@@ -17,6 +17,7 @@ use gpui::{
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::resizable::{h_resizable, resizable_panel};
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use gpui_component::avatar::Avatar;
 use gpui_component::badge::Badge;
 use gpui_component::stepper::{Stepper, StepperItem};
@@ -417,7 +418,12 @@ impl Chamber {
             .absolute()
             .inset_0()
             .flex()
-            .justify_center()
+            // Column so items_center handles the horizontal centering and the
+            // card sits at a fixed top offset — deterministic, not leaning on the
+            // default stretch/align that was dropping it to the window's foot.
+            .flex_col()
+            .items_center()
+            .justify_start()
             .bg(rgba(0x00000066))
             .on_click(cx.listener(|this, _, window, cx| {
                 this.palette_open = false;
@@ -849,18 +855,37 @@ impl Chamber {
 
         // The scrolling viewport: the selected view stacks to its natural height
         // and scrolls *within* the card, instead of growing the card and pushing
-        // the input (and the whole layout) off the bottom.
+        // the input (and the whole layout) off the bottom. The hover scrollbar is
+        // an absolute sibling of the scrolled content (not a child of it, or it
+        // would scroll away), reading the same handle.
         let body = div()
-            .id("chat-body-scroll")
+            .relative()
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&self.chat_scroll)
-            .child(match selected {
-                ChatTab::Chat => self.chat_view().into_any_element(),
-                ChatTab::Log => self.log_view().into_any_element(),
-                ChatTab::Timeline => self.timeline_view().into_any_element(),
-            });
+            .child(
+                div()
+                    .id("chat-body-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.chat_scroll)
+                    .child(match selected {
+                        ChatTab::Chat => self.chat_view().into_any_element(),
+                        ChatTab::Log => self.log_view().into_any_element(),
+                        ChatTab::Timeline => self.timeline_view().into_any_element(),
+                    }),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .child(
+                        Scrollbar::vertical(&self.chat_scroll)
+                            .scrollbar_show(ScrollbarShow::Hover),
+                    ),
+            );
 
         // The message box is only meaningful in Chat — you talk to the field
         // there. Log and Timeline are read-only views, so they get no input.
@@ -1202,7 +1227,6 @@ impl Chamber {
 
         let card = v_flex()
             .occlude()
-            .mt(px(80.0))
             .w(px(520.0))
             .p_4()
             .gap_4()
@@ -1284,6 +1308,10 @@ impl Chamber {
             .absolute()
             .inset_0()
             .flex()
+            // Center on both axes deterministically (was relying on default
+            // align + a top margin, which sank the card to the window's foot).
+            .flex_col()
+            .items_center()
             .justify_center()
             .bg(rgba(0x00000088))
             .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx)))
