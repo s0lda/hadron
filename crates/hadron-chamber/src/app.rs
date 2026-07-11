@@ -42,6 +42,9 @@ const RAIL_STRIP: f32 = 44.0;
 const RAIL_MIN: f32 = 160.0;
 const RAIL_MAX: f32 = 440.0;
 
+/// Corner radius for floating panels/containers on the unified canvas.
+const INNER_RADIUS: Pixels = px(12.0);
+
 /// The two collapsible side rails.
 #[derive(Clone, Copy)]
 enum Rail {
@@ -571,8 +574,6 @@ impl Chamber {
             .bg(theme::sidebar())
             .rounded_tl(top_radius)
             .rounded_tr(top_radius)
-            .border_b_1()
-            .border_color(theme::border())
             .child(drag_region("drag-l"))
             .child(command_bar)
             .child(
@@ -599,8 +600,6 @@ impl Chamber {
             .bg(theme::sidebar())
             .rounded_bl(bottom_radius)
             .rounded_br(bottom_radius)
-            .border_t_1()
-            .border_color(theme::border())
             .text_xs()
             .text_color(theme::text_muted())
             .child(div().child("ready"))
@@ -763,7 +762,8 @@ impl Chamber {
     }
 
     /// The center column: a segmented Chat / Log / Timeline tab bar over the
-    /// selected view, with the human's message box pinned at the foot.
+    /// selected view, with the human's message box pinned at the foot. The whole
+    /// thing is a rounded, filled card that floats on the unified canvas.
     fn chat_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.chat_tab;
         let tabs = TabBar::new("chat-tabs")
@@ -775,14 +775,7 @@ impl Chamber {
                 cx.notify();
             }));
 
-        let header = h_flex()
-            .flex_none()
-            .items_center()
-            .px_3()
-            .py_2()
-            .border_b_1()
-            .border_color(theme::border())
-            .child(tabs);
+        let header = h_flex().flex_none().items_center().px_3().py_2().child(tabs);
 
         let body = match selected {
             ChatTab::Chat => self.chat_view().into_any_element(),
@@ -798,13 +791,19 @@ impl Chamber {
             .bg(theme::input_bg())
             .child(Input::new(&self.input));
 
-        v_flex()
-            .w_full()
-            .h_full()
-            .bg(theme::bg())
+        // The floating chat card: filled + rounded, inset from the canvas so the
+        // unified space shows around it.
+        let card = v_flex()
+            .flex_1()
+            .min_h_0()
+            .rounded(INNER_RADIUS)
+            .overflow_hidden()
+            .bg(theme::sidebar())
             .child(header)
             .child(body)
-            .child(input)
+            .child(input);
+
+        v_flex().w_full().h_full().p_2().child(card)
     }
 
     /// The Chat tab: the conversation only (message events), styled like a chat

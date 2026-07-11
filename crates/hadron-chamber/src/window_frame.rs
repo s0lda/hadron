@@ -21,7 +21,7 @@ const BORDER_SIZE: Pixels = px(1.0);
 /// The corner radius the upstream frame hardcodes to zero. Public so the
 /// titlebar can round its own top corners to match (else the close-button hover
 /// spills past the rounded frame edge).
-pub const FRAME_RADIUS: Pixels = px(10.0);
+pub const FRAME_RADIUS: Pixels = px(20.0);
 /// Half-width of the resize hit band on each side of the visible frame edge.
 const RESIZE_HIT: Pixels = px(6.0);
 
