@@ -80,10 +80,13 @@ impl Chamber {
     /// count to the current row count is a cheap change check (projection emits
     /// exactly one row per event), so an unchanged field costs only a read.
     fn reload_if_changed(&mut self, cx: &mut Context<Self>) {
-        let events = io::read_events(&self.path).unwrap_or_default();
-        if events.len() != self.view.messages.len() {
-            self.view = model::project(&events);
-            cx.notify();
+        // Only reproject on a successful read — a transient read error must not
+        // blank the current view (which would flash to empty, then repopulate).
+        if let Ok(events) = io::read_events(&self.path) {
+            if events.len() != self.view.messages.len() {
+                self.view = model::project(&events);
+                cx.notify();
+            }
         }
     }
 
