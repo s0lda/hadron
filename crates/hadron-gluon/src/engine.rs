@@ -18,6 +18,8 @@ pub struct Engine {
     repo_root: Option<PathBuf>,
     /// Opt-in nucleus context: pre-rendered digest injected into projections.
     nucleus_digest: String,
+    ledger: Option<crate::ledger::Ledger>,
+    energy_limit: u32,
 }
 
 impl Engine {
@@ -44,6 +46,8 @@ impl Engine {
             max_exchanges,
             repo_root: None,
             nucleus_digest: String::new(),
+            ledger: None,
+            energy_limit: 0,
         }
     }
 
@@ -51,6 +55,12 @@ impl Engine {
     /// the working diff into the projection. Additive — off by default.
     pub fn with_git(mut self, repo_root: PathBuf) -> Self {
         self.repo_root = Some(repo_root);
+        self
+    }
+
+    pub fn with_ledger(mut self, ledger: crate::ledger::Ledger, limit: u32) -> Self {
+        self.ledger = Some(ledger);
+        self.energy_limit = limit;
         self
     }
 
@@ -72,6 +82,21 @@ impl Engine {
                 Some(q) => q,
                 None => return Ok(()), // quiesce: control returns to the human
             };
+
+            if let Some(ledger) = &self.ledger {
+                if ledger.is_depleted(&target, self.energy_limit)? {
+                    let msg = format!("⚠️ Quark {} is depleted (exceeded {} tokens).", target.as_str(), self.energy_limit);
+                    append_event(
+                        &self.field_path,
+                        &Event::new(Actor::Gluon, None, Kind::Message { body: msg }),
+                    )?;
+                    append_event(
+                        &self.field_path,
+                        &Event::new(Actor::Quark(target.clone()), None, Kind::Status { state: QuarkState::Blocked }),
+                    )?;
+                    continue; // Reroute: skip this quark and process the next pending event
+                }
+            }
 
             if exchanges >= self.max_exchanges {
                 append_event(
@@ -120,6 +145,16 @@ impl Engine {
                 .get_mut(&target)
                 .ok_or_else(|| anyhow::anyhow!("no such quark on roster: {}", target.as_str()))?;
             let outcome = quark.excite(projection).await?;
+
+            if outcome.used_tokens > 0 {
+                if let Some(ledger) = &self.ledger {
+                    ledger.record_usage(&target, outcome.used_tokens)?;
+                }
+                append_event(
+                    &self.field_path,
+                    &Event::new(Actor::Quark(target.clone()), None, Kind::EnergyReport { used_tokens: outcome.used_tokens }),
+                )?;
+            }
 
             if let Some(body) = outcome.message {
                 let to = parse_addressee(&body, &self.roster);
@@ -315,5 +350,48 @@ mod tests {
             .filter(|e| matches!(e.kind, Kind::Status { state: QuarkState::Ground }))
             .count();
         assert_eq!(ground_statuses, 4, "exactly max_exchanges turns ran");
+    }
+
+    #[tokio::test]
+    async fn engine_blocks_depleted_quarks_and_records_usage() {
+        use crate::ledger::Ledger;
+        let fdir = tempdir().unwrap();
+        let path = fdir.path().join("field.jsonl");
+
+        struct HeavyQuark;
+        #[async_trait::async_trait]
+        impl Quark for HeavyQuark {
+            fn id(&self) -> QuarkId { QuarkId::new("worker") }
+            fn flavor(&self) -> Flavor { Flavor::Worker }
+            fn energy(&self) -> hadron_lattice::EnergyState { hadron_lattice::EnergyState::Available }
+            async fn excite(&mut self, _turn: Projection) -> anyhow::Result<hadron_lattice::TurnOutcome> {
+                // Consume 100 tokens per turn
+                Ok(hadron_lattice::TurnOutcome { message: None, used_tokens: 100 })
+            }
+        }
+
+        let ledger = Ledger::open_in_memory().unwrap();
+        let mut engine = Engine::new(path.clone(), vec![Box::new(HeavyQuark)], "".into(), 5)
+            .with_ledger(ledger, 150);
+
+        // Turn 1: 0 used. Executes, uses 100. Total: 100.
+        seed_human_message(&path, "worker", "do heavy work 1");
+        engine.run_until_quiesce().await.unwrap();
+
+        // Turn 2: 100 used (<= 150 limit). Executes, uses 100. Total: 200.
+        seed_human_message(&path, "worker", "do heavy work 2");
+        engine.run_until_quiesce().await.unwrap();
+
+        // Turn 3: 200 used (> 150 limit). Blocked!
+        seed_human_message(&path, "worker", "do heavy work 3");
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&path).unwrap();
+        
+        let reports = events.iter().filter(|e| matches!(e.kind, Kind::EnergyReport { .. })).count();
+        assert_eq!(reports, 2, "Quark should execute 2 times before depleting");
+        
+        let blocks = events.iter().filter(|e| matches!(e.kind, Kind::Status { state: QuarkState::Blocked })).count();
+        assert_eq!(blocks, 1, "Quark should be blocked on the 3rd attempt");
     }
 }
