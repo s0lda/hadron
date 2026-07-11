@@ -19,6 +19,8 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::avatar::Avatar;
 use gpui_component::badge::Badge;
+use gpui_component::stepper::{Stepper, StepperItem};
+use gpui_component::tab::{Tab, TabBar};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{
     h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar,
@@ -78,6 +80,41 @@ impl PaletteCmd {
     }
 }
 
+/// The three views over the field, selected by the chat column's segmented tabs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChatTab {
+    /// The conversation — human/quark messages, styled like a chat.
+    Chat,
+    /// Every event on the field, compact — the raw activity log.
+    Log,
+    /// A vertical stepper over the run's milestones (non-message activity).
+    Timeline,
+}
+
+impl ChatTab {
+    const ALL: [ChatTab; 3] = [ChatTab::Chat, ChatTab::Log, ChatTab::Timeline];
+
+    fn index(self) -> usize {
+        match self {
+            ChatTab::Chat => 0,
+            ChatTab::Log => 1,
+            ChatTab::Timeline => 2,
+        }
+    }
+
+    fn from_index(ix: usize) -> Self {
+        Self::ALL.get(ix).copied().unwrap_or(ChatTab::Chat)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            ChatTab::Chat => "Chat",
+            ChatTab::Log => "Log",
+            ChatTab::Timeline => "Timeline",
+        }
+    }
+}
+
 struct Chamber {
     view: ChamberView,
     prefs: ChamberPrefs,
@@ -87,6 +124,8 @@ struct Chamber {
     input: Entity<InputState>,
     /// Root focus target, so Ctrl+Shift+P dispatches regardless of what's focused.
     focus_handle: FocusHandle,
+    /// Which view the chat column's segmented tabs are showing.
+    chat_tab: ChatTab,
     /// Whether the Ctrl+Shift+P command palette overlay is showing.
     palette_open: bool,
     /// The palette's filter box.
@@ -144,6 +183,7 @@ impl Chamber {
             path,
             input,
             focus_handle,
+            chat_tab: ChatTab::Chat,
             palette_open: false,
             palette_input,
             _input_sub,
@@ -482,7 +522,7 @@ impl Chamber {
                     .child(self.roster_pane(cx)),
             );
         }
-        group = group.child(resizable_panel().child(self.chat_pane()));
+        group = group.child(resizable_panel().child(self.chat_pane(cx)));
         if !inspector_collapsed {
             group = group.child(
                 resizable_panel()
@@ -599,18 +639,36 @@ impl Chamber {
             .child(self.settings_button(cx, false))
     }
 
-    fn chat_pane(&self) -> impl IntoElement {
-        let mut messages = v_flex().flex_1().gap_3().p_4().child(
-            div()
-                .text_sm()
-                .text_color(theme::text_muted())
-                .child("FIELD"),
-        );
-        for m in &self.view.messages {
-            messages = messages.child(message_row(m));
-        }
+    /// The center column: a segmented Chat / Log / Timeline tab bar over the
+    /// selected view, with the human's message box pinned at the foot.
+    fn chat_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = self.chat_tab;
+        let tabs = TabBar::new("chat-tabs")
+            .segmented()
+            .selected_index(selected.index())
+            .children(ChatTab::ALL.map(|t| Tab::new().label(t.label())))
+            .on_click(cx.listener(|this, ix: &usize, _window, cx| {
+                this.chat_tab = ChatTab::from_index(*ix);
+                cx.notify();
+            }));
+
+        let header = h_flex()
+            .flex_none()
+            .items_center()
+            .px_3()
+            .py_2()
+            .border_b_1()
+            .border_color(theme::border())
+            .child(tabs);
+
+        let body = match selected {
+            ChatTab::Chat => self.chat_view().into_any_element(),
+            ChatTab::Log => self.log_view().into_any_element(),
+            ChatTab::Timeline => self.timeline_view().into_any_element(),
+        };
 
         let input = h_flex()
+            .flex_none()
             .m_4()
             .px_1()
             .rounded_lg()
@@ -621,8 +679,80 @@ impl Chamber {
             .w_full()
             .h_full()
             .bg(theme::bg())
-            .child(messages)
+            .child(header)
+            .child(body)
             .child(input)
+    }
+
+    /// The Chat tab: the conversation only (message events), styled like a chat
+    /// with each author's avatar and name.
+    fn chat_view(&self) -> impl IntoElement {
+        let mut col = v_flex().flex_1().gap_4().p_4();
+        let mut any = false;
+        for m in &self.view.messages {
+            if m.kind_label == "message" {
+                col = col.child(chat_message_row(m));
+                any = true;
+            }
+        }
+        if !any {
+            col = col.child(empty_hint("No messages yet — say something below."));
+        }
+        col
+    }
+
+    /// The Log tab: every event on the field, compact (the raw activity).
+    fn log_view(&self) -> impl IntoElement {
+        let mut col = v_flex().flex_1().gap_3().p_4();
+        if self.view.messages.is_empty() {
+            col = col.child(empty_hint("The field is empty."));
+        }
+        for m in &self.view.messages {
+            col = col.child(message_row(m));
+        }
+        col
+    }
+
+    /// The Timeline tab: a vertical [`Stepper`] over the run's milestones — the
+    /// non-message activity (status changes, edits, commands, snapshots), most
+    /// recent marked as the current step.
+    fn timeline_view(&self) -> impl IntoElement {
+        let steps: Vec<&MessageRow> = self
+            .view
+            .messages
+            .iter()
+            .filter(|m| m.kind_label != "message")
+            .collect();
+
+        let mut col = v_flex().flex_1().p_4();
+        if steps.is_empty() {
+            return col.child(empty_hint("No activity yet — the timeline fills as quarks work."));
+        }
+
+        let current = steps.len().saturating_sub(1);
+        let stepper = Stepper::new("timeline")
+            .vertical()
+            .selected_index(current)
+            .items(steps.into_iter().map(|m| {
+                StepperItem::new().pb_6().icon(kind_icon(m.kind_label)).child(
+                    v_flex()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text())
+                                .child(format!("{}  ·  {}", m.from, m.kind_label)),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child(m.body.clone()),
+                        ),
+                )
+            }));
+        col = col.child(stepper);
+        col
     }
 
     /// The right rail: the Terminal. Placeholder body for now — real terminal
@@ -782,6 +912,64 @@ fn roster_row(r: &RosterRow) -> impl IntoElement {
                 ),
         )
         .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+}
+
+/// A muted placeholder line shown when a tab view has nothing to render.
+fn empty_hint(text: &'static str) -> impl IntoElement {
+    div()
+        .text_sm()
+        .text_color(theme::text_muted())
+        .child(text)
+}
+
+/// Map an event kind to a timeline step icon.
+fn kind_icon(kind_label: &str) -> IconName {
+    match kind_label {
+        "status" => IconName::Info,
+        "edit" => IconName::Folder,
+        "command" => IconName::SquareTerminal,
+        "snapshot" => IconName::CircleCheck,
+        _ => IconName::Asterisk,
+    }
+}
+
+/// A chat-styled message row: the author's initials avatar and name, then the
+/// body — used by the Chat tab so the field reads like a conversation.
+fn chat_message_row(m: &MessageRow) -> impl IntoElement {
+    let name = m.from.clone();
+    h_flex()
+        .items_start()
+        .gap_2p5()
+        .child(Avatar::new().name(name.clone()).with_size(Size::Small))
+        .child(
+            v_flex()
+                .min_w_0()
+                .gap_0p5()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::actor_hue(&m.from))
+                                .child(name),
+                        )
+                        .when_some(m.to.clone(), |this, to| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(format!("→ {to}")),
+                            )
+                        }),
+                )
+                .child(
+                    div()
+                        .text_color(theme::text_secondary())
+                        .child(m.body.clone()),
+                ),
+        )
 }
 
 fn message_row(m: &MessageRow) -> impl IntoElement {
