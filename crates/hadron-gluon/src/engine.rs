@@ -5,14 +5,70 @@ use hadron_lattice::{Actor, Event, Kind, Projection, QuarkCard, QuarkId, QuarkSt
 
 use crate::field::{append_event, read_events};
 use crate::quark::Quark;
-use crate::router::{current_task, next_pending, parse_addressee};
+use crate::router::{next_pending, parse_addressee};
+use std::fs;
+
+fn build_invariants(workspace_root: &std::path::Path, requested: &[String]) -> (String, Vec<String>) {
+    let mut combined = String::new();
+    let invariants_dir = workspace_root.join(".hadron").join("nucleus").join("invariants");
+    let mut available = Vec::new();
+    
+    // Always include standard_model.md if it exists
+    let sm_path = invariants_dir.join("standard_model.md");
+    if sm_path.exists() {
+        match fs::read_to_string(&sm_path) {
+            Ok(content) => {
+                combined.push_str(&content);
+                combined.push('\n');
+            }
+            Err(e) => {
+                eprintln!("warning: requested invariant file exists but could not be read: {} - {}", sm_path.display(), e);
+            }
+        }
+    }
+
+    if invariants_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&invariants_dir) {
+            for entry in entries.flatten() {
+                if let Ok(name) = entry.file_name().into_string() {
+                    if name.ends_with(".md") && name != "standard_model.md" {
+                        available.push(name.trim_end_matches(".md").to_string());
+                    }
+                }
+            }
+        }
+    }
+    
+    available.sort();
+    
+    // Sort requested invariants to ensure deterministic cache hits
+    let mut requested_sorted = requested.to_vec();
+    requested_sorted.sort();
+
+    for req in requested_sorted {
+        let req_path = invariants_dir.join(format!("{}.md", req));
+        if req_path.exists() {
+            match fs::read_to_string(&req_path) {
+                Ok(content) => {
+                    combined.push_str(&format!("\n# Rule: {}\n", req));
+                    combined.push_str(&content);
+                    combined.push('\n');
+                }
+                Err(e) => {
+                    eprintln!("warning: requested invariant file exists but could not be read: {} - {}", req_path.display(), e);
+                }
+            }
+        }
+    }
+
+    (combined.trim().to_string(), available)
+}
 
 /// Drives the sequential coordination loop over a single field file.
 pub struct Engine {
     field_path: PathBuf,
     quarks: HashMap<QuarkId, Box<dyn Quark>>,
     roster: Vec<QuarkCard>,
-    invariants: String,
     max_exchanges: usize,
     /// Opt-in git safety: target project repo to snapshot/diff. `None` = off.
     repo_root: Option<PathBuf>,
@@ -26,7 +82,6 @@ impl Engine {
     pub fn new(
         field_path: PathBuf,
         quarks: Vec<Box<dyn Quark>>,
-        invariants: String,
         max_exchanges: usize,
     ) -> Self {
         let roster = quarks
@@ -42,7 +97,6 @@ impl Engine {
             field_path,
             quarks,
             roster,
-            invariants,
             max_exchanges,
             repo_root: None,
             nucleus_digest: String::new(),
@@ -131,9 +185,41 @@ impl Engine {
                 String::new()
             };
 
+            let mut requested_invariants = vec![];
+            let mut task_desc = String::new();
+            
+            // Find the most recent event targeting this quark to get its task context
+            if let Some(trigger) = events.iter().rev().find(|e| e.to.as_ref() == Some(&target)) {
+                match &trigger.kind {
+                    Kind::Assign { task, invariants } => {
+                        task_desc = task.clone();
+                        requested_invariants = invariants.clone();
+                    }
+                    Kind::Message { body } => {
+                        task_desc = body.clone();
+                        // For a follow-up message, scan further backward for the most recent Assign to inherit invariants
+                        if let Some(assign_event) = events.iter().rev().find(|e| {
+                            e.to.as_ref() == Some(&target) && matches!(e.kind, Kind::Assign { .. })
+                        }) {
+                            if let Kind::Assign { invariants, .. } = &assign_event.kind {
+                                requested_invariants = invariants.clone();
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            
+            let workspace_root = self.field_path.ancestors()
+                .find(|p| p.join(".hadron").exists())
+                .unwrap_or_else(|| self.field_path.parent().unwrap_or_else(|| std::path::Path::new("")));
+                
+            let (invariants_text, available_invariants) = build_invariants(workspace_root, &requested_invariants);
+
             let projection = Projection {
-                task: current_task(&events, &target),
-                invariants: self.invariants.clone(),
+                task: task_desc,
+                invariants: invariants_text,
+                available_invariants,
                 nucleus_digest: self.nucleus_digest.clone(),
                 roster: self.roster.clone(),
                 field_window: events.clone(),
@@ -232,7 +318,7 @@ mod tests {
             Flavor::Orchestrator,
             vec![Some("done, back to human".into())],
         );
-        let mut engine = Engine::new(path.clone(), vec![Box::new(orch)], "x".into(), 10)
+        let mut engine = Engine::new(path.clone(), vec![Box::new(orch)], 10)
             .with_git(repo.path().to_path_buf());
         engine.run_until_quiesce().await.unwrap();
 
@@ -270,7 +356,7 @@ mod tests {
             }
         }
 
-        let mut engine = Engine::new(path.clone(), vec![Box::new(Probe)], "x".into(), 10)
+        let mut engine = Engine::new(path.clone(), vec![Box::new(Probe)], 10)
             .with_nucleus("## map.md\nthe project map".into());
         engine.run_until_quiesce().await.unwrap();
     }
@@ -298,7 +384,6 @@ mod tests {
         let mut engine = Engine::new(
             path.clone(),
             vec![Box::new(orch), Box::new(worker)],
-            "Coordinate via @mentions.".into(),
             10,
         );
         engine.run_until_quiesce().await.unwrap();
@@ -333,7 +418,6 @@ mod tests {
         let mut engine = Engine::new(
             path.clone(),
             vec![Box::new(orch), Box::new(worker)],
-            "x".into(),
             4,
         );
         engine.run_until_quiesce().await.unwrap();
@@ -371,7 +455,7 @@ mod tests {
         }
 
         let ledger = Ledger::open_in_memory().unwrap();
-        let mut engine = Engine::new(path.clone(), vec![Box::new(HeavyQuark)], "".into(), 5)
+        let mut engine = Engine::new(path.clone(), vec![Box::new(HeavyQuark)], 5)
             .with_ledger(ledger, 150);
 
         // Turn 1: 0 used. Executes, uses 100. Total: 100.
@@ -393,5 +477,54 @@ mod tests {
         
         let blocks = events.iter().filter(|e| matches!(e.kind, Kind::Status { state: QuarkState::Blocked })).count();
         assert_eq!(blocks, 1, "Quark should be blocked on the 3rd attempt");
+    }
+
+    #[tokio::test]
+    async fn engine_injects_invariants() {
+        use std::fs;
+        let fdir = tempdir().unwrap();
+        
+        // Setup .hadron/nucleus/invariants structure
+        let invariants_dir = fdir.path().join(".hadron").join("nucleus").join("invariants");
+        fs::create_dir_all(&invariants_dir).unwrap();
+        fs::write(invariants_dir.join("standard_model.md"), "Be nice.").unwrap();
+        fs::write(invariants_dir.join("rust_style.md"), "Use camelCase... wait no.").unwrap();
+
+        let path = fdir.path().join("field.jsonl");
+        
+        // Create an Assign event requesting "rust_style" invariant
+        append_event(
+            &path,
+            &Event::new(
+                Actor::Human,
+                Some(QuarkId::new("worker")),
+                Kind::Assign { task: "Fix formatting".into(), invariants: vec!["rust_style".to_string()] },
+            ),
+        ).unwrap();
+
+        use hadron_lattice::{Projection, TurnOutcome};
+        struct Probe;
+        #[async_trait::async_trait]
+        impl crate::quark::Quark for Probe {
+            fn id(&self) -> QuarkId {
+                QuarkId::new("worker")
+            }
+            fn flavor(&self) -> Flavor {
+                Flavor::Worker
+            }
+            fn energy(&self) -> hadron_lattice::EnergyState {
+                hadron_lattice::EnergyState::Available
+            }
+            async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+                assert!(turn.invariants.contains("Be nice."));
+                assert!(turn.invariants.contains("# Rule: rust_style"));
+                assert!(turn.invariants.contains("Use camelCase... wait no."));
+                assert_eq!(turn.available_invariants, vec!["rust_style".to_string()]);
+                Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0 })
+            }
+        }
+
+        let mut engine = Engine::new(path.clone(), vec![Box::new(Probe)], 10);
+        engine.run_until_quiesce().await.unwrap();
     }
 }

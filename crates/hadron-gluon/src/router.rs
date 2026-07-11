@@ -1,4 +1,4 @@
-use hadron_lattice::{Actor, Event, Kind, QuarkCard, QuarkId};
+use hadron_lattice::{Actor, Event, QuarkCard, QuarkId};
 
 /// Which quark should be excited next.
 ///
@@ -39,17 +39,6 @@ pub fn parse_addressee(body: &str, roster: &[QuarkCard]) -> Option<QuarkId> {
     None
 }
 
-/// The most recent Message addressed to `target` — what it was last asked to do.
-pub fn current_task(events: &[Event], target: &QuarkId) -> String {
-    events
-        .iter()
-        .rev()
-        .find_map(|e| match (&e.to, &e.kind) {
-            (Some(to), Kind::Message { body }) if to == target => Some(body.clone()),
-            _ => None,
-        })
-        .unwrap_or_default()
-}
 
 #[cfg(test)]
 mod tests {
@@ -101,12 +90,4 @@ mod tests {
         assert_eq!(parse_addressee("@ghost unknown", &roster()), None);
     }
 
-    #[test]
-    fn current_task_is_last_message_to_target() {
-        let events = vec![
-            msg(Actor::Human, Some("orch"), "first"),
-            msg(Actor::Quark(QuarkId::new("orch")), Some("worker"), "@worker second"),
-        ];
-        assert_eq!(current_task(&events, &QuarkId::new("worker")), "@worker second");
-    }
 }
