@@ -1,6 +1,6 @@
 # Hadron Phase 4 — The Swarm Loop (persistent 0-CPU daemon) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Turn the engine from a run-once-then-quiesce batch into a persistent daemon that sleeps at ~0% CPU and wakes to process new field appends until told to shut down.
 
@@ -29,7 +29,7 @@
 - Produces: `Engine::field_path(&self) -> &std::path::Path` (pub(crate)) — lets `daemon.rs` read the private `field_path` field to construct the watcher.
 - Consumes: tokio `sync` feature for `watch`/`mpsc` in Task 2.
 
-- [ ] **Step 1: Add `"sync"` to the tokio features array** in `crates/hadron-gluon/Cargo.toml`. The array becomes:
+- [x] **Step 1: Add `"sync"` to the tokio features array** in `crates/hadron-gluon/Cargo.toml`. The array becomes:
 
 ```toml
 tokio = { version = "1", features = [
@@ -43,7 +43,7 @@ tokio = { version = "1", features = [
 ] }
 ```
 
-- [ ] **Step 2: Add the getter** to `impl Engine` in `crates/hadron-gluon/src/engine.rs` (place it right after `pub fn new(...)`'s closing brace, before `with_git`):
+- [x] **Step 2: Add the getter** to `impl Engine` in `crates/hadron-gluon/src/engine.rs` (place it right after `pub fn new(...)`'s closing brace, before `with_git`):
 
 ```rust
     /// The field file this engine reads and appends to.
@@ -52,10 +52,10 @@ tokio = { version = "1", features = [
     }
 ```
 
-- [ ] **Step 3: Verify it compiles** — `cargo build -p hadron-gluon`.
+- [x] **Step 3: Verify it compiles** — `cargo build -p hadron-gluon`.
 Expected: builds clean (the getter is currently unused; that's fine — Task 2 consumes it in the same crate, so no dead-code warning once wired. If a warning appears before Task 2, ignore it.)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add crates/hadron-gluon/Cargo.toml crates/hadron-gluon/src/engine.rs
@@ -74,7 +74,7 @@ git commit -m "feat(gluon): tokio sync feature + Engine::field_path getter for t
 - Consumes: `Engine::run_until_quiesce(&mut self) -> anyhow::Result<()>`, `Engine::field_path(&self) -> &Path` (Task 1), `crate::watch::FieldWatcher::{new, wait}`.
 - Produces: `impl Engine { pub async fn serve(&mut self, shutdown: tokio::sync::watch::Receiver<bool>) -> anyhow::Result<()> }` — runs until `shutdown` observes `true`, then returns `Ok(())` after joining the watcher bridge.
 
-- [ ] **Step 1: Write the failing test.** Create `crates/hadron-gluon/src/daemon.rs` with the loop stubbed to `todo!()` inside, plus these two tests. (The tests import from the existing test-helper patterns in `engine.rs`; `MockQuark::scripted` and manual field seeding.)
+- [x] **Step 1: Write the failing test.** Create `crates/hadron-gluon/src/daemon.rs` with the loop stubbed to `todo!()` inside, plus these two tests. (The tests import from the existing test-helper patterns in `engine.rs`; `MockQuark::scripted` and manual field seeding.)
 
 ```rust
 use std::path::Path;
@@ -181,10 +181,10 @@ Add to `crates/hadron-gluon/src/lib.rs` after `pub mod watch;`:
 pub mod daemon;
 ```
 
-- [ ] **Step 2: Run tests to verify they fail** — `cargo test -p hadron-gluon daemon::`.
+- [x] **Step 2: Run tests to verify they fail** — `cargo test -p hadron-gluon daemon::`.
 Expected: FAIL — `todo!()` panics (`not yet implemented`).
 
-- [ ] **Step 3: Implement `serve`.** Replace the `todo!()` body with the real loop:
+- [x] **Step 3: Implement `serve`.** Replace the `todo!()` body with the real loop:
 
 ```rust
     pub async fn serve(&mut self, mut shutdown: watch::Receiver<bool>) -> anyhow::Result<()> {
@@ -234,13 +234,13 @@ Expected: FAIL — `todo!()` panics (`not yet implemented`).
     }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass** — `cargo test -p hadron-gluon daemon::`.
+- [x] **Step 4: Run tests to verify they pass** — `cargo test -p hadron-gluon daemon::`.
 Expected: PASS (both tests). If `daemon_processes...` is flaky, the safety-poll should still catch the seeded event within 500ms; the 4s poll window has ample margin.
 
-- [ ] **Step 5: Run the full gluon suite** — `cargo test -p hadron-gluon`.
+- [x] **Step 5: Run the full gluon suite** — `cargo test -p hadron-gluon`.
 Expected: all prior tests still green + 2 new.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crates/hadron-gluon/src/daemon.rs crates/hadron-gluon/src/lib.rs
@@ -253,10 +253,10 @@ git commit -m "feat(gluon): the swarm loop — persistent 0-CPU serve() daemon (
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: Full workspace test** — `cargo test` (default features; GPUI `gui` feature stays off).
+- [x] **Step 1: Full workspace test** — `cargo test` (default features; GPUI `gui` feature stays off).
 Expected: all crates green (lattice, gluon incl. 2 new daemon tests, forge, chamber model).
 
-- [ ] **Step 2: Clippy sanity** — `cargo clippy -p hadron-gluon 2>&1 | grep -E "warning: unused|error" | head`.
+- [x] **Step 2: Clippy sanity** — `cargo clippy -p hadron-gluon 2>&1 | grep -E "warning: unused|error" | head`.
 Expected: no new warnings from `daemon.rs`/the getter. (Pre-existing `ledger.rs` assert-bool warnings from Phase 3 are out of scope.)
 
 ---
