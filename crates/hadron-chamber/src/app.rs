@@ -94,8 +94,25 @@ fn state_color(state: QuarkState) -> gpui::Rgba {
     }
 }
 
+/// True when running under WSL (WSLg). Used to work around WSLg's Wayland.
+fn is_wsl() -> bool {
+    std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .map(|s| {
+            let s = s.to_lowercase();
+            s.contains("microsoft") || s.contains("wsl")
+        })
+        .unwrap_or(false)
+}
+
 /// Launch the chamber window against a field file path.
 pub fn run(field_path: Option<String>) {
+    // WSLg's Wayland compositor version is not supported by gpui's Wayland
+    // backend (it panics with `UnsupportedVersion`). On WSL, force the X11
+    // backend (XWayland serves `DISPLAY`), which works. No effect elsewhere.
+    if is_wsl() && std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        std::env::remove_var("WAYLAND_DISPLAY");
+    }
+
     let Some(path) = field_path else {
         eprintln!("usage: hadron-chamber <field.jsonl>");
         return;
