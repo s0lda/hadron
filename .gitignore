@@ -1,3 +1,6 @@
 /target
 **/*.rs.bk
 Cargo.lock.orig
+
+# Session-local hook scratch (remember plugin); not project state.
+.remember/
