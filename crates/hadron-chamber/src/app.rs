@@ -1,21 +1,23 @@
 //! GPUI window for the chamber. Behind the `gui` feature.
 //!
-//! Built on the git gpui stack + gpui-component: a frameless, dark, client-decorated
-//! window with a custom `TitleBar`, and a 3-pane body built from gpui-component's
-//! `Resizable` panels — a Quarks rail, the field chat (grows), and an Inspector rail.
-//! Both rails drag-resize and collapse; a single shared [`ResizableState`] drives
-//! both gestures, and widths + collapse state persist via [`crate::config`].
+//! Built on the git gpui stack + gpui-component: a transparent, dark,
+//! client-decorated window inside our own rounded, shadowed [`crate::window_frame`],
+//! with a custom `TitleBar` and a 3-pane body — a Quarks rail, the field chat
+//! (grows), and an Inspector rail. Expanded rails are gpui-component `Resizable`
+//! panels (drag-resize); a collapsed rail is a fixed strip outside the group.
+//! Widths + collapse state persist via [`crate::config`].
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
-    actions, div, prelude::*, px, rgb, rgba, App, Context, Entity, FocusHandle, KeyBinding, Render,
-    SharedString, Subscription, Window, WindowBounds, WindowDecorations, WindowOptions,
+    actions, div, prelude::*, px, rgb, rgba, App, Context, Entity, FocusHandle, KeyBinding,
+    MouseButton, Render, SharedString, Subscription, Window, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::resizable::{h_resizable, resizable_panel};
-use gpui_component::{h_flex, v_flex, Root, Theme, ThemeMode, TitleBar};
+use gpui_component::{h_flex, v_flex, Icon, IconName, Root, Sizable, Theme, ThemeMode, TitleBar};
 use hadron_lattice::{io, Actor, Event, Kind, QuarkState};
 
 use crate::config::{self, ChamberPrefs};
@@ -62,9 +64,9 @@ impl PaletteCmd {
             }
             PaletteCmd::ToggleInspector => {
                 if prefs.inspector_collapsed {
-                    "Show Inspector"
+                    "Show Terminal"
                 } else {
-                    "Hide Inspector"
+                    "Hide Terminal"
                 }
             }
         }
@@ -108,7 +110,9 @@ impl Chamber {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let palette_input = cx.new(|cx| {
-            InputState::new(window, cx).submit_on_enter(true).placeholder("Run a command…")
+            InputState::new(window, cx)
+                .submit_on_enter(true)
+                .placeholder("Run a command…")
         });
         let _palette_sub = cx.subscribe_in(&palette_input, window, Self::on_palette_submit);
 
@@ -116,12 +120,15 @@ impl Chamber {
         // the gluon (a separate process) appear without interaction. Dumb full
         // re-read — the field is small and this matches the engine's own posture.
         // The loop ends when the entity is dropped (`update` returns `Err`).
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_millis(400)).await;
-                if this.update(cx, |chamber, cx| chamber.reload_if_changed(cx)).is_err() {
-                    break;
-                }
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(400))
+                .await;
+            if this
+                .update(cx, |chamber, cx| chamber.reload_if_changed(cx))
+                .is_err()
+            {
+                break;
             }
         })
         .detach();
@@ -141,7 +148,12 @@ impl Chamber {
 
     /// Toggle the command palette (Ctrl+Shift+P, or the titlebar bar). Opening
     /// clears + focuses the filter box; closing returns focus to the root.
-    fn on_toggle_palette(&mut self, _: &TogglePalette, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_toggle_palette(
+        &mut self,
+        _: &TogglePalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.palette_open = !self.palette_open;
         if self.palette_open {
             self.palette_input.update(cx, |state, cx| {
@@ -215,7 +227,11 @@ impl Chamber {
                         .px_2()
                         .py_1p5()
                         .rounded_md()
-                        .bg(if top { theme::surface_raised() } else { theme::surface() })
+                        .bg(if top {
+                            theme::surface_raised()
+                        } else {
+                            theme::surface()
+                        })
                         .hover(|s| s.bg(theme::surface_raised()))
                         .active(|s| s.opacity(0.8))
                         .child(cmd.label(&self.prefs).to_string())
@@ -303,12 +319,13 @@ impl Chamber {
 }
 
 impl Render for Chamber {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let titlebar = self.titlebar(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let titlebar = self.titlebar(window, cx);
         let body = self.body(cx);
+        let status = self.status_bar();
         let overlay = self.palette_open.then(|| self.palette_overlay(cx));
 
-        v_flex()
+        let content = v_flex()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_toggle_palette))
@@ -318,28 +335,35 @@ impl Render for Chamber {
             .text_color(theme::text())
             .child(titlebar)
             .child(body)
-            .children(overlay)
+            .child(status)
+            .children(overlay);
+
+        // Wrap in our transparent, rounded, shadowed client-side frame.
+        crate::window_frame::window_frame(window, cx, content)
     }
 }
 
 impl Chamber {
-    fn titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        // A modern, centered command bar (Ctrl+Shift+P). TitleBar renders the
-        // window controls on the right and handles dragging.
+    /// Our own titlebar: a centered command bar (Ctrl+Shift+P), draggable side
+    /// regions, and custom min/max/close controls with *circular* hover — Zed-like,
+    /// and a circle can't poke a square corner past the rounded frame.
+    fn titlebar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let command_bar = h_flex()
             .id("command-bar")
             .items_center()
             .gap_3()
-            .my_1p5() // breathing room from the titlebar top/bottom edges
+            .my_2()
             .px_3()
-            .py_1()
+            .py_1p5()
             .w(px(380.0))
             .rounded_md()
-            .bg(theme::surface())
+            .bg(theme::bg()) // darker than the titlebar → a recessed search field
             .text_sm()
             .text_color(theme::text_muted())
-            .hover(|s| s.bg(theme::surface_raised()))
+            .hover(|s| s.bg(theme::surface()))
             .active(|s| s.opacity(0.85))
+            // Don't let a press on the bar start a window move.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().child("Run a command…"))
             .child(
                 div()
@@ -352,14 +376,62 @@ impl Chamber {
                 this.on_toggle_palette(&TogglePalette, window, cx);
             }));
 
-        TitleBar::new().child(
-            h_flex()
-                .w_full()
-                .items_center()
-                .child(div().flex_1())
-                .child(command_bar)
-                .child(div().flex_1()),
-        )
+        let controls = h_flex()
+            .items_center()
+            .gap_1()
+            .pr(px(8.0))
+            .flex_shrink_0()
+            .child(control_button("min", IconName::WindowMinimize, false))
+            .child(control_button(
+                "max",
+                if window.is_maximized() {
+                    IconName::WindowRestore
+                } else {
+                    IconName::WindowMaximize
+                },
+                false,
+            ))
+            .child(control_button("close", IconName::WindowClose, true));
+
+        h_flex()
+            .id("titlebar")
+            .h(px(40.0))
+            .w_full()
+            .flex_none()
+            .items_center()
+            .bg(theme::sidebar())
+            .border_b_1()
+            .border_color(theme::border())
+            .child(drag_region("drag-l"))
+            .child(command_bar)
+            .child(
+                h_flex()
+                    .flex_1()
+                    .h_full()
+                    .items_center()
+                    .justify_end()
+                    .child(drag_region("drag-r"))
+                    .child(controls),
+            )
+    }
+
+    /// The status bar along the foot of the window (same tone as the titlebar).
+    /// Placeholder content for now.
+    fn status_bar(&self) -> impl IntoElement {
+        h_flex()
+            .w_full()
+            .h(px(24.0))
+            .flex_none()
+            .items_center()
+            .justify_between()
+            .px_3()
+            .bg(theme::sidebar())
+            .border_t_1()
+            .border_color(theme::border())
+            .text_xs()
+            .text_color(theme::text_muted())
+            .child(div().child("ready"))
+            .child(div().child(format!("{} quark(s)", self.view.roster.len())))
     }
 
     /// The body: two collapsible rails around the field chat. Only *expanded*
@@ -408,14 +480,16 @@ impl Chamber {
                 resizable_panel()
                     .size(px(self.prefs.inspector_width))
                     .size_range(px(RAIL_MIN)..px(RAIL_MAX))
-                    .child(self.inspector_pane(cx)),
+                    .child(self.terminal_pane(cx)),
             );
         }
 
         h_flex()
             .flex_1()
             .w_full()
-            .when(roster_collapsed, |this| this.child(self.rail_strip(Rail::Roster, cx)))
+            .when(roster_collapsed, |this| {
+                this.child(self.rail_strip(Rail::Roster, cx))
+            })
             .child(group)
             .when(inspector_collapsed, |this| {
                 this.child(self.rail_strip(Rail::Inspector, cx))
@@ -425,9 +499,9 @@ impl Chamber {
     /// A collapsed rail: a fixed vertical strip with just the expand affordance
     /// (and, on the Quarks rail, the pinned Settings button).
     fn rail_strip(&self, rail: Rail, cx: &mut Context<Self>) -> impl IntoElement {
-        let (id, glyph) = match rail {
-            Rail::Roster => ("roster-strip", "»"),
-            Rail::Inspector => ("inspector-strip", "«"),
+        let (id, icon) = match rail {
+            Rail::Roster => ("roster-strip", IconName::PanelLeftOpen),
+            Rail::Inspector => ("inspector-strip", IconName::PanelRightOpen),
         };
         let mut col = v_flex()
             .id(id)
@@ -442,14 +516,16 @@ impl Chamber {
                 div()
                     .id("expand")
                     .text_color(theme::text_muted())
-                    .child(glyph)
+                    .child(Icon::new(icon).small())
                     .active(|s| s.opacity(0.6))
                     .on_click(
                         cx.listener(move |this, _, window, cx| this.toggle_rail(rail, window, cx)),
                     ),
             );
         if let Rail::Roster = rail {
-            col = col.child(div().flex_1()).child(self.settings_button(cx, true));
+            col = col
+                .child(div().flex_1())
+                .child(self.settings_button(cx, true));
         }
         col
     }
@@ -469,7 +545,7 @@ impl Chamber {
             .text_color(theme::text_muted())
             .hover(|s| s.bg(theme::surface()))
             .active(|s| s.opacity(0.7))
-            .child("⚙")
+            .child(Icon::new(IconName::Settings).small())
             .when(!icon_only, |this| this.child("Settings"))
             .on_click(cx.listener(|_this, _, _window, _cx| {
                 // TODO: open settings (placeholder — content TBD with Jake).
@@ -485,9 +561,11 @@ impl Chamber {
             .text_sm()
             .text_color(theme::text_muted())
             .child("Quarks")
-            .child("«")
+            .child(Icon::new(IconName::PanelLeftClose).small())
             .active(|s| s.opacity(0.6))
-            .on_click(cx.listener(|this, _, window, cx| this.toggle_rail(Rail::Roster, window, cx)));
+            .on_click(
+                cx.listener(|this, _, window, cx| this.toggle_rail(Rail::Roster, window, cx)),
+            );
 
         let mut col = v_flex()
             .w_full()
@@ -501,16 +579,24 @@ impl Chamber {
             col = col.child(roster_row(r));
         }
         if self.view.roster.is_empty() {
-            col = col
-                .child(div().text_sm().text_color(theme::text_muted()).child("no quarks yet"));
+            col = col.child(
+                div()
+                    .text_sm()
+                    .text_color(theme::text_muted())
+                    .child("no quarks yet"),
+            );
         }
         // Settings pinned to the bottom of the rail.
-        col.child(div().flex_1()).child(self.settings_button(cx, false))
+        col.child(div().flex_1())
+            .child(self.settings_button(cx, false))
     }
 
     fn chat_pane(&self) -> impl IntoElement {
         let mut messages = v_flex().flex_1().gap_3().p_4().child(
-            div().text_sm().text_color(theme::text_muted()).child("FIELD"),
+            div()
+                .text_sm()
+                .text_color(theme::text_muted())
+                .child("FIELD"),
         );
         for m in &self.view.messages {
             messages = messages.child(message_row(m));
@@ -523,10 +609,17 @@ impl Chamber {
             .bg(theme::input_bg())
             .child(Input::new(&self.input));
 
-        v_flex().w_full().h_full().bg(theme::bg()).child(messages).child(input)
+        v_flex()
+            .w_full()
+            .h_full()
+            .bg(theme::bg())
+            .child(messages)
+            .child(input)
     }
 
-    fn inspector_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The right rail: the Terminal. Placeholder body for now — real terminal
+    /// wiring lands later. (Internally still `Rail::Inspector` for collapse/size.)
+    fn terminal_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let header = h_flex()
             .id("inspector-toggle")
             .w_full()
@@ -534,57 +627,37 @@ impl Chamber {
             .items_center()
             .text_sm()
             .text_color(theme::text_muted())
-            .child("Inspector")
-            .child("»")
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(Icon::new(IconName::SquareTerminal).small())
+                    .child("Terminal"),
+            )
+            .child(Icon::new(IconName::PanelRightClose).small())
             .active(|s| s.opacity(0.6))
             .on_click(
                 cx.listener(|this, _, window, cx| this.toggle_rail(Rail::Inspector, window, cx)),
             );
 
-        let mut col = v_flex()
+        v_flex()
             .w_full()
             .h_full()
             .p_2()
             .gap_2()
             .bg(theme::sidebar())
-            .child(header);
-
-        let activity: Vec<&MessageRow> = self
-            .view
-            .messages
-            .iter()
-            .filter(|m| matches!(m.kind_label, "snapshot" | "edit" | "command"))
-            .collect();
-        col = col.child(div().text_sm().text_color(theme::text_muted()).child("Activity"));
-        if activity.is_empty() {
-            col = col.child(
-                div().text_sm().text_color(theme::text_muted()).child("no changes yet"),
-            );
-        } else {
-            for m in activity {
-                col = col.child(
-                    v_flex()
-                        .gap_1()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .bg(theme::surface())
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme::accent_secondary())
-                                .child(m.kind_label.to_string()),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme::text_secondary())
-                                .child(m.body.clone()),
-                        ),
-                );
-            }
-        }
-        col
+            .child(header)
+            .child(
+                v_flex()
+                    .flex_1()
+                    .mt_1()
+                    .p_3()
+                    .rounded_md()
+                    .bg(theme::bg())
+                    .text_sm()
+                    .text_color(theme::text_muted())
+                    .child("$ terminal coming soon"),
+            )
     }
 
     /// Collapse or expand a rail. Just flips the persisted flag — the layout
@@ -598,6 +671,45 @@ impl Chamber {
         let _ = config::save(&self.prefs);
         cx.notify();
     }
+}
+
+/// A circular window-control button (min / max / close) with circular hover.
+fn control_button(id: &'static str, icon: IconName, is_close: bool) -> impl IntoElement {
+    let hover_bg = if is_close {
+        theme::danger()
+    } else {
+        theme::surface_raised()
+    };
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(26.0))
+        .rounded_full()
+        .text_color(theme::text_secondary())
+        .hover(|s| s.bg(hover_bg).text_color(theme::text()))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            match id {
+                "min" => window.minimize_window(),
+                "max" => window.zoom_window(),
+                _ => window.remove_window(),
+            }
+        })
+        .child(Icon::new(icon).small())
+}
+
+/// A draggable titlebar region: marks the area for the compositor and starts a
+/// window move on press.
+fn drag_region(id: &'static str) -> impl IntoElement {
+    div()
+        .id(id)
+        .flex_1()
+        .h_full()
+        .window_control_area(WindowControlArea::Drag)
+        .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
 }
 
 fn roster_row(r: &RosterRow) -> impl IntoElement {
@@ -624,8 +736,17 @@ fn message_row(m: &MessageRow) -> impl IntoElement {
     };
     v_flex()
         .gap_1()
-        .child(div().text_sm().text_color(theme::actor_hue(&m.from)).child(header))
-        .child(div().text_color(theme::text_secondary()).child(m.body.clone()))
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme::actor_hue(&m.from))
+                .child(header),
+        )
+        .child(
+            div()
+                .text_color(theme::text_secondary())
+                .child(m.body.clone()),
+        )
 }
 
 fn state_label(state: QuarkState) -> String {
@@ -651,7 +772,11 @@ pub fn run(field_path: Option<String>) {
         // controls) to Jake's palette so they blend with our hand-drawn surfaces.
         {
             let t = gpui_component::Theme::global_mut(cx);
-            t.title_bar = rgb(0x121314).into();
+            // Titlebar shares the sidebar's colour; the search bar (a darker
+            // recessed pill) uses the base bg. `tokens.title_bar` is what the
+            // TitleBar actually paints.
+            t.title_bar = rgb(0x191a1b).into();
+            t.tokens.title_bar = gpui::Hsla::from(rgb(0x191a1b)).into();
             t.title_bar_border = rgb(0x252627).into();
             t.background = rgb(0x121314).into();
             t.input = rgb(0x191a1b).into();
@@ -663,6 +788,12 @@ pub fn run(field_path: Option<String>) {
             // stays legible (was red-on-red).
             t.danger = rgb(0xef4444).into();
             t.danger_foreground = rgb(0xf5f5f6).into();
+            // Subtle dark window frame (Zed-style CSD border), matching the UI.
+            t.window_border = rgb(0x2a2b2c).into();
+            // Root paints this behind everything; transparent so our rounded
+            // window frame (crate::window_frame) shows the shadow through the
+            // corners instead of a square fill.
+            t.tokens.background = gpui::hsla(0.0, 0.0, 0.0, 0.0).into();
         }
         cx.bind_keys([
             KeyBinding::new("ctrl-shift-p", TogglePalette, Some(KEY_CONTEXT)),
@@ -673,8 +804,12 @@ pub fn run(field_path: Option<String>) {
         let window_options = WindowOptions {
             titlebar: Some(TitleBar::title_bar_options()),
             window_decorations: Some(WindowDecorations::Client),
+            // Transparent so the client-side shadow + rounded frame composite
+            // over the desktop (Zed's approach). On WSLg this is the open
+            // question — if the compositor ignores it, the inset shows black.
+            window_background: WindowBackgroundAppearance::Transparent,
             window_bounds: Some(WindowBounds::centered(
-                gpui::size(px(1000.0), px(640.0)),
+                gpui::size(px(1440.0), px(900.0)),
                 cx,
             )),
             ..Default::default()

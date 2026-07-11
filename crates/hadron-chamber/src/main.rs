@@ -13,6 +13,8 @@ mod config;
 mod app;
 #[cfg(feature = "gui")]
 mod theme;
+#[cfg(feature = "gui")]
+mod window_frame;
 
 fn main() {
     let path = std::env::args().nth(1);
