@@ -1,6 +1,6 @@
 # Hadron Phase 6 slice 3a — Gatekeeper Engine Wiring Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans. Steps use checkbox (`- [x]`) syntax.
 
 **Goal:** Wire the gatekeeper into the coordination loop: a quark self-declares a needed risky op, the engine records a `PermissionReq`, and the god-mode `Policy` decides — auto-grant (god-mode) or pause-for-human. A grant addressed to the quark resumes it on the next tick.
 
@@ -27,7 +27,7 @@
 **Interfaces:**
 - Produces: `struct PermissionAsk { risk: Risk, description: String }`; `TurnOutcome` gains `permission: Option<PermissionAsk>` (serde-default, so old lines/JSON still deserialize).
 
-- [ ] **Step 1: Add `PermissionAsk`** (near `TurnOutcome`; import `Risk`). At the top of `projection.rs` ensure `use crate::Risk;` (or `crate::event::Risk`) is in scope:
+- [x] **Step 1: Add `PermissionAsk`** (near `TurnOutcome`; import `Risk`). At the top of `projection.rs` ensure `use crate::Risk;` (or `crate::event::Risk`) is in scope:
 
 ```rust
 /// A quark's self-declared request to perform a risky operation, surfaced on its
@@ -41,14 +41,14 @@ pub struct PermissionAsk {
 }
 ```
 
-- [ ] **Step 2: Add the field to `TurnOutcome`:**
+- [x] **Step 2: Add the field to `TurnOutcome`:**
 
 ```rust
     #[serde(default)]
     pub permission: Option<PermissionAsk>,
 ```
 
-- [ ] **Step 3: Fix the `TurnOutcome::default()` test** at the bottom of `projection.rs`:
+- [x] **Step 3: Fix the `TurnOutcome::default()` test** at the bottom of `projection.rs`:
 
 ```rust
         assert_eq!(
@@ -57,13 +57,13 @@ pub struct PermissionAsk {
         );
 ```
 
-- [ ] **Step 4: Export** — confirm `PermissionAsk` is re-exported (projection.rs is under `pub use projection::*` in lib.rs, so it is automatic).
+- [x] **Step 4: Export** — confirm `PermissionAsk` is re-exported (projection.rs is under `pub use projection::*` in lib.rs, so it is automatic).
 
-- [ ] **Step 5: Build lattice** — `cargo build -p hadron-lattice`. Expected: clean (the field is additive; `Default` derives fine since `Option` defaults to `None`).
+- [x] **Step 5: Build lattice** — `cargo build -p hadron-lattice`. Expected: clean (the field is additive; `Default` derives fine since `Option` defaults to `None`).
 
-- [ ] **Step 6: Run lattice tests** — `cargo test -p hadron-lattice`. Expected: PASS (incl. the fixed default test).
+- [x] **Step 6: Run lattice tests** — `cargo test -p hadron-lattice`. Expected: PASS (incl. the fixed default test).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add crates/hadron-lattice/src/projection.rs
@@ -83,19 +83,19 @@ git commit -m "feat(lattice): TurnOutcome.permission — a quark's structured pe
 - Consumes: `hadron_gatekeeper::{decide, Decision, Policy}`, `hadron_lattice::{PermissionAsk, Risk, Kind::PermissionReq, Kind::PermissionGrant, QuarkState::Waiting}`.
 - Produces: `Engine::with_policy(policy: Policy) -> Self`; permission-aware `run_until_quiesce`.
 
-- [ ] **Step 1: Add the dependency** to `crates/hadron-gluon/Cargo.toml` `[dependencies]`:
+- [x] **Step 1: Add the dependency** to `crates/hadron-gluon/Cargo.toml` `[dependencies]`:
 
 ```toml
 hadron-gatekeeper = { path = "../hadron-gatekeeper" }
 ```
 
-- [ ] **Step 2: Fix every non-permission `TurnOutcome {}` literal** so they compile with the new field. In `mock.rs:55`, `adapter/runner.rs` (2 sites), `adapter/claude.rs`, `bin/hadron-gluon.rs`, and the three test literals in `engine.rs` (~360, ~458, ~528): add `permission: None,` to each (or `..Default::default()`). Example (mock.rs):
+- [x] **Step 2: Fix every non-permission `TurnOutcome {}` literal** so they compile with the new field. In `mock.rs:55`, `adapter/runner.rs` (2 sites), `adapter/claude.rs`, `bin/hadron-gluon.rs`, and the three test literals in `engine.rs` (~360, ~458, ~528): add `permission: None,` to each (or `..Default::default()`). Example (mock.rs):
 
 ```rust
         Ok(TurnOutcome { message, used_tokens: 0, permission: None })
 ```
 
-- [ ] **Step 3: Add the `policy` field + builder.** In the `Engine` struct add `policy: hadron_gatekeeper::Policy,`; in `new(...)` initialize `policy: hadron_gatekeeper::Policy::locked_down(),`; add the builder near the others:
+- [x] **Step 3: Add the `policy` field + builder.** In the `Engine` struct add `policy: hadron_gatekeeper::Policy,`; in `new(...)` initialize `policy: hadron_gatekeeper::Policy::locked_down(),`; add the builder near the others:
 
 ```rust
     /// Opt in to god-mode: pre-authorize classes of risky op. Default is
@@ -106,7 +106,7 @@ hadron-gatekeeper = { path = "../hadron-gatekeeper" }
     }
 ```
 
-- [ ] **Step 4: THE FIX — make the trigger-finder skip non-task events.** In `run_until_quiesce`, change the finder so a `PermissionGrant` addressed to the quark doesn't shadow the real task:
+- [x] **Step 4: THE FIX — make the trigger-finder skip non-task events.** In `run_until_quiesce`, change the finder so a `PermissionGrant` addressed to the quark doesn't shadow the real task:
 
 ```rust
         if let Some(trigger) = events.iter().rev().find(|e| {
@@ -117,7 +117,7 @@ hadron-gatekeeper = { path = "../hadron-gatekeeper" }
 
 (Only the `find` predicate changes; the `match` body is unchanged. Without this, a resumed quark receives an empty task because the grant is the most-recent event addressed to it.)
 
-- [ ] **Step 5: Add the outcome permission hook.** Replace the unconditional trailing `append Ground` block. After the existing `used_tokens` and `outcome.message` handling, insert:
+- [x] **Step 5: Add the outcome permission hook.** Replace the unconditional trailing `append Ground` block. After the existing `used_tokens` and `outcome.message` handling, insert:
 
 ```rust
             if let Some(ask) = outcome.permission {
@@ -175,7 +175,7 @@ hadron-gatekeeper = { path = "../hadron-gatekeeper" }
 
 (The existing `append Ground` + `exchanges += 1` become the fall-through for the no-permission case shown above; delete the old duplicate.)
 
-- [ ] **Step 6: Write the tests.** Add to `engine.rs`'s `#[cfg(test)] mod tests` a local recording quark and three tests. Use existing helpers (`seed_human_message`, `tempdir`).
+- [x] **Step 6: Write the tests.** Add to `engine.rs`'s `#[cfg(test)] mod tests` a local recording quark and three tests. Use existing helpers (`seed_human_message`, `tempdir`).
 
 ```rust
     use std::sync::{Arc, Mutex};
@@ -284,11 +284,11 @@ hadron-gatekeeper = { path = "../hadron-gatekeeper" }
     }
 ```
 
-- [ ] **Step 7: Run the tests** — `cargo test -p hadron-gluon`. Expected: all prior + 3 new PASS. (If `human_grant_resumes...` fails on `recorded[1] == "hello"`, the trigger-finder fix in Step 4 is missing.)
+- [x] **Step 7: Run the tests** — `cargo test -p hadron-gluon`. Expected: all prior + 3 new PASS. (If `human_grant_resumes...` fails on `recorded[1] == "hello"`, the trigger-finder fix in Step 4 is missing.)
 
-- [ ] **Step 8: Full workspace + clippy** — `cargo test` and `cargo clippy -p hadron-gluon`. Expected: green, no new warnings.
+- [x] **Step 8: Full workspace + clippy** — `cargo test` and `cargo clippy -p hadron-gluon`. Expected: green, no new warnings.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add crates/hadron-gluon
