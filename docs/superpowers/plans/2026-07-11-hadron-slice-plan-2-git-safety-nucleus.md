@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Execution status (2026-07-11):** All 6 tasks **executed and committed**. Verified 2026-07-11: lattice snapshot (1 test), gluon snapshot (5 tests), gluon nucleus (5 tests), gluon engine (4 tests, 2 from Plan 1 unchanged) — 15 Plan-2 tests green plus all Plan 1 tests intact. git CLI deviation accepted (gix remains bought land). Checkboxes marked complete.
+
 **Goal:** Give the gluon two of the pillars it needs before real quarks arrive: (1) a **git safety net** — snapshot the target project's worktree before a quark acts, expose the working diff for the projection, and restore to any snapshot (undo); and (2) the **nucleus** — the per-project SSOT knowledge layer (repo-level over global-level, with strict override), digested into the projection so a quark starts a turn already oriented. Still **zero API spend, zero GPUI** — driven by `MockQuark` and real temp git repos.
 
 **Architecture:** Extend `hadron-lattice` with two pure-data types (`SnapshotRef`, `NucleusIndex`). Extend `hadron-gluon` with a `snapshot` module (git operations behind a seam) and a `nucleus` module (layered load + digest + staleness). Wire both into `Engine` additively — via builder methods (`with_git`, `with_nucleus`) so **Plan 1's `Engine::new` and its tests are untouched**.
@@ -45,7 +47,7 @@ The spec (§11) names **`gix` (gitoxide, pure-Rust git)** for git safety. This p
 - Produces (lattice): `struct SnapshotRef { id: String, label: String, commit: String }` (serde-derived, `Eq`).
 - Produces (gluon): `snapshot::create(repo_root: &Path, label: &str) -> anyhow::Result<SnapshotRef>`; `snapshot::list(repo_root: &Path) -> anyhow::Result<Vec<SnapshotRef>>`.
 
-- [ ] **Step 1: Add the lattice type**
+- [x] **Step 1: Add the lattice type**
 
 Create `crates/hadron-lattice/src/snapshot.rs`:
 ```rust
@@ -91,7 +93,7 @@ pub use quark::*;
 pub use snapshot::*;
 ```
 
-- [ ] **Step 2: Write the failing gluon snapshot test**
+- [x] **Step 2: Write the failing gluon snapshot test**
 
 Create `crates/hadron-gluon/src/snapshot.rs`:
 ```rust
@@ -275,12 +277,12 @@ pub mod router;
 pub mod snapshot;
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `cargo test -p hadron-lattice snapshot` then `cargo test -p hadron-gluon snapshot::`
 Expected: PASS (1 lattice + 3 gluon). These exercise real `git` in temp repos — confirm `git` is on PATH.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add crates/hadron-lattice crates/hadron-gluon
@@ -297,7 +299,7 @@ git commit -m "feat(gluon): snapshot create/list via shadow refs (SnapshotRef)"
 **Interfaces:**
 - Produces: `snapshot::working_diff(repo_root: &Path) -> anyhow::Result<String>` (diff vs HEAD, empty when no HEAD); `snapshot::restore(repo_root: &Path, snap: &SnapshotRef) -> anyhow::Result<()>` (revert worktree files to the snapshot's tree).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `crates/hadron-gluon/src/snapshot.rs` (before the `#[cfg(test)]` module, add the two functions; then add tests inside the existing test module):
 ```rust
@@ -347,12 +349,12 @@ Add these tests inside the existing `mod tests`:
     }
 ```
 
-- [ ] **Step 2: Run tests**
+- [x] **Step 2: Run tests**
 
 Run: `cargo test -p hadron-gluon snapshot::`
 Expected: PASS (5 tests). `restore_reverts_worktree_to_snapshot` proves the undo net; if `git restore` behaves unexpectedly on this git version, adjust the flags here (this is the intended TDD checkpoint for the recipe).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add crates/hadron-gluon/src/snapshot.rs
@@ -369,7 +371,7 @@ git commit -m "feat(gluon): working_diff + restore (undo to snapshot)"
 **Interfaces:**
 - Produces: `Engine::with_git(self, repo_root: PathBuf) -> Engine` (builder). When set, each turn: append a `Kind::Snapshot` event before exciting, and populate `Projection.git_diff` from `snapshot::working_diff`.
 
-- [ ] **Step 1: Extend the engine**
+- [x] **Step 1: Extend the engine**
 
 In `crates/hadron-gluon/src/engine.rs`, add a `repo_root: Option<PathBuf>` field to `Engine`, default it to `None` in `new`, and add the builder + loop wiring.
 
@@ -402,7 +404,7 @@ Inside `run_until_quiesce`, after resolving `target` and passing the backstop ch
 ```
 Then use `git_diff` in the `Projection { .. git_diff, .. }` construction (replace the hard-coded `String::new()`).
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Add to `engine.rs` `mod tests`:
 ```rust
@@ -447,12 +449,12 @@ Add to `engine.rs` `mod tests`:
     }
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `cargo test -p hadron-gluon engine::`
 Expected: PASS (3 tests — the 2 from Plan 1 still pass, proving additivity, plus the new git one).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add crates/hadron-gluon/src/engine.rs
@@ -470,7 +472,7 @@ git commit -m "feat(gluon): snapshot-before-excite + working diff in projection 
 **Interfaces:**
 - Produces: `struct NucleusIndex { version: u32, last_verified_commit: Option<String>, sources: Vec<String> }` (serde; `sources` are relative markdown filenames in scan order).
 
-- [ ] **Step 1: Write the type + test**
+- [x] **Step 1: Write the type + test**
 
 Create `crates/hadron-lattice/src/nucleus.rs`:
 ```rust
@@ -532,12 +534,12 @@ pub use quark::*;
 pub use snapshot::*;
 ```
 
-- [ ] **Step 2: Run test**
+- [x] **Step 2: Run test**
 
 Run: `cargo test -p hadron-lattice nucleus`
 Expected: PASS (1 test).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add crates/hadron-lattice/src
@@ -556,7 +558,7 @@ git commit -m "feat(lattice): NucleusIndex manifest type"
 - Produces: `struct Nucleus { docs: Vec<(String, String)>, last_verified_commit: Option<String> }`; `nucleus::load(repo_layer: Option<&Path>, global_layer: Option<&Path>) -> anyhow::Result<Nucleus>`.
 - Layering rule: start from the repo layer's docs (in `index.json` `sources` order); for each global-layer doc, **override** a same-named repo doc in place, or append if new. `last_verified_commit` is taken from the repo layer (the project-specific truth); global has none.
 
-- [ ] **Step 1: Write the loader + test**
+- [x] **Step 1: Write the loader + test**
 
 Create `crates/hadron-gluon/src/nucleus.rs`:
 ```rust
@@ -688,12 +690,12 @@ pub mod router;
 pub mod snapshot;
 ```
 
-- [ ] **Step 2: Run tests**
+- [x] **Step 2: Run tests**
 
 Run: `cargo test -p hadron-gluon nucleus::`
 Expected: PASS (3 tests).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add crates/hadron-gluon/src
@@ -711,7 +713,7 @@ git commit -m "feat(gluon): layered nucleus load (repo base, global strict overr
 **Interfaces:**
 - Produces: `nucleus::digest(n: &Nucleus, max_bytes: usize) -> String` (concatenate docs with `## <name>` headers, truncated to a byte budget); `enum Staleness { Fresh, Stale, Unknown }`; `nucleus::staleness(n: &Nucleus, head: Option<&str>) -> Staleness`; `Engine::with_nucleus(self, Nucleus) -> Engine` populating `Projection.nucleus_digest`.
 
-- [ ] **Step 1: Add digest + staleness**
+- [x] **Step 1: Add digest + staleness**
 
 Append to `crates/hadron-gluon/src/nucleus.rs`:
 ```rust
@@ -786,7 +788,7 @@ Add tests inside `nucleus.rs` `mod tests`:
     }
 ```
 
-- [ ] **Step 2: Wire into the engine**
+- [x] **Step 2: Wire into the engine**
 
 In `engine.rs`, add a `nucleus_digest: String` field to `Engine` (default `String::new()` in `new`), plus:
 ```rust
@@ -830,17 +832,17 @@ Add an engine test:
     }
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `cargo test -p hadron-gluon nucleus::` then `cargo test -p hadron-gluon engine::`
 Expected: PASS (nucleus: 5; engine: 4).
 
-- [ ] **Step 4: Whole workspace green**
+- [x] **Step 4: Whole workspace green**
 
 Run: `cargo test`
 Expected: PASS across lattice + gluon (Plan 1 tests + all Plan 2 additions).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/hadron-gluon/src
