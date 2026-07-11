@@ -477,14 +477,15 @@ impl Chamber {
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Match the client frame's rounded corners on the top/bottom strips, so
-        // their opaque fills don't paint square nubs into the frame's arcs (the
-        // frame's overflow_hidden clips to a rectangle, not the radius). Zero on
-        // any tiled edge, so a maximized/snapped window stays square.
+        // Round the full-height content itself to match the client frame, rather
+        // than the (too-short) top/bottom strips — a 24px status bar can't reach
+        // the ~20px radius, so its square corners poked past the frame's arc. The
+        // strips are now transparent; the content's own rounded fill owns all four
+        // corners. Zero on any tiled edge, so a maximized/snapped window stays square.
         let (top_radius, bottom_radius) = frame_corner_radii(window);
-        let titlebar = self.titlebar(window, cx, top_radius);
+        let titlebar = self.titlebar(window, cx);
         let body = self.body(cx);
-        let status = self.status_bar(bottom_radius);
+        let status = self.status_bar();
         let overlay = self.palette_open.then(|| self.palette_overlay(cx));
         let settings = self.settings_open.then(|| self.settings_overlay(cx));
 
@@ -494,7 +495,11 @@ impl Render for Chamber {
             .on_action(cx.listener(Self::on_toggle_palette))
             .relative()
             .size_full()
-            .bg(theme::bg())
+            .bg(theme::sidebar())
+            .rounded_tl(top_radius)
+            .rounded_tr(top_radius)
+            .rounded_bl(bottom_radius)
+            .rounded_br(bottom_radius)
             .text_color(theme::text())
             .child(titlebar)
             .child(body)
@@ -511,12 +516,7 @@ impl Chamber {
     /// Our own titlebar: a centered command bar (Ctrl+Shift+P), draggable side
     /// regions, and custom min/max/close controls with *circular* hover — Zed-like,
     /// and a circle can't poke a square corner past the rounded frame.
-    fn titlebar(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        top_radius: Pixels,
-    ) -> impl IntoElement {
+    fn titlebar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let command_bar = h_flex()
             .id("command-bar")
             .items_center()
@@ -568,9 +568,9 @@ impl Chamber {
             .w_full()
             .flex_none()
             .items_center()
-            .bg(theme::sidebar())
-            .rounded_tl(top_radius)
-            .rounded_tr(top_radius)
+            // Transparent: the content behind (theme::sidebar) shows through, and
+            // its rounded top corners own the frame's arc — an opaque strip here
+            // would paint square nubs past it.
             // App/options menu (the 3-line menu; options land later) in the far
             // left corner.
             .child(
@@ -595,7 +595,7 @@ impl Chamber {
 
     /// The status bar along the foot of the window (same tone as the titlebar).
     /// Placeholder content for now.
-    fn status_bar(&self, bottom_radius: Pixels) -> impl IntoElement {
+    fn status_bar(&self) -> impl IntoElement {
         h_flex()
             .w_full()
             .h(px(24.0))
@@ -603,9 +603,8 @@ impl Chamber {
             .items_center()
             .justify_between()
             .px_3()
-            .bg(theme::sidebar())
-            .rounded_bl(bottom_radius)
-            .rounded_br(bottom_radius)
+            // Transparent: the content's rounded bottom corners (theme::sidebar)
+            // own the frame's arc — this 24px strip can't round tight enough to.
             .text_xs()
             .text_color(theme::text_muted())
             .child(div().child("ready"))
@@ -1254,11 +1253,13 @@ impl Chamber {
     }
 }
 
-/// Corner radii for the top and bottom window strips, matching the client
-/// frame ([`crate::window_frame`]). Nested just inside the frame's 1px border,
-/// and zero on a tiled edge (maximized/snapped) so those corners stay square.
+/// Corner radii for the full-height content container, matching the client
+/// frame ([`crate::window_frame`]). Rounds at the frame's own radius so the
+/// content tucks *inside* the 1px border (a hair rounder never pokes past the
+/// arc; the frame's matching sidebar fill hides the sub-pixel sliver). Zero on
+/// a tiled edge (maximized/snapped) so those corners stay square.
 fn frame_corner_radii(window: &Window) -> (Pixels, Pixels) {
-    let r = crate::window_frame::FRAME_RADIUS - px(1.0);
+    let r = crate::window_frame::FRAME_RADIUS;
     match window.window_decorations() {
         Decorations::Client { tiling } => (
             if tiling.top { px(0.0) } else { r },
@@ -1504,6 +1505,11 @@ pub fn run(field_path: Option<String>) {
             t.secondary_hover = rgb(0x252627).into();
             t.popover = rgb(0x191a1b).into();
             t.border = rgb(0x303133).into();
+            // The chat's segmented tab track: a step above the dark card (bg) so
+            // the control is visible. The active tab reads as a darker cutout (its
+            // sliding indicator paints `tokens.background`, which we keep
+            // transparent for the frame — so it shows the card behind).
+            t.tokens.tab_bar_segmented = gpui::Hsla::from(rgb(0x202122)).into();
             // Close-button hover: red *background*, but keep the X light so it
             // stays legible (was red-on-red).
             t.danger = rgb(0xef4444).into();
