@@ -10,6 +10,9 @@ use std::time::Duration;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
+use hadron_lattice::io::read_new;
+use hadron_lattice::Event;
+
 pub struct FieldWatcher {
     // Kept alive for the lifetime of the watcher; dropping it stops watching.
     _watcher: RecommendedWatcher,
@@ -54,6 +57,21 @@ impl FieldWatcher {
             }
             Err(_) => false,
         }
+    }
+
+    /// Wait for the field to change (up to `timeout`), then read any newly
+    /// appended events via [`read_new`]. Returns `(events, new_offset)`; the
+    /// events may be empty if the wait timed out or the change added no complete
+    /// line yet. `field_path` is the same path the watcher was created for.
+    pub fn next_batch(
+        &self,
+        field_path: &Path,
+        offset: u64,
+        timeout: Duration,
+    ) -> anyhow::Result<(Vec<Event>, u64)> {
+        self.wait(timeout);
+        let (events, new_offset) = read_new(field_path, offset)?;
+        Ok((events, new_offset))
     }
 }
 
@@ -105,5 +123,26 @@ mod tests {
             !watcher.wait(Duration::from_millis(400)),
             "watcher should be quiet when idle"
         );
+    }
+
+    #[test]
+    fn next_batch_yields_appended_events() {
+        use hadron_lattice::{Actor, Kind};
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        std::fs::write(&field, "").unwrap();
+
+        let watcher = FieldWatcher::new(&field).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+
+        // Append a real event via the lattice writer.
+        let ev = Event::new(Actor::Human, None, Kind::Message { body: "hi swarm".into() });
+        hadron_lattice::io::append_event(&field, &ev).unwrap();
+
+        let (batch, off) = watcher
+            .next_batch(&field, 0, Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(batch, vec![ev]);
+        assert_eq!(off, std::fs::metadata(&field).unwrap().len());
     }
 }
