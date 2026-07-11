@@ -26,7 +26,7 @@ impl Render for Chamber {
             .size_full()
             .bg(theme::bg())
             .text_color(theme::text())
-            .child(self.titlebar())
+            .child(self.titlebar(cx))
             .child(
                 h_flex()
                     .flex_1()
@@ -39,27 +39,41 @@ impl Render for Chamber {
 }
 
 impl Chamber {
-    fn titlebar(&self) -> impl IntoElement {
-        // TitleBar renders the OS window controls on the right and handles dragging.
+    fn titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        // A modern, centered command bar (Ctrl+Shift+P). TitleBar renders the
+        // window controls on the right and handles dragging.
+        let command_bar = h_flex()
+            .id("command-bar")
+            .items_center()
+            .gap_3()
+            .px_3()
+            .py_1()
+            .w(px(380.0))
+            .rounded_md()
+            .bg(theme::surface())
+            .text_sm()
+            .text_color(theme::text_muted())
+            .hover(|s| s.bg(theme::surface_raised()))
+            .active(|s| s.opacity(0.85))
+            .child(div().child("Run a command…"))
+            .child(
+                div()
+                    .ml_auto()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child("Ctrl ⇧ P"),
+            )
+            .on_click(cx.listener(|_this, _, _window, _cx| {
+                // TODO: open the command palette (commands TBD with Jake).
+            }));
+
         TitleBar::new().child(
             h_flex()
                 .w_full()
-                .px_2()
                 .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme::text_secondary())
-                        .child("Hadron · Chamber"),
-                )
-                .child(
-                    div().text_sm().text_color(theme::text_muted()).child(format!(
-                        "{} quark(s) · {} event(s)",
-                        self.view.roster.len(),
-                        self.view.messages.len()
-                    )),
-                ),
+                .child(div().flex_1())
+                .child(command_bar)
+                .child(div().flex_1()),
         )
     }
 
