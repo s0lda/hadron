@@ -1,12 +1,14 @@
 # Hadron Phase 4 (slice 2) — The 0-CPU Field Watcher
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build the "0-CPU file bus" wake mechanism from Phase 4 — a filesystem-watched, incrementally-read field so a reader (the future swarm daemon, or a lower-latency chamber tail) sleeps at 0% CPU and wakes only when `field.jsonl` grows, then reads *only the newly-appended* events instead of re-parsing the whole file.
 
 **Architecture:** The project's pure-core + thin-seam pattern (as with `forge` and the `CliRunner`). The correctness-bearing piece is a **pure incremental reader** `hadron_lattice::io::read_new(path, offset) -> (Vec<Event>, new_offset)` — deterministic, torn-line-safe, exhaustively unit-tested with tempfiles, and immediately useful (the chamber currently full-re-reads every 400ms tick). The OS-timing-dependent piece is a **thin `notify` seam** `hadron_gluon::watch::FieldWatcher` that coalesces raw fs events into a single "the field changed" signal; its test is a deliberately thin "the wire is live" check with a generous timeout — *not* where correctness lives. A small `watch_new_events` helper composes the two into a 0-CPU "block until new events, then yield them" loop.
 
 **Tech Stack:** Rust (edition 2021), `notify = "8"` (cached, validated to fire end-to-end in this environment), plus existing lattice/gluon deps. Dev: `tempfile`.
+
+> **Execution status (2026-07-11):** All 4 tasks **executed and committed** on branch `worktree-phase4-field-watcher` (branched from merged `main`). 7 new tests green (4 `read_new` deterministic + 3 `watch` real-inotify); full `cargo test --workspace` = 82 passed / 0 failed; the new `read_new`/`watch` code is clippy-clean. Zero API spend, no GPUI in the path. Note: `cargo clippy -p hadron-gluon` surfaces 3 pre-existing `assert_eq!`-with-bool warnings in Phase 3's `ledger.rs` — deliberately NOT fixed here (out of slice scope; belongs in a Phase 3 cleanup). Deferred: wiring the watcher into a persistent swarm daemon (next slice), and the `/mnt/c` inotify-silent-no-fire fallback (bought land below).
 
 **This is slice 2 of Phase 4** (roadmap: `docs/plans/001_Initial_Plan.md` §"Phase 4"), building on slice 1 (`hadron-forge` edit-by-hash, already merged). It is **roadmap item 1 ("The Watcher") and the hard prerequisite for the swarm loop.** Honest framing: `FieldWatcher`/`watch_new_events` is infrastructure nothing consumes yet (the sequential engine still runs per-human-turn); it has a complete internal story (watch → read_new → yield) and is roadmap-ordered, but this slice does **not** wire it into the engine — that is the swarm-loop slice.
 
@@ -36,7 +38,7 @@
 - Consumes: existing `Event` (de)serialization.
 - Produces: `pub fn read_new(path: &std::path::Path, offset: u64) -> std::io::Result<(Vec<Event>, u64)>` — reads bytes after `offset`, parses only *complete* lines (up to the last newline), returns the new events and the byte offset to pass next time. A missing file yields `(vec![], offset)`. A torn final line (bytes after the last newline) is left unconsumed — the returned offset points at the last newline boundary.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the bottom of `crates/hadron-lattice/src/io.rs` (inside the existing `#[cfg(test)] mod tests`, after the current tests — reuse its `use` imports; add `use std::io::Write;` at the top of the test module if not present):
 
@@ -112,12 +114,12 @@ Add to the bottom of `crates/hadron-lattice/src/io.rs` (inside the existing `#[c
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test -p hadron-lattice read_new`
 Expected: FAIL to compile — `cannot find function read_new`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Add to `crates/hadron-lattice/src/io.rs` (after `read_events`). Add `use std::io::{Read, Seek, SeekFrom};` to the existing top-of-file `use std::io::...` line (it currently imports `BufRead, BufReader, Write`; extend it to `use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};`).
 
@@ -167,12 +169,12 @@ pub fn read_new(path: &Path, offset: u64) -> std::io::Result<(Vec<Event>, u64)> 
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p hadron-lattice read_new`
 Expected: PASS (4 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add crates/hadron-lattice/src/io.rs
 git commit -m "feat(lattice): read_new — incremental, torn-line-safe field read"
@@ -193,14 +195,14 @@ git commit -m "feat(lattice): read_new — incremental, torn-line-safe field rea
   - `pub fn FieldWatcher::new(field_path: &Path) -> anyhow::Result<FieldWatcher>` — watches the field file's **parent directory** (non-recursive) and coalesces any raw event whose path matches `field_path` into a `()` signal. (Watching the parent dir, not the file, survives create/rename/atomic-replace.)
   - `pub fn FieldWatcher::wait(&self, timeout: Duration) -> bool` — blocks until at least one change signal arrives (draining any coalesced backlog), returning `true` on a change or `false` on timeout.
 
-- [ ] **Step 1: Add the `notify` dependency**
+- [x] **Step 1: Add the `notify` dependency**
 
 Add to `crates/hadron-gluon/Cargo.toml` under `[dependencies]`:
 ```toml
 notify = "8"
 ```
 
-- [ ] **Step 2: Write `watch.rs` with a thin liveness test**
+- [x] **Step 2: Write `watch.rs` with a thin liveness test**
 
 Create `crates/hadron-gluon/src/watch.rs`:
 ```rust
@@ -308,12 +310,12 @@ mod tests {
 
 Add `pub mod watch;` to `crates/hadron-gluon/src/lib.rs` (append after `pub mod snapshot;` / the existing module list).
 
-- [ ] **Step 3: Run the test**
+- [x] **Step 3: Run the test**
 
 Run: `cargo test -p hadron-gluon watch::`
 Expected: PASS (2 tests). If `wait_fires_on_append` *times out* rather than passes, inotify is unavailable in the run environment (e.g. a `/mnt/c` mount) — see the bought-land note; the pure `read_new` tests remain the correctness guarantee.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 ```bash
 git add crates/hadron-gluon/Cargo.toml crates/hadron-gluon/src/watch.rs crates/hadron-gluon/src/lib.rs
 git commit -m "feat(gluon): FieldWatcher — coalesced 0-CPU notify seam over the field"
@@ -330,7 +332,7 @@ git commit -m "feat(gluon): FieldWatcher — coalesced 0-CPU notify seam over th
 - Consumes: `FieldWatcher` (Task 2), `hadron_lattice::io::read_new` (Task 1).
 - Produces: `pub fn FieldWatcher::next_batch(&self, offset: u64, timeout: Duration) -> anyhow::Result<(Vec<Event>, u64)>` — waits for a change (up to `timeout`), then returns whatever `read_new` yields from `offset` (possibly empty if the change added no complete line yet) and the advanced offset. This is the building block a swarm daemon loops on: `loop { let (evs, off) = w.next_batch(off, ...)?; for e in evs { ... } }`, sleeping at 0 CPU between appends.
 
-- [ ] **Step 1: Write the failing test + implementation**
+- [x] **Step 1: Write the failing test + implementation**
 
 Add to `crates/hadron-gluon/src/watch.rs`:
 
@@ -381,12 +383,12 @@ Add the test (in the same `#[cfg(test)] mod tests`):
     }
 ```
 
-- [ ] **Step 2: Run the test**
+- [x] **Step 2: Run the test**
 
 Run: `cargo test -p hadron-gluon watch::`
 Expected: PASS (3 tests).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 ```bash
 git add crates/hadron-gluon/src/watch.rs
 git commit -m "feat(gluon): FieldWatcher::next_batch — 0-CPU watch-then-read building block"
@@ -398,17 +400,17 @@ git commit -m "feat(gluon): FieldWatcher::next_batch — 0-CPU watch-then-read b
 
 **Files:** none (verification only).
 
-- [ ] **Step 1: Full workspace build & test**
+- [x] **Step 1: Full workspace build & test**
 
 Run: `cargo test --workspace`
 Expected: PASS — all pre-existing tests plus 7 new (4 `read_new` + 3 `watch`), 0 failures. (The watch tests exercise real inotify; they pass here per the probe.)
 
-- [ ] **Step 2: Lint the changed crates**
+- [x] **Step 2: Lint the changed crates**
 
 Run: `cargo clippy -p hadron-lattice -p hadron-gluon --all-targets`
 Expected: no new warnings from `read_new`/`watch`. Fix any that appear.
 
-- [ ] **Step 3: Commit any lint fixes (skip if none)**
+- [x] **Step 3: Commit any lint fixes (skip if none)**
 ```bash
 git add crates/hadron-lattice/src crates/hadron-gluon/src
 git commit -m "chore: clippy clean for field watcher slice"
