@@ -1,6 +1,6 @@
 # Hadron Phase 6 — The Bypass Matrix (Gatekeeper core) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build the pure decision core of the Gatekeeper — the "bypass matrix" that maps a proposed operation's risk against the human's god-mode policy to either auto-approve or ask the human.
 
@@ -33,7 +33,7 @@
   - `enum Decision { AutoApprove, AskHuman }`.
   - `fn decide(risk: Risk, policy: Policy) -> Decision` — the truth table: `WorkspaceEdit` is auto-approved iff `auto_approve_edits`; `BashExec` (incl. publish-class shell ops) is auto-approved iff `bypass_bash`; otherwise `AskHuman`.
 
-- [ ] **Step 1: Create the crate skeleton.**
+- [x] **Step 1: Create the crate skeleton.**
 
 `crates/hadron-gatekeeper/Cargo.toml`:
 ```toml
@@ -59,9 +59,9 @@ mod matrix;
 pub use matrix::{decide, Decision, Policy, Risk};
 ```
 
-- [ ] **Step 2: Add the crate to the workspace** — in root `Cargo.toml`, add `"crates/hadron-gatekeeper"` to the `members` array (keep it sorted/grouped with the other `crates/...` entries).
+- [x] **Step 2: Add the crate to the workspace** — in root `Cargo.toml`, add `"crates/hadron-gatekeeper"` to the `members` array (keep it sorted/grouped with the other `crates/...` entries).
 
-- [ ] **Step 3: Write the failing tests.** Create `crates/hadron-gatekeeper/src/matrix.rs` with the types + a `todo!()` body for `decide`, and this exhaustive test module:
+- [x] **Step 3: Write the failing tests.** Create `crates/hadron-gatekeeper/src/matrix.rs` with the types + a `todo!()` body for `decide`, and this exhaustive test module:
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -157,10 +157,10 @@ mod tests {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they fail** — `cargo test -p hadron-gatekeeper`.
+- [x] **Step 4: Run tests to verify they fail** — `cargo test -p hadron-gatekeeper`.
 Expected: FAIL — `decide` panics with `not yet implemented`.
 
-- [ ] **Step 5: Implement `decide`.** Replace the `todo!()` body:
+- [x] **Step 5: Implement `decide`.** Replace the `todo!()` body:
 
 ```rust
 pub fn decide(risk: Risk, policy: Policy) -> Decision {
@@ -176,13 +176,13 @@ pub fn decide(risk: Risk, policy: Policy) -> Decision {
 }
 ```
 
-- [ ] **Step 6: Run tests to verify they pass** — `cargo test -p hadron-gatekeeper`.
+- [x] **Step 6: Run tests to verify they pass** — `cargo test -p hadron-gatekeeper`.
 Expected: PASS (5 tests).
 
-- [ ] **Step 7: Confirm the workspace still builds** — `cargo build` (library only; do NOT run the full `cargo test`, gluon's test binary is transiently red on Gemini's `router.rs`).
+- [x] **Step 7: Confirm the workspace still builds** — `cargo build` (library only; do NOT run the full `cargo test`, gluon's test binary is transiently red on Gemini's `router.rs`).
 Expected: `hadron-gatekeeper` compiles and is a workspace member.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add crates/hadron-gatekeeper Cargo.toml
