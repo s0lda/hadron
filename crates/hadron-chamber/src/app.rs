@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use gpui::{
     actions, div, prelude::*, px, rgb, rgba, App, Context, Decorations, Entity, FocusHandle, Hsla,
-    KeyBinding, MouseButton, Pixels, Render, Rgba, SharedString, Subscription, Window,
+    KeyBinding, MouseButton, Pixels, Render, Rgba, ScrollHandle, SharedString, Subscription, Window,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
@@ -214,6 +214,9 @@ struct Chamber {
     focus_handle: FocusHandle,
     /// Which view the chat column's segmented tabs are showing.
     chat_tab: ChatTab,
+    /// Scroll position of the chat body, so new messages can stick it to the
+    /// bottom (and the pane opens showing the newest, not the oldest).
+    chat_scroll: ScrollHandle,
     /// Whether the Ctrl+Shift+P command palette overlay is showing.
     palette_open: bool,
     /// The palette's filter box.
@@ -288,6 +291,11 @@ impl Chamber {
         })
         .detach();
 
+        // Open showing the newest message: honoured on the first paint, once the
+        // content is laid out.
+        let chat_scroll = ScrollHandle::new();
+        chat_scroll.scroll_to_bottom();
+
         Chamber {
             view,
             prefs,
@@ -295,6 +303,7 @@ impl Chamber {
             input,
             focus_handle,
             chat_tab: ChatTab::Chat,
+            chat_scroll,
             palette_open: false,
             palette_input,
             settings_open: false,
@@ -438,10 +447,26 @@ impl Chamber {
         // blank the current view (which would flash to empty, then repopulate).
         if let Ok(events) = io::read_events(&self.path) {
             if events.len() != self.view.messages.len() {
+                // Decide *before* the content grows: if the user is parked at the
+                // bottom, keep them there as the new message lands; if they've
+                // scrolled up to read history, leave their position alone.
+                let follow = self.chat_at_bottom();
                 self.view = model::project(&events);
+                if follow {
+                    self.chat_scroll.scroll_to_bottom();
+                }
                 cx.notify();
             }
         }
+    }
+
+    /// Whether the chat viewport is scrolled to (or within a message-height of)
+    /// the bottom. `offset.y` grows more negative scrolling down and bottoms out
+    /// at `-max_offset.y`, so their sum is ~0 at the bottom.
+    fn chat_at_bottom(&self) -> bool {
+        let off = self.chat_scroll.offset().y;
+        let max = self.chat_scroll.max_offset().y;
+        off + max <= px(48.0)
     }
 
     /// Submit the human's message on Enter (Shift+Enter inserts a newline).
@@ -475,6 +500,8 @@ impl Chamber {
         input.update(cx, |state, cx| state.set_value("", window, cx));
         let events = io::read_events(&self.path).unwrap_or_default();
         self.view = model::project(&events);
+        // The human just spoke — always snap to their new message.
+        self.chat_scroll.scroll_to_bottom();
         cx.notify();
     }
 }
@@ -828,6 +855,7 @@ impl Chamber {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
+            .track_scroll(&self.chat_scroll)
             .child(match selected {
                 ChatTab::Chat => self.chat_view().into_any_element(),
                 ChatTab::Log => self.log_view().into_any_element(),
