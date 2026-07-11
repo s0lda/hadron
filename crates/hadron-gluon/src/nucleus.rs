@@ -57,6 +57,48 @@ pub fn load(repo_layer: Option<&Path>, global_layer: Option<&Path>) -> anyhow::R
     Ok(Nucleus { docs, last_verified_commit: repo_index.last_verified_commit })
 }
 
+/// Whether the nucleus knowledge is still trustworthy relative to the repo HEAD.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Staleness {
+    /// last_verified_commit matches HEAD.
+    Fresh,
+    /// HEAD has moved past last_verified_commit — knowledge may be outdated.
+    Stale,
+    /// No last_verified_commit or no HEAD to compare against.
+    Unknown,
+}
+
+/// Render the nucleus into the projection's `nucleus_digest`: each doc under a
+/// `## <name>` header, joined, then truncated to `max_bytes` on a char boundary.
+pub fn digest(n: &Nucleus, max_bytes: usize) -> String {
+    let mut out = String::new();
+    for (name, body) in &n.docs {
+        out.push_str("## ");
+        out.push_str(name);
+        out.push('\n');
+        out.push_str(body.trim_end());
+        out.push_str("\n\n");
+    }
+    let trimmed = out.trim_end();
+    if trimmed.len() <= max_bytes {
+        return trimmed.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !trimmed.is_char_boundary(end) {
+        end -= 1;
+    }
+    trimmed[..end].to_string()
+}
+
+/// Compare the nucleus's verified commit to the current HEAD.
+pub fn staleness(n: &Nucleus, head: Option<&str>) -> Staleness {
+    match (n.last_verified_commit.as_deref(), head) {
+        (Some(verified), Some(head)) if verified == head => Staleness::Fresh,
+        (Some(_), Some(_)) => Staleness::Stale,
+        _ => Staleness::Unknown,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,5 +155,30 @@ mod tests {
         let n = load(Some(&missing), None).unwrap();
         assert_eq!(n.docs.len(), 0);
         assert_eq!(n.last_verified_commit, None);
+    }
+
+    #[test]
+    fn digest_headers_and_truncates() {
+        let n = Nucleus {
+            docs: vec![("map.md".into(), "alpha".into()), ("conventions.md".into(), "beta".into())],
+            last_verified_commit: None,
+        };
+        let full = digest(&n, 10_000);
+        assert!(full.contains("## map.md"));
+        assert!(full.contains("alpha"));
+        assert!(full.contains("## conventions.md"));
+        // Truncation respects the byte budget.
+        let short = digest(&n, 8);
+        assert!(short.len() <= 8);
+    }
+
+    #[test]
+    fn staleness_compares_commit_to_head() {
+        let fresh = Nucleus { docs: vec![], last_verified_commit: Some("abc".into()) };
+        assert_eq!(staleness(&fresh, Some("abc")), Staleness::Fresh);
+        assert_eq!(staleness(&fresh, Some("def")), Staleness::Stale);
+        assert_eq!(staleness(&fresh, None), Staleness::Unknown);
+        let unknown = Nucleus { docs: vec![], last_verified_commit: None };
+        assert_eq!(staleness(&unknown, Some("abc")), Staleness::Unknown);
     }
 }
