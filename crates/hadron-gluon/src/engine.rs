@@ -5,7 +5,54 @@ use hadron_lattice::{Actor, Event, Kind, Projection, QuarkCard, QuarkId, QuarkSt
 
 use crate::field::{append_event, read_events};
 use crate::quark::Quark;
-use crate::router::{current_task, next_pending, parse_addressee};
+use crate::router::{next_pending, parse_addressee};
+use std::fs;
+
+fn build_invariants(workspace_root: &std::path::Path, requested: &[String]) -> (String, Vec<String>) {
+    let mut combined = String::new();
+    let invariants_dir = workspace_root.join(".hadron").join("nucleus").join("invariants");
+    let mut available = Vec::new();
+    
+    // Always include standard_model.md if it exists
+    let sm_path = invariants_dir.join("standard_model.md");
+    if sm_path.exists() {
+        if let Ok(content) = fs::read_to_string(&sm_path) {
+            combined.push_str(&content);
+            combined.push('\n');
+        }
+    }
+
+    if invariants_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&invariants_dir) {
+            for entry in entries.flatten() {
+                if let Ok(name) = entry.file_name().into_string() {
+                    if name.ends_with(".md") && name != "standard_model.md" {
+                        available.push(name.trim_end_matches(".md").to_string());
+                    }
+                }
+            }
+        }
+    }
+    
+    available.sort();
+    
+    // Sort requested invariants to ensure deterministic cache hits
+    let mut requested_sorted = requested.to_vec();
+    requested_sorted.sort();
+
+    for req in requested_sorted {
+        let req_path = invariants_dir.join(format!("{}.md", req));
+        if req_path.exists() {
+            if let Ok(content) = fs::read_to_string(&req_path) {
+                combined.push_str(&format!("\n# Rule: {}\n", req));
+                combined.push_str(&content);
+                combined.push('\n');
+            }
+        }
+    }
+
+    (combined.trim().to_string(), available)
+}
 
 /// Drives the sequential coordination loop over a single field file.
 pub struct Engine {
@@ -131,9 +178,42 @@ impl Engine {
                 String::new()
             };
 
+            let mut requested_invariants = vec![];
+            let mut task_desc = String::new();
+            
+            // Find the most recent event targeting this quark to get its task context
+            if let Some(trigger) = events.iter().rev().find(|e| e.to.as_ref() == Some(&target)) {
+                match &trigger.kind {
+                    Kind::Assign { task, invariants } => {
+                        task_desc = task.clone();
+                        requested_invariants = invariants.clone();
+                    }
+                    Kind::Message { body } => {
+                        task_desc = body.clone();
+                    }
+                    _ => {}
+                }
+            }
+            
+            let workspace_root = self.field_path
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+                .unwrap_or_else(|| self.field_path.parent().unwrap_or_else(|| std::path::Path::new("")));
+                
+            let (mut invariants_text, available_invariants) = build_invariants(workspace_root, &requested_invariants);
+            
+            // Fallback to initial engine invariants if no dynamic ones are found
+            if invariants_text.is_empty() {
+                invariants_text = self.invariants.clone();
+            } else if !self.invariants.is_empty() {
+                invariants_text = format!("{}\n\n{}", self.invariants, invariants_text);
+            }
+
             let projection = Projection {
-                task: current_task(&events, &target),
-                invariants: self.invariants.clone(),
+                task: task_desc,
+                invariants: invariants_text,
+                available_invariants,
                 nucleus_digest: self.nucleus_digest.clone(),
                 roster: self.roster.clone(),
                 field_window: events.clone(),
