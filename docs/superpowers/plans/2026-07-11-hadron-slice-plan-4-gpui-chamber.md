@@ -10,6 +10,8 @@
 
 **This is Plan 4 of 4** for the Hadron vertical slice (spec: `docs/superpowers/specs/2026-07-10-hadron-vertical-slice-design.md`). Plans 1–3 built the schema, engine, git safety, nucleus, and real adapters. This plan is the viewer.
 
+> **Execution status (2026-07-11):** Tasks 1–2 **executed and committed** (runtime-free field IO + pure view-model — 8 IO + 4 model tests green, zero GPUI in the test path). Task 3 (GPUI window) **code written and it compiles against the real gpui 0.2.2 API**, but the crate **cannot link** in this environment: `rust-lld: unable to find library -lxkbcommon / -lxkbcommon-x11`. The runtime libs (`libxkbcommon.so.0`, `libxkbcommon-x11.so.0`) are present; only the `-dev` symlink packages are missing. **Fix (needs sudo):** `sudo apt install libxkbcommon-dev libxkbcommon-x11-dev`, then `cargo run -p hadron-chamber --features gui -- <field.jsonl>`. gpui itself, fontconfig, freetype, and the Vulkan/Blade renderer all compiled and linked — only these two X keyboard dev libs block. Tasks 4–5 (input, live tail) build on the Task 3 window and are **not started** (they need the window to run for verification). The `gui` feature is off by default, so the default workspace build/tests remain fully green.
+
 ## ⚠️ Platform reality (read before running)
 
 - **GPUI is pre-1.0 and roughest on Linux; most mature on macOS.** On WSL2/Linux a display server (X/Wayland) is required; a headless CI box cannot render the window.
