@@ -7,6 +7,7 @@
 //! both gestures, and widths + collapse state persist via [`crate::config`].
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use gpui::{
     div, prelude::*, px, App, Context, Entity, Render, Subscription, Window, WindowBounds,
@@ -57,7 +58,33 @@ impl Chamber {
                 .placeholder("Type @quark a message…  (Enter to send · Shift+Enter for newline)")
         });
         let _input_sub = cx.subscribe_in(&input, window, Self::on_input_submit);
+
+        // Live tail: re-read the field on an interval so quark turns appended by
+        // the gluon (a separate process) appear without interaction. Dumb full
+        // re-read — the field is small and this matches the engine's own posture.
+        // The loop ends when the entity is dropped (`update` returns `Err`).
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(400)).await;
+                if this.update(cx, |chamber, cx| chamber.reload_if_changed(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+
         Chamber { view, prefs, path, resize_state, input, _input_sub }
+    }
+
+    /// Re-read the field; if it grew, re-project and repaint. Comparing event
+    /// count to the current row count is a cheap change check (projection emits
+    /// exactly one row per event), so an unchanged field costs only a read.
+    fn reload_if_changed(&mut self, cx: &mut Context<Self>) {
+        let events = io::read_events(&self.path).unwrap_or_default();
+        if events.len() != self.view.messages.len() {
+            self.view = model::project(&events);
+            cx.notify();
+        }
     }
 
     /// Submit the human's message on Enter (Shift+Enter inserts a newline).
