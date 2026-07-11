@@ -957,6 +957,7 @@ impl Chamber {
             .overflow_hidden()
             .bg(theme::bg())
             .child(header)
+            .children(self.permission_toast(cx))
             .child(body)
             .children(input);
 
@@ -1081,6 +1082,98 @@ impl Chamber {
                     .text_color(theme::text_muted())
                     .child("$ terminal coming soon"),
             )
+            .child(self.god_mode_section(cx))
+    }
+
+    /// Answer an outstanding permission request by appending a human
+    /// `PermissionGrant` (addressed back to the asking quark, so the daemon
+    /// resumes it) — the same bus the quarks use. Mirrors [`Self::on_input_submit`].
+    fn answer_permission(&mut self, approved: bool, cx: &mut Context<Self>) {
+        let Some(pending) = self.view.pending_permission.clone() else {
+            return;
+        };
+        let ev = hadron_gatekeeper::grant(&pending, approved);
+        if let Err(e) = io::append_event(&self.path, &ev) {
+            eprintln!("chamber: failed to append permission grant: {e}");
+            return;
+        }
+        let events = io::read_events(&self.path).unwrap_or_default();
+        self.view = model::project(&events);
+        self.chat_scroll.scroll_to_bottom();
+        cx.notify();
+    }
+
+    /// The non-blocking permission toast: when a quark is waiting on the human,
+    /// a banner drops in with Approve / Deny. `None` when nothing is pending.
+    fn permission_toast(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let pending = self.view.pending_permission.as_ref()?;
+        let text = format!(
+            "⚠️ {} wants to: {} ({:?})",
+            pending.quark.as_str(),
+            pending.description,
+            pending.risk,
+        );
+        Some(
+            h_flex()
+                .flex_none()
+                .mx_4()
+                .mt_2()
+                .px_3()
+                .py_2()
+                .gap_3()
+                .items_center()
+                .rounded_lg()
+                .bg(theme::surface_raised())
+                .child(
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .text_color(theme::text())
+                        .child(text),
+                )
+                .child(text_button("perm-approve", "Approve").on_click(
+                    cx.listener(|this, _, _, cx| this.answer_permission(true, cx)),
+                ))
+                .child(text_button("perm-deny", "Deny").on_click(
+                    cx.listener(|this, _, _, cx| this.answer_permission(false, cx)),
+                )),
+        )
+    }
+
+    /// The god-mode section (right rail): two independent bypass toggles the
+    /// human flips to pre-authorize classes of risky op. Persisted to prefs.
+    /// (Propagating a live change to a running daemon is a separate integration.)
+    fn god_mode_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = self.prefs.policy;
+        v_flex()
+            .flex_none()
+            .mt_2()
+            .gap_1p5()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child("GOD MODE"),
+            )
+            .child(
+                god_toggle_row("god-edits", "Auto-approve edits", p.auto_approve_edits)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_policy(true, cx))),
+            )
+            .child(
+                god_toggle_row("god-bash", "Bypass bash prompts", p.bypass_bash)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_policy(false, cx))),
+            )
+    }
+
+    /// Flip one god-mode toggle (`edits` selects which) and persist.
+    fn toggle_policy(&mut self, edits: bool, cx: &mut Context<Self>) {
+        if edits {
+            self.prefs.policy.auto_approve_edits = !self.prefs.policy.auto_approve_edits;
+        } else {
+            self.prefs.policy.bypass_bash = !self.prefs.policy.bypass_bash;
+        }
+        let _ = config::save(&self.prefs);
+        cx.notify();
     }
 
     /// Resolve an actor's display identity: prefs overrides over code defaults.
@@ -1608,6 +1701,32 @@ fn text_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Di
         .text_color(theme::text_secondary())
         .hover(|s| s.bg(theme::surface_raised()).text_color(theme::text()))
         .child(label)
+}
+
+/// A god-mode toggle row: a label with an ON/OFF pill that brightens (accent)
+/// when enabled. Caller attaches `on_click` to flip it.
+fn god_toggle_row(id: &'static str, label: &'static str, on: bool) -> gpui::Stateful<gpui::Div> {
+    let pill = div()
+        .px_2()
+        .py_0p5()
+        .rounded_full()
+        .text_xs()
+        .bg(if on { theme::accent() } else { theme::surface_raised() })
+        .text_color(if on { theme::bg() } else { theme::text_muted() })
+        .child(if on { "ON" } else { "OFF" });
+    h_flex()
+        .id(id)
+        .w_full()
+        .items_center()
+        .justify_between()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .text_sm()
+        .text_color(theme::text_secondary())
+        .hover(|s| s.bg(theme::surface_raised()).text_color(theme::text()))
+        .child(label)
+        .child(pill)
 }
 
 /// A muted placeholder line shown when a tab view has nothing to render.

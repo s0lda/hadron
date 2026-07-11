@@ -28,6 +28,9 @@ pub struct RosterRow {
 pub struct ChamberView {
     pub messages: Vec<MessageRow>,
     pub roster: Vec<RosterRow>,
+    /// An outstanding permission request awaiting the human's Approve/Deny, if any.
+    /// The UI renders this as a toast; `None` means nothing to decide.
+    pub pending_permission: Option<hadron_gatekeeper::PendingPermission>,
 }
 
 fn actor_str(a: &Actor) -> String {
@@ -104,7 +107,11 @@ pub fn project(events: &[Event]) -> ChamberView {
         })
         .collect();
 
-    ChamberView { messages, roster }
+    ChamberView {
+        messages,
+        roster,
+        pending_permission: hadron_gatekeeper::pending_permission(events),
+    }
 }
 
 /// Parse a human input line into an optional addressee and the message body.
@@ -151,6 +158,28 @@ mod tests {
         assert_eq!(row.to.as_deref(), Some("claude"));
         assert_eq!(row.body, "build it");
         assert_eq!(row.kind_label, "message");
+    }
+
+    #[test]
+    fn pending_permission_is_surfaced_then_cleared_by_a_grant() {
+        let req = ev(
+            Actor::Quark(QuarkId::new("agy")),
+            None,
+            Kind::PermissionReq {
+                risk: hadron_gatekeeper::Risk::BashExec,
+                description: "cargo publish".into(),
+            },
+        );
+        // With an outstanding request, the view carries it (addressed to the asker).
+        let view = project(std::slice::from_ref(&req));
+        let pending = view.pending_permission.expect("outstanding request surfaced");
+        assert_eq!(pending.quark, QuarkId::new("agy"));
+        assert_eq!(pending.description, "cargo publish");
+
+        // Once granted, the toast clears.
+        let grant = ev(Actor::Human, Some("agy"), Kind::PermissionGrant { approved: true });
+        let view = project(&[req, grant]);
+        assert!(view.pending_permission.is_none());
     }
 
     #[test]

@@ -41,6 +41,11 @@ pub struct ChamberPrefs {
     /// Per-quark identity overrides, keyed by quark id.
     #[serde(default)]
     pub quarks: BTreeMap<String, Identity>,
+    /// God-mode bypass policy set from the UI toggles. Persisted so the human's
+    /// choice survives restarts. (Propagating a live change to a running daemon is
+    /// a separate integration — the daemon reads its policy at construction.)
+    #[serde(default)]
+    pub policy: hadron_gatekeeper::Policy,
 }
 
 fn default_false() -> bool {
@@ -62,6 +67,7 @@ impl Default for ChamberPrefs {
             inspector_width: default_inspector_width(),
             human: Identity::default(),
             quarks: BTreeMap::new(),
+            policy: hadron_gatekeeper::Policy::default(),
         }
     }
 }
@@ -140,6 +146,7 @@ mod tests {
                 image_path: Some("/tmp/me.png".into()),
             },
             quarks,
+            policy: hadron_gatekeeper::Policy { auto_approve_edits: true, bypass_bash: true },
         };
         let json = serde_json::to_string(&prefs).unwrap();
         let back: ChamberPrefs = serde_json::from_str(&json).unwrap();
@@ -192,5 +199,19 @@ mod tests {
         let path = dir.path().join("chamber.json");
         std::fs::write(&path, "{ not json").unwrap();
         assert_eq!(load_from(&path), ChamberPrefs::default());
+    }
+
+    #[test]
+    fn god_mode_policy_persists() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("chamber.json");
+        let prefs = ChamberPrefs {
+            policy: hadron_gatekeeper::Policy { auto_approve_edits: true, bypass_bash: false },
+            ..Default::default()
+        };
+        save_to(&path, &prefs).unwrap();
+        assert_eq!(load_from(&path).policy, prefs.policy);
+        // Default (no policy in file) stays locked down.
+        assert_eq!(ChamberPrefs::default().policy, hadron_gatekeeper::Policy::locked_down());
     }
 }
