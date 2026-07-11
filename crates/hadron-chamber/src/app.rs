@@ -782,11 +782,19 @@ impl Chamber {
 
         let header = h_flex().flex_none().items_center().px_3().py_2().child(tabs);
 
-        let body = match selected {
-            ChatTab::Chat => self.chat_view().into_any_element(),
-            ChatTab::Log => self.log_view().into_any_element(),
-            ChatTab::Timeline => self.timeline_view().into_any_element(),
-        };
+        // The scrolling viewport: the selected view stacks to its natural height
+        // and scrolls *within* the card, instead of growing the card and pushing
+        // the input (and the whole layout) off the bottom.
+        let body = div()
+            .id("chat-body-scroll")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .child(match selected {
+                ChatTab::Chat => self.chat_view().into_any_element(),
+                ChatTab::Log => self.log_view().into_any_element(),
+                ChatTab::Timeline => self.timeline_view().into_any_element(),
+            });
 
         let input = h_flex()
             .flex_none()
@@ -819,7 +827,7 @@ impl Chamber {
     /// The Chat tab: the conversation only (message events), styled like a chat
     /// with each author's avatar and name.
     fn chat_view(&self) -> impl IntoElement {
-        let mut col = v_flex().flex_1().gap_4().p_4();
+        let mut col = v_flex().gap_4().p_4();
         let mut any = false;
         for m in &self.view.messages {
             if m.kind_label == "message" {
@@ -835,7 +843,7 @@ impl Chamber {
 
     /// The Log tab: every event on the field, compact (the raw activity).
     fn log_view(&self) -> impl IntoElement {
-        let mut col = v_flex().flex_1().gap_3().p_4();
+        let mut col = v_flex().gap_3().p_4();
         if self.view.messages.is_empty() {
             col = col.child(empty_hint("The field is empty."));
         }
@@ -856,7 +864,7 @@ impl Chamber {
             .filter(|m| m.kind_label != "message")
             .collect();
 
-        let mut col = v_flex().flex_1().p_4();
+        let mut col = v_flex().p_4();
         if steps.is_empty() {
             return col.child(empty_hint("No activity yet — the timeline fills as quarks work."));
         }
