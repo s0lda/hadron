@@ -56,11 +56,19 @@ impl<R: CliRunner> Quark for ClaudeQuark<R> {
             if let Some(sid) = v.get("session_id").and_then(|s| s.as_str()) {
                 self.session = Some(sid.to_string());
             }
+
+            // Extract usage if available
+            let used_tokens = v.get("usage")
+                .and_then(|u| u.get("total_tokens"))
+                .and_then(|t| t.as_u64())
+                .map(|t| t as u32)
+                .unwrap_or(0);
+
             if let Some(text) = v.get("result").and_then(|s| s.as_str()) {
                 let t = text.trim();
                 return Ok(TurnOutcome {
                     message: if t.is_empty() { None } else { Some(t.to_string()) },
-                    used_tokens: 0,
+                    used_tokens,
                 });
             }
         }
@@ -89,16 +97,18 @@ mod tests {
     #[tokio::test]
     async fn first_turn_starts_session_then_resumes() {
         let runner = FakeRunner::with_stdout(vec![
-            r#"{"session_id":"sess-1","result":"hello @worker"}"#,
-            r#"{"session_id":"sess-1","result":"all done"}"#,
+            r#"{"session_id":"sess-1","result":"hello @worker","usage":{"total_tokens":42}}"#,
+            r#"{"session_id":"sess-1","result":"all done","usage":{"total_tokens":12}}"#,
         ]);
         let mut q = ClaudeQuark::new(QuarkId::new("claude"), Flavor::Orchestrator, runner);
 
         let o1 = q.excite(projection("start")).await.unwrap();
         assert_eq!(o1.message.as_deref(), Some("hello @worker"));
+        assert_eq!(o1.used_tokens, 42);
 
         let o2 = q.excite(projection("continue")).await.unwrap();
         assert_eq!(o2.message.as_deref(), Some("all done"));
+        assert_eq!(o2.used_tokens, 12);
 
         // Turn 1 had no --resume; turn 2 resumed the captured session.
         let recorded = q.runner.recorded.lock().unwrap();
