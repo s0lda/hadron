@@ -9,7 +9,7 @@ serde_json = "1"
 anyhow = "1"
 async-trait = "0.1"
 ulid = { version = "1", features = ["serde"] }
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "process", "io-util"] }
 
 [dev-dependencies]
 tempfile = "3"
