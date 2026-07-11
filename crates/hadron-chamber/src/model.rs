@@ -57,7 +57,12 @@ fn render_row(e: &Event) -> MessageRow {
         Kind::Snapshot { label, .. } => (format!("snapshot: {label}"), "snapshot"),
         Kind::Unknown { kind, .. } => (format!("unrecognized event: {kind}"), "unrecognized"),
     };
-    MessageRow { from, to, body, kind_label }
+    MessageRow {
+        from,
+        to,
+        body,
+        kind_label,
+    }
 }
 
 /// Project the field into a renderable view. Roster order is first-seen; a
@@ -127,7 +132,9 @@ mod tests {
         let view = project(&[ev(
             Actor::Human,
             Some("claude"),
-            Kind::Message { body: "build it".into() },
+            Kind::Message {
+                body: "build it".into(),
+            },
         )]);
         assert_eq!(view.messages.len(), 1);
         let row = &view.messages[0];
@@ -141,9 +148,25 @@ mod tests {
     fn latest_status_wins_in_roster() {
         let agy = || Actor::Quark(QuarkId::new("agy"));
         let view = project(&[
-            ev(Actor::Human, Some("agy"), Kind::Message { body: "go".into() }),
-            ev(agy(), None, Kind::Status { state: QuarkState::Excited }),
-            ev(agy(), None, Kind::Status { state: QuarkState::Ground }),
+            ev(
+                Actor::Human,
+                Some("agy"),
+                Kind::Message { body: "go".into() },
+            ),
+            ev(
+                agy(),
+                None,
+                Kind::Status {
+                    state: QuarkState::Excited,
+                },
+            ),
+            ev(
+                agy(),
+                None,
+                Kind::Status {
+                    state: QuarkState::Ground,
+                },
+            ),
         ]);
         let agy_row = view.roster.iter().find(|r| r.id == "agy").unwrap();
         assert_eq!(agy_row.state, QuarkState::Ground); // latest wins
@@ -172,11 +195,17 @@ mod tests {
     #[test]
     fn roster_includes_authors_and_addressees() {
         let view = project(&[
-            ev(Actor::Human, Some("orch"), Kind::Message { body: "go".into() }),
+            ev(
+                Actor::Human,
+                Some("orch"),
+                Kind::Message { body: "go".into() },
+            ),
             ev(
                 Actor::Quark(QuarkId::new("orch")),
                 Some("worker"),
-                Kind::Message { body: "@worker do it".into() },
+                Kind::Message {
+                    body: "@worker do it".into(),
+                },
             ),
         ]);
         let ids: Vec<&str> = view.roster.iter().map(|r| r.id.as_str()).collect();

@@ -48,14 +48,17 @@ pub fn accent() -> Rgba {
 pub fn accent_secondary() -> Rgba {
     rgb(0xa855f7) // purple — thinking
 }
+pub fn danger() -> Rgba {
+    rgb(0xef4444) // red — close-button hover
+}
 
 /// Roster chip color for a quark's lifecycle state (the status ramp).
 pub fn quark_state(state: QuarkState) -> Rgba {
     match state {
-        QuarkState::Ground => rgb(0x9ca2ad),           // neutral grey
-        QuarkState::Excited => rgb(0xec4899),          // pink — active
-        QuarkState::Thinking => rgb(0xa855f7),         // purple
-        QuarkState::Waiting => rgb(0xfbbf24),          // amber
+        QuarkState::Ground => rgb(0x9ca2ad),   // neutral grey
+        QuarkState::Excited => rgb(0xec4899),  // pink — active
+        QuarkState::Thinking => rgb(0xa855f7), // purple
+        QuarkState::Waiting => rgb(0xfbbf24),  // amber
         QuarkState::Blocked | QuarkState::Error => rgb(0xf87171), // red
     }
 }
@@ -64,13 +67,12 @@ pub fn quark_state(state: QuarkState) -> Rgba {
 /// Human/gluon are fixed; quarks cycle through the chart palette by name.
 pub fn actor_hue(actor: &str) -> Rgba {
     match actor {
-        "human" => rgb(0xf5f5f6),  // bright — the human
-        "gluon" => rgb(0x60a5fa),  // info blue — the system
+        "human" => rgb(0xf5f5f6), // bright — the human
+        "gluon" => rgb(0x60a5fa), // info blue — the system
         other => {
-            const CHART: [u32; 6] =
-                [0x38bdf8, 0x34d399, 0xa78bfa, 0xfbbf24, 0xfb7185, 0x94a3b8];
-            let idx = (other.bytes().fold(0u32, |a, b| a.wrapping_add(b as u32)) as usize)
-                % CHART.len();
+            const CHART: [u32; 6] = [0x38bdf8, 0x34d399, 0xa78bfa, 0xfbbf24, 0xfb7185, 0x94a3b8];
+            let idx =
+                (other.bytes().fold(0u32, |a, b| a.wrapping_add(b as u32)) as usize) % CHART.len();
             rgb(CHART[idx])
         }
     }

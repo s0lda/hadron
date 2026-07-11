@@ -36,7 +36,12 @@ pub fn config_path() -> Option<PathBuf> {
         }
     }
     let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".config").join("hadron").join("chamber.json"))
+    Some(
+        PathBuf::from(home)
+            .join(".config")
+            .join("hadron")
+            .join("chamber.json"),
+    )
 }
 
 /// Read preferences from an explicit path; missing or malformed → defaults.
@@ -98,7 +103,10 @@ mod tests {
     fn save_then_load_from_round_trips_on_disk() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("sub").join("chamber.json"); // parent created by save
-        let prefs = ChamberPrefs { roster_collapsed: true, ..Default::default() };
+        let prefs = ChamberPrefs {
+            roster_collapsed: true,
+            ..Default::default()
+        };
         save_to(&path, &prefs).unwrap();
         assert_eq!(load_from(&path), prefs);
     }
