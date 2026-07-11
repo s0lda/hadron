@@ -1,13 +1,16 @@
 //! GPUI window for the chamber. Behind the `gui` feature.
 //!
 //! Built on the git gpui stack + gpui-component: a frameless, dark, client-decorated
-//! window with a custom `TitleBar`, and a 3-pane body — collapsible Quarks rail,
-//! field chat, collapsible Inspector rail. Rail state persists via [`crate::config`].
+//! window with a custom `TitleBar`, and a 3-pane body built from gpui-component's
+//! `Resizable` panels — a Quarks rail, the field chat (grows), and an Inspector rail.
+//! Both rails drag-resize and collapse; a single shared [`ResizableState`] drives
+//! both gestures, and widths + collapse state persist via [`crate::config`].
 
 use gpui::{
-    div, prelude::*, px, App, Context, Render, Window, WindowBounds, WindowDecorations,
+    div, prelude::*, px, App, Context, Entity, Render, Window, WindowBounds, WindowDecorations,
     WindowOptions,
 };
+use gpui_component::resizable::{h_resizable, resizable_panel, ResizableState};
 use gpui_component::{h_flex, v_flex, Root, Theme, ThemeMode, TitleBar};
 use hadron_lattice::{io, QuarkState};
 
@@ -15,9 +18,18 @@ use crate::config::{self, ChamberPrefs};
 use crate::model::{self, ChamberView, MessageRow, RosterRow};
 use crate::theme;
 
+/// Panel indices within the body's [`ResizableState`] (roster · chat · inspector).
+const ROSTER_IX: usize = 0;
+const INSPECTOR_IX: usize = 2;
+/// Width a rail shrinks to when collapsed — just enough for the toggle.
+const RAIL_COLLAPSED: f32 = 36.0;
+
 struct Chamber {
     view: ChamberView,
     prefs: ChamberPrefs,
+    /// Shared sizing state for the 3-pane body. Drag handles mutate it, and the
+    /// collapse toggles drive it programmatically, so both gestures agree.
+    resize_state: Entity<ResizableState>,
 }
 
 impl Render for Chamber {
@@ -27,14 +39,7 @@ impl Render for Chamber {
             .bg(theme::bg())
             .text_color(theme::text())
             .child(self.titlebar(cx))
-            .child(
-                h_flex()
-                    .flex_1()
-                    .w_full()
-                    .child(self.roster_pane(cx))
-                    .child(self.chat_pane())
-                    .child(self.inspector_pane(cx)),
-            )
+            .child(self.body(cx))
     }
 }
 
@@ -77,6 +82,57 @@ impl Chamber {
         )
     }
 
+    /// The 3-pane body: two collapsible/resizable rails around the field chat.
+    fn body(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        // Captured for the drag-persist callback below (see `on_resize`).
+        let chamber = cx.entity();
+
+        let roster = resizable_panel()
+            .size(px(if self.prefs.roster_collapsed {
+                RAIL_COLLAPSED
+            } else {
+                self.prefs.roster_width
+            }))
+            .size_range(px(RAIL_COLLAPSED)..px(480.0))
+            .child(self.roster_pane(cx));
+
+        let chat = resizable_panel().child(self.chat_pane());
+
+        let inspector = resizable_panel()
+            .size(px(if self.prefs.inspector_collapsed {
+                RAIL_COLLAPSED
+            } else {
+                self.prefs.inspector_width
+            }))
+            .size_range(px(RAIL_COLLAPSED)..px(560.0))
+            .child(self.inspector_pane(cx));
+
+        h_resizable("chamber-body")
+            .with_state(&self.resize_state)
+            // Fires when the user finishes dragging a handle. Persist the new
+            // rail widths — but not while a rail is collapsed, so its remembered
+            // expanded width survives a drag of the *other* handle.
+            .on_resize(move |state, _window, app| {
+                let sizes = state.read(app).sizes().clone();
+                chamber.update(app, |this, _cx| {
+                    if !this.prefs.roster_collapsed {
+                        if let Some(w) = sizes.first() {
+                            this.prefs.roster_width = w.as_f32();
+                        }
+                    }
+                    if !this.prefs.inspector_collapsed {
+                        if let Some(w) = sizes.last() {
+                            this.prefs.inspector_width = w.as_f32();
+                        }
+                    }
+                    let _ = config::save(&this.prefs);
+                });
+            })
+            .child(roster)
+            .child(chat)
+            .child(inspector)
+    }
+
     fn roster_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let collapsed = self.prefs.roster_collapsed;
         let toggle = div()
@@ -85,18 +141,16 @@ impl Chamber {
             .text_color(theme::text_muted())
             .child(if collapsed { ">".to_string() } else { "Quarks   <".to_string() })
             .active(|s| s.opacity(0.6))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.prefs.roster_collapsed = !this.prefs.roster_collapsed;
-                let _ = config::save(&this.prefs);
-                cx.notify();
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.toggle_rail(ROSTER_IX, window, cx);
             }));
 
         let mut col = v_flex()
+            .w_full()
             .h_full()
             .p_2()
             .gap_2()
             .bg(theme::sidebar())
-            .w(if collapsed { px(36.0) } else { px(self.prefs.roster_width) })
             .child(toggle);
 
         if !collapsed {
@@ -133,7 +187,7 @@ impl Chamber {
                     .child("type @quark a message…  (input coming soon)"),
             );
 
-        v_flex().flex_1().h_full().bg(theme::bg()).child(messages).child(input)
+        v_flex().w_full().h_full().bg(theme::bg()).child(messages).child(input)
     }
 
     fn inspector_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -144,18 +198,16 @@ impl Chamber {
             .text_color(theme::text_muted())
             .child(if collapsed { "<".to_string() } else { ">   Inspector".to_string() })
             .active(|s| s.opacity(0.6))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.prefs.inspector_collapsed = !this.prefs.inspector_collapsed;
-                let _ = config::save(&this.prefs);
-                cx.notify();
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.toggle_rail(INSPECTOR_IX, window, cx);
             }));
 
         let mut col = v_flex()
+            .w_full()
             .h_full()
             .p_2()
             .gap_2()
             .bg(theme::sidebar())
-            .w(if collapsed { px(36.0) } else { px(self.prefs.inspector_width) })
             .child(toggle);
 
         if !collapsed {
@@ -197,6 +249,28 @@ impl Chamber {
             }
         }
         col
+    }
+
+    /// Collapse or expand a rail. Flips the persisted flag and drives the shared
+    /// `ResizableState` to the target width — collapsing to a sliver, or restoring
+    /// the remembered expanded width. Programmatic resizes don't fire `on_resize`,
+    /// so the remembered width in `prefs` is never clobbered by the collapse itself.
+    fn toggle_rail(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let (collapsed_flag, remembered) = match ix {
+            ROSTER_IX => {
+                self.prefs.roster_collapsed = !self.prefs.roster_collapsed;
+                (self.prefs.roster_collapsed, self.prefs.roster_width)
+            }
+            _ => {
+                self.prefs.inspector_collapsed = !self.prefs.inspector_collapsed;
+                (self.prefs.inspector_collapsed, self.prefs.inspector_width)
+            }
+        };
+        let target = px(if collapsed_flag { RAIL_COLLAPSED } else { remembered });
+        self.resize_state
+            .update(cx, |state, cx| state.resize_panel(ix, target, window, cx));
+        let _ = config::save(&self.prefs);
+        cx.notify();
     }
 }
 
@@ -260,7 +334,12 @@ pub fn run(field_path: Option<String>) {
 
         cx.spawn(async move |cx| {
             cx.open_window(window_options, move |window, cx| {
-                let chamber = cx.new(|_| Chamber { view: view.clone(), prefs: prefs.clone() });
+                let resize_state = cx.new(|_| ResizableState::default());
+                let chamber = cx.new(|_| Chamber {
+                    view: view.clone(),
+                    prefs: prefs.clone(),
+                    resize_state,
+                });
                 cx.new(|cx| Root::new(chamber, window, cx).bordered(false))
             })
             .expect("failed to open window");
