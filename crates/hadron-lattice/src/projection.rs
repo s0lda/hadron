@@ -28,6 +28,8 @@ pub struct Projection {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct TurnOutcome {
     pub message: Option<String>,
+    #[serde(default)]
+    pub used_tokens: u32,
 }
 
 #[cfg(test)]
@@ -59,6 +61,6 @@ mod tests {
 
     #[test]
     fn turn_outcome_default_is_empty() {
-        assert_eq!(TurnOutcome::default(), TurnOutcome { message: None });
+        assert_eq!(TurnOutcome::default(), TurnOutcome { message: None, used_tokens: 0 });
     }
 }
