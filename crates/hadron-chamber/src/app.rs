@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
-    actions, div, prelude::*, px, rgb, rgba, App, Context, Entity, FocusHandle, KeyBinding,
-    MouseButton, Render, SharedString, Subscription, Window, WindowBackgroundAppearance,
+    actions, div, prelude::*, px, rgb, rgba, App, Context, Entity, FocusHandle, Hsla, KeyBinding,
+    MouseButton, Render, Rgba, SharedString, Subscription, Window, WindowBackgroundAppearance,
     WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
@@ -27,7 +27,7 @@ use gpui_component::{
 };
 use hadron_lattice::{io, Actor, Event, Kind};
 
-use crate::config::{self, ChamberPrefs};
+use crate::config::{self, ChamberPrefs, Identity};
 use crate::model::{self, ChamberView, MessageRow, RosterRow};
 use crate::theme;
 
@@ -47,6 +47,70 @@ const RAIL_MAX: f32 = 440.0;
 enum Rail {
     Roster,
     Inspector,
+}
+
+/// A fully-resolved display identity — what actually renders after applying the
+/// user's [`Identity`] overrides over code defaults (id-derived name, hue color,
+/// initials avatar).
+struct ResolvedIdentity {
+    name: String,
+    color: Hsla,
+    image: Option<String>,
+}
+
+/// The palette a user picks an identity color from (Settings). Kept small and
+/// legible on the dark surfaces.
+const IDENTITY_SWATCHES: [u32; 8] = [
+    0xf5f5f6, // near-white (the human's default)
+    0xec4899, // pink
+    0xa855f7, // purple
+    0x60a5fa, // blue
+    0x34d399, // green
+    0xfbbf24, // amber
+    0xfb7185, // rose
+    0x94a3b8, // slate
+];
+
+/// Parse a `#rrggbb` string into a color.
+fn parse_hex(s: &str) -> Option<Rgba> {
+    let s = s.trim().trim_start_matches('#');
+    if s.len() != 6 {
+        return None;
+    }
+    u32::from_str_radix(s, 16).ok().map(rgb)
+}
+
+/// Up to two uppercase initials from a display name, for the fallback avatar.
+fn initials(name: &str) -> String {
+    let mut words = name.split_whitespace().filter_map(|w| w.chars().next());
+    match (words.next(), words.next()) {
+        (Some(a), Some(b)) => format!("{a}{b}").to_uppercase(),
+        (Some(a), None) => a.to_uppercase().to_string(),
+        _ => "?".to_string(),
+    }
+}
+
+/// Render an identity's avatar: the chosen image if set, else a colored circle
+/// with the name's initials.
+fn identity_avatar(id: &ResolvedIdentity, diameter: f32) -> gpui::AnyElement {
+    match &id.image {
+        Some(path) => Avatar::new()
+            .src(path.clone())
+            .with_size(Size::Size(px(diameter)))
+            .into_any_element(),
+        None => div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .flex_shrink_0()
+            .size(px(diameter))
+            .rounded_full()
+            .bg(id.color.opacity(0.2))
+            .text_color(id.color)
+            .text_size(px(diameter * 0.4))
+            .child(initials(&id.name))
+            .into_any_element(),
+    }
 }
 
 /// Commands offered by the Ctrl+Shift+P palette. v1: the two rail toggles.
@@ -115,6 +179,23 @@ impl ChatTab {
     }
 }
 
+/// Which identity the Settings overlay is currently editing.
+#[derive(Clone, PartialEq, Eq)]
+enum SettingsTarget {
+    Human,
+    Quark(String),
+}
+
+impl SettingsTarget {
+    /// The actor key used for identity resolution / prefs lookup.
+    fn key(&self) -> &str {
+        match self {
+            SettingsTarget::Human => "human",
+            SettingsTarget::Quark(id) => id,
+        }
+    }
+}
+
 struct Chamber {
     view: ChamberView,
     prefs: ChamberPrefs,
@@ -130,9 +211,17 @@ struct Chamber {
     palette_open: bool,
     /// The palette's filter box.
     palette_input: Entity<InputState>,
-    /// Keep the two input subscriptions alive for the window's lifetime.
+    /// Whether the Settings overlay is showing, and which identity it edits.
+    settings_open: bool,
+    settings_target: SettingsTarget,
+    /// Settings editor fields (display name + image path for the current target).
+    settings_name: Entity<InputState>,
+    settings_path: Entity<InputState>,
+    /// Keep the input subscriptions alive for the window's lifetime. The last
+    /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
     _palette_sub: Subscription,
+    _settings_subs: [Subscription; 2],
 }
 
 impl Chamber {
@@ -160,6 +249,21 @@ impl Chamber {
         });
         let _palette_sub = cx.subscribe_in(&palette_input, window, Self::on_palette_submit);
 
+        let settings_name =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Display name"));
+        let settings_path = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Path to an image file… (optional)")
+        });
+        // Repaint the Settings overlay on every edit so its preview is live.
+        let _settings_subs = [
+            cx.subscribe_in(&settings_name, window, |_, _, _: &InputEvent, _, cx| {
+                cx.notify()
+            }),
+            cx.subscribe_in(&settings_path, window, |_, _, _: &InputEvent, _, cx| {
+                cx.notify()
+            }),
+        ];
+
         // Live tail: re-read the field on an interval so quark turns appended by
         // the gluon (a separate process) appear without interaction. Dumb full
         // re-read — the field is small and this matches the engine's own posture.
@@ -186,8 +290,13 @@ impl Chamber {
             chat_tab: ChatTab::Chat,
             palette_open: false,
             palette_input,
+            settings_open: false,
+            settings_target: SettingsTarget::Human,
+            settings_name,
+            settings_path,
             _input_sub,
             _palette_sub,
+            _settings_subs,
         }
     }
 
@@ -369,6 +478,7 @@ impl Render for Chamber {
         let body = self.body(cx);
         let status = self.status_bar();
         let overlay = self.palette_open.then(|| self.palette_overlay(cx));
+        let settings = self.settings_open.then(|| self.settings_overlay(cx));
 
         let content = v_flex()
             .key_context(KEY_CONTEXT)
@@ -381,7 +491,8 @@ impl Render for Chamber {
             .child(titlebar)
             .child(body)
             .child(status)
-            .children(overlay);
+            .children(overlay)
+            .children(settings);
 
         // Wrap in our transparent, rounded, shadowed client-side frame.
         crate::window_frame::window_frame(window, cx, content)
@@ -595,9 +706,7 @@ impl Chamber {
             .active(|s| s.opacity(0.7))
             .child(Icon::new(IconName::Settings).small())
             .when(!icon_only, |this| this.child("Settings"))
-            .on_click(cx.listener(|_this, _, _window, _cx| {
-                // TODO: open settings (placeholder — content TBD with Jake).
-            }))
+            .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx)))
     }
 
     fn roster_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -624,7 +733,7 @@ impl Chamber {
             .child(header);
 
         for r in &self.view.roster {
-            col = col.child(roster_row(r));
+            col = col.child(roster_row(&self.resolve_identity(&r.id), r));
         }
         if self.view.roster.is_empty() {
             col = col.child(
@@ -691,7 +800,7 @@ impl Chamber {
         let mut any = false;
         for m in &self.view.messages {
             if m.kind_label == "message" {
-                col = col.child(chat_message_row(m));
+                col = col.child(chat_message_row(&self.resolve_identity(&m.from), m));
                 any = true;
             }
         }
@@ -798,6 +907,316 @@ impl Chamber {
             )
     }
 
+    /// Resolve an actor's display identity: prefs overrides over code defaults.
+    /// `actor` is `"human"` or a quark id (as it appears in [`MessageRow::from`]
+    /// / [`RosterRow::id`]).
+    fn resolve_identity(&self, actor: &str) -> ResolvedIdentity {
+        let stored: Option<&Identity> = if actor == "human" {
+            Some(&self.prefs.human)
+        } else {
+            self.prefs.quarks.get(actor)
+        };
+        let default_name = if actor == "human" { "You" } else { actor };
+        let name = stored
+            .and_then(|i| i.display_name.clone())
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| default_name.to_string());
+        let color: Hsla = stored
+            .and_then(|i| i.color.as_deref())
+            .and_then(parse_hex)
+            .map(Into::into)
+            .unwrap_or_else(|| theme::actor_hue(actor).into());
+        let image = stored
+            .and_then(|i| i.image_path.clone())
+            .filter(|p| !p.trim().is_empty());
+        ResolvedIdentity { name, color, image }
+    }
+
+    /// Open the Settings overlay, editing the human's identity first.
+    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_open = true;
+        self.settings_target = SettingsTarget::Human;
+        self.load_settings_inputs(window, cx);
+        cx.notify();
+    }
+
+    /// Commit the name/image inputs, then close the overlay and refocus root.
+    fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_settings_inputs(cx);
+        self.settings_open = false;
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    /// A mutable handle to the identity currently being edited (creating an
+    /// empty quark entry on first edit).
+    fn settings_identity_mut(&mut self) -> &mut Identity {
+        match &self.settings_target {
+            SettingsTarget::Human => &mut self.prefs.human,
+            SettingsTarget::Quark(id) => self.prefs.quarks.entry(id.clone()).or_default(),
+        }
+    }
+
+    /// The stored color override for the current target, if any (`#rrggbb`).
+    fn settings_color(&self) -> Option<String> {
+        let key = self.settings_target.key();
+        let id = if key == "human" {
+            Some(&self.prefs.human)
+        } else {
+            self.prefs.quarks.get(key)
+        };
+        id.and_then(|i| i.color.clone())
+    }
+
+    /// Load the current target's name + image path into the editor inputs.
+    fn load_settings_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (name, path) = {
+            let key = self.settings_target.key();
+            let id = if key == "human" {
+                Some(&self.prefs.human)
+            } else {
+                self.prefs.quarks.get(key)
+            };
+            (
+                id.and_then(|i| i.display_name.clone()).unwrap_or_default(),
+                id.and_then(|i| i.image_path.clone()).unwrap_or_default(),
+            )
+        };
+        self.settings_name
+            .update(cx, |s, cx| s.set_value(name, window, cx));
+        self.settings_path
+            .update(cx, |s, cx| s.set_value(path, window, cx));
+    }
+
+    /// Write the editor inputs back into the current target identity and persist.
+    fn commit_settings_inputs(&mut self, cx: &mut Context<Self>) {
+        let name = self.settings_name.read(cx).value().trim().to_string();
+        let path = self.settings_path.read(cx).value().trim().to_string();
+        let id = self.settings_identity_mut();
+        id.display_name = (!name.is_empty()).then_some(name);
+        id.image_path = (!path.is_empty()).then_some(path);
+        let _ = config::save(&self.prefs);
+    }
+
+    /// Switch which identity the overlay edits (committing the current one).
+    fn select_settings_target(
+        &mut self,
+        target: SettingsTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit_settings_inputs(cx);
+        self.settings_target = target;
+        self.load_settings_inputs(window, cx);
+        cx.notify();
+    }
+
+    /// Set the current target's accent/avatar color from a swatch.
+    fn set_settings_color(&mut self, hex: u32, cx: &mut Context<Self>) {
+        self.commit_settings_inputs(cx);
+        self.settings_identity_mut().color = Some(format!("#{hex:06x}"));
+        let _ = config::save(&self.prefs);
+        cx.notify();
+    }
+
+    /// Clear the current target's image (falling back to color + initials).
+    fn clear_settings_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_identity_mut().image_path = None;
+        self.settings_path
+            .update(cx, |s, cx| s.set_value("", window, cx));
+        let _ = config::save(&self.prefs);
+        cx.notify();
+    }
+
+    /// Reset the current target to its code defaults.
+    fn reset_settings_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.settings_target.clone() {
+            SettingsTarget::Human => self.prefs.human = Identity::default(),
+            SettingsTarget::Quark(id) => {
+                self.prefs.quarks.remove(&id);
+            }
+        }
+        self.load_settings_inputs(window, cx);
+        let _ = config::save(&self.prefs);
+        cx.notify();
+    }
+
+    /// The Settings overlay: a dim backdrop (click to dismiss) behind a card
+    /// that edits one identity — an avatar switcher, a live preview, a display
+    /// name, a color swatch row, and an image path (image wins over color).
+    fn settings_overlay(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let target = self.settings_target.clone();
+
+        // Everyone editable: the human, then each quark on the roster.
+        let mut switcher = h_flex().gap_2().flex_wrap().child(self.settings_avatar_button(
+            SettingsTarget::Human,
+            &target,
+            cx,
+        ));
+        for r in &self.view.roster {
+            switcher = switcher.child(self.settings_avatar_button(
+                SettingsTarget::Quark(r.id.clone()),
+                &target,
+                cx,
+            ));
+        }
+
+        // Live preview: the target resolved, but with the in-progress name/image
+        // from the inputs so it tracks typing.
+        let live_name = self.settings_name.read(cx).value().to_string();
+        let live_path = self.settings_path.read(cx).value().trim().to_string();
+        let mut preview = self.resolve_identity(target.key());
+        if !live_name.trim().is_empty() {
+            preview.name = live_name;
+        }
+        preview.image = (!live_path.is_empty()).then_some(live_path);
+        let preview_row = h_flex()
+            .items_center()
+            .gap_3()
+            .child(identity_avatar(&preview, 44.0))
+            .child(
+                div()
+                    .text_color(preview.color)
+                    .child(preview.name.clone()),
+            );
+
+        // Color swatches; the stored color (if any) gets a bright ring.
+        let selected = self.settings_color();
+        let mut swatches = h_flex().gap_2().flex_wrap();
+        for hex in IDENTITY_SWATCHES {
+            let is_sel = selected.as_deref() == Some(format!("#{hex:06x}").as_str());
+            swatches = swatches.child(
+                div()
+                    .id(SharedString::from(format!("swatch-{hex:06x}")))
+                    .size(px(22.0))
+                    .rounded_full()
+                    .bg(rgb(hex))
+                    .border_2()
+                    .border_color(if is_sel { theme::text() } else { theme::border() })
+                    .hover(|s| s.border_color(theme::text_secondary()))
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_settings_color(hex, cx))),
+            );
+        }
+
+        let card = v_flex()
+            .occlude()
+            .mt(px(80.0))
+            .w(px(520.0))
+            .p_4()
+            .gap_4()
+            .rounded_lg()
+            .bg(theme::sidebar())
+            .border_1()
+            .border_color(theme::border())
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .child(div().text_color(theme::text()).child("Settings"))
+                    .child(
+                        div()
+                            .id("settings-close")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(24.0))
+                            .rounded_full()
+                            .text_color(theme::text_secondary())
+                            .hover(|s| s.bg(theme::surface_raised()).text_color(theme::text()))
+                            .child(Icon::new(IconName::WindowClose).small())
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.close_settings(window, cx)),
+                            ),
+                    ),
+            )
+            .child(settings_field("Identity", switcher.into_any_element()))
+            .child(settings_field("Preview", preview_row.into_any_element()))
+            .child(settings_field(
+                "Display name",
+                Input::new(&self.settings_name).into_any_element(),
+            ))
+            .child(settings_field("Color", swatches.into_any_element()))
+            .child(settings_field(
+                "Image",
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(div().flex_1().child(Input::new(&self.settings_path)))
+                    .child(
+                        text_button("settings-clear-img", "Clear")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.clear_settings_image(window, cx)
+                            })),
+                    )
+                    .into_any_element(),
+            ))
+            .child(
+                h_flex()
+                    .justify_between()
+                    .pt_1()
+                    .child(
+                        text_button("settings-reset", "Reset to default").on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.reset_settings_target(window, cx)
+                            }),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .id("settings-done")
+                            .px_3()
+                            .py_1p5()
+                            .rounded_md()
+                            .bg(theme::accent())
+                            .text_color(theme::text())
+                            .hover(|s| s.opacity(0.9))
+                            .child("Done")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.close_settings(window, cx)),
+                            ),
+                    ),
+            );
+
+        div()
+            .id("settings-backdrop")
+            .absolute()
+            .inset_0()
+            .flex()
+            .justify_center()
+            .bg(rgba(0x00000088))
+            .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx)))
+            .child(card)
+    }
+
+    /// One avatar button in the Settings identity switcher.
+    fn settings_avatar_button(
+        &self,
+        who: SettingsTarget,
+        current: &SettingsTarget,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let resolved = self.resolve_identity(who.key());
+        let selected = &who == current;
+        let id = SharedString::from(format!("settings-id-{}", who.key()));
+        div()
+            .id(id)
+            .p_0p5()
+            .rounded_full()
+            .border_2()
+            .border_color(if selected {
+                theme::accent()
+            } else {
+                theme::border()
+            })
+            .hover(|s| s.border_color(theme::text_secondary()))
+            .child(identity_avatar(&resolved, 32.0))
+            .on_click(
+                cx.listener(move |this, _, window, cx| {
+                    this.select_settings_target(who.clone(), window, cx)
+                }),
+            )
+    }
+
     /// Collapse or expand a rail. Just flips the persisted flag — the layout
     /// follows (an expanded rail is a resizable panel; a collapsed one is a fixed
     /// strip), so there's no sizing state to drive by hand.
@@ -871,12 +1290,11 @@ fn drag_region(id: &'static str) -> impl IntoElement {
         .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
 }
 
-/// One roster entry, styled as a presence list-item: an initials [`Avatar`] with
-/// a status [`Badge`] dot, a display name, and a one-word presence subtitle, with
-/// a tooltip on hover. Display name currently derives from the quark id — a
-/// Settings-chosen name/avatar lands here later.
-fn roster_row(r: &RosterRow) -> impl IntoElement {
-    let name = r.id.clone();
+/// One roster entry, styled as a presence list-item: the resolved avatar with a
+/// status [`Badge`] dot, a display name, and a one-word presence subtitle, with a
+/// tooltip on hover.
+fn roster_row(id: &ResolvedIdentity, r: &RosterRow) -> impl IntoElement {
+    let name = id.name.clone();
     let label = theme::presence_label(r.state);
     let tip: SharedString = format!("{name} — {label}").into();
 
@@ -892,7 +1310,7 @@ fn roster_row(r: &RosterRow) -> impl IntoElement {
             Badge::new()
                 .dot()
                 .color(theme::presence(r.state))
-                .child(Avatar::new().name(name.clone()).with_size(Size::Small)),
+                .child(identity_avatar(id, 28.0)),
         )
         .child(
             v_flex()
@@ -914,6 +1332,32 @@ fn roster_row(r: &RosterRow) -> impl IntoElement {
         .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
 }
 
+/// A labeled row in the Settings card: a muted caption above its control.
+fn settings_field(label: &'static str, content: gpui::AnyElement) -> impl IntoElement {
+    v_flex()
+        .gap_1p5()
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme::text_muted())
+                .child(label),
+        )
+        .child(content)
+}
+
+/// A small, subtle text button for secondary actions (caller attaches on_click).
+fn text_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .text_sm()
+        .text_color(theme::text_secondary())
+        .hover(|s| s.bg(theme::surface_raised()).text_color(theme::text()))
+        .child(label)
+}
+
 /// A muted placeholder line shown when a tab view has nothing to render.
 fn empty_hint(text: &'static str) -> impl IntoElement {
     div()
@@ -933,14 +1377,13 @@ fn kind_icon(kind_label: &str) -> IconName {
     }
 }
 
-/// A chat-styled message row: the author's initials avatar and name, then the
+/// A chat-styled message row: the author's resolved avatar and name, then the
 /// body — used by the Chat tab so the field reads like a conversation.
-fn chat_message_row(m: &MessageRow) -> impl IntoElement {
-    let name = m.from.clone();
+fn chat_message_row(id: &ResolvedIdentity, m: &MessageRow) -> impl IntoElement {
     h_flex()
         .items_start()
         .gap_2p5()
-        .child(Avatar::new().name(name.clone()).with_size(Size::Small))
+        .child(identity_avatar(id, 28.0))
         .child(
             v_flex()
                 .min_w_0()
@@ -952,8 +1395,8 @@ fn chat_message_row(m: &MessageRow) -> impl IntoElement {
                         .child(
                             div()
                                 .text_sm()
-                                .text_color(theme::actor_hue(&m.from))
-                                .child(name),
+                                .text_color(id.color)
+                                .child(id.name.clone()),
                         )
                         .when_some(m.to.clone(), |this, to| {
                             this.child(
