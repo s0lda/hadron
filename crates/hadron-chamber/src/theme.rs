@@ -10,24 +10,24 @@ use gpui::{rgb, rgba, Rgba};
 
 use hadron_lattice::QuarkState;
 
-// --- surfaces (darkest → raised) ---
+// --- surfaces (darkest → raised) --- Jake's greyscale: 0x121314 / 0x191a1b / 0x252627.
 pub fn bg() -> Rgba {
-    rgb(0x0d0e11)
+    rgb(0x121314) // base canvas
 }
 pub fn sidebar() -> Rgba {
-    rgb(0x16181c)
+    rgb(0x191a1b) // rails
 }
 pub fn surface() -> Rgba {
-    rgb(0x1c1e22)
+    rgb(0x202122) // chips/cards on the rails (a step above sidebar so they read)
 }
 pub fn surface_raised() -> Rgba {
-    rgb(0x24272d)
+    rgb(0x252627) // hover / active
 }
 pub fn input_bg() -> Rgba {
-    rgb(0x191b1f)
+    rgb(0x191a1b)
 }
 pub fn border() -> Rgba {
-    rgb(0x40444d)
+    rgb(0x303133)
 }
 
 // --- text tiers ---
@@ -48,15 +48,40 @@ pub fn accent() -> Rgba {
 pub fn accent_secondary() -> Rgba {
     rgb(0xa855f7) // purple — thinking
 }
+pub fn danger() -> Rgba {
+    rgb(0xef4444) // red — close-button hover
+}
 
 /// Roster chip color for a quark's lifecycle state (the status ramp).
 pub fn quark_state(state: QuarkState) -> Rgba {
     match state {
-        QuarkState::Ground => rgb(0x9ca2ad),           // neutral grey
-        QuarkState::Excited => rgb(0xec4899),          // pink — active
-        QuarkState::Thinking => rgb(0xa855f7),         // purple
-        QuarkState::Waiting => rgb(0xfbbf24),          // amber
+        QuarkState::Ground => rgb(0x9ca2ad),   // neutral grey
+        QuarkState::Excited => rgb(0xec4899),  // pink — active
+        QuarkState::Thinking => rgb(0xa855f7), // purple
+        QuarkState::Waiting => rgb(0xfbbf24),  // amber
         QuarkState::Blocked | QuarkState::Error => rgb(0xf87171), // red
+    }
+}
+
+/// Presence-dot color for the roster user-list — Jake's traffic-light semantics
+/// (green available · blue working · amber waiting · red unavailable), distinct
+/// from the [`quark_state`] accent ramp used elsewhere.
+pub fn presence(state: QuarkState) -> Rgba {
+    match state {
+        QuarkState::Ground => rgb(0x22c55e), // green — available
+        QuarkState::Excited | QuarkState::Thinking => rgb(0x3b82f6), // blue — working
+        QuarkState::Waiting => rgb(0xf59e0b), // amber — waiting on a decision
+        QuarkState::Blocked | QuarkState::Error => rgb(0xef4444), // red — unavailable
+    }
+}
+
+/// One-word presence label matching [`presence`], for tooltips/subtitles.
+pub fn presence_label(state: QuarkState) -> &'static str {
+    match state {
+        QuarkState::Ground => "available",
+        QuarkState::Excited | QuarkState::Thinking => "working",
+        QuarkState::Waiting => "waiting",
+        QuarkState::Blocked | QuarkState::Error => "unavailable",
     }
 }
 
@@ -64,13 +89,12 @@ pub fn quark_state(state: QuarkState) -> Rgba {
 /// Human/gluon are fixed; quarks cycle through the chart palette by name.
 pub fn actor_hue(actor: &str) -> Rgba {
     match actor {
-        "human" => rgb(0xf5f5f6),  // bright — the human
-        "gluon" => rgb(0x60a5fa),  // info blue — the system
+        "human" => rgb(0xf5f5f6), // bright — the human
+        "gluon" => rgb(0x60a5fa), // info blue — the system
         other => {
-            const CHART: [u32; 6] =
-                [0x38bdf8, 0x34d399, 0xa78bfa, 0xfbbf24, 0xfb7185, 0x94a3b8];
-            let idx = (other.bytes().fold(0u32, |a, b| a.wrapping_add(b as u32)) as usize)
-                % CHART.len();
+            const CHART: [u32; 6] = [0x38bdf8, 0x34d399, 0xa78bfa, 0xfbbf24, 0xfb7185, 0x94a3b8];
+            let idx =
+                (other.bytes().fold(0u32, |a, b| a.wrapping_add(b as u32)) as usize) % CHART.len();
             rgb(CHART[idx])
         }
     }
