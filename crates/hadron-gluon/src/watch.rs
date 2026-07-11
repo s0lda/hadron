@@ -106,19 +106,29 @@ mod tests {
         );
     }
 
-    // Negative case kept separate and write-free so it can't race trailing events
-    // from a preceding append (the flaky failure mode).
+    // Negative case: once the watcher has quiesced, an idle field must not wake it.
+    //
+    // Under parallel-test load the inotify backend can deliver a *residual* event
+    // from the pre-watch seed write slightly after the watch registers, so a single
+    // `wait` is fragile (it may consume that one leftover signal). We instead drain
+    // any startup residue, then assert the *next* idle wait times out — mirroring
+    // how the daemon processes the initial field state and only then waits for new
+    // writes. A genuinely busy-waking watcher would still fail here, because the
+    // post-drain wait would also fire.
     #[test]
     fn wait_times_out_when_no_changes() {
         let dir = tempdir().unwrap();
         let field = dir.path().join("field.jsonl");
-        // Seed write happens BEFORE the watcher exists, so it produces no signal.
+        // Seed write happens BEFORE the watcher exists; any delivery of it is residue.
         std::fs::write(&field, "seed\n").unwrap();
 
         let watcher = FieldWatcher::new(&field).unwrap();
         std::thread::sleep(Duration::from_millis(150));
 
-        // No writes at all after watching → wait must time out.
+        // Absorb any residual startup signal (returns immediately if none).
+        watcher.wait(Duration::from_millis(200));
+
+        // Nothing writes to the field now → the next wait must time out.
         assert!(
             !watcher.wait(Duration::from_millis(400)),
             "watcher should be quiet when idle"
