@@ -10,6 +10,8 @@
 
 **This is Plan 3 of 4** for the Hadron vertical slice (spec: `docs/superpowers/specs/2026-07-10-hadron-vertical-slice-design.md`). Plan 1 built the schema+engine; Plan 2 added git safety + nucleus. Plan 4 is the GPUI chamber.
 
+> **Execution status (2026-07-11):** Tasks 1–5 **executed and committed** (zero-spend, all `FakeRunner`/pure — 11 adapter tests green). Task 6 (live smoke tests — real budget + CLIs) **not yet run**; deliberately held for a human-present session. Two design corrections were made during execution: (a) `CliResult` dropped `session_id` — session parsing belongs in the Claude adapter, not the generic runner; (b) added tokio `process`/`io-util` features for `ProcessRunner`.
+
 ## ⚠️ Execution safety (read before running)
 
 - **This plan spends real API/subscription budget and spawns `claude` / `agy` subprocesses that can edit files.** Run it with a human present, in a throwaway target repo first.
