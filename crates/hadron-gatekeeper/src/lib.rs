@@ -4,6 +4,9 @@
 //! This crate is intentionally offline and side-effect-free. It does NOT classify
 //! commands, emit events, pause the daemon, or render UI — those are later slices.
 
+mod gate;
 mod matrix;
 
-pub use matrix::{decide, Decision, Policy, Risk};
+pub use gate::{pending_permission, PendingPermission};
+pub use hadron_lattice::Risk;
+pub use matrix::{decide, Decision, Policy};

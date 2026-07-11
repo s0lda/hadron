@@ -1,17 +1,5 @@
+use hadron_lattice::Risk;
 use serde::{Deserialize, Serialize};
-
-/// The category of a proposed operation. An *input* to the matrix — Hadron does
-/// not derive this from command text in the CLI-adapter architecture (a quark's
-/// turn surfaces only as a message, not structured tool calls). A later slice
-/// decides who supplies the `Risk`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Risk {
-    /// Writing, editing, or deleting files inside the workspace.
-    WorkspaceEdit,
-    /// Executing a shell command (includes publish-class ops like `cargo publish`).
-    BashExec,
-}
 
 /// The human's god-mode configuration: two independent bypass toggles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
