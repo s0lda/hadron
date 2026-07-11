@@ -5,7 +5,9 @@
 //! across sessions via [`crate::config`]. Themed with [`crate::theme`].
 
 use gpui::{
-    div, prelude::*, px, App, Application, Bounds, Context, Window, WindowBounds, WindowOptions,
+    div, prelude::*, px, App, Application, Bounds, Context, Decorations, MouseButton,
+    TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowOptions,
 };
 use hadron_lattice::{io, QuarkState};
 
@@ -19,16 +21,52 @@ struct Chamber {
 }
 
 impl Render for Chamber {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Client-side decorations (borderless + rounded + our own dark titlebar)
+        // only take effect where the platform supports them (Wayland/macOS). On
+        // server-decorated platforms (incl. WSLg X11) the WM draws the frame, so
+        // we skip our custom titlebar to avoid a double bar.
+        let client = matches!(window.window_decorations(), Decorations::Client { .. });
+
+        // A dark, draggable custom titlebar (only when we own the frame).
+        let titlebar = div()
+            .id("titlebar")
             .flex()
             .flex_row()
+            .items_center()
+            .h(px(38.0))
+            .w_full()
+            .px_4()
+            .bg(theme::sidebar())
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme::text_secondary())
+                    .child("Hadron · Chamber"),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _, window, _| window.start_window_move()),
+            );
+
+        let body = div()
+            .flex()
+            .flex_row()
+            .flex_1()
+            .child(self.roster_pane(cx))
+            .child(self.chat_pane())
+            .child(self.inspector_pane(cx));
+
+        div()
+            .id("root")
+            .flex()
+            .flex_col()
             .size_full()
             .bg(theme::bg())
             .text_color(theme::text())
-            .child(self.roster_pane(cx))
-            .child(self.chat_pane())
-            .child(self.inspector_pane(cx))
+            .when(client, |r| r.rounded_lg().overflow_hidden())
+            .when(client, |r| r.child(titlebar))
+            .child(body)
     }
 }
 
@@ -87,10 +125,8 @@ impl Chamber {
             .m_4()
             .px_3()
             .py_2()
-            .rounded_md()
+            .rounded_lg()
             .bg(theme::input_bg())
-            .border_1()
-            .border_color(theme::border())
             .child(
                 div()
                     .text_color(theme::text_muted())
@@ -240,6 +276,17 @@ pub fn run(field_path: Option<String>) {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                // Ask for a frameless, transparent, client-decorated window so we
+                // can draw our own dark titlebar with rounded corners. Falls back
+                // to server decorations where unsupported (e.g. WSLg X11).
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Hadron · Chamber".into()),
+                    appears_transparent: true,
+                    traffic_light_position: None,
+                }),
+                window_background: WindowBackgroundAppearance::Transparent,
+                window_decorations: Some(WindowDecorations::Client),
+                app_id: Some("dev.hadron.chamber".into()),
                 ..Default::default()
             },
             |_, cx| cx.new(|_| Chamber { view: view.clone(), prefs: prefs.clone() }),
