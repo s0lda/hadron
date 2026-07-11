@@ -147,6 +147,22 @@ mod tests {
     }
 
     #[test]
+    fn assign_becomes_a_row() {
+        let view = project(&[ev(
+            Actor::Human,
+            Some("agy"),
+            Kind::Assign {
+                task: "work".into(),
+                invariants: vec!["no errors".into()],
+            },
+        )]);
+        assert_eq!(view.messages.len(), 1);
+        let row = &view.messages[0];
+        assert_eq!(row.kind_label, "assign");
+        assert_eq!(row.body, "assigned: work (invariants: [\"no errors\"])");
+    }
+
+    #[test]
     fn latest_status_wins_in_roster() {
         let agy = || Actor::Quark(QuarkId::new("agy"));
         let view = project(&[

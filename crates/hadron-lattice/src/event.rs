@@ -266,6 +266,24 @@ mod event_tests {
     }
 
     #[test]
+    fn assign_event_round_trips() {
+        let ev = Event::new(
+            Actor::Human,
+            Some(QuarkId::new("claude")),
+            Kind::Assign {
+                task: "fix tests".into(),
+                invariants: vec!["pass".into()],
+            },
+        );
+        let line = serde_json::to_string(&ev).unwrap();
+        let back: Event = serde_json::from_str(&line).unwrap();
+        assert_eq!(ev, back);
+        assert!(line.contains(r#""kind":"assign""#));
+        assert!(line.contains(r#""task":"fix tests""#));
+        assert!(line.contains(r#""invariants":["pass"]"#));
+    }
+
+    #[test]
     fn null_to_deserializes_as_none() {
         let line = r#"{"v":1,"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","ts":"2026-07-10T14:00:00Z","from":"claude","to":null,"kind":"status","state":"ground"}"#;
         let ev: Event = serde_json::from_str(line).unwrap();
