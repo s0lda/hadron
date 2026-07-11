@@ -60,6 +60,7 @@ impl<R: CliRunner> Quark for ClaudeQuark<R> {
                 let t = text.trim();
                 return Ok(TurnOutcome {
                     message: if t.is_empty() { None } else { Some(t.to_string()) },
+                    used_tokens: 0,
                 });
             }
         }

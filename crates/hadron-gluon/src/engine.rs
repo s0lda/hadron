@@ -231,7 +231,7 @@ mod tests {
             }
             async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
                 assert!(turn.nucleus_digest.contains("## map.md"));
-                Ok(TurnOutcome { message: Some("done".into()) })
+                Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0 })
             }
         }
 
