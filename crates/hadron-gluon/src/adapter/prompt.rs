@@ -76,6 +76,7 @@ mod tests {
         Projection {
             task: task.into(),
             invariants: "Snapshot before editing. Use @mentions.".into(),
+            available_invariants: vec![],
             nucleus_digest: "## map.md\nauth lives in src/auth".into(),
             roster: vec![QuarkCard {
                 id: QuarkId::new("agy"),

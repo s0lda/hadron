@@ -12,6 +12,9 @@ pub struct Projection {
     pub task: String,
     /// Enforced working protocol, injected as a Markdown preamble. v1: static.
     pub invariants: String,
+    /// Available invariants loaded from the nucleus.
+    #[serde(default)]
+    pub available_invariants: Vec<String>,
     /// Relevant slice of the project SSOT (nucleus). v1: may be empty.
     pub nucleus_digest: String,
     /// Who exists, their flavor and energy — enables orchestration.
@@ -42,6 +45,7 @@ mod tests {
         let proj = Projection {
             task: "Build auth".into(),
             invariants: "Snapshot before editing.".into(),
+            available_invariants: vec![],
             nucleus_digest: String::new(),
             roster: vec![QuarkCard {
                 id: QuarkId::new("agy"),
