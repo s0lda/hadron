@@ -6,13 +6,16 @@
 //! Both rails drag-resize and collapse; a single shared [`ResizableState`] drives
 //! both gestures, and widths + collapse state persist via [`crate::config`].
 
+use std::path::PathBuf;
+
 use gpui::{
-    div, prelude::*, px, App, Context, Entity, Render, Window, WindowBounds, WindowDecorations,
-    WindowOptions,
+    div, prelude::*, px, App, Context, Entity, Render, Subscription, Window, WindowBounds,
+    WindowDecorations, WindowOptions,
 };
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::resizable::{h_resizable, resizable_panel, ResizableState};
 use gpui_component::{h_flex, v_flex, Root, Theme, ThemeMode, TitleBar};
-use hadron_lattice::{io, QuarkState};
+use hadron_lattice::{io, Actor, Event, Kind, QuarkState};
 
 use crate::config::{self, ChamberPrefs};
 use crate::model::{self, ChamberView, MessageRow, RosterRow};
@@ -27,9 +30,69 @@ const RAIL_COLLAPSED: f32 = 36.0;
 struct Chamber {
     view: ChamberView,
     prefs: ChamberPrefs,
+    /// The field file this chamber reads from and steers into.
+    path: PathBuf,
     /// Shared sizing state for the 3-pane body. Drag handles mutate it, and the
     /// collapse toggles drive it programmatically, so both gestures agree.
     resize_state: Entity<ResizableState>,
+    /// The human's message box at the foot of the chat column.
+    input: Entity<InputState>,
+    /// Keeps the input-submit subscription alive for the window's lifetime.
+    _input_sub: Subscription,
+}
+
+impl Chamber {
+    fn new(
+        view: ChamberView,
+        prefs: ChamberPrefs,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let resize_state = cx.new(|_| ResizableState::default());
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .auto_grow(1, 4)
+                .submit_on_enter(true)
+                .placeholder("Type @quark a message…  (Enter to send · Shift+Enter for newline)")
+        });
+        let _input_sub = cx.subscribe_in(&input, window, Self::on_input_submit);
+        Chamber { view, prefs, path, resize_state, input, _input_sub }
+    }
+
+    /// Submit the human's message on Enter (Shift+Enter inserts a newline).
+    /// Appends an `Actor::Human` event to the field — the same bus the quarks
+    /// use — then re-reads and re-projects so the new row appears immediately.
+    fn on_input_submit(
+        &mut self,
+        input: &Entity<InputState>,
+        event: &InputEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let InputEvent::PressEnter { shift, .. } = event else {
+            return;
+        };
+        if *shift {
+            return;
+        }
+        let text = input.read(cx).value().trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+
+        let (to, body) = model::parse_mention(&text);
+        let ev = Event::new(Actor::Human, to, Kind::Message { body });
+        if let Err(e) = io::append_event(&self.path, &ev) {
+            eprintln!("chamber: failed to append steering message: {e}");
+            return;
+        }
+
+        input.update(cx, |state, cx| state.set_value("", window, cx));
+        let events = io::read_events(&self.path).unwrap_or_default();
+        self.view = model::project(&events);
+        cx.notify();
+    }
 }
 
 impl Render for Chamber {
@@ -175,17 +238,11 @@ impl Chamber {
         }
 
         let input = h_flex()
-            .items_center()
             .m_4()
-            .px_3()
-            .py_2()
+            .px_1()
             .rounded_lg()
             .bg(theme::input_bg())
-            .child(
-                div()
-                    .text_color(theme::text_muted())
-                    .child("type @quark a message…  (input coming soon)"),
-            );
+            .child(Input::new(&self.input));
 
         v_flex().w_full().h_full().bg(theme::bg()).child(messages).child(input)
     }
@@ -312,7 +369,8 @@ pub fn run(field_path: Option<String>) {
         eprintln!("usage: hadron-chamber <field.jsonl>");
         return;
     };
-    let events = io::read_events(std::path::Path::new(&path)).unwrap_or_default();
+    let field_path = PathBuf::from(&path);
+    let events = io::read_events(&field_path).unwrap_or_default();
     let view = model::project(&events);
     let prefs = config::load();
 
@@ -334,11 +392,8 @@ pub fn run(field_path: Option<String>) {
 
         cx.spawn(async move |cx| {
             cx.open_window(window_options, move |window, cx| {
-                let resize_state = cx.new(|_| ResizableState::default());
-                let chamber = cx.new(|_| Chamber {
-                    view: view.clone(),
-                    prefs: prefs.clone(),
-                    resize_state,
+                let chamber = cx.new(|cx| {
+                    Chamber::new(view.clone(), prefs.clone(), field_path.clone(), window, cx)
                 });
                 cx.new(|cx| Root::new(chamber, window, cx).bordered(false))
             })
