@@ -87,6 +87,7 @@ mod tests {
         Projection {
             task: task.into(),
             invariants: String::new(),
+            available_invariants: vec![],
             nucleus_digest: String::new(),
             roster: vec![],
             field_window: vec![],
