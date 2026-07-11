@@ -60,6 +60,7 @@ pub enum Kind {
     Edit { paths: Vec<String>, git: String, summary: String },
     Command { cmd: String, exit: i32, out_summary: String },
     Snapshot { git: String, label: String },
+    EnergyReport { used_tokens: u32 },
     /// Any kind this version does not understand. `raw` holds the full set of
     /// non-envelope fields so the event can be re-serialized and displayed.
     Unknown { kind: String, raw: Value },
@@ -126,6 +127,10 @@ impl Serialize for Event {
                 m.serialize_entry("git", git)?;
                 m.serialize_entry("label", label)?;
             }
+            Kind::EnergyReport { used_tokens } => {
+                m.serialize_entry("kind", "energy_report")?;
+                m.serialize_entry("used_tokens", used_tokens)?;
+            }
             Kind::Unknown { kind, raw } => {
                 m.serialize_entry("kind", kind)?;
                 if let Value::Object(obj) = raw {
@@ -183,6 +188,9 @@ impl<'de> Deserialize<'de> for Event {
             "snapshot" => Kind::Snapshot {
                 git: take_field(&mut map, "git")?,
                 label: take_field(&mut map, "label")?,
+            },
+            "energy_report" => Kind::EnergyReport {
+                used_tokens: take_field(&mut map, "used_tokens")?,
             },
             other => Kind::Unknown {
                 kind: other.to_string(),
