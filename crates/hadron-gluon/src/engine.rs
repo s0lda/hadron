@@ -83,21 +83,6 @@ impl Engine {
                 None => return Ok(()), // quiesce: control returns to the human
             };
 
-            if let Some(ledger) = &self.ledger {
-                if ledger.is_depleted(&target, self.energy_limit)? {
-                    let msg = format!("⚠️ Quark {} is depleted (exceeded {} tokens).", target.as_str(), self.energy_limit);
-                    append_event(
-                        &self.field_path,
-                        &Event::new(Actor::Gluon, None, Kind::Message { body: msg }),
-                    )?;
-                    append_event(
-                        &self.field_path,
-                        &Event::new(Actor::Quark(target.clone()), None, Kind::Status { state: QuarkState::Blocked }),
-                    )?;
-                    continue; // Reroute: skip this quark and process the next pending event
-                }
-            }
-
             if exchanges >= self.max_exchanges {
                 append_event(
                     &self.field_path,
@@ -113,6 +98,21 @@ impl Engine {
                     ),
                 )?;
                 return Ok(());
+            }
+
+            if let Some(ledger) = &self.ledger {
+                if ledger.is_depleted(&target, self.energy_limit)? {
+                    let msg = format!("⚠️ Quark {} is depleted (exceeded {} tokens).", target.as_str(), self.energy_limit);
+                    append_event(
+                        &self.field_path,
+                        &Event::new(Actor::Gluon, None, Kind::Message { body: msg }),
+                    )?;
+                    append_event(
+                        &self.field_path,
+                        &Event::new(Actor::Quark(target.clone()), None, Kind::Status { state: QuarkState::Blocked }),
+                    )?;
+                    continue; // Reroute: skip this quark and process the next pending event
+                }
             }
 
             let git_diff = if let Some(root) = &self.repo_root {
