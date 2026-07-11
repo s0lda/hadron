@@ -88,7 +88,7 @@ mod tests {
 
     fn engine_with_quark(field: &Path, id: &str, reply: &str) -> Engine {
         let quark = MockQuark::repeating(QuarkId::new(id), Flavor::Orchestrator, reply);
-        Engine::new(field.to_path_buf(), vec![Box::new(quark)], String::new(), 8)
+        Engine::new(field.to_path_buf(), vec![Box::new(quark)], 8)
     }
 
     /// Poll the field for up to ~4s waiting for a `body` message to appear.

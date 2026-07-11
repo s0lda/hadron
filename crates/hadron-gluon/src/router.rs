@@ -43,7 +43,7 @@ pub fn parse_addressee(body: &str, roster: &[QuarkCard]) -> Option<QuarkId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hadron_lattice::{EnergyState, Flavor};
+    use hadron_lattice::{EnergyState, Flavor, Kind};
 
     fn msg(from: Actor, to: Option<&str>, body: &str) -> Event {
         Event::new(from, to.map(QuarkId::new), Kind::Message { body: body.into() })
