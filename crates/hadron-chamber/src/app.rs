@@ -11,9 +11,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
-    actions, div, prelude::*, px, rgb, rgba, App, Context, Entity, FocusHandle, Hsla, KeyBinding,
-    MouseButton, Render, Rgba, SharedString, Subscription, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
+    actions, div, prelude::*, px, rgb, rgba, App, Context, Decorations, Entity, FocusHandle, Hsla,
+    KeyBinding, MouseButton, Pixels, Render, Rgba, SharedString, Subscription, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::resizable::{h_resizable, resizable_panel};
@@ -474,9 +474,14 @@ impl Chamber {
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let titlebar = self.titlebar(window, cx);
+        // Match the client frame's rounded corners on the top/bottom strips, so
+        // their opaque fills don't paint square nubs into the frame's arcs (the
+        // frame's overflow_hidden clips to a rectangle, not the radius). Zero on
+        // any tiled edge, so a maximized/snapped window stays square.
+        let (top_radius, bottom_radius) = frame_corner_radii(window);
+        let titlebar = self.titlebar(window, cx, top_radius);
         let body = self.body(cx);
-        let status = self.status_bar();
+        let status = self.status_bar(bottom_radius);
         let overlay = self.palette_open.then(|| self.palette_overlay(cx));
         let settings = self.settings_open.then(|| self.settings_overlay(cx));
 
@@ -503,7 +508,12 @@ impl Chamber {
     /// Our own titlebar: a centered command bar (Ctrl+Shift+P), draggable side
     /// regions, and custom min/max/close controls with *circular* hover — Zed-like,
     /// and a circle can't poke a square corner past the rounded frame.
-    fn titlebar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn titlebar(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        top_radius: Pixels,
+    ) -> impl IntoElement {
         let command_bar = h_flex()
             .id("command-bar")
             .items_center()
@@ -559,6 +569,8 @@ impl Chamber {
             .flex_none()
             .items_center()
             .bg(theme::sidebar())
+            .rounded_tl(top_radius)
+            .rounded_tr(top_radius)
             .border_b_1()
             .border_color(theme::border())
             .child(drag_region("drag-l"))
@@ -576,7 +588,7 @@ impl Chamber {
 
     /// The status bar along the foot of the window (same tone as the titlebar).
     /// Placeholder content for now.
-    fn status_bar(&self) -> impl IntoElement {
+    fn status_bar(&self, bottom_radius: Pixels) -> impl IntoElement {
         h_flex()
             .w_full()
             .h(px(24.0))
@@ -585,6 +597,8 @@ impl Chamber {
             .justify_between()
             .px_3()
             .bg(theme::sidebar())
+            .rounded_bl(bottom_radius)
+            .rounded_br(bottom_radius)
             .border_t_1()
             .border_color(theme::border())
             .text_xs()
@@ -1227,6 +1241,20 @@ impl Chamber {
         }
         let _ = config::save(&self.prefs);
         cx.notify();
+    }
+}
+
+/// Corner radii for the top and bottom window strips, matching the client
+/// frame ([`crate::window_frame`]). Nested just inside the frame's 1px border,
+/// and zero on a tiled edge (maximized/snapped) so those corners stay square.
+fn frame_corner_radii(window: &Window) -> (Pixels, Pixels) {
+    let r = crate::window_frame::FRAME_RADIUS - px(1.0);
+    match window.window_decorations() {
+        Decorations::Client { tiling } => (
+            if tiling.top { px(0.0) } else { r },
+            if tiling.bottom { px(0.0) } else { r },
+        ),
+        Decorations::Server => (px(0.0), px(0.0)),
     }
 }
 
