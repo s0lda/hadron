@@ -1,11 +1,18 @@
 //! The chamber: Hadron's viewer. Without `--features gui` this is a headless
 //! smoke binary that projects a field file and prints row counts (proves the
-//! model links without GPUI). With `gui`, it launches the GPUI window (Task 3+).
+//! model links without GPUI). With `gui`, it launches the GPUI window.
 
 mod model;
 
+// Layout persistence is used by the window; keep it compiled (and unit-tested)
+// in the default build, but don't warn when the headless binary ignores it.
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+mod config;
+
 #[cfg(feature = "gui")]
 mod app;
+#[cfg(feature = "gui")]
+mod theme;
 
 fn main() {
     let path = std::env::args().nth(1);

@@ -5,15 +5,17 @@ edition = "2021"
 
 [dependencies]
 hadron-lattice = { path = "../hadron-lattice" }
-# GPUI is optional and off by default so the pure view-model builds/tests without
-# it. The window lives behind `--features gui`. See Plan 4.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# GPUI is optional and off by default so the pure view-model + config build/test
+# without it. The window lives behind `--features gui`. See Plan 4.
 gpui = { version = "0.2", optional = true }
 
 [features]
 gui = ["dep:gpui"]
 
 [dev-dependencies]
-serde_json = "1"
+tempfile = "3"
 
 [[bin]]
 name = "hadron-chamber"
