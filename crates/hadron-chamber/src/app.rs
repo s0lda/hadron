@@ -17,8 +17,13 @@ use gpui::{
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::resizable::{h_resizable, resizable_panel};
-use gpui_component::{h_flex, v_flex, Icon, IconName, Root, Sizable, Theme, ThemeMode, TitleBar};
-use hadron_lattice::{io, Actor, Event, Kind, QuarkState};
+use gpui_component::avatar::Avatar;
+use gpui_component::badge::Badge;
+use gpui_component::tooltip::Tooltip;
+use gpui_component::{
+    h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar,
+};
+use hadron_lattice::{io, Actor, Event, Kind};
 
 use crate::config::{self, ChamberPrefs};
 use crate::model::{self, ChamberView, MessageRow, RosterRow};
@@ -381,6 +386,9 @@ impl Chamber {
             .gap_1()
             .pr(px(8.0))
             .flex_shrink_0()
+            // App/options menu (placeholder — the 3-line menu; options land later).
+            .child(menu_button())
+            .child(div().w(px(6.0)))
             .child(control_button("min", IconName::WindowMinimize, false))
             .child(control_button(
                 "max",
@@ -673,6 +681,27 @@ impl Chamber {
     }
 }
 
+/// The titlebar's app/options menu — a 3-line "hamburger" with circular hover.
+/// Placeholder for now: opening a menu of options lands later. Stops propagation
+/// so a press here can't start a window move.
+fn menu_button() -> impl IntoElement {
+    div()
+        .id("app-menu")
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(26.0))
+        .rounded_full()
+        .text_color(theme::text_secondary())
+        .hover(|s| s.bg(theme::surface_raised()).text_color(theme::text()))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(|_, _window, cx| {
+            cx.stop_propagation();
+            // TODO: open the options menu (placeholder — items TBD with Jake).
+        })
+        .child(Icon::new(IconName::Menu).small())
+}
+
 /// A circular window-control button (min / max / close) with circular hover.
 fn control_button(id: &'static str, icon: IconName, is_close: bool) -> impl IntoElement {
     let hover_bg = if is_close {
@@ -712,21 +741,47 @@ fn drag_region(id: &'static str) -> impl IntoElement {
         .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
 }
 
+/// One roster entry, styled as a presence list-item: an initials [`Avatar`] with
+/// a status [`Badge`] dot, a display name, and a one-word presence subtitle, with
+/// a tooltip on hover. Display name currently derives from the quark id — a
+/// Settings-chosen name/avatar lands here later.
 fn roster_row(r: &RosterRow) -> impl IntoElement {
+    let name = r.id.clone();
+    let label = theme::presence_label(r.state);
+    let tip: SharedString = format!("{name} — {label}").into();
+
     h_flex()
-        .justify_between()
+        .id(SharedString::from(format!("quark-{}", r.id)))
         .items_center()
+        .gap_2p5()
         .px_2()
-        .py_1()
+        .py_1p5()
         .rounded_md()
-        .bg(theme::surface())
-        .child(div().child(r.id.clone()))
+        .hover(|s| s.bg(theme::surface()))
         .child(
-            div()
-                .text_sm()
-                .text_color(theme::quark_state(r.state))
-                .child(state_label(r.state)),
+            Badge::new()
+                .dot()
+                .color(theme::presence(r.state))
+                .child(Avatar::new().name(name.clone()).with_size(Size::Small)),
         )
+        .child(
+            v_flex()
+                .min_w_0()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme::text())
+                        .truncate()
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::presence(r.state))
+                        .child(label),
+                ),
+        )
+        .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
 }
 
 fn message_row(m: &MessageRow) -> impl IntoElement {
@@ -747,10 +802,6 @@ fn message_row(m: &MessageRow) -> impl IntoElement {
                 .text_color(theme::text_secondary())
                 .child(m.body.clone()),
         )
-}
-
-fn state_label(state: QuarkState) -> String {
-    format!("{state:?}").to_lowercase()
 }
 
 /// Launch the chamber window against a field file path.
