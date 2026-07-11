@@ -91,11 +91,28 @@ mod tests {
         Engine::new(field.to_path_buf(), vec![Box::new(quark)], String::new(), 8)
     }
 
+    /// Poll the field for up to ~4s waiting for a `body` message to appear.
+    async fn wait_for_message(field: &Path, body: &str) -> bool {
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let events = read_events(field).unwrap();
+            if events
+                .iter()
+                .any(|e| matches!(&e.kind, Kind::Message { body: b } if b == body))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Startup pass: a message already in the field is processed by the first
+    /// `run_until_quiesce` before the daemon ever idles. (Does NOT exercise the
+    /// wake path — see `daemon_wakes_from_idle_...` for that.)
     #[tokio::test]
-    async fn daemon_processes_an_appended_message_then_shuts_down() {
+    async fn daemon_processes_a_preexisting_message_on_startup() {
         let dir = tempdir().unwrap();
         let field = dir.path().join("field.jsonl");
-        // Seed the file so the watcher's parent dir exists and is watchable.
         append_event(&field, &human_msg("agy", "hello")).unwrap();
 
         let mut engine = engine_with_quark(&field, "agy", "pong");
@@ -103,28 +120,67 @@ mod tests {
 
         let handle = tokio::spawn(async move { engine.serve(rx).await });
 
-        // Poll for the quark's reply to land (safety-poll floor is 500ms; give margin).
-        let mut saw_reply = false;
-        for _ in 0..40 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let events = read_events(&field).unwrap();
-            if events
-                .iter()
-                .any(|e| matches!(&e.kind, Kind::Message { body } if body == "pong"))
-            {
-                saw_reply = true;
-                break;
-            }
-        }
         assert!(
-            saw_reply,
-            "daemon should have processed the seeded message and appended a reply"
+            wait_for_message(&field, "pong").await,
+            "daemon should have processed the pre-existing message and appended a reply"
         );
 
-        // Shut down and confirm serve() returns Ok promptly.
         tx.send(true).unwrap();
         let joined = tokio::time::timeout(Duration::from_secs(3), handle).await;
         assert!(joined.is_ok(), "serve() should return promptly after shutdown");
+        joined.unwrap().unwrap().unwrap();
+    }
+
+    /// The headline Phase 4 behavior: the daemon idles at ~0% CPU on a quiesced
+    /// field, and when an append arrives it wakes (notify, or the safety-poll
+    /// floor) and processes it — no interaction, no restart.
+    #[tokio::test]
+    async fn daemon_wakes_from_idle_when_the_field_grows() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        // Start on an EMPTY field: the startup pass quiesces immediately, so the
+        // daemon is genuinely idle in `select!` when the message lands.
+        let mut engine = engine_with_quark(&field, "agy", "pong");
+        let (tx, rx) = watch::channel(false);
+        let handle = tokio::spawn(async move { engine.serve(rx).await });
+
+        // Let it reach the idle select, THEN inject the message.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        append_event(&field, &human_msg("agy", "hello")).unwrap();
+
+        assert!(
+            wait_for_message(&field, "pong").await,
+            "daemon should have woken from idle and processed the appended message"
+        );
+
+        tx.send(true).unwrap();
+        let joined = tokio::time::timeout(Duration::from_secs(3), handle).await;
+        assert!(joined.is_ok(), "serve() should return promptly after shutdown");
+        joined.unwrap().unwrap().unwrap();
+    }
+
+    /// Even if the watcher bridge never starts (its parent dir doesn't exist, so
+    /// `FieldWatcher::new` fails), the daemon must not busy-spin: the `change_open`
+    /// guard drops the dead channel arm and the safety-poll carries the loop. It
+    /// still shuts down promptly.
+    #[tokio::test]
+    async fn daemon_does_not_spin_when_the_watcher_bridge_dies() {
+        // Nonexistent parent dir → FieldWatcher::new errs → bridge returns →
+        // change_tx drops. run_until_quiesce reads a missing file as empty → quiesce.
+        let field = Path::new("/nonexistent-hadron-dir-xyz/field.jsonl").to_path_buf();
+        let mut engine = engine_with_quark(&field, "agy", "pong");
+        let (tx, rx) = watch::channel(false);
+        let handle = tokio::spawn(async move { engine.serve(rx).await });
+
+        // Give the dead-channel path time to run several loop turns; if it spun,
+        // this window would peg a core but still not hang the test.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        tx.send(true).unwrap();
+        let joined = tokio::time::timeout(Duration::from_secs(3), handle).await;
+        assert!(
+            joined.is_ok(),
+            "serve() should shut down promptly even with a dead watcher bridge"
+        );
         joined.unwrap().unwrap().unwrap();
     }
 
