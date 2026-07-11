@@ -56,6 +56,7 @@ fn render_row(e: &Event) -> MessageRow {
         Kind::Command { cmd, exit, .. } => (format!("$ {cmd} (exit {exit})"), "command"),
         Kind::Snapshot { label, .. } => (format!("snapshot: {label}"), "snapshot"),
         Kind::EnergyReport { used_tokens } => (format!("used {used_tokens} tokens"), "energy_report"),
+        Kind::Assign { task, invariants } => (format!("assigned: {task} (invariants: {:?})", invariants), "assign"),
         Kind::Unknown { kind, .. } => (format!("unrecognized event: {kind}"), "unrecognized"),
     };
     MessageRow {
