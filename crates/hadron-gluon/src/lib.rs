@@ -8,3 +8,4 @@ pub mod router;
 pub mod snapshot;
 pub mod ledger;
 pub mod watch;
+pub mod daemon;
