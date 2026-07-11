@@ -97,6 +97,24 @@ pub fn list(repo_root: &Path) -> anyhow::Result<Vec<SnapshotRef>> {
     Ok(refs)
 }
 
+/// The current working diff against HEAD — what a quark has changed so far.
+/// Feeds `Projection.git_diff`. Empty string when the repo has no commit yet.
+pub fn working_diff(repo_root: &Path) -> anyhow::Result<String> {
+    if head_commit(repo_root).is_none() {
+        return Ok(String::new());
+    }
+    git(repo_root, &["diff", "HEAD"])
+}
+
+/// Restore the worktree to a snapshot (undo). Reverts tracked paths to the
+/// snapshot's tree without moving HEAD or the branch. v1 limitation: files
+/// created after the snapshot are left in place (documented; a hard clean is a
+/// later concern).
+pub fn restore(repo_root: &Path, snap: &SnapshotRef) -> anyhow::Result<()> {
+    git(repo_root, &["restore", "--source", &snap.commit, "--worktree", "--", "."])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +179,29 @@ mod tests {
         let labels: Vec<&str> = listed.iter().map(|s| s.label.as_str()).collect();
         assert!(labels.contains(&"first"));
         assert!(labels.contains(&"second"));
+    }
+
+    #[test]
+    fn working_diff_shows_uncommitted_edits() {
+        let dir = repo_with_file("a.txt", "one\n");
+        let root = dir.path();
+        assert_eq!(working_diff(root).unwrap(), "");
+        std::fs::write(root.join("a.txt"), "changed\n").unwrap();
+        let diff = working_diff(root).unwrap();
+        assert!(diff.contains("a.txt"));
+        assert!(diff.contains("+changed"));
+    }
+
+    #[test]
+    fn restore_reverts_worktree_to_snapshot() {
+        let dir = repo_with_file("a.txt", "one\n");
+        let root = dir.path();
+        // Snapshot the clean state, then mutate the file.
+        let snap = create(root, "clean").unwrap();
+        std::fs::write(root.join("a.txt"), "corrupted\n").unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), "corrupted\n");
+
+        restore(root, &snap).unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), "one\n");
     }
 }
