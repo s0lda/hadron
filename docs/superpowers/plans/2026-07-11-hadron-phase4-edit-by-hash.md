@@ -1,6 +1,6 @@
 # Hadron Phase 4 (core slice) — Edit-by-Hash: AST Block Hashing & Optimistic Concurrency
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Give Hadron the pure, testable heart of Phase 4's "manage concurrent, multi-agent file editing without corrupting line numbers": parse a Rust source file into logical blocks (functions, structs, enums, impls, traits), hash each block with blake3, and reconcile an agent's edit against a block's hash so a stale edit is *rejected* instead of clobbering another agent's change.
 
@@ -9,6 +9,8 @@
 **Why a separate crate (not `hadron-gluon`):** the roadmap files this under `hadron-gluon`, but `tree-sitter`/`blake3` are heavy C-compiling deps that must not leak into the lightweight `hadron-lattice` schema crate (which `hadron-chamber` depends on) nor bloat `hadron-gluon` unnecessarily. A standalone `hadron-forge` keeps the heavy deps confined, is reusable by both the gluon engine (edit application) and the chamber (block-overlay visualization, Phase 5), and — importantly — **merges cleanly alongside Phase 3**, which is concurrently editing `hadron-lattice` and `hadron-gluon`. When Phase 3 and the swarm-loop land, the engine takes a dependency on `hadron-forge`; nothing here touches Phase 3's files.
 
 **Tech Stack:** Rust (edition 2021), `tree-sitter = "0.22"`, `tree-sitter-rust = "0.21"`, `blake3 = "1"`. No dev-deps beyond the std test harness.
+
+> **Execution status (2026-07-11):** All 3 tasks **executed and committed** on branch `worktree-phase4-edit-by-hash` (branched from `main`, isolated from Gemini's concurrent Phase 3 work). 9 new `hadron-forge` tests green (5 block + 4 edit, incl. the concurrent-edit-rejection thesis test); full `cargo test --workspace` = 73 passed / 0 failed; `clippy -p hadron-forge` clean. Zero API spend, zero external process, no GPUI in the path. Deferred items (notify watcher, tokio/reqwest swarm loop, new `Kind` event variants) intentionally held — they extend Phase 3's `engine.rs`/`event.rs` and must merge after Phase 3 lands.
 
 **This is the isolable core of Phase 4** (roadmap: `docs/plans/001_Initial_Plan.md` §"Phase 4: The 0-CPU File Bus & Edit-by-Hash"). Deliberately **out of scope** for this slice (see "Deferred / bought land"): the `notify` filesystem watcher, the tokio 0-CPU swarm loop, `reqwest` API calls, and any new `hadron-lattice` `Kind` variants — those extend Phase 3's `engine.rs`/`event.rs` and must merge *after* Phase 3.
 
@@ -47,7 +49,7 @@
   - `pub fn short_hash(text: &str) -> String` — blake3 hex, first `HASH_LEN` chars.
   - `pub fn parse_blocks(source: &str) -> Vec<Block>` — top-level items in source order; unparseable/empty → empty vec.
 
-- [ ] **Step 1: Create the crate manifest and register it in the workspace**
+- [x] **Step 1: Create the crate manifest and register it in the workspace**
 
 Create `crates/hadron-forge/Cargo.toml`:
 ```toml
@@ -82,7 +84,7 @@ pub mod edit;
 // Implemented in Task 2.
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `crates/hadron-forge/src/block.rs`:
 ```rust
@@ -295,17 +297,17 @@ trait Shape { fn area(&self) -> f64; }
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail (compile first)**
+- [x] **Step 3: Run the tests to verify they fail (compile first)**
 
 Run: `cargo test -p hadron-forge block::`
 Expected: the crate compiles (deps fetch on first build — allow time), tests run. If you wrote `block.rs` exactly as above they should PASS immediately; the "failing" gate here is really "does the whole thing build and the assertions hold" — if any assertion is wrong, fix the *assertion* to match validated behavior, not the code.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p hadron-forge block::`
 Expected: PASS (5 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add crates/hadron-forge/Cargo.toml crates/hadron-forge/src/lib.rs crates/hadron-forge/src/block.rs Cargo.toml
 git commit -m "feat(forge): parse Rust into blake3-hashed top-level blocks"
@@ -325,7 +327,7 @@ git commit -m "feat(forge): parse Rust into blake3-hashed top-level blocks"
   - `pub enum EditOutcome { Applied { new_source: String }, Rejected { reason: String } }`
   - `pub fn apply_edit(source: &str, edit: &HashedEdit) -> EditOutcome`
 
-- [ ] **Step 1: Write the failing tests + implementation**
+- [x] **Step 1: Write the failing tests + implementation**
 
 Replace `crates/hadron-forge/src/edit.rs` with:
 ```rust
@@ -469,12 +471,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the tests**
+- [x] **Step 2: Run the tests**
 
 Run: `cargo test -p hadron-forge edit::`
 Expected: PASS (4 tests).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 ```bash
 git add crates/hadron-forge/src/edit.rs
 git commit -m "feat(forge): optimistic-concurrency apply_edit (stale/ambiguous rejection)"
@@ -489,17 +491,17 @@ git commit -m "feat(forge): optimistic-concurrency apply_edit (stale/ambiguous r
 
 **Interfaces:** none.
 
-- [ ] **Step 1: Full workspace build & test (default features)**
+- [x] **Step 1: Full workspace build & test (default features)**
 
 Run: `cargo test --workspace`
 Expected: PASS — the pre-existing 64 tests plus 9 new `hadron-forge` tests (5 block + 4 edit), 0 failures, zero API spend, no GPUI in the path (the `gui` feature stays off).
 
-- [ ] **Step 2: Lint the new crate**
+- [x] **Step 2: Lint the new crate**
 
 Run: `cargo clippy -p hadron-forge --all-targets`
 Expected: no warnings from `hadron-forge` (fix any that appear; the crate is small and should be clean).
 
-- [ ] **Step 3: Commit any lint fixes (if the previous step changed files)**
+- [x] **Step 3: Commit any lint fixes (if the previous step changed files)**
 ```bash
 git add crates/hadron-forge/src
 git commit -m "chore(forge): clippy clean"
