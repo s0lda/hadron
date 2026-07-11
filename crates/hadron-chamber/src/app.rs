@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, App, Context, Entity, Render, Subscription, Window, WindowBounds,
-    WindowDecorations, WindowOptions,
+    actions, div, prelude::*, px, rgba, App, Context, Entity, FocusHandle, KeyBinding, Render,
+    Subscription, Window, WindowBounds, WindowDecorations, WindowOptions,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::resizable::{h_resizable, resizable_panel, ResizableState};
@@ -22,11 +22,47 @@ use crate::config::{self, ChamberPrefs};
 use crate::model::{self, ChamberView, MessageRow, RosterRow};
 use crate::theme;
 
+actions!(chamber, [TogglePalette]);
+
+/// Key-dispatch context for the chamber's window-level actions.
+const KEY_CONTEXT: &str = "Chamber";
+
 /// Panel indices within the body's [`ResizableState`] (roster · chat · inspector).
 const ROSTER_IX: usize = 0;
 const INSPECTOR_IX: usize = 2;
 /// Width a rail shrinks to when collapsed — just enough for the toggle.
 const RAIL_COLLAPSED: f32 = 36.0;
+
+/// Commands offered by the Ctrl+Shift+P palette. v1: the two rail toggles.
+#[derive(Clone, Copy)]
+enum PaletteCmd {
+    ToggleRoster,
+    ToggleInspector,
+}
+
+impl PaletteCmd {
+    const ALL: [PaletteCmd; 2] = [PaletteCmd::ToggleRoster, PaletteCmd::ToggleInspector];
+
+    /// Label reflects the current rail state, so the verb matches what will happen.
+    fn label(self, prefs: &ChamberPrefs) -> &'static str {
+        match self {
+            PaletteCmd::ToggleRoster => {
+                if prefs.roster_collapsed {
+                    "Show Quarks rail"
+                } else {
+                    "Hide Quarks rail"
+                }
+            }
+            PaletteCmd::ToggleInspector => {
+                if prefs.inspector_collapsed {
+                    "Show Inspector"
+                } else {
+                    "Hide Inspector"
+                }
+            }
+        }
+    }
+}
 
 struct Chamber {
     view: ChamberView,
@@ -38,8 +74,15 @@ struct Chamber {
     resize_state: Entity<ResizableState>,
     /// The human's message box at the foot of the chat column.
     input: Entity<InputState>,
-    /// Keeps the input-submit subscription alive for the window's lifetime.
+    /// Root focus target, so Ctrl+Shift+P dispatches regardless of what's focused.
+    focus_handle: FocusHandle,
+    /// Whether the Ctrl+Shift+P command palette overlay is showing.
+    palette_open: bool,
+    /// The palette's filter box.
+    palette_input: Entity<InputState>,
+    /// Keep the two input subscriptions alive for the window's lifetime.
     _input_sub: Subscription,
+    _palette_sub: Subscription,
 }
 
 impl Chamber {
@@ -59,6 +102,13 @@ impl Chamber {
         });
         let _input_sub = cx.subscribe_in(&input, window, Self::on_input_submit);
 
+        let focus_handle = cx.focus_handle();
+        window.focus(&focus_handle, cx);
+        let palette_input = cx.new(|cx| {
+            InputState::new(window, cx).submit_on_enter(true).placeholder("Run a command…")
+        });
+        let _palette_sub = cx.subscribe_in(&palette_input, window, Self::on_palette_submit);
+
         // Live tail: re-read the field on an interval so quark turns appended by
         // the gluon (a separate process) appear without interaction. Dumb full
         // re-read — the field is small and this matches the engine's own posture.
@@ -73,7 +123,132 @@ impl Chamber {
         })
         .detach();
 
-        Chamber { view, prefs, path, resize_state, input, _input_sub }
+        Chamber {
+            view,
+            prefs,
+            path,
+            resize_state,
+            input,
+            focus_handle,
+            palette_open: false,
+            palette_input,
+            _input_sub,
+            _palette_sub,
+        }
+    }
+
+    /// Toggle the command palette (Ctrl+Shift+P, or the titlebar bar). Opening
+    /// clears + focuses the filter box; closing returns focus to the root.
+    fn on_toggle_palette(&mut self, _: &TogglePalette, window: &mut Window, cx: &mut Context<Self>) {
+        self.palette_open = !self.palette_open;
+        if self.palette_open {
+            self.palette_input.update(cx, |state, cx| {
+                state.set_value("", window, cx);
+                state.focus(window, cx);
+            });
+        } else {
+            window.focus(&self.focus_handle, cx);
+        }
+        cx.notify();
+    }
+
+    /// Run the top match when the human presses Enter in the palette filter.
+    fn on_palette_submit(
+        &mut self,
+        input: &Entity<InputState>,
+        event: &InputEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(event, InputEvent::PressEnter { .. }) {
+            return;
+        }
+        let query = input.read(cx).value().to_lowercase();
+        if let Some(&cmd) = self.filtered_commands(&query).first() {
+            self.run_command(cmd, window, cx);
+        }
+    }
+
+    /// Commands whose label contains the (lowercased) query.
+    fn filtered_commands(&self, query: &str) -> Vec<PaletteCmd> {
+        PaletteCmd::ALL
+            .into_iter()
+            .filter(|c| c.label(&self.prefs).to_lowercase().contains(query))
+            .collect()
+    }
+
+    /// Execute a palette command and dismiss the overlay.
+    fn run_command(&mut self, cmd: PaletteCmd, window: &mut Window, cx: &mut Context<Self>) {
+        match cmd {
+            PaletteCmd::ToggleRoster => self.toggle_rail(ROSTER_IX, window, cx),
+            PaletteCmd::ToggleInspector => self.toggle_rail(INSPECTOR_IX, window, cx),
+        }
+        self.palette_open = false;
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    /// The command-palette overlay: a dim backdrop (click to dismiss) behind a
+    /// centered box with the filter input and the matching commands.
+    fn palette_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let query = self.palette_input.read(cx).value().to_lowercase();
+        let cmds = self.filtered_commands(&query);
+
+        let mut list = v_flex().gap_1().mt_2();
+        if cmds.is_empty() {
+            list = list.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_sm()
+                    .text_color(theme::text_muted())
+                    .child("no matching command"),
+            );
+        } else {
+            for (i, cmd) in cmds.into_iter().enumerate() {
+                let top = i == 0; // the Enter target
+                list = list.child(
+                    div()
+                        .id(("palette-cmd", i))
+                        .px_2()
+                        .py_1p5()
+                        .rounded_md()
+                        .bg(if top { theme::surface_raised() } else { theme::surface() })
+                        .hover(|s| s.bg(theme::surface_raised()))
+                        .active(|s| s.opacity(0.8))
+                        .child(cmd.label(&self.prefs).to_string())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.run_command(cmd, window, cx)
+                        })),
+                );
+            }
+        }
+
+        div()
+            .id("palette-backdrop")
+            .absolute()
+            .inset_0()
+            .flex()
+            .justify_center()
+            .bg(rgba(0x00000066))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.palette_open = false;
+                window.focus(&this.focus_handle, cx);
+                cx.notify();
+            }))
+            .child(
+                v_flex()
+                    .occlude()
+                    .mt(px(96.0))
+                    .w(px(480.0))
+                    .p_2()
+                    .rounded_lg()
+                    .bg(theme::sidebar())
+                    .border_1()
+                    .border_color(theme::border())
+                    .child(Input::new(&self.palette_input))
+                    .child(list),
+            )
     }
 
     /// Re-read the field; if it grew, re-project and repaint. Comparing event
@@ -127,12 +302,21 @@ impl Chamber {
 
 impl Render for Chamber {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let titlebar = self.titlebar(cx);
+        let body = self.body(cx);
+        let overlay = self.palette_open.then(|| self.palette_overlay(cx));
+
         v_flex()
+            .key_context(KEY_CONTEXT)
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::on_toggle_palette))
+            .relative()
             .size_full()
             .bg(theme::bg())
             .text_color(theme::text())
-            .child(self.titlebar(cx))
-            .child(self.body(cx))
+            .child(titlebar)
+            .child(body)
+            .children(overlay)
     }
 }
 
@@ -161,8 +345,8 @@ impl Chamber {
                     .text_color(theme::text_muted())
                     .child("Ctrl ⇧ P"),
             )
-            .on_click(cx.listener(|_this, _, _window, _cx| {
-                // TODO: open the command palette (commands TBD with Jake).
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.on_toggle_palette(&TogglePalette, window, cx);
             }));
 
         TitleBar::new().child(
@@ -408,6 +592,10 @@ pub fn run(field_path: Option<String>) {
     app.run(move |cx: &mut App| {
         gpui_component::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
+        cx.bind_keys([
+            KeyBinding::new("ctrl-shift-p", TogglePalette, Some(KEY_CONTEXT)),
+            KeyBinding::new("cmd-shift-p", TogglePalette, Some(KEY_CONTEXT)),
+        ]);
 
         // Build window options here (needs `&App`, not the async cx below).
         let window_options = WindowOptions {
