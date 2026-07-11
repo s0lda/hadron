@@ -57,6 +57,13 @@ fn render_row(e: &Event) -> MessageRow {
         Kind::Snapshot { label, .. } => (format!("snapshot: {label}"), "snapshot"),
         Kind::EnergyReport { used_tokens } => (format!("used {used_tokens} tokens"), "energy_report"),
         Kind::Assign { task, invariants } => (format!("assigned: {task} (invariants: {:?})", invariants), "assign"),
+        Kind::PermissionReq { risk, description } => {
+            (format!("⚠️ permission requested ({risk:?}): {description}"), "permission_req")
+        }
+        Kind::PermissionGrant { approved } => (
+            format!("permission {}", if *approved { "approved" } else { "denied" }),
+            "permission_grant",
+        ),
         Kind::Unknown { kind, .. } => (format!("unrecognized event: {kind}"), "unrecognized"),
     };
     MessageRow {

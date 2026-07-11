@@ -48,6 +48,17 @@ pub enum QuarkState {
     Error,
 }
 
+/// The category of a proposed operation, carried on a `PermissionReq`. Matched
+/// against the human's god-mode policy by `hadron_gatekeeper::decide`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Risk {
+    /// Writing, editing, or deleting files inside the workspace.
+    WorkspaceEdit,
+    /// Executing a shell command (includes publish-class ops like `cargo publish`).
+    BashExec,
+}
+
 /// The payload of an event. Known variants flatten into the envelope under a
 /// `"kind"` tag. Unknown kinds are preserved verbatim for forward-compat.
 ///
@@ -62,6 +73,8 @@ pub enum Kind {
     Snapshot { git: String, label: String },
     EnergyReport { used_tokens: u32 },
     Assign { task: String, invariants: Vec<String> },
+    PermissionReq { risk: Risk, description: String },
+    PermissionGrant { approved: bool },
     /// Any kind this version does not understand. `raw` holds the full set of
     /// non-envelope fields so the event can be re-serialized and displayed.
     Unknown { kind: String, raw: Value },
@@ -137,6 +150,15 @@ impl Serialize for Event {
                 m.serialize_entry("task", task)?;
                 m.serialize_entry("invariants", invariants)?;
             }
+            Kind::PermissionReq { risk, description } => {
+                m.serialize_entry("kind", "permission_req")?;
+                m.serialize_entry("risk", risk)?;
+                m.serialize_entry("description", description)?;
+            }
+            Kind::PermissionGrant { approved } => {
+                m.serialize_entry("kind", "permission_grant")?;
+                m.serialize_entry("approved", approved)?;
+            }
             Kind::Unknown { kind, raw } => {
                 m.serialize_entry("kind", kind)?;
                 if let Value::Object(obj) = raw {
@@ -201,6 +223,13 @@ impl<'de> Deserialize<'de> for Event {
             "assign" => Kind::Assign {
                 task: take_field(&mut map, "task")?,
                 invariants: take_field(&mut map, "invariants")?,
+            },
+            "permission_req" => Kind::PermissionReq {
+                risk: take_field(&mut map, "risk")?,
+                description: take_field(&mut map, "description")?,
+            },
+            "permission_grant" => Kind::PermissionGrant {
+                approved: take_field(&mut map, "approved")?,
             },
             other => Kind::Unknown {
                 kind: other.to_string(),
@@ -281,6 +310,38 @@ mod event_tests {
         assert!(line.contains(r#""kind":"assign""#));
         assert!(line.contains(r#""task":"fix tests""#));
         assert!(line.contains(r#""invariants":["pass"]"#));
+    }
+
+    #[test]
+    fn permission_req_round_trips() {
+        let ev = Event::new(
+            Actor::Quark(QuarkId::new("agy")),
+            Some(QuarkId::new("human")),
+            Kind::PermissionReq {
+                risk: Risk::BashExec,
+                description: "cargo publish".into(),
+            },
+        );
+        let line = serde_json::to_string(&ev).unwrap();
+        let back: Event = serde_json::from_str(&line).unwrap();
+        assert_eq!(ev, back);
+        assert!(line.contains(r#""kind":"permission_req""#));
+        assert!(line.contains(r#""risk":"bash_exec""#));
+        assert!(line.contains(r#""description":"cargo publish""#));
+    }
+
+    #[test]
+    fn permission_grant_round_trips() {
+        let ev = Event::new(
+            Actor::Human,
+            None,
+            Kind::PermissionGrant { approved: true },
+        );
+        let line = serde_json::to_string(&ev).unwrap();
+        let back: Event = serde_json::from_str(&line).unwrap();
+        assert_eq!(ev, back);
+        assert!(line.contains(r#""kind":"permission_grant""#));
+        assert!(line.contains(r#""approved":true"#));
     }
 
     #[test]
