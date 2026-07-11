@@ -76,6 +76,8 @@ pub struct Engine {
     nucleus_digest: String,
     ledger: Option<crate::ledger::Ledger>,
     energy_limit: u32,
+    /// God-mode bypass policy. Default `locked_down()` — every risky op asks the human.
+    policy: hadron_gatekeeper::Policy,
 }
 
 impl Engine {
@@ -102,7 +104,15 @@ impl Engine {
             nucleus_digest: String::new(),
             ledger: None,
             energy_limit: 0,
+            policy: hadron_gatekeeper::Policy::locked_down(),
         }
+    }
+
+    /// Opt in to god-mode: pre-authorize classes of risky op. Default is
+    /// `Policy::locked_down()` (every risky op asks the human).
+    pub fn with_policy(mut self, policy: hadron_gatekeeper::Policy) -> Self {
+        self.policy = policy;
+        self
     }
 
     /// The field file this engine reads and appends to.
@@ -193,8 +203,13 @@ impl Engine {
             let mut requested_invariants = vec![];
             let mut task_desc = String::new();
             
-            // Find the most recent event targeting this quark to get its task context
-            if let Some(trigger) = events.iter().rev().find(|e| e.to.as_ref() == Some(&target)) {
+            // Find the most recent *task-bearing* event targeting this quark. Skip
+            // non-task events like a PermissionGrant (also addressed to the quark, to
+            // re-trigger it) — otherwise a resumed quark would get an empty task.
+            if let Some(trigger) = events.iter().rev().find(|e| {
+                e.to.as_ref() == Some(&target)
+                    && matches!(e.kind, Kind::Assign { .. } | Kind::Message { .. })
+            }) {
                 match &trigger.kind {
                     Kind::Assign { task, invariants } => {
                         task_desc = task.clone();
@@ -254,6 +269,51 @@ impl Engine {
                     &Event::new(Actor::Quark(target.clone()), to, Kind::Message { body }),
                 )?;
             }
+
+            // A self-declared permission ask: record it, then let the god-mode
+            // policy decide. A grant is addressed to the quark so `next_pending`
+            // re-selects it (the resume path); the task survives via the
+            // task-bearing trigger-finder above.
+            if let Some(ask) = outcome.permission {
+                let risk = ask.risk;
+                append_event(
+                    &self.field_path,
+                    &Event::new(
+                        Actor::Quark(target.clone()),
+                        None,
+                        Kind::PermissionReq { risk, description: ask.description },
+                    ),
+                )?;
+                match hadron_gatekeeper::decide(risk, self.policy) {
+                    hadron_gatekeeper::Decision::AutoApprove => {
+                        // God-mode: the gluon grants on the human's behalf.
+                        append_event(
+                            &self.field_path,
+                            &Event::new(
+                                Actor::Gluon,
+                                Some(target.clone()),
+                                Kind::PermissionGrant { approved: true },
+                            ),
+                        )?;
+                        exchanges += 1;
+                        continue;
+                    }
+                    hadron_gatekeeper::Decision::AskHuman => {
+                        // Pause: mark the quark waiting and quiesce until a human
+                        // PermissionGrant (addressed to the quark) resumes it.
+                        append_event(
+                            &self.field_path,
+                            &Event::new(
+                                Actor::Quark(target.clone()),
+                                None,
+                                Kind::Status { state: QuarkState::Waiting },
+                            ),
+                        )?;
+                        return Ok(());
+                    }
+                }
+            }
+
             append_event(
                 &self.field_path,
                 &Event::new(
@@ -271,10 +331,131 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::append_event;
+    use crate::field::{append_event, read_events};
     use crate::mock::MockQuark;
-    use hadron_lattice::{Actor, Flavor, Kind, QuarkId};
+    use hadron_lattice::{Actor, EnergyState, Flavor, Kind, PermissionAsk, Projection, QuarkId, TurnOutcome};
+    use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
+
+    /// Asks for permission on excite #1, replies on later excites, and records the
+    /// `task` it was handed each excite — so a test can prove task context survives
+    /// a resume (the load-bearing trigger-finder fix).
+    struct PermissionQuark {
+        id: QuarkId,
+        flavor: Flavor,
+        ask: PermissionAsk,
+        reply: String,
+        calls: usize,
+        tasks: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for PermissionQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            self.flavor.clone()
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+            self.tasks.lock().unwrap().push(turn.task.clone());
+            self.calls += 1;
+            if self.calls == 1 {
+                Ok(TurnOutcome { message: None, used_tokens: 0, permission: Some(self.ask.clone()) })
+            } else {
+                Ok(TurnOutcome {
+                    message: Some(self.reply.clone()),
+                    used_tokens: 0,
+                    permission: None,
+                })
+            }
+        }
+    }
+
+    fn perm_quark(id: &str, tasks: Arc<Mutex<Vec<String>>>) -> PermissionQuark {
+        PermissionQuark {
+            id: QuarkId::new(id),
+            flavor: Flavor::Orchestrator,
+            ask: PermissionAsk {
+                risk: hadron_gatekeeper::Risk::BashExec,
+                description: "cargo publish".into(),
+            },
+            reply: "published".into(),
+            calls: 0,
+            tasks,
+        }
+    }
+
+    fn has_kind(events: &[Event], pred: impl Fn(&Kind) -> bool) -> bool {
+        events.iter().any(|e| pred(&e.kind))
+    }
+
+    #[tokio::test]
+    async fn locked_down_policy_pauses_for_human() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        let tasks = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(field.clone(), vec![Box::new(perm_quark("agy", tasks.clone()))], 8);
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(has_kind(&events, |k| matches!(k, Kind::PermissionReq { .. })), "req recorded");
+        assert!(!has_kind(&events, |k| matches!(k, Kind::PermissionGrant { .. })), "no auto-grant when locked down");
+        assert!(has_kind(&events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })), "quark waits");
+        assert!(!has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "published")), "op not performed yet");
+        assert!(hadron_gatekeeper::pending_permission(&events).is_some(), "chamber can surface the request");
+    }
+
+    #[tokio::test]
+    async fn human_grant_resumes_the_quark_with_its_task() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        let tasks = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(field.clone(), vec![Box::new(perm_quark("agy", tasks.clone()))], 8);
+        engine.run_until_quiesce().await.unwrap();
+
+        // Human approves, addressed to the quark.
+        append_event(
+            &field,
+            &Event::new(Actor::Human, Some(QuarkId::new("agy")), Kind::PermissionGrant { approved: true }),
+        )
+        .unwrap();
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "published")), "op performed after grant");
+        // THE FIX: the resumed excite got the original task, not the grant's empty context.
+        let recorded = tasks.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 2, "asked once, resumed once");
+        assert_eq!(recorded[1], "hello", "resumed quark kept its task");
+    }
+
+    #[tokio::test]
+    async fn god_mode_auto_approves_and_completes() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        let tasks = Arc::new(Mutex::new(vec![]));
+        let policy = hadron_gatekeeper::Policy { auto_approve_edits: false, bypass_bash: true };
+        let mut engine = Engine::new(field.clone(), vec![Box::new(perm_quark("agy", tasks.clone()))], 8)
+            .with_policy(policy);
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(has_kind(&events, |k| matches!(k, Kind::PermissionReq { .. })), "req still recorded (audit trail)");
+        assert!(
+            events.iter().any(|e| e.from == Actor::Gluon && matches!(e.kind, Kind::PermissionGrant { approved: true })),
+            "gluon auto-granted"
+        );
+        assert!(has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "published")), "op completed without a human");
+        let recorded = tasks.lock().unwrap().clone();
+        assert_eq!(recorded[1], "hello", "auto-resumed quark kept its task");
+    }
 
     fn seed_human_message(path: &std::path::Path, to: &str, body: &str) {
         append_event(
@@ -357,7 +538,7 @@ mod tests {
             }
             async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
                 assert!(turn.nucleus_digest.contains("## map.md"));
-                Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0 })
+                Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0, permission: None })
             }
         }
 
@@ -455,7 +636,7 @@ mod tests {
             fn energy(&self) -> hadron_lattice::EnergyState { hadron_lattice::EnergyState::Available }
             async fn excite(&mut self, _turn: Projection) -> anyhow::Result<hadron_lattice::TurnOutcome> {
                 // Consume 100 tokens per turn
-                Ok(hadron_lattice::TurnOutcome { message: None, used_tokens: 100 })
+                Ok(hadron_lattice::TurnOutcome { message: None, used_tokens: 100, permission: None })
             }
         }
 
@@ -525,7 +706,7 @@ mod tests {
                 assert!(turn.invariants.contains("# Rule: rust_style"));
                 assert!(turn.invariants.contains("Use camelCase... wait no."));
                 assert_eq!(turn.available_invariants, vec!["rust_style".to_string()]);
-                Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0 })
+                Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0, permission: None })
             }
         }
 

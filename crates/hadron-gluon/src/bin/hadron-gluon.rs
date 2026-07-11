@@ -61,7 +61,7 @@ impl Quark for DemoQuark {
         } else {
             format!("[{}] acknowledged: \"{task}\" (mock reply — no real work performed)", self.label)
         };
-        Ok(TurnOutcome { message: Some(body), used_tokens: 0 })
+        Ok(TurnOutcome { message: Some(body), used_tokens: 0, permission: None })
     }
 }
 
