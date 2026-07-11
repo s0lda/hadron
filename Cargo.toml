@@ -1,3 +1,3 @@
 [workspace]
 resolver = "2"
-members = ["crates/hadron-lattice", "crates/hadron-gluon", "crates/hadron-chamber", "crates/hadron-forge"]
+members = ["crates/hadron-lattice", "crates/hadron-gluon", "crates/hadron-chamber", "crates/hadron-forge", "crates/hadron-gatekeeper"]
