@@ -15,7 +15,7 @@ use gpui::{
     KeyBinding, MouseButton, Pixels, Render, Rgba, ScrollHandle, SharedString, Subscription, Window,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
 };
-use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use gpui_component::avatar::Avatar;
@@ -222,6 +222,9 @@ struct Chamber {
     palette_open: bool,
     /// The palette's filter box.
     palette_input: Entity<InputState>,
+    /// Which filtered command the palette has highlighted (Up/Down move it,
+    /// Enter runs it). Reset to 0 on open and whenever the query changes.
+    palette_selected: usize,
     /// Whether the Settings overlay is showing, and which identity it edits.
     settings_open: bool,
     settings_target: SettingsTarget,
@@ -307,6 +310,7 @@ impl Chamber {
             chat_scroll,
             palette_open: false,
             palette_input,
+            palette_selected: 0,
             settings_open: false,
             settings_target: SettingsTarget::Human,
             settings_name,
@@ -327,6 +331,7 @@ impl Chamber {
     ) {
         self.palette_open = !self.palette_open;
         if self.palette_open {
+            self.palette_selected = 0;
             self.palette_input.update(cx, |state, cx| {
                 state.set_value("", window, cx);
                 state.focus(window, cx);
@@ -337,7 +342,8 @@ impl Chamber {
         cx.notify();
     }
 
-    /// Run the top match when the human presses Enter in the palette filter.
+    /// React to the palette filter: Enter runs the highlighted command; typing
+    /// re-filters, so the highlight resets to the top match.
     fn on_palette_submit(
         &mut self,
         input: &Entity<InputState>,
@@ -345,13 +351,33 @@ impl Chamber {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(event, InputEvent::PressEnter { .. }) {
+        match event {
+            InputEvent::PressEnter { .. } => {
+                let query = input.read(cx).value().to_lowercase();
+                let cmds = self.filtered_commands(&query);
+                if let Some(&cmd) = cmds.get(self.palette_selected).or_else(|| cmds.first()) {
+                    self.run_command(cmd, window, cx);
+                }
+            }
+            InputEvent::Change => {
+                self.palette_selected = 0;
+                cx.notify();
+            }
+            _ => {}
+        }
+    }
+
+    /// Move the palette highlight by `delta`, clamped to the filtered list.
+    fn move_palette_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let query = self.palette_input.read(cx).value().to_lowercase();
+        let len = self.filtered_commands(&query).len();
+        if len == 0 {
+            self.palette_selected = 0;
             return;
         }
-        let query = input.read(cx).value().to_lowercase();
-        if let Some(&cmd) = self.filtered_commands(&query).first() {
-            self.run_command(cmd, window, cx);
-        }
+        let max = len as isize - 1;
+        self.palette_selected = (self.palette_selected as isize + delta).clamp(0, max) as usize;
+        cx.notify();
     }
 
     /// Commands whose label contains the (lowercased) query.
@@ -378,6 +404,9 @@ impl Chamber {
     fn palette_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let query = self.palette_input.read(cx).value().to_lowercase();
         let cmds = self.filtered_commands(&query);
+        // The highlighted row (Up/Down move it, Enter runs it), clamped in case
+        // the filtered list shrank since the selection last moved.
+        let sel = self.palette_selected.min(cmds.len().saturating_sub(1));
 
         let mut list = v_flex().gap_1().mt_2();
         if cmds.is_empty() {
@@ -391,14 +420,14 @@ impl Chamber {
             );
         } else {
             for (i, cmd) in cmds.into_iter().enumerate() {
-                let top = i == 0; // the Enter target
+                let selected = i == sel; // the Enter target
                 list = list.child(
                     div()
                         .id(("palette-cmd", i))
                         .px_2()
                         .py_1p5()
                         .rounded_md()
-                        .bg(if top {
+                        .bg(if selected {
                             theme::surface_raised()
                         } else {
                             theme::surface()
@@ -433,6 +462,26 @@ impl Chamber {
             .child(
                 v_flex()
                     .occlude()
+                    // The focused Input binds Up/Down/Escape (to cursor moves /
+                    // clear) at the deepest node, so an ancestor *key* binding
+                    // can't outrank it. Intercept the resulting Input *actions*
+                    // in the capture phase — which runs ancestor-first, before
+                    // the Input's own bubble handler — and stop them there. Enter
+                    // still flows to the Input's submit (see on_palette_submit).
+                    .capture_action(cx.listener(|this, _: &MoveDown, _window, cx| {
+                        this.move_palette_selection(1, cx);
+                        cx.stop_propagation();
+                    }))
+                    .capture_action(cx.listener(|this, _: &MoveUp, _window, cx| {
+                        this.move_palette_selection(-1, cx);
+                        cx.stop_propagation();
+                    }))
+                    .capture_action(cx.listener(|this, _: &Escape, window, cx| {
+                        this.palette_open = false;
+                        window.focus(&this.focus_handle, cx);
+                        cx.notify();
+                        cx.stop_propagation();
+                    }))
                     .mt(px(96.0))
                     .w(px(480.0))
                     .p_2()
