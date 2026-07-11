@@ -1,3 +1,4 @@
+pub mod adapter;
 pub mod engine;
 pub mod field;
 pub mod mock;
