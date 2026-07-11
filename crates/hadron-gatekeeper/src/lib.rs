@@ -7,6 +7,6 @@
 mod gate;
 mod matrix;
 
-pub use gate::{pending_permission, PendingPermission};
+pub use gate::{grant, pending_permission, PendingPermission};
 pub use hadron_lattice::Risk;
 pub use matrix::{decide, Decision, Policy};
