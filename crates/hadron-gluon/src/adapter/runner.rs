@@ -60,10 +60,26 @@ impl CliRunner for ProcessRunner {
         }
 
         let output = child.wait_with_output().await?;
-        Ok(CliResult {
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            exit: output.status.code().unwrap_or(-1),
-        })
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        // A nonzero exit is a real failure (expired auth, rate-limit, bad flag).
+        // Surface stderr as the error rather than silently returning empty stdout
+        // — otherwise the loop just stalls with no diagnostic signal.
+        if !output.status.success() {
+            let code = output
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".to_string());
+            return Err(anyhow::anyhow!(
+                "{} exited with {code}: {}",
+                inv.program,
+                stderr.trim()
+            ));
+        }
+
+        Ok(CliResult { stdout, exit: output.status.code().unwrap_or(0) })
     }
 }
 
@@ -120,6 +136,40 @@ mod tests {
         assert_eq!(some.message.as_deref(), Some("hello"));
         let none = reply_to_outcome(&CliResult { stdout: "   \n ".into(), exit: 0 });
         assert_eq!(none.message, None);
+    }
+
+    // ProcessRunner tests use standard Unix tools (cat/sh), never a real CLI —
+    // local, free, deterministic. They de-risk the actual subprocess plumbing
+    // (stdin piping, stdout capture, nonzero-exit handling) before any live run.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_runner_pipes_stdin_to_stdout() {
+        let out = ProcessRunner
+            .run(CliInvocation {
+                program: "cat".into(),
+                args: vec![],
+                stdin: "hello world".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.stdout, "hello world");
+        assert_eq!(out.exit, 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_runner_errors_on_nonzero_with_stderr() {
+        let err = ProcessRunner
+            .run(CliInvocation {
+                program: "sh".into(),
+                args: vec!["-c".into(), "echo boom >&2; exit 3".into()],
+                stdin: String::new(),
+            })
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("boom"), "stderr should surface in the error: {msg}");
+        assert!(msg.contains('3'), "exit code should surface: {msg}");
     }
 
     #[tokio::test]

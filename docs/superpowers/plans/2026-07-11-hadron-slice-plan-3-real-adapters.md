@@ -304,3 +304,8 @@ pub mod snapshot;
 - **Session robustness** (claude session id capture) is the most likely thing to need adjustment against a real CLI version — it is deliberately isolated to `claude.rs` + `ProcessRunner`.
 - **Timeouts / cancellation:** `ProcessRunner` should grow a per-turn timeout before heavy live use (a hung CLI otherwise stalls the loop). Wire it when moving past smoke tests.
 - **Energy/session-limit detection** (spec §13) can be derived from CLI exit codes / stderr patterns in `ProcessRunner` and surfaced as `EnergyState::Depleted` — bought land, not needed for the thesis test.
+
+## Watch-items for the live run (Task 6)
+
+- **`ProcessRunner` now errors on nonzero exit with stderr embedded** (added during Task 1–5 execution; unit-tested via `cat`/`sh`). This means a failed live CLI call surfaces as a real `Err` (auth expired, rate-limit, unknown flag) instead of a silent empty turn. When wiring the daemon, decide whether an excite error should abort the human turn or append a gluon error message to the field and quiesce.
+- **Claude session double-sends context.** `ClaudeQuark` resumes the session (`--resume`) *and* the prompt re-injects the full `field_window` every turn, so from turn 2 the model sees prior turns twice (session memory + re-sent transcript). This is intentional for v1 symmetry with sessionless `agy`, but watch it live: if Claude gets confused or token cost balloons, the fix is a delta-vs-full-window split in the prompt builder for resumable adapters. Do not change on spec — validate first.
