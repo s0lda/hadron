@@ -1223,14 +1223,12 @@ impl Chamber {
     fn settings_overlay(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let target = self.settings_target.clone();
 
-        // Everyone editable: the human, then each quark on the roster.
-        let mut switcher = h_flex().gap_2().flex_wrap().child(self.settings_avatar_button(
-            SettingsTarget::Human,
-            &target,
-            cx,
-        ));
+        // Left nav: every editable identity — the human, then each quark.
+        let mut nav = v_flex()
+            .gap_0p5()
+            .child(self.settings_nav_row(SettingsTarget::Human, &target, cx));
         for r in &self.view.roster {
-            switcher = switcher.child(self.settings_avatar_button(
+            nav = nav.child(self.settings_nav_row(
                 SettingsTarget::Quark(r.id.clone()),
                 &target,
                 cx,
@@ -1274,37 +1272,60 @@ impl Chamber {
             );
         }
 
-        let card = v_flex()
-            .occlude()
-            .w(px(520.0))
-            .p_4()
-            .gap_4()
-            .rounded_lg()
-            .bg(theme::sidebar())
-            .border_1()
+        // Left sidebar: a recessed, scrollable nav column of identities.
+        let sidebar = v_flex()
+            .flex_none()
+            .w(px(190.0))
+            .h_full()
+            .p_2()
+            .gap_2()
+            .bg(theme::bg())
+            .border_r(px(1.0))
             .border_color(theme::border())
+            .child(div().px_1().text_color(theme::text()).child("Settings"))
             .child(
-                h_flex()
-                    .items_center()
-                    .justify_between()
-                    .child(div().text_color(theme::text()).child("Settings"))
-                    .child(
-                        div()
-                            .id("settings-close")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(24.0))
-                            .rounded_full()
-                            .text_color(theme::text_secondary())
-                            .hover(|s| s.bg(theme::surface_raised()).text_color(theme::text()))
-                            .child(Icon::new(IconName::WindowClose).small())
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.close_settings(window, cx)),
-                            ),
-                    ),
+                div()
+                    .px_1()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child("IDENTITIES"),
             )
-            .child(settings_field("Identity", switcher.into_any_element()))
+            .child(
+                div()
+                    .id("settings-nav-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(nav),
+            );
+
+        // Right panel: header (who + close), the scrollable editor fields, and a
+        // pinned footer (Reset / Done).
+        let header = h_flex()
+            .flex_none()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .text_color(theme::text_secondary())
+                    .child(format!("Editing {}", preview.name)),
+            )
+            .child(
+                div()
+                    .id("settings-close")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.0))
+                    .rounded_full()
+                    .text_color(theme::text_secondary())
+                    .hover(|s| s.bg(theme::surface_raised()).text_color(theme::text()))
+                    .child(Icon::new(IconName::WindowClose).small())
+                    .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx))),
+            );
+
+        let fields = v_flex()
+            .gap_4()
             .child(settings_field("Preview", preview_row.into_any_element()))
             .child(settings_field(
                 "Display name",
@@ -1317,40 +1338,62 @@ impl Chamber {
                     .gap_2()
                     .items_center()
                     .child(div().flex_1().child(Input::new(&self.settings_path)))
-                    .child(
-                        text_button("settings-clear-img", "Clear")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.clear_settings_image(window, cx)
-                            })),
-                    )
+                    .child(text_button("settings-clear-img", "Clear").on_click(
+                        cx.listener(|this, _, window, cx| this.clear_settings_image(window, cx)),
+                    ))
                     .into_any_element(),
-            ))
+            ));
+
+        let footer = h_flex()
+            .flex_none()
+            .justify_between()
+            .pt_1()
             .child(
-                h_flex()
-                    .justify_between()
-                    .pt_1()
-                    .child(
-                        text_button("settings-reset", "Reset to default").on_click(
-                            cx.listener(|this, _, window, cx| {
-                                this.reset_settings_target(window, cx)
-                            }),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .id("settings-done")
-                            .px_3()
-                            .py_1p5()
-                            .rounded_md()
-                            .bg(theme::accent())
-                            .text_color(theme::text())
-                            .hover(|s| s.opacity(0.9))
-                            .child("Done")
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.close_settings(window, cx)),
-                            ),
-                    ),
+                text_button("settings-reset", "Reset to default").on_click(cx.listener(
+                    |this, _, window, cx| this.reset_settings_target(window, cx),
+                )),
+            )
+            .child(
+                div()
+                    .id("settings-done")
+                    .px_3()
+                    .py_1p5()
+                    .rounded_md()
+                    .bg(theme::accent())
+                    .text_color(theme::text())
+                    .hover(|s| s.opacity(0.9))
+                    .child("Done")
+                    .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx))),
             );
+
+        let panel = v_flex()
+            .flex_1()
+            .h_full()
+            .min_w_0()
+            .p_4()
+            .gap_4()
+            .child(header)
+            .child(
+                div()
+                    .id("settings-fields-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(fields),
+            )
+            .child(footer);
+
+        let card = h_flex()
+            .occlude()
+            .w(px(720.0))
+            .h(px(460.0))
+            .rounded_lg()
+            .overflow_hidden()
+            .bg(theme::sidebar())
+            .border_1()
+            .border_color(theme::border())
+            .child(sidebar)
+            .child(panel);
 
         div()
             .id("settings-backdrop")
@@ -1367,8 +1410,9 @@ impl Chamber {
             .child(card)
     }
 
-    /// One avatar button in the Settings identity switcher.
-    fn settings_avatar_button(
+    /// One row in the Settings identity nav: avatar + name, highlighted when it's
+    /// the identity currently being edited.
+    fn settings_nav_row(
         &self,
         who: SettingsTarget,
         current: &SettingsTarget,
@@ -1377,23 +1421,36 @@ impl Chamber {
         let resolved = self.resolve_identity(who.key());
         let selected = &who == current;
         let id = SharedString::from(format!("settings-id-{}", who.key()));
-        div()
+        h_flex()
             .id(id)
-            .p_0p5()
-            .rounded_full()
-            .border_2()
-            .border_color(if selected {
-                theme::accent()
+            .items_center()
+            .gap_2()
+            .w_full()
+            .px_2()
+            .py_1p5()
+            .rounded_md()
+            .bg(if selected {
+                theme::surface_raised()
             } else {
-                theme::border()
+                theme::bg()
             })
-            .hover(|s| s.border_color(theme::text_secondary()))
-            .child(identity_avatar(&resolved, 32.0))
-            .on_click(
-                cx.listener(move |this, _, window, cx| {
-                    this.select_settings_target(who.clone(), window, cx)
-                }),
+            .hover(|s| s.bg(theme::surface()))
+            .child(identity_avatar(&resolved, 24.0))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_sm()
+                    .text_color(if selected {
+                        theme::text()
+                    } else {
+                        theme::text_secondary()
+                    })
+                    .child(resolved.name.clone()),
             )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.select_settings_target(who.clone(), window, cx)
+            }))
     }
 
     /// Collapse or expand a rail. Just flips the persisted flag — the layout
