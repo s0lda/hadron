@@ -38,9 +38,13 @@ const KEY_CONTEXT: &str = "Chamber";
 
 /// Width of a collapsed rail's strip (just the expand affordance).
 const RAIL_STRIP: f32 = 44.0;
-/// Drag-resize bounds for an expanded rail.
+/// Minimum drag width for the resizable terminal rail.
 const RAIL_MIN: f32 = 160.0;
-const RAIL_MAX: f32 = 440.0;
+/// The terminal/multitool has no meaningful upper width — cap it far past any
+/// screen so the only real limit is the chat keeping its [`CHAT_MIN`].
+const TERMINAL_MAX: f32 = 6000.0;
+/// The chat can be squeezed but never collapsed to nothing.
+const CHAT_MIN: f32 = 360.0;
 
 /// Corner radius for floating panels/containers on the unified canvas.
 const INNER_RADIUS: Pixels = px(12.0);
@@ -639,13 +643,20 @@ impl Chamber {
             });
         });
 
-        // Chat: flex (no fixed size) so it absorbs slack on resize.
-        group = group.child(resizable_panel().child(self.chat_pane(cx)));
+        // Chat: flex (no fixed size) so it absorbs slack on resize, but floored
+        // at CHAT_MIN so the terminal can't stretch over it entirely.
+        group = group.child(
+            resizable_panel()
+                .size_range(px(CHAT_MIN)..px(TERMINAL_MAX))
+                .child(self.chat_pane(cx)),
+        );
         if !inspector_collapsed {
             group = group.child(
                 resizable_panel()
                     .size(px(self.prefs.inspector_width))
-                    .size_range(px(RAIL_MIN)..px(RAIL_MAX))
+                    // No real upper cap — the terminal/multitool can take most of
+                    // the window; the chat's own min keeps it from vanishing.
+                    .size_range(px(RAIL_MIN)..px(TERMINAL_MAX))
                     .child(self.terminal_pane(cx)),
             );
         }
@@ -665,6 +676,10 @@ impl Chamber {
 
         h_flex()
             .flex_1()
+            // Bound the height so children shrink to it instead of growing to
+            // their content — without this, the chat's min-content height
+            // propagates up and nothing below can scroll (it just pushes down).
+            .min_h_0()
             .w_full()
             .child(left)
             .child(group)
@@ -742,27 +757,37 @@ impl Chamber {
                 cx.listener(|this, _, window, cx| this.toggle_rail(Rail::Roster, window, cx)),
             );
 
-        let mut col = v_flex()
-            .w_full()
-            .h_full()
-            .p_2()
-            .gap_2()
-            .bg(theme::sidebar())
-            .child(header);
-
+        // The roster rows, stacked to natural height so they scroll within the
+        // rail rather than pushing the pinned Settings button off the bottom.
+        let mut rows = v_flex().w_full().gap_2();
         for r in &self.view.roster {
-            col = col.child(roster_row(&self.resolve_identity(&r.id), r));
+            rows = rows.child(roster_row(&self.resolve_identity(&r.id), r));
         }
         if self.view.roster.is_empty() {
-            col = col.child(
+            rows = rows.child(
                 div()
                     .text_sm()
                     .text_color(theme::text_muted())
                     .child("no quarks yet"),
             );
         }
-        // Settings pinned to the bottom of the rail.
-        col.child(div().flex_1())
+
+        v_flex()
+            .w_full()
+            .h_full()
+            .p_2()
+            .gap_2()
+            .bg(theme::sidebar())
+            .child(header) // pinned top
+            .child(
+                div()
+                    .id("roster-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(rows),
+            )
+            // Settings pinned to the bottom of the rail.
             .child(self.settings_button(cx, false))
     }
 
@@ -774,7 +799,20 @@ impl Chamber {
         let tabs = TabBar::new("chat-tabs")
             .segmented()
             .selected_index(selected.index())
-            .children(ChatTab::ALL.map(|t| Tab::new().label(t.label())))
+            .children(ChatTab::ALL.map(|t| {
+                // The active tab reads as a dark cutout; give its label the pink
+                // accent so the selection is unmistakable. Inactive tabs keep the
+                // default muted label.
+                if t.index() == selected.index() {
+                    Tab::new().child(
+                        div()
+                            .text_color(theme::accent())
+                            .child(t.label().to_string()),
+                    )
+                } else {
+                    Tab::new().label(t.label())
+                }
+            }))
             .on_click(cx.listener(|this, ix: &usize, _window, cx| {
                 this.chat_tab = ChatTab::from_index(*ix);
                 cx.notify();
@@ -796,13 +834,17 @@ impl Chamber {
                 ChatTab::Timeline => self.timeline_view().into_any_element(),
             });
 
-        let input = h_flex()
-            .flex_none()
-            .m_4()
-            .px_1()
-            .rounded_lg()
-            .bg(theme::input_bg())
-            .child(Input::new(&self.input));
+        // The message box is only meaningful in Chat — you talk to the field
+        // there. Log and Timeline are read-only views, so they get no input.
+        let input = matches!(selected, ChatTab::Chat).then(|| {
+            h_flex()
+                .flex_none()
+                .m_4()
+                .px_1()
+                .rounded_lg()
+                .bg(theme::input_bg())
+                .child(Input::new(&self.input))
+        });
 
         // The floating chat card: darker + rounded, inset from the lighter
         // unified space that shows around it.
@@ -814,11 +856,12 @@ impl Chamber {
             .bg(theme::bg())
             .child(header)
             .child(body)
-            .child(input);
+            .children(input);
 
         v_flex()
             .w_full()
             .h_full()
+            .min_h_0()
             .p_2()
             .bg(theme::sidebar())
             .child(card)
