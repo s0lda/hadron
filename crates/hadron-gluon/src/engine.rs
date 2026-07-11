@@ -51,6 +51,11 @@ impl Engine {
         }
     }
 
+    /// The field file this engine reads and appends to.
+    pub(crate) fn field_path(&self) -> &std::path::Path {
+        &self.field_path
+    }
+
     /// Opt in to git safety: snapshot the target repo before each excite and feed
     /// the working diff into the projection. Additive — off by default.
     pub fn with_git(mut self, repo_root: PathBuf) -> Self {
