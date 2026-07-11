@@ -4,6 +4,8 @@ mod projection;
 mod quark;
 mod snapshot;
 
+pub mod io;
+
 pub use event::*;
 pub use nucleus::*;
 pub use projection::*;

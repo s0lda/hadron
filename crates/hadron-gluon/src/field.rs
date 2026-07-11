@@ -1,45 +1,13 @@
-use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+//! Field IO for the gluon. Single implementation lives in
+//! [`hadron_lattice::io`] (runtime-free, shared with the chamber); this module
+//! re-exports it so existing `crate::field::*` call sites are unchanged.
 
-use hadron_lattice::Event;
-
-/// Append a single event as one JSON line. Line-atomic; creates the file if
-/// missing. Never rewrites existing content.
-pub fn append_event(path: &Path, event: &Event) -> std::io::Result<()> {
-    let line = serde_json::to_string(event)?;
-    let mut f = OpenOptions::new().create(true).append(true).open(path)?;
-    writeln!(f, "{line}")?;
-    Ok(())
-}
-
-/// Read every event in order. A missing file yields an empty vec. Blank lines
-/// are skipped. A line that fails to parse is skipped rather than crashing the
-/// reader (append-only integrity means a torn final line can be ignored).
-pub fn read_events(path: &Path) -> std::io::Result<Vec<Event>> {
-    let file = match File::open(path) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e),
-    };
-    let mut out = Vec::new();
-    for line in BufReader::new(file).lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        match serde_json::from_str::<Event>(&line) {
-            Ok(ev) => out.push(ev),
-            Err(_) => continue,
-        }
-    }
-    Ok(out)
-}
+pub use hadron_lattice::io::{append_event, read_events};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hadron_lattice::{Actor, Kind, QuarkId, QuarkState};
+    use hadron_lattice::{Actor, Event, Kind, QuarkId, QuarkState};
     use tempfile::tempdir;
 
     #[test]
