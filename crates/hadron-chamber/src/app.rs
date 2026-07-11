@@ -611,29 +611,25 @@ impl Chamber {
             .child(div().child(format!("{} quark(s)", self.view.roster.len())))
     }
 
-    /// The body: two collapsible rails around the field chat. Only *expanded*
-    /// rails live in the resizable group (so a collapsed rail can't be dragged);
-    /// a collapsed rail is a fixed strip outside the group. The group is re-keyed
-    /// per layout so a fresh sizing state seeds panel widths from prefs, and
-    /// `on_resize` persists new widths back — drag-resize without the fighting.
+    /// The body: the left roster ("friends list") at a locked width, then the
+    /// resizable chat + terminal group. The roster sits *outside* the group so
+    /// dragging the terminal never disturbs it — only the terminal is draggable,
+    /// and the chat flexes to fill whatever's left (so a window resize reflows
+    /// into the chat instead of stranding a stored width). A collapsed rail is a
+    /// thin strip. The group is re-keyed on the terminal's presence so a fresh
+    /// sizing state seeds its width from prefs; `on_resize` persists it back.
     fn body(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let roster_collapsed = self.prefs.roster_collapsed;
         let inspector_collapsed = self.prefs.inspector_collapsed;
         let chamber = cx.entity();
 
-        let group_id = SharedString::from(format!(
-            "chamber-body-{}-{}",
-            roster_collapsed as u8, inspector_collapsed as u8
-        ));
+        let group_id = SharedString::from(format!("chamber-body-{}", inspector_collapsed as u8));
 
         let mut group = h_resizable(group_id).on_resize(move |state, _window, app| {
             let sizes = state.read(app).sizes().clone();
             chamber.update(app, |this, _cx| {
-                if !this.prefs.roster_collapsed {
-                    if let Some(w) = sizes.first() {
-                        this.prefs.roster_width = w.as_f32();
-                    }
-                }
+                // Only the terminal carries a stored width now; it's the last
+                // panel in the group (chat is the flex first panel).
                 if !this.prefs.inspector_collapsed {
                     if let Some(w) = sizes.last() {
                         this.prefs.inspector_width = w.as_f32();
@@ -643,14 +639,7 @@ impl Chamber {
             });
         });
 
-        if !roster_collapsed {
-            group = group.child(
-                resizable_panel()
-                    .size(px(self.prefs.roster_width))
-                    .size_range(px(RAIL_MIN)..px(RAIL_MAX))
-                    .child(self.roster_pane(cx)),
-            );
-        }
+        // Chat: flex (no fixed size) so it absorbs slack on resize.
         group = group.child(resizable_panel().child(self.chat_pane(cx)));
         if !inspector_collapsed {
             group = group.child(
@@ -661,12 +650,23 @@ impl Chamber {
             );
         }
 
+        // Left rail: a fixed-width column (locked, not draggable) or a thin strip
+        // when collapsed — a sibling of the group, never part of the drag.
+        let left = if roster_collapsed {
+            self.rail_strip(Rail::Roster, cx).into_any_element()
+        } else {
+            div()
+                .flex_none()
+                .w(px(self.prefs.roster_width))
+                .h_full()
+                .child(self.roster_pane(cx))
+                .into_any_element()
+        };
+
         h_flex()
             .flex_1()
             .w_full()
-            .when(roster_collapsed, |this| {
-                this.child(self.rail_strip(Rail::Roster, cx))
-            })
+            .child(left)
             .child(group)
             .when(inspector_collapsed, |this| {
                 this.child(self.rail_strip(Rail::Inspector, cx))
@@ -1512,7 +1512,13 @@ pub fn run(field_path: Option<String>) {
             t.secondary = rgb(0x191a1b).into();
             t.secondary_hover = rgb(0x252627).into();
             t.popover = rgb(0x191a1b).into();
-            t.border = rgb(0x303133).into();
+            // Borderless: the resize handle paints `border` when idle, so match
+            // it to the sidebar and it disappears into the unified space; while
+            // dragging it paints `drag_border` — keep that on-brand pink so the
+            // drag still shows feedback. (This also softens gpui-component's own
+            // hairlines, which suits the borderless surfaces.)
+            t.border = rgb(0x191a1b).into();
+            t.drag_border = rgb(0xec4899).into();
             // The chat's segmented tab track: a step above the dark card (bg) so
             // the control is visible. The active tab reads as a darker cutout (its
             // sliding indicator paints `tokens.background`, which we keep
