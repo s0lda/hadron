@@ -63,6 +63,28 @@ pub fn quark_state(state: QuarkState) -> Rgba {
     }
 }
 
+/// Presence-dot color for the roster user-list — Jake's traffic-light semantics
+/// (green available · blue working · amber waiting · red unavailable), distinct
+/// from the [`quark_state`] accent ramp used elsewhere.
+pub fn presence(state: QuarkState) -> Rgba {
+    match state {
+        QuarkState::Ground => rgb(0x22c55e), // green — available
+        QuarkState::Excited | QuarkState::Thinking => rgb(0x3b82f6), // blue — working
+        QuarkState::Waiting => rgb(0xf59e0b), // amber — waiting on a decision
+        QuarkState::Blocked | QuarkState::Error => rgb(0xef4444), // red — unavailable
+    }
+}
+
+/// One-word presence label matching [`presence`], for tooltips/subtitles.
+pub fn presence_label(state: QuarkState) -> &'static str {
+    match state {
+        QuarkState::Ground => "available",
+        QuarkState::Excited | QuarkState::Thinking => "working",
+        QuarkState::Waiting => "waiting",
+        QuarkState::Blocked | QuarkState::Error => "unavailable",
+    }
+}
+
 /// A stable hue for a chat author's header, so who-said-what scans at a glance.
 /// Human/gluon are fixed; quarks cycle through the chart palette by name.
 pub fn actor_hue(actor: &str) -> Rgba {
