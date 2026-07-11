@@ -99,10 +99,7 @@ async fn main() {
         Box::new(DemoQuark::new("claude", Flavor::Orchestrator, "Claude")),
         Box::new(DemoQuark::new("agy", Flavor::Worker, "Antigravity")),
     ];
-    // Static invariants preamble (v1); the exchange budget caps a runaway burst.
-    let invariants =
-        "Snapshot before editing. Keep turns small. Hand back to the human on quiesce.".to_string();
-    let mut engine = Engine::new(args.field_path.clone(), quarks, invariants, 12);
+    let mut engine = Engine::new(args.field_path.clone(), quarks, 12);
 
     eprintln!(
         "hadron-gluon (mock mode) watching {} — quarks: claude (orchestrator), agy (worker)",
