@@ -11,10 +11,10 @@ use std::time::Duration;
 
 use gpui::{
     actions, div, prelude::*, px, rgb, rgba, App, Context, Entity, FocusHandle, KeyBinding, Render,
-    Subscription, Window, WindowBounds, WindowDecorations, WindowOptions,
+    SharedString, Subscription, Window, WindowBounds, WindowDecorations, WindowOptions,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::resizable::{h_resizable, resizable_panel, ResizableState};
+use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::{h_flex, v_flex, Root, Theme, ThemeMode, TitleBar};
 use hadron_lattice::{io, Actor, Event, Kind, QuarkState};
 
@@ -27,11 +27,18 @@ actions!(chamber, [TogglePalette]);
 /// Key-dispatch context for the chamber's window-level actions.
 const KEY_CONTEXT: &str = "Chamber";
 
-/// Panel indices within the body's [`ResizableState`] (roster · chat · inspector).
-const ROSTER_IX: usize = 0;
-const INSPECTOR_IX: usize = 2;
-/// Width a rail shrinks to when collapsed — just enough for the toggle.
-const RAIL_COLLAPSED: f32 = 36.0;
+/// Width of a collapsed rail's strip (just the expand affordance).
+const RAIL_STRIP: f32 = 44.0;
+/// Drag-resize bounds for an expanded rail.
+const RAIL_MIN: f32 = 160.0;
+const RAIL_MAX: f32 = 440.0;
+
+/// The two collapsible side rails.
+#[derive(Clone, Copy)]
+enum Rail {
+    Roster,
+    Inspector,
+}
 
 /// Commands offered by the Ctrl+Shift+P palette. v1: the two rail toggles.
 #[derive(Clone, Copy)]
@@ -69,9 +76,6 @@ struct Chamber {
     prefs: ChamberPrefs,
     /// The field file this chamber reads from and steers into.
     path: PathBuf,
-    /// Shared sizing state for the 3-pane body. Drag handles mutate it, and the
-    /// collapse toggles drive it programmatically, so both gestures agree.
-    resize_state: Entity<ResizableState>,
     /// The human's message box at the foot of the chat column.
     input: Entity<InputState>,
     /// Root focus target, so Ctrl+Shift+P dispatches regardless of what's focused.
@@ -93,7 +97,6 @@ impl Chamber {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let resize_state = cx.new(|_| ResizableState::default());
         let input = cx.new(|cx| {
             InputState::new(window, cx)
                 .auto_grow(1, 4)
@@ -127,7 +130,6 @@ impl Chamber {
             view,
             prefs,
             path,
-            resize_state,
             input,
             focus_handle,
             palette_open: false,
@@ -180,8 +182,8 @@ impl Chamber {
     /// Execute a palette command and dismiss the overlay.
     fn run_command(&mut self, cmd: PaletteCmd, window: &mut Window, cx: &mut Context<Self>) {
         match cmd {
-            PaletteCmd::ToggleRoster => self.toggle_rail(ROSTER_IX, window, cx),
-            PaletteCmd::ToggleInspector => self.toggle_rail(INSPECTOR_IX, window, cx),
+            PaletteCmd::ToggleRoster => self.toggle_rail(Rail::Roster, window, cx),
+            PaletteCmd::ToggleInspector => self.toggle_rail(Rail::Inspector, window, cx),
         }
         self.palette_open = false;
         window.focus(&self.focus_handle, cx);
@@ -360,68 +362,132 @@ impl Chamber {
         )
     }
 
-    /// The 3-pane body: two collapsible/resizable rails around the field chat.
+    /// The body: two collapsible rails around the field chat. Only *expanded*
+    /// rails live in the resizable group (so a collapsed rail can't be dragged);
+    /// a collapsed rail is a fixed strip outside the group. The group is re-keyed
+    /// per layout so a fresh sizing state seeds panel widths from prefs, and
+    /// `on_resize` persists new widths back — drag-resize without the fighting.
     fn body(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        // Captured for the drag-persist callback below (see `on_resize`).
+        let roster_collapsed = self.prefs.roster_collapsed;
+        let inspector_collapsed = self.prefs.inspector_collapsed;
         let chamber = cx.entity();
 
-        let roster = resizable_panel()
-            .size(px(if self.prefs.roster_collapsed {
-                RAIL_COLLAPSED
-            } else {
-                self.prefs.roster_width
-            }))
-            .size_range(px(RAIL_COLLAPSED)..px(480.0))
-            .child(self.roster_pane(cx));
+        let group_id = SharedString::from(format!(
+            "chamber-body-{}-{}",
+            roster_collapsed as u8, inspector_collapsed as u8
+        ));
 
-        let chat = resizable_panel().child(self.chat_pane());
-
-        let inspector = resizable_panel()
-            .size(px(if self.prefs.inspector_collapsed {
-                RAIL_COLLAPSED
-            } else {
-                self.prefs.inspector_width
-            }))
-            .size_range(px(RAIL_COLLAPSED)..px(560.0))
-            .child(self.inspector_pane(cx));
-
-        h_resizable("chamber-body")
-            .with_state(&self.resize_state)
-            // Fires when the user finishes dragging a handle. Persist the new
-            // rail widths — but not while a rail is collapsed, so its remembered
-            // expanded width survives a drag of the *other* handle.
-            .on_resize(move |state, _window, app| {
-                let sizes = state.read(app).sizes().clone();
-                chamber.update(app, |this, _cx| {
-                    if !this.prefs.roster_collapsed {
-                        if let Some(w) = sizes.first() {
-                            this.prefs.roster_width = w.as_f32();
-                        }
+        let mut group = h_resizable(group_id).on_resize(move |state, _window, app| {
+            let sizes = state.read(app).sizes().clone();
+            chamber.update(app, |this, _cx| {
+                if !this.prefs.roster_collapsed {
+                    if let Some(w) = sizes.first() {
+                        this.prefs.roster_width = w.as_f32();
                     }
-                    if !this.prefs.inspector_collapsed {
-                        if let Some(w) = sizes.last() {
-                            this.prefs.inspector_width = w.as_f32();
-                        }
+                }
+                if !this.prefs.inspector_collapsed {
+                    if let Some(w) = sizes.last() {
+                        this.prefs.inspector_width = w.as_f32();
                     }
-                    let _ = config::save(&this.prefs);
-                });
+                }
+                let _ = config::save(&this.prefs);
+            });
+        });
+
+        if !roster_collapsed {
+            group = group.child(
+                resizable_panel()
+                    .size(px(self.prefs.roster_width))
+                    .size_range(px(RAIL_MIN)..px(RAIL_MAX))
+                    .child(self.roster_pane(cx)),
+            );
+        }
+        group = group.child(resizable_panel().child(self.chat_pane()));
+        if !inspector_collapsed {
+            group = group.child(
+                resizable_panel()
+                    .size(px(self.prefs.inspector_width))
+                    .size_range(px(RAIL_MIN)..px(RAIL_MAX))
+                    .child(self.inspector_pane(cx)),
+            );
+        }
+
+        h_flex()
+            .flex_1()
+            .w_full()
+            .when(roster_collapsed, |this| this.child(self.rail_strip(Rail::Roster, cx)))
+            .child(group)
+            .when(inspector_collapsed, |this| {
+                this.child(self.rail_strip(Rail::Inspector, cx))
             })
-            .child(roster)
-            .child(chat)
-            .child(inspector)
+    }
+
+    /// A collapsed rail: a fixed vertical strip with just the expand affordance
+    /// (and, on the Quarks rail, the pinned Settings button).
+    fn rail_strip(&self, rail: Rail, cx: &mut Context<Self>) -> impl IntoElement {
+        let (id, glyph) = match rail {
+            Rail::Roster => ("roster-strip", "»"),
+            Rail::Inspector => ("inspector-strip", "«"),
+        };
+        let mut col = v_flex()
+            .id(id)
+            .h_full()
+            .w(px(RAIL_STRIP))
+            .flex_none()
+            .py_2()
+            .items_center()
+            .gap_2()
+            .bg(theme::sidebar())
+            .child(
+                div()
+                    .id("expand")
+                    .text_color(theme::text_muted())
+                    .child(glyph)
+                    .active(|s| s.opacity(0.6))
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.toggle_rail(rail, window, cx)),
+                    ),
+            );
+        if let Rail::Roster = rail {
+            col = col.child(div().flex_1()).child(self.settings_button(cx, true));
+        }
+        col
+    }
+
+    /// The Settings entry pinned to the foot of the Quarks rail. Placeholder for
+    /// now — content lands here as it's built out.
+    fn settings_button(&self, cx: &mut Context<Self>, icon_only: bool) -> impl IntoElement {
+        div()
+            .id("settings")
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1p5()
+            .rounded_md()
+            .text_sm()
+            .text_color(theme::text_muted())
+            .hover(|s| s.bg(theme::surface()))
+            .active(|s| s.opacity(0.7))
+            .child("⚙")
+            .when(!icon_only, |this| this.child("Settings"))
+            .on_click(cx.listener(|_this, _, _window, _cx| {
+                // TODO: open settings (placeholder — content TBD with Jake).
+            }))
     }
 
     fn roster_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let collapsed = self.prefs.roster_collapsed;
-        let toggle = div()
+        let header = h_flex()
             .id("roster-toggle")
+            .w_full()
+            .justify_between()
+            .items_center()
             .text_sm()
             .text_color(theme::text_muted())
-            .child(if collapsed { ">".to_string() } else { "Quarks   <".to_string() })
+            .child("Quarks")
+            .child("«")
             .active(|s| s.opacity(0.6))
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.toggle_rail(ROSTER_IX, window, cx);
-            }));
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_rail(Rail::Roster, window, cx)));
 
         let mut col = v_flex()
             .w_full()
@@ -429,19 +495,17 @@ impl Chamber {
             .p_2()
             .gap_2()
             .bg(theme::sidebar())
-            .child(toggle);
+            .child(header);
 
-        if !collapsed {
-            for r in &self.view.roster {
-                col = col.child(roster_row(r));
-            }
-            if self.view.roster.is_empty() {
-                col = col.child(
-                    div().text_sm().text_color(theme::text_muted()).child("no quarks yet"),
-                );
-            }
+        for r in &self.view.roster {
+            col = col.child(roster_row(r));
         }
-        col
+        if self.view.roster.is_empty() {
+            col = col
+                .child(div().text_sm().text_color(theme::text_muted()).child("no quarks yet"));
+        }
+        // Settings pinned to the bottom of the rail.
+        col.child(div().flex_1()).child(self.settings_button(cx, false))
     }
 
     fn chat_pane(&self) -> impl IntoElement {
@@ -463,16 +527,19 @@ impl Chamber {
     }
 
     fn inspector_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let collapsed = self.prefs.inspector_collapsed;
-        let toggle = div()
+        let header = h_flex()
             .id("inspector-toggle")
+            .w_full()
+            .justify_between()
+            .items_center()
             .text_sm()
             .text_color(theme::text_muted())
-            .child(if collapsed { "<".to_string() } else { ">   Inspector".to_string() })
+            .child("Inspector")
+            .child("»")
             .active(|s| s.opacity(0.6))
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.toggle_rail(INSPECTOR_IX, window, cx);
-            }));
+            .on_click(
+                cx.listener(|this, _, window, cx| this.toggle_rail(Rail::Inspector, window, cx)),
+            );
 
         let mut col = v_flex()
             .w_full()
@@ -480,67 +547,54 @@ impl Chamber {
             .p_2()
             .gap_2()
             .bg(theme::sidebar())
-            .child(toggle);
+            .child(header);
 
-        if !collapsed {
-            let activity: Vec<&MessageRow> = self
-                .view
-                .messages
-                .iter()
-                .filter(|m| matches!(m.kind_label, "snapshot" | "edit" | "command"))
-                .collect();
-            col = col
-                .child(div().text_sm().text_color(theme::text_muted()).child("Activity"));
-            if activity.is_empty() {
+        let activity: Vec<&MessageRow> = self
+            .view
+            .messages
+            .iter()
+            .filter(|m| matches!(m.kind_label, "snapshot" | "edit" | "command"))
+            .collect();
+        col = col.child(div().text_sm().text_color(theme::text_muted()).child("Activity"));
+        if activity.is_empty() {
+            col = col.child(
+                div().text_sm().text_color(theme::text_muted()).child("no changes yet"),
+            );
+        } else {
+            for m in activity {
                 col = col.child(
-                    div().text_sm().text_color(theme::text_muted()).child("no changes yet"),
+                    v_flex()
+                        .gap_1()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(theme::surface())
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::accent_secondary())
+                                .child(m.kind_label.to_string()),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text_secondary())
+                                .child(m.body.clone()),
+                        ),
                 );
-            } else {
-                for m in activity {
-                    col = col.child(
-                        v_flex()
-                            .gap_1()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(theme::surface())
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::accent_secondary())
-                                    .child(m.kind_label.to_string()),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text_secondary())
-                                    .child(m.body.clone()),
-                            ),
-                    );
-                }
             }
         }
         col
     }
 
-    /// Collapse or expand a rail. Flips the persisted flag and drives the shared
-    /// `ResizableState` to the target width — collapsing to a sliver, or restoring
-    /// the remembered expanded width. Programmatic resizes don't fire `on_resize`,
-    /// so the remembered width in `prefs` is never clobbered by the collapse itself.
-    fn toggle_rail(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let (collapsed_flag, remembered) = match ix {
-            ROSTER_IX => {
-                self.prefs.roster_collapsed = !self.prefs.roster_collapsed;
-                (self.prefs.roster_collapsed, self.prefs.roster_width)
-            }
-            _ => {
-                self.prefs.inspector_collapsed = !self.prefs.inspector_collapsed;
-                (self.prefs.inspector_collapsed, self.prefs.inspector_width)
-            }
-        };
-        let target = px(if collapsed_flag { RAIL_COLLAPSED } else { remembered });
-        self.resize_state
-            .update(cx, |state, cx| state.resize_panel(ix, target, window, cx));
+    /// Collapse or expand a rail. Just flips the persisted flag — the layout
+    /// follows (an expanded rail is a resizable panel; a collapsed one is a fixed
+    /// strip), so there's no sizing state to drive by hand.
+    fn toggle_rail(&mut self, rail: Rail, _window: &mut Window, cx: &mut Context<Self>) {
+        match rail {
+            Rail::Roster => self.prefs.roster_collapsed = !self.prefs.roster_collapsed,
+            Rail::Inspector => self.prefs.inspector_collapsed = !self.prefs.inspector_collapsed,
+        }
         let _ = config::save(&self.prefs);
         cx.notify();
     }
