@@ -4,3 +4,8 @@ Cargo.lock.orig
 
 # Session-local hook scratch (remember plugin); not project state.
 .remember/
+.superpowers/
+
+# Development artifacts
+docs/superpowers/
+docs/plans/
