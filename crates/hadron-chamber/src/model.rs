@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use hadron_lattice::{Actor, Event, Kind, QuarkState};
+use hadron_lattice::{Actor, Event, Kind, QuarkId, QuarkState};
 
 /// One rendered chat row. `kind_label` lets the UI style/filter by event type;
 /// `body` is a display string synthesized for non-message events.
@@ -93,10 +93,29 @@ pub fn project(events: &[Event]) -> ChamberView {
     ChamberView { messages, roster }
 }
 
+/// Parse a human input line into an optional addressee and the message body.
+///
+/// A leading `@name ` (name followed by whitespace and a non-empty body) is
+/// lifted into the addressee, so `@claude fix the tests` targets `claude` with
+/// body `fix the tests`. Anything else — no `@`, a bare `@name`, or an `@` with
+/// no body — is sent as-is to no one (`to = None`), matching how the human
+/// speaks to the field at large.
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+pub fn parse_mention(text: &str) -> (Option<QuarkId>, String) {
+    if let Some(rest) = text.strip_prefix('@') {
+        if let Some((name, body)) = rest.split_once(char::is_whitespace) {
+            let body = body.trim();
+            if !name.is_empty() && !body.is_empty() {
+                return (Some(QuarkId::new(name)), body.to_string());
+            }
+        }
+    }
+    (None, text.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hadron_lattice::QuarkId;
     use serde_json::json;
 
     fn ev(from: Actor, to: Option<&str>, kind: Kind) -> Event {
@@ -165,5 +184,34 @@ mod tests {
         assert!(ids.contains(&"worker"));
         // human is not a quark → not on the roster.
         assert!(!ids.contains(&"human"));
+    }
+
+    #[test]
+    fn mention_lifts_addressee_and_body() {
+        let (to, body) = parse_mention("@claude fix the failing tests");
+        assert_eq!(to.as_ref().map(QuarkId::as_str), Some("claude"));
+        assert_eq!(body, "fix the failing tests");
+    }
+
+    #[test]
+    fn plain_message_has_no_addressee() {
+        let (to, body) = parse_mention("hello everyone");
+        assert_eq!(to, None);
+        assert_eq!(body, "hello everyone");
+    }
+
+    #[test]
+    fn bare_mention_is_not_treated_as_addressing() {
+        // No body after the name → send the whole thing, addressed to no one.
+        let (to, body) = parse_mention("@claude");
+        assert_eq!(to, None);
+        assert_eq!(body, "@claude");
+    }
+
+    #[test]
+    fn mention_trims_extra_whitespace_in_body() {
+        let (to, body) = parse_mention("@agy    run the build   ");
+        assert_eq!(to.as_ref().map(QuarkId::as_str), Some("agy"));
+        assert_eq!(body, "run the build");
     }
 }
