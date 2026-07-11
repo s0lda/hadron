@@ -16,6 +16,8 @@ pub struct Engine {
     max_exchanges: usize,
     /// Opt-in git safety: target project repo to snapshot/diff. `None` = off.
     repo_root: Option<PathBuf>,
+    /// Opt-in nucleus context: pre-rendered digest injected into projections.
+    nucleus_digest: String,
 }
 
 impl Engine {
@@ -41,6 +43,7 @@ impl Engine {
             invariants,
             max_exchanges,
             repo_root: None,
+            nucleus_digest: String::new(),
         }
     }
 
@@ -48,6 +51,13 @@ impl Engine {
     /// the working diff into the projection. Additive — off by default.
     pub fn with_git(mut self, repo_root: PathBuf) -> Self {
         self.repo_root = Some(repo_root);
+        self
+    }
+
+    /// Opt in to nucleus context: the pre-rendered digest (built by the daemon
+    /// via `nucleus::load` → `nucleus::digest`) is injected into every projection.
+    pub fn with_nucleus(mut self, digest: String) -> Self {
+        self.nucleus_digest = digest;
         self
     }
 
@@ -99,7 +109,7 @@ impl Engine {
             let projection = Projection {
                 task: current_task(&events, &target),
                 invariants: self.invariants.clone(),
-                nucleus_digest: String::new(),
+                nucleus_digest: self.nucleus_digest.clone(),
                 roster: self.roster.clone(),
                 field_window: events.clone(),
                 git_diff,
@@ -197,6 +207,37 @@ mod tests {
             .filter(|e| matches!(e.kind, Kind::Snapshot { .. }))
             .count();
         assert_eq!(snapshots, 1, "one snapshot recorded before the single excite");
+    }
+
+    #[tokio::test]
+    async fn projection_carries_nucleus_digest() {
+        let fdir = tempdir().unwrap();
+        let path = fdir.path().join("field.jsonl");
+        seed_human_message(&path, "orch", "go");
+
+        // A probe quark asserts on the projection it receives.
+        use hadron_lattice::{Projection, TurnOutcome};
+        struct Probe;
+        #[async_trait::async_trait]
+        impl crate::quark::Quark for Probe {
+            fn id(&self) -> QuarkId {
+                QuarkId::new("orch")
+            }
+            fn flavor(&self) -> Flavor {
+                Flavor::Orchestrator
+            }
+            fn energy(&self) -> hadron_lattice::EnergyState {
+                hadron_lattice::EnergyState::Available
+            }
+            async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+                assert!(turn.nucleus_digest.contains("## map.md"));
+                Ok(TurnOutcome { message: Some("done".into()) })
+            }
+        }
+
+        let mut engine = Engine::new(path.clone(), vec![Box::new(Probe)], "x".into(), 10)
+            .with_nucleus("## map.md\nthe project map".into());
+        engine.run_until_quiesce().await.unwrap();
     }
 
     #[tokio::test]
