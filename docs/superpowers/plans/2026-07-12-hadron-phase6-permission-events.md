@@ -1,6 +1,6 @@
 # Hadron Phase 6 slice 2 — Permission Events & Pairing Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans. Steps use checkbox (`- [x]`) syntax.
 
 **Goal:** Make a permission request a first-class citizen of the append-only field: add `Kind::PermissionReq`/`Kind::PermissionGrant` events, and a pure pairing helper that finds an outstanding (ungranted) request — so the swarm loop can wait on it exactly like it waits on a pending quark turn.
 
@@ -26,7 +26,7 @@
 **Interfaces:**
 - Produces: `enum Risk { WorkspaceEdit, BashExec }` (snake_case serde). `Kind::PermissionReq { risk: Risk, description: String }` and `Kind::PermissionGrant { approved: bool }`.
 
-- [ ] **Step 1: Add the `Risk` enum** right after `QuarkState` (same derive/attrs):
+- [x] **Step 1: Add the `Risk` enum** right after `QuarkState` (same derive/attrs):
 
 ```rust
 /// The category of a proposed operation, carried on a `PermissionReq`. Matched
@@ -41,14 +41,14 @@ pub enum Risk {
 }
 ```
 
-- [ ] **Step 2: Add the two `Kind` arms** (after `Assign`, before `Unknown`):
+- [x] **Step 2: Add the two `Kind` arms** (after `Assign`, before `Unknown`):
 
 ```rust
     PermissionReq { risk: Risk, description: String },
     PermissionGrant { approved: bool },
 ```
 
-- [ ] **Step 3: Add serialize arms** (in the `match &self.kind` block, after `Assign`):
+- [x] **Step 3: Add serialize arms** (in the `match &self.kind` block, after `Assign`):
 
 ```rust
             Kind::PermissionReq { risk, description } => {
@@ -62,7 +62,7 @@ pub enum Risk {
             }
 ```
 
-- [ ] **Step 4: Add deserialize arms** (in the `match kind_tag.as_str()`, after `"assign"`):
+- [x] **Step 4: Add deserialize arms** (in the `match kind_tag.as_str()`, after `"assign"`):
 
 ```rust
             "permission_req" => Kind::PermissionReq {
@@ -74,7 +74,7 @@ pub enum Risk {
             },
 ```
 
-- [ ] **Step 5: Write round-trip tests** (append to `mod event_tests`):
+- [x] **Step 5: Write round-trip tests** (append to `mod event_tests`):
 
 ```rust
     #[test]
@@ -110,10 +110,10 @@ pub enum Risk {
     }
 ```
 
-- [ ] **Step 6: Run tests** — `cargo test -p hadron-lattice event`.
+- [x] **Step 6: Run tests** — `cargo test -p hadron-lattice event`.
 Expected: PASS incl. the 2 new; the existing `unknown_kind_is_preserved_not_crashed` still passes (forward-compat intact).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add crates/hadron-lattice/src/event.rs
@@ -134,7 +134,7 @@ git commit -m "feat(lattice): permission_req/permission_grant events + Risk on t
 - Consumes: `hadron_lattice::{Event, Kind, Risk}`.
 - Produces: `struct PendingPermission { risk: Risk, description: String }`; `fn pending_permission(events: &[Event]) -> Option<PendingPermission>` — the most recent `PermissionReq` with no `PermissionGrant` after it (mirrors `router::next_pending`).
 
-- [ ] **Step 1: Add the lattice dependency** to `crates/hadron-gatekeeper/Cargo.toml`:
+- [x] **Step 1: Add the lattice dependency** to `crates/hadron-gatekeeper/Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -142,9 +142,9 @@ serde = { version = "1", features = ["derive"] }
 hadron-lattice = { path = "../hadron-lattice" }
 ```
 
-- [ ] **Step 2: Move `Risk` out of gatekeeper.** In `matrix.rs`, delete the local `pub enum Risk { … }` and add at the top: `use hadron_lattice::Risk;`. (`decide` and the existing tests reference `Risk` unchanged via `use super::*`.)
+- [x] **Step 2: Move `Risk` out of gatekeeper.** In `matrix.rs`, delete the local `pub enum Risk { … }` and add at the top: `use hadron_lattice::Risk;`. (`decide` and the existing tests reference `Risk` unchanged via `use super::*`.)
 
-- [ ] **Step 3: Update `lib.rs`** so the public API is unchanged and `gate` is wired:
+- [x] **Step 3: Update `lib.rs`** so the public API is unchanged and `gate` is wired:
 
 ```rust
 mod gate;
@@ -155,7 +155,7 @@ pub use hadron_lattice::Risk;
 pub use matrix::{decide, Decision, Policy};
 ```
 
-- [ ] **Step 4: Write `gate.rs` with a failing-first stub + tests:**
+- [x] **Step 4: Write `gate.rs` with a failing-first stub + tests:**
 
 ```rust
 use hadron_lattice::{Event, Kind, Risk};
@@ -239,13 +239,13 @@ mod tests {
 }
 ```
 
-- [ ] **Step 5: Run tests** — `cargo test -p hadron-gatekeeper`.
+- [x] **Step 5: Run tests** — `cargo test -p hadron-gatekeeper`.
 Expected: PASS — the 5 existing matrix tests (now using lattice's `Risk`) + 5 new gate tests.
 
-- [ ] **Step 6: Confirm the workspace builds** — `cargo build`.
+- [x] **Step 6: Confirm the workspace builds** — `cargo build`.
 Expected: clean.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add crates/hadron-gatekeeper
