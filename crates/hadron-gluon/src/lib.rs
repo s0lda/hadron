@@ -7,3 +7,4 @@ pub mod quark;
 pub mod router;
 pub mod snapshot;
 pub mod ledger;
+pub mod watch;
