@@ -10,24 +10,24 @@ use gpui::{rgb, rgba, Rgba};
 
 use hadron_lattice::QuarkState;
 
-// --- surfaces (darkest → raised) ---
+// --- surfaces (darkest → raised) --- Jake's greyscale: 0x121314 / 0x191a1b / 0x252627.
 pub fn bg() -> Rgba {
-    rgb(0x0d0e11)
+    rgb(0x121314) // base canvas
 }
 pub fn sidebar() -> Rgba {
-    rgb(0x16181c)
+    rgb(0x191a1b) // rails
 }
 pub fn surface() -> Rgba {
-    rgb(0x1c1e22)
+    rgb(0x202122) // chips/cards on the rails (a step above sidebar so they read)
 }
 pub fn surface_raised() -> Rgba {
-    rgb(0x24272d)
+    rgb(0x252627) // hover / active
 }
 pub fn input_bg() -> Rgba {
-    rgb(0x191b1f)
+    rgb(0x191a1b)
 }
 pub fn border() -> Rgba {
-    rgb(0x40444d)
+    rgb(0x303133)
 }
 
 // --- text tiers ---

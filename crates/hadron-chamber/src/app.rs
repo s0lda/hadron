@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
-    actions, div, prelude::*, px, rgba, App, Context, Entity, FocusHandle, KeyBinding, Render,
+    actions, div, prelude::*, px, rgb, rgba, App, Context, Entity, FocusHandle, KeyBinding, Render,
     Subscription, Window, WindowBounds, WindowDecorations, WindowOptions,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
@@ -328,6 +328,7 @@ impl Chamber {
             .id("command-bar")
             .items_center()
             .gap_3()
+            .my_1p5() // breathing room from the titlebar top/bottom edges
             .px_3()
             .py_1()
             .w(px(380.0))
@@ -592,6 +593,23 @@ pub fn run(field_path: Option<String>) {
     app.run(move |cx: &mut App| {
         gpui_component::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
+        // Align gpui-component's own component colors (titlebar, inputs, window
+        // controls) to Jake's palette so they blend with our hand-drawn surfaces.
+        {
+            let t = gpui_component::Theme::global_mut(cx);
+            t.title_bar = rgb(0x121314).into();
+            t.title_bar_border = rgb(0x252627).into();
+            t.background = rgb(0x121314).into();
+            t.input = rgb(0x191a1b).into();
+            t.secondary = rgb(0x191a1b).into();
+            t.secondary_hover = rgb(0x252627).into();
+            t.popover = rgb(0x191a1b).into();
+            t.border = rgb(0x303133).into();
+            // Close-button hover: red *background*, but keep the X light so it
+            // stays legible (was red-on-red).
+            t.danger = rgb(0xef4444).into();
+            t.danger_foreground = rgb(0xf5f5f6).into();
+        }
         cx.bind_keys([
             KeyBinding::new("ctrl-shift-p", TogglePalette, Some(KEY_CONTEXT)),
             KeyBinding::new("cmd-shift-p", TogglePalette, Some(KEY_CONTEXT)),
