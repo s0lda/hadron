@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Event, QuarkCard};
+use crate::{Event, QuarkCard, Risk};
 
 /// The curated context handed to a quark on excitation. The single chokepoint
 /// where cost-control (what context), invariants (methodology), nucleus (project
@@ -28,11 +28,23 @@ pub struct Projection {
 /// What an adapter returns after a turn. File mutations are NOT reported here —
 /// the gluon derives them from git diff (Plan 2). A `None` message means the
 /// quark produced no field message this turn.
+/// A quark's self-declared request to perform a risky operation, surfaced on its
+/// `TurnOutcome`. The engine turns this into a `Kind::PermissionReq` and consults
+/// the god-mode policy. Mirror of gatekeeper's `PendingPermission` (lattice can't
+/// depend on gatekeeper, so the shape is duplicated deliberately).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionAsk {
+    pub risk: Risk,
+    pub description: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct TurnOutcome {
     pub message: Option<String>,
     #[serde(default)]
     pub used_tokens: u32,
+    #[serde(default)]
+    pub permission: Option<PermissionAsk>,
 }
 
 #[cfg(test)]
@@ -65,6 +77,9 @@ mod tests {
 
     #[test]
     fn turn_outcome_default_is_empty() {
-        assert_eq!(TurnOutcome::default(), TurnOutcome { message: None, used_tokens: 0 });
+        assert_eq!(
+            TurnOutcome::default(),
+            TurnOutcome { message: None, used_tokens: 0, permission: None }
+        );
     }
 }
