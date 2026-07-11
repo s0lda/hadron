@@ -14,6 +14,8 @@ pub struct Engine {
     roster: Vec<QuarkCard>,
     invariants: String,
     max_exchanges: usize,
+    /// Opt-in git safety: target project repo to snapshot/diff. `None` = off.
+    repo_root: Option<PathBuf>,
 }
 
 impl Engine {
@@ -38,7 +40,15 @@ impl Engine {
             roster,
             invariants,
             max_exchanges,
+            repo_root: None,
         }
+    }
+
+    /// Opt in to git safety: snapshot the target repo before each excite and feed
+    /// the working diff into the projection. Additive — off by default.
+    pub fn with_git(mut self, repo_root: PathBuf) -> Self {
+        self.repo_root = Some(repo_root);
+        self
     }
 
     /// Excite quarks one at a time until no addressee is pending (quiesce) or the
@@ -70,13 +80,29 @@ impl Engine {
                 return Ok(());
             }
 
+            let git_diff = if let Some(root) = &self.repo_root {
+                let snap =
+                    crate::snapshot::create(root, &format!("before {}", target.as_str()))?;
+                append_event(
+                    &self.field_path,
+                    &Event::new(
+                        Actor::Gluon,
+                        None,
+                        Kind::Snapshot { git: snap.commit.clone(), label: snap.label.clone() },
+                    ),
+                )?;
+                crate::snapshot::working_diff(root)?
+            } else {
+                String::new()
+            };
+
             let projection = Projection {
                 task: current_task(&events, &target),
                 invariants: self.invariants.clone(),
                 nucleus_digest: String::new(),
                 roster: self.roster.clone(),
                 field_window: events.clone(),
-                git_diff: String::new(),
+                git_diff,
             };
 
             let quark = self
@@ -124,6 +150,53 @@ mod tests {
             ),
         )
         .unwrap();
+    }
+
+    /// A temp git repo with one commit so HEAD exists (for git-safety tests).
+    fn git_init_repo() -> tempfile::TempDir {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .status()
+                .unwrap();
+        };
+        run(&["init", "-q"]);
+        std::fs::write(root.join("f.txt"), "x\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-q", "-m", "init"]);
+        dir
+    }
+
+    #[tokio::test]
+    async fn engine_snapshots_before_excite_when_git_enabled() {
+        let fdir = tempdir().unwrap();
+        let path = fdir.path().join("field.jsonl");
+        seed_human_message(&path, "orch", "do it");
+
+        let repo = git_init_repo();
+        let orch = MockQuark::scripted(
+            QuarkId::new("orch"),
+            Flavor::Orchestrator,
+            vec![Some("done, back to human".into())],
+        );
+        let mut engine = Engine::new(path.clone(), vec![Box::new(orch)], "x".into(), 10)
+            .with_git(repo.path().to_path_buf());
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&path).unwrap();
+        let snapshots = events
+            .iter()
+            .filter(|e| matches!(e.kind, Kind::Snapshot { .. }))
+            .count();
+        assert_eq!(snapshots, 1, "one snapshot recorded before the single excite");
     }
 
     #[tokio::test]
