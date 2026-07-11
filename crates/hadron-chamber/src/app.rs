@@ -550,9 +550,6 @@ impl Chamber {
             .gap_1()
             .pr(px(8.0))
             .flex_shrink_0()
-            // App/options menu (placeholder — the 3-line menu; options land later).
-            .child(menu_button())
-            .child(div().w(px(6.0)))
             .child(control_button("min", IconName::WindowMinimize, false))
             .child(control_button(
                 "max",
@@ -574,6 +571,15 @@ impl Chamber {
             .bg(theme::sidebar())
             .rounded_tl(top_radius)
             .rounded_tr(top_radius)
+            // App/options menu (the 3-line menu; options land later) in the far
+            // left corner.
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .pl(px(8.0))
+                    .child(menu_button()),
+            )
             .child(drag_region("drag-l"))
             .child(command_bar)
             .child(
@@ -791,19 +797,24 @@ impl Chamber {
             .bg(theme::input_bg())
             .child(Input::new(&self.input));
 
-        // The floating chat card: filled + rounded, inset from the canvas so the
-        // unified space shows around it.
+        // The floating chat card: darker + rounded, inset from the lighter
+        // unified space that shows around it.
         let card = v_flex()
             .flex_1()
             .min_h_0()
             .rounded(INNER_RADIUS)
             .overflow_hidden()
-            .bg(theme::sidebar())
+            .bg(theme::bg())
             .child(header)
             .child(body)
             .child(input);
 
-        v_flex().w_full().h_full().p_2().child(card)
+        v_flex()
+            .w_full()
+            .h_full()
+            .p_2()
+            .bg(theme::sidebar())
+            .child(card)
     }
 
     /// The Chat tab: the conversation only (message events), styled like a chat
