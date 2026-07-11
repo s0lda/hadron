@@ -7,6 +7,7 @@ edition = "2021"
 rusqlite = { version = "0.31", features = ["bundled"] }
 notify = "8"
 hadron-lattice = { path = "../hadron-lattice" }
+hadron-gatekeeper = { path = "../hadron-gatekeeper" }
 serde_json = "1"
 anyhow = "1"
 async-trait = "0.1"
