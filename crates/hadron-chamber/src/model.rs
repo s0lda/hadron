@@ -152,25 +152,12 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
     }
 }
 
-/// Parse a human input line into an optional addressee and the message body.
-///
-/// A leading `@name ` (name followed by whitespace and a non-empty body) is
-/// lifted into the addressee, so `@claude fix the tests` targets `claude` with
-/// body `fix the tests`. Anything else — no `@`, a bare `@name`, or an `@` with
-/// no body — is sent as-is to no one (`to = None`), matching how the human
-/// speaks to the field at large.
-#[cfg_attr(not(feature = "gui"), allow(dead_code))]
-pub fn parse_mention(text: &str) -> (Option<QuarkId>, String) {
-    if let Some(rest) = text.strip_prefix('@') {
-        if let Some((name, body)) = rest.split_once(char::is_whitespace) {
-            let body = body.trim();
-            if !name.is_empty() && !body.is_empty() {
-                return (Some(QuarkId::new(name)), body.to_string());
-            }
-        }
-    }
-    (None, text.to_string())
-}
+// NOTE: the human's `@mention` routing lives in the daemon now
+// (`hadron_gluon::router::human_mentions`), not the chamber. The chamber writes
+// the raw message with `to: None` and leaves mentions in the body, so ONE message
+// can address several quarks; the daemon resolves and fans them out. (A former
+// `parse_mention` here lifted a single leading mention into `to` — which silently
+// dropped the second addressee — and has been removed.)
 
 #[cfg(test)]
 mod tests {
@@ -352,32 +339,4 @@ mod tests {
         assert!(!ids.contains(&"human"));
     }
 
-    #[test]
-    fn mention_lifts_addressee_and_body() {
-        let (to, body) = parse_mention("@claude fix the failing tests");
-        assert_eq!(to.as_ref().map(QuarkId::as_str), Some("claude"));
-        assert_eq!(body, "fix the failing tests");
-    }
-
-    #[test]
-    fn plain_message_has_no_addressee() {
-        let (to, body) = parse_mention("hello everyone");
-        assert_eq!(to, None);
-        assert_eq!(body, "hello everyone");
-    }
-
-    #[test]
-    fn bare_mention_is_not_treated_as_addressing() {
-        // No body after the name → send the whole thing, addressed to no one.
-        let (to, body) = parse_mention("@claude");
-        assert_eq!(to, None);
-        assert_eq!(body, "@claude");
-    }
-
-    #[test]
-    fn mention_trims_extra_whitespace_in_body() {
-        let (to, body) = parse_mention("@agy    run the build   ");
-        assert_eq!(to.as_ref().map(QuarkId::as_str), Some("agy"));
-        assert_eq!(body, "run the build");
-    }
 }

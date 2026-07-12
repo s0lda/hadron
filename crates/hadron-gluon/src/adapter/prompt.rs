@@ -35,8 +35,16 @@ fn render_event_line(from: &Actor, to: &Option<QuarkId>, body: &str) -> String {
 
 /// Build the full Markdown prompt handed to a quark's CLI for one turn.
 /// Deterministic and side-effect-free so it can be unit-tested exactly.
-pub fn build(projection: &Projection) -> String {
+/// `self_id` is the quark's own handle — a human message can address several
+/// quarks at once ("@opus X and @agy Y"), each of whom receives the whole
+/// message, so each must know which mentions are its part.
+pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     let mut p = String::new();
+
+    // 0. Identity — which quark is being excited. A multi-addressee human
+    // message hands the SAME text to each named quark, so the model must know
+    // its own handle to act on only its part.
+    p.push_str(&format!("# Who you are\nYou are `@{}` in this swarm.\n\n", self_id.as_str()));
 
     // 1. Invariants — the enforced working protocol.
     if !projection.invariants.trim().is_empty() {
@@ -85,10 +93,11 @@ pub fn build(projection: &Projection) -> String {
     // 6. Handoff reminder — how to keep the loop coordinating / quiescing.
     p.push_str("# How to respond\n");
     p.push_str(
-        "Reply in Markdown. To delegate, start a line with `@<quark-id>` and the request \
-         (only a mention at the START of a line routes — mentions inside prose are ignored). \
-         When the overall task is complete, reply WITHOUT any `@mention` to hand control back \
-         to the human.\n\n\
+        "Reply in Markdown. If a message addresses several quarks (e.g. `@opus do X and @agy \
+         do Y`), act ONLY on the part directed at you — the others handle theirs. To delegate, \
+         start a line with `@<quark-id>` and the request (only a mention at the START of a line \
+         routes — mentions inside prose are ignored). When the overall task is complete, reply \
+         WITHOUT any `@mention` to hand control back to the human.\n\n\
          Be truthful about your actions: report only what you actually did and verified this \
          turn, and clearly separate what you PROPOSE from what you have DONE. Never state \
          completed work — commits, passing tests, file edits — that you did not perform. If you \
@@ -128,7 +137,7 @@ mod tests {
 
     #[test]
     fn prompt_contains_all_sections() {
-        let p = build(&projection("Build login"));
+        let p = build(&projection("Build login"), &QuarkId::new("agy"));
         assert!(p.contains("# Working protocol (Invariants)"));
         assert!(p.contains("Snapshot before editing"));
         assert!(p.contains("# Project knowledge (nucleus)"));
@@ -141,18 +150,28 @@ mod tests {
     }
 
     #[test]
+    fn prompt_states_the_quarks_own_identity_and_multi_addressee_rule() {
+        // A quark must know its handle to act on only its slice of a message that
+        // named several quarks (the multi-dispatch case).
+        let p = build(&projection("x"), &QuarkId::new("opus"));
+        assert!(p.contains("# Who you are"));
+        assert!(p.contains("You are `@opus`"));
+        assert!(p.contains("act ONLY on the part directed at you"));
+    }
+
+    #[test]
     fn prompt_states_mode_authority_and_demands_honesty() {
         let mut proj = projection("x");
         // Read-only mode tells the quark it cannot act…
         proj.mode = hadron_lattice::Mode::Ask;
-        let p = build(&proj);
+        let p = build(&proj, &QuarkId::new("agy"));
         assert!(p.contains("# Your authority this turn"));
         assert!(p.contains("Ask (read-only)"));
         // …and every mode demands truthful reporting (the anti-confabulation rule).
         assert!(p.contains("Never state completed work"));
 
         proj.mode = hadron_lattice::Mode::Bypass;
-        assert!(build(&proj).contains("Bypass — full tool access"));
+        assert!(build(&proj, &QuarkId::new("agy")).contains("Bypass — full tool access"));
     }
 
     #[test]
@@ -161,7 +180,7 @@ mod tests {
         proj.invariants = String::new();
         proj.nucleus_digest = String::new();
         proj.git_diff = String::new();
-        let p = build(&proj);
+        let p = build(&proj, &QuarkId::new("agy"));
         assert!(!p.contains("Invariants"));
         assert!(!p.contains("nucleus"));
         assert!(!p.contains("working diff"));

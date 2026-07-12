@@ -70,7 +70,7 @@ impl<R: CliRunner> Quark for AgyQuark<R> {
 
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let mode = turn.mode;
-        let prompt = crate::adapter::prompt::build(&turn);
+        let prompt = crate::adapter::prompt::build(&turn, &self.id);
         let result = self.runner.run(self.invocation(prompt, mode)).await?;
         Ok(reply_to_outcome(&result))
     }

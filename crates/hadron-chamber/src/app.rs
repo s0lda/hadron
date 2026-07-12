@@ -551,8 +551,11 @@ impl Chamber {
             return;
         }
 
-        let (to, body) = model::parse_mention(&text);
-        let ev = Event::new(Actor::Human, to, Kind::Message { body });
+        // Write the raw text with `to: None`, leaving any `@mentions` in the body.
+        // The daemon resolves addressees from the body, so ONE message can address
+        // several quarks ("@opus do X and @agy do Y") — each is fanned out in turn.
+        // (Stripping a single leading mention into `to` would drop the others.)
+        let ev = Event::new(Actor::Human, None, Kind::Message { body: text });
         if let Err(e) = io::append_event(&self.path, &ev) {
             eprintln!("chamber: failed to append steering message: {e}");
             return;

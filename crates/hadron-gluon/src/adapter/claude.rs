@@ -80,7 +80,7 @@ impl<R: CliRunner> Quark for ClaudeQuark<R> {
 
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let mode = turn.mode;
-        let prompt = crate::adapter::prompt::build(&turn);
+        let prompt = crate::adapter::prompt::build(&turn, &self.id);
         let result = self.runner.run(self.invocation(prompt, mode)).await?;
 
         // Parse the JSON envelope: capture the session id, extract the reply text.

@@ -5,7 +5,7 @@ use hadron_lattice::{Actor, Event, Flavor, Kind, Projection, QuarkCard, QuarkId,
 
 use crate::field::{append_event, read_events};
 use crate::quark::Quark;
-use crate::router::{next_pending, parse_addressee};
+use crate::router::{human_mentions, next_pending, parse_addressee};
 use std::fs;
 
 fn build_invariants(workspace_root: &std::path::Path, requested: &[String]) -> (String, Vec<String>) {
@@ -134,30 +134,49 @@ impl Engine {
         self
     }
 
-    /// Orchestrator default-routing: when nothing is explicitly addressed, the
-    /// human's latest message — if it named no one and no quark has answered it —
-    /// is fielded by the orchestrator, who then decides and delegates. This is
-    /// what lets the human "just type in the chat" instead of always `@mention`-ing.
-    /// Returns the orchestrator's id and the message body to hand it. `None` if
-    /// the last human message was addressed/answered or there is no orchestrator.
-    fn orchestrator_fallback(&self, events: &[Event]) -> Option<(QuarkId, String)> {
+    /// Who a human message addresses: every quark it `@mentions` (anywhere, in
+    /// order — the multi-dispatch case, "@opus X and @agy Y"), or, if it mentions
+    /// no one, the orchestrator (default-routing, so the human can "just type").
+    /// An empty result means no one can field it (e.g. no orchestrator on the
+    /// roster and no valid mention).
+    fn human_addressees(&self, body: &str) -> Vec<QuarkId> {
+        let mut addressees = human_mentions(body, &self.roster);
+        if addressees.is_empty() {
+            if let Some(orch) = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator) {
+                addressees.push(orch.id.clone());
+            }
+        }
+        addressees
+    }
+
+    /// Route the human's latest UNADDRESSED (`to == None`) message. The chamber
+    /// writes human messages with the mentions left in the body (not stripped into
+    /// `to`), so one message can name several quarks. This fans out sequentially:
+    /// it returns the FIRST addressee that hasn't answered yet, handing it the full
+    /// message; after that quark replies, the next call picks up the next unserved
+    /// addressee. Addressed messages and quark hand-offs are `next_pending`'s job —
+    /// this only fires once `next_pending` returns `None`. `None` here means the
+    /// message is fully served (or no one can field it) → quiesce.
+    fn human_message_target(&self, events: &[Event]) -> Option<(QuarkId, String)> {
         let idx = events
             .iter()
             .rposition(|e| e.from == Actor::Human && matches!(e.kind, Kind::Message { .. }))?;
         if events[idx].to.is_some() {
-            return None; // last human message was addressed → next_pending owns it
-        }
-        let answered = events[idx + 1..]
-            .iter()
-            .any(|e| matches!(e.from, Actor::Quark(_)));
-        if answered {
-            return None;
+            return None; // addressed message → next_pending owns it
         }
         let Kind::Message { body } = &events[idx].kind else {
             return None;
         };
-        let orch = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator)?;
-        Some((orch.id.clone(), body.clone()))
+        // First addressee that has not authored an event since this message.
+        for addressee in self.human_addressees(body) {
+            let served = events[idx + 1..]
+                .iter()
+                .any(|e| e.from == Actor::Quark(addressee.clone()));
+            if !served {
+                return Some((addressee, body.clone()));
+            }
+        }
+        None
     }
 
     /// Excite quarks one at a time until no addressee is pending (quiesce) or the
@@ -167,12 +186,14 @@ impl Engine {
         loop {
             let events = read_events(&self.field_path)?;
 
-            // Pick the next quark: an explicit addressee/hand-off first, else the
-            // orchestrator fielding an unaddressed human message (fallback_task
-            // carries that message so it isn't looked up by `to == target`).
+            // Pick the next quark: an explicit addressee/hand-off first, else an
+            // unaddressed human message fanned out to whoever it @mentioned (or the
+            // orchestrator). `fallback_task` carries that message so it isn't looked
+            // up by `to == target` (the message is `to: None`, naming quarks only in
+            // its body).
             let (target, fallback_task) = match next_pending(&events) {
                 Some(q) => (q, None),
-                None => match self.orchestrator_fallback(&events) {
+                None => match self.human_message_target(&events) {
                     Some((q, task)) => (q, Some(task)),
                     None => return Ok(()), // quiesce: control returns to the human
                 },
@@ -233,8 +254,8 @@ impl Engine {
             // non-task events like a PermissionGrant (also addressed to the quark, to
             // re-trigger it) — otherwise a resumed quark would get an empty task.
             if let Some(task) = &fallback_task {
-                // Orchestrator picking up an unaddressed human message: the task is
-                // that message itself (no `to == target` event exists to find).
+                // Routing an unaddressed human message (single or multi-mention):
+                // the task is that message itself (no `to == target` event exists).
                 task_desc = task.clone();
             } else if let Some(trigger) = events.iter().rev().find(|e| {
                 e.to.as_ref() == Some(&target)
@@ -257,6 +278,19 @@ impl Engine {
                         }
                     }
                     _ => {}
+                }
+            } else if let Some(driving) = events.iter().rev().find(|e| {
+                // No event is addressed `to == target` — this is a quark resuming
+                // after a permission grant whose DRIVING message is an unaddressed
+                // (`to: None`) human message that named this quark in its body (a
+                // mention, or an unmentioned message the quark orchestrates). Recover
+                // the task from that message so the resumed turn isn't handed "".
+                // Resolution matches `human_message_target` exactly, so both agree on
+                // which human message drives this quark's turn.
+                matches!(&e.kind, Kind::Message { body } if e.from == Actor::Human && self.human_addressees(body).contains(&target))
+            }) {
+                if let Kind::Message { body } = &driving.kind {
+                    task_desc = body.clone();
                 }
             }
             
@@ -548,6 +582,107 @@ mod tests {
         let recorded = tasks.lock().unwrap().clone();
         assert_eq!(recorded.len(), 2, "asked once, resumed once");
         assert_eq!(recorded[1], "hello", "resumed quark kept its task");
+    }
+
+    #[tokio::test]
+    async fn multi_mention_message_fans_out_to_each_named_quark() {
+        // "@orch do X and you @worker do Y" (unaddressed, to: None — as the chamber
+        // now writes it) must excite BOTH quarks, in mention order, each handed the
+        // FULL message. This is the core multi-dispatch behavior.
+        use hadron_lattice::{Projection, TurnOutcome};
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+        append_event(
+            &path,
+            &Event::new(
+                Actor::Human,
+                None,
+                Kind::Message { body: "@orch do X and you @worker do Y".into() },
+            ),
+        )
+        .unwrap();
+
+        struct Spy {
+            id: &'static str,
+            flavor: Flavor,
+            seen: Arc<Mutex<Vec<String>>>,
+        }
+        #[async_trait::async_trait]
+        impl crate::quark::Quark for Spy {
+            fn id(&self) -> QuarkId {
+                QuarkId::new(self.id)
+            }
+            fn flavor(&self) -> Flavor {
+                self.flavor.clone()
+            }
+            fn energy(&self) -> EnergyState {
+                EnergyState::Available
+            }
+            async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+                self.seen.lock().unwrap().push(format!("{}:{}", self.id, turn.task));
+                // Reply with no @mention → hand back, so the loop advances to the
+                // next unserved addressee rather than a hand-off chain.
+                Ok(TurnOutcome { message: Some(format!("{} done", self.id)), used_tokens: 0, permission: None })
+            }
+        }
+
+        let seen = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(
+            path.clone(),
+            vec![
+                Box::new(Spy { id: "orch", flavor: Flavor::Orchestrator, seen: seen.clone() }),
+                Box::new(Spy { id: "worker", flavor: Flavor::Worker, seen: seen.clone() }),
+            ],
+            10,
+        );
+        engine.run_until_quiesce().await.unwrap();
+
+        let s = seen.lock().unwrap().clone();
+        assert_eq!(
+            s,
+            vec![
+                "orch:@orch do X and you @worker do Y".to_string(),
+                "worker:@orch do X and you @worker do Y".to_string(),
+            ],
+            "both named quarks ran in mention order, each seeing the whole message"
+        );
+    }
+
+    #[tokio::test]
+    async fn to_none_mention_message_resumes_the_quark_with_its_task() {
+        // THE DISCRIMINATING TEST (advisor-flagged regression): the real chamber
+        // writes human messages `to: None` with mentions in the BODY. A quark that
+        // asks permission and is then granted must resume with its ORIGINAL task,
+        // recovered from that driving (to:None) message — not an empty string. The
+        // old `to == target` task-finder returns "" here; the addressee-resolving
+        // fallback recovers it. `seed_human_message` (to:Some) can't catch this.
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        append_event(
+            &field,
+            &Event::new(Actor::Human, None, Kind::Message { body: "@agy please publish".into() }),
+        )
+        .unwrap();
+        let tasks = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(field.clone(), vec![Box::new(perm_quark("agy", tasks.clone()))], 8);
+        engine.run_until_quiesce().await.unwrap();
+        // Paused for the human under default Ask.
+        let events = read_events(&field).unwrap();
+        assert!(has_kind(&events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })), "asked, waiting");
+
+        // Human approves (addressed to the quark, as the chamber writes a grant).
+        append_event(
+            &field,
+            &Event::new(Actor::Human, Some(QuarkId::new("agy")), Kind::PermissionGrant { approved: true, remember: false }),
+        )
+        .unwrap();
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "published")), "op performed after grant");
+        let recorded = tasks.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 2, "asked once, resumed once");
+        assert_eq!(recorded[1], "@agy please publish", "resumed quark kept its task, not an empty string");
     }
 
     /// Helper: run a quark of the given risk/op under a seeded global mode and
