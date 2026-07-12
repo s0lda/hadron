@@ -29,6 +29,7 @@ pub struct RosterRow {
     pub mode_is_override: bool,
     pub provider: String,
     pub model: String,
+    pub flavor: Option<hadron_lattice::Flavor>,
     pub tokens: u32,
 }
 
@@ -141,9 +142,9 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
         .map(|id| {
             let state = states.get(&id).copied().unwrap_or(QuarkState::Ground);
             let qid = QuarkId::new(&id);
-            let (provider, model) = team
+            let (provider, model, flavor) = team
                 .get(&qid)
-                .map(|s| (s.provider.clone(), s.model.clone()))
+                .map(|s| (s.provider.clone(), s.model.clone(), Some(s.flavor.clone())))
                 .unwrap_or_default();
             let q_tokens = tokens.get(&id).copied().unwrap_or(0);
             RosterRow {
@@ -152,6 +153,7 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
                 mode_is_override: has_override(events, &qid),
                 provider,
                 model,
+                flavor,
                 id,
                 tokens: q_tokens,
             }
