@@ -50,6 +50,34 @@ pub fn parse_addressee(body: &str, roster: &[QuarkCard], sender: Option<&QuarkId
 }
 
 
+/// Every roster quark id `@mentioned` ANYWHERE in a human message, in first-seen
+/// order, deduped. Unlike `parse_addressee` (line-start only, for quark replies
+/// where an incidental/quoted mention must not route), a human addresses whoever
+/// they name — so "@opus do X and you @agy do Y" returns `[opus, agy]` and the
+/// daemon fans the turn out to each. Mentions of ids not on the roster are
+/// ignored; an `@` not starting a word (e.g. inside `email@host`) is not a mention.
+pub fn human_mentions(body: &str, roster: &[QuarkCard]) -> Vec<QuarkId> {
+    let mut out: Vec<QuarkId> = Vec::new();
+    for word in body.split_whitespace() {
+        let Some(rest) = word.strip_prefix('@') else {
+            continue;
+        };
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(card) = roster.iter().find(|c| c.id.as_str() == name) {
+            if !out.contains(&card.id) {
+                out.push(card.id.clone());
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,5 +161,25 @@ mod tests {
             parse_addressee("@worker take over", &roster(), Some(&QuarkId::new("orch"))),
             Some(QuarkId::new("worker"))
         );
+    }
+
+    #[test]
+    fn human_mentions_finds_every_mention_anywhere_deduped_in_order() {
+        // A human addresses whoever they name, mid-sentence and in any order —
+        // this is the multi-dispatch case: "@orch do X and you @worker do Y".
+        assert_eq!(
+            human_mentions("@orch please proceed and you @worker start task 3", &roster()),
+            vec![QuarkId::new("orch"), QuarkId::new("worker")]
+        );
+        // Order follows first appearance; duplicates collapse.
+        assert_eq!(
+            human_mentions("@worker and @orch, then @worker again", &roster()),
+            vec![QuarkId::new("worker"), QuarkId::new("orch")]
+        );
+        // Punctuation ends a handle; unknown ids and bare '@' are ignored.
+        assert_eq!(human_mentions("hey @orch, thanks!", &roster()), vec![QuarkId::new("orch")]);
+        assert_eq!(human_mentions("@ghost @nobody nothing here", &roster()), Vec::<QuarkId>::new());
+        // An '@' not starting a word (an email) is not a mention.
+        assert_eq!(human_mentions("mail me at jake@orch.dev", &roster()), Vec::<QuarkId>::new());
     }
 }
