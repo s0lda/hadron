@@ -4,3 +4,7 @@ Cargo.lock.orig
 
 # Session-local hook scratch (remember plugin); not project state.
 .remember/
+.hadron/
+
+# Claude Code local state (incl. embedded worktrees)
+.claude/
