@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use hadron_lattice::{
@@ -23,6 +23,28 @@ type SharedQuark = Arc<AsyncMutex<Box<dyn Quark>>>;
 /// message arriving mid-turn reaches a free quark instead of queueing behind the
 /// running one. It bounds how long a quark sits unexcited, not how long a turn takes.
 const FIELD_POLL: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// The workspace directory that owns `field_path` — the directory every quark's CLI
+/// is spawned in, and the root the nucleus/invariants are read from.
+///
+/// `base` is the directory a *relative* `field_path` is resolved against (the
+/// daemon's cwd in production). Taking it as a parameter rather than reading
+/// `current_dir()` inline is what makes this testable at all: the bug it exists to
+/// prevent is only reachable via a relative path, and a test cannot chdir a shared
+/// process without racing every other test.
+pub(crate) fn workspace_root_of(field_path: &Path, base: &Path) -> PathBuf {
+    let field_path = if field_path.is_absolute() {
+        field_path.to_path_buf()
+    } else {
+        base.join(field_path)
+    };
+
+    field_path
+        .ancestors()
+        .find(|p| p.join(".hadron").exists())
+        .unwrap_or_else(|| field_path.parent().unwrap_or_else(|| Path::new("")))
+        .to_path_buf()
+}
 
 fn build_invariants(workspace_root: &std::path::Path, requested: &[String]) -> (String, Vec<String>) {
     let mut combined = String::new();
@@ -346,11 +368,15 @@ impl Engine {
             }
         }
 
-        let workspace_root = self.field_path.ancestors()
-            .find(|p| p.join(".hadron").exists())
-            .unwrap_or_else(|| self.field_path.parent().unwrap_or_else(|| std::path::Path::new("")));
+        // Resolved against the daemon's cwd: a *relative* field path (`.hadron/field.jsonl`,
+        // exactly how the daemon is launched) used to bottom out on the empty ancestor —
+        // `"".join(".hadron")` exists, so the search "succeeded" with a root of "". That
+        // empty root became the CLI's `cwd`, and `current_dir("")` is ENOENT, which the
+        // spawn error then blamed on the program: `failed to spawn claude`.
+        let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let workspace_root = workspace_root_of(&self.field_path, &base);
 
-        let (invariants_text, available_invariants) = build_invariants(workspace_root, &requested_invariants);
+        let (invariants_text, available_invariants) = build_invariants(&workspace_root, &requested_invariants);
 
         // Resolve the quark's effective mode from the field before the turn:
         // real adapters translate it into the CLI's permission posture, so the
@@ -368,7 +394,7 @@ impl Engine {
             // E2BIG. Keep the most recent events that fit the byte budget.
             field_window: bounded_window(events, FIELD_WINDOW_BUDGET_BYTES),
             git_diff,
-            cwd: workspace_root.to_path_buf(),
+            cwd: workspace_root,
             mode: turn_mode,
         }
     }
@@ -660,6 +686,41 @@ mod tests {
     use super::*;
     use crate::field::{append_event, read_events};
     use crate::mock::MockQuark;
+
+    /// The daemon is launched as `hadron-gluon .hadron/field.jsonl` — a *relative*
+    /// path. That path's ancestors end in the empty path, and `"".join(".hadron")`
+    /// resolves against the process cwd, so the old ancestor search "found" a
+    /// workspace root of `""`. That empty root rode the projection down to
+    /// `Command::current_dir("")`, which the kernel answers with ENOENT — surfacing
+    /// as `failed to spawn claude: No such file or directory`, blaming a binary that
+    /// was on PATH the whole time.
+    ///
+    /// The root must be the real workspace directory, and it must exist.
+    #[test]
+    fn a_relative_field_path_resolves_to_a_real_workspace_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = tmp.path().canonicalize().unwrap();
+        fs::create_dir_all(workspace.join(".hadron")).unwrap();
+
+        let root = workspace_root_of(Path::new(".hadron/field.jsonl"), &workspace);
+
+        assert_eq!(root, workspace, "relative field path must resolve to its workspace");
+        assert!(!root.as_os_str().is_empty(), "an empty root becomes current_dir(\"\") → ENOENT");
+        assert!(root.is_dir(), "the CLI's cwd must be a directory that exists");
+    }
+
+    /// An absolute field path keeps working, and still finds the `.hadron` owner
+    /// rather than just the file's parent.
+    #[test]
+    fn an_absolute_field_path_finds_its_workspace_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = tmp.path().canonicalize().unwrap();
+        fs::create_dir_all(workspace.join(".hadron")).unwrap();
+
+        let root = workspace_root_of(&workspace.join(".hadron/field.jsonl"), Path::new("/nowhere"));
+
+        assert_eq!(root, workspace);
+    }
     use hadron_lattice::{Actor, EnergyState, Flavor, Kind, PermissionAsk, Projection, QuarkId, TurnOutcome};
     use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
