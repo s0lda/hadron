@@ -120,6 +120,14 @@ impl<R: CliRunner> Quark for ClaudeQuark<R> {
                     message: if t.is_empty() { None } else { Some(t.to_string()) },
                     used_tokens,
                     permission: None,
+                    // KEEPING CLAUDE HONEST. `claude -p` reports real token counts
+                    // (above) but says nothing about quota and never reports its
+                    // context-window *size*. So `usage` stays empty: no fake "100%
+                    // quota remaining" (indistinguishable, in the UI, from a real
+                    // untouched budget) and no invented 200k window. Absent is absent;
+                    // the real tokens still ride on `used_tokens` into the ledger and
+                    // the energy report.
+                    usage: Default::default(),
                 });
             }
         }
