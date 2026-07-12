@@ -83,7 +83,7 @@ pub fn parse_blocks(source: &str) -> Vec<Block> {
     // The grammar is a compile-time constant; set_language only fails on an
     // ABI mismatch, a build-time impossibility here.
     parser
-        .set_language(&tree_sitter_rust::language())
+        .set_language(&tree_sitter_rust::LANGUAGE.into())
         .expect("load tree-sitter-rust grammar");
     let tree = match parser.parse(source, None) {
         Some(t) => t,

@@ -19,7 +19,11 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
     "wayland",
     "runtime_shaders",
 ], optional = true }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", optional = true }
+# `tree-sitter-languages` compiles the grammars in. Without it the highlighter has
+# no language to parse with, so fenced code blocks render unstyled whatever theme is set.
+gpui-component = { git = "https://github.com/longbridge/gpui-component", optional = true, features = [
+    "tree-sitter-languages",
+] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", optional = true }
 lsp-types = "0.97.0"
 emojis = "0.9.0"
