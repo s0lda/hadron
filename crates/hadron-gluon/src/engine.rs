@@ -705,18 +705,20 @@ mod tests {
         let path = dir.path().join("field.jsonl");
         seed_human_message(&path, "orch", "Build the thing. @worker will help.");
 
+        // Handoffs begin a line (the line-start delegation convention): a mention
+        // buried mid-sentence no longer routes, so the @mention is line-leading.
         let orch = MockQuark::scripted(
             QuarkId::new("orch"),
             Flavor::Orchestrator,
             vec![
-                Some("Starting. @worker please build the UI.".into()),
+                Some("Starting the build.\n@worker please build the UI.".into()),
                 Some("All done. Handing back to the human.".into()),
             ],
         );
         let worker = MockQuark::scripted(
             QuarkId::new("worker"),
             Flavor::Worker,
-            vec![Some("UI complete. @orch back to you.".into())],
+            vec![Some("UI complete.\n@orch back to you.".into())],
         );
 
         let mut engine = Engine::new(
