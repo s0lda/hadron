@@ -1,9 +1,15 @@
 use std::path::Path;
+use std::sync::Mutex;
 use rusqlite::Connection;
 use hadron_lattice::QuarkId;
 
+/// The energy ledger. The `Mutex` is not for contention (every call site is the
+/// engine's dispatch loop, one task) but for `Sync`: a rusqlite `Connection` holds a
+/// `RefCell` statement cache, so a bare `Ledger` is `Send` but not `Sync` — and an
+/// engine that isn't `Sync` can't hold `&self` across an `.await`, which the
+/// concurrent turn loop does on every field append.
 pub struct Ledger {
-    conn: Connection,
+    conn: Mutex<Connection>,
 }
 
 impl Ledger {
@@ -11,14 +17,14 @@ impl Ledger {
     pub fn open_in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
         Self::init(&conn)?;
-        Ok(Ledger { conn })
+        Ok(Ledger { conn: Mutex::new(conn) })
     }
 
     /// Open a file-backed ledger.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let conn = Connection::open(path)?;
         Self::init(&conn)?;
-        Ok(Ledger { conn })
+        Ok(Ledger { conn: Mutex::new(conn) })
     }
 
     fn init(conn: &Connection) -> anyhow::Result<()> {
@@ -34,7 +40,8 @@ impl Ledger {
 
     /// Add tokens to a quark's total usage.
     pub fn record_usage(&self, quark: &QuarkId, tokens: u32) -> anyhow::Result<()> {
-        self.conn.execute(
+        let conn = self.conn.lock().expect("ledger mutex poisoned");
+        conn.execute(
             "INSERT INTO usage (quark_id, used_tokens) VALUES (?1, ?2)
              ON CONFLICT(quark_id) DO UPDATE SET used_tokens = used_tokens + ?2",
             rusqlite::params![quark.as_str(), tokens],
@@ -44,7 +51,8 @@ impl Ledger {
 
     /// Check if a quark has exceeded the given limit.
     pub fn is_depleted(&self, quark: &QuarkId, limit: u32) -> anyhow::Result<bool> {
-        let mut stmt = self.conn.prepare("SELECT used_tokens FROM usage WHERE quark_id = ?1")?;
+        let conn = self.conn.lock().expect("ledger mutex poisoned");
+        let mut stmt = conn.prepare("SELECT used_tokens FROM usage WHERE quark_id = ?1")?;
         let mut rows = stmt.query([quark.as_str()])?;
         if let Some(row) = rows.next()? {
             let used: u32 = row.get(0)?;

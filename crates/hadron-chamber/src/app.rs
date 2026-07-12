@@ -355,6 +355,8 @@ impl Chamber {
             focus_handle,
             chat_tab: ChatTab::Chat,
             chat_scrolls,
+            right_rail_tab: RightRailTab::Terminal,
+            working_diff: None,
             bounds_save_pending: false,
             palette_open: false,
             palette_input,
@@ -771,7 +773,7 @@ impl Chamber {
     /// The status bar along the foot of the window (same tone as the titlebar).
     /// Left: an overall swarm-status tag. Right: the quark count and the global
     /// permission-mode tag (click to cycle Ask → Write → Auto → Bypass).
-    fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn status_bar(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
             .h(px(24.0))
