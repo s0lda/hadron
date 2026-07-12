@@ -6,7 +6,7 @@
 //! Pure and offline: this only parses the config. Spawning adapters from it is
 //! the daemon's job; annotating the roster is the chamber's.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +41,20 @@ impl Team {
     pub fn is_empty(&self) -> bool {
         self.quarks.is_empty()
     }
+}
+
+/// The canonical `team.json` location: `$XDG_CONFIG_HOME/hadron/team.json`,
+/// falling back to `$HOME/.config/hadron/team.json`. `None` if neither is set.
+/// Both the daemon (to seat quarks) and the chamber (to annotate the roster)
+/// resolve the same file here.
+pub fn team_config_path() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME") {
+        if !dir.is_empty() {
+            return Some(PathBuf::from(dir).join("hadron").join("team.json"));
+        }
+    }
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".config").join("hadron").join("team.json"))
 }
 
 /// Load a team from an explicit path. Missing or malformed → an empty team, so

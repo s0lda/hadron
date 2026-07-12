@@ -21,10 +21,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use hadron_gluon::adapter::registry;
 use hadron_gluon::engine::Engine;
 use hadron_gluon::field::read_events;
 use hadron_gluon::quark::Quark;
-use hadron_lattice::{EnergyState, Flavor, Projection, QuarkId, TurnOutcome};
+use hadron_lattice::{
+    load_team, team_config_path, EnergyState, Flavor, Projection, QuarkId, Team, TurnOutcome,
+};
 
 /// A deterministic stand-in for a real adapter: it acknowledges whatever task it
 /// was handed, labelled so the reply is unmistakably a mock. It never errors and
@@ -65,47 +68,88 @@ impl Quark for DemoQuark {
     }
 }
 
-/// Parsed command line: the field path and the poll interval.
+/// Parsed command line: the field path, poll interval, and optional team path.
 struct Args {
     field_path: PathBuf,
     interval: Duration,
+    team_path: Option<PathBuf>,
 }
 
 fn parse_args() -> Option<Args> {
     let mut field_path: Option<PathBuf> = None;
     let mut interval_ms: u64 = 400;
+    let mut team_path: Option<PathBuf> = None;
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--interval-ms" => interval_ms = it.next()?.parse().ok()?,
+            "--team" => team_path = Some(PathBuf::from(it.next()?)),
             "-h" | "--help" => return None,
             other if !other.starts_with('-') => field_path = Some(PathBuf::from(other)),
             _ => return None,
         }
     }
-    Some(Args { field_path: field_path?, interval: Duration::from_millis(interval_ms) })
+    Some(Args {
+        field_path: field_path?,
+        interval: Duration::from_millis(interval_ms),
+        team_path,
+    })
+}
+
+/// Seat the quarks: real adapters from `team.json` when present, else the
+/// deterministic mock pair (zero-spend). Returns the quarks and a mode label.
+fn seat_quarks(team: &Team) -> (Vec<Box<dyn Quark>>, &'static str) {
+    if team.is_empty() {
+        let quarks: Vec<Box<dyn Quark>> = vec![
+            Box::new(DemoQuark::new("claude", Flavor::Orchestrator, "Claude")),
+            Box::new(DemoQuark::new("agy", Flavor::Worker, "Antigravity")),
+        ];
+        return (quarks, "mock mode");
+    }
+    let mut quarks: Vec<Box<dyn Quark>> = Vec::new();
+    for seat in &team.quarks {
+        match registry::build_seat(seat) {
+            Ok(q) => {
+                eprintln!(
+                    "  seated {} — {} · {} ({:?})",
+                    seat.id.as_str(),
+                    seat.provider,
+                    seat.model,
+                    seat.flavor
+                );
+                quarks.push(q);
+            }
+            Err(e) => eprintln!("  skipped {}: {e:#}", seat.id.as_str()),
+        }
+    }
+    (quarks, "live mode (real CLIs — real budget)")
 }
 
 #[tokio::main]
 async fn main() {
     let Some(args) = parse_args() else {
-        eprintln!("usage: hadron-gluon <field.jsonl> [--interval-ms N]");
-        eprintln!("  mock daemon: excites @claude / @agy with deterministic echo replies.");
+        eprintln!("usage: hadron-gluon <field.jsonl> [--interval-ms N] [--team team.json]");
+        eprintln!("  With a team.json (default: $XDG_CONFIG_HOME/hadron/team.json), seats the");
+        eprintln!("  listed real CLI quarks. Without one, runs deterministic mock quarks.");
         std::process::exit(2);
     };
 
-    // v1 roster: an orchestrator and a worker, matching the two-quark slice.
-    let quarks: Vec<Box<dyn Quark>> = vec![
-        Box::new(DemoQuark::new("claude", Flavor::Orchestrator, "Claude")),
-        Box::new(DemoQuark::new("agy", Flavor::Worker, "Antigravity")),
-    ];
+    // Seat the team: real adapters from team.json (explicit --team, else the
+    // config-dir default), or the mock pair when there is no team config.
+    let team_path = args.team_path.clone().or_else(team_config_path);
+    let team = team_path.as_deref().map(load_team).unwrap_or_default();
+    let (quarks, mode_label) = seat_quarks(&team);
+    if quarks.is_empty() {
+        eprintln!("hadron-gluon: team.json had no usable quarks; nothing to run.");
+        std::process::exit(2);
+    }
     let mut engine = Engine::new(args.field_path.clone(), quarks, 12);
 
     eprintln!(
-        "hadron-gluon (mock mode) watching {} — quarks: claude (orchestrator), agy (worker)",
+        "hadron-gluon ({mode_label}) watching {}",
         args.field_path.display()
     );
-    eprintln!("  address them from the chamber: '@claude …' or '@agy …'. Ctrl-C to stop.");
+    eprintln!("  address quarks from the chamber: '@<id> …'. Ctrl-C to stop.");
 
     loop {
         let before = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);

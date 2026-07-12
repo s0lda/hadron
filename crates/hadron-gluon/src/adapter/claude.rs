@@ -10,23 +10,29 @@ use crate::quark::Quark;
 pub struct ClaudeQuark<R: CliRunner> {
     id: QuarkId,
     flavor: Flavor,
+    /// The model to run, e.g. "opus-4.8". Empty → let the CLI pick its default.
+    model: String,
     runner: R,
     session: Option<String>,
 }
 
 impl<R: CliRunner> ClaudeQuark<R> {
-    pub fn new(id: QuarkId, flavor: Flavor, runner: R) -> Self {
-        ClaudeQuark { id, flavor, runner, session: None }
+    pub fn new(id: QuarkId, flavor: Flavor, model: impl Into<String>, runner: R) -> Self {
+        ClaudeQuark { id, flavor, model: model.into(), runner, session: None }
     }
 
     /// Build this turn's invocation. `claude -p --output-format json` (headless,
-    /// JSON envelope so we can recover the session id), adding `--resume <id>`
-    /// once a session exists. Prompt goes on stdin.
+    /// JSON envelope so we can recover the session id), `--model <model>` when a
+    /// model is set, adding `--resume <id>` once a session exists. Prompt on stdin.
     ///
     /// NOTE: exact flags must be verified against the installed CLI version — this
     /// is the intended point of adjustment (see Plan 3).
     fn invocation(&self, prompt: String) -> CliInvocation {
         let mut args = vec!["-p".to_string(), "--output-format".to_string(), "json".to_string()];
+        if !self.model.is_empty() {
+            args.push("--model".to_string());
+            args.push(self.model.clone());
+        }
         if let Some(sid) = &self.session {
             args.push("--resume".to_string());
             args.push(sid.clone());
@@ -102,7 +108,7 @@ mod tests {
             r#"{"session_id":"sess-1","result":"hello @worker","usage":{"total_tokens":42}}"#,
             r#"{"session_id":"sess-1","result":"all done","usage":{"total_tokens":12}}"#,
         ]);
-        let mut q = ClaudeQuark::new(QuarkId::new("claude"), Flavor::Orchestrator, runner);
+        let mut q = ClaudeQuark::new(QuarkId::new("claude"), Flavor::Orchestrator, "opus-4.8", runner);
 
         let o1 = q.excite(projection("start")).await.unwrap();
         assert_eq!(o1.message.as_deref(), Some("hello @worker"));
@@ -112,8 +118,11 @@ mod tests {
         assert_eq!(o2.message.as_deref(), Some("all done"));
         assert_eq!(o2.used_tokens, 12);
 
-        // Turn 1 had no --resume; turn 2 resumed the captured session.
+        // Turn 1 had no --resume; turn 2 resumed the captured session. Both carry
+        // the model flag.
         let recorded = q.runner.recorded.lock().unwrap();
+        assert!(recorded[0].args.iter().any(|a| a == "--model"));
+        assert!(recorded[0].args.iter().any(|a| a == "opus-4.8"));
         assert!(!recorded[0].args.iter().any(|a| a == "--resume"));
         assert!(recorded[1].args.iter().any(|a| a == "--resume"));
         assert!(recorded[1].args.iter().any(|a| a == "sess-1"));
@@ -122,7 +131,7 @@ mod tests {
     #[tokio::test]
     async fn non_json_stdout_falls_back_to_raw() {
         let runner = FakeRunner::with_stdout(vec!["plain markdown reply"]);
-        let mut q = ClaudeQuark::new(QuarkId::new("claude"), Flavor::Worker, runner);
+        let mut q = ClaudeQuark::new(QuarkId::new("claude"), Flavor::Worker, "", runner);
         let o = q.excite(projection("x")).await.unwrap();
         assert_eq!(o.message.as_deref(), Some("plain markdown reply"));
         assert_eq!(q.session, None); // no session id to capture
