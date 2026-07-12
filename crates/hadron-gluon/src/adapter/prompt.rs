@@ -91,6 +91,7 @@ mod tests {
                 Kind::Message { body: "start the auth work".into() },
             )],
             git_diff: String::new(),
+            mode: hadron_lattice::Mode::default(),
         }
     }
 

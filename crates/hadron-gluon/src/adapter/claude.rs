@@ -99,6 +99,7 @@ mod tests {
             roster: vec![],
             field_window: vec![],
             git_diff: String::new(),
+            mode: hadron_lattice::Mode::default(),
         }
     }
 
