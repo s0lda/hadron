@@ -4,6 +4,14 @@
 **State:** all 7 planned tasks done. **Full workspace green** (0 failures), clippy clean (incl. `--features gui`) apart from 3 pre-existing `assert_eq!`-bool warnings in Phase 3's `ledger.rs`.
 **Built autonomously** under your "orchestrator in bypass" delegation. Nothing here was merged to `main` — it's one fast-forward away (see below).
 
+## ⚠️ Read this first — the gate is DORMANT for real quarks
+
+The mode system is a complete, tested **mechanism**, but on the real-quark path it does not fire yet. Trace it: `@claude do X` → `ClaudeQuark` runs `claude -p …` → the CLI does the work **in its own subprocess** → the adapter returns `TurnOutcome { permission: None }`. No `permission_req` is ever emitted, so `resolve_mode`/`decide` never run. **Every passing test drives the gate with a synthetic/hand-written ask — none exercise what a real quark actually does.**
+
+Consequence: in the morning, **mock mode demonstrates the full flow**, and **real quarks will chat and coordinate**, but **the mode tags will NOT gate a real agent's shell/edits.** If you set "Ask" and tell a real quark to do something destructive, it may just happen — the CLI already ran it and never asked. Do not rely on Ask/Bypass controlling a real agent yet.
+
+Why this isn't a quick fix: for the gate to *prevent* (not just record after the fact), the quark must **propose-and-wait** — emit `permission_req` *before* executing and block for the grant on a later turn. That likely needs the vendor CLI run in a propose-only posture, not just a prompt tweak. Treat it as an **open design problem**, the real next milestone for this feature.
+
 ## What this delivers
 
 The whole "ask / write / auto / bypass" idea we brainstormed, end to end:
@@ -11,7 +19,8 @@ The whole "ask / write / auto / bypass" idea we brainstormed, end to end:
 - **Mode ladder** as **field events** (`Kind::ModeSet`) — the field is the source of truth, so a running daemon honours a mode change on its next tick and re-opening a field restores it. This also retired the old two god-mode booleans **and** the "toggles don't reach the daemon" gap in one move.
 - **Per-quark override over a global default** — set the swarm's baseline in the status bar; override a single quark from its roster row.
 - **Trust-on-first-use allow-list** — `PermissionGrant.remember`; "Always allow" teaches a `(quark, op)` rule. **Auto** asks *you* on first use; **Bypass** auto-approves on the orchestrator's authority (audited, no prompt).
-- **Legibility** — `QuarkCard`/roster show `provider · model` from `team.json`.
+- **Legibility** — each roster row shows `provider · model`, read straight from `team.json` by the chamber (`project_with_team`). (The `QuarkCard.provider/model` schema fields exist but the daemon leaves them empty today — legibility does not depend on them; a later change can populate them if we want card-carried identity.)
+- **Per-quark modes accept all four tiers.** You'd floated "a quark can only be write or bypass"; I let per-quark override span ask/write/auto/bypass so the roster tag and the global tag share one mechanism. If you want to constrain per-quark to {write, bypass}, it's a one-line guard in `cycle_quark_mode` — flag it and I'll add it.
 - **UI** — status-bar status + mode tags, roster mode tags, toast "Always allow"; god-mode toggles removed from the terminal (terminal is full again).
 - **Team seating** — add a quark by editing `team.json`; the daemon seats the real `claude`/`agy` CLIs with `--model`.
 
