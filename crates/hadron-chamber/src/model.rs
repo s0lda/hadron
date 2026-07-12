@@ -4,7 +4,8 @@
 
 use std::collections::HashMap;
 
-use hadron_lattice::{Actor, Event, Kind, QuarkId, QuarkState};
+use hadron_gatekeeper::{global_mode, has_override, resolve_mode, Mode};
+use hadron_lattice::{Actor, Event, Kind, QuarkId, QuarkState, Team};
 
 /// One rendered chat row. `kind_label` lets the UI style/filter by event type;
 /// `body` is a display string synthesized for non-message events.
@@ -16,11 +17,18 @@ pub struct MessageRow {
     pub kind_label: &'static str,
 }
 
-/// One roster entry: a quark and its latest known lifecycle state.
+/// One roster entry: a quark, its latest lifecycle state, its effective
+/// permission mode (and whether that's an explicit per-quark override vs the
+/// inherited global), and its legibility (`provider`/`model` from the team
+/// config — empty strings when the seat isn't in `team.json`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RosterRow {
     pub id: String,
     pub state: QuarkState,
+    pub mode: Mode,
+    pub mode_is_override: bool,
+    pub provider: String,
+    pub model: String,
 }
 
 /// Everything the chamber needs to render one frame.
@@ -28,6 +36,9 @@ pub struct RosterRow {
 pub struct ChamberView {
     pub messages: Vec<MessageRow>,
     pub roster: Vec<RosterRow>,
+    /// The global default permission mode (the status-bar mode badge), folded
+    /// from the field's `ModeSet` events. `Mode::Ask` if none has been set.
+    pub global_mode: Mode,
     /// An outstanding permission request awaiting the human's Approve/Deny, if any.
     /// The UI renders this as a toast; `None` means nothing to decide.
     pub pending_permission: Option<hadron_gatekeeper::PendingPermission>,
@@ -82,9 +93,17 @@ fn render_row(e: &Event) -> MessageRow {
     }
 }
 
-/// Project the field into a renderable view. Roster order is first-seen; a
-/// quark's state is the latest `Kind::Status` it authored (default `Ground`).
+/// Project the field into a renderable view, with no team annotations
+/// (`provider`/`model` blank). Convenience for tests and callers without a team.
 pub fn project(events: &[Event]) -> ChamberView {
+    project_with_team(events, &Team::default())
+}
+
+/// Project the field into a renderable view. Roster order is first-seen; a
+/// quark's state is the latest `Kind::Status` it authored (default `Ground`);
+/// its mode is folded from `ModeSet` events (per-quark override over global);
+/// its `provider`/`model` come from `team` (blank when the seat is unknown).
+pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
     let mut messages = Vec::with_capacity(events.len());
     let mut order: Vec<String> = Vec::new();
     let mut states: HashMap<String, QuarkState> = HashMap::new();
@@ -108,13 +127,26 @@ pub fn project(events: &[Event]) -> ChamberView {
         .into_iter()
         .map(|id| {
             let state = states.get(&id).copied().unwrap_or(QuarkState::Ground);
-            RosterRow { id, state }
+            let qid = QuarkId::new(&id);
+            let (provider, model) = team
+                .get(&qid)
+                .map(|s| (s.provider.clone(), s.model.clone()))
+                .unwrap_or_default();
+            RosterRow {
+                state,
+                mode: resolve_mode(events, &qid),
+                mode_is_override: has_override(events, &qid),
+                provider,
+                model,
+                id,
+            }
         })
         .collect();
 
     ChamberView {
         messages,
         roster,
+        global_mode: global_mode(events),
         pending_permission: hadron_gatekeeper::pending_permission(events),
     }
 }
@@ -146,6 +178,51 @@ mod tests {
 
     fn ev(from: Actor, to: Option<&str>, kind: Kind) -> Event {
         Event::new(from, to.map(QuarkId::new), kind)
+    }
+
+    #[test]
+    fn global_mode_and_per_quark_override_are_surfaced() {
+        let evs = vec![
+            ev(Actor::Human, Some("agy"), Kind::Message { body: "go".into() }),
+            ev(Actor::Human, None, Kind::ModeSet { mode: Mode::Auto }), // global Auto
+            ev(Actor::Human, Some("agy"), Kind::ModeSet { mode: Mode::Bypass }), // agy override
+        ];
+        let view = project(&evs);
+        assert_eq!(view.global_mode, Mode::Auto);
+        let agy = view.roster.iter().find(|r| r.id == "agy").unwrap();
+        assert_eq!(agy.mode, Mode::Bypass);
+        assert!(agy.mode_is_override);
+    }
+
+    #[test]
+    fn roster_row_inherits_global_and_carries_team_legibility() {
+        use hadron_lattice::{Flavor, Seat};
+        let team = Team {
+            quarks: vec![Seat {
+                id: QuarkId::new("agy"),
+                provider: "agy".into(),
+                model: "gemini-3-pro".into(),
+                flavor: Flavor::Worker,
+            }],
+        };
+        let evs = vec![
+            ev(Actor::Human, None, Kind::ModeSet { mode: Mode::Write }),
+            ev(Actor::Human, Some("agy"), Kind::Message { body: "go".into() }),
+        ];
+        let view = project_with_team(&evs, &team);
+        let agy = view.roster.iter().find(|r| r.id == "agy").unwrap();
+        assert_eq!(agy.mode, Mode::Write, "inherits the global default");
+        assert!(!agy.mode_is_override);
+        assert_eq!(agy.provider, "agy");
+        assert_eq!(agy.model, "gemini-3-pro");
+    }
+
+    #[test]
+    fn mode_set_renders_as_a_row() {
+        let view = project(&[ev(Actor::Human, None, Kind::ModeSet { mode: Mode::Bypass })]);
+        assert_eq!(view.messages.len(), 1);
+        assert_eq!(view.messages[0].kind_label, "mode_set");
+        assert!(view.messages[0].body.contains("bypass"));
     }
 
     #[test]
