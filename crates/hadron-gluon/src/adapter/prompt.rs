@@ -1,4 +1,4 @@
-use hadron_lattice::{Actor, Kind, Mode, Projection, QuarkId};
+use hadron_lattice::{Actor, Flavor, Kind, Mode, Projection, QuarkId};
 
 /// What the quark can actually do this turn, given its resolved permission mode.
 /// The mode sets the CLI posture, but the *model* only narrates honestly if it is
@@ -97,14 +97,43 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
          do Y`), act ONLY on the part directed at you — the others handle theirs. To delegate, \
          start a line with `@<quark-id>` and the request (only a mention at the START of a line \
          routes — mentions inside prose are ignored). When the overall task is complete, reply \
-         WITHOUT any `@mention` to hand control back to the human.\n\n\
-         Be truthful about your actions: report only what you actually did and verified this \
+         WITHOUT any `@mention` to hand control back to the human.\n\n",
+    );
+
+    // 6b. Escalation — a worker owns execution, not the call. Addressed by ROLE
+    // (`@orchestrator`), never by a hardcoded id, so re-flavouring the team in
+    // `team.json` retargets escalation without touching this text.
+    if is_worker(projection, self_id) {
+        p.push_str(
+            "You are a **worker**: you execute the work you are handed. If you hit a decision, \
+             an ambiguity, or a question that is not yours to settle — a design fork, a scope \
+             change, anything the task does not already answer — do NOT guess. Start a line with \
+             `@orchestrator` and put the question there; it routes to whoever currently holds \
+             that role.\n\n",
+        );
+    }
+
+    p.push_str(
+        "Be truthful about your actions: report only what you actually did and verified this \
          turn, and clearly separate what you PROPOSE from what you have DONE. Never state \
          completed work — commits, passing tests, file edits — that you did not perform. If you \
          could not do something, say so.\n",
     );
 
     p
+}
+
+/// Whether this quark is a worker *and* someone holds the orchestrator role — the
+/// only case where telling it to escalate to `@orchestrator` is honest. On a roster
+/// with no orchestrator the alias resolves to nobody, so the clause is omitted
+/// rather than pointing the worker at a target that cannot be reached.
+fn is_worker(projection: &Projection, self_id: &QuarkId) -> bool {
+    let self_is_worker = projection
+        .roster
+        .iter()
+        .any(|c| &c.id == self_id && c.flavor == Flavor::Worker);
+    let has_orchestrator = projection.roster.iter().any(|c| c.flavor == Flavor::Orchestrator);
+    self_is_worker && has_orchestrator
 }
 
 #[cfg(test)]
@@ -172,6 +201,36 @@ mod tests {
 
         proj.mode = hadron_lattice::Mode::Bypass;
         assert!(build(&proj, &QuarkId::new("agy")).contains("Bypass — full tool access"));
+    }
+
+    /// A worker is told to escalate by ROLE; the orchestrator is not told to
+    /// escalate at all (it *is* the escalation target — it hands back to the human).
+    #[test]
+    fn worker_is_told_to_escalate_to_the_orchestrator_role() {
+        let mut proj = projection("x");
+        proj.roster.push(QuarkCard {
+            id: QuarkId::new("opus"),
+            flavor: Flavor::Orchestrator,
+            energy: EnergyState::Available,
+            provider: String::new(),
+            model: String::new(),
+        });
+
+        let worker_prompt = build(&proj, &QuarkId::new("agy"));
+        assert!(worker_prompt.contains("You are a **worker**"));
+        assert!(worker_prompt.contains("`@orchestrator`"));
+
+        let orch_prompt = build(&proj, &QuarkId::new("opus"));
+        assert!(!orch_prompt.contains("You are a **worker**"));
+    }
+
+    /// No orchestrator on the roster → don't point the worker at a target that
+    /// cannot be reached.
+    #[test]
+    fn no_escalation_clause_without_an_orchestrator() {
+        // The base projection's roster is a lone worker (`agy`).
+        let p = build(&projection("x"), &QuarkId::new("agy"));
+        assert!(!p.contains("You are a **worker**"));
     }
 
     #[test]
