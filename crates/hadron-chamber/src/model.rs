@@ -29,6 +29,7 @@ pub struct RosterRow {
     pub mode_is_override: bool,
     pub provider: String,
     pub model: String,
+    pub tokens: u32,
 }
 
 /// Everything the chamber needs to render one frame.
@@ -113,6 +114,7 @@ pub fn project(events: &[Event]) -> ChamberView {
 pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
     let mut messages = Vec::with_capacity(events.len());
     let mut order: Vec<String> = Vec::new();
+    let mut tokens: HashMap<String, u32> = HashMap::new();
     let mut states: HashMap<String, QuarkState> = HashMap::new();
 
     for e in events {
@@ -127,6 +129,10 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
         if let (Actor::Quark(q), Kind::Status { state }) = (&e.from, &e.kind) {
             states.insert(q.as_str().to_string(), *state);
         }
+        // Accumulate tokens
+        if let (Actor::Quark(q), Kind::EnergyReport { used_tokens }) = (&e.from, &e.kind) {
+            *tokens.entry(q.as_str().to_string()).or_default() += used_tokens;
+        }
         messages.push(render_row(e));
     }
 
@@ -139,6 +145,7 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
                 .get(&qid)
                 .map(|s| (s.provider.clone(), s.model.clone()))
                 .unwrap_or_default();
+            let q_tokens = tokens.get(&id).copied().unwrap_or(0);
             RosterRow {
                 state,
                 mode: resolve_mode(events, &qid),
@@ -146,6 +153,7 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
                 provider,
                 model,
                 id,
+                tokens: q_tokens,
             }
         })
         .collect();
