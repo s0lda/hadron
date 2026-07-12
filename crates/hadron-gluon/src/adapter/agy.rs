@@ -1,8 +1,92 @@
 use async_trait::async_trait;
-use hadron_lattice::{EnergyState, Flavor, Mode, Projection, QuarkId, TurnOutcome};
+use hadron_lattice::{
+    Actor, EnergyState, Event, Flavor, Kind, Mode, Projection, QuarkId, TurnOutcome,
+};
+use std::path::PathBuf;
 
 use crate::adapter::runner::{reply_to_outcome, CliInvocation, CliRunner};
 use crate::quark::Quark;
+
+/// Linux's hard cap on a **single** argv element (`MAX_ARG_STRLEN` = 32 pages =
+/// 128 KiB, `include/uapi/linux/binfmts.h`). It is NOT the same as `ARG_MAX`, and
+/// it cannot be raised with `ulimit`. `execve` rejects an over-long element with
+/// E2BIG *before the program starts*.
+///
+/// This matters here and nowhere else: `agy` has no stdin in print mode and no
+/// `--prompt-file`, so the whole prompt must ride as one argv element. (`claude`
+/// takes its prompt on stdin, which has no such limit — which is exactly why agy
+/// was the only quark that broke.)
+const MAX_ARG_STRLEN: usize = 128 * 1024;
+
+/// The budget the adapter actually enforces: three quarters of the kernel's hard
+/// limit (96 KiB), leaving headroom for the other argv elements, the environment
+/// block, and multi-byte slack. A prompt over this is truncated rather than handed
+/// to a doomed `execve`. Derived from [`MAX_ARG_STRLEN`] on purpose — the headroom
+/// should stay visibly tied to the limit it is hedging against.
+const SAFE_ARG_BYTES: usize = MAX_ARG_STRLEN / 4 * 3;
+
+/// Inserted where the transcript was cut, so a truncated quark knows its context is
+/// incomplete instead of confabulating over the gap.
+const TRUNCATION_MARKER: &str = "[transcript truncated: older field events were dropped to fit the CLI's argument limit]";
+
+/// Last-resort guard on the prompt handed to `agy --print`.
+///
+/// The projection already caps its field window ([`crate::engine::FIELD_WINDOW_BUDGET_BYTES`]),
+/// but that is *policy* — it can be raised, and a single pathological message or a
+/// large `git_diff` can still overshoot. This is the *safety net*: it guarantees the
+/// argv element we are about to hand `execve` is one `execve` will accept.
+///
+/// It truncates by dropping the **oldest** field-window events and re-rendering, so
+/// the identity / task / authority / handoff sections — the quark's actual
+/// instructions — survive by construction. If dropping the entire field window is
+/// still not enough (a colossal `git_diff` or task), the diff goes too; a prompt with
+/// no instructions is worse than a prompt with no transcript.
+fn fit_prompt(projection: &Projection, self_id: &QuarkId) -> String {
+    let render = |p: &Projection| crate::adapter::prompt::build(p, self_id);
+
+    let prompt = render(projection);
+    if prompt.len() <= SAFE_ARG_BYTES {
+        return prompt;
+    }
+
+    let mut p = projection.clone();
+    // Drop the oldest events one at a time until it fits. The marker rides as a
+    // synthetic leading event so it renders inside the transcript, right where the
+    // cut happened.
+    while !p.field_window.is_empty() {
+        p.field_window.remove(0);
+        let mut probe = p.clone();
+        probe.field_window.insert(
+            0,
+            Event::new(Actor::Gluon, None, Kind::Message { body: TRUNCATION_MARKER.to_string() }),
+        );
+        let out = render(&probe);
+        if out.len() <= SAFE_ARG_BYTES {
+            return out;
+        }
+    }
+
+    // The field window is gone and it still does not fit: the diff is the only other
+    // unbounded section. Drop it too, and say so.
+    p.git_diff = String::new();
+    p.field_window = vec![Event::new(
+        Actor::Gluon,
+        None,
+        Kind::Message { body: TRUNCATION_MARKER.to_string() },
+    )];
+    let out = render(&p);
+    if out.len() <= SAFE_ARG_BYTES {
+        return out;
+    }
+
+    // Nothing left to drop — the *task itself* is enormous. Hard-cut on a char
+    // boundary rather than hand `execve` an argument it will reject outright.
+    let mut cut = SAFE_ARG_BYTES.saturating_sub(TRUNCATION_MARKER.len() + 1);
+    while cut > 0 && !out.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}\n{TRUNCATION_MARKER}", &out[..cut])
+}
 
 /// Translate the resolved permission mode into `agy` CLI posture flags, mirroring
 /// the claude mapping: Ask→read-only `plan`, Write/Auto→`accept-edits` (edits
@@ -45,14 +129,17 @@ impl<R: CliRunner> AgyQuark<R> {
     ///
     /// Verified live against `agy 1.1.1`: prompt-on-stdin is silently ignored
     /// (the model answers a default prompt); the prompt must ride as an arg.
-    fn invocation(&self, prompt: String, mode: Mode) -> CliInvocation {
+    ///
+    /// `agy` takes no directory flag either, so the working directory rides on the
+    /// invocation and `ProcessRunner` applies it — no new argv surface.
+    fn invocation(&self, prompt: String, mode: Mode, cwd: PathBuf) -> CliInvocation {
         let mut args = vec!["--print".to_string(), prompt];
         if !self.model.is_empty() {
             args.push("--model".to_string());
             args.push(self.model.clone());
         }
         args.extend(posture_args(mode));
-        CliInvocation { program: "agy".to_string(), args, stdin: String::new() }
+        CliInvocation { program: "agy".to_string(), args, stdin: String::new(), cwd }
     }
 }
 
@@ -70,8 +157,12 @@ impl<R: CliRunner> Quark for AgyQuark<R> {
 
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let mode = turn.mode;
-        let prompt = crate::adapter::prompt::build(&turn, &self.id);
-        let result = self.runner.run(self.invocation(prompt, mode)).await?;
+        let cwd = turn.cwd.clone();
+        // NOT `prompt::build` directly: the prompt is one argv element, and `execve`
+        // rejects an over-long one with E2BIG before agy ever starts. `fit_prompt` is
+        // the guard that makes the invocation executable no matter how big the field.
+        let prompt = fit_prompt(&turn, &self.id);
+        let result = self.runner.run(self.invocation(prompt, mode, cwd)).await?;
         Ok(reply_to_outcome(&result))
     }
 }
@@ -86,6 +177,10 @@ mod tests {
     }
 
     fn projection_mode(task: &str, mode: Mode) -> Projection {
+        projection_in(task, mode, PathBuf::from("/tmp/hadron-test-cwd"))
+    }
+
+    fn projection_in(task: &str, mode: Mode, cwd: PathBuf) -> Projection {
         Projection {
             task: task.into(),
             invariants: String::new(),
@@ -94,8 +189,112 @@ mod tests {
             roster: vec![],
             field_window: vec![],
             git_diff: String::new(),
+            cwd,
             mode,
         }
+    }
+
+    /// A projection whose field window is `n` messages of `body_bytes` each — a
+    /// long-lived swarm's field, which is what actually blew up in production.
+    fn huge_projection(n: usize, body_bytes: usize) -> Projection {
+        let mut p = projection_mode("summarise the work so far", Mode::Bypass);
+        p.field_window = (0..n)
+            .map(|i| {
+                Event::new(
+                    Actor::Human,
+                    None,
+                    Kind::Message { body: format!("event{i} {}", "x".repeat(body_bytes)) },
+                )
+            })
+            .collect();
+        p
+    }
+
+    /// **THE discriminating test.** `agy` has no stdin and no `--prompt-file`: the
+    /// prompt is one argv element, and Linux caps a single argv element at
+    /// `MAX_ARG_STRLEN` = 128 KiB. Hand the adapter an oversized projection and the
+    /// invocation must STILL be executable — otherwise `execve` returns E2BIG and
+    /// the turn dies in under a millisecond with no subprocess ever spawned.
+    #[tokio::test]
+    async fn agy_never_builds_an_argv_element_that_execve_would_reject() {
+        let runner = FakeRunner::with_stdout(vec!["ok"]);
+        let mut q = AgyQuark::new(QuarkId::new("agy"), Flavor::Worker, "Gemini 3.1 Pro (High)", runner);
+
+        // ~400 KB of field — over 3× the kernel's hard limit for one argv element.
+        let p = huge_projection(200, 2000);
+        assert!(
+            crate::adapter::prompt::build(&p, &QuarkId::new("agy")).len() > MAX_ARG_STRLEN,
+            "precondition: the un-guarded prompt really would be rejected by execve"
+        );
+
+        q.excite(p).await.unwrap();
+
+        let recorded = q.runner.recorded.lock().unwrap();
+        for (i, arg) in recorded[0].args.iter().enumerate() {
+            assert!(
+                arg.len() <= SAFE_ARG_BYTES,
+                "argv[{i}] is {} bytes, over the {SAFE_ARG_BYTES}-byte safe budget \
+                 (kernel hard limit {MAX_ARG_STRLEN})",
+                arg.len()
+            );
+        }
+    }
+
+    /// Truncation must be *honest* and must cut the OLDEST context. The identity,
+    /// task, authority and handoff sections are the quark's instructions — losing
+    /// them silently turns a truncated turn into a confabulated one.
+    #[tokio::test]
+    async fn truncation_drops_the_oldest_field_and_says_so() {
+        let runner = FakeRunner::with_stdout(vec!["ok"]);
+        let mut q = AgyQuark::new(QuarkId::new("agy"), Flavor::Worker, "", runner);
+
+        let mut p = huge_projection(200, 2000);
+        // Bookend the window: the oldest event must go, the newest must survive.
+        p.field_window.first_mut().unwrap().kind =
+            Kind::Message { body: format!("OLDEST-CANARY {}", "x".repeat(2000)) };
+        p.field_window.last_mut().unwrap().kind =
+            Kind::Message { body: "NEWEST-CANARY the thing I just asked for".into() };
+
+        q.excite(p).await.unwrap();
+
+        let recorded = q.runner.recorded.lock().unwrap();
+        let prompt = &recorded[0].args[1];
+        assert!(prompt.contains("# Who you are"), "identity survives");
+        assert!(prompt.contains("summarise the work so far"), "the task survives");
+        assert!(prompt.contains("# Your authority this turn"), "authority survives");
+        assert!(prompt.contains("# How to respond"), "the handoff reminder survives");
+        assert!(prompt.contains("NEWEST-CANARY"), "the most recent field survives");
+        assert!(!prompt.contains("OLDEST-CANARY"), "the oldest field is what gets dropped");
+        assert!(
+            prompt.contains(TRUNCATION_MARKER),
+            "and the quark is TOLD its transcript was cut, so it does not confabulate the gap"
+        );
+    }
+
+    /// The guard is a safety net, not a tax: a normal-sized prompt is passed through
+    /// byte-for-byte, with no marker and nothing dropped.
+    #[tokio::test]
+    async fn a_normal_prompt_is_not_touched() {
+        let runner = FakeRunner::with_stdout(vec!["ok"]);
+        let mut q = AgyQuark::new(QuarkId::new("agy"), Flavor::Worker, "", runner);
+        let p = huge_projection(3, 100);
+        let want = crate::adapter::prompt::build(&p, &QuarkId::new("agy"));
+
+        q.excite(p).await.unwrap();
+
+        let recorded = q.runner.recorded.lock().unwrap();
+        assert_eq!(&recorded[0].args[1], &want, "passed through untouched");
+        assert!(!recorded[0].args[1].contains(TRUNCATION_MARKER));
+    }
+
+    /// Layer 3b of the cwd chain, agy side.
+    #[tokio::test]
+    async fn agy_invocation_carries_the_projection_cwd() {
+        let runner = FakeRunner::with_stdout(vec!["ok"]);
+        let mut q = AgyQuark::new(QuarkId::new("agy"), Flavor::Worker, "", runner);
+        let wt = PathBuf::from("/repo/.hadron/trees/agy");
+        q.excite(projection_in("go", Mode::Write, wt.clone())).await.unwrap();
+        assert_eq!(q.runner.recorded.lock().unwrap()[0].cwd, wt);
     }
 
     #[test]

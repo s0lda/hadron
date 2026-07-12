@@ -1,12 +1,21 @@
 use async_trait::async_trait;
 use hadron_lattice::TurnOutcome;
+use std::path::PathBuf;
 
-/// A single CLI invocation: the program, its args, and the text piped to stdin.
+/// A single CLI invocation: the program, its args, the text piped to stdin, and
+/// **the directory it runs in**.
+///
+/// `cwd` is deliberately NOT an `Option`. Before it existed, `ProcessRunner` never
+/// called `.current_dir()`, so every `claude`/`agy` subprocess inherited the
+/// *daemon's* cwd — two concurrent quarks editing one checkout, silently. An
+/// `Option` defaulting to `None` would reopen exactly that channel; a required
+/// field makes the compiler ask every construction site where its process runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliInvocation {
     pub program: String,
     pub args: Vec<String>,
     pub stdin: String,
+    pub cwd: PathBuf,
 }
 
 /// The result of one invocation. Kept CLI-agnostic: session ids and other
@@ -48,6 +57,9 @@ impl CliRunner for ProcessRunner {
 
         let mut child = tokio::process::Command::new(&inv.program)
             .args(&inv.args)
+            // THE fix: the CLI runs in the quark's own worktree, not wherever the
+            // daemon happened to be launched from.
+            .current_dir(&inv.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -149,11 +161,34 @@ mod tests {
                 program: "cat".into(),
                 args: vec![],
                 stdin: "hello world".into(),
+                cwd: std::env::temp_dir(),
             })
             .await
             .unwrap();
         assert_eq!(out.stdout, "hello world");
         assert_eq!(out.exit, 0);
+    }
+
+    /// The direct proof of the whole cwd chain's last link: a spawned process runs
+    /// in the invocation's `cwd`, not the daemon's. Before this, `ProcessRunner`
+    /// never called `.current_dir()` and every quark ran in the human's checkout.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_runner_runs_in_the_given_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        // Canonicalize: macOS/WSL temp dirs can be symlinks, and `pwd` prints the
+        // resolved path.
+        let want = dir.path().canonicalize().unwrap();
+        let out = ProcessRunner
+            .run(CliInvocation {
+                program: "pwd".into(),
+                args: vec![],
+                stdin: String::new(),
+                cwd: want.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.stdout.trim(), want.to_string_lossy());
     }
 
     #[cfg(unix)]
@@ -164,6 +199,7 @@ mod tests {
                 program: "sh".into(),
                 args: vec!["-c".into(), "echo boom >&2; exit 3".into()],
                 stdin: String::new(),
+                cwd: std::env::temp_dir(),
             })
             .await
             .unwrap_err();
@@ -176,11 +212,21 @@ mod tests {
     async fn fake_runner_returns_in_order_and_records() {
         let runner = FakeRunner::with_stdout(vec!["first", "second"]);
         let r1 = runner
-            .run(CliInvocation { program: "claude".into(), args: vec!["-p".into()], stdin: "a".into() })
+            .run(CliInvocation {
+                program: "claude".into(),
+                args: vec!["-p".into()],
+                stdin: "a".into(),
+                cwd: PathBuf::from("/tmp"),
+            })
             .await
             .unwrap();
         let r2 = runner
-            .run(CliInvocation { program: "agy".into(), args: vec![], stdin: "b".into() })
+            .run(CliInvocation {
+                program: "agy".into(),
+                args: vec![],
+                stdin: "b".into(),
+                cwd: PathBuf::from("/tmp"),
+            })
             .await
             .unwrap();
         assert_eq!(r1.stdout, "first");

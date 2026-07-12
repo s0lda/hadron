@@ -9,8 +9,21 @@ const SNAPSHOT_REF_PREFIX: &str = "refs/hadron/snapshots/";
 
 /// Run `git` inside `repo_root` with explicit identity so snapshotting works
 /// even when the repo has no configured user. Returns stdout on success.
-fn git(repo_root: &Path, args: &[&str]) -> anyhow::Result<String> {
+///
+/// `pub(crate)` so `worktree.rs` and `merge.rs` reuse the one git wrapper (with
+/// its pinned identity) instead of growing a third `Command::new("git")`.
+pub(crate) fn git(repo_root: &Path, args: &[&str]) -> anyhow::Result<String> {
     git_with_env(repo_root, args, &[])
+}
+
+/// Like [`git`], but returns `Err` only on spawn failure — a nonzero exit is
+/// reported as `Ok(None)`. For the many probe-shaped git calls (`does this ref
+/// exist?`, `is HEAD detached?`) where "it failed" IS the answer.
+pub(crate) fn git_ok(repo_root: &Path, args: &[&str]) -> anyhow::Result<Option<String>> {
+    match git(repo_root, args) {
+        Ok(out) => Ok(Some(out)),
+        Err(_) => Ok(None),
+    }
 }
 
 fn git_with_env(repo_root: &Path, args: &[&str], envs: &[(&str, &str)]) -> anyhow::Result<String> {

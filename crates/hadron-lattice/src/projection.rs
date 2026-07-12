@@ -23,6 +23,13 @@ pub struct Projection {
     pub field_window: Vec<Event>,
     /// Current working diff, not whole files. v1: may be empty.
     pub git_diff: String,
+    /// **Where this quark works.** The directory every tool the adapter spawns
+    /// runs in — the quark's own `git worktree` when worktree discipline is on,
+    /// else the workspace root. Non-optional on purpose: an `Option` defaulting
+    /// to `None` would let a forgetful adapter silently inherit the *daemon's*
+    /// cwd, which is precisely the shared-tree hazard this field exists to close.
+    #[serde(default)]
+    pub cwd: std::path::PathBuf,
     /// The permission authority this quark runs under this turn. The engine
     /// resolves it from the field (`resolve_mode`) before excitation; real
     /// adapters translate it into the CLI's permission posture. Defaults to the
@@ -78,8 +85,10 @@ mod tests {
                 Kind::Message { body: "go".into() },
             )],
             git_diff: String::new(),
+            cwd: std::path::PathBuf::from("/tmp/wt"),
             mode: Mode::Bypass,
         };
+        assert_eq!(proj.cwd, std::path::Path::new("/tmp/wt"));
         assert_eq!(proj.roster.len(), 1);
         assert_eq!(proj.field_window.len(), 1);
         assert_eq!(proj.mode, Mode::Bypass);
