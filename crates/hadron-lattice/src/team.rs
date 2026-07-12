@@ -108,6 +108,23 @@ mod tests {
     }
 
     #[test]
+    fn tolerates_unknown_keys_like_the_template_note() {
+        // The shipped team.example.json carries a leading "_note" comment key.
+        // A silent parse failure would degrade to an empty team (mock quarks), so
+        // pin that the extra key is ignored and the quarks still load.
+        let with_note = r#"{
+            "_note": "provider = backing CLI; agy model is a display name",
+            "quarks": [
+                { "id": "opus", "provider": "claude", "model": "opus", "flavor": "orchestrator" },
+                { "id": "agy",  "provider": "agy",    "model": "Gemini 3.1 Pro (High)", "flavor": "worker" }
+            ]
+        }"#;
+        let team: Team = serde_json::from_str(with_note).unwrap();
+        assert_eq!(team.quarks.len(), 2);
+        assert_eq!(team.get(&QuarkId::new("agy")).unwrap().model, "Gemini 3.1 Pro (High)");
+    }
+
+    #[test]
     fn loads_a_written_team() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("team.json");
