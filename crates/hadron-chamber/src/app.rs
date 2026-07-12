@@ -1363,7 +1363,7 @@ impl Chamber {
                     .min_h_0()
                     .relative()
                     .child(
-                        v_flex()
+                        div()
                             .id("changes-scroll")
                             .size_full()
                             .overflow_y_scroll()
@@ -1377,6 +1377,7 @@ impl Chamber {
                         div()
                             .absolute()
                             .top_0()
+                            .left_0()
                             .bottom_0()
                             .right_0()
                             .child(Scrollbar::vertical(&self.changes_scroll).scrollbar_show(ScrollbarShow::Hover))
@@ -2053,7 +2054,7 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
 
     h_flex()
         .id(SharedString::from(format!("quark-{}", r.id)))
-        .items_center()
+        .items_start()
         .gap_2p5()
         .px_2()
         .py_1p5()
@@ -2062,6 +2063,7 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
         .child(
             div()
                 .relative()
+                .mt_1()
                 .child(identity_avatar(id, 28.0))
                 .child(dot)
         )
@@ -2333,6 +2335,9 @@ pub fn run(field_path: Option<String>) {
             // hairlines, which suits the borderless surfaces.)
             t.border = rgb(0x191a1b).into();
             t.drag_border = rgb(0xec4899).into();
+            // Markdown inline code blocks use `accent` for background in gpui-component.
+            // Override it to a very soft white overlay so it's slightly brighter than the background.
+            t.accent = gpui::rgba(0xffffff20).into();
             // The chat's segmented tab track: a step above the dark card (bg) so
             // the control is visible. The active tab reads as a darker cutout (its
             // sliding indicator paints `tokens.background`, which we keep
