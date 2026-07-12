@@ -49,7 +49,7 @@ pub enum QuarkState {
 }
 
 /// The category of a proposed operation, carried on a `PermissionReq`. Matched
-/// against the human's god-mode policy by `hadron_gatekeeper::decide`.
+/// against the effective mode by `hadron_gatekeeper::decide`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Risk {
@@ -57,6 +57,27 @@ pub enum Risk {
     WorkspaceEdit,
     /// Executing a shell command (includes publish-class ops like `cargo publish`).
     BashExec,
+}
+
+/// How much permission authority the human delegates to the orchestrator for a
+/// quark (or, globally, for the whole swarm). An autonomy ladder carried on a
+/// `Kind::ModeSet` event — the field is the source of truth, so a running daemon
+/// honours a change on its next tick and re-opening a field restores the setting.
+///
+/// - `Ask`: every op asks the human (pure conversation).
+/// - `Write`: edits auto-approve; every command asks the human.
+/// - `Auto`: edits auto-approve; a command asks the human once, then is
+///   remembered (trust-on-first-use) per quark; off-list commands still ask.
+/// - `Bypass`: the orchestrator owns it — the gluon auto-approves and the human
+///   is never asked (the request + grant are still recorded for audit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    #[default]
+    Ask,
+    Write,
+    Auto,
+    Bypass,
 }
 
 /// The payload of an event. Known variants flatten into the envelope under a
@@ -74,7 +95,10 @@ pub enum Kind {
     EnergyReport { used_tokens: u32 },
     Assign { task: String, invariants: Vec<String> },
     PermissionReq { risk: Risk, description: String },
-    PermissionGrant { approved: bool },
+    PermissionGrant { approved: bool, remember: bool },
+    /// Set the permission mode. The envelope's `to` field is the target:
+    /// `Some(quark)` = a per-quark override, `None` = the global default.
+    ModeSet { mode: Mode },
     /// Any kind this version does not understand. `raw` holds the full set of
     /// non-envelope fields so the event can be re-serialized and displayed.
     Unknown { kind: String, raw: Value },
@@ -155,9 +179,14 @@ impl Serialize for Event {
                 m.serialize_entry("risk", risk)?;
                 m.serialize_entry("description", description)?;
             }
-            Kind::PermissionGrant { approved } => {
+            Kind::PermissionGrant { approved, remember } => {
                 m.serialize_entry("kind", "permission_grant")?;
                 m.serialize_entry("approved", approved)?;
+                m.serialize_entry("remember", remember)?;
+            }
+            Kind::ModeSet { mode } => {
+                m.serialize_entry("kind", "mode_set")?;
+                m.serialize_entry("mode", mode)?;
             }
             Kind::Unknown { kind, raw } => {
                 m.serialize_entry("kind", kind)?;
@@ -230,6 +259,14 @@ impl<'de> Deserialize<'de> for Event {
             },
             "permission_grant" => Kind::PermissionGrant {
                 approved: take_field(&mut map, "approved")?,
+                // Additive field: legacy grants (pre-mode-ladder) omit it → false.
+                remember: match map.remove("remember") {
+                    None | Some(Value::Null) => false,
+                    Some(val) => serde_json::from_value(val).map_err(D::Error::custom)?,
+                },
+            },
+            "mode_set" => Kind::ModeSet {
+                mode: take_field(&mut map, "mode")?,
             },
             other => Kind::Unknown {
                 kind: other.to_string(),
@@ -335,13 +372,51 @@ mod event_tests {
         let ev = Event::new(
             Actor::Human,
             None,
-            Kind::PermissionGrant { approved: true },
+            Kind::PermissionGrant { approved: true, remember: true },
         );
         let line = serde_json::to_string(&ev).unwrap();
         let back: Event = serde_json::from_str(&line).unwrap();
         assert_eq!(ev, back);
         assert!(line.contains(r#""kind":"permission_grant""#));
         assert!(line.contains(r#""approved":true"#));
+        assert!(line.contains(r#""remember":true"#));
+    }
+
+    #[test]
+    fn permission_grant_without_remember_defaults_false() {
+        // A grant written before the mode ladder has no `remember` field.
+        let line = r#"{"v":1,"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","ts":"2026-07-10T14:00:00Z","from":"human","to":"agy","kind":"permission_grant","approved":true}"#;
+        let ev: Event = serde_json::from_str(line).unwrap();
+        assert_eq!(ev.kind, Kind::PermissionGrant { approved: true, remember: false });
+    }
+
+    #[test]
+    fn mode_serializes_snake_case() {
+        assert_eq!(serde_json::to_string(&Mode::Ask).unwrap(), r#""ask""#);
+        assert_eq!(serde_json::to_string(&Mode::Bypass).unwrap(), r#""bypass""#);
+        assert_eq!(Mode::default(), Mode::Ask);
+        let back: Mode = serde_json::from_str(r#""auto""#).unwrap();
+        assert_eq!(back, Mode::Auto);
+    }
+
+    #[test]
+    fn mode_set_round_trips_global_and_per_quark() {
+        // Global default (to: None).
+        let global = Event::new(Actor::Human, None, Kind::ModeSet { mode: Mode::Auto });
+        let line = serde_json::to_string(&global).unwrap();
+        assert!(line.contains(r#""kind":"mode_set""#));
+        assert!(line.contains(r#""mode":"auto""#));
+        assert_eq!(serde_json::from_str::<Event>(&line).unwrap(), global);
+
+        // Per-quark override (to: Some(quark)).
+        let per = Event::new(
+            Actor::Human,
+            Some(QuarkId::new("agy")),
+            Kind::ModeSet { mode: Mode::Bypass },
+        );
+        let back: Event = serde_json::from_str(&serde_json::to_string(&per).unwrap()).unwrap();
+        assert_eq!(back, per);
+        assert_eq!(back.to, Some(QuarkId::new("agy")));
     }
 
     #[test]

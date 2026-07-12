@@ -63,10 +63,15 @@ fn render_row(e: &Event) -> MessageRow {
         Kind::PermissionReq { risk, description } => {
             (format!("⚠️ permission requested ({risk:?}): {description}"), "permission_req")
         }
-        Kind::PermissionGrant { approved } => (
-            format!("permission {}", if *approved { "approved" } else { "denied" }),
+        Kind::PermissionGrant { approved, remember } => (
+            format!(
+                "permission {}{}",
+                if *approved { "approved" } else { "denied" },
+                if *remember { " (remembered)" } else { "" },
+            ),
             "permission_grant",
         ),
+        Kind::ModeSet { mode } => (format!("mode → {mode:?}").to_lowercase(), "mode_set"),
         Kind::Unknown { kind, .. } => (format!("unrecognized event: {kind}"), "unrecognized"),
     };
     MessageRow {
@@ -177,7 +182,7 @@ mod tests {
         assert_eq!(pending.description, "cargo publish");
 
         // Once granted, the toast clears.
-        let grant = ev(Actor::Human, Some("agy"), Kind::PermissionGrant { approved: true });
+        let grant = ev(Actor::Human, Some("agy"), Kind::PermissionGrant { approved: true, remember: false });
         let view = project(&[req, grant]);
         assert!(view.pending_permission.is_none());
     }

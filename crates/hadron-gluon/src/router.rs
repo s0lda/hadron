@@ -51,8 +51,8 @@ mod tests {
 
     fn roster() -> Vec<QuarkCard> {
         vec![
-            QuarkCard { id: QuarkId::new("orch"), flavor: Flavor::Orchestrator, energy: EnergyState::Available },
-            QuarkCard { id: QuarkId::new("worker"), flavor: Flavor::Worker, energy: EnergyState::Available },
+            QuarkCard { id: QuarkId::new("orch"), flavor: Flavor::Orchestrator, energy: EnergyState::Available, provider: String::new(), model: String::new() },
+            QuarkCard { id: QuarkId::new("worker"), flavor: Flavor::Worker, energy: EnergyState::Available, provider: String::new(), model: String::new() },
         ]
     }
 

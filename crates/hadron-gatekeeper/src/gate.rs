@@ -46,7 +46,7 @@ pub fn grant(pending: &PendingPermission, approved: bool) -> Event {
     Event::new(
         Actor::Human,
         Some(pending.quark.clone()),
-        Kind::PermissionGrant { approved },
+        Kind::PermissionGrant { approved, remember: false },
     )
 }
 
@@ -63,7 +63,7 @@ mod tests {
         )
     }
     fn grant_ev(approved: bool) -> Event {
-        Event::new(Actor::Human, None, Kind::PermissionGrant { approved })
+        Event::new(Actor::Human, None, Kind::PermissionGrant { approved, remember: false })
     }
     fn msg() -> Event {
         Event::new(Actor::Human, None, Kind::Message { body: "hi".into() })
@@ -88,10 +88,10 @@ mod tests {
         let approve = grant(&pending, true);
         assert_eq!(approve.from, Actor::Human);
         assert_eq!(approve.to, Some(QuarkId::new("agy")));
-        assert!(matches!(approve.kind, Kind::PermissionGrant { approved: true }));
+        assert!(matches!(approve.kind, Kind::PermissionGrant { approved: true, .. }));
         // And a denial:
         let deny = grant(&pending, false);
-        assert!(matches!(deny.kind, Kind::PermissionGrant { approved: false }));
+        assert!(matches!(deny.kind, Kind::PermissionGrant { approved: false, .. }));
     }
 
     #[test]

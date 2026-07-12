@@ -2615,6 +2615,7 @@ dependencies = [
  "gpui-component",
  "gpui-component-assets",
  "gpui_platform",
+ "hadron-gatekeeper",
  "hadron-lattice",
  "serde",
  "serde_json",
@@ -2631,11 +2632,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hadron-gatekeeper"
+version = "0.1.0"
+dependencies = [
+ "hadron-lattice",
+ "serde",
+]
+
+[[package]]
 name = "hadron-gluon"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "hadron-gatekeeper",
  "hadron-lattice",
  "notify 8.2.0",
  "rusqlite",

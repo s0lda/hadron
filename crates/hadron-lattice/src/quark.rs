@@ -31,12 +31,18 @@ pub enum EnergyState {
     Unknown,
 }
 
-/// A roster entry shown to the orchestrator so it can assign work.
+/// A roster entry shown to the orchestrator so it can assign work. `provider`
+/// (the backing CLI/vendor, e.g. "claude", "agy") and `model` (e.g. "opus-4.8")
+/// make a seat legible so the human's per-quark trust decision is informed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuarkCard {
     pub id: QuarkId,
     pub flavor: Flavor,
     pub energy: EnergyState,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub model: String,
 }
 
 #[cfg(test)]
@@ -49,13 +55,24 @@ mod tests {
             id: QuarkId::new("claude"),
             flavor: Flavor::Orchestrator,
             energy: EnergyState::Available,
+            provider: "claude".into(),
+            model: "opus-4.8".into(),
         };
         let json = serde_json::to_string(&card).unwrap();
         assert_eq!(
             json,
-            r#"{"id":"claude","flavor":"orchestrator","energy":"available"}"#
+            r#"{"id":"claude","flavor":"orchestrator","energy":"available","provider":"claude","model":"opus-4.8"}"#
         );
         let back: QuarkCard = serde_json::from_str(&json).unwrap();
         assert_eq!(card, back);
+    }
+
+    #[test]
+    fn quark_card_without_provider_model_defaults_empty() {
+        // A card written before legibility fields exist still loads.
+        let json = r#"{"id":"agy","flavor":"worker","energy":"available"}"#;
+        let card: QuarkCard = serde_json::from_str(json).unwrap();
+        assert_eq!(card.provider, "");
+        assert_eq!(card.model, "");
     }
 }
