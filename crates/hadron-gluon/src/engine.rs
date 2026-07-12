@@ -409,6 +409,58 @@ mod tests {
         events.iter().any(|e| pred(&e.kind))
     }
 
+    /// Records the `mode` on the projection it is handed, then quiesces in one
+    /// turn (a plain reply, no permission ask) — so a test can prove the engine
+    /// resolved and delivered the quark's effective mode before excitation.
+    struct ModeSpyQuark {
+        id: QuarkId,
+        seen: Arc<Mutex<Vec<hadron_gatekeeper::Mode>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for ModeSpyQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+            self.seen.lock().unwrap().push(turn.mode);
+            Ok(TurnOutcome { message: Some("ok".into()), used_tokens: 0, permission: None })
+        }
+    }
+
+    #[tokio::test]
+    async fn engine_delivers_resolved_mode_on_the_projection() {
+        use hadron_gatekeeper::Mode;
+        // No ModeSet → the quark's turn runs under the default Ask.
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        let seen = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(ModeSpyQuark { id: QuarkId::new("agy"), seen: seen.clone() })],
+            8,
+        );
+        engine.run_until_quiesce().await.unwrap();
+        assert_eq!(seen.lock().unwrap().as_slice(), &[Mode::Ask], "default is Ask");
+
+        // A per-quark override for agy → its next turn runs under Bypass.
+        seed_mode(&field, Some("agy"), Mode::Bypass);
+        seed_human_message(&field, "agy", "again");
+        engine.run_until_quiesce().await.unwrap();
+        assert_eq!(
+            seen.lock().unwrap().last().copied(),
+            Some(Mode::Bypass),
+            "per-quark ModeSet reached the projection"
+        );
+    }
+
     /// Seed a mode-set event into the field before serving. `to = None` sets the
     /// global default; `Some(quark)` sets a per-quark override.
     fn seed_mode(field: &std::path::Path, to: Option<&str>, mode: hadron_gatekeeper::Mode) {
