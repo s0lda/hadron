@@ -1,0 +1,6 @@
+{
+  "quarks": [
+    { "id": "opus", "provider": "claude", "model": "opus-4.8", "flavor": "orchestrator" },
+    { "id": "agy",  "provider": "agy",    "model": "gemini-3-pro", "flavor": "worker" }
+  ]
+}
