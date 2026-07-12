@@ -41,10 +41,13 @@ pub fn validate_quark_id(id: &QuarkId) -> anyhow::Result<()> {
     if s.is_empty() || s.chars().any(|c| c.is_whitespace()) {
         anyhow::bail!("quark id must be a non-empty, whitespace-free token (got {s:?})");
     }
-    if s == "human"
-        || s == "gluon"
-        || s == crate::router::ORCHESTRATOR_ALIAS
-        || s == crate::router::TEAM_ALIAS
+    // Case-insensitively, because mentions now resolve that way: an id like
+    // `Team` would otherwise validate fine and then be permanently unreachable,
+    // since `@Team` resolves to the alias before it ever reaches the roster.
+    if s.eq_ignore_ascii_case("human")
+        || s.eq_ignore_ascii_case("gluon")
+        || s.eq_ignore_ascii_case(crate::router::ORCHESTRATOR_ALIAS)
+        || s.eq_ignore_ascii_case(crate::router::TEAM_ALIAS)
     {
         anyhow::bail!("quark id '{s}' is reserved");
     }

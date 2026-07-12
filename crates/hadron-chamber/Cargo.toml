@@ -21,6 +21,9 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
 ], optional = true }
 gpui-component = { git = "https://github.com/longbridge/gpui-component", optional = true }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", optional = true }
+lsp-types = "0.97.0"
+emojis = "0.9.0"
+anyhow = "1.0.103"
 
 [features]
 gui = ["dep:gpui", "dep:gpui_platform", "dep:gpui-component", "dep:gpui-component-assets"]

@@ -1,3 +1,17 @@
 [workspace]
 resolver = "2"
 members = ["crates/hadron-lattice", "crates/hadron-gluon", "crates/hadron-chamber", "crates/hadron-forge", "crates/hadron-gatekeeper"]
+
+# Optimize *dependencies* even in a debug build, while our own crates stay at
+# opt-level 0 (fast to rebuild, still debuggable). This is the standard GPUI/Zed
+# posture and it is not cosmetic: the chamber's per-frame cost lives almost
+# entirely in dependencies — GPUI's text shaping and layout, markdown parsing,
+# and tree-sitter syntax highlighting. Unoptimized, those make the UI stutter
+# while typing and scrolling; at opt-level 2 they are a different application.
+[profile.dev.package."*"]
+opt-level = 2
+
+# The GPUI text/highlight path is hot enough to be worth optimizing even when
+# it *is* one of our own crates' inline generics.
+[profile.dev]
+opt-level = 1
