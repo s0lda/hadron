@@ -20,7 +20,7 @@ pub fn next_pending(events: &[Event]) -> Option<QuarkId> {
 
 /// Extract the addressee from a Markdown message: the first `@quarkid` mention
 /// whose id is on the roster. Returns `None` (hand back to human) if none match.
-pub fn parse_addressee(body: &str, roster: &[QuarkCard]) -> Option<QuarkId> {
+pub fn parse_addressee(body: &str, roster: &[QuarkCard], sender: Option<&QuarkId>) -> Option<QuarkId> {
     for word in body.split_whitespace() {
         let Some(rest) = word.strip_prefix('@') else {
             continue;
@@ -33,7 +33,9 @@ pub fn parse_addressee(body: &str, roster: &[QuarkCard]) -> Option<QuarkId> {
             continue;
         }
         if let Some(card) = roster.iter().find(|c| c.id.as_str() == name) {
-            return Some(card.id.clone());
+            if Some(&card.id) != sender {
+                return Some(card.id.clone());
+            }
         }
     }
     None
@@ -83,11 +85,26 @@ mod tests {
     #[test]
     fn parse_addressee_finds_mention() {
         assert_eq!(
-            parse_addressee("Sure, @worker please handle it.", &roster()),
+            parse_addressee("Sure, @worker please handle it.", &roster(), None),
             Some(QuarkId::new("worker"))
         );
-        assert_eq!(parse_addressee("no mention here", &roster()), None);
-        assert_eq!(parse_addressee("@ghost unknown", &roster()), None);
+        assert_eq!(parse_addressee("no mention here", &roster(), None), None);
+        assert_eq!(parse_addressee("@ghost unknown", &roster(), None), None);
+    }
+
+    #[test]
+    fn parse_addressee_ignores_sender() {
+        let orch = QuarkId::new("orch");
+        // An orchestrator's own mention is ignored, next valid target is found.
+        assert_eq!(
+            parse_addressee("I see @orch in history. @worker do the work.", &roster(), Some(&orch)),
+            Some(QuarkId::new("worker"))
+        );
+        // If only the sender is mentioned, it returns None.
+        assert_eq!(
+            parse_addressee("I am @worker", &roster(), Some(&QuarkId::new("worker"))),
+            None
+        );
     }
 
 }
