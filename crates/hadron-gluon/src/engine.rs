@@ -92,6 +92,10 @@ impl Engine {
                 id: q.id(),
                 flavor: q.flavor(),
                 energy: q.energy(),
+                // Populated from the team config in the daemon bin (Task 6);
+                // empty here keeps the pure engine independent of seating.
+                provider: String::new(),
+                model: String::new(),
             })
             .collect();
         let quarks = quarks.into_iter().map(|q| (q.id(), q)).collect();
@@ -292,7 +296,7 @@ impl Engine {
                             &Event::new(
                                 Actor::Gluon,
                                 Some(target.clone()),
-                                Kind::PermissionGrant { approved: true },
+                                Kind::PermissionGrant { approved: true, remember: false },
                             ),
                         )?;
                         exchanges += 1;
@@ -422,7 +426,7 @@ mod tests {
         // Human approves, addressed to the quark.
         append_event(
             &field,
-            &Event::new(Actor::Human, Some(QuarkId::new("agy")), Kind::PermissionGrant { approved: true }),
+            &Event::new(Actor::Human, Some(QuarkId::new("agy")), Kind::PermissionGrant { approved: true, remember: false }),
         )
         .unwrap();
         engine.run_until_quiesce().await.unwrap();
@@ -449,7 +453,7 @@ mod tests {
         let events = read_events(&field).unwrap();
         assert!(has_kind(&events, |k| matches!(k, Kind::PermissionReq { .. })), "req still recorded (audit trail)");
         assert!(
-            events.iter().any(|e| e.from == Actor::Gluon && matches!(e.kind, Kind::PermissionGrant { approved: true })),
+            events.iter().any(|e| e.from == Actor::Gluon && matches!(e.kind, Kind::PermissionGrant { approved: true, .. })),
             "gluon auto-granted"
         );
         assert!(has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "published")), "op completed without a human");

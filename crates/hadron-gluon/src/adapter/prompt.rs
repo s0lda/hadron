@@ -82,6 +82,8 @@ mod tests {
                 id: QuarkId::new("agy"),
                 flavor: Flavor::Worker,
                 energy: EnergyState::Available,
+                provider: String::new(),
+                model: String::new(),
             }],
             field_window: vec![Event::new(
                 Actor::Human,
