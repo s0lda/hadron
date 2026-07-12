@@ -1996,12 +1996,24 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
         format!("{}", tokens)
     };
 
-    let sub: SharedString = if r.provider.is_empty() && r.model.is_empty() {
-        format!("{} · {}", label, tokens_str).into()
+    let flavor_str = match &r.flavor {
+        Some(hadron_lattice::Flavor::Orchestrator) => "Orchestrator",
+        Some(hadron_lattice::Flavor::Worker) => "Worker",
+        None => "",
+    };
+
+    let detail_1: SharedString = if r.provider.is_empty() && r.model.is_empty() {
+        label.into()
     } else if r.model.is_empty() {
-        format!("{} · {}", cap(&r.provider), tokens_str).into()
+        cap(&r.provider).into()
     } else {
-        format!("{} · {} · {}", cap(&r.provider), cap(&r.model), tokens_str).into()
+        format!("{} · {}", cap(&r.provider), cap(&r.model)).into()
+    };
+
+    let detail_2: SharedString = if flavor_str.is_empty() {
+        format!("{} tokens", tokens_str).into()
+    } else {
+        format!("{} · {} tokens", flavor_str, tokens_str).into()
     };
 
     let is_excited = r.state == hadron_lattice::QuarkState::Excited;
@@ -2060,7 +2072,14 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
                         .text_xs()
                         .text_color(theme::text_muted())
                         .truncate()
-                        .child(sub),
+                        .child(detail_1),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .truncate()
+                        .child(detail_2),
                 ),
         )
         // Effective permission mode (click to cycle a per-quark override).
