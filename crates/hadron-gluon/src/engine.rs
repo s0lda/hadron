@@ -1,12 +1,28 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use hadron_lattice::{Actor, Event, Flavor, Kind, Projection, QuarkCard, QuarkId, QuarkState};
+use hadron_lattice::{
+    Actor, Event, Flavor, Kind, Projection, QuarkCard, QuarkId, QuarkState, TurnOutcome,
+};
+use tokio::sync::Mutex as AsyncMutex;
+use tokio::task::JoinSet;
 
 use crate::field::{append_event, read_events};
 use crate::quark::Quark;
 use crate::router::{human_mentions, next_pending, parse_addressee};
 use std::fs;
+
+/// A quark, shareable across concurrent turns. The `Mutex` is what lets a single
+/// quark's `&mut self` turn move into a spawned task while the dispatch loop keeps
+/// running — and it is *also* the belt to the `in_flight` set's braces: a quark can
+/// only ever run one turn at a time.
+type SharedQuark = Arc<AsyncMutex<Box<dyn Quark>>>;
+
+/// How often the dispatch loop re-reads the field while turns are in flight, so a
+/// message arriving mid-turn reaches a free quark instead of queueing behind the
+/// running one. It bounds how long a quark sits unexcited, not how long a turn takes.
+const FIELD_POLL: std::time::Duration = std::time::Duration::from_millis(150);
 
 fn build_invariants(workspace_root: &std::path::Path, requested: &[String]) -> (String, Vec<String>) {
     let mut combined = String::new();
@@ -64,10 +80,14 @@ fn build_invariants(workspace_root: &std::path::Path, requested: &[String]) -> (
     (combined.trim().to_string(), available)
 }
 
-/// Drives the sequential coordination loop over a single field file.
+/// Drives the concurrent coordination loop over a single field file.
+///
+/// Turns run *in parallel*: every pending target found in one read of the field is
+/// dispatched at once (one turn per quark, never two), and the engine only quiesces
+/// when the field has no pending work **and** no turn is still in flight.
 pub struct Engine {
     field_path: PathBuf,
-    quarks: HashMap<QuarkId, Box<dyn Quark>>,
+    quarks: HashMap<QuarkId, SharedQuark>,
     roster: Vec<QuarkCard>,
     max_exchanges: usize,
     /// Opt-in git safety: target project repo to snapshot/diff. `None` = off.
@@ -76,6 +96,11 @@ pub struct Engine {
     nucleus_digest: String,
     ledger: Option<crate::ledger::Ledger>,
     energy_limit: u32,
+    /// Serializes every field append the engine makes. `append_event` re-opens the
+    /// file O_APPEND each call, so a single line can't tear — but two concurrent
+    /// turns finishing at once could still interleave their *sequences* of events.
+    /// Holding this across each append keeps the JSONL a clean, totally-ordered log.
+    field_lock: Arc<AsyncMutex<()>>,
 }
 
 impl Engine {
@@ -96,7 +121,10 @@ impl Engine {
                 model: String::new(),
             })
             .collect();
-        let quarks = quarks.into_iter().map(|q| (q.id(), q)).collect();
+        let quarks = quarks
+            .into_iter()
+            .map(|q| (q.id(), Arc::new(AsyncMutex::new(q)) as SharedQuark))
+            .collect();
         Engine {
             field_path,
             quarks,
@@ -106,7 +134,15 @@ impl Engine {
             nucleus_digest: String::new(),
             ledger: None,
             energy_limit: 0,
+            field_lock: Arc::new(AsyncMutex::new(())),
         }
+    }
+
+    /// The one way the engine writes to the field: serialized behind `field_lock`,
+    /// so concurrent turns can never interleave their event sequences.
+    async fn append(&self, event: Event) -> anyhow::Result<()> {
+        let _guard = self.field_lock.lock().await;
+        Ok(append_event(&self.field_path, &event)?)
     }
 
     /// The field file this engine reads and appends to.
@@ -151,287 +187,417 @@ impl Engine {
 
     /// Route the human's latest UNADDRESSED (`to == None`) message. The chamber
     /// writes human messages with the mentions left in the body (not stripped into
-    /// `to`), so one message can name several quarks. This fans out sequentially:
-    /// it returns the FIRST addressee that hasn't answered yet, handing it the full
-    /// message; after that quark replies, the next call picks up the next unserved
-    /// addressee. Addressed messages and quark hand-offs are `next_pending`'s job —
-    /// this only fires once `next_pending` returns `None`. `None` here means the
-    /// message is fully served (or no one can field it) → quiesce.
-    fn human_message_target(&self, events: &[Event]) -> Option<(QuarkId, String)> {
-        let idx = events
+    /// `to`), so one message can name several quarks. This now fans out *in
+    /// parallel*: it returns EVERY addressee that hasn't answered yet, each handed
+    /// the full message, and the dispatch loop excites them all at once. Addressed
+    /// messages and quark hand-offs are `next_pending`'s job. An empty result means
+    /// the message is fully served (or no one can field it).
+    ///
+    /// "Answered" means the quark has authored *any* event since the message — which
+    /// includes the `Status{Excited}` the engine appends before a turn. That is what
+    /// keeps an in-flight quark from being re-dispatched on the next read.
+    fn human_message_targets(&self, events: &[Event]) -> Vec<(QuarkId, String)> {
+        let Some(idx) = events
             .iter()
-            .rposition(|e| e.from == Actor::Human && matches!(e.kind, Kind::Message { .. }))?;
+            .rposition(|e| e.from == Actor::Human && matches!(e.kind, Kind::Message { .. }))
+        else {
+            return Vec::new();
+        };
         if events[idx].to.is_some() {
-            return None; // addressed message → next_pending owns it
+            return Vec::new(); // addressed message → next_pending owns it
         }
         let Kind::Message { body } = &events[idx].kind else {
-            return None;
+            return Vec::new();
         };
-        // First addressee that has not authored an event since this message.
-        for addressee in self.human_addressees(body) {
-            let served = events[idx + 1..]
-                .iter()
-                .any(|e| e.from == Actor::Quark(addressee.clone()));
-            if !served {
-                return Some((addressee, body.clone()));
-            }
-        }
-        None
+        self.human_addressees(body)
+            .into_iter()
+            .filter(|addressee| {
+                !events[idx + 1..]
+                    .iter()
+                    .any(|e| e.from == Actor::Quark(addressee.clone()))
+            })
+            .map(|addressee| (addressee, body.clone()))
+            .collect()
     }
 
-    /// Excite quarks one at a time until no addressee is pending (quiesce) or the
-    /// per-human-turn exchange budget is exhausted (backstop).
-    pub async fn run_until_quiesce(&mut self) -> anyhow::Result<()> {
-        let mut exchanges = 0usize;
-        loop {
-            let events = read_events(&self.field_path)?;
-
-            // Pick the next quark: an explicit addressee/hand-off first, else an
-            // unaddressed human message fanned out to whoever it @mentioned (or the
-            // orchestrator). `fallback_task` carries that message so it isn't looked
-            // up by `to == target` (the message is `to: None`, naming quarks only in
-            // its body).
-            let (target, fallback_task) = match next_pending(&events) {
-                Some(q) => (q, None),
-                None => match self.human_message_target(&events) {
-                    Some((q, task)) => (q, Some(task)),
-                    None => return Ok(()), // quiesce: control returns to the human
-                },
-            };
-
-            if exchanges >= self.max_exchanges {
-                append_event(
-                    &self.field_path,
-                    &Event::new(
-                        Actor::Gluon,
-                        None,
-                        Kind::Message {
-                            body: format!(
-                                "⚠️ backstop reached ({} exchanges); returning control to the human.",
-                                self.max_exchanges
-                            ),
-                        },
-                    ),
-                )?;
-                return Ok(());
+    /// Everyone the field is currently waiting on, in dispatch order: the explicit
+    /// addressee / hand-off first (`next_pending`), then every unserved addressee of
+    /// the latest unaddressed human message. The `String` is the `fallback_task` —
+    /// the human message body, carried along because it is `to: None` and so cannot
+    /// be found by the `to == target` trigger-finder.
+    fn pending_targets(&self, events: &[Event]) -> Vec<(QuarkId, Option<String>)> {
+        let mut targets: Vec<(QuarkId, Option<String>)> = Vec::new();
+        if let Some(q) = next_pending(events) {
+            targets.push((q, None));
+        }
+        for (q, task) in self.human_message_targets(events) {
+            if !targets.iter().any(|(id, _)| id == &q) {
+                targets.push((q, Some(task)));
             }
+        }
+        targets
+    }
 
-            if let Some(ledger) = &self.ledger {
-                if ledger.is_depleted(&target, self.energy_limit)? {
-                    let msg = format!("⚠️ Quark {} is depleted (exceeded {} tokens).", target.as_str(), self.energy_limit);
-                    append_event(
-                        &self.field_path,
-                        &Event::new(Actor::Gluon, None, Kind::Message { body: msg }),
-                    )?;
-                    append_event(
-                        &self.field_path,
-                        &Event::new(Actor::Quark(target.clone()), None, Kind::Status { state: QuarkState::Blocked }),
-                    )?;
-                    continue; // Reroute: skip this quark and process the next pending event
+    /// Build the projection handed to `target` for this turn, from the field as read
+    /// at dispatch time. `fallback_task` carries an unaddressed human message body
+    /// (the multi-mention / default-routing case, where no `to == target` event
+    /// exists to recover the task from).
+    fn projection_for(
+        &self,
+        events: &[Event],
+        target: &QuarkId,
+        fallback_task: Option<String>,
+        git_diff: String,
+    ) -> Projection {
+        let mut requested_invariants = vec![];
+        let mut task_desc = String::new();
+
+        // Find the most recent *task-bearing* event targeting this quark. Skip
+        // non-task events like a PermissionGrant (also addressed to the quark, to
+        // re-trigger it) — otherwise a resumed quark would get an empty task.
+        if let Some(task) = &fallback_task {
+            // Routing an unaddressed human message (single or multi-mention):
+            // the task is that message itself (no `to == target` event exists).
+            task_desc = task.clone();
+        } else if let Some(trigger) = events.iter().rev().find(|e| {
+            e.to.as_ref() == Some(target)
+                && matches!(e.kind, Kind::Assign { .. } | Kind::Message { .. })
+        }) {
+            match &trigger.kind {
+                Kind::Assign { task, invariants } => {
+                    task_desc = task.clone();
+                    requested_invariants = invariants.clone();
                 }
-            }
-
-            let git_diff = if let Some(root) = &self.repo_root {
-                let snap =
-                    crate::snapshot::create(root, &format!("before {}", target.as_str()))?;
-                append_event(
-                    &self.field_path,
-                    &Event::new(
-                        Actor::Gluon,
-                        None,
-                        Kind::Snapshot { git: snap.commit.clone(), label: snap.label.clone() },
-                    ),
-                )?;
-                crate::snapshot::working_diff(root)?
-            } else {
-                String::new()
-            };
-
-            let mut requested_invariants = vec![];
-            let mut task_desc = String::new();
-            
-            // Find the most recent *task-bearing* event targeting this quark. Skip
-            // non-task events like a PermissionGrant (also addressed to the quark, to
-            // re-trigger it) — otherwise a resumed quark would get an empty task.
-            if let Some(task) = &fallback_task {
-                // Routing an unaddressed human message (single or multi-mention):
-                // the task is that message itself (no `to == target` event exists).
-                task_desc = task.clone();
-            } else if let Some(trigger) = events.iter().rev().find(|e| {
-                e.to.as_ref() == Some(&target)
-                    && matches!(e.kind, Kind::Assign { .. } | Kind::Message { .. })
-            }) {
-                match &trigger.kind {
-                    Kind::Assign { task, invariants } => {
-                        task_desc = task.clone();
-                        requested_invariants = invariants.clone();
-                    }
-                    Kind::Message { body } => {
-                        task_desc = body.clone();
-                        // For a follow-up message, scan further backward for the most recent Assign to inherit invariants
-                        if let Some(assign_event) = events.iter().rev().find(|e| {
-                            e.to.as_ref() == Some(&target) && matches!(e.kind, Kind::Assign { .. })
-                        }) {
-                            if let Kind::Assign { invariants, .. } = &assign_event.kind {
-                                requested_invariants = invariants.clone();
-                            }
+                Kind::Message { body } => {
+                    task_desc = body.clone();
+                    // For a follow-up message, scan further backward for the most recent Assign to inherit invariants
+                    if let Some(assign_event) = events.iter().rev().find(|e| {
+                        e.to.as_ref() == Some(target) && matches!(e.kind, Kind::Assign { .. })
+                    }) {
+                        if let Kind::Assign { invariants, .. } = &assign_event.kind {
+                            requested_invariants = invariants.clone();
                         }
                     }
-                    _ => {}
                 }
-            } else if let Some(driving) = events.iter().rev().find(|e| {
-                // No event is addressed `to == target` — this is a quark resuming
-                // after a permission grant whose DRIVING message is an unaddressed
-                // (`to: None`) human message that named this quark in its body (a
-                // mention, or an unmentioned message the quark orchestrates). Recover
-                // the task from that message so the resumed turn isn't handed "".
-                // Resolution matches `human_message_target` exactly, so both agree on
-                // which human message drives this quark's turn.
-                matches!(&e.kind, Kind::Message { body } if e.from == Actor::Human && self.human_addressees(body).contains(&target))
-            }) {
-                if let Kind::Message { body } = &driving.kind {
-                    task_desc = body.clone();
+                _ => {}
+            }
+        } else if let Some(driving) = events.iter().rev().find(|e| {
+            // No event is addressed `to == target` — this is a quark resuming
+            // after a permission grant whose DRIVING message is an unaddressed
+            // (`to: None`) human message that named this quark in its body (a
+            // mention, or an unmentioned message the quark orchestrates). Recover
+            // the task from that message so the resumed turn isn't handed "".
+            // Resolution matches `human_message_targets` exactly, so both agree on
+            // which human message drives this quark's turn.
+            matches!(&e.kind, Kind::Message { body } if e.from == Actor::Human && self.human_addressees(body).contains(target))
+        }) {
+            if let Kind::Message { body } = &driving.kind {
+                task_desc = body.clone();
+            }
+        }
+
+        let workspace_root = self.field_path.ancestors()
+            .find(|p| p.join(".hadron").exists())
+            .unwrap_or_else(|| self.field_path.parent().unwrap_or_else(|| std::path::Path::new("")));
+
+        let (invariants_text, available_invariants) = build_invariants(workspace_root, &requested_invariants);
+
+        // Resolve the quark's effective mode from the field before the turn:
+        // real adapters translate it into the CLI's permission posture, so the
+        // mode must ride along on the projection (not just gate a post-turn ask).
+        let turn_mode = hadron_gatekeeper::resolve_mode(events, target);
+
+        Projection {
+            task: task_desc,
+            invariants: invariants_text,
+            available_invariants,
+            nucleus_digest: self.nucleus_digest.clone(),
+            roster: self.roster.clone(),
+            field_window: events.to_vec(),
+            git_diff,
+            mode: turn_mode,
+        }
+    }
+
+    /// Everything that happens *after* a turn returns: energy, the reply (routed by
+    /// its line-leading `@mention`), the permission ask, and the terminal status.
+    ///
+    /// Grounding is skipped on both permission paths, exactly as before: an
+    /// auto-approved quark is re-dispatched by the grant (`to == quark`, so
+    /// `next_pending` re-selects it) and grounds at the end of its *next* turn, and
+    /// an ask-the-human quark ends `Waiting` until a human grant resumes it.
+    async fn finish_turn(&self, target: &QuarkId, outcome: TurnOutcome) -> anyhow::Result<()> {
+        if outcome.used_tokens > 0 {
+            if let Some(ledger) = &self.ledger {
+                ledger.record_usage(target, outcome.used_tokens)?;
+            }
+            self.append(Event::new(
+                Actor::Quark(target.clone()),
+                None,
+                Kind::EnergyReport { used_tokens: outcome.used_tokens },
+            ))
+            .await?;
+        }
+
+        if let Some(body) = outcome.message {
+            let to = parse_addressee(&body, &self.roster, Some(target));
+            self.append(Event::new(Actor::Quark(target.clone()), to, Kind::Message { body }))
+                .await?;
+        }
+
+        // A self-declared permission ask: record it, then let the effective mode
+        // decide. The mode + allow-list are folded from the field as it stands
+        // *before* the req is appended (the req itself must not become its own
+        // remembered rule), but re-read here rather than reused from dispatch time —
+        // a concurrent turn may have moved the field on since.
+        if let Some(ask) = outcome.permission {
+            let events = read_events(&self.field_path)?;
+            let risk = ask.risk;
+            let op = ask.description.clone();
+            self.append(Event::new(
+                Actor::Quark(target.clone()),
+                None,
+                Kind::PermissionReq { risk, description: ask.description },
+            ))
+            .await?;
+            let mode = hadron_gatekeeper::resolve_mode(&events, target);
+            let rules = hadron_gatekeeper::allow_rules(&events);
+            match hadron_gatekeeper::decide(mode, risk, &op, target, &rules) {
+                hadron_gatekeeper::Decision::AutoApprove => {
+                    // Pre-authorized by the mode: the gluon grants on the
+                    // orchestrator's / human's standing authority.
+                    self.append(Event::new(
+                        Actor::Gluon,
+                        Some(target.clone()),
+                        Kind::PermissionGrant { approved: true, remember: false },
+                    ))
+                    .await?;
+                    return Ok(());
+                }
+                hadron_gatekeeper::Decision::AskHuman => {
+                    // Pause: mark the quark waiting. The dispatch loop no longer has
+                    // any pending work for it, so once every *other* in-flight turn
+                    // finishes the engine quiesces and the human is asked.
+                    self.append(Event::new(
+                        Actor::Quark(target.clone()),
+                        None,
+                        Kind::Status { state: QuarkState::Waiting },
+                    ))
+                    .await?;
+                    return Ok(());
                 }
             }
-            
-            let workspace_root = self.field_path.ancestors()
-                .find(|p| p.join(".hadron").exists())
-                .unwrap_or_else(|| self.field_path.parent().unwrap_or_else(|| std::path::Path::new("")));
-                
-            let (invariants_text, available_invariants) = build_invariants(workspace_root, &requested_invariants);
+        }
 
-            // Resolve the quark's effective mode from the field before the turn:
-            // real adapters translate it into the CLI's permission posture, so the
-            // mode must ride along on the projection (not just gate a post-turn ask).
-            let turn_mode = hadron_gatekeeper::resolve_mode(&events, &target);
+        self.append(Event::new(
+            Actor::Quark(target.clone()),
+            None,
+            Kind::Status { state: QuarkState::Ground },
+        ))
+        .await?;
+        Ok(())
+    }
 
-            let projection = Projection {
-                task: task_desc,
-                invariants: invariants_text,
-                available_invariants,
-                nucleus_digest: self.nucleus_digest.clone(),
-                roster: self.roster.clone(),
-                field_window: events.clone(),
-                git_diff,
-                mode: turn_mode,
+    /// Dispatch every pending quark turn CONCURRENTLY until the field has no pending
+    /// work **and** no turn is still in flight (quiesce), or the exchange budget is
+    /// exhausted (backstop).
+    ///
+    /// Each pass re-reads the field, computes every pending target, and spawns a turn
+    /// for each one that is not already running — so "@a do X and @b do Y" excites a
+    /// and b at the same time instead of making b wait out a's whole turn. A quark
+    /// only ever runs one turn at a time (`in_flight` + its own `Mutex`); a target
+    /// that is already running is simply left for a later pass.
+    ///
+    /// Quiesce is the *conjunction*: an engine that has nothing pending but is still
+    /// waiting on a running turn must not return, or the daemon would report the team
+    /// idle while it is mid-thought.
+    pub async fn run_until_quiesce(&mut self) -> anyhow::Result<()> {
+        let mut exchanges = 0usize;
+        let mut in_flight: HashSet<QuarkId> = HashSet::new();
+        let mut turns: JoinSet<(QuarkId, anyhow::Result<TurnOutcome>)> = JoinSet::new();
+        // The first turn error wins; siblings still run to completion (and still get
+        // their terminal status) so a single failure can't strand the rest as
+        // forever-Excited in the field.
+        let mut first_err: Option<anyhow::Error> = None;
+        let mut backstop = false;
+
+        loop {
+            let mut spawned_any = false;
+
+            // Stop *starting* work once we're aborting or out of budget — but keep
+            // looping, so already-running turns are drained rather than dropped.
+            if first_err.is_none() && !backstop {
+                let events = read_events(&self.field_path)?;
+
+                for (target, fallback_task) in self.pending_targets(&events) {
+                    // One turn per quark at a time. A quark that becomes pending again
+                    // while it is running is picked up on a later pass (its reply, or
+                    // the event that re-addressed it, is still in the field).
+                    if in_flight.contains(&target) {
+                        continue;
+                    }
+
+                    if exchanges >= self.max_exchanges {
+                        backstop = true;
+                        break;
+                    }
+
+                    if let Some(ledger) = &self.ledger {
+                        if ledger.is_depleted(&target, self.energy_limit)? {
+                            let msg = format!("⚠️ Quark {} is depleted (exceeded {} tokens).", target.as_str(), self.energy_limit);
+                            self.append(Event::new(Actor::Gluon, None, Kind::Message { body: msg }))
+                                .await?;
+                            self.append(Event::new(
+                                Actor::Quark(target.clone()),
+                                None,
+                                Kind::Status { state: QuarkState::Blocked },
+                            ))
+                            .await?;
+                            continue; // Reroute: skip this quark, dispatch the rest
+                        }
+                    }
+
+                    let Some(quark) = self.quarks.get(&target).cloned() else {
+                        first_err =
+                            Some(anyhow::anyhow!("no such quark on roster: {}", target.as_str()));
+                        break;
+                    };
+
+                    // TODO(worktrees): this snapshots the SHARED working tree, so under
+                    // concurrent turns the "before <quark>" label no longer attributes a
+                    // diff to one quark — two turns may snapshot the same tree, and the
+                    // diff a quark sees may contain a sibling's edits. It is safe (git
+                    // stash-free, append-only, no panic), just not meaningful attribution.
+                    // Real per-quark attribution needs worktree isolation — a separate task.
+                    let git_diff = if let Some(root) = &self.repo_root {
+                        let snap = crate::snapshot::create(root, &format!("before {}", target.as_str()))?;
+                        self.append(Event::new(
+                            Actor::Gluon,
+                            None,
+                            Kind::Snapshot { git: snap.commit.clone(), label: snap.label.clone() },
+                        ))
+                        .await?;
+                        crate::snapshot::working_diff(root)?
+                    } else {
+                        String::new()
+                    };
+
+                    let projection = self.projection_for(&events, &target, fallback_task, git_diff);
+
+                    // Announce the excitation *before* the turn runs, so the chamber can
+                    // show the quark working while it works. The adapter only returns at
+                    // the end of a turn, so without this the field is silent for the whole
+                    // duration and the quark reads as ignoring the human. Appended after
+                    // the projection is built, so the quark never sees its own status.
+                    // It doubles as the in-flight marker in the field itself: `next_pending`
+                    // and `human_message_targets` both count it as the quark having
+                    // "authored since", so a running quark is never re-selected.
+                    self.append(Event::new(
+                        Actor::Quark(target.clone()),
+                        None,
+                        Kind::Status { state: QuarkState::Excited },
+                    ))
+                    .await?;
+
+                    let turn_id = target.clone();
+                    turns.spawn(async move {
+                        let mut quark = quark.lock().await;
+                        let outcome = quark.excite(projection).await;
+                        (turn_id, outcome)
+                    });
+                    in_flight.insert(target);
+                    exchanges += 1;
+                    spawned_any = true;
+                }
+            }
+
+            // Quiesce is the conjunction: nothing new to start AND nothing running.
+            if turns.is_empty() && !spawned_any {
+                break;
+            }
+
+            // Something is running. Wait for the next turn to land — but do NOT wait
+            // only on that: a message can arrive in the field *while* a turn grinds,
+            // addressed to a quark that is free. Blocking solely on `join_next` would
+            // queue it behind the running turn, so handing one quark a long task would
+            // freeze the conversation with every other quark. So we race the join
+            // against a poll tick, and on a tick we loop back to re-read the field and
+            // dispatch anything newly pending.
+            let joined = tokio::select! {
+                joined = turns.join_next() => joined,
+                _ = tokio::time::sleep(FIELD_POLL) => continue,
+            };
+            let Some(joined) = joined else {
+                continue; // everything we spawned was already drained
             };
 
-            let quark = self
-                .quarks
-                .get_mut(&target)
-                .ok_or_else(|| anyhow::anyhow!("no such quark on roster: {}", target.as_str()))?;
-
-            // Announce the excitation *before* the turn runs, so the chamber can
-            // show the quark working while it works. The adapter only returns at
-            // the end of a turn, so without this the field is silent for the whole
-            // duration and the quark reads as ignoring the human. Appended after
-            // the projection is built, so the quark never sees its own status.
-            append_event(
-                &self.field_path,
-                &Event::new(
-                    Actor::Quark(target.clone()),
-                    None,
-                    Kind::Status { state: QuarkState::Excited },
-                ),
-            )?;
-
-            // A failed turn must still ground the quark; propagating straight out
-            // of `?` would strand it as forever-Excited in the field.
-            let outcome = match quark.excite(projection).await {
-                Ok(outcome) => outcome,
-                Err(err) => {
-                    append_event(
-                        &self.field_path,
-                        &Event::new(
+            match joined {
+                Ok((target, Ok(outcome))) => {
+                    in_flight.remove(&target);
+                    if let Err(err) = self.finish_turn(&target, outcome).await {
+                        if first_err.is_none() {
+                            first_err = Some(err);
+                        }
+                    }
+                }
+                Ok((target, Err(err))) => {
+                    // A failed turn must still leave a terminal status behind, or the
+                    // quark reads as forever-working. Its siblings keep running.
+                    in_flight.remove(&target);
+                    let grounded = self
+                        .append(Event::new(
                             Actor::Quark(target.clone()),
                             None,
                             Kind::Status { state: QuarkState::Error },
-                        ),
-                    )?;
-                    return Err(err);
-                }
-            };
-
-            if outcome.used_tokens > 0 {
-                if let Some(ledger) = &self.ledger {
-                    ledger.record_usage(&target, outcome.used_tokens)?;
-                }
-                append_event(
-                    &self.field_path,
-                    &Event::new(Actor::Quark(target.clone()), None, Kind::EnergyReport { used_tokens: outcome.used_tokens }),
-                )?;
-            }
-
-            if let Some(body) = outcome.message {
-                let to = parse_addressee(&body, &self.roster, Some(&target));
-                append_event(
-                    &self.field_path,
-                    &Event::new(Actor::Quark(target.clone()), to, Kind::Message { body }),
-                )?;
-            }
-
-            // A self-declared permission ask: record it, then let the effective
-            // mode decide. The mode + allow-list are folded from the field's
-            // prior ModeSet / remembered-grant events (the `events` binding above
-            // already holds them — the just-appended req doesn't affect either).
-            // A grant is addressed to the quark so `next_pending` re-selects it
-            // (the resume path); the task survives via the task-bearing
-            // trigger-finder above.
-            if let Some(ask) = outcome.permission {
-                let risk = ask.risk;
-                let op = ask.description.clone();
-                append_event(
-                    &self.field_path,
-                    &Event::new(
-                        Actor::Quark(target.clone()),
-                        None,
-                        Kind::PermissionReq { risk, description: ask.description },
-                    ),
-                )?;
-                let mode = hadron_gatekeeper::resolve_mode(&events, &target);
-                let rules = hadron_gatekeeper::allow_rules(&events);
-                match hadron_gatekeeper::decide(mode, risk, &op, &target, &rules) {
-                    hadron_gatekeeper::Decision::AutoApprove => {
-                        // Pre-authorized by the mode: the gluon grants on the
-                        // orchestrator's / human's standing authority.
-                        append_event(
-                            &self.field_path,
-                            &Event::new(
-                                Actor::Gluon,
-                                Some(target.clone()),
-                                Kind::PermissionGrant { approved: true, remember: false },
-                            ),
-                        )?;
-                        exchanges += 1;
-                        continue;
+                        ))
+                        .await;
+                    if first_err.is_none() {
+                        first_err = Some(err);
+                        if let Err(io_err) = grounded {
+                            first_err = Some(io_err);
+                        }
                     }
-                    hadron_gatekeeper::Decision::AskHuman => {
-                        // Pause: mark the quark waiting and quiesce until a human
-                        // PermissionGrant (addressed to the quark) resumes it.
-                        append_event(
-                            &self.field_path,
-                            &Event::new(
-                                Actor::Quark(target.clone()),
+                }
+                Err(join_err) => {
+                    // A panicking turn: we cannot tell which quark it was from the
+                    // JoinError alone, so ground every quark still in flight rather than
+                    // strand one Excited, and abort.
+                    for target in std::mem::take(&mut in_flight) {
+                        let _ = self
+                            .append(Event::new(
+                                Actor::Quark(target),
                                 None,
-                                Kind::Status { state: QuarkState::Waiting },
-                            ),
-                        )?;
-                        return Ok(());
+                                Kind::Status { state: QuarkState::Error },
+                            ))
+                            .await;
+                    }
+                    turns.abort_all();
+                    if first_err.is_none() {
+                        first_err = Some(anyhow::anyhow!("a quark turn panicked: {join_err}"));
                     }
                 }
             }
-
-            append_event(
-                &self.field_path,
-                &Event::new(
-                    Actor::Quark(target.clone()),
-                    None,
-                    Kind::Status { state: QuarkState::Ground },
-                ),
-            )?;
-
-            exchanges += 1;
         }
+
+        if let Some(err) = first_err {
+            return Err(err);
+        }
+
+        if backstop {
+            self.append(Event::new(
+                Actor::Gluon,
+                None,
+                Kind::Message {
+                    body: format!(
+                        "⚠️ backstop reached ({} exchanges); returning control to the human.",
+                        self.max_exchanges
+                    ),
+                },
+            ))
+            .await?;
+        }
+
+        Ok(())
     }
 }
 
@@ -1229,5 +1395,161 @@ mod tests {
 
         let mut engine = Engine::new(path.clone(), vec![Box::new(Probe)], 10);
         engine.run_until_quiesce().await.unwrap();
+    }
+
+    /// A quark that holds `running` true for the length of its turn, and records
+    /// whether its *sibling* was mid-turn at the moment it was excited. Two of these
+    /// pointed at each other prove overlap directly: if neither ever observed the
+    /// other running, the turns were serialised.
+    struct OverlapQuark {
+        id: QuarkId,
+        /// Set for the duration of *this* quark's turn.
+        running: Arc<std::sync::atomic::AtomicBool>,
+        /// The sibling's flag, sampled on entry.
+        sibling_running: Arc<std::sync::atomic::AtomicBool>,
+        /// True if the sibling was mid-turn when this quark was excited.
+        saw_sibling: Arc<std::sync::atomic::AtomicBool>,
+        hold: std::time::Duration,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for OverlapQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+            use std::sync::atomic::Ordering;
+            if self.sibling_running.load(Ordering::SeqCst) {
+                self.saw_sibling.store(true, Ordering::SeqCst);
+            }
+            self.running.store(true, Ordering::SeqCst);
+            tokio::time::sleep(self.hold).await;
+            self.running.store(false, Ordering::SeqCst);
+            Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0, permission: None })
+        }
+    }
+
+    /// Two quarks named in ONE message must run at the same time, not one after the
+    /// other. This is the whole point of the concurrent dispatch loop: "@a do X and
+    /// @b do Y" should not make b wait out a's entire turn.
+    #[tokio::test]
+    async fn two_quarks_named_in_one_message_run_concurrently() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+        append_event(
+            &path,
+            &Event::new(
+                Actor::Human,
+                None,
+                Kind::Message { body: "@a do X and @b do Y".into() },
+            ),
+        )
+        .unwrap();
+
+        let a_running = Arc::new(AtomicBool::new(false));
+        let b_running = Arc::new(AtomicBool::new(false));
+        let overlap = Arc::new(AtomicBool::new(false));
+        let hold = std::time::Duration::from_millis(200);
+
+        let mut engine = Engine::new(
+            path.clone(),
+            vec![
+                Box::new(OverlapQuark {
+                    id: QuarkId::new("a"),
+                    running: a_running.clone(),
+                    sibling_running: b_running.clone(),
+                    saw_sibling: overlap.clone(),
+                    hold,
+                }),
+                Box::new(OverlapQuark {
+                    id: QuarkId::new("b"),
+                    running: b_running.clone(),
+                    sibling_running: a_running.clone(),
+                    saw_sibling: overlap.clone(),
+                    hold,
+                }),
+            ],
+            10,
+        );
+        engine.run_until_quiesce().await.unwrap();
+
+        assert!(
+            overlap.load(Ordering::SeqCst),
+            "the two turns never overlapped — dispatch is still serial"
+        );
+    }
+
+    /// The behaviour the human actually asked for: while a worker grinds through a
+    /// long turn, a message arriving for a DIFFERENT quark must be picked up straight
+    /// away, not queued behind the running turn. Otherwise handing a big task to one
+    /// quark freezes the conversation with every other quark — which is exactly the
+    /// "waiting is a killer" complaint.
+    ///
+    /// This is strictly stronger than fanning out one multi-mention message: it
+    /// requires the loop to keep *re-reading the field* while turns are in flight.
+    #[tokio::test]
+    async fn a_message_arriving_mid_turn_is_dispatched_without_waiting() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+        // Only the slow worker is addressed to begin with.
+        seed_human_message(&path, "slow", "a big grinding task");
+
+        let slow_running = Arc::new(AtomicBool::new(false));
+        let fast_running = Arc::new(AtomicBool::new(false));
+        let fast_saw_slow = Arc::new(AtomicBool::new(false));
+
+        // Mid-flight, the human sends a second message to the *other* quark.
+        let mid_flight = {
+            let path = path.clone();
+            let slow_running = slow_running.clone();
+            tokio::spawn(async move {
+                // Wait until the slow turn is genuinely underway.
+                for _ in 0..100 {
+                    if slow_running.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                seed_human_message(&path, "fast", "quick question");
+            })
+        };
+
+        let mut engine = Engine::new(
+            path.clone(),
+            vec![
+                Box::new(OverlapQuark {
+                    id: QuarkId::new("slow"),
+                    running: slow_running.clone(),
+                    // The slow quark doesn't care what the fast one is doing.
+                    sibling_running: Arc::new(AtomicBool::new(false)),
+                    saw_sibling: Arc::new(AtomicBool::new(false)),
+                    hold: std::time::Duration::from_millis(1500),
+                }),
+                Box::new(OverlapQuark {
+                    id: QuarkId::new("fast"),
+                    running: fast_running.clone(),
+                    sibling_running: slow_running.clone(),
+                    saw_sibling: fast_saw_slow.clone(),
+                    hold: std::time::Duration::from_millis(10),
+                }),
+            ],
+            10,
+        );
+        engine.run_until_quiesce().await.unwrap();
+        mid_flight.await.unwrap();
+
+        assert!(
+            fast_saw_slow.load(Ordering::SeqCst),
+            "the fast quark only ran AFTER the slow turn finished — a message arriving \
+             mid-turn is still queued behind the grinding worker"
+        );
     }
 }
