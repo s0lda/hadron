@@ -90,7 +90,11 @@ impl<R: CliRunner> Quark for ClaudeQuark<R> {
             }
 
             // Usage: the envelope reports `input_tokens`/`output_tokens` (there is
-            // no `total_tokens`); sum them for the energy ledger.
+            // no `total_tokens`); sum them for the energy ledger. NOTE: this
+            // excludes `cache_read_input_tokens`/`cache_creation_input_tokens`,
+            // which can dwarf the live counts — the ledger undercounts real token
+            // spend. Strictly better than the old always-0, but revisit if the
+            // ledger needs true billed totals.
             let used_tokens = v.get("usage")
                 .map(|u| {
                     let field = |k| u.get(k).and_then(|t| t.as_u64()).unwrap_or(0);
