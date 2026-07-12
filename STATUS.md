@@ -4,13 +4,24 @@
 **State:** all 7 planned tasks done. **Full workspace green** (0 failures), clippy clean (incl. `--features gui`) apart from 3 pre-existing `assert_eq!`-bool warnings in Phase 3's `ledger.rs`.
 **Built autonomously** under your "orchestrator in bypass" delegation. Nothing here was merged to `main` — it's one fast-forward away (see below).
 
-## ⚠️ Read this first — the gate is DORMANT for real quarks
+## Real-quark gating — the dormant gap is now (mostly) closed
 
-The mode system is a complete, tested **mechanism**, but on the real-quark path it does not fire yet. Trace it: `@claude do X` → `ClaudeQuark` runs `claude -p …` → the CLI does the work **in its own subprocess** → the adapter returns `TurnOutcome { permission: None }`. No `permission_req` is ever emitted, so `resolve_mode`/`decide` never run. **Every passing test drives the gate with a synthetic/hand-written ask — none exercise what a real quark actually does.**
+> **UPDATE (branch `feat/real-quark-gating`, off `main@97d65a7`).** The permission modes now actually shape what a *real* quark can do. Details + CLI probe findings: `docs/superpowers/specs/2026-07-12-real-quark-gating-design.md`.
 
-Consequence: in the morning, **mock mode demonstrates the full flow**, and **real quarks will chat and coordinate**, but **the mode tags will NOT gate a real agent's shell/edits.** If you set "Ask" and tell a real quark to do something destructive, it may just happen — the CLI already ran it and never asked. Do not rely on Ask/Bypass controlling a real agent yet.
+The engine resolves each quark's mode from the field **before** the turn (`Projection.mode`) and each adapter translates it into the CLI's permission posture at invocation:
 
-Why this isn't a quick fix: for the gate to *prevent* (not just record after the fact), the quark must **propose-and-wait** — emit `permission_req` *before* executing and block for the grant on a later turn. That likely needs the vendor CLI run in a propose-only posture, not just a prompt tweak. Treat it as an **open design problem**, the real next milestone for this feature.
+| Mode | claude | agy | Effect on a real quark |
+|------|--------|-----|------------------------|
+| **Ask** | `--permission-mode plan` | `--mode plan` | Read-only: proposes, **executes nothing**. Escalate the quark's mode + re-address to act. |
+| **Write** | `acceptEdits --disallowedTools Bash` | `--mode accept-edits` | File edits auto-apply; **no ungated shell**. |
+| **Auto** | *same as Write* | *same as Write* | Degrades to Write's safe posture (see limit below). |
+| **Bypass** | `--permission-mode bypassPermissions` | `--dangerously-skip-permissions` | Everything runs (your mode). |
+
+Verified live against `claude 2.1.207` (Ask=plan proposes nothing; Write applies an edit and blocks bash; Bypass runs bash). This is **turn-granular** propose-and-wait — the reachable gate given the CLIs (no `--permission-prompt-tool`, no mid-turn deny signal in headless mode).
+
+**Still deferred (honest limits):**
+- **True Auto** (per-command trust-on-first-use) and live "ask me about *this* bash" mid-turn are **not expressible** against these CLIs headless. They need the Claude **Agent SDK `canUseTool`** callback (a resident SDK-driven adapter, not one-shot `claude -p`) — a separate, larger build. Until then **Auto behaves as Write** (never all-bash).
+- **agy** posture is implemented + unit-tested but its live flag/model shape is **unverified** (display-name models, finicky parser). Validate before trusting agy gating.
 
 ## What this delivers
 

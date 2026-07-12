@@ -1,6 +1,7 @@
 {
+  "_note": "provider = backing CLI (claude|agy). claude model: an alias (haiku|sonnet|opus) or a full id. agy model: a display name exactly as `agy models` prints it, e.g. 'Gemini 3.1 Pro (High)'. Same CLI + different model = a second entry (a second quark).",
   "quarks": [
-    { "id": "opus", "provider": "claude", "model": "opus-4.8", "flavor": "orchestrator" },
-    { "id": "agy",  "provider": "agy",    "model": "gemini-3-pro", "flavor": "worker" }
+    { "id": "opus", "provider": "claude", "model": "opus", "flavor": "orchestrator" },
+    { "id": "agy",  "provider": "agy",    "model": "Gemini 3.1 Pro (High)", "flavor": "worker" }
   ]
 }
