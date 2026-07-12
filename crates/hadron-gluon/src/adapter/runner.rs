@@ -64,7 +64,21 @@ impl CliRunner for ProcessRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| anyhow::anyhow!("failed to spawn {}: {e}", inv.program))?;
+            // A missing `cwd` fails as ENOENT — indistinguishable, in the raw error, from a
+            // missing *program*. That cost a real debugging session: `failed to spawn claude:
+            // No such file or directory` while `claude` sat on PATH, executable. Name the
+            // likelier culprit rather than making the next reader re-derive it.
+            .map_err(|e| {
+                if !inv.cwd.is_dir() {
+                    anyhow::anyhow!(
+                        "failed to spawn {}: its working directory {:?} does not exist",
+                        inv.program,
+                        inv.cwd,
+                    )
+                } else {
+                    anyhow::anyhow!("failed to spawn {}: {e}", inv.program)
+                }
+            })?;
 
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(inv.stdin.as_bytes()).await?;
@@ -167,6 +181,29 @@ mod tests {
             .unwrap();
         assert_eq!(out.stdout, "hello world");
         assert_eq!(out.exit, 0);
+    }
+
+    /// A nonexistent `cwd` and a nonexistent *program* both surface as ENOENT. The
+    /// error must finger the cwd, or the next reader loses an afternoon to a binary
+    /// that was on PATH all along.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_missing_cwd_blames_the_cwd_and_not_the_program() {
+        let err = ProcessRunner
+            .run(CliInvocation {
+                program: "sh".into(), // on PATH; only the cwd is bad
+                args: vec!["-c".into(), "true".into()],
+                stdin: String::new(),
+                cwd: PathBuf::from("/definitely/not/a/real/directory"),
+            })
+            .await
+            .expect_err("a missing cwd must fail the spawn");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("working directory") && msg.contains("does not exist"),
+            "error should name the cwd as the culprit, got: {msg}"
+        );
     }
 
     /// The direct proof of the whole cwd chain's last link: a spawned process runs
