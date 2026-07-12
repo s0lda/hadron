@@ -26,6 +26,7 @@ use gpui_component::tab::{Tab, TabBar};
 use gpui_component::tag::Tag;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::accordion::Accordion;
+use gpui_component::table::{Table, TableBody, TableRow, TableCell};
 use gpui_component::{
     h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar, ChildElement
 };
@@ -1358,26 +1359,40 @@ impl Chamber {
 
                             acc = acc.item(|mut item| {
                                 item = item.title(title);
+                                let mut table_body = TableBody::new();
                                 for (_, hunk) in file.hunks.iter().enumerate() {
-                                    let mut hunk_flex = v_flex().w_full().child(
-                                        div().text_color(theme::text_muted()).child(hunk.header.clone())
+                                    table_body = table_body.child(
+                                        TableRow::new().child(
+                                            TableCell::new().w_full().text_color(theme::text_muted()).child(hunk.header.clone())
+                                        )
                                     );
                                     for line in &hunk.lines {
                                         match line {
                                             crate::vcs::DiffLine::Context(c) => {
-                                                hunk_flex = hunk_flex.child(div().w_full().child(format!(" {}", c)));
+                                                table_body = table_body.child(
+                                                    TableRow::new().child(
+                                                        TableCell::new().w_full().child(format!(" {}", c))
+                                                    )
+                                                );
                                             }
                                             crate::vcs::DiffLine::Added(a) => {
-                                                hunk_flex = hunk_flex.child(div().w_full().bg(gpui::rgba(0x34d39922)).text_color(gpui::rgb(0x34d399)).child(format!("+{}", a)));
+                                                table_body = table_body.child(
+                                                    TableRow::new().child(
+                                                        TableCell::new().w_full().bg(gpui::rgba(0x34d39922)).text_color(gpui::rgb(0x34d399)).child(format!("+{}", a))
+                                                    )
+                                                );
                                             }
                                             crate::vcs::DiffLine::Removed(r) => {
-                                                hunk_flex = hunk_flex.child(div().w_full().bg(gpui::rgba(0xfb718522)).text_color(gpui::rgb(0xfb7185)).child(format!("-{}", r)));
+                                                table_body = table_body.child(
+                                                    TableRow::new().child(
+                                                        TableCell::new().w_full().bg(gpui::rgba(0xfb718522)).text_color(gpui::rgb(0xfb7185)).child(format!("-{}", r))
+                                                    )
+                                                );
                                             }
                                         }
                                     }
-                                    item = item.child(hunk_flex.into_any_element());
                                 }
-                                item
+                                item.child(Table::new().w_full().child(table_body))
                             });
                         }
                         acc.into_any_element()
