@@ -257,6 +257,7 @@ struct Chamber {
     right_rail_tabs: [RightRailTab; 3],
     /// Cached diff string for the Changes rail
     working_diff: Option<Vec<crate::vcs::FileDiff>>,
+    changes_open_ixs: std::collections::HashSet<usize>,
     changes_scroll: ScrollHandle,
     /// Scroll position for each of the three tabs.
     chat_scrolls: [ScrollHandle; 3],
@@ -374,6 +375,7 @@ impl Chamber {
             chat_tab: ChatTab::Chat,
             right_rail_tabs: [RightRailTab::Terminal, RightRailTab::FileTree, RightRailTab::Changes],
             working_diff: None,
+            changes_open_ixs: std::collections::HashSet::new(),
             changes_scroll: ScrollHandle::new(),
             chat_scrolls,
             bounds_save_pending: false,
@@ -1306,16 +1308,17 @@ impl Chamber {
                     if diffs.is_empty() {
                         div().p_4().text_color(theme::text_muted()).child("No changes in working tree.").into_any_element()
                     } else {
-                        let mut acc = Accordion::new("changes-accordion").multiple(true);
-                        for file in diffs {
+                        let mut acc = Accordion::new("changes-accordion").multiple(true).bordered(false);
+                        for (ix, file) in diffs.iter().enumerate() {
                             let title = h_flex().gap_2().items_center()
                                 .child(div().child(file.path.clone()))
                                 .child(div().text_color(gpui::rgb(0x34d399)).child(format!("+{}", file.added)))
                                 .child(div().text_color(gpui::rgb(0xfb7185)).child(format!("-{}", file.removed)));
 
+                            let is_open = self.changes_open_ixs.contains(&ix);
                             acc = acc.item(|mut item| {
-                                item = item.title(title);
-                                let mut lines_list = v_flex().w_full().text_sm().pt_2();
+                                item = item.title(title).open(is_open);
+                                let mut lines_list = v_flex().w_full().text_sm().pt_2().font_family("Cascadia Code");
                                 for (_, hunk) in file.hunks.iter().enumerate() {
                                     lines_list = lines_list.child(
                                         div().w_full().px_2().py_1().text_color(theme::text_muted()).child(hunk.header.clone())
@@ -1343,7 +1346,13 @@ impl Chamber {
                                 item.child(lines_list)
                             });
                         }
-                        acc.into_any_element()
+                        acc.on_toggle_click(cx.listener(|this, open_ixs: &[usize], _window, cx| {
+                            this.changes_open_ixs.clear();
+                            for &ix in open_ixs {
+                                this.changes_open_ixs.insert(ix);
+                            }
+                            cx.notify();
+                        })).into_any_element()
                     }
                 } else {
                     div().p_4().text_color(theme::text_muted()).child("Failed to load diff.").into_any_element()
@@ -2060,6 +2069,7 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
             v_flex()
                 .flex_1()
                 .min_w_0()
+                .gap_0p5()
                 .child(
                     div()
                         .text_sm()
@@ -2070,14 +2080,16 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
                 .child(
                     div()
                         .text_xs()
-                        .text_color(theme::text_muted())
+                        .text_color(theme::text())
+                        .opacity(0.8)
                         .truncate()
                         .child(detail_1),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(theme::text_muted())
+                        .text_color(theme::text())
+                        .opacity(0.7)
                         .truncate()
                         .child(detail_2),
                 ),
@@ -2201,9 +2213,9 @@ fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
             if name.is_empty() {
                 out.push('@');
             } else if roster.iter().any(|q| q.id == name) {
-                out.push_str(&format!("<mark color=\"blue-200\">@{}</mark>", name));
+                out.push_str(&format!("<mark color=\"pink-400\">@{}</mark>", name));
             } else {
-                out.push_str(&format!("<mark color=\"fuchsia-300\">@{}</mark>", name));
+                out.push_str(&format!("<mark color=\"purple-400\">@{}</mark>", name));
             }
         } else {
             out.push(c);
