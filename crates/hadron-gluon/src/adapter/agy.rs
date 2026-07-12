@@ -11,23 +11,27 @@ use crate::quark::Quark;
 pub struct AgyQuark<R: CliRunner> {
     id: QuarkId,
     flavor: Flavor,
+    /// The model to run, e.g. "gemini-3-pro". Empty → the CLI's default.
+    model: String,
     runner: R,
 }
 
 impl<R: CliRunner> AgyQuark<R> {
-    pub fn new(id: QuarkId, flavor: Flavor, runner: R) -> Self {
-        AgyQuark { id, flavor, runner }
+    pub fn new(id: QuarkId, flavor: Flavor, model: impl Into<String>, runner: R) -> Self {
+        AgyQuark { id, flavor, model: model.into(), runner }
     }
 
-    /// `agy --print` (one-shot headless), prompt on stdin, Markdown on stdout.
+    /// `agy --print` (one-shot headless), `--model <model>` when set, prompt on
+    /// stdin, Markdown on stdout.
     ///
     /// NOTE: exact flag must be verified against the installed CLI version.
     fn invocation(&self, prompt: String) -> CliInvocation {
-        CliInvocation {
-            program: "agy".to_string(),
-            args: vec!["--print".to_string()],
-            stdin: prompt,
+        let mut args = vec!["--print".to_string()];
+        if !self.model.is_empty() {
+            args.push("--model".to_string());
+            args.push(self.model.clone());
         }
+        CliInvocation { program: "agy".to_string(), args, stdin: prompt }
     }
 }
 
@@ -70,7 +74,7 @@ mod tests {
     #[tokio::test]
     async fn agy_runs_print_mode_and_maps_reply() {
         let runner = FakeRunner::with_stdout(vec!["UI complete. @claude back to you."]);
-        let mut q = AgyQuark::new(QuarkId::new("agy"), Flavor::Worker, runner);
+        let mut q = AgyQuark::new(QuarkId::new("agy"), Flavor::Worker, "gemini-3-pro", runner);
 
         let o = q.excite(projection("build the UI")).await.unwrap();
         assert_eq!(o.message.as_deref(), Some("UI complete. @claude back to you."));
@@ -78,6 +82,8 @@ mod tests {
         let recorded = q.runner.recorded.lock().unwrap();
         assert_eq!(recorded[0].program, "agy");
         assert!(recorded[0].args.iter().any(|a| a == "--print"));
+        assert!(recorded[0].args.iter().any(|a| a == "--model"));
+        assert!(recorded[0].args.iter().any(|a| a == "gemini-3-pro"));
         // The prompt (with the handoff reminder) reached stdin.
         assert!(recorded[0].stdin.contains("# How to respond"));
     }
