@@ -50,6 +50,17 @@ pub fn grant(pending: &PendingPermission, approved: bool) -> Event {
     )
 }
 
+/// Build an "always allow" answer: an approving grant that *remembers* the op,
+/// so `allow_rules` will auto-approve the same `(quark, op)` next time. The
+/// chamber appends this when the human clicks "Always allow".
+pub fn grant_remembering(pending: &PendingPermission) -> Event {
+    Event::new(
+        Actor::Human,
+        Some(pending.quark.clone()),
+        Kind::PermissionGrant { approved: true, remember: true },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
