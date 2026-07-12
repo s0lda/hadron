@@ -105,22 +105,53 @@ fn posture_args(mode: Mode) -> Vec<String> {
     }
 }
 
-/// A quark backed by the Antigravity CLI (`agy`). One-shot per turn in v1:
-/// Antigravity cannot emit structured JSON, so the Markdown reply on stdout IS
-/// the message. Each turn is self-contained (the prompt already carries the
-/// recent field + diff), so no session state is threaded in v1.
+/// `agy --print` gives up on its own turn after **5 minutes** by default
+/// (`--print-timeout`, default `5m0s`, per `agy --help`). That default is what put
+/// agy in `error` after exactly 5m02s on a real turn: not a crash, not a quota wall
+/// — the CLI abandoned a turn that was still working.
+///
+/// A quark's turn is routinely longer than that, so the timeout is raised to sit
+/// just inside the engine's own 30-minute turn deadline. The engine stays the outer
+/// bound: agy should give up *because Hadron said so*, not on a default nobody chose.
+const PRINT_TIMEOUT: &str = "29m";
+
+/// Strip the transcript from a projection bound for a resident conversation.
+///
+/// The identity, task, authority and diff sections stay: they are *this turn's*
+/// instruction, and they change every turn. Only the field window goes, because the
+/// resumed conversation already contains it.
+fn without_field_window(mut projection: Projection) -> Projection {
+    projection.field_window = Vec::new();
+    projection
+}
+
+/// A quark backed by the Antigravity CLI (`agy`). Antigravity cannot emit structured
+/// JSON, so the Markdown reply on stdout IS the message.
+///
+/// The session is **resident**: the first turn opens a conversation, every turn after
+/// resumes it with `--continue` and sends only the new instruction rather than the
+/// whole field again. Verified live — a second `--continue` turn recalled a codeword
+/// from the first with no history re-sent. This is what stops cost growing
+/// quadratically with the conversation, and it is why we no longer have to throw away
+/// the human's transcript to fit an argv limit.
 pub struct AgyQuark<R: CliRunner> {
     id: QuarkId,
     flavor: Flavor,
     /// The model to run, a display name as `agy models` prints it, e.g.
     /// "Gemini 3.1 Pro (High)". Empty → the CLI's default.
     model: String,
+    /// Whether this quark already has a conversation for `--continue` to resume.
+    ///
+    /// In-memory on purpose: a daemon restart resets it, and the next turn re-sends
+    /// the full projection. Re-sending context is merely expensive; resuming a
+    /// conversation that does not exist would silently answer the wrong question.
+    resident: bool,
     runner: R,
 }
 
 impl<R: CliRunner> AgyQuark<R> {
     pub fn new(id: QuarkId, flavor: Flavor, model: impl Into<String>, runner: R) -> Self {
-        AgyQuark { id, flavor, model: model.into(), runner }
+        AgyQuark { id, flavor, model: model.into(), resident: false, runner }
     }
 
     /// `agy --print <prompt>` (one-shot headless — the prompt is the **argument**
@@ -133,7 +164,19 @@ impl<R: CliRunner> AgyQuark<R> {
     /// `agy` takes no directory flag either, so the working directory rides on the
     /// invocation and `ProcessRunner` applies it — no new argv surface.
     fn invocation(&self, prompt: String, mode: Mode, cwd: PathBuf) -> CliInvocation {
-        let mut args = vec!["--print".to_string(), prompt];
+        let mut args = Vec::new();
+        // `--continue` resumes the most recent conversation *in this working directory*,
+        // which is why it can only be trusted once the quark has one of its own.
+        if self.resident {
+            args.push("--continue".to_string());
+        }
+        // The prompt is the **value** of `--print`, not a positional. Get this wrong and
+        // agy answers the next flag as if it were the question — observed live: it
+        // replied "I'm not sure what you mean by --dangerously-skip-permissions".
+        args.push("--print".to_string());
+        args.push(prompt);
+        args.push("--print-timeout".to_string());
+        args.push(PRINT_TIMEOUT.to_string());
         if !self.model.is_empty() {
             args.push("--model".to_string());
             args.push(self.model.clone());
@@ -158,11 +201,17 @@ impl<R: CliRunner> Quark for AgyQuark<R> {
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let mode = turn.mode;
         let cwd = turn.cwd.clone();
+        // A resumed conversation already holds everything we sent before, so re-sending
+        // the field window would pay for the same history twice — the whole point of
+        // going resident. Send the new instruction only; agy still has the rest.
+        let turn = if self.resident { without_field_window(turn) } else { turn };
         // NOT `prompt::build` directly: the prompt is one argv element, and `execve`
         // rejects an over-long one with E2BIG before agy ever starts. `fit_prompt` is
         // the guard that makes the invocation executable no matter how big the field.
         let prompt = fit_prompt(&turn, &self.id);
         let result = self.runner.run(self.invocation(prompt, mode, cwd)).await?;
+        // Only a turn that actually ran leaves a conversation behind for `--continue`.
+        self.resident = true;
         Ok(reply_to_outcome(&result))
     }
 }
@@ -337,5 +386,58 @@ mod tests {
         let has = |i: usize, seq: &[&str]| recorded[i].args.windows(seq.len()).any(|w| w == seq);
         assert!(has(0, &["--mode", "plan"]), "Ask → plan");
         assert!(recorded[1].args.iter().any(|a| a == "--dangerously-skip-permissions"), "Bypass → skip");
+    }
+
+    /// `agy --print` abandons its own turn after 5 minutes by default, which is how a
+    /// perfectly healthy quark landed in `error` after 5m02s. Every invocation must
+    /// carry an explicit timeout, or that default silently comes back.
+    #[tokio::test]
+    async fn every_turn_overrides_agys_five_minute_print_timeout() {
+        let runner = FakeRunner::with_stdout(vec!["ok"]);
+        let mut q = AgyQuark::new(QuarkId::new("agy"), Flavor::Worker, "", runner);
+
+        q.excite(projection_mode("work", Mode::Bypass)).await.unwrap();
+
+        let recorded = q.runner.recorded.lock().unwrap();
+        assert!(
+            recorded[0].args.windows(2).any(|w| w == ["--print-timeout", PRINT_TIMEOUT]),
+            "no --print-timeout: agy will give up after 5 minutes. args: {:?}",
+            recorded[0].args
+        );
+    }
+
+    /// **The discriminating test for resident sessions.** The first turn opens a
+    /// conversation and carries the transcript; every turn after resumes it and must
+    /// send only the new instruction. Re-sending the field into a resumed conversation
+    /// pays for the same history twice — which is the entire cost problem going
+    /// resident exists to solve.
+    #[tokio::test]
+    async fn a_resumed_turn_continues_the_session_and_stops_resending_the_field() {
+        let runner = FakeRunner::with_stdout(vec!["one", "two"]);
+        let mut q = AgyQuark::new(QuarkId::new("agy"), Flavor::Worker, "", runner);
+
+        let mut first = projection_mode("first task", Mode::Bypass);
+        first.field_window = vec![Event::new(
+            Actor::Human,
+            None,
+            Kind::Message { body: "MEMORABLE-TRANSCRIPT-LINE".into() },
+        )];
+        let mut second = first.clone();
+        second.task = "second task".into();
+
+        q.excite(first).await.unwrap();
+        q.excite(second).await.unwrap();
+
+        let recorded = q.runner.recorded.lock().unwrap();
+        assert!(!recorded[0].args.iter().any(|a| a == "--continue"), "first turn opens the session");
+        assert!(recorded[0].args[1].contains("MEMORABLE-TRANSCRIPT-LINE"), "first turn carries the field");
+
+        assert!(recorded[1].args.iter().any(|a| a == "--continue"), "second turn resumes it");
+        let resumed_prompt = &recorded[1].args[2];
+        assert!(resumed_prompt.contains("second task"), "the new instruction still rides");
+        assert!(
+            !resumed_prompt.contains("MEMORABLE-TRANSCRIPT-LINE"),
+            "a resumed turn re-sent the transcript agy already has"
+        );
     }
 }
