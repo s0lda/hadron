@@ -36,6 +36,4 @@ gui = ["dep:gpui", "dep:gpui_platform", "dep:gpui-component", "dep:gpui-componen
 [dev-dependencies]
 tempfile = "3"
 
-[[bin]]
-name = "hadron-chamber"
-path = "src/main.rs"
+

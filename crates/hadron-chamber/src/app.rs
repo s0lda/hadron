@@ -259,8 +259,14 @@ struct Chamber {
     working_diff: Option<Vec<crate::vcs::FileDiff>>,
     changes_open_ixs: std::collections::HashSet<usize>,
     changes_scroll: ScrollHandle,
+    /// Virtual list state for the Chat tab.
+    chat_list_state: gpui::ListState,
+    /// Maps a virtual list item index to the message's true index in `view.messages`.
+    chat_message_ixs: Vec<usize>,
     /// Scroll position for each of the three tabs.
     chat_scrolls: [ScrollHandle; 3],
+    /// Cache of parsed Markdown to HTML, keyed by message index
+    parsed_markdown: std::cell::RefCell<std::collections::HashMap<usize, String>>,
     /// A debounced window-bounds save is already in flight, so a drag (which
     /// re-renders every frame) coalesces into one write instead of one per frame.
     bounds_save_pending: bool,
@@ -360,6 +366,17 @@ impl Chamber {
         })
         .detach();
 
+        // Precompute the message indices for the virtualized chat.
+        let chat_message_ixs: Vec<usize> = view.messages.iter().enumerate()
+            .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
+            .collect();
+            
+        let chat_list_state = gpui::ListState::new(
+            chat_message_ixs.len(),
+            gpui::ListAlignment::Bottom,
+            px(20.0),
+        );
+
         // Open showing the newest message: honoured on the first paint, once the
         // content is laid out.
         let chat_scrolls = [ScrollHandle::new(), ScrollHandle::new(), ScrollHandle::new()];
@@ -377,7 +394,10 @@ impl Chamber {
             working_diff: None,
             changes_open_ixs: std::collections::HashSet::new(),
             changes_scroll: ScrollHandle::new(),
+            chat_list_state,
+            chat_message_ixs,
             chat_scrolls,
+            parsed_markdown: std::cell::RefCell::new(std::collections::HashMap::new()),
             bounds_save_pending: false,
             palette_open: false,
             palette_input,
@@ -579,10 +599,25 @@ impl Chamber {
                 // scrolled up to read history, leave their position alone.
                 let follow = self.chat_at_bottom();
                 self.view = model::project_with_team(&events, &self.team);
+                
+                let old_chat_count = self.chat_message_ixs.len();
+                self.chat_message_ixs = self.view.messages.iter().enumerate()
+                    .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
+                    .collect();
+                let new_chat_count = self.chat_message_ixs.len();
+                
+                if new_chat_count > old_chat_count {
+                    self.chat_list_state.splice(old_chat_count..old_chat_count, new_chat_count - old_chat_count);
+                } else if new_chat_count < old_chat_count {
+                    // Should not happen since field is append-only, but just in case
+                    self.chat_list_state.reset(new_chat_count);
+                }
+
                 if follow {
                     for scroll in &self.chat_scrolls {
                         scroll.scroll_to_bottom();
                     }
+                    self.chat_list_state.scroll_to_reveal_item(new_chat_count.saturating_sub(1));
                 }
                 changed = true;
             }
@@ -644,10 +679,21 @@ impl Chamber {
         input.update(cx, |state, cx| state.set_value("", window, cx));
         let events = io::read_events(&self.path).unwrap_or_default();
         self.view = model::project_with_team(&events, &self.team);
+        
+        let old_chat_count = self.chat_message_ixs.len();
+        self.chat_message_ixs = self.view.messages.iter().enumerate()
+            .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
+            .collect();
+        let new_chat_count = self.chat_message_ixs.len();
+        if new_chat_count > old_chat_count {
+            self.chat_list_state.splice(old_chat_count..old_chat_count, new_chat_count - old_chat_count);
+        }
+
         // The human just spoke — always snap to their new message.
         for scroll in &self.chat_scrolls {
             scroll.scroll_to_bottom();
         }
+        self.chat_list_state.scroll_to_reveal_item(new_chat_count.saturating_sub(1));
         cx.notify();
     }
 }
@@ -1036,7 +1082,7 @@ impl Chamber {
     /// The center column: a segmented Chat / Log / Timeline tab bar over the
     /// selected view, with the human's message box pinned at the foot. The whole
     /// thing is a rounded, filled card that floats on the unified canvas.
-    fn chat_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn chat_pane(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.chat_tab;
         let tabs = TabBar::new("chat-tabs")
             .segmented()
@@ -1080,12 +1126,22 @@ impl Chamber {
                 div()
                     .id("chat-body-scroll")
                     .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.chat_scrolls[selected.index()])
                     .child(match selected {
-                        ChatTab::Chat => self.chat_view().into_any_element(),
-                        ChatTab::Log => self.log_view().into_any_element(),
-                        ChatTab::Timeline => self.timeline_view().into_any_element(),
+                        ChatTab::Chat => self.chat_view(cx).into_any_element(),
+                        ChatTab::Log => div()
+                            .id("log-scroll")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.chat_scrolls[selected.index()])
+                            .child(self.log_view())
+                            .into_any_element(),
+                        ChatTab::Timeline => div()
+                            .id("timeline-scroll")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.chat_scrolls[selected.index()])
+                            .child(self.timeline_view())
+                            .into_any_element(),
                     }),
             )
             .child(
@@ -1095,9 +1151,11 @@ impl Chamber {
                     .left_0()
                     .right_0()
                     .bottom_0()
-                    .child(
-                        Scrollbar::vertical(&self.chat_scrolls[selected.index()]).scrollbar_show(ScrollbarShow::Hover),
-                    ),
+                    .when(selected != ChatTab::Chat, |this| {
+                        this.child(
+                            Scrollbar::vertical(&self.chat_scrolls[selected.index()]).scrollbar_show(ScrollbarShow::Hover),
+                        )
+                    }),
             );
 
         // The message box is only meaningful in Chat — you talk to the field
@@ -1163,19 +1221,35 @@ impl Chamber {
 
     /// The Chat tab: the conversation only (message events), styled like a chat
     /// with each author's avatar and name.
-    fn chat_view(&self) -> impl IntoElement {
-        let mut col = v_flex().gap_4().p_4();
-        let mut any = false;
-        for (ix, m) in self.view.messages.iter().enumerate() {
-            if m.kind_label == "message" {
-                col = col.child(chat_message_row(&self.resolve_identity(&m.from), m, ix, &self.view.roster));
-                any = true;
-            }
+    fn chat_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.chat_message_ixs.is_empty() {
+            return v_flex().p_4().child(empty_hint("No messages yet — say something below.")).into_any_element();
         }
-        if !any {
-            col = col.child(empty_hint("No messages yet — say something below."));
-        }
-        col
+        
+        let weak_view = cx.entity().downgrade();
+        
+        // Wrap the virtual list with padding
+        v_flex().size_full().p_4().child(
+            gpui::list(
+                self.chat_list_state.clone(),
+                move |ix, _window, cx| {
+                    if let Some(view) = weak_view.upgrade() {
+                        view.update(cx, |this, _cx| {
+                            if let Some(&real_ix) = this.chat_message_ixs.get(ix) {
+                                if let Some(m) = this.view.messages.get(real_ix) {
+                                    return div().pb(px(16.0)).child(
+                                        this.chat_message_row(&this.resolve_identity(&m.from), m, real_ix, &this.view.roster)
+                                    ).into_any_element();
+                                }
+                            }
+                            div().into_any_element()
+                        })
+                    } else {
+                        div().into_any_element()
+                    }
+                }
+            ).size_full()
+        ).into_any_element()
     }
 
     /// The Log tab: every event on the field, compact (the raw activity).
@@ -1185,7 +1259,7 @@ impl Chamber {
             col = col.child(empty_hint("The field is empty."));
         }
         for (ix, m) in self.view.messages.iter().enumerate() {
-            col = col.child(message_row(m, ix, &self.view.roster));
+            col = col.child(self.message_row(m, ix, &self.view.roster));
         }
         col
     }
@@ -2273,66 +2347,69 @@ fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
 /// rendered oldest-first, so a given message keeps its index for the window's life.
 /// If rows ever get reordered or filtered, key on a stable message id instead — the
 /// cache would silently stop helping, and no test would catch the regression.
-fn markdown_body(view: &'static str, ix: usize, body: &str, roster: &[crate::model::RosterRow]) -> impl IntoElement {
-    let options = markdown::Options {
-        compile: markdown::CompileOptions {
-            allow_dangerous_html: true,
-            ..markdown::CompileOptions::default()
-        },
-        parse: markdown::ParseOptions::gfm(),
-    };
-    let html = markdown::to_html_with_options(&color_mentions(body, roster), &options).unwrap_or_default();
+impl Chamber {
+    fn markdown_body(&self, view: &'static str, ix: usize, body: &str, roster: &[crate::model::RosterRow]) -> impl IntoElement {
+        let mut cache = self.parsed_markdown.borrow_mut();
+        let html = cache.entry(ix).or_insert_with(|| {
+            let options = markdown::Options {
+                compile: markdown::CompileOptions {
+                    allow_dangerous_html: true,
+                    ..markdown::CompileOptions::default()
+                },
+                parse: markdown::ParseOptions::gfm(),
+            };
+            markdown::to_html_with_options(&color_mentions(body, roster), &options).unwrap_or_default()
+        }).clone();
 
-    div().text_size(px(13.65)).child(
-        gpui_component::text::TextView::html((view, ix), html)
-            .selectable(true)
-            .style(markdown_style()),
-    )
-}
-
-/// A chat-styled message row: the author's resolved avatar and name, then the
-/// body — used by the Chat tab so the field reads like a conversation.
-fn chat_message_row(id: &ResolvedIdentity, m: &MessageRow, ix: usize, roster: &[crate::model::RosterRow]) -> impl IntoElement {
-    h_flex()
-        .items_start()
-        .gap_2p5()
-        .child(identity_avatar(id, 28.0))
-        .child(
-            v_flex()
-                .min_w_0()
-                .gap_0p5()
-                .child(
-                    h_flex()
-                        .items_center()
-                        .gap_2()
-                        .child(div().text_sm().text_color(id.color).child(id.name.clone()))
-                        .when_some(m.to.clone(), |this, to| {
-                            this.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme::text_muted())
-                                    .child(format!("→ {to}")),
-                            )
-                        }),
-                )
-                .child(markdown_body("chat-md", ix, &m.body, roster)),
+        div().text_size(px(13.65)).child(
+            gpui_component::text::TextView::html((view, ix), html)
+                .selectable(true)
+                .style(markdown_style()),
         )
-}
+    }
 
-fn message_row(m: &MessageRow, ix: usize, roster: &[crate::model::RosterRow]) -> impl IntoElement {
-    let header = match &m.to {
-        Some(to) => format!("{} → {}  ·  {}", m.from, to, m.kind_label),
-        None => format!("{}  ·  {}", m.from, m.kind_label),
-    };
-    v_flex()
-        .gap_1()
-        .child(
-            div()
-                .text_sm()
-                .text_color(theme::actor_hue(&m.from))
-                .child(header),
-        )
-        .child(markdown_body("log-md", ix, &m.body, roster))
+    fn chat_message_row(&self, id: &ResolvedIdentity, m: &MessageRow, ix: usize, roster: &[crate::model::RosterRow]) -> impl IntoElement {
+        h_flex()
+            .items_start()
+            .gap_2p5()
+            .child(identity_avatar(id, 28.0))
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .gap_0p5()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().text_sm().text_color(id.color).child(id.name.clone()))
+                            .when_some(m.to.clone(), |this, to| {
+                                this.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(format!("→ {to}")),
+                                )
+                            }),
+                    )
+                    .child(self.markdown_body("chat-md", ix, &m.body, roster)),
+            )
+    }
+
+    fn message_row(&self, m: &MessageRow, ix: usize, roster: &[crate::model::RosterRow]) -> impl IntoElement {
+        let header = match &m.to {
+            Some(to) => format!("{} → {}  ·  {}", m.from, to, m.kind_label),
+            None => format!("{}  ·  {}", m.from, m.kind_label),
+        };
+        v_flex()
+            .gap_1()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme::actor_hue(&m.from))
+                    .child(header),
+            )
+            .child(self.markdown_body("log-md", ix, &m.body, roster))
+    }
 }
 
 /// Launch the chamber window against a field file path.
