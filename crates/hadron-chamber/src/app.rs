@@ -251,8 +251,8 @@ struct Chamber {
     focus_handle: FocusHandle,
     /// Which view the chat column's segmented tabs are showing.
     chat_tab: ChatTab,
-    /// Which view the right rail's segmented tabs are showing.
-    right_rail_tab: RightRailTab,
+    /// Which view the right rail's segmented tabs are showing, per ChatTab.
+    right_rail_tabs: [RightRailTab; 3],
     /// Cached diff string for the Changes rail
     working_diff: Option<String>,
     /// Scroll position for each of the three tabs.
@@ -355,7 +355,7 @@ impl Chamber {
             focus_handle,
             chat_tab: ChatTab::Chat,
             chat_scrolls,
-            right_rail_tab: RightRailTab::Terminal,
+            right_rail_tabs: [RightRailTab::Terminal, RightRailTab::Terminal, RightRailTab::Terminal],
             working_diff: None,
             bounds_save_pending: false,
             palette_open: false,
@@ -1195,9 +1195,36 @@ impl Chamber {
         col
     }
 
-    /// The right rail: the Terminal. Placeholder body for now — real terminal
-    /// wiring lands later. (Internally still `Rail::Inspector` for collapse/size.)
+    /// The right rail: the swappable Terminal / File Tree / Changes pane.
+    /// (Internally still `Rail::Inspector` for collapse/size.)
     fn terminal_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let chat_ix = self.chat_tab.index();
+        let selected = self.right_rail_tabs[chat_ix];
+
+        let tabs = TabBar::new("right-rail-tabs")
+            .segmented()
+            .selected_index(selected.index())
+            .children(RightRailTab::ALL.map(|t| {
+                if t.index() == selected.index() {
+                    Tab::new().child(
+                        div()
+                            .text_color(theme::accent())
+                            .child(t.label().to_string()),
+                    )
+                } else {
+                    Tab::new().label(t.label())
+                }
+            }))
+            .on_click(cx.listener(move |this, ix: &usize, _window, cx| {
+                let current_chat_ix = this.chat_tab.index();
+                this.right_rail_tabs[current_chat_ix] = RightRailTab::from_index(*ix);
+                if this.right_rail_tabs[current_chat_ix] == RightRailTab::Changes {
+                    let root = crate::vcs::repo_root_of(&this.path);
+                    this.working_diff = Some(crate::vcs::working_diff(root).unwrap_or_default());
+                }
+                cx.notify();
+            }));
+
         let header = h_flex()
             .id("inspector-toggle")
             .w_full()
@@ -1207,18 +1234,49 @@ impl Chamber {
             .py_2()
             .text_sm()
             .text_color(theme::text_muted())
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(Icon::new(IconName::SquareTerminal).small())
-                    .child("Terminal"),
-            )
+            .child(tabs)
             .child(Icon::new(IconName::PanelRightClose).small())
             .active(|s| s.opacity(0.6))
             .on_click(
                 cx.listener(|this, _, window, cx| this.toggle_rail(Rail::Inspector, window, cx)),
             );
+
+        let content = match selected {
+            RightRailTab::Terminal => {
+                v_flex()
+                    .flex_1()
+                    .p_3()
+                    .text_sm()
+                    .text_color(theme::text_muted())
+                    .child("$ terminal coming soon")
+                    .into_any_element()
+            }
+            RightRailTab::FileTree => {
+                v_flex()
+                    .flex_1()
+                    .p_3()
+                    .text_sm()
+                    .text_color(theme::text_muted())
+                    .child("File tree coming soon")
+                    .into_any_element()
+            }
+            RightRailTab::Changes => {
+                v_flex()
+                    .id("changes-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .p_3()
+                    .text_sm()
+                    .text_color(theme::text())
+                    .child(
+                        gpui_component::text::markdown(
+                            format!("```diff\n{}\n```", self.working_diff.clone().unwrap_or_default())
+                        )
+                    )
+                    .into_any_element()
+            }
+        };
 
         let card = v_flex()
             .flex_1()
@@ -1227,14 +1285,7 @@ impl Chamber {
             .overflow_hidden()
             .bg(theme::bg())
             .child(header)
-            .child(
-                v_flex()
-                    .flex_1()
-                    .p_3()
-                    .text_sm()
-                    .text_color(theme::text_muted())
-                    .child("$ terminal coming soon"),
-            );
+            .child(content);
 
         v_flex()
             .w_full()
