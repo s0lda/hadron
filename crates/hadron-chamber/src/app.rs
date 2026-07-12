@@ -23,10 +23,11 @@ use gpui_component::badge::Badge;
 use gpui_component::stepper::{Stepper, StepperItem};
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::tooltip::Tooltip;
+use gpui_component::tag::Tag;
 use gpui_component::{
     h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar,
 };
-use hadron_lattice::{io, Actor, Event, Kind};
+use hadron_lattice::{io, load_team, Actor, Event, Kind, Mode, QuarkId, QuarkState, Team};
 
 use crate::config::{self, ChamberPrefs, Identity};
 use crate::model::{self, ChamberView, MessageRow, RosterRow};
@@ -207,6 +208,9 @@ impl SettingsTarget {
 struct Chamber {
     view: ChamberView,
     prefs: ChamberPrefs,
+    /// The seated team (id → provider/model/flavor), read from `team.json`, used
+    /// to make roster rows legible. Read-only in the chamber.
+    team: Team,
     /// The field file this chamber reads from and steers into.
     path: PathBuf,
     /// The human's message box at the foot of the chat column.
@@ -242,6 +246,7 @@ impl Chamber {
     fn new(
         view: ChamberView,
         prefs: ChamberPrefs,
+        team: Team,
         path: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -303,6 +308,7 @@ impl Chamber {
         Chamber {
             view,
             prefs,
+            team,
             path,
             input,
             focus_handle,
@@ -506,7 +512,7 @@ impl Chamber {
                 // bottom, keep them there as the new message lands; if they've
                 // scrolled up to read history, leave their position alone.
                 let follow = self.chat_at_bottom();
-                self.view = model::project(&events);
+                self.view = model::project_with_team(&events, &self.team);
                 if follow {
                     self.chat_scroll.scroll_to_bottom();
                 }
@@ -554,7 +560,7 @@ impl Chamber {
 
         input.update(cx, |state, cx| state.set_value("", window, cx));
         let events = io::read_events(&self.path).unwrap_or_default();
-        self.view = model::project(&events);
+        self.view = model::project_with_team(&events, &self.team);
         // The human just spoke — always snap to their new message.
         self.chat_scroll.scroll_to_bottom();
         cx.notify();
@@ -571,7 +577,7 @@ impl Render for Chamber {
         let (top_radius, bottom_radius) = frame_corner_radii(window);
         let titlebar = self.titlebar(window, cx);
         let body = self.body(cx);
-        let status = self.status_bar();
+        let status = self.status_bar(cx);
         let overlay = self.palette_open.then(|| self.palette_overlay(cx));
         let settings = self.settings_open.then(|| self.settings_overlay(cx));
 
@@ -680,8 +686,9 @@ impl Chamber {
     }
 
     /// The status bar along the foot of the window (same tone as the titlebar).
-    /// Placeholder content for now.
-    fn status_bar(&self) -> impl IntoElement {
+    /// Left: an overall swarm-status tag. Right: the quark count and the global
+    /// permission-mode tag (click to cycle Ask → Write → Auto → Bypass).
+    fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
             .h(px(24.0))
@@ -693,8 +700,24 @@ impl Chamber {
             // own the frame's arc — this 24px strip can't round tight enough to.
             .text_xs()
             .text_color(theme::text_muted())
-            .child(div().child("ready"))
-            .child(div().child(format!("{} quark(s)", self.view.roster.len())))
+            .child(swarm_status_tag(&self.view))
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().child(format!("{} quark(s)", self.view.roster.len())))
+                    .child(
+                        div()
+                            .id("global-mode")
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| this.cycle_global_mode(cx)))
+                            .tooltip(|window, cx| {
+                                Tooltip::new("Permission mode — click to cycle").build(window, cx)
+                            })
+                            // Global default renders as a solid tag.
+                            .child(mode_tag(self.view.global_mode, true)),
+                    ),
+            )
     }
 
     /// The body: the left roster ("friends list") at a locked width, then the
@@ -843,7 +866,15 @@ impl Chamber {
         // rail rather than pushing the pinned Settings button off the bottom.
         let mut rows = v_flex().w_full().gap_2();
         for r in &self.view.roster {
-            rows = rows.child(roster_row(&self.resolve_identity(&r.id), r));
+            // The per-quark mode tag is clickable → cycle this quark's override.
+            let qid = r.id.clone();
+            let mode_el = div()
+                .id(SharedString::from(format!("mode-{}", r.id)))
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| this.cycle_quark_mode(&qid, cx)))
+                .child(mode_tag(r.mode, r.mode_is_override))
+                .into_any_element();
+            rows = rows.child(roster_row(&self.resolve_identity(&r.id), r, mode_el));
         }
         if self.view.roster.is_empty() {
             rows = rows.child(
@@ -1082,7 +1113,6 @@ impl Chamber {
                     .text_color(theme::text_muted())
                     .child("$ terminal coming soon"),
             )
-            .child(self.god_mode_section(cx))
     }
 
     /// Answer an outstanding permission request by appending a human
@@ -1098,7 +1128,7 @@ impl Chamber {
             return;
         }
         let events = io::read_events(&self.path).unwrap_or_default();
-        self.view = model::project(&events);
+        self.view = model::project_with_team(&events, &self.team);
         self.chat_scroll.scroll_to_bottom();
         cx.notify();
     }
@@ -1134,45 +1164,59 @@ impl Chamber {
                 .child(text_button("perm-approve", "Approve").on_click(
                     cx.listener(|this, _, _, cx| this.answer_permission(true, cx)),
                 ))
+                // "Always allow" remembers this (quark, op) so Auto mode won't ask again.
+                .child(text_button("perm-always", "Always allow").on_click(
+                    cx.listener(|this, _, _, cx| this.answer_permission_remember(cx)),
+                ))
                 .child(text_button("perm-deny", "Deny").on_click(
                     cx.listener(|this, _, _, cx| this.answer_permission(false, cx)),
                 )),
         )
     }
 
-    /// The god-mode section (right rail): two independent bypass toggles the
-    /// human flips to pre-authorize classes of risky op. Persisted to prefs.
-    /// (Propagating a live change to a running daemon is a separate integration.)
-    fn god_mode_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = self.prefs.policy;
-        v_flex()
-            .flex_none()
-            .mt_2()
-            .gap_1p5()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child("GOD MODE"),
-            )
-            .child(
-                god_toggle_row("god-edits", "Auto-approve edits", p.auto_approve_edits)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_policy(true, cx))),
-            )
-            .child(
-                god_toggle_row("god-bash", "Bypass bash prompts", p.bypass_bash)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_policy(false, cx))),
-            )
+    /// "Always allow" the pending op: append a *remembering* grant so the
+    /// gatekeeper's allow-list auto-approves the same `(quark, op)` next time.
+    fn answer_permission_remember(&mut self, cx: &mut Context<Self>) {
+        let Some(pending) = self.view.pending_permission.clone() else {
+            return;
+        };
+        self.append_and_reload(hadron_gatekeeper::grant_remembering(&pending), cx);
     }
 
-    /// Flip one god-mode toggle (`edits` selects which) and persist.
-    fn toggle_policy(&mut self, edits: bool, cx: &mut Context<Self>) {
-        if edits {
-            self.prefs.policy.auto_approve_edits = !self.prefs.policy.auto_approve_edits;
-        } else {
-            self.prefs.policy.bypass_bash = !self.prefs.policy.bypass_bash;
+    /// Cycle the global default permission mode (Ask → Write → Auto → Bypass →
+    /// Ask) by appending a global `ModeSet`. The daemon honours it next tick.
+    fn cycle_global_mode(&mut self, cx: &mut Context<Self>) {
+        let next = next_mode(self.view.global_mode);
+        self.append_and_reload(Event::new(Actor::Human, None, Kind::ModeSet { mode: next }), cx);
+    }
+
+    /// Cycle a single quark's permission mode by appending a per-quark `ModeSet`
+    /// (addressed to it). This always creates/updates an explicit override.
+    fn cycle_quark_mode(&mut self, id: &str, cx: &mut Context<Self>) {
+        let qid = QuarkId::new(id);
+        let current = self
+            .view
+            .roster
+            .iter()
+            .find(|r| r.id == id)
+            .map(|r| r.mode)
+            .unwrap_or_default();
+        let next = next_mode(current);
+        self.append_and_reload(
+            Event::new(Actor::Human, Some(qid), Kind::ModeSet { mode: next }),
+            cx,
+        );
+    }
+
+    /// Append an event to the field and re-project the view (the shared write
+    /// path for permission grants and mode changes — the same bus the quarks use).
+    fn append_and_reload(&mut self, ev: Event, cx: &mut Context<Self>) {
+        if let Err(e) = io::append_event(&self.path, &ev) {
+            eprintln!("chamber: failed to append event: {e}");
+            return;
         }
-        let _ = config::save(&self.prefs);
+        let events = io::read_events(&self.path).unwrap_or_default();
+        self.view = model::project_with_team(&events, &self.team);
         cx.notify();
     }
 
@@ -1638,10 +1682,20 @@ fn drag_region(id: &'static str) -> impl IntoElement {
 /// One roster entry, styled as a presence list-item: the resolved avatar with a
 /// status [`Badge`] dot, a display name, and a one-word presence subtitle, with a
 /// tooltip on hover.
-fn roster_row(id: &ResolvedIdentity, r: &RosterRow) -> impl IntoElement {
+fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -> impl IntoElement {
     let name = id.name.clone();
     let label = theme::presence_label(r.state);
     let tip: SharedString = format!("{name} — {label}").into();
+
+    // Legibility line: "provider · model" when the seat is in team.json, else
+    // the presence label alone.
+    let sub: SharedString = if r.provider.is_empty() && r.model.is_empty() {
+        label.into()
+    } else if r.model.is_empty() {
+        r.provider.clone().into()
+    } else {
+        format!("{} · {}", r.provider, r.model).into()
+    };
 
     h_flex()
         .id(SharedString::from(format!("quark-{}", r.id)))
@@ -1659,6 +1713,7 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow) -> impl IntoElement {
         )
         .child(
             v_flex()
+                .flex_1()
                 .min_w_0()
                 .child(
                     div()
@@ -1670,10 +1725,13 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow) -> impl IntoElement {
                 .child(
                     div()
                         .text_xs()
-                        .text_color(theme::presence(r.state))
-                        .child(label),
+                        .text_color(theme::text_muted())
+                        .truncate()
+                        .child(sub),
                 ),
         )
+        // Effective permission mode (click to cycle a per-quark override).
+        .child(mode_el)
         .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
 }
 
@@ -1703,30 +1761,55 @@ fn text_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Di
         .child(label)
 }
 
-/// A god-mode toggle row: a label with an ON/OFF pill that brightens (accent)
-/// when enabled. Caller attaches `on_click` to flip it.
-fn god_toggle_row(id: &'static str, label: &'static str, on: bool) -> gpui::Stateful<gpui::Div> {
-    let pill = div()
-        .px_2()
-        .py_0p5()
-        .rounded_full()
-        .text_xs()
-        .bg(if on { theme::accent() } else { theme::surface_raised() })
-        .text_color(if on { theme::bg() } else { theme::text_muted() })
-        .child(if on { "ON" } else { "OFF" });
-    h_flex()
-        .id(id)
-        .w_full()
-        .items_center()
-        .justify_between()
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .text_sm()
-        .text_color(theme::text_secondary())
-        .hover(|s| s.bg(theme::surface_raised()).text_color(theme::text()))
-        .child(label)
-        .child(pill)
+/// The next mode in the ladder, cycling Ask → Write → Auto → Bypass → Ask.
+fn next_mode(mode: Mode) -> Mode {
+    match mode {
+        Mode::Ask => Mode::Write,
+        Mode::Write => Mode::Auto,
+        Mode::Auto => Mode::Bypass,
+        Mode::Bypass => Mode::Ask,
+    }
+}
+
+/// A permission-mode badge. Variant carries the risk temperature (Ask muted →
+/// Bypass danger). A per-quark override renders solid; an inherited/global mode
+/// renders outlined.
+fn mode_tag(mode: Mode, is_override: bool) -> impl IntoElement {
+    let (tag, label): (Tag, &'static str) = match mode {
+        Mode::Ask => (Tag::secondary(), "ASK"),
+        Mode::Write => (Tag::info(), "WRITE"),
+        Mode::Auto => (Tag::warning(), "AUTO"),
+        Mode::Bypass => (Tag::danger(), "BYPASS"),
+    };
+    let tag = tag.small().child(label);
+    if is_override {
+        tag
+    } else {
+        tag.outline()
+    }
+}
+
+/// An overall swarm-status badge for the status bar. Priority: a blocked/error
+/// quark, then a pending permission, then any active quark, else "ready".
+fn swarm_status_tag(view: &ChamberView) -> impl IntoElement {
+    let (tag, label): (Tag, &'static str) = if view
+        .roster
+        .iter()
+        .any(|r| matches!(r.state, QuarkState::Error | QuarkState::Blocked))
+    {
+        (Tag::danger(), "error")
+    } else if view.pending_permission.is_some() {
+        (Tag::warning(), "waiting")
+    } else if view
+        .roster
+        .iter()
+        .any(|r| matches!(r.state, QuarkState::Excited | QuarkState::Thinking))
+    {
+        (Tag::info(), "working")
+    } else {
+        (Tag::success(), "ready")
+    };
+    tag.small().outline().child(label)
 }
 
 /// A muted placeholder line shown when a tab view has nothing to render.
@@ -1813,8 +1896,9 @@ pub fn run(field_path: Option<String>) {
         return;
     };
     let field_path = PathBuf::from(&path);
+    let team = config::team_path().map(|p| load_team(&p)).unwrap_or_default();
     let events = io::read_events(&field_path).unwrap_or_default();
-    let view = model::project(&events);
+    let view = model::project_with_team(&events, &team);
     let prefs = config::load();
 
     let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
@@ -1882,7 +1966,7 @@ pub fn run(field_path: Option<String>) {
         cx.spawn(async move |cx| {
             cx.open_window(window_options, move |window, cx| {
                 let chamber = cx.new(|cx| {
-                    Chamber::new(view.clone(), prefs.clone(), field_path.clone(), window, cx)
+                    Chamber::new(view.clone(), prefs.clone(), team.clone(), field_path.clone(), window, cx)
                 });
                 cx.new(|cx| Root::new(chamber, window, cx).bordered(false))
             })

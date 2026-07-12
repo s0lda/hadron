@@ -83,6 +83,12 @@ pub fn config_path() -> Option<PathBuf> {
     )
 }
 
+/// Resolve the team roster path (`team.json`), a sibling of `chamber.json` in
+/// the config dir. The daemon writes/reads the same file to seat quarks.
+pub fn team_path() -> Option<PathBuf> {
+    config_path().map(|p| p.with_file_name("team.json"))
+}
+
 /// Read preferences from an explicit path; missing or malformed → defaults.
 pub fn load_from(path: &Path) -> ChamberPrefs {
     match std::fs::read_to_string(path) {
