@@ -24,6 +24,26 @@ type SharedQuark = Arc<AsyncMutex<Box<dyn Quark>>>;
 /// running one. It bounds how long a quark sits unexcited, not how long a turn takes.
 const FIELD_POLL: std::time::Duration = std::time::Duration::from_millis(150);
 
+/// How long a single turn may run before the engine declares it dead and writes a
+/// terminal status for the quark itself.
+///
+/// This exists because a turn can end **without ever returning**. The observed
+/// failure: a quark went `Excited`, its CLI process died (or orphaned its stdout
+/// pipe to a grandchild, so `wait_with_output` never saw EOF), and the turn future
+/// simply never resolved. `run_until_quiesce` cannot quiesce while a turn is in
+/// flight, so the dispatch loop sat in `select!` for 56 minutes with no `Ground`,
+/// no `Error`, and no re-dispatch. A quark whose turn dies without writing a
+/// terminal status is lost forever.
+///
+/// **30 minutes.** Sized to be *loose*, not tight: a real coding turn here
+/// legitimately runs for many minutes (a quark that reads a crate, edits, and runs
+/// `cargo test --workspace` can burn ten-plus), and killing a healthy turn is
+/// strictly worse than the wedge this guards — the work is lost AND the human is
+/// lied to. 30 min is comfortably past any turn we have observed while still
+/// bounding the wedge to something a human notices once, not something that eats an
+/// afternoon. Override per-engine with [`Engine::with_turn_deadline`].
+pub const TURN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
 /// The event that drives a turn: the *assignment*. Its ULID names the quark's
 /// branch (`quark/<id>/<assignment>`), and its body is the task on the projection —
 /// one event, one source of truth, so the branch a quark commits to and the task it
@@ -202,6 +222,9 @@ pub struct Engine {
     /// turns finishing at once could still interleave their *sequences* of events.
     /// Holding this across each append keeps the JSONL a clean, totally-ordered log.
     field_lock: Arc<AsyncMutex<()>>,
+    /// The watchdog: how long an excited turn may run before the engine writes its
+    /// terminal status *for* it. See [`TURN_DEADLINE`].
+    turn_deadline: std::time::Duration,
 }
 
 impl Engine {
@@ -237,7 +260,17 @@ impl Engine {
             energy_limit: 0,
             merge: None,
             field_lock: Arc::new(AsyncMutex::new(())),
+            turn_deadline: TURN_DEADLINE,
         }
+    }
+
+    /// Override the turn watchdog's [deadline](TURN_DEADLINE). Tests use a tiny one;
+    /// production takes the default. A deadline of zero is not special-cased — an
+    /// engine configured that way would time every turn out immediately, which is a
+    /// misconfiguration, not a feature.
+    pub fn with_turn_deadline(mut self, deadline: std::time::Duration) -> Self {
+        self.turn_deadline = deadline;
+        self
     }
 
     /// Opt in to the merge gate: when an assignment completes, run the workspace tests
@@ -914,9 +947,37 @@ impl Engine {
 
                     let turn_id = target.clone();
                     let turn_tree = tree.clone();
+                    let deadline = self.turn_deadline;
                     turns.spawn(async move {
                         let mut quark = quark.lock().await;
-                        let outcome = quark.excite(projection).await;
+                        // THE WATCHDOG. A turn that never resolves — its CLI process
+                        // died, or orphaned its stdout pipe to a grandchild so the
+                        // adapter waits forever on an EOF that will never come — would
+                        // otherwise keep this quark in `in_flight` for good: no terminal
+                        // status, no quiesce, no re-dispatch, the quark simply gone.
+                        // On expiry we DROP the turn future (which drops the adapter's
+                        // `Child`, killing a still-live process — see `ProcessRunner`'s
+                        // `kill_on_drop`) and return an error, which lands in the
+                        // existing failed-turn arm below: `Status{Error}`, out of
+                        // `in_flight`, excitable again by the next message.
+                        //
+                        // The lock is acquired OUTSIDE the timeout on purpose: the
+                        // deadline measures the turn, not the wait for a turn slot.
+                        let outcome = match tokio::time::timeout(
+                            deadline,
+                            quark.excite(projection),
+                        )
+                        .await
+                        {
+                            Ok(outcome) => outcome,
+                            Err(_) => Err(anyhow::anyhow!(
+                                "turn exceeded deadline with no terminal status: {} was excited \
+                                 for {}s and its turn never returned (process gone, or hung with \
+                                 no outcome); the engine is ending the turn on its behalf",
+                                turn_id.as_str(),
+                                deadline.as_secs(),
+                            )),
+                        };
                         (turn_id, turn_tree, outcome)
                     });
                     in_flight.insert(target);
@@ -1057,6 +1118,7 @@ mod tests {
     }
     use hadron_lattice::{Actor, EnergyState, Flavor, Kind, PermissionAsk, Projection, QuarkId, TurnOutcome};
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
     use tempfile::tempdir;
 
     /// Asks for permission on excite #1, replies on later excites, and records the
@@ -1261,6 +1323,98 @@ mod tests {
             last_state,
             Some(QuarkState::Error),
             "the quark ends Error, not stranded Excited"
+        );
+    }
+
+    /// **THE discriminating test for the turn watchdog.**
+    ///
+    /// The production failure, exactly: a quark is excited, its process dies (or
+    /// orphans the pipe the adapter is waiting on) and the turn future NEVER
+    /// RESOLVES. Nothing in the engine ever ends that turn: `run_until_quiesce`
+    /// cannot quiesce while a turn is in flight, so the dispatch loop wedges — no
+    /// `Ground`, no `Error`, no re-dispatch, and the quark is lost.
+    ///
+    /// Before the deadline existed this test did not *fail*, it HUNG: the outer
+    /// `timeout` below is what turns the wedge into a red test instead of a stuck
+    /// suite. After it: the quark ends `Error`, and a new message re-excites it.
+    #[tokio::test]
+    async fn a_turn_whose_process_dies_without_an_outcome_is_ended_by_the_watchdog() {
+        /// Excite #1 never returns — a turn whose process is gone. Later excites
+        /// answer normally, which is what proves the quark is not stranded.
+        struct VanishingQuark {
+            calls: usize,
+        }
+        #[async_trait::async_trait]
+        impl Quark for VanishingQuark {
+            fn id(&self) -> QuarkId {
+                QuarkId::new("agy")
+            }
+            fn flavor(&self) -> Flavor {
+                Flavor::Worker
+            }
+            fn energy(&self) -> EnergyState {
+                EnergyState::Available
+            }
+            async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+                self.calls += 1;
+                if self.calls == 1 {
+                    // The vanished process: no outcome, no error, ever.
+                    std::future::pending::<()>().await;
+                    unreachable!("pending() never resolves");
+                }
+                Ok(TurnOutcome {
+                    message: Some("back from the dead".into()),
+                    used_tokens: 0,
+                    permission: None,
+                    usage: Default::default(),
+                })
+            }
+        }
+
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        let mut engine = Engine::new(field.clone(), vec![Box::new(VanishingQuark { calls: 0 })], 8)
+            .with_turn_deadline(Duration::from_millis(200));
+
+        // The wedge, made visible: WITHOUT the watchdog this never returns.
+        let result = tokio::time::timeout(Duration::from_secs(5), engine.run_until_quiesce())
+            .await
+            .expect("the engine must not wedge forever on a turn that never returns");
+        let err = result.expect_err("the watchdog ends the turn as a failure");
+        assert!(
+            err.to_string().contains("deadline"),
+            "the error must say WHY the turn ended: {err}"
+        );
+
+        // The quark is not stranded Excited: it has a terminal status.
+        let events = read_events(&field).unwrap();
+        let states: Vec<QuarkState> = events
+            .iter()
+            .filter_map(|e| match &e.kind {
+                Kind::Status { state } => Some(state.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            states,
+            vec![QuarkState::Excited, QuarkState::Error],
+            "excited, then ENDED — the watchdog wrote the terminal status the turn never did"
+        );
+
+        // …and it is excitable again. (Deliberately NOT re-excited by the *same*
+        // message — the `Error` counts as the quark having answered, which is what
+        // keeps a permanently-hanging quark from spinning the deadline forever. A
+        // NEW message is what brings it back.)
+        seed_human_message(&field, "agy", "you there?");
+        tokio::time::timeout(Duration::from_secs(5), engine.run_until_quiesce())
+            .await
+            .expect("no wedge")
+            .expect("the second turn runs normally");
+        let events = read_events(&field).unwrap();
+        assert!(
+            has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "back from the dead")),
+            "a quark the watchdog reaped must be excitable again"
         );
     }
 
