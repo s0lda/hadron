@@ -8,9 +8,13 @@
 
 mod gate;
 mod matrix;
+mod merge;
 
 pub use gate::{grant, grant_remembering, pending_permission, PendingPermission};
 pub use hadron_lattice::{Mode, Risk};
 pub use matrix::{
     allow_rules, decide, global_mode, has_override, resolve_mode, AllowRules, Decision,
+};
+pub use merge::{
+    merge_approved, merge_decision, merge_op, BlockReason, BranchState, MergeVerdict,
 };
