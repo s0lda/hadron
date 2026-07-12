@@ -34,13 +34,18 @@ pub struct QuarkSpec {
 
 /// Enforce the naming contract: ids must be non-empty, whitespace-free tokens
 /// (so `@mention` routing works), and must not collide with the reserved actor
-/// names `human` / `gluon`.
+/// names `human` / `gluon` or the `orchestrator` role alias (which routing
+/// resolves to whoever holds the role, so an id of that name would shadow it).
 pub fn validate_quark_id(id: &QuarkId) -> anyhow::Result<()> {
     let s = id.as_str();
     if s.is_empty() || s.chars().any(|c| c.is_whitespace()) {
         anyhow::bail!("quark id must be a non-empty, whitespace-free token (got {s:?})");
     }
-    if s == "human" || s == "gluon" {
+    if s == "human"
+        || s == "gluon"
+        || s == crate::router::ORCHESTRATOR_ALIAS
+        || s == crate::router::TEAM_ALIAS
+    {
         anyhow::bail!("quark id '{s}' is reserved");
     }
     Ok(())
