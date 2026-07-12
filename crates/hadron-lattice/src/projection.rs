@@ -30,6 +30,13 @@ pub struct Projection {
     /// cwd, which is precisely the shared-tree hazard this field exists to close.
     #[serde(default)]
     pub cwd: std::path::PathBuf,
+    /// Whether `cwd` is a worktree of this quark's own, or the workspace root it
+    /// shares with the human and every other quark. The prompt used to assert
+    /// isolation unconditionally — so a quark in the shared tree was told its
+    /// commits could only reach `main` "through the merge gate", refused to
+    /// commit at all, and left its work to be lost. Say which world it is in.
+    #[serde(default)]
+    pub isolated: bool,
     /// The permission authority this quark runs under this turn. The engine
     /// resolves it from the field (`resolve_mode`) before excitation; real
     /// adapters translate it into the CLI's permission posture. Defaults to the
@@ -90,6 +97,7 @@ mod tests {
                 Kind::Message { body: "go".into() },
             )],
             git_diff: String::new(),
+            isolated: true,
             cwd: std::path::PathBuf::from("/tmp/wt"),
             mode: Mode::Bypass,
         };
