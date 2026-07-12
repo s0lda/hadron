@@ -101,7 +101,7 @@ fn parse_args() -> Option<Args> {
 /// 2. a `team.json` sitting **next to the field** — the per-project
 ///    `.hadron/team.json` convention (field at `.hadron/field.jsonl` → team at
 ///    `.hadron/team.json`), so opening a project's field just works;
-/// 3. the config-dir default (`$XDG_CONFIG_HOME/hadron/team.json`).
+/// 3. the user-level default (`~/.hadron/team.json`).
 ///
 /// `None` → no team file found → mock quarks.
 fn resolve_team_path(explicit: Option<PathBuf>, field_path: &Path) -> Option<PathBuf> {
@@ -155,7 +155,7 @@ async fn main() {
     let Some(args) = parse_args() else {
         eprintln!("usage: hadron-gluon <field.jsonl> [--interval-ms N] [--team team.json]");
         eprintln!("  Team resolution: --team, else a team.json next to the field");
-        eprintln!("  (e.g. .hadron/team.json), else $XDG_CONFIG_HOME/hadron/team.json.");
+        eprintln!("  (e.g. .hadron/team.json), else ~/.hadron/team.json.");
         eprintln!("  With none, runs deterministic mock quarks (ids: claude, agy).");
         std::process::exit(2);
     };

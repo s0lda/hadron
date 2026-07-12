@@ -43,18 +43,32 @@ impl Team {
     }
 }
 
-/// The canonical `team.json` location: `$XDG_CONFIG_HOME/hadron/team.json`,
-/// falling back to `$HOME/.config/hadron/team.json`. `None` if neither is set.
-/// Both the daemon (to seat quarks) and the chamber (to annotate the roster)
-/// resolve the same file here.
-pub fn team_config_path() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME") {
-        if !dir.is_empty() {
-            return Some(PathBuf::from(dir).join("hadron").join("team.json"));
+/// The user's home directory, cross-platform: `$HOME` on Unix, `%USERPROFILE%`
+/// on Windows. `None` if neither is set.
+fn home_dir() -> Option<PathBuf> {
+    for var in ["HOME", "USERPROFILE"] {
+        if let Some(v) = std::env::var_os(var) {
+            if !v.is_empty() {
+                return Some(PathBuf::from(v));
+            }
         }
     }
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".config").join("hadron").join("team.json"))
+    None
+}
+
+/// The user-level Hadron directory: `~/.hadron` (i.e. `<home>/.hadron`), the same
+/// dot-folder convention as a project's `.hadron/`. Cross-platform. `None` if the
+/// home directory can't be resolved. All global Hadron state (chamber prefs, the
+/// default team) lives here.
+pub fn user_hadron_dir() -> Option<PathBuf> {
+    Some(home_dir()?.join(".hadron"))
+}
+
+/// The canonical global `team.json` location: `~/.hadron/team.json`. Both the
+/// daemon (to seat quarks when no project team is found) and the chamber (to
+/// annotate the roster) resolve the same file here.
+pub fn team_config_path() -> Option<PathBuf> {
+    Some(user_hadron_dir()?.join("team.json"))
 }
 
 /// Load a team from an explicit path. Missing or malformed → an empty team, so
@@ -105,6 +119,16 @@ mod tests {
         let bad = dir.path().join("team.json");
         std::fs::write(&bad, "{ not json").unwrap();
         assert!(load_team(&bad).is_empty());
+    }
+
+    #[test]
+    fn global_paths_live_under_user_hadron_dir() {
+        // Whatever the home resolves to in this env, ~/.hadron is the root and
+        // the global team.json sits directly inside it.
+        if let Some(dir) = user_hadron_dir() {
+            assert!(dir.ends_with(".hadron"), "user dir is <home>/.hadron");
+            assert_eq!(team_config_path(), Some(dir.join("team.json")));
+        }
     }
 
     #[test]

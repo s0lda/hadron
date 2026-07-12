@@ -1,7 +1,7 @@
 //! Persistent chamber layout preferences — rail collapse state and panel widths.
-//! Stored at `$XDG_CONFIG_HOME/hadron/chamber.json` (fallback `~/.config/...`),
-//! loaded on start and saved whenever the layout changes, so the user's
-//! workspace is preserved across sessions. Pure (no GPUI) so it is unit-tested.
+//! Stored at `~/.hadron/chamber.json` (cross-platform), loaded on start and saved
+//! whenever the layout changes, so the user's workspace is preserved across
+//! sessions. Pure (no GPUI) so it is unit-tested.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -66,25 +66,15 @@ impl Default for ChamberPrefs {
     }
 }
 
-/// Resolve the on-disk preferences path: `$XDG_CONFIG_HOME/hadron/chamber.json`,
-/// falling back to `$HOME/.config/hadron/chamber.json`. `None` if neither is set.
+/// Resolve the on-disk preferences path: `~/.hadron/chamber.json` (cross-platform).
+/// `None` if the home directory can't be resolved.
 pub fn config_path() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME") {
-        if !dir.is_empty() {
-            return Some(PathBuf::from(dir).join("hadron").join("chamber.json"));
-        }
-    }
-    let home = std::env::var_os("HOME")?;
-    Some(
-        PathBuf::from(home)
-            .join(".config")
-            .join("hadron")
-            .join("chamber.json"),
-    )
+    Some(hadron_lattice::user_hadron_dir()?.join("chamber.json"))
 }
 
-/// Resolve the team roster path (`team.json`), a sibling of `chamber.json` in
-/// the config dir. The daemon writes/reads the same file to seat quarks.
+/// Resolve the team roster path (`~/.hadron/team.json`), a sibling of
+/// `chamber.json`. The daemon reads the same file to seat quarks when no
+/// project-level `.hadron/team.json` is present.
 pub fn team_path() -> Option<PathBuf> {
     config_path().map(|p| p.with_file_name("team.json"))
 }
