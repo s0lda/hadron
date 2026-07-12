@@ -71,6 +71,21 @@ pub fn team_config_path() -> Option<PathBuf> {
     Some(user_hadron_dir()?.join("team.json"))
 }
 
+/// Resolve which `team.json` describes the team working a given field: the
+/// project-level `team.json` sitting next to the field (the `.hadron/` convention)
+/// if present, else the global `~/.hadron/team.json`. Both the daemon (to seat)
+/// and the chamber (to annotate the roster) must resolve the SAME team, so they
+/// share this — otherwise the chamber shows legibility for a team the daemon
+/// never seated.
+pub fn team_for_field(field_path: &Path) -> Option<PathBuf> {
+    if let Some(sibling) = field_path.parent().map(|d| d.join("team.json")) {
+        if sibling.exists() {
+            return Some(sibling);
+        }
+    }
+    team_config_path()
+}
+
 /// Load a team from an explicit path. Missing or malformed → an empty team, so
 /// a fresh install (or a viewer with no config) degrades to "no annotations"
 /// rather than an error.
@@ -119,6 +134,21 @@ mod tests {
         let bad = dir.path().join("team.json");
         std::fs::write(&bad, "{ not json").unwrap();
         assert!(load_team(&bad).is_empty());
+    }
+
+    #[test]
+    fn team_for_field_prefers_the_sibling_then_global() {
+        let dir = tempdir().unwrap();
+        let hadron = dir.path().join(".hadron");
+        std::fs::create_dir_all(&hadron).unwrap();
+        let field = hadron.join("field.jsonl");
+        // No sibling team.json yet → falls back to the global path (env-dependent,
+        // but never the sibling).
+        let sibling = hadron.join("team.json");
+        assert_ne!(team_for_field(&field), Some(sibling.clone()));
+        // Once a sibling exists, it wins.
+        std::fs::write(&sibling, "{}").unwrap();
+        assert_eq!(team_for_field(&field), Some(sibling));
     }
 
     #[test]

@@ -1895,7 +1895,11 @@ pub fn run(field_path: Option<String>) {
         return;
     };
     let field_path = PathBuf::from(&path);
-    let team = config::team_path().map(|p| load_team(&p)).unwrap_or_default();
+    // Load the SAME team the daemon seated for this field: the project
+    // `.hadron/team.json` beside the field, else the global `~/.hadron/team.json`.
+    let team = hadron_lattice::team_for_field(&field_path)
+        .map(|p| load_team(&p))
+        .unwrap_or_default();
     let events = io::read_events(&field_path).unwrap_or_default();
     let view = model::project_with_team(&events, &team);
     let prefs = config::load();
