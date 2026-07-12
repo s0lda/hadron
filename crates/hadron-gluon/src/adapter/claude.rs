@@ -152,6 +152,7 @@ mod tests {
 
     fn projection_in(task: &str, mode: Mode, cwd: PathBuf) -> Projection {
         Projection {
+            isolated: true,
             task: task.into(),
             invariants: String::new(),
             available_invariants: vec![],
