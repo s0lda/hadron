@@ -80,6 +80,56 @@ fn build_invariants(workspace_root: &std::path::Path, requested: &[String]) -> (
     (combined.trim().to_string(), available)
 }
 
+/// How many bytes of *rendered field transcript* a projection may carry.
+///
+/// Two hard reasons, not a taste:
+///
+/// 1. **`execve` rejects a long argv element.** `agy` has no stdin in print mode
+///    and no `--prompt-file`, so its whole prompt is one argv element — and Linux
+///    caps a single element at `MAX_ARG_STRLEN` = 128 KiB, unraisable. The field
+///    window used to be `events.to_vec()` (the *entire* field), which grew past
+///    that in normal use and killed every agy turn with E2BIG in ~0.7 ms, before
+///    any subprocess started.
+/// 2. **Tokens are money.** Re-sending the whole field on every turn of every quark
+///    is quadratic in the swarm's lifetime, and the oldest events are the least
+///    useful.
+///
+/// 48 KiB keeps a generous multi-turn transcript while leaving room under the
+/// adapter's own [safety net](crate::adapter::agy) for the diff, nucleus and task.
+/// A *byte* budget, not an event count: one long message can blow an event count.
+pub const FIELD_WINDOW_BUDGET_BYTES: usize = 48 * 1024;
+
+/// What one event costs the rendered prompt. Only `Message` bodies are rendered
+/// (`prompt::build`), plus a small allowance for the `**from → to:**` prefix.
+fn event_cost(e: &Event) -> usize {
+    let body = match &e.kind {
+        Kind::Message { body } => body.len(),
+        _ => 0,
+    };
+    body + 32
+}
+
+/// The most recent events that fit in `budget` bytes, in field order.
+///
+/// Most-recent-wins: the driving message and the freshest context are the ones a
+/// quark actually needs; the oldest are the ones to drop. Always yields at least
+/// the single newest event, even if that one event is itself over budget — a quark
+/// with no transcript at all cannot act, and the adapter's guard bounds the final
+/// argv anyway.
+fn bounded_window(events: &[Event], budget: usize) -> Vec<Event> {
+    let mut spent = 0usize;
+    let mut keep = 0usize;
+    for e in events.iter().rev() {
+        let cost = event_cost(e);
+        if keep > 0 && spent + cost > budget {
+            break;
+        }
+        spent += cost;
+        keep += 1;
+    }
+    events[events.len().saturating_sub(keep)..].to_vec()
+}
+
 /// Drives the concurrent coordination loop over a single field file.
 ///
 /// Turns run *in parallel*: every pending target found in one read of the field is
@@ -313,8 +363,12 @@ impl Engine {
             available_invariants,
             nucleus_digest: self.nucleus_digest.clone(),
             roster: self.roster.clone(),
-            field_window: events.to_vec(),
+            // NOT `events.to_vec()`. The whole field is unbounded; it grew past the
+            // kernel's 128 KiB single-argv limit and killed every agy turn with
+            // E2BIG. Keep the most recent events that fit the byte budget.
+            field_window: bounded_window(events, FIELD_WINDOW_BUDGET_BYTES),
             git_diff,
+            cwd: workspace_root.to_path_buf(),
             mode: turn_mode,
         }
     }
@@ -1550,6 +1604,53 @@ mod tests {
             fast_saw_slow.load(Ordering::SeqCst),
             "the fast quark only ran AFTER the slow turn finished — a message arriving \
              mid-turn is still queued behind the grinding worker"
+        );
+    }
+
+    /// **The E2BIG regression test.** `field_window` used to be `events.to_vec()` —
+    /// the *entire* field, unbounded. A long-running swarm's field renders to
+    /// hundreds of KB, and `agy` takes its prompt as a single argv element, whose
+    /// hard kernel limit is `MAX_ARG_STRLEN` = 128 KiB. `execve` then failed with
+    /// E2BIG in under a millisecond: the quark went excited → error without any
+    /// subprocess ever starting.
+    #[tokio::test]
+    async fn the_field_window_is_bounded_however_big_the_field_grows() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        // ~400 KB of field: 200 messages × ~2 KB of body.
+        for i in 0..200 {
+            append_event(
+                &field,
+                &Event::new(
+                    Actor::Human,
+                    None,
+                    Kind::Message { body: format!("msg{i} {}", "x".repeat(2000)) },
+                ),
+            )
+            .unwrap();
+        }
+        seed_human_message(&field, "agy", "what is the state of things?");
+        let events = read_events(&field).unwrap();
+        assert!(
+            events.iter().map(event_cost).sum::<usize>() > 300_000,
+            "precondition: the raw field really is huge"
+        );
+
+        let engine = Engine::new(field.clone(), vec![], 8);
+        let proj = engine.projection_for(&events, &QuarkId::new("agy"), None, String::new());
+
+        let cost: usize = proj.field_window.iter().map(event_cost).sum();
+        assert!(
+            cost <= FIELD_WINDOW_BUDGET_BYTES,
+            "the field window must be bounded by the byte budget, got {cost} > {FIELD_WINDOW_BUDGET_BYTES}"
+        );
+        assert!(!proj.field_window.is_empty(), "but not empty — recent context survives");
+
+        // Most-recent-wins: the driving message is the last event and MUST survive.
+        let last = proj.field_window.last().unwrap();
+        assert!(
+            matches!(&last.kind, Kind::Message { body } if body.contains("state of things")),
+            "the newest event is kept, the oldest are the ones dropped"
         );
     }
 }

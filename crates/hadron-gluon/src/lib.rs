@@ -9,3 +9,4 @@ pub mod snapshot;
 pub mod ledger;
 pub mod watch;
 pub mod daemon;
+pub mod worktree;

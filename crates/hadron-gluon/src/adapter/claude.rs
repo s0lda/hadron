@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use hadron_lattice::{EnergyState, Flavor, Mode, Projection, QuarkId, TurnOutcome};
+use std::path::PathBuf;
 
 use crate::adapter::runner::{CliInvocation, CliRunner};
 use crate::quark::Quark;
@@ -51,7 +52,12 @@ impl<R: CliRunner> ClaudeQuark<R> {
     /// JSON envelope so we can recover the session id), `--model <model>` when a
     /// model is set, the permission posture from the turn's `mode`, adding
     /// `--resume <id>` once a session exists. Prompt on stdin.
-    fn invocation(&self, prompt: String, mode: Mode) -> CliInvocation {
+    ///
+    /// `claude` takes no directory flag, so the *process* cwd is the only lever:
+    /// it rides on the invocation and `ProcessRunner` applies it. The quark's
+    /// worktree path is stable across turns, so a `--resume`d session never sees
+    /// its project directory move under it.
+    fn invocation(&self, prompt: String, mode: Mode, cwd: PathBuf) -> CliInvocation {
         let mut args = vec!["-p".to_string(), "--output-format".to_string(), "json".to_string()];
         if !self.model.is_empty() {
             args.push("--model".to_string());
@@ -62,7 +68,7 @@ impl<R: CliRunner> ClaudeQuark<R> {
             args.push("--resume".to_string());
             args.push(sid.clone());
         }
-        CliInvocation { program: "claude".to_string(), args, stdin: prompt }
+        CliInvocation { program: "claude".to_string(), args, stdin: prompt, cwd }
     }
 }
 
@@ -80,8 +86,9 @@ impl<R: CliRunner> Quark for ClaudeQuark<R> {
 
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let mode = turn.mode;
+        let cwd = turn.cwd.clone();
         let prompt = crate::adapter::prompt::build(&turn, &self.id);
-        let result = self.runner.run(self.invocation(prompt, mode)).await?;
+        let result = self.runner.run(self.invocation(prompt, mode, cwd)).await?;
 
         // Parse the JSON envelope: capture the session id, extract the reply text.
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&result.stdout) {
@@ -132,6 +139,10 @@ mod tests {
     }
 
     fn projection_mode(task: &str, mode: Mode) -> Projection {
+        projection_in(task, mode, PathBuf::from("/tmp/hadron-test-cwd"))
+    }
+
+    fn projection_in(task: &str, mode: Mode, cwd: PathBuf) -> Projection {
         Projection {
             task: task.into(),
             invariants: String::new(),
@@ -140,8 +151,20 @@ mod tests {
             roster: vec![],
             field_window: vec![],
             git_diff: String::new(),
+            cwd,
             mode,
         }
+    }
+
+    /// Layer 3b of the cwd chain: the adapter copies the projection's cwd onto the
+    /// invocation. A break here silently returns the quark to the daemon's tree.
+    #[tokio::test]
+    async fn claude_invocation_carries_the_projection_cwd() {
+        let runner = FakeRunner::with_stdout(vec![r#"{"session_id":"s","result":"ok"}"#]);
+        let mut q = ClaudeQuark::new(QuarkId::new("claude"), Flavor::Worker, "", runner);
+        let wt = PathBuf::from("/repo/.hadron/trees/claude");
+        q.excite(projection_in("go", Mode::Write, wt.clone())).await.unwrap();
+        assert_eq!(q.runner.recorded.lock().unwrap()[0].cwd, wt);
     }
 
     #[test]
