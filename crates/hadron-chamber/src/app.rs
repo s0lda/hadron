@@ -222,9 +222,33 @@ impl RightRailTab {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct AgentDescriptor { pub id: String, pub name: String, pub command: String, pub args: Vec<String> }
+
+#[derive(Clone, PartialEq, Eq)]
+struct AuthMethod { pub id: String, pub name: String, pub description: String }
+
+#[derive(Clone, PartialEq, Eq)]
+enum ProviderState { NotConnected, NeedsAuth(Vec<AuthMethod>), Ready { model: String }, Failed(String) }
+
+#[derive(Clone, PartialEq, Eq)]
+struct ConfiguredQuark {
+    pub id: String,
+    pub transport: String,
+    pub state: ProviderState,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum WizardState {
+    None,
+    PickPreset,
+    Connecting(AgentDescriptor, ProviderState),
+}
+
 /// Which identity the Settings overlay is currently editing.
 #[derive(Clone, PartialEq, Eq)]
 enum SettingsTarget {
+    Providers,
     Human,
     Quark(String),
 }
@@ -233,6 +257,7 @@ impl SettingsTarget {
     /// The actor key used for identity resolution / prefs lookup.
     fn key(&self) -> &str {
         match self {
+            SettingsTarget::Providers => "providers",
             SettingsTarget::Human => "human",
             SettingsTarget::Quark(id) => id,
         }
@@ -288,6 +313,8 @@ struct Chamber {
     _input_sub: Subscription,
     _palette_sub: Subscription,
     _settings_subs: [Subscription; 2],
+    providers: Vec<ConfiguredQuark>,
+    wizard_state: WizardState,
 }
 
 impl Chamber {
@@ -409,6 +436,8 @@ impl Chamber {
             _input_sub,
             _palette_sub,
             _settings_subs,
+            providers: Vec::new(),
+            wizard_state: WizardState::None,
         }
     }
 
@@ -1658,10 +1687,11 @@ impl Chamber {
 
     /// A mutable handle to the identity currently being edited (creating an
     /// empty quark entry on first edit).
-    fn settings_identity_mut(&mut self) -> &mut Identity {
+    fn settings_identity_mut(&mut self) -> Option<&mut Identity> {
         match &self.settings_target {
-            SettingsTarget::Human => &mut self.prefs.human,
-            SettingsTarget::Quark(id) => self.prefs.quarks.entry(id.clone()).or_default(),
+            SettingsTarget::Human => Some(&mut self.prefs.human),
+            SettingsTarget::Quark(id) => Some(self.prefs.quarks.entry(id.clone()).or_default()),
+            SettingsTarget::Providers => None,
         }
     }
 
@@ -1700,10 +1730,11 @@ impl Chamber {
     fn commit_settings_inputs(&mut self, cx: &mut Context<Self>) {
         let name = self.settings_name.read(cx).value().trim().to_string();
         let path = self.settings_path.read(cx).value().trim().to_string();
-        let id = self.settings_identity_mut();
-        id.display_name = (!name.is_empty()).then_some(name);
-        id.image_path = (!path.is_empty()).then_some(path);
-        let _ = config::save(&self.prefs);
+        if let Some(id) = self.settings_identity_mut() {
+            id.display_name = (!name.is_empty()).then_some(name);
+            id.image_path = (!path.is_empty()).then_some(path);
+            let _ = config::save(&self.prefs);
+        }
     }
 
     /// Switch which identity the overlay edits (committing the current one).
@@ -1722,18 +1753,22 @@ impl Chamber {
     /// Set the current target's accent/avatar color from a swatch.
     fn set_settings_color(&mut self, hex: u32, cx: &mut Context<Self>) {
         self.commit_settings_inputs(cx);
-        self.settings_identity_mut().color = Some(format!("#{hex:06x}"));
-        let _ = config::save(&self.prefs);
-        cx.notify();
+        if let Some(id) = self.settings_identity_mut() {
+            id.color = Some(format!("#{hex:06x}"));
+            let _ = config::save(&self.prefs);
+            cx.notify();
+        }
     }
 
     /// Clear the current target's image (falling back to color + initials).
     fn clear_settings_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.settings_identity_mut().image_path = None;
-        self.settings_path
-            .update(cx, |s, cx| s.set_value("", window, cx));
-        let _ = config::save(&self.prefs);
-        cx.notify();
+        if let Some(identity) = self.settings_identity_mut() {
+            identity.image_path = None;
+            self.settings_path
+                .update(cx, |s, cx| s.set_value("", window, cx));
+            let _ = config::save(&self.prefs);
+            cx.notify();
+        }
     }
 
     /// Reset the current target to its code defaults.
@@ -1743,6 +1778,7 @@ impl Chamber {
             SettingsTarget::Quark(id) => {
                 self.prefs.quarks.remove(&id);
             }
+            SettingsTarget::Providers => {}
         }
         self.load_settings_inputs(window, cx);
         let _ = config::save(&self.prefs);
@@ -1756,10 +1792,28 @@ impl Chamber {
         let target = self.settings_target.clone();
 
         // Left nav: every editable identity — the human, then each quark.
-        let mut nav =
-            v_flex()
-                .gap_0p5()
-                .child(self.settings_nav_row(SettingsTarget::Human, &target, cx));
+        let mut nav = v_flex()
+            .gap_0p5()
+            .child(
+                div()
+                    .px_1()
+                    .pt_2()
+                    .pb_1()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child("GLOBAL"),
+            )
+            .child(self.settings_nav_row(SettingsTarget::Providers, &target, cx))
+            .child(
+                div()
+                    .px_1()
+                    .pt_2()
+                    .pb_1()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child("IDENTITIES"),
+            )
+            .child(self.settings_nav_row(SettingsTarget::Human, &target, cx));
         for r in &self.view.roster {
             nav =
                 nav.child(self.settings_nav_row(SettingsTarget::Quark(r.id.clone()), &target, cx));
@@ -1818,7 +1872,7 @@ impl Chamber {
                     .px_1()
                     .text_xs()
                     .text_color(theme::text_muted())
-                    .child("IDENTITIES"),
+                    .child("SETTINGS"),
             )
             .child(
                 div()
@@ -1838,7 +1892,11 @@ impl Chamber {
             .child(
                 div()
                     .text_color(theme::text_secondary())
-                    .child(format!("Editing {}", preview.name)),
+                    .child(if target == SettingsTarget::Providers {
+                        "Providers".to_string()
+                    } else {
+                        format!("Editing {}", preview.name)
+                    }),
             )
             .child(
                 div()
@@ -1854,46 +1912,56 @@ impl Chamber {
                     .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx))),
             );
 
-        let fields = v_flex()
-            .gap_4()
-            .child(settings_field("Preview", preview_row.into_any_element()))
-            .child(settings_field(
-                "Display name",
-                Input::new(&self.settings_name).into_any_element(),
-            ))
-            .child(settings_field("Color", swatches.into_any_element()))
-            .child(settings_field(
-                "Image",
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(div().flex_1().child(Input::new(&self.settings_path)))
-                    .child(text_button("settings-clear-img", "Clear").on_click(
-                        cx.listener(|this, _, window, cx| this.clear_settings_image(window, cx)),
-                    ))
-                    .into_any_element(),
-            ));
+        let fields = if target == SettingsTarget::Providers {
+            self.providers_view(cx).into_any_element()
+        } else {
+            v_flex()
+                .gap_4()
+                .child(settings_field("Preview", preview_row.into_any_element()))
+                .child(settings_field(
+                    "Display name",
+                    Input::new(&self.settings_name).into_any_element(),
+                ))
+                .child(settings_field("Color", swatches.into_any_element()))
+                .child(settings_field(
+                    "Image",
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(div().flex_1().child(Input::new(&self.settings_path)))
+                        .child(text_button("settings-clear-img", "Clear").on_click(
+                            cx.listener(|this, _, window, cx| this.clear_settings_image(window, cx)),
+                        ))
+                        .into_any_element(),
+                ))
+                .into_any_element()
+        };
 
-        let footer = h_flex()
-            .flex_none()
-            .justify_between()
-            .pt_1()
-            .child(text_button("settings-reset", "Reset to default").on_click(
-                cx.listener(|this, _, window, cx| this.reset_settings_target(window, cx)),
-            ))
-            .child(
-                div()
-                    .id("settings-done")
-                    .px_3()
-                    .py_1p5()
-                    .rounded_md()
-                    .bg(theme::accent())
-                    .text_color(theme::text())
-                    .hover(|s| s.opacity(0.9))
-                    .child("Done")
-                    .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx))),
-            );
-
+        let footer = if target == SettingsTarget::Providers {
+            div().into_any_element()
+        } else {
+            h_flex()
+                .flex_none()
+                .justify_between()
+                .pt_1()
+                .child(text_button("settings-reset", "Reset to default").on_click(
+                    cx.listener(|this, _, window, cx| this.reset_settings_target(window, cx)),
+                ))
+                .child(
+                    div()
+                        .id("settings-done")
+                        .px_3()
+                        .py_1p5()
+                        .rounded_md()
+                        .bg(theme::accent())
+                        .text_color(theme::text())
+                        .hover(|s| s.opacity(0.9))
+                        .active(|s| s.opacity(0.8))
+                        .child("Done")
+                        .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx))),
+                )
+                .into_any_element()
+        };
         let panel = v_flex()
             .flex_1()
             .h_full()
@@ -1963,7 +2031,11 @@ impl Chamber {
                 theme::bg()
             })
             .hover(|s| s.bg(theme::surface()))
-            .child(identity_avatar(&resolved, 24.0))
+            .child(if who == SettingsTarget::Providers {
+                div().flex().items_center().justify_center().size(px(24.0)).text_color(theme::text_muted()).child(Icon::new(IconName::Cpu).small()).into_any_element()
+            } else {
+                identity_avatar(&resolved, 24.0).into_any_element()
+            })
             .child(
                 div()
                     .flex_1()
@@ -1974,7 +2046,11 @@ impl Chamber {
                     } else {
                         theme::text_secondary()
                     })
-                    .child(resolved.name.clone()),
+                    .child(if who == SettingsTarget::Providers {
+                        "Providers".to_string()
+                    } else {
+                        resolved.name.clone()
+                    }),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select_settings_target(who.clone(), window, cx)
@@ -1991,6 +2067,203 @@ impl Chamber {
         }
         let _ = config::save(&self.prefs);
         cx.notify();
+    }
+
+    fn providers_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        match &self.wizard_state {
+            WizardState::None => {
+                let mut list = v_flex().gap_4();
+                for provider in &self.providers {
+                    let state_text = match &provider.state {
+                        ProviderState::NotConnected => "Not Connected".to_string(),
+                        ProviderState::NeedsAuth(_) => "Needs Auth".to_string(),
+                        ProviderState::Ready { model } => format!("Ready ({})", model),
+                        ProviderState::Failed(e) => format!("Failed: {}", e),
+                    };
+                    list = list.child(
+                        h_flex()
+                            .justify_between()
+                            .p_3()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme::border())
+                            .child(
+                                v_flex()
+                                    .child(div().text_color(theme::text()).child(provider.id.clone()))
+                                    .child(div().text_xs().text_color(theme::text_muted()).child(format!("Transport: {}", provider.transport)))
+                            )
+                            .child(div().text_color(theme::text_secondary()).child(state_text))
+                    );
+                }
+                
+                v_flex()
+                    .size_full()
+                    .gap_4()
+                    .child(div().text_lg().text_color(theme::text()).child("Configured Providers"))
+                    .child(list)
+                    .child(
+                        text_button("add-quark", "Add Quark")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.wizard_state = WizardState::PickPreset;
+                                cx.notify();
+                            }))
+                    )
+            }
+            WizardState::PickPreset => {
+                let presets = vec![
+                    AgentDescriptor { id: "claude".into(), name: "Claude Code".into(), command: "npx".into(), args: vec!["-y".into(), "@zed-industries/claude-code-acp".into()] },
+                    AgentDescriptor { id: "gemini".into(), name: "Gemini CLI".into(), command: "gemini".into(), args: vec!["acp".into()] },
+                    AgentDescriptor { id: "ollama".into(), name: "Ollama".into(), command: "ollama".into(), args: vec!["acp".into()] },
+                ];
+                
+                let mut list = v_flex().gap_2();
+                for preset in presets {
+                    let preset_clone = preset.clone();
+                    list = list.child(
+                        h_flex()
+                            .id(SharedString::from(format!("preset-{}", preset.id)))
+                            .items_center()
+                            .justify_between()
+                            .p_3()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme::border())
+                            .hover(|s| s.bg(theme::surface()))
+                            .child(
+                                v_flex()
+                                    .child(div().text_color(theme::text()).child(preset.name.clone()))
+                                    .child(div().text_xs().text_color(theme::text_muted()).child(format!("{} {}", preset.command, preset.args.join(" "))))
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.wizard_state = WizardState::Connecting(preset_clone.clone(), ProviderState::NotConnected);
+                                cx.notify();
+                            }))
+                    );
+                }
+                
+                // Add custom option
+                list = list.child(
+                    h_flex()
+                        .id("preset-custom")
+                        .items_center()
+                        .justify_between()
+                        .p_3()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme::border())
+                        .hover(|s| s.bg(theme::surface()))
+                        .child(div().text_color(theme::text()).child("Custom command…"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.wizard_state = WizardState::Connecting(
+                                AgentDescriptor { id: "custom".into(), name: "Custom".into(), command: "".into(), args: vec![] },
+                                ProviderState::NotConnected
+                            );
+                            cx.notify();
+                        }))
+                );
+
+                v_flex()
+                    .size_full()
+                    .gap_4()
+                    .child(
+                        text_button("back-wizard", "← Back")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.wizard_state = WizardState::None;
+                                cx.notify();
+                            }))
+                    )
+                    .child(div().text_lg().text_color(theme::text()).child("Select a Preset"))
+                    .child(list)
+            }
+            WizardState::Connecting(desc, state) => {
+                let desc_clone = desc.clone();
+                let state_ui = match state {
+                    ProviderState::NotConnected => {
+                        v_flex().gap_4().child(
+                            text_button("connect-btn", "Connect")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    let new_state = match desc_clone.id.as_str() {
+                                        "claude" => ProviderState::NeedsAuth(vec![AuthMethod {
+                                            id: "claude-login".into(),
+                                            name: "Log in with Claude Code".into(),
+                                            description: "Run `claude /login` in the terminal".into()
+                                        }]),
+                                        "gemini" => ProviderState::NeedsAuth(vec![AuthMethod {
+                                            id: "gemini-login".into(),
+                                            name: "Log in with Google".into(),
+                                            description: "Run `gcloud auth application-default login`".into()
+                                        }]),
+                                        _ => ProviderState::Ready { model: "default-model".into() }
+                                    };
+                                    this.wizard_state = WizardState::Connecting(desc_clone.clone(), new_state);
+                                    cx.notify();
+                                }))
+                        ).into_any_element()
+                    }
+                    ProviderState::NeedsAuth(methods) => {
+                        let mut auth_list = v_flex().gap_2();
+                        for method in methods {
+                            let method_clone = method.clone();
+                            let desc_inner = desc.clone();
+                            auth_list = auth_list.child(
+                                v_flex()
+                                    .gap_2()
+                                    .p_3()
+                                    .border_1()
+                                    .border_color(theme::border())
+                                    .rounded_md()
+                                    .child(div().text_color(theme::text()).child(method.name.clone()))
+                                    .child(div().text_sm().text_color(theme::text_muted()).child(method.description.clone()))
+                                    .child(
+                                        text_button(&format!("auth-btn-{}", method.id), &method.name)
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                let final_model = if desc_inner.id == "claude" { "claude-3-5-sonnet" } else { "gemini-1.5-pro" };
+                                                this.wizard_state = WizardState::Connecting(desc_inner.clone(), ProviderState::Ready { model: final_model.into() });
+                                                cx.notify();
+                                            }))
+                                    )
+                            );
+                        }
+                        auth_list.into_any_element()
+                    }
+                    ProviderState::Ready { model } => {
+                        let desc_inner = desc.clone();
+                        let state_inner = state.clone();
+                        v_flex().gap_4()
+                            .child(div().text_color(theme::accent()).child(format!("Ready! Model available: {}", model)))
+                            .child(
+                                text_button("save-provider", "Save Provider")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.providers.push(ConfiguredQuark {
+                                            id: desc_inner.id.clone(),
+                                            transport: "acp".to_string(),
+                                            state: state_inner.clone()
+                                        });
+                                        this.wizard_state = WizardState::None;
+                                        cx.notify();
+                                    }))
+                            )
+                            .into_any_element()
+                    }
+                    ProviderState::Failed(err) => {
+                        div().text_color(theme::text_secondary()).child(err.clone()).into_any_element()
+                    }
+                };
+
+                v_flex()
+                    .size_full()
+                    .gap_4()
+                    .child(
+                        text_button("back-presets", "← Back")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.wizard_state = WizardState::PickPreset;
+                                cx.notify();
+                            }))
+                    )
+                    .child(div().text_lg().text_color(theme::text()).child(format!("Connecting to {}", desc.name)))
+                    .child(state_ui)
+            }
+        }
     }
 }
 
@@ -2201,9 +2474,9 @@ fn settings_field(label: &'static str, content: gpui::AnyElement) -> impl IntoEl
 }
 
 /// A small, subtle text button for secondary actions (caller attaches on_click).
-fn text_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
+fn text_button(id: impl Into<gpui::SharedString>, label: impl Into<gpui::SharedString>) -> gpui::Stateful<gpui::Div> {
     div()
-        .id(id)
+        .id(id.into())
         .font_family("Inter")
         .px_2()
         .py_1()
@@ -2211,7 +2484,7 @@ fn text_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Di
         .text_sm()
         .text_color(theme::text_secondary())
         .hover(|s| s.bg(theme::surface_raised()).text_color(theme::text()))
-        .child(label)
+        .child(label.into())
 }
 
 /// The next mode in the ladder, cycling Ask → Write → Auto → Bypass → Ask.
