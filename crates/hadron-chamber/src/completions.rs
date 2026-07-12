@@ -5,6 +5,7 @@ use lsp_types::{CompletionContext, CompletionItem, CompletionItemKind, Completio
 
 pub struct ChatCompletionProvider {
     pub quarks: Vec<String>,
+    pub files: Vec<String>,
 }
 
 pub fn extract_completion_query(text: &str, offset: usize) -> Option<(char, String, usize)> {
@@ -61,6 +62,23 @@ impl CompletionProvider for ChatCompletionProvider {
                         kind: Some(CompletionItemKind::KEYWORD),
                         detail: Some("Quark".to_string()),
                         filter_text: Some(format!("@{}", quark_lower)),
+                        ..Default::default()
+                    });
+                }
+            }
+            for file in &self.files {
+                let file_lower = file.to_lowercase();
+                if query_lower.is_empty() || file_lower.contains(&query_lower) {
+                    items.push(CompletionItem {
+                        label: format!("@{}", file),
+                        insert_text: Some(format!("@{} ", file)),
+                        text_edit: Some(lsp_types::CompletionTextEdit::Edit(lsp_types::TextEdit {
+                            range,
+                            new_text: format!("@{} ", file),
+                        })),
+                        kind: Some(CompletionItemKind::FILE),
+                        detail: Some("File".to_string()),
+                        filter_text: Some(format!("@{}", file_lower)),
                         ..Default::default()
                     });
                 }
