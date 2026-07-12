@@ -17,7 +17,7 @@ use gpui::{
     WindowOptions, AnimationExt,
 };
 use gpui_component::avatar::Avatar;
-use gpui_component::badge::Badge;
+// badge removed
 use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
@@ -26,9 +26,9 @@ use gpui_component::tab::{Tab, TabBar};
 use gpui_component::tag::Tag;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::accordion::Accordion;
-use gpui_component::table::{Table, TableBody, TableRow, TableCell};
+// table imports removed
 use gpui_component::{
-    h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar, ChildElement
+    h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar
 };
 use hadron_lattice::{io, load_team, Actor, Event, Kind, Mode, QuarkId, QuarkState, Team};
 
@@ -257,7 +257,6 @@ struct Chamber {
     right_rail_tabs: [RightRailTab; 3],
     /// Cached diff string for the Changes rail
     working_diff: Option<Vec<crate::vcs::FileDiff>>,
-    changes_open_files: std::collections::HashSet<String>,
     changes_scroll: ScrollHandle,
     /// Scroll position for each of the three tabs.
     chat_scrolls: [ScrollHandle; 3],
@@ -375,7 +374,6 @@ impl Chamber {
             chat_tab: ChatTab::Chat,
             right_rail_tabs: [RightRailTab::Terminal, RightRailTab::FileTree, RightRailTab::Changes],
             working_diff: None,
-            changes_open_files: std::collections::HashSet::new(),
             changes_scroll: ScrollHandle::new(),
             chat_scrolls,
             bounds_save_pending: false,
@@ -711,6 +709,7 @@ impl Render for Chamber {
             .rounded_bl(bottom_radius)
             .rounded_br(bottom_radius)
             .text_color(theme::text())
+            .font_family("Cascadia Code")
             .child(titlebar)
             .child(body)
             .child(status)
@@ -1080,7 +1079,6 @@ impl Chamber {
                     .size_full()
                     .overflow_y_scroll()
                     .track_scroll(&self.chat_scrolls[selected.index()])
-                    .font_family("Cascadia Code")
                     .child(match selected {
                         ChatTab::Chat => self.chat_view().into_any_element(),
                         ChatTab::Log => self.log_view().into_any_element(),
@@ -1236,49 +1234,6 @@ impl Chamber {
         col
     }
 
-    fn activity_viz(&self) -> impl IntoElement {
-        let mut viz = v_flex().border_b_1().border_color(theme::border());
-
-        let header = h_flex().w_full().justify_between().items_center().px_3().py_2()
-            .child(div().text_sm().text_color(theme::text_muted()).child("Activity & Usage"));
-
-        let mut list = v_flex().gap_2().px_3().pb_3();
-
-        for row in &self.view.roster {
-            let is_error = row.state == hadron_lattice::QuarkState::Error;
-            let is_excited = row.state == hadron_lattice::QuarkState::Excited;
-
-            let dot_color = if is_error {
-                gpui::rgb(0xef4444)
-            } else if is_excited {
-                gpui::rgb(0x3b82f6)
-            } else {
-                gpui::rgb(0x22c55e)
-            };
-
-            let dot = div().rounded_full().w_2().h_2().bg(dot_color);
-            let dot = if is_excited {
-                dot.with_animation(
-                    "pulse",
-                    gpui::Animation::new(std::time::Duration::from_millis(1500)).repeat(),
-                    move |div, delta| {
-                        let v: f32 = 0.3 + (delta * std::f32::consts::PI * 2.0).sin() * 0.7;
-                        div.opacity(v.max(0.3_f32))
-                    }
-                ).into_any_element()
-            } else {
-                dot.into_any_element()
-            };
-
-            list = list.child(
-                h_flex().w_full().justify_between().items_center().gap_3()
-                    .child(h_flex().items_center().gap_2().child(dot).child(div().text_sm().text_color(theme::text()).child(format!("@{}", row.id))))
-                    .child(div().text_sm().text_color(theme::text_muted()).child(format!("{} tk", row.tokens)))
-            );
-        }
-
-        viz.child(header).child(list)
-    }
 
     /// The right rail: the swappable Terminal / File Tree / Changes pane.
     /// (Internally still `Rail::Inspector` for collapse/size.)
@@ -1293,11 +1248,12 @@ impl Chamber {
                 if t.index() == selected.index() {
                     Tab::new().child(
                         div()
+                            .font_family("Inter")
                             .text_color(theme::accent())
                             .child(t.label().to_string()),
                     )
                 } else {
-                    Tab::new().label(t.label())
+                    Tab::new().child(div().font_family("Inter").child(t.label()))
                 }
             }))
             .on_click(cx.listener(move |this, ix: &usize, _window, cx| {
@@ -1359,40 +1315,32 @@ impl Chamber {
 
                             acc = acc.item(|mut item| {
                                 item = item.title(title);
-                                let mut table_body = TableBody::new();
+                                let mut lines_list = v_flex().w_full().text_sm().pt_2();
                                 for (_, hunk) in file.hunks.iter().enumerate() {
-                                    table_body = table_body.child(
-                                        TableRow::new().child(
-                                            TableCell::new().w_full().text_color(theme::text_muted()).child(hunk.header.clone())
-                                        )
+                                    lines_list = lines_list.child(
+                                        div().w_full().px_2().py_1().text_color(theme::text_muted()).child(hunk.header.clone())
                                     );
                                     for line in &hunk.lines {
                                         match line {
                                             crate::vcs::DiffLine::Context(c) => {
-                                                table_body = table_body.child(
-                                                    TableRow::new().child(
-                                                        TableCell::new().w_full().child(format!(" {}", c))
-                                                    )
+                                                lines_list = lines_list.child(
+                                                    div().w_full().px_2().text_color(theme::text()).child(format!(" {}", c))
                                                 );
                                             }
                                             crate::vcs::DiffLine::Added(a) => {
-                                                table_body = table_body.child(
-                                                    TableRow::new().child(
-                                                        TableCell::new().w_full().bg(gpui::rgba(0x34d39922)).text_color(gpui::rgb(0x34d399)).child(format!("+{}", a))
-                                                    )
+                                                lines_list = lines_list.child(
+                                                    div().w_full().px_2().bg(gpui::rgba(0x34d39922)).text_color(gpui::rgb(0x34d399)).child(format!("+{}", a))
                                                 );
                                             }
                                             crate::vcs::DiffLine::Removed(r) => {
-                                                table_body = table_body.child(
-                                                    TableRow::new().child(
-                                                        TableCell::new().w_full().bg(gpui::rgba(0xfb718522)).text_color(gpui::rgb(0xfb7185)).child(format!("-{}", r))
-                                                    )
+                                                lines_list = lines_list.child(
+                                                    div().w_full().px_2().bg(gpui::rgba(0xfb718522)).text_color(gpui::rgb(0xfb7185)).child(format!("-{}", r))
                                                 );
                                             }
                                         }
                                     }
                                 }
-                                item.child(Table::new().w_full().child(table_body))
+                                item.child(lines_list)
                             });
                         }
                         acc.into_any_element()
@@ -1413,7 +1361,6 @@ impl Chamber {
                             .track_scroll(&self.changes_scroll)
                             .p_3()
                             .text_sm()
-                            .font_family("Cascadia Code")
                             .text_color(theme::text())
                             .child(diff_content)
                     )
@@ -1436,7 +1383,6 @@ impl Chamber {
             .overflow_hidden()
             .bg(theme::bg())
             .child(header)
-            .child(self.activity_viz())
             .child(content);
 
         v_flex()
@@ -2041,12 +1987,47 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
         }
     };
 
-    let sub: SharedString = if r.provider.is_empty() && r.model.is_empty() {
-        label.into()
-    } else if r.model.is_empty() {
-        cap(&r.provider).into()
+    let tokens = r.tokens;
+    let tokens_str = if tokens >= 1_000_000 {
+        format!("{:.1}m", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{}k", tokens / 1_000)
     } else {
-        format!("{} · {}", cap(&r.provider), cap(&r.model)).into()
+        format!("{}", tokens)
+    };
+
+    let sub: SharedString = if r.provider.is_empty() && r.model.is_empty() {
+        format!("{} · {}", label, tokens_str).into()
+    } else if r.model.is_empty() {
+        format!("{} · {}", cap(&r.provider), tokens_str).into()
+    } else {
+        format!("{} · {} · {}", cap(&r.provider), cap(&r.model), tokens_str).into()
+    };
+
+    let is_excited = r.state == hadron_lattice::QuarkState::Excited;
+    let dot_color = theme::presence(r.state);
+    
+    let dot = div()
+        .absolute()
+        .bottom_0()
+        .right_0()
+        .size(px(10.0))
+        .rounded_full()
+        .bg(dot_color)
+        .border_2()
+        .border_color(theme::sidebar());
+
+    let dot = if is_excited {
+        dot.with_animation(
+            "pulse",
+            gpui::Animation::new(std::time::Duration::from_millis(1500)).repeat(),
+            move |div, delta| {
+                let v: f32 = 0.3 + (delta * std::f32::consts::PI * 2.0).sin() * 0.7;
+                div.opacity(v.max(0.3_f32))
+            }
+        ).into_any_element()
+    } else {
+        dot.into_any_element()
     };
 
     h_flex()
@@ -2058,10 +2039,10 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
         .rounded_md()
         .hover(|s| s.bg(theme::surface()))
         .child(
-            Badge::new()
-                .dot()
-                .color(theme::presence(r.state))
-                .child(identity_avatar(id, 28.0)),
+            div()
+                .relative()
+                .child(identity_avatar(id, 28.0))
+                .child(dot)
         )
         .child(
             v_flex()
@@ -2099,6 +2080,7 @@ fn settings_field(label: &'static str, content: gpui::AnyElement) -> impl IntoEl
 fn text_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
+        .font_family("Inter")
         .px_2()
         .py_1()
         .rounded_md()
@@ -2123,7 +2105,7 @@ fn next_mode(mode: Mode) -> Mode {
 /// renders outlined.
 fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
     if !is_override {
-        return Tag::secondary().small().outline().child("DEFAULT").into_any_element();
+        return Tag::secondary().small().outline().child(div().font_family("Inter").child("DEFAULT")).into_any_element();
     }
     let (tag, label): (Tag, &'static str) = match mode {
         Mode::Ask => (Tag::secondary(), "ASK"),
@@ -2131,7 +2113,7 @@ fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
         Mode::Auto => (Tag::warning(), "AUTO"),
         Mode::Bypass => (Tag::danger(), "BYPASS"),
     };
-    tag.small().outline().child(label.to_string()).into_any_element()
+    tag.small().outline().child(div().font_family("Inter").child(label.to_string())).into_any_element()
 }
 
 /// An overall swarm-status badge for the status bar. Priority: a blocked/error
@@ -2154,7 +2136,7 @@ fn swarm_status_tag(view: &ChamberView) -> impl IntoElement {
     } else {
         (Tag::success(), "ready")
     };
-    tag.small().outline().child(label)
+    tag.small().outline().child(div().font_family("Inter").child(label))
 }
 
 /// A muted placeholder line shown when a tab view has nothing to render.
@@ -2202,7 +2184,7 @@ fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
             } else if roster.iter().any(|q| q.id == name) {
                 out.push_str(&format!("<mark color=\"blue-200\">@{}</mark>", name));
             } else {
-                out.push_str(&format!("<mark color=\"amber/30\">@{}</mark>", name));
+                out.push_str(&format!("<mark color=\"fuchsia-300\">@{}</mark>", name));
             }
         } else {
             out.push(c);
@@ -2335,7 +2317,7 @@ pub fn run(field_path: Option<String>) {
             // window frame (crate::window_frame) shows the shadow through the
             // corners instead of a square fill.
             t.tokens.background = gpui::hsla(0.0, 0.0, 0.0, 0.0).into();
-            t.font_family = "Inter, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
+            t.font_family = "Cascadia Code, Inter, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
         }
         cx.bind_keys([
             KeyBinding::new("ctrl-shift-p", TogglePalette, Some(KEY_CONTEXT)),
