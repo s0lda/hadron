@@ -12,6 +12,8 @@ mod config;
 #[cfg(feature = "gui")]
 mod app;
 #[cfg(feature = "gui")]
+mod completions;
+#[cfg(feature = "gui")]
 mod theme;
 #[cfg(feature = "gui")]
 mod window_frame;

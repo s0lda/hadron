@@ -40,10 +40,10 @@ pub const TEAM_ALIAS: &str = "team";
 /// to whoever currently holds `Flavor::Orchestrator`, anything else matches an id
 /// verbatim. Shared by both parsers so the two routing paths cannot drift.
 fn resolve_mention<'a>(name: &str, roster: &'a [QuarkCard]) -> Option<&'a QuarkCard> {
-    if name == ORCHESTRATOR_ALIAS {
+    if name.eq_ignore_ascii_case(ORCHESTRATOR_ALIAS) {
         return roster.iter().find(|c| c.flavor == Flavor::Orchestrator);
     }
-    roster.iter().find(|c| c.id.as_str() == name)
+    roster.iter().find(|c| c.id.as_str().eq_ignore_ascii_case(name))
 }
 
 /// Read the `@name` token at the start of `s` (the chars after a leading `@`).
@@ -104,7 +104,7 @@ pub fn human_mentions(body: &str, roster: &[QuarkCard]) -> Vec<QuarkId> {
         }
         // `@team` expands to the whole roster in roster order — the daemon then
         // fans the turn out to each in sequence, so one message can rally everyone.
-        if name == TEAM_ALIAS {
+        if name.eq_ignore_ascii_case(TEAM_ALIAS) {
             for card in roster {
                 if !out.contains(&card.id) {
                     out.push(card.id.clone());
@@ -189,6 +189,25 @@ mod tests {
         assert_eq!(
             parse_addressee("@orchestrator your call", &reflavoured, Some(&QuarkId::new("orch"))),
             Some(QuarkId::new("worker"))
+        );
+    }
+
+    /// Jake types `@Opus` as often as `@opus`; a mention that misses on case would
+    /// silently route nowhere rather than fail loudly, so pin both ids and aliases.
+    #[test]
+    fn mentions_resolve_regardless_of_case() {
+        let r = roster();
+        assert_eq!(
+            parse_addressee("@Worker take this", &r, Some(&QuarkId::new("orch"))),
+            Some(QuarkId::new("worker"))
+        );
+        assert_eq!(
+            parse_addressee("@ORCHESTRATOR your call", &r, Some(&QuarkId::new("worker"))),
+            Some(QuarkId::new("orch"))
+        );
+        assert_eq!(
+            human_mentions("@Team report progress", &r),
+            vec![QuarkId::new("orch"), QuarkId::new("worker")]
         );
     }
 

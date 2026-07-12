@@ -1518,6 +1518,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "emojis"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b1514ced566c94991ed9563258ecf61e311fd773bf0a3f20606830386bf66e3"
+dependencies = [
+ "phf 0.13.1",
+]
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2611,12 +2620,15 @@ dependencies = [
 name = "hadron-chamber"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "emojis",
  "gpui",
  "gpui-component",
  "gpui-component-assets",
  "gpui_platform",
  "hadron-gatekeeper",
  "hadron-lattice",
+ "lsp-types",
  "serde",
  "serde_json",
  "tempfile",

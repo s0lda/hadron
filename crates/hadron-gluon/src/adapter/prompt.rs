@@ -113,6 +113,22 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         );
     }
 
+    // 6c. Availability — the orchestrator is the human's conversational partner, so
+    // its turn is what the human waits on. The engine runs turns serially, so a long
+    // orchestrator turn IS the chat freezing. Keep its turn short by construction:
+    // dispatch the long work and hand back, rather than doing it inline.
+    if is_orchestrator(projection, self_id) {
+        p.push_str(
+            "You are the **orchestrator**: you are the human's conversational partner, and the \
+             human waits on your turn. Stay available. When a request implies long work, do NOT \
+             grind through it inline — decide, hand it to a worker (start a line with \
+             `@<quark-id>`) or to your own sub-agents, and reply promptly so the human can keep \
+             talking to you. Doing the long work yourself is what makes the chat feel frozen. \
+             Short answers, quick questions, and decisions you can settle immediately are yours \
+             to answer directly — it is the long, grinding work that should be dispatched.\n\n",
+        );
+    }
+
     p.push_str(
         "Be truthful about your actions: report only what you actually did and verified this \
          turn, and clearly separate what you PROPOSE from what you have DONE. Never state \
@@ -121,6 +137,16 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     );
 
     p
+}
+
+/// Whether this quark holds the orchestrator role. Only it gets the stay-available
+/// clause: a worker grinding through long work blocks nobody's conversation, but the
+/// orchestrator doing the same is the human staring at a silent chat.
+fn is_orchestrator(projection: &Projection, self_id: &QuarkId) -> bool {
+    projection
+        .roster
+        .iter()
+        .any(|c| &c.id == self_id && c.flavor == Flavor::Orchestrator)
 }
 
 /// Whether this quark is a worker *and* someone holds the orchestrator role — the
@@ -222,6 +248,27 @@ mod tests {
 
         let orch_prompt = build(&proj, &QuarkId::new("opus"));
         assert!(!orch_prompt.contains("You are a **worker**"));
+    }
+
+    /// The orchestrator is told to stay available and dispatch long work; a worker
+    /// is not (a worker grinding away blocks nobody's conversation).
+    #[test]
+    fn only_the_orchestrator_is_told_to_stay_available() {
+        let mut proj = projection("x");
+        proj.roster.push(QuarkCard {
+            id: QuarkId::new("opus"),
+            flavor: Flavor::Orchestrator,
+            energy: EnergyState::Available,
+            provider: String::new(),
+            model: String::new(),
+        });
+
+        let orch_prompt = build(&proj, &QuarkId::new("opus"));
+        assert!(orch_prompt.contains("You are the **orchestrator**"));
+        assert!(orch_prompt.contains("Stay available"));
+
+        let worker_prompt = build(&proj, &QuarkId::new("agy"));
+        assert!(!worker_prompt.contains("You are the **orchestrator**"));
     }
 
     /// No orchestrator on the roster → don't point the worker at a target that

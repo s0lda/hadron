@@ -34,7 +34,7 @@ use crate::config::{self, ChamberPrefs, Identity};
 use crate::model::{self, ChamberView, MessageRow, RosterRow};
 use crate::theme;
 
-actions!(chamber, [TogglePalette]);
+actions!(chamber, [TogglePalette, CycleMode]);
 
 /// Key-dispatch context for the chamber's window-level actions.
 const KEY_CONTEXT: &str = "Chamber";
@@ -189,6 +189,37 @@ impl ChatTab {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RightRailTab {
+    Terminal,
+    FileTree,
+    Changes,
+}
+
+impl RightRailTab {
+    const ALL: [RightRailTab; 3] = [RightRailTab::Terminal, RightRailTab::FileTree, RightRailTab::Changes];
+
+    fn index(self) -> usize {
+        match self {
+            RightRailTab::Terminal => 0,
+            RightRailTab::FileTree => 1,
+            RightRailTab::Changes => 2,
+        }
+    }
+
+    fn from_index(ix: usize) -> Self {
+        Self::ALL.get(ix).copied().unwrap_or(RightRailTab::Terminal)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            RightRailTab::Terminal => "Terminal",
+            RightRailTab::FileTree => "File Tree",
+            RightRailTab::Changes => "Changes",
+        }
+    }
+}
+
 /// Which identity the Settings overlay is currently editing.
 #[derive(Clone, PartialEq, Eq)]
 enum SettingsTarget {
@@ -220,9 +251,15 @@ struct Chamber {
     focus_handle: FocusHandle,
     /// Which view the chat column's segmented tabs are showing.
     chat_tab: ChatTab,
-    /// Scroll position of the chat body, so new messages can stick it to the
-    /// bottom (and the pane opens showing the newest, not the oldest).
-    chat_scroll: ScrollHandle,
+    /// Which view the right rail's segmented tabs are showing.
+    right_rail_tab: RightRailTab,
+    /// Cached diff string for the Changes rail
+    working_diff: Option<String>,
+    /// Scroll position for each of the three tabs.
+    chat_scrolls: [ScrollHandle; 3],
+    /// A debounced window-bounds save is already in flight, so a drag (which
+    /// re-renders every frame) coalesces into one write instead of one per frame.
+    bounds_save_pending: bool,
     /// Whether the Ctrl+Shift+P command palette overlay is showing.
     palette_open: bool,
     /// The palette's filter box.
@@ -253,10 +290,15 @@ impl Chamber {
         cx: &mut Context<Self>,
     ) -> Self {
         let input = cx.new(|cx| {
-            InputState::new(window, cx)
+            let mut state = InputState::new(window, cx)
                 .auto_grow(1, 4)
                 .submit_on_enter(true)
-                .placeholder("Type @quark a message…  (Enter to send · Shift+Enter for newline)")
+                .placeholder("Type @quark a message…  (Enter to send · Shift+Enter for newline)");
+            let team_quarks = team.quarks.iter().map(|q| q.id.0.clone()).collect::<Vec<_>>();
+            state.lsp.completion_provider = Some(std::rc::Rc::new(crate::completions::ChatCompletionProvider {
+                quarks: team_quarks,
+            }));
+            state
         });
         let _input_sub = cx.subscribe_in(&input, window, Self::on_input_submit);
 
@@ -301,8 +343,8 @@ impl Chamber {
 
         // Open showing the newest message: honoured on the first paint, once the
         // content is laid out.
-        let chat_scroll = ScrollHandle::new();
-        chat_scroll.scroll_to_bottom();
+        let chat_scrolls = [ScrollHandle::new(), ScrollHandle::new(), ScrollHandle::new()];
+        chat_scrolls[0].scroll_to_bottom(); // Chat tab
 
         Chamber {
             view,
@@ -312,7 +354,8 @@ impl Chamber {
             input,
             focus_handle,
             chat_tab: ChatTab::Chat,
-            chat_scroll,
+            chat_scrolls,
+            bounds_save_pending: false,
             palette_open: false,
             palette_input,
             palette_selected: 0,
@@ -513,7 +556,9 @@ impl Chamber {
                 let follow = self.chat_at_bottom();
                 self.view = model::project_with_team(&events, &self.team);
                 if follow {
-                    self.chat_scroll.scroll_to_bottom();
+                    for scroll in &self.chat_scrolls {
+                        scroll.scroll_to_bottom();
+                    }
                 }
                 cx.notify();
             }
@@ -524,8 +569,9 @@ impl Chamber {
     /// the bottom. `offset.y` grows more negative scrolling down and bottoms out
     /// at `-max_offset.y`, so their sum is ~0 at the bottom.
     fn chat_at_bottom(&self) -> bool {
-        let off = self.chat_scroll.offset().y;
-        let max = self.chat_scroll.max_offset().y;
+        let scroll = &self.chat_scrolls[self.chat_tab.index()];
+        let off = scroll.offset().y;
+        let max = scroll.max_offset().y;
         off + max <= px(48.0)
     }
 
@@ -564,13 +610,47 @@ impl Chamber {
         let events = io::read_events(&self.path).unwrap_or_default();
         self.view = model::project_with_team(&events, &self.team);
         // The human just spoke — always snap to their new message.
-        self.chat_scroll.scroll_to_bottom();
+        for scroll in &self.chat_scrolls {
+            scroll.scroll_to_bottom();
+        }
         cx.notify();
     }
 }
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Track the window's geometry so it can be restored next launch. The write
+        // is debounced, not immediate: a drag or resize re-renders every frame, and
+        // saving inline here would put a `chamber.json` write on the render thread
+        // ~60×/sec. Updating `prefs` in memory is free; the timer coalesces the
+        // burst into a single trailing write once the geometry settles.
+        if let gpui::WindowBounds::Windowed(bounds) = window.window_bounds() {
+            let wb = config::WindowBoundsPrefs {
+                x: bounds.origin.x.into(),
+                y: bounds.origin.y.into(),
+                width: bounds.size.width.into(),
+                height: bounds.size.height.into(),
+            };
+            if self.prefs.window_bounds.as_ref() != Some(&wb) {
+                self.prefs.window_bounds = Some(wb);
+                if !self.bounds_save_pending {
+                    self.bounds_save_pending = true;
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(500))
+                            .await;
+                        let _ = this.update(cx, |this, _cx| {
+                            this.bounds_save_pending = false;
+                            // Saves whatever the geometry settled on, not the value
+                            // that happened to trip the timer.
+                            let _ = config::save(&this.prefs);
+                        });
+                    })
+                    .detach();
+                }
+            }
+        }
+
         // Round the full-height content itself to match the client frame, rather
         // than the (too-short) top/bottom strips — a 24px status bar can't reach
         // the ~20px radius, so its square corners poked past the frame's arc. The
@@ -587,6 +667,7 @@ impl Render for Chamber {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_toggle_palette))
+            .on_action(cx.listener(|this, _: &CycleMode, _, cx| this.cycle_global_mode(cx)))
             .relative()
             .size_full()
             .bg(theme::sidebar())
@@ -704,21 +785,23 @@ impl Chamber {
             .text_color(theme::text_muted())
             .child(swarm_status_tag(&self.view))
             .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(
+                        self.path
+                            .parent()
+                            .and_then(|p| if p.file_name() == Some(std::ffi::OsStr::new(".hadron")) { p.parent() } else { Some(p) })
+                            .unwrap_or(&self.path)
+                            .display()
+                            .to_string()
+                    ),
+            )
+            .child(
                 h_flex()
                     .items_center()
                     .gap_2()
-                    .child(div().child(format!("{} quark(s)", self.view.roster.len())))
-                    .child(
-                        div()
-                            .id("global-mode")
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| this.cycle_global_mode(cx)))
-                            .tooltip(|window, cx| {
-                                Tooltip::new("Permission mode — click to cycle").build(window, cx)
-                            })
-                            // Global default renders as a solid tag.
-                            .child(mode_tag(self.view.global_mode, true)),
-                    ),
+                    .child(div().child(format!("{} quark(s)", self.view.roster.len()))),
             )
     }
 
@@ -789,7 +872,14 @@ impl Chamber {
             .min_h_0()
             .w_full()
             .child(left)
-            .child(group)
+            // The resizable group renders itself `size_full` (width: 100%). As a
+            // direct flex item that resolves against the *whole* row, so it fights
+            // its fixed-width siblings (the roster, and the collapsed terminal
+            // strip) for the same pixels and pushes them past the right edge — the
+            // strip vanishes and the chat's own right inset is clipped away. Boxing
+            // it in a flex-1 (min-w-0) cell makes that 100% resolve against the
+            // slack the siblings *leave*, which is what it always meant.
+            .child(div().flex_1().min_w_0().h_full().child(group))
             .when(inspector_collapsed, |this| {
                 this.child(self.rail_strip(Rail::Inspector, cx))
             })
@@ -954,7 +1044,7 @@ impl Chamber {
                     .id("chat-body-scroll")
                     .size_full()
                     .overflow_y_scroll()
-                    .track_scroll(&self.chat_scroll)
+                    .track_scroll(&self.chat_scrolls[selected.index()])
                     .child(match selected {
                         ChatTab::Chat => self.chat_view().into_any_element(),
                         ChatTab::Log => self.log_view().into_any_element(),
@@ -969,20 +1059,40 @@ impl Chamber {
                     .right_0()
                     .bottom_0()
                     .child(
-                        Scrollbar::vertical(&self.chat_scroll).scrollbar_show(ScrollbarShow::Hover),
+                        Scrollbar::vertical(&self.chat_scrolls[selected.index()]).scrollbar_show(ScrollbarShow::Hover),
                     ),
             );
 
         // The message box is only meaningful in Chat — you talk to the field
         // there. Log and Timeline are read-only views, so they get no input.
         let input = matches!(selected, ChatTab::Chat).then(|| {
-            h_flex()
+            v_flex()
                 .flex_none()
                 .m_4()
-                .px_1()
-                .rounded_lg()
-                .bg(theme::input_bg())
-                .child(Input::new(&self.input))
+                .child(
+                    h_flex()
+                        .px_1()
+                        .rounded_lg()
+                        .bg(theme::input_bg())
+                        .child(Input::new(&self.input))
+                )
+                .child(
+                    h_flex()
+                        .mt_2()
+                        .items_center()
+                        .gap_2()
+                        .child(div().text_xs().text_color(theme::text_muted()).child("Global Mode:"))
+                        .child(
+                            div()
+                                .id("global-mode")
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _, _, cx| this.cycle_global_mode(cx)))
+                                .tooltip(|window, cx| {
+                                    Tooltip::new("Permission mode — Shift+Tab or click to cycle").build(window, cx)
+                                })
+                                .child(mode_tag(self.view.global_mode, true)),
+                        )
+                )
         });
 
         // The floating chat card: darker + rounded, inset from the lighter
@@ -1012,9 +1122,9 @@ impl Chamber {
     fn chat_view(&self) -> impl IntoElement {
         let mut col = v_flex().gap_4().p_4();
         let mut any = false;
-        for m in &self.view.messages {
+        for (ix, m) in self.view.messages.iter().enumerate() {
             if m.kind_label == "message" {
-                col = col.child(chat_message_row(&self.resolve_identity(&m.from), m));
+                col = col.child(chat_message_row(&self.resolve_identity(&m.from), m, ix));
                 any = true;
             }
         }
@@ -1030,8 +1140,8 @@ impl Chamber {
         if self.view.messages.is_empty() {
             col = col.child(empty_hint("The field is empty."));
         }
-        for m in &self.view.messages {
-            col = col.child(message_row(m));
+        for (ix, m) in self.view.messages.iter().enumerate() {
+            col = col.child(message_row(m, ix));
         }
         col
     }
@@ -1091,6 +1201,8 @@ impl Chamber {
             .w_full()
             .justify_between()
             .items_center()
+            .px_3()
+            .py_2()
             .text_sm()
             .text_color(theme::text_muted())
             .child(
@@ -1106,24 +1218,29 @@ impl Chamber {
                 cx.listener(|this, _, window, cx| this.toggle_rail(Rail::Inspector, window, cx)),
             );
 
-        v_flex()
-            .w_full()
-            .h_full()
-            .p_2()
-            .gap_2()
-            .bg(theme::sidebar())
+        let card = v_flex()
+            .flex_1()
+            .min_h_0()
+            .rounded(INNER_RADIUS)
+            .overflow_hidden()
+            .bg(theme::bg())
             .child(header)
             .child(
                 v_flex()
                     .flex_1()
-                    .mt_1()
                     .p_3()
-                    .rounded_md()
-                    .bg(theme::bg())
                     .text_sm()
                     .text_color(theme::text_muted())
                     .child("$ terminal coming soon"),
-            )
+            );
+
+        v_flex()
+            .w_full()
+            .h_full()
+            .min_h_0()
+            .p_2()
+            .bg(theme::sidebar())
+            .child(card)
     }
 
     /// Answer an outstanding permission request by appending a human
@@ -1140,7 +1257,9 @@ impl Chamber {
         }
         let events = io::read_events(&self.path).unwrap_or_default();
         self.view = model::project_with_team(&events, &self.team);
-        self.chat_scroll.scroll_to_bottom();
+        for scroll in &self.chat_scrolls {
+            scroll.scroll_to_bottom();
+        }
         cx.notify();
     }
 
@@ -1247,11 +1366,17 @@ impl Chamber {
         } else {
             self.prefs.quarks.get(actor)
         };
-        let default_name = if actor == "human" { "You" } else { actor };
+        let default_name = if actor == "human" { "You".to_string() } else { 
+            let mut c = actor.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        };
         let name = stored
             .and_then(|i| i.display_name.clone())
             .filter(|n| !n.trim().is_empty())
-            .unwrap_or_else(|| default_name.to_string());
+            .unwrap_or_else(|| default_name);
         let color: Hsla = stored
             .and_then(|i| i.color.as_deref())
             .and_then(parse_hex)
@@ -1703,12 +1828,20 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
 
     // Legibility line: "provider · model" when the seat is in team.json, else
     // the presence label alone.
+    let cap = |s: &str| {
+        let mut c = s.chars();
+        match c.next() {
+            None => String::new(),
+            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        }
+    };
+
     let sub: SharedString = if r.provider.is_empty() && r.model.is_empty() {
         label.into()
     } else if r.model.is_empty() {
-        r.provider.clone().into()
+        cap(&r.provider).into()
     } else {
-        format!("{} · {}", r.provider, r.model).into()
+        format!("{} · {}", cap(&r.provider), cap(&r.model)).into()
     };
 
     h_flex()
@@ -1783,22 +1916,17 @@ fn next_mode(mode: Mode) -> Mode {
 /// A permission-mode badge. Variant carries the risk temperature (Ask muted →
 /// Bypass danger). A per-quark override renders solid; an inherited/global mode
 /// renders outlined.
-fn mode_tag(mode: Mode, is_override: bool) -> impl IntoElement {
+fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
+    if !is_override {
+        return Tag::secondary().small().outline().child("DEFAULT").into_any_element();
+    }
     let (tag, label): (Tag, &'static str) = match mode {
         Mode::Ask => (Tag::secondary(), "ASK"),
         Mode::Write => (Tag::info(), "WRITE"),
         Mode::Auto => (Tag::warning(), "AUTO"),
         Mode::Bypass => (Tag::danger(), "BYPASS"),
     };
-    // Always an outline tag (matches the status badge). A per-quark override
-    // keeps a subtle leading dot so it stays distinguishable from an inherited
-    // (global) mode now that both share the outline style.
-    let text = if is_override {
-        format!("•{label}")
-    } else {
-        label.to_string()
-    };
-    tag.small().outline().child(text)
+    tag.small().outline().child(label.to_string()).into_any_element()
 }
 
 /// An overall swarm-status badge for the status bar. Priority: a blocked/error
@@ -1840,9 +1968,42 @@ fn kind_icon(kind_label: &str) -> IconName {
     }
 }
 
+fn markdown_style() -> gpui_component::text::TextViewStyle {
+    let mut style = gpui_component::text::TextViewStyle::default();
+    style.highlight_theme = gpui_component::highlighter::HighlightTheme::default_dark();
+    style.table = {
+        let mut s = gpui::StyleRefinement::default();
+        s.overflow.x = Some(gpui::Overflow::Scroll);
+        s
+    };
+    style
+}
+
+/// Render a message body as Markdown under an element id unique to `(view, ix)`.
+///
+/// The id is load-bearing, not decoration. `gpui_component::text::markdown()`
+/// derives its `ElementId` from `Location::caller()`, so every row rendered from
+/// one call site would share a single id — and the `TextView`'s parsed state is
+/// keyed on that id. All messages would then share one state, whose `set_text`
+/// would see different text on every message and re-parse (and re-highlight) the
+/// Markdown for every row, every frame. Distinct ids give each row its own state,
+/// so `set_text` early-returns and the parse happens once per body.
+///
+/// Keying on the positional `ix` is sound only because the field is append-only and
+/// rendered oldest-first, so a given message keeps its index for the window's life.
+/// If rows ever get reordered or filtered, key on a stable message id instead — the
+/// cache would silently stop helping, and no test would catch the regression.
+fn markdown_body(view: &'static str, ix: usize, body: &str) -> impl IntoElement {
+    div().text_size(px(13.65)).child(
+        gpui_component::text::TextView::markdown((view, ix), body.to_string())
+            .selectable(true)
+            .style(markdown_style()),
+    )
+}
+
 /// A chat-styled message row: the author's resolved avatar and name, then the
 /// body — used by the Chat tab so the field reads like a conversation.
-fn chat_message_row(id: &ResolvedIdentity, m: &MessageRow) -> impl IntoElement {
+fn chat_message_row(id: &ResolvedIdentity, m: &MessageRow, ix: usize) -> impl IntoElement {
     h_flex()
         .items_start()
         .gap_2p5()
@@ -1865,11 +2026,11 @@ fn chat_message_row(id: &ResolvedIdentity, m: &MessageRow) -> impl IntoElement {
                             )
                         }),
                 )
-                .child(gpui_component::text::markdown(m.body.clone())),
+                .child(markdown_body("chat-md", ix, &m.body)),
         )
 }
 
-fn message_row(m: &MessageRow) -> impl IntoElement {
+fn message_row(m: &MessageRow, ix: usize) -> impl IntoElement {
     let header = match &m.to {
         Some(to) => format!("{} → {}  ·  {}", m.from, to, m.kind_label),
         None => format!("{}  ·  {}", m.from, m.kind_label),
@@ -1882,7 +2043,7 @@ fn message_row(m: &MessageRow) -> impl IntoElement {
                 .text_color(theme::actor_hue(&m.from))
                 .child(header),
         )
-        .child(gpui_component::text::markdown(m.body.clone()))
+        .child(markdown_body("log-md", ix, &m.body))
 }
 
 /// Launch the chamber window against a field file path.
@@ -1942,13 +2103,41 @@ pub fn run(field_path: Option<String>) {
             // window frame (crate::window_frame) shows the shadow through the
             // corners instead of a square fill.
             t.tokens.background = gpui::hsla(0.0, 0.0, 0.0, 0.0).into();
+            t.font_family = "Cascadia Code, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
         }
         cx.bind_keys([
             KeyBinding::new("ctrl-shift-p", TogglePalette, Some(KEY_CONTEXT)),
             KeyBinding::new("cmd-shift-p", TogglePalette, Some(KEY_CONTEXT)),
+            KeyBinding::new("shift-tab", CycleMode, Some(KEY_CONTEXT)),
         ]);
 
         // Build window options here (needs `&App`, not the async cx below).
+        //
+        // Size and origin are restored *independently*, which matters: the first
+        // cut treated them as one unit, so a saved origin the compositor wouldn't
+        // vouch for threw the saved size away too and the window reopened at the
+        // default. Under Wayland (WSLg) that fired every launch — a client there
+        // can't position itself, and `displays()` may enumerate nothing — so the
+        // origin check must not be able to veto the size.
+        let default_size = gpui::size(px(1440.0), px(900.0));
+        let mut bounds = WindowBounds::centered(default_size, cx);
+        if let Some(wb) = &prefs.window_bounds {
+            let size = gpui::size(px(wb.width), px(wb.height));
+            let origin = gpui::point(px(wb.x), px(wb.y));
+
+            // Keep the saved size regardless — centered is the honest fallback for
+            // a position we can't place.
+            bounds = WindowBounds::centered(size, cx);
+
+            // Only place the window at its saved origin if a display actually
+            // covers it, so an unplugged monitor can't strand it offscreen.
+            let displays = cx.displays();
+            let on_screen = displays.iter().any(|d| d.bounds().contains(&origin));
+            if on_screen {
+                bounds = WindowBounds::Windowed(gpui::Bounds { origin, size });
+            }
+        }
+
         let window_options = WindowOptions {
             titlebar: Some(TitleBar::title_bar_options()),
             window_decorations: Some(WindowDecorations::Client),
@@ -1956,10 +2145,7 @@ pub fn run(field_path: Option<String>) {
             // over the desktop (Zed's approach). On WSLg this is the open
             // question — if the compositor ignores it, the inset shows black.
             window_background: WindowBackgroundAppearance::Transparent,
-            window_bounds: Some(WindowBounds::centered(
-                gpui::size(px(1440.0), px(900.0)),
-                cx,
-            )),
+            window_bounds: Some(bounds),
             ..Default::default()
         };
 

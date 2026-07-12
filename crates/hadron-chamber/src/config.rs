@@ -24,6 +24,14 @@ pub struct Identity {
     pub image_path: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WindowBoundsPrefs {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
 /// The persisted chamber state: rail layout, plus per-actor display identities.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChamberPrefs {
@@ -35,6 +43,8 @@ pub struct ChamberPrefs {
     pub roster_width: f32,
     #[serde(default = "default_inspector_width")]
     pub inspector_width: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_bounds: Option<WindowBoundsPrefs>,
     /// The human's own chat identity.
     #[serde(default)]
     pub human: Identity,
@@ -60,6 +70,7 @@ impl Default for ChamberPrefs {
             inspector_collapsed: default_false(),
             roster_width: default_roster_width(),
             inspector_width: default_inspector_width(),
+            window_bounds: None,
             human: Identity::default(),
             quarks: BTreeMap::new(),
         }
@@ -123,6 +134,7 @@ mod tests {
             inspector_collapsed: false,
             roster_width: 180.5,
             inspector_width: 320.0,
+            window_bounds: None,
             human: Identity {
                 display_name: Some("Jake".into()),
                 color: Some("#ec4899".into()),
@@ -154,6 +166,33 @@ mod tests {
         assert_eq!(prefs.inspector_width, 333.0);
         assert_eq!(prefs.human, Identity::default());
         assert!(prefs.quarks.is_empty());
+    }
+
+    #[test]
+    fn window_bounds_round_trip_on_disk() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("chamber.json");
+        let prefs = ChamberPrefs {
+            window_bounds: Some(WindowBoundsPrefs {
+                x: 120.0,
+                y: 64.0,
+                width: 1600.0,
+                height: 1000.0,
+            }),
+            ..Default::default()
+        };
+        save_to(&path, &prefs).unwrap();
+        assert_eq!(load_from(&path), prefs);
+    }
+
+    #[test]
+    fn config_without_window_bounds_loads_as_unset() {
+        // A config written by a pre-persistence binary must still parse — it just
+        // has no remembered geometry, so the window centers on its default size.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("chamber.json");
+        std::fs::write(&path, r#"{"roster_collapsed":false,"roster_width":240.0}"#).unwrap();
+        assert_eq!(load_from(&path).window_bounds, None);
     }
 
     #[test]

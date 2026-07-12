@@ -320,7 +320,37 @@ impl Engine {
                 .quarks
                 .get_mut(&target)
                 .ok_or_else(|| anyhow::anyhow!("no such quark on roster: {}", target.as_str()))?;
-            let outcome = quark.excite(projection).await?;
+
+            // Announce the excitation *before* the turn runs, so the chamber can
+            // show the quark working while it works. The adapter only returns at
+            // the end of a turn, so without this the field is silent for the whole
+            // duration and the quark reads as ignoring the human. Appended after
+            // the projection is built, so the quark never sees its own status.
+            append_event(
+                &self.field_path,
+                &Event::new(
+                    Actor::Quark(target.clone()),
+                    None,
+                    Kind::Status { state: QuarkState::Excited },
+                ),
+            )?;
+
+            // A failed turn must still ground the quark; propagating straight out
+            // of `?` would strand it as forever-Excited in the field.
+            let outcome = match quark.excite(projection).await {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    append_event(
+                        &self.field_path,
+                        &Event::new(
+                            Actor::Quark(target.clone()),
+                            None,
+                            Kind::Status { state: QuarkState::Error },
+                        ),
+                    )?;
+                    return Err(err);
+                }
+            };
 
             if outcome.used_tokens > 0 {
                 if let Some(ledger) = &self.ledger {
@@ -528,6 +558,93 @@ mod tests {
             seen.lock().unwrap().last().copied(),
             Some(Mode::Bypass),
             "per-quark ModeSet reached the projection"
+        );
+    }
+
+    /// The presence pair: a quark excites *before* its turn and grounds after, so
+    /// the chamber can render it working for the whole (slow) duration of a turn.
+    #[tokio::test]
+    async fn excitation_is_announced_before_the_turn_and_grounded_after() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(MockQuark::scripted(
+                QuarkId::new("agy"),
+                Flavor::Worker,
+                vec![Some("done".into())],
+            ))],
+            8,
+        );
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        let states: Vec<QuarkState> = events
+            .iter()
+            .filter_map(|e| match &e.kind {
+                Kind::Status { state } => Some(state.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            states,
+            vec![QuarkState::Excited, QuarkState::Ground],
+            "excited then ground, in that order"
+        );
+
+        // The excitation must land before the reply, or the chamber would only
+        // learn the quark was working once it had already stopped working.
+        let excited_ix = events
+            .iter()
+            .position(|e| matches!(e.kind, Kind::Status { state: QuarkState::Excited }))
+            .expect("excited emitted");
+        let reply_ix = events
+            .iter()
+            .position(|e| matches!(&e.kind, Kind::Message { body } if body == "done"))
+            .expect("reply emitted");
+        assert!(excited_ix < reply_ix, "excited precedes the reply");
+    }
+
+    /// A turn that fails must still leave a terminal status behind — otherwise the
+    /// quark reads as forever-working in the roster.
+    #[tokio::test]
+    async fn a_failed_turn_does_not_strand_the_quark_as_excited() {
+        struct FailingQuark;
+        #[async_trait::async_trait]
+        impl Quark for FailingQuark {
+            fn id(&self) -> QuarkId {
+                QuarkId::new("agy")
+            }
+            fn flavor(&self) -> Flavor {
+                Flavor::Worker
+            }
+            fn energy(&self) -> EnergyState {
+                EnergyState::Available
+            }
+            async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+                Err(anyhow::anyhow!("cli blew up"))
+            }
+        }
+
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        let mut engine = Engine::new(field.clone(), vec![Box::new(FailingQuark)], 8);
+        assert!(engine.run_until_quiesce().await.is_err(), "the failure propagates");
+
+        let events = read_events(&field).unwrap();
+        let last_state = events
+            .iter()
+            .filter_map(|e| match &e.kind {
+                Kind::Status { state } => Some(state.clone()),
+                _ => None,
+            })
+            .next_back();
+        assert_eq!(
+            last_state,
+            Some(QuarkState::Error),
+            "the quark ends Error, not stranded Excited"
         );
     }
 
