@@ -8,6 +8,7 @@ mod model;
 // in the default build, but don't warn when the headless binary ignores it.
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 mod config;
+mod vcs;
 
 #[cfg(feature = "gui")]
 mod app;
