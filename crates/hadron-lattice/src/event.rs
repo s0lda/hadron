@@ -104,7 +104,8 @@ pub enum Kind {
     Unknown { kind: String, raw: Value },
 }
 
-/// One line in the field. The envelope (`v/id/ts/from/to`) plus a flattened kind.
+/// One line in the field. The envelope (`v/id/ts/from/to`) plus a flattened kind,
+/// plus optional telemetry.
 /// `PartialEq` but not `Eq` (contains `Kind`, which is not `Eq`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
@@ -114,6 +115,20 @@ pub struct Event {
     pub from: Actor,
     pub to: Option<QuarkId>,
     pub kind: Kind,
+    /// What the turn cost and what budget is left — context usage and quota buckets.
+    /// In practice only ever set on an `energy_report`; `None` everywhere else.
+    ///
+    /// WHY THE ENVELOPE AND NOT A NEW `Kind`: `Kind` is matched **exhaustively, with
+    /// no wildcard arm, by a crate this one does not own** (the chamber's
+    /// `model.rs`). Adding a variant to `Kind` — or a field to `Kind::EnergyReport` —
+    /// is therefore a *breaking* change that fails the workspace build until every
+    /// downstream reader is edited in lockstep. An additive `Option` field on the
+    /// envelope is source-compatible for every reader (nothing destructures `Event`;
+    /// they all go through [`Event::new`] and field access), so the schema can grow
+    /// without the lattice reaching into a UI it does not own. The tradeoff is that
+    /// telemetry is envelope-shaped rather than payload-shaped; if `Kind` ever gains
+    /// a wildcard arm downstream, this is the first thing that should move into it.
+    pub usage: Option<crate::Usage>,
 }
 
 impl Event {
@@ -126,7 +141,18 @@ impl Event {
             from,
             to,
             kind,
+            usage: None,
         }
+    }
+
+    /// Attach telemetry to an event. Empty usage attaches nothing, so a provider with
+    /// no numbers to report (a mock, a silent turn) never writes a hollow `usage: {}`
+    /// into the field.
+    pub fn with_usage(mut self, usage: crate::Usage) -> Self {
+        if !usage.is_empty() {
+            self.usage = Some(usage);
+        }
+        self
     }
 }
 
@@ -139,6 +165,9 @@ impl Serialize for Event {
         m.serialize_entry("ts", &self.ts)?;
         m.serialize_entry("from", &self.from)?;
         m.serialize_entry("to", &self.to)?;
+        if let Some(usage) = &self.usage {
+            m.serialize_entry("usage", usage)?;
+        }
         match &self.kind {
             Kind::Message { body } => {
                 m.serialize_entry("kind", "message")?;
@@ -224,6 +253,12 @@ impl<'de> Deserialize<'de> for Event {
             None | Some(Value::Null) => None,
             Some(val) => Some(serde_json::from_value(val).map_err(D::Error::custom)?),
         };
+        // Additive: every event written before telemetry existed simply has no `usage`.
+        // Taken BEFORE the kind tag so it never leaks into `Kind::Unknown`'s `raw`.
+        let usage: Option<crate::Usage> = match map.remove("usage") {
+            None | Some(Value::Null) => None,
+            Some(val) => Some(serde_json::from_value(val).map_err(D::Error::custom)?),
+        };
         let kind_tag: String = take_field(&mut map, "kind")?;
         let kind = match kind_tag.as_str() {
             "message" => Kind::Message {
@@ -273,7 +308,7 @@ impl<'de> Deserialize<'de> for Event {
                 raw: Value::Object(map.clone()),
             },
         };
-        Ok(Event { v, id, ts, from, to, kind })
+        Ok(Event { v, id, ts, from, to, kind, usage })
     }
 }
 
@@ -425,6 +460,88 @@ mod event_tests {
         let ev: Event = serde_json::from_str(line).unwrap();
         assert_eq!(ev.to, None);
         assert_eq!(ev.kind, Kind::Status { state: QuarkState::Ground });
+    }
+
+    /// An energy report carries the turn's context + quota, and survives a round trip.
+    #[test]
+    fn energy_report_carries_usage_and_round_trips() {
+        use crate::{ContextUsage, QuotaBucket, Usage};
+
+        let usage = Usage {
+            context: Some(ContextUsage {
+                used_tokens: 635,
+                context_window_size: 1_048_576,
+                used_percentage: 0.0605,
+            }),
+            quota: vec![QuotaBucket {
+                key: "gemini-weekly".into(),
+                remaining_fraction: 0.0517783,
+                reset_time: None,
+            }],
+        };
+        let ev = Event::new(
+            Actor::Quark(QuarkId::new("agy")),
+            None,
+            Kind::EnergyReport { used_tokens: 927 },
+        )
+        .with_usage(usage.clone());
+
+        let line = serde_json::to_string(&ev).unwrap();
+        let back: Event = serde_json::from_str(&line).unwrap();
+        assert_eq!(back, ev);
+        assert_eq!(back.usage.unwrap(), usage);
+        assert!(line.contains(r#""kind":"energy_report""#));
+        assert!(line.contains(r#""used_tokens":927"#));
+        assert!(line.contains(r#""gemini-weekly""#));
+    }
+
+    /// **PRIVACY, at the boundary that matters.** The field (`.hadron/field.jsonl`) is
+    /// a durable, human-readable log the chamber renders. The agy statusline payload
+    /// that feeds an energy report also carries the human's email address and plan
+    /// tier. Neither may EVER reach a serialized event — this is the test that fails
+    /// loudly if someone ever widens the parser to a derived mirror struct.
+    #[test]
+    fn email_never_reaches_the_serialized_event() {
+        // The real payload shape, with a real-looking email in it.
+        let payload = r#"{"cwd":"/home/Jake/dev/hadron","conversation_id":"b66f1126","model":{"id":"Gemini 3.1 Pro (High)"},"context_window":{"total_input_tokens":635,"total_output_tokens":292,"context_window_size":1048576,"used_percentage":0.06},"quota":{"gemini-weekly":{"remaining_fraction":0.0517783,"reset_time":"2026-07-13T13:12:03Z"}},"plan_tier":"Google AI Ultra","email":"jake.private@gmail.com","terminal_width":80}"#;
+
+        let t = crate::parse_agy_statusline(payload).unwrap();
+        let ev = Event::new(
+            Actor::Quark(QuarkId::new("agy")),
+            None,
+            Kind::EnergyReport { used_tokens: t.used_tokens },
+        )
+        .with_usage(t.usage);
+
+        let line = serde_json::to_string(&ev).unwrap();
+        assert!(!line.contains("jake.private@gmail.com"), "email in the field: {line}");
+        assert!(!line.contains("gmail"), "no email fragment in the field: {line}");
+        assert!(!line.contains('@'), "nothing email-shaped in the field: {line}");
+        assert!(!line.contains("Google AI Ultra"), "plan tier in the field: {line}");
+        assert!(!line.contains("Ultra"), "no plan-tier fragment: {line}");
+        // ...while the numbers we DO want are there.
+        assert!(line.contains(r#""used_tokens":927"#));
+        assert!(line.contains("0.0517783"));
+    }
+
+    /// A turn with nothing to report writes no hollow `usage` key at all, and every
+    /// event written before telemetry existed still loads.
+    #[test]
+    fn usage_is_absent_by_default_and_legacy_events_still_load() {
+        let plain = Event::new(Actor::Human, None, Kind::Message { body: "hi".into() });
+        let line = serde_json::to_string(&plain).unwrap();
+        assert!(!line.contains("usage"), "no phantom usage key: {line}");
+
+        // Empty usage attaches nothing rather than an empty object.
+        let hollow = Event::new(Actor::Gluon, None, Kind::EnergyReport { used_tokens: 1 })
+            .with_usage(crate::Usage::default());
+        assert_eq!(hollow.usage, None);
+
+        // A pre-telemetry event on disk.
+        let legacy = r#"{"v":1,"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","ts":"2026-07-10T14:00:00Z","from":"agy","to":null,"kind":"energy_report","used_tokens":42}"#;
+        let ev: Event = serde_json::from_str(legacy).unwrap();
+        assert_eq!(ev.usage, None);
+        assert_eq!(ev.kind, Kind::EnergyReport { used_tokens: 42 });
     }
 
     #[test]
