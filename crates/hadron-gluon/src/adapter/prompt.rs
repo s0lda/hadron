@@ -71,6 +71,20 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     p.push_str(mode_guidance(projection.mode));
     p.push_str("\n\n");
 
+    // 3c. Where you are. The CLI already *runs* in this directory (the engine sets
+    // the process cwd to the quark's own worktree), but a model that isn't told its
+    // constraints narrates around them — same failure class as `mode_guidance`. Say
+    // it plainly, so nobody goes looking for the parent checkout.
+    if !projection.cwd.as_os_str().is_empty() {
+        p.push_str("# Where you are\n");
+        p.push_str(&format!(
+            "You are working in `{}` — your own checkout, isolated from every other quark and \
+             from the human's tree. Do all your work here. Do NOT `cd` out of it, and do NOT \
+             touch the parent checkout: your changes reach `main` only through the merge gate.\n\n",
+            projection.cwd.display()
+        ));
+    }
+
     // 4. Recent field transcript.
     if !projection.field_window.is_empty() {
         p.push_str("# Recent field (most recent last)\n");
@@ -186,8 +200,18 @@ mod tests {
                 Kind::Message { body: "start the auth work".into() },
             )],
             git_diff: String::new(),
+            cwd: std::path::PathBuf::from("/repo/.hadron/trees/agy"),
             mode: hadron_lattice::Mode::default(),
         }
+    }
+
+    /// The quark must be TOLD where it is working, not just silently placed there.
+    #[test]
+    fn prompt_names_the_working_directory() {
+        let p = build(&projection("Build login"), &QuarkId::new("agy"));
+        assert!(p.contains("# Where you are"));
+        assert!(p.contains("/repo/.hadron/trees/agy"));
+        assert!(p.contains("do NOT"), "and told not to touch the parent checkout");
     }
 
     #[test]
