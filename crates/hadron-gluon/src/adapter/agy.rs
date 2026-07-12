@@ -28,7 +28,8 @@ fn posture_args(mode: Mode) -> Vec<String> {
 pub struct AgyQuark<R: CliRunner> {
     id: QuarkId,
     flavor: Flavor,
-    /// The model to run, e.g. "gemini-3-pro". Empty → the CLI's default.
+    /// The model to run, a display name as `agy models` prints it, e.g.
+    /// "Gemini 3.1 Pro (High)". Empty → the CLI's default.
     model: String,
     runner: R,
 }
@@ -38,17 +39,20 @@ impl<R: CliRunner> AgyQuark<R> {
         AgyQuark { id, flavor, model: model.into(), runner }
     }
 
-    /// `agy --print` (one-shot headless), `--model <model>` when set, the
-    /// permission posture from the turn's `mode`, prompt on stdin, Markdown on
-    /// stdout.
+    /// `agy --print <prompt>` (one-shot headless — the prompt is the **argument**
+    /// to `--print`; agy ignores stdin in print mode), `--model <model>` when set,
+    /// and the permission posture from the turn's `mode`. Markdown on stdout.
+    ///
+    /// Verified live against `agy 1.1.1`: prompt-on-stdin is silently ignored
+    /// (the model answers a default prompt); the prompt must ride as an arg.
     fn invocation(&self, prompt: String, mode: Mode) -> CliInvocation {
-        let mut args = vec!["--print".to_string()];
+        let mut args = vec!["--print".to_string(), prompt];
         if !self.model.is_empty() {
             args.push("--model".to_string());
             args.push(self.model.clone());
         }
         args.extend(posture_args(mode));
-        CliInvocation { program: "agy".to_string(), args, stdin: prompt }
+        CliInvocation { program: "agy".to_string(), args, stdin: String::new() }
     }
 }
 
@@ -116,8 +120,12 @@ mod tests {
         assert!(recorded[0].args.iter().any(|a| a == "--print"));
         assert!(recorded[0].args.iter().any(|a| a == "--model"));
         assert!(recorded[0].args.iter().any(|a| a == "Gemini 3.1 Pro (High)"));
-        // The prompt (with the handoff reminder) reached stdin.
-        assert!(recorded[0].stdin.contains("# How to respond"));
+        // The prompt (with the handoff reminder) rides as the --print argument,
+        // not stdin (agy ignores stdin in print mode). It is args[1], right after
+        // "--print", and stdin is empty.
+        assert_eq!(recorded[0].args[0], "--print");
+        assert!(recorded[0].args[1].contains("# How to respond"));
+        assert!(recorded[0].stdin.is_empty());
     }
 
     #[tokio::test]
