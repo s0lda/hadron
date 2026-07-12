@@ -263,7 +263,7 @@ impl Engine {
             }
 
             if let Some(body) = outcome.message {
-                let to = parse_addressee(&body, &self.roster);
+                let to = parse_addressee(&body, &self.roster, Some(&target));
                 append_event(
                     &self.field_path,
                     &Event::new(Actor::Quark(target.clone()), to, Kind::Message { body }),
