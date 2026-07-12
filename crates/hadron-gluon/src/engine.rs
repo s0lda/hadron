@@ -76,8 +76,6 @@ pub struct Engine {
     nucleus_digest: String,
     ledger: Option<crate::ledger::Ledger>,
     energy_limit: u32,
-    /// God-mode bypass policy. Default `locked_down()` — every risky op asks the human.
-    policy: hadron_gatekeeper::Policy,
 }
 
 impl Engine {
@@ -108,15 +106,7 @@ impl Engine {
             nucleus_digest: String::new(),
             ledger: None,
             energy_limit: 0,
-            policy: hadron_gatekeeper::Policy::locked_down(),
         }
-    }
-
-    /// Opt in to god-mode: pre-authorize classes of risky op. Default is
-    /// `Policy::locked_down()` (every risky op asks the human).
-    pub fn with_policy(mut self, policy: hadron_gatekeeper::Policy) -> Self {
-        self.policy = policy;
-        self
     }
 
     /// The field file this engine reads and appends to.
@@ -274,12 +264,16 @@ impl Engine {
                 )?;
             }
 
-            // A self-declared permission ask: record it, then let the god-mode
-            // policy decide. A grant is addressed to the quark so `next_pending`
-            // re-selects it (the resume path); the task survives via the
-            // task-bearing trigger-finder above.
+            // A self-declared permission ask: record it, then let the effective
+            // mode decide. The mode + allow-list are folded from the field's
+            // prior ModeSet / remembered-grant events (the `events` binding above
+            // already holds them — the just-appended req doesn't affect either).
+            // A grant is addressed to the quark so `next_pending` re-selects it
+            // (the resume path); the task survives via the task-bearing
+            // trigger-finder above.
             if let Some(ask) = outcome.permission {
                 let risk = ask.risk;
+                let op = ask.description.clone();
                 append_event(
                     &self.field_path,
                     &Event::new(
@@ -288,9 +282,12 @@ impl Engine {
                         Kind::PermissionReq { risk, description: ask.description },
                     ),
                 )?;
-                match hadron_gatekeeper::decide(risk, self.policy) {
+                let mode = hadron_gatekeeper::resolve_mode(&events, &target);
+                let rules = hadron_gatekeeper::allow_rules(&events);
+                match hadron_gatekeeper::decide(mode, risk, &op, &target, &rules) {
                     hadron_gatekeeper::Decision::AutoApprove => {
-                        // God-mode: the gluon grants on the human's behalf.
+                        // Pre-authorized by the mode: the gluon grants on the
+                        // orchestrator's / human's standing authority.
                         append_event(
                             &self.field_path,
                             &Event::new(
@@ -380,14 +377,23 @@ mod tests {
     }
 
     fn perm_quark(id: &str, tasks: Arc<Mutex<Vec<String>>>) -> PermissionQuark {
+        perm_quark_risk(id, tasks, hadron_gatekeeper::Risk::BashExec, "cargo publish", "published")
+    }
+
+    /// A permission quark with a chosen risk/op, so tests can exercise the edit
+    /// vs bash branches of the mode ladder.
+    fn perm_quark_risk(
+        id: &str,
+        tasks: Arc<Mutex<Vec<String>>>,
+        risk: hadron_gatekeeper::Risk,
+        desc: &str,
+        reply: &str,
+    ) -> PermissionQuark {
         PermissionQuark {
             id: QuarkId::new(id),
             flavor: Flavor::Orchestrator,
-            ask: PermissionAsk {
-                risk: hadron_gatekeeper::Risk::BashExec,
-                description: "cargo publish".into(),
-            },
-            reply: "published".into(),
+            ask: PermissionAsk { risk, description: desc.into() },
+            reply: reply.into(),
             calls: 0,
             tasks,
         }
@@ -397,8 +403,19 @@ mod tests {
         events.iter().any(|e| pred(&e.kind))
     }
 
+    /// Seed a mode-set event into the field before serving. `to = None` sets the
+    /// global default; `Some(quark)` sets a per-quark override.
+    fn seed_mode(field: &std::path::Path, to: Option<&str>, mode: hadron_gatekeeper::Mode) {
+        append_event(
+            field,
+            &Event::new(Actor::Human, to.map(QuarkId::new), Kind::ModeSet { mode }),
+        )
+        .unwrap();
+    }
+
     #[tokio::test]
-    async fn locked_down_policy_pauses_for_human() {
+    async fn ask_mode_default_pauses_for_human() {
+        // No ModeSet in the field → global default is Ask → a bash op pauses.
         let dir = tempdir().unwrap();
         let field = dir.path().join("field.jsonl");
         seed_human_message(&field, "agy", "hello");
@@ -408,7 +425,7 @@ mod tests {
 
         let events = read_events(&field).unwrap();
         assert!(has_kind(&events, |k| matches!(k, Kind::PermissionReq { .. })), "req recorded");
-        assert!(!has_kind(&events, |k| matches!(k, Kind::PermissionGrant { .. })), "no auto-grant when locked down");
+        assert!(!has_kind(&events, |k| matches!(k, Kind::PermissionGrant { .. })), "no auto-grant under Ask");
         assert!(has_kind(&events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })), "quark waits");
         assert!(!has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "published")), "op not performed yet");
         assert!(hadron_gatekeeper::pending_permission(&events).is_some(), "chamber can surface the request");
@@ -439,26 +456,99 @@ mod tests {
         assert_eq!(recorded[1], "hello", "resumed quark kept its task");
     }
 
-    #[tokio::test]
-    async fn god_mode_auto_approves_and_completes() {
+    /// Helper: run a quark of the given risk/op under a seeded global mode and
+    /// return the resulting field events.
+    async fn serve_under_mode(
+        mode: hadron_gatekeeper::Mode,
+        risk: hadron_gatekeeper::Risk,
+        desc: &str,
+    ) -> (Vec<Event>, Arc<Mutex<Vec<String>>>) {
         let dir = tempdir().unwrap();
         let field = dir.path().join("field.jsonl");
         seed_human_message(&field, "agy", "hello");
+        seed_mode(&field, None, mode);
         let tasks = Arc::new(Mutex::new(vec![]));
-        let policy = hadron_gatekeeper::Policy { auto_approve_edits: false, bypass_bash: true };
-        let mut engine = Engine::new(field.clone(), vec![Box::new(perm_quark("agy", tasks.clone()))], 8)
-            .with_policy(policy);
-        engine.run_until_quiesce().await.unwrap();
-
-        let events = read_events(&field).unwrap();
-        assert!(has_kind(&events, |k| matches!(k, Kind::PermissionReq { .. })), "req still recorded (audit trail)");
-        assert!(
-            events.iter().any(|e| e.from == Actor::Gluon && matches!(e.kind, Kind::PermissionGrant { approved: true, .. })),
-            "gluon auto-granted"
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(perm_quark_risk("agy", tasks.clone(), risk, desc, "done"))],
+            8,
         );
-        assert!(has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "published")), "op completed without a human");
-        let recorded = tasks.lock().unwrap().clone();
-        assert_eq!(recorded[1], "hello", "auto-resumed quark kept its task");
+        engine.run_until_quiesce().await.unwrap();
+        // Keep the tempdir alive by reading before it drops.
+        (read_events(&field).unwrap(), tasks)
+    }
+
+    fn gluon_auto_granted(events: &[Event]) -> bool {
+        events
+            .iter()
+            .any(|e| e.from == Actor::Gluon && matches!(e.kind, Kind::PermissionGrant { approved: true, .. }))
+    }
+
+    #[tokio::test]
+    async fn write_mode_auto_approves_edit_but_pauses_on_bash() {
+        use hadron_gatekeeper::{Mode, Risk};
+        // Edit under Write → auto-approved and completed.
+        let (events, tasks) = serve_under_mode(Mode::Write, Risk::WorkspaceEdit, "patch src/main.rs").await;
+        assert!(gluon_auto_granted(&events), "edit auto-granted under Write");
+        assert!(has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "done")), "edit completed");
+        assert_eq!(tasks.lock().unwrap()[1], "hello", "task survived the auto-resume");
+
+        // Bash under Write → pauses for the human.
+        let (events, _) = serve_under_mode(Mode::Write, Risk::BashExec, "cargo publish").await;
+        assert!(!gluon_auto_granted(&events), "bash NOT auto-granted under Write");
+        assert!(has_kind(&events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })), "bash waits for human");
+    }
+
+    #[tokio::test]
+    async fn bypass_mode_auto_approves_bash() {
+        use hadron_gatekeeper::{Mode, Risk};
+        let (events, _) = serve_under_mode(Mode::Bypass, Risk::BashExec, "cargo publish").await;
+        assert!(has_kind(&events, |k| matches!(k, Kind::PermissionReq { .. })), "req still recorded (audit)");
+        assert!(gluon_auto_granted(&events), "bash auto-granted under Bypass");
+        assert!(has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "done")), "op completed with no human");
+    }
+
+    #[tokio::test]
+    async fn auto_mode_pauses_on_unlisted_then_honors_a_remembered_command() {
+        use hadron_gatekeeper::{Mode, Risk};
+        // Unlisted command under Auto → pauses.
+        let (events, _) = serve_under_mode(Mode::Auto, Risk::BashExec, "cargo publish").await;
+        assert!(!gluon_auto_granted(&events), "unlisted bash pauses under Auto");
+        assert!(has_kind(&events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })), "waits");
+
+        // Now with a prior remembered grant for the SAME (quark, op) → auto-approved.
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        seed_mode(&field, None, Mode::Auto);
+        // Teach the rule: a prior req + an "always allow" grant for the same op.
+        append_event(&field, &Event::new(Actor::Quark(QuarkId::new("agy")), None,
+            Kind::PermissionReq { risk: Risk::BashExec, description: "cargo publish".into() })).unwrap();
+        append_event(&field, &Event::new(Actor::Human, Some(QuarkId::new("agy")),
+            Kind::PermissionGrant { approved: true, remember: true })).unwrap();
+        let tasks = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(field.clone(),
+            vec![Box::new(perm_quark_risk("agy", tasks.clone(), Risk::BashExec, "cargo publish", "done"))], 8);
+        engine.run_until_quiesce().await.unwrap();
+        let events = read_events(&field).unwrap();
+        assert!(gluon_auto_granted(&events), "remembered command auto-granted under Auto");
+        assert!(has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "done")), "op completed");
+    }
+
+    #[tokio::test]
+    async fn per_quark_bypass_override_beats_global_ask() {
+        use hadron_gatekeeper::{Mode, Risk};
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        seed_mode(&field, None, Mode::Ask); // global: ask for everything
+        seed_mode(&field, Some("agy"), Mode::Bypass); // but agy is trusted
+        let tasks = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(field.clone(),
+            vec![Box::new(perm_quark_risk("agy", tasks.clone(), Risk::BashExec, "cargo publish", "done"))], 8);
+        engine.run_until_quiesce().await.unwrap();
+        let events = read_events(&field).unwrap();
+        assert!(gluon_auto_granted(&events), "per-quark Bypass override auto-grants despite global Ask");
     }
 
     fn seed_human_message(path: &std::path::Path, to: &str, body: &str) {
