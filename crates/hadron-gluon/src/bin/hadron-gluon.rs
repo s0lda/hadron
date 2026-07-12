@@ -17,7 +17,7 @@
 //! it lands: whether an excite error aborts the human turn or appends a gluon
 //! error message and quiesces (see the plan's watch-items).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -96,10 +96,35 @@ fn parse_args() -> Option<Args> {
     })
 }
 
+/// Resolve which `team.json` to load, in priority order:
+/// 1. an explicit `--team <path>`;
+/// 2. a `team.json` sitting **next to the field** — the per-project
+///    `.hadron/team.json` convention (field at `.hadron/field.jsonl` → team at
+///    `.hadron/team.json`), so opening a project's field just works;
+/// 3. the config-dir default (`$XDG_CONFIG_HOME/hadron/team.json`).
+///
+/// `None` → no team file found → mock quarks.
+fn resolve_team_path(explicit: Option<PathBuf>, field_path: &Path) -> Option<PathBuf> {
+    if explicit.is_some() {
+        return explicit;
+    }
+    if let Some(sibling) = field_path.parent().map(|d| d.join("team.json")) {
+        if sibling.exists() {
+            return Some(sibling);
+        }
+    }
+    team_config_path().filter(|p| p.exists())
+}
+
 /// Seat the quarks: real adapters from `team.json` when present, else the
 /// deterministic mock pair (zero-spend). Returns the quarks and a mode label.
 fn seat_quarks(team: &Team) -> (Vec<Box<dyn Quark>>, &'static str) {
     if team.is_empty() {
+        eprintln!(
+            "  ⚠ no usable team.json — running MOCK quarks: only '@claude' and '@agy' exist \
+             and their replies are fake. Add a team.json next to the field \
+             (e.g. .hadron/team.json) or pass --team to seat real CLI quarks."
+        );
         let quarks: Vec<Box<dyn Quark>> = vec![
             Box::new(DemoQuark::new("claude", Flavor::Orchestrator, "Claude")),
             Box::new(DemoQuark::new("agy", Flavor::Worker, "Antigravity")),
@@ -129,14 +154,19 @@ fn seat_quarks(team: &Team) -> (Vec<Box<dyn Quark>>, &'static str) {
 async fn main() {
     let Some(args) = parse_args() else {
         eprintln!("usage: hadron-gluon <field.jsonl> [--interval-ms N] [--team team.json]");
-        eprintln!("  With a team.json (default: $XDG_CONFIG_HOME/hadron/team.json), seats the");
-        eprintln!("  listed real CLI quarks. Without one, runs deterministic mock quarks.");
+        eprintln!("  Team resolution: --team, else a team.json next to the field");
+        eprintln!("  (e.g. .hadron/team.json), else $XDG_CONFIG_HOME/hadron/team.json.");
+        eprintln!("  With none, runs deterministic mock quarks (ids: claude, agy).");
         std::process::exit(2);
     };
 
-    // Seat the team: real adapters from team.json (explicit --team, else the
-    // config-dir default), or the mock pair when there is no team config.
-    let team_path = args.team_path.clone().or_else(team_config_path);
+    // Seat the team: explicit --team, else a sibling team.json next to the field
+    // (the .hadron/ convention), else the config-dir default; mock when none.
+    let team_path = resolve_team_path(args.team_path.clone(), &args.field_path);
+    match &team_path {
+        Some(p) => eprintln!("hadron-gluon: team from {}", p.display()),
+        None => eprintln!("hadron-gluon: no team.json found (looked next to the field, then the config dir)"),
+    }
     let team = team_path.as_deref().map(load_team).unwrap_or_default();
     let (quarks, mode_label) = seat_quarks(&team);
     if quarks.is_empty() {
@@ -162,5 +192,47 @@ async fn main() {
             eprintln!("gluon: appended {} event(s) → {after} total", after - before);
         }
         tokio::time::sleep(args.interval).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn explicit_team_wins() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join(".hadron").join("field.jsonl");
+        let explicit = dir.path().join("custom-team.json");
+        assert_eq!(
+            resolve_team_path(Some(explicit.clone()), &field),
+            Some(explicit)
+        );
+    }
+
+    #[test]
+    fn discovers_team_json_next_to_the_field() {
+        // The .hadron/ convention: team.json sits beside the field.
+        let dir = tempdir().unwrap();
+        let hadron = dir.path().join(".hadron");
+        std::fs::create_dir_all(&hadron).unwrap();
+        let field = hadron.join("field.jsonl");
+        let sibling = hadron.join("team.json");
+        std::fs::write(&sibling, "{}").unwrap();
+        assert_eq!(resolve_team_path(None, &field), Some(sibling));
+    }
+
+    #[test]
+    fn no_sibling_and_no_config_falls_through_to_none() {
+        // No team.json beside the field. (The config-dir default is env-dependent;
+        // in a clean temp field dir with no sibling, discovery must not invent one.)
+        let dir = tempdir().unwrap();
+        let field = dir.path().join(".hadron").join("field.jsonl");
+        let resolved = resolve_team_path(None, &field);
+        // Either None (no config file) or the real config path — never the sibling.
+        if let Some(p) = resolved {
+            assert_ne!(p, field.parent().unwrap().join("team.json"));
+        }
     }
 }
