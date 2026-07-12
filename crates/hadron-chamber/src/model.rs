@@ -69,11 +69,17 @@ fn render_row(e: &Event) -> MessageRow {
         }
         Kind::Command { cmd, exit, .. } => (format!("$ {cmd} (exit {exit})"), "command"),
         Kind::Snapshot { label, .. } => (format!("snapshot: {label}"), "snapshot"),
-        Kind::EnergyReport { used_tokens } => (format!("used {used_tokens} tokens"), "energy_report"),
-        Kind::Assign { task, invariants } => (format!("assigned: {task} (invariants: {:?})", invariants), "assign"),
-        Kind::PermissionReq { risk, description } => {
-            (format!("⚠️ permission requested ({risk:?}): {description}"), "permission_req")
+        Kind::EnergyReport { used_tokens } => {
+            (format!("used {used_tokens} tokens"), "energy_report")
         }
+        Kind::Assign { task, invariants } => (
+            format!("assigned: {task} (invariants: {:?})", invariants),
+            "assign",
+        ),
+        Kind::PermissionReq { risk, description } => (
+            format!("⚠️ permission requested ({risk:?}): {description}"),
+            "permission_req",
+        ),
         Kind::PermissionGrant { approved, remember } => (
             format!(
                 "permission {}{}",
@@ -171,9 +177,17 @@ mod tests {
     #[test]
     fn global_mode_and_per_quark_override_are_surfaced() {
         let evs = vec![
-            ev(Actor::Human, Some("agy"), Kind::Message { body: "go".into() }),
+            ev(
+                Actor::Human,
+                Some("agy"),
+                Kind::Message { body: "go".into() },
+            ),
             ev(Actor::Human, None, Kind::ModeSet { mode: Mode::Auto }), // global Auto
-            ev(Actor::Human, Some("agy"), Kind::ModeSet { mode: Mode::Bypass }), // agy override
+            ev(
+                Actor::Human,
+                Some("agy"),
+                Kind::ModeSet { mode: Mode::Bypass },
+            ), // agy override
         ];
         let view = project(&evs);
         assert_eq!(view.global_mode, Mode::Auto);
@@ -195,7 +209,11 @@ mod tests {
         };
         let evs = vec![
             ev(Actor::Human, None, Kind::ModeSet { mode: Mode::Write }),
-            ev(Actor::Human, Some("agy"), Kind::Message { body: "go".into() }),
+            ev(
+                Actor::Human,
+                Some("agy"),
+                Kind::Message { body: "go".into() },
+            ),
         ];
         let view = project_with_team(&evs, &team);
         let agy = view.roster.iter().find(|r| r.id == "agy").unwrap();
@@ -242,12 +260,21 @@ mod tests {
         );
         // With an outstanding request, the view carries it (addressed to the asker).
         let view = project(std::slice::from_ref(&req));
-        let pending = view.pending_permission.expect("outstanding request surfaced");
+        let pending = view
+            .pending_permission
+            .expect("outstanding request surfaced");
         assert_eq!(pending.quark, QuarkId::new("agy"));
         assert_eq!(pending.description, "cargo publish");
 
         // Once granted, the toast clears.
-        let grant = ev(Actor::Human, Some("agy"), Kind::PermissionGrant { approved: true, remember: false });
+        let grant = ev(
+            Actor::Human,
+            Some("agy"),
+            Kind::PermissionGrant {
+                approved: true,
+                remember: false,
+            },
+        );
         let view = project(&[req, grant]);
         assert!(view.pending_permission.is_none());
     }
@@ -338,5 +365,4 @@ mod tests {
         // human is not a quark → not on the roster.
         assert!(!ids.contains(&"human"));
     }
-
 }

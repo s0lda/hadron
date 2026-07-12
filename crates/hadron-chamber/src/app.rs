@@ -12,18 +12,19 @@ use std::time::Duration;
 
 use gpui::{
     actions, div, prelude::*, px, rgb, rgba, App, Context, Decorations, Entity, FocusHandle, Hsla,
-    KeyBinding, MouseButton, Pixels, Render, Rgba, ScrollHandle, SharedString, Subscription, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
+    KeyBinding, MouseButton, Pixels, Render, Rgba, ScrollHandle, SharedString, Subscription,
+    Window, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowDecorations,
+    WindowOptions,
 };
+use gpui_component::avatar::Avatar;
+use gpui_component::badge::Badge;
 use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
-use gpui_component::avatar::Avatar;
-use gpui_component::badge::Badge;
 use gpui_component::stepper::{Stepper, StepperItem};
 use gpui_component::tab::{Tab, TabBar};
-use gpui_component::tooltip::Tooltip;
 use gpui_component::tag::Tag;
+use gpui_component::tooltip::Tooltip;
 use gpui_component::{
     h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar,
 };
@@ -268,11 +269,9 @@ impl Chamber {
         });
         let _palette_sub = cx.subscribe_in(&palette_input, window, Self::on_palette_submit);
 
-        let settings_name =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Display name"));
-        let settings_path = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Path to an image file… (optional)")
-        });
+        let settings_name = cx.new(|cx| InputState::new(window, cx).placeholder("Display name"));
+        let settings_path = cx
+            .new(|cx| InputState::new(window, cx).placeholder("Path to an image file… (optional)"));
         // Repaint the Settings overlay on every edit so its preview is live.
         let _settings_subs = [
             cx.subscribe_in(&settings_name, window, |_, _, _: &InputEvent, _, cx| {
@@ -934,7 +933,12 @@ impl Chamber {
                 cx.notify();
             }));
 
-        let header = h_flex().flex_none().items_center().px_3().py_2().child(tabs);
+        let header = h_flex()
+            .flex_none()
+            .items_center()
+            .px_3()
+            .py_2()
+            .child(tabs);
 
         // The scrolling viewport: the selected view stacks to its natural height
         // and scrolls *within* the card, instead of growing the card and pushing
@@ -965,8 +969,7 @@ impl Chamber {
                     .right_0()
                     .bottom_0()
                     .child(
-                        Scrollbar::vertical(&self.chat_scroll)
-                            .scrollbar_show(ScrollbarShow::Hover),
+                        Scrollbar::vertical(&self.chat_scroll).scrollbar_show(ScrollbarShow::Hover),
                     ),
             );
 
@@ -1046,7 +1049,9 @@ impl Chamber {
 
         let mut col = v_flex().p_4();
         if steps.is_empty() {
-            return col.child(empty_hint("No activity yet — the timeline fills as quarks work."));
+            return col.child(empty_hint(
+                "No activity yet — the timeline fills as quarks work.",
+            ));
         }
 
         let current = steps.len().saturating_sub(1);
@@ -1054,22 +1059,25 @@ impl Chamber {
             .vertical()
             .selected_index(current)
             .items(steps.into_iter().map(|m| {
-                StepperItem::new().pb_6().icon(kind_icon(m.kind_label)).child(
-                    v_flex()
-                        .gap_0p5()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme::text())
-                                .child(format!("{}  ·  {}", m.from, m.kind_label)),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme::text_muted())
-                                .child(m.body.clone()),
-                        ),
-                )
+                StepperItem::new()
+                    .pb_6()
+                    .icon(kind_icon(m.kind_label))
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text())
+                                    .child(format!("{}  ·  {}", m.from, m.kind_label)),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(m.body.clone()),
+                            ),
+                    )
             }));
         col = col.child(stepper);
         col
@@ -1164,16 +1172,20 @@ impl Chamber {
                         .text_color(theme::text())
                         .child(text),
                 )
-                .child(text_button("perm-approve", "Approve").on_click(
-                    cx.listener(|this, _, _, cx| this.answer_permission(true, cx)),
-                ))
+                .child(
+                    text_button("perm-approve", "Approve")
+                        .on_click(cx.listener(|this, _, _, cx| this.answer_permission(true, cx))),
+                )
                 // "Always allow" remembers this (quark, op) so Auto mode won't ask again.
-                .child(text_button("perm-always", "Always allow").on_click(
-                    cx.listener(|this, _, _, cx| this.answer_permission_remember(cx)),
-                ))
-                .child(text_button("perm-deny", "Deny").on_click(
-                    cx.listener(|this, _, _, cx| this.answer_permission(false, cx)),
-                )),
+                .child(
+                    text_button("perm-always", "Always allow").on_click(
+                        cx.listener(|this, _, _, cx| this.answer_permission_remember(cx)),
+                    ),
+                )
+                .child(
+                    text_button("perm-deny", "Deny")
+                        .on_click(cx.listener(|this, _, _, cx| this.answer_permission(false, cx))),
+                ),
         )
     }
 
@@ -1190,7 +1202,10 @@ impl Chamber {
     /// Ask) by appending a global `ModeSet`. The daemon honours it next tick.
     fn cycle_global_mode(&mut self, cx: &mut Context<Self>) {
         let next = next_mode(self.view.global_mode);
-        self.append_and_reload(Event::new(Actor::Human, None, Kind::ModeSet { mode: next }), cx);
+        self.append_and_reload(
+            Event::new(Actor::Human, None, Kind::ModeSet { mode: next }),
+            cx,
+        );
     }
 
     /// Cycle a single quark's permission mode by appending a per-quark `ModeSet`
@@ -1364,15 +1379,13 @@ impl Chamber {
         let target = self.settings_target.clone();
 
         // Left nav: every editable identity — the human, then each quark.
-        let mut nav = v_flex()
-            .gap_0p5()
-            .child(self.settings_nav_row(SettingsTarget::Human, &target, cx));
+        let mut nav =
+            v_flex()
+                .gap_0p5()
+                .child(self.settings_nav_row(SettingsTarget::Human, &target, cx));
         for r in &self.view.roster {
-            nav = nav.child(self.settings_nav_row(
-                SettingsTarget::Quark(r.id.clone()),
-                &target,
-                cx,
-            ));
+            nav =
+                nav.child(self.settings_nav_row(SettingsTarget::Quark(r.id.clone()), &target, cx));
         }
 
         // Live preview: the target resolved, but with the in-progress name/image
@@ -1388,11 +1401,7 @@ impl Chamber {
             .items_center()
             .gap_3()
             .child(identity_avatar(&preview, 44.0))
-            .child(
-                div()
-                    .text_color(preview.color)
-                    .child(preview.name.clone()),
-            );
+            .child(div().text_color(preview.color).child(preview.name.clone()));
 
         // Color swatches; the stored color (if any) gets a bright ring.
         let selected = self.settings_color();
@@ -1406,7 +1415,11 @@ impl Chamber {
                     .rounded_full()
                     .bg(rgb(hex))
                     .border_2()
-                    .border_color(if is_sel { theme::text() } else { theme::border() })
+                    .border_color(if is_sel {
+                        theme::text()
+                    } else {
+                        theme::border()
+                    })
                     .hover(|s| s.border_color(theme::text_secondary()))
                     .on_click(cx.listener(move |this, _, _, cx| this.set_settings_color(hex, cx))),
             );
@@ -1488,11 +1501,9 @@ impl Chamber {
             .flex_none()
             .justify_between()
             .pt_1()
-            .child(
-                text_button("settings-reset", "Reset to default").on_click(cx.listener(
-                    |this, _, window, cx| this.reset_settings_target(window, cx),
-                )),
-            )
+            .child(text_button("settings-reset", "Reset to default").on_click(
+                cx.listener(|this, _, window, cx| this.reset_settings_target(window, cx)),
+            ))
             .child(
                 div()
                     .id("settings-done")
@@ -1742,12 +1753,7 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
 fn settings_field(label: &'static str, content: gpui::AnyElement) -> impl IntoElement {
     v_flex()
         .gap_1p5()
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme::text_muted())
-                .child(label),
-        )
+        .child(div().text_xs().text_color(theme::text_muted()).child(label))
         .child(content)
 }
 
@@ -1787,7 +1793,11 @@ fn mode_tag(mode: Mode, is_override: bool) -> impl IntoElement {
     // Always an outline tag (matches the status badge). A per-quark override
     // keeps a subtle leading dot so it stays distinguishable from an inherited
     // (global) mode now that both share the outline style.
-    let text = if is_override { format!("•{label}") } else { label.to_string() };
+    let text = if is_override {
+        format!("•{label}")
+    } else {
+        label.to_string()
+    };
     tag.small().outline().child(text)
 }
 
@@ -1816,10 +1826,7 @@ fn swarm_status_tag(view: &ChamberView) -> impl IntoElement {
 
 /// A muted placeholder line shown when a tab view has nothing to render.
 fn empty_hint(text: &'static str) -> impl IntoElement {
-    div()
-        .text_sm()
-        .text_color(theme::text_muted())
-        .child(text)
+    div().text_sm().text_color(theme::text_muted()).child(text)
 }
 
 /// Map an event kind to a timeline step icon.
@@ -1848,12 +1855,7 @@ fn chat_message_row(id: &ResolvedIdentity, m: &MessageRow) -> impl IntoElement {
                     h_flex()
                         .items_center()
                         .gap_2()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(id.color)
-                                .child(id.name.clone()),
-                        )
+                        .child(div().text_sm().text_color(id.color).child(id.name.clone()))
                         .when_some(m.to.clone(), |this, to| {
                             this.child(
                                 div()
@@ -1863,11 +1865,7 @@ fn chat_message_row(id: &ResolvedIdentity, m: &MessageRow) -> impl IntoElement {
                             )
                         }),
                 )
-                .child(
-                    div()
-                        .text_color(theme::text_secondary())
-                        .child(m.body.clone()),
-                ),
+                .child(gpui_component::text::markdown(m.body.clone())),
         )
 }
 
@@ -1884,11 +1882,7 @@ fn message_row(m: &MessageRow) -> impl IntoElement {
                 .text_color(theme::actor_hue(&m.from))
                 .child(header),
         )
-        .child(
-            div()
-                .text_color(theme::text_secondary())
-                .child(m.body.clone()),
-        )
+        .child(gpui_component::text::markdown(m.body.clone()))
 }
 
 /// Launch the chamber window against a field file path.
@@ -1972,7 +1966,14 @@ pub fn run(field_path: Option<String>) {
         cx.spawn(async move |cx| {
             cx.open_window(window_options, move |window, cx| {
                 let chamber = cx.new(|cx| {
-                    Chamber::new(view.clone(), prefs.clone(), team.clone(), field_path.clone(), window, cx)
+                    Chamber::new(
+                        view.clone(),
+                        prefs.clone(),
+                        team.clone(),
+                        field_path.clone(),
+                        window,
+                        cx,
+                    )
                 });
                 cx.new(|cx| Root::new(chamber, window, cx).bordered(false))
             })
