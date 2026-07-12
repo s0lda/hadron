@@ -14,7 +14,7 @@ use gpui::{
     actions, div, prelude::*, px, rgb, rgba, App, Context, Decorations, Entity, FocusHandle, Hsla,
     KeyBinding, MouseButton, Pixels, Render, Rgba, ScrollHandle, SharedString, Subscription,
     Window, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowDecorations,
-    WindowOptions,
+    WindowOptions, AnimationExt,
 };
 use gpui_component::avatar::Avatar;
 use gpui_component::badge::Badge;
@@ -298,8 +298,23 @@ impl Chamber {
                 .submit_on_enter(true)
                 .placeholder("Type @quark a message…  (Enter to send · Shift+Enter for newline)");
             let team_quarks = team.quarks.iter().map(|q| q.id.0.clone()).collect::<Vec<_>>();
+            let repo_root = crate::vcs::repo_root_of(&path);
+            let mut files = vec![];
+            if let Ok(output) = std::process::Command::new("git")
+                .arg("ls-files")
+                .current_dir(repo_root)
+                .output()
+            {
+                if output.status.success() {
+                    files = String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .map(|s| s.to_string())
+                        .collect();
+                }
+            }
             state.lsp.completion_provider = Some(std::rc::Rc::new(crate::completions::ChatCompletionProvider {
                 quarks: team_quarks,
+                files,
             }));
             state
         });
@@ -1064,6 +1079,7 @@ impl Chamber {
                     .size_full()
                     .overflow_y_scroll()
                     .track_scroll(&self.chat_scrolls[selected.index()])
+                    .font_family("Cascadia Code")
                     .child(match selected {
                         ChatTab::Chat => self.chat_view().into_any_element(),
                         ChatTab::Log => self.log_view().into_any_element(),
@@ -1097,19 +1113,26 @@ impl Chamber {
                 )
                 .child(
                     h_flex()
+                        .w_full()
+                        .justify_between()
                         .mt_2()
                         .items_center()
-                        .gap_2()
-                        .child(div().text_xs().text_color(theme::text_muted()).child("Global Mode:"))
                         .child(
-                            div()
-                                .id("global-mode")
-                                .cursor_pointer()
-                                .on_click(cx.listener(|this, _, _, cx| this.cycle_global_mode(cx)))
-                                .tooltip(|window, cx| {
-                                    Tooltip::new("Permission mode — Shift+Tab or click to cycle").build(window, cx)
-                                })
-                                .child(mode_tag(self.view.global_mode, true)),
+                            h_flex().gap_2().items_center()
+                                .child(div().text_xs().text_color(theme::text_muted()).child("Global Mode:"))
+                                .child(
+                                    div()
+                                        .id("global-mode")
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| this.cycle_global_mode(cx)))
+                                        .tooltip(|window, cx| {
+                                            Tooltip::new("Permission mode — Shift+Tab or click to cycle").build(window, cx)
+                                        })
+                                        .child(mode_tag(self.view.global_mode, true)),
+                                )
+                        )
+                        .child(
+                            div().text_xs().text_color(theme::text_muted()).child(crate::vcs::repo_root_of(&self.path).display().to_string())
                         )
                 )
         });
@@ -1143,7 +1166,7 @@ impl Chamber {
         let mut any = false;
         for (ix, m) in self.view.messages.iter().enumerate() {
             if m.kind_label == "message" {
-                col = col.child(chat_message_row(&self.resolve_identity(&m.from), m, ix));
+                col = col.child(chat_message_row(&self.resolve_identity(&m.from), m, ix, &self.view.roster));
                 any = true;
             }
         }
@@ -1160,7 +1183,7 @@ impl Chamber {
             col = col.child(empty_hint("The field is empty."));
         }
         for (ix, m) in self.view.messages.iter().enumerate() {
-            col = col.child(message_row(m, ix));
+            col = col.child(message_row(m, ix, &self.view.roster));
         }
         col
     }
@@ -1210,6 +1233,50 @@ impl Chamber {
             }));
         col = col.child(stepper);
         col
+    }
+
+    fn activity_viz(&self) -> impl IntoElement {
+        let mut viz = v_flex().border_b_1().border_color(theme::border());
+
+        let header = h_flex().w_full().justify_between().items_center().px_3().py_2()
+            .child(div().text_sm().text_color(theme::text_muted()).child("Activity & Usage"));
+
+        let mut list = v_flex().gap_2().px_3().pb_3();
+
+        for row in &self.view.roster {
+            let is_error = row.state == hadron_lattice::QuarkState::Error;
+            let is_excited = row.state == hadron_lattice::QuarkState::Excited;
+
+            let dot_color = if is_error {
+                gpui::rgb(0xef4444)
+            } else if is_excited {
+                gpui::rgb(0x3b82f6)
+            } else {
+                gpui::rgb(0x22c55e)
+            };
+
+            let dot = div().rounded_full().w_2().h_2().bg(dot_color);
+            let dot = if is_excited {
+                dot.with_animation(
+                    "pulse",
+                    gpui::Animation::new(std::time::Duration::from_millis(1500)).repeat(),
+                    move |div, delta| {
+                        let v: f32 = 0.3 + (delta * std::f32::consts::PI * 2.0).sin() * 0.7;
+                        div.opacity(v.max(0.3_f32))
+                    }
+                ).into_any_element()
+            } else {
+                dot.into_any_element()
+            };
+
+            list = list.child(
+                h_flex().w_full().justify_between().items_center().gap_3()
+                    .child(h_flex().items_center().gap_2().child(dot).child(div().text_sm().text_color(theme::text()).child(format!("@{}", row.id))))
+                    .child(div().text_sm().text_color(theme::text_muted()).child(format!("{} tk", row.tokens)))
+            );
+        }
+
+        viz.child(header).child(list)
     }
 
     /// The right rail: the swappable Terminal / File Tree / Changes pane.
@@ -1291,24 +1358,24 @@ impl Chamber {
 
                             acc = acc.item(|mut item| {
                                 item = item.title(title);
-                                for (hix, hunk) in file.hunks.iter().enumerate() {
-                                    let mut table = Table::new().with_ix(hix).child(
-                                        TableRow::new().child(TableCell::new().text_color(theme::text_muted()).child(hunk.header.clone()))
+                                for (_, hunk) in file.hunks.iter().enumerate() {
+                                    let mut hunk_flex = v_flex().w_full().child(
+                                        div().text_color(theme::text_muted()).child(hunk.header.clone())
                                     );
                                     for line in &hunk.lines {
                                         match line {
                                             crate::vcs::DiffLine::Context(c) => {
-                                                table = table.child(TableRow::new().child(TableCell::new().child(format!(" {}", c))));
+                                                hunk_flex = hunk_flex.child(div().w_full().child(format!(" {}", c)));
                                             }
                                             crate::vcs::DiffLine::Added(a) => {
-                                                table = table.child(TableRow::new().bg(gpui::rgba(0x34d39922)).child(TableCell::new().text_color(gpui::rgb(0x34d399)).child(format!("+{}", a))));
+                                                hunk_flex = hunk_flex.child(div().w_full().bg(gpui::rgba(0x34d39922)).text_color(gpui::rgb(0x34d399)).child(format!("+{}", a)));
                                             }
                                             crate::vcs::DiffLine::Removed(r) => {
-                                                table = table.child(TableRow::new().bg(gpui::rgba(0xfb718522)).child(TableCell::new().text_color(gpui::rgb(0xfb7185)).child(format!("-{}", r))));
+                                                hunk_flex = hunk_flex.child(div().w_full().bg(gpui::rgba(0xfb718522)).text_color(gpui::rgb(0xfb7185)).child(format!("-{}", r)));
                                             }
                                         }
                                     }
-                                    item = item.child(table.into_any_element());
+                                    item = item.child(hunk_flex.into_any_element());
                                 }
                                 item
                             });
@@ -1319,15 +1386,30 @@ impl Chamber {
                     div().p_4().text_color(theme::text_muted()).child("Failed to load diff.").into_any_element()
                 };
 
-                v_flex()
-                    .id("changes-scroll")
+                div()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .p_3()
-                    .text_sm()
-                    .text_color(theme::text())
-                    .child(diff_content)
+                    .relative()
+                    .child(
+                        v_flex()
+                            .id("changes-scroll")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.changes_scroll)
+                            .p_3()
+                            .text_sm()
+                            .font_family("Cascadia Code")
+                            .text_color(theme::text())
+                            .child(diff_content)
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .right_0()
+                            .child(Scrollbar::vertical(&self.changes_scroll).scrollbar_show(ScrollbarShow::Hover))
+                    )
                     .into_any_element()
             }
         };
@@ -1339,6 +1421,7 @@ impl Chamber {
             .overflow_hidden()
             .bg(theme::bg())
             .child(header)
+            .child(self.activity_viz())
             .child(content);
 
         v_flex()
@@ -2086,6 +2169,33 @@ fn markdown_style() -> gpui_component::text::TextViewStyle {
     style
 }
 
+fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
+    let mut out = String::with_capacity(body.len() + 100);
+    let mut chars = body.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '@' {
+            let mut name = String::new();
+            while let Some(&nc) = chars.peek() {
+                if nc.is_alphanumeric() || nc == '.' || nc == '/' || nc == '-' || nc == '_' {
+                    name.push(chars.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+            if name.is_empty() {
+                out.push('@');
+            } else if roster.iter().any(|q| q.id == name) {
+                out.push_str(&format!("<mark color=\"blue-200\">@{}</mark>", name));
+            } else {
+                out.push_str(&format!("<mark color=\"amber/30\">@{}</mark>", name));
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Render a message body as Markdown under an element id unique to `(view, ix)`.
 ///
 /// The id is load-bearing, not decoration. `gpui_component::text::markdown()`
@@ -2100,9 +2210,9 @@ fn markdown_style() -> gpui_component::text::TextViewStyle {
 /// rendered oldest-first, so a given message keeps its index for the window's life.
 /// If rows ever get reordered or filtered, key on a stable message id instead — the
 /// cache would silently stop helping, and no test would catch the regression.
-fn markdown_body(view: &'static str, ix: usize, body: &str) -> impl IntoElement {
+fn markdown_body(view: &'static str, ix: usize, body: &str, roster: &[crate::model::RosterRow]) -> impl IntoElement {
     div().text_size(px(13.65)).child(
-        gpui_component::text::TextView::markdown((view, ix), body.to_string())
+        gpui_component::text::TextView::markdown((view, ix), color_mentions(body, roster))
             .selectable(true)
             .style(markdown_style()),
     )
@@ -2110,7 +2220,7 @@ fn markdown_body(view: &'static str, ix: usize, body: &str) -> impl IntoElement 
 
 /// A chat-styled message row: the author's resolved avatar and name, then the
 /// body — used by the Chat tab so the field reads like a conversation.
-fn chat_message_row(id: &ResolvedIdentity, m: &MessageRow, ix: usize) -> impl IntoElement {
+fn chat_message_row(id: &ResolvedIdentity, m: &MessageRow, ix: usize, roster: &[crate::model::RosterRow]) -> impl IntoElement {
     h_flex()
         .items_start()
         .gap_2p5()
@@ -2133,11 +2243,11 @@ fn chat_message_row(id: &ResolvedIdentity, m: &MessageRow, ix: usize) -> impl In
                             )
                         }),
                 )
-                .child(markdown_body("chat-md", ix, &m.body)),
+                .child(markdown_body("chat-md", ix, &m.body, roster)),
         )
 }
 
-fn message_row(m: &MessageRow, ix: usize) -> impl IntoElement {
+fn message_row(m: &MessageRow, ix: usize, roster: &[crate::model::RosterRow]) -> impl IntoElement {
     let header = match &m.to {
         Some(to) => format!("{} → {}  ·  {}", m.from, to, m.kind_label),
         None => format!("{}  ·  {}", m.from, m.kind_label),
@@ -2150,7 +2260,7 @@ fn message_row(m: &MessageRow, ix: usize) -> impl IntoElement {
                 .text_color(theme::actor_hue(&m.from))
                 .child(header),
         )
-        .child(markdown_body("log-md", ix, &m.body))
+        .child(markdown_body("log-md", ix, &m.body, roster))
 }
 
 /// Launch the chamber window against a field file path.
@@ -2210,7 +2320,7 @@ pub fn run(field_path: Option<String>) {
             // window frame (crate::window_frame) shows the shadow through the
             // corners instead of a square fill.
             t.tokens.background = gpui::hsla(0.0, 0.0, 0.0, 0.0).into();
-            t.font_family = "Cascadia Code, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
+            t.font_family = "Inter, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
         }
         cx.bind_keys([
             KeyBinding::new("ctrl-shift-p", TogglePalette, Some(KEY_CONTEXT)),
