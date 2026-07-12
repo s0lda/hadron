@@ -18,11 +18,19 @@ pub fn next_pending(events: &[Event]) -> Option<QuarkId> {
     }
 }
 
-/// Extract the addressee from a Markdown message: the first `@quarkid` mention
-/// whose id is on the roster. Returns `None` (hand back to human) if none match.
+/// Extract the addressee from a Markdown message: the first line that **starts**
+/// with `@quarkid` (after optional leading whitespace) whose id is on the roster.
+/// Returns `None` (hand back to the human / broadcast) if none match.
+///
+/// A delegation only counts when `@<id>` begins a line — a mention buried in prose
+/// or *quoted* from history (e.g. a quark listing the conversation, which contains
+/// other quarks' handles) does NOT route. This is what keeps a quark from routing
+/// its reply to whoever it happened to name: the original whole-body scan tagged
+/// opus's reply `→ agy` merely because it quoted the string `@agy`, spuriously
+/// exciting agy. Sender-exclusion is kept as a belt-and-suspenders guard.
 pub fn parse_addressee(body: &str, roster: &[QuarkCard], sender: Option<&QuarkId>) -> Option<QuarkId> {
-    for word in body.split_whitespace() {
-        let Some(rest) = word.strip_prefix('@') else {
+    for line in body.lines() {
+        let Some(rest) = line.trim_start().strip_prefix('@') else {
             continue;
         };
         let name: String = rest
@@ -83,9 +91,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_addressee_finds_mention() {
+    fn parse_addressee_matches_a_line_starting_mention() {
+        // A delegation begins a line (optionally indented).
         assert_eq!(
-            parse_addressee("Sure, @worker please handle it.", &roster(), None),
+            parse_addressee("@worker please handle it.", &roster(), None),
+            Some(QuarkId::new("worker"))
+        );
+        assert_eq!(
+            parse_addressee("Here's the plan.\n@worker execute it.", &roster(), None),
             Some(QuarkId::new("worker"))
         );
         assert_eq!(parse_addressee("no mention here", &roster(), None), None);
@@ -93,18 +106,32 @@ mod tests {
     }
 
     #[test]
-    fn parse_addressee_ignores_sender() {
-        let orch = QuarkId::new("orch");
-        // An orchestrator's own mention is ignored, next valid target is found.
+    fn parse_addressee_ignores_mid_line_and_quoted_mentions() {
+        // The regression: a mention buried in prose does NOT route — this is the
+        // bug where a quark listing the conversation quoted "@agy"/"@worker" and
+        // its reply got mis-routed there, spuriously exciting that quark.
         assert_eq!(
-            parse_addressee("I see @orch in history. @worker do the work.", &roster(), Some(&orch)),
-            Some(QuarkId::new("worker"))
+            parse_addressee("Sure, @worker please handle it.", &roster(), None),
+            None,
+            "mid-line mention must not route"
         );
-        // If only the sender is mentioned, it returns None.
+        let quoted = "I can see these messages:\n1. human: @worker do X\n2. @orch replied\nThat's all.";
         assert_eq!(
-            parse_addressee("I am @worker", &roster(), Some(&QuarkId::new("worker"))),
-            None
+            parse_addressee(quoted, &roster(), Some(&QuarkId::new("orch"))),
+            None,
+            "quoted mentions inside a numbered list must not route"
         );
     }
 
+    #[test]
+    fn parse_addressee_ignores_sender() {
+        // A quark starting a line with its OWN handle must not self-address.
+        let worker = QuarkId::new("worker");
+        assert_eq!(parse_addressee("@worker I'm on it", &roster(), Some(&worker)), None);
+        // A line-starting mention of a DIFFERENT quark still routes.
+        assert_eq!(
+            parse_addressee("@worker take over", &roster(), Some(&QuarkId::new("orch"))),
+            Some(QuarkId::new("worker"))
+        );
+    }
 }
