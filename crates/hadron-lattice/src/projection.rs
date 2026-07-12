@@ -51,13 +51,18 @@ pub struct PermissionAsk {
     pub description: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// What one turn produced. `PartialEq` but no longer `Eq`: `usage` carries floats.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct TurnOutcome {
     pub message: Option<String>,
     #[serde(default)]
     pub used_tokens: u32,
     #[serde(default)]
     pub permission: Option<PermissionAsk>,
+    /// Context + quota the provider reported for this turn. Empty when the provider
+    /// reports nothing (a mock) or has no quota concept (claude reports context only).
+    #[serde(default, skip_serializing_if = "crate::Usage::is_empty")]
+    pub usage: crate::Usage,
 }
 
 #[cfg(test)]
@@ -110,7 +115,7 @@ mod tests {
     fn turn_outcome_default_is_empty() {
         assert_eq!(
             TurnOutcome::default(),
-            TurnOutcome { message: None, used_tokens: 0, permission: None }
+            TurnOutcome { message: None, used_tokens: 0, permission: None, usage: Default::default() }
         );
     }
 }

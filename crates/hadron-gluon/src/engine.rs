@@ -1086,12 +1086,13 @@ mod tests {
             self.tasks.lock().unwrap().push(turn.task.clone());
             self.calls += 1;
             if self.calls == 1 {
-                Ok(TurnOutcome { message: None, used_tokens: 0, permission: Some(self.ask.clone()) })
+                Ok(TurnOutcome { message: None, used_tokens: 0, permission: Some(self.ask.clone()), usage: Default::default() })
             } else {
                 Ok(TurnOutcome {
                     message: Some(self.reply.clone()),
                     used_tokens: 0,
                     permission: None,
+                    usage: Default::default(),
                 })
             }
         }
@@ -1145,7 +1146,7 @@ mod tests {
         }
         async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
             self.seen.lock().unwrap().push(turn.mode);
-            Ok(TurnOutcome { message: Some("ok".into()), used_tokens: 0, permission: None })
+            Ok(TurnOutcome { message: Some("ok".into()), used_tokens: 0, permission: None, usage: Default::default() })
         }
     }
 
@@ -1354,7 +1355,7 @@ mod tests {
                 self.seen.lock().unwrap().push(format!("{}:{}", self.id, turn.task));
                 // Reply with no @mention → hand back, so the loop advances to the
                 // next unserved addressee rather than a hand-off chain.
-                Ok(TurnOutcome { message: Some(format!("{} done", self.id)), used_tokens: 0, permission: None })
+                Ok(TurnOutcome { message: Some(format!("{} done", self.id)), used_tokens: 0, permission: None, usage: Default::default() })
             }
         }
 
@@ -1596,7 +1597,7 @@ mod tests {
             }
             async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
                 assert!(turn.nucleus_digest.contains("## map.md"));
-                Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0, permission: None })
+                Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0, permission: None, usage: Default::default() })
             }
         }
 
@@ -1680,7 +1681,7 @@ mod tests {
             }
             async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
                 self.seen.lock().unwrap().push(turn.task.clone());
-                Ok(TurnOutcome { message: Some("I've got it.".into()), used_tokens: 0, permission: None })
+                Ok(TurnOutcome { message: Some("I've got it.".into()), used_tokens: 0, permission: None, usage: Default::default() })
             }
         }
         let seen = Arc::new(Mutex::new(vec![]));
@@ -1771,7 +1772,7 @@ mod tests {
             fn energy(&self) -> hadron_lattice::EnergyState { hadron_lattice::EnergyState::Available }
             async fn excite(&mut self, _turn: Projection) -> anyhow::Result<hadron_lattice::TurnOutcome> {
                 // Consume 100 tokens per turn
-                Ok(hadron_lattice::TurnOutcome { message: None, used_tokens: 100, permission: None })
+                Ok(hadron_lattice::TurnOutcome { message: None, used_tokens: 100, permission: None, usage: Default::default() })
             }
         }
 
@@ -1841,7 +1842,7 @@ mod tests {
                 assert!(turn.invariants.contains("# Rule: rust_style"));
                 assert!(turn.invariants.contains("Use camelCase... wait no."));
                 assert_eq!(turn.available_invariants, vec!["rust_style".to_string()]);
-                Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0, permission: None })
+                Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0, permission: None, usage: Default::default() })
             }
         }
 
@@ -1883,7 +1884,7 @@ mod tests {
             self.running.store(true, Ordering::SeqCst);
             tokio::time::sleep(self.hold).await;
             self.running.store(false, Ordering::SeqCst);
-            Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0, permission: None })
+            Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0, permission: None, usage: Default::default() })
         }
     }
 
@@ -2036,6 +2037,7 @@ mod tests {
                 message: Some(format!("{} wrote {}", self.id.as_str(), self.file)),
                 used_tokens: 0,
                 permission: None,
+                usage: Default::default(),
             })
         }
     }

@@ -52,6 +52,6 @@ impl Quark for MockQuark {
             .scripted
             .pop_front()
             .unwrap_or_else(|| self.repeating.clone());
-        Ok(TurnOutcome { message, used_tokens: 0, permission: None })
+        Ok(TurnOutcome { message, used_tokens: 0, permission: None, usage: Default::default() })
     }
 }
