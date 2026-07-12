@@ -96,8 +96,28 @@ impl CompletionProvider for ChatCompletionProvider {
         new_text: &str,
         _cx: &mut Context<InputState>,
     ) -> bool {
-        new_text == "@" || new_text == ":"
+        is_trigger_text(new_text)
     }
+}
+
+/// Whether an edit should (re)run the completion provider.
+///
+/// `@` and `:` open the menu, but they must not be the *only* things that trigger it.
+/// Each completion item carries an absolute `text_edit.range`, and the editor replaces
+/// exactly that range on accept. If the provider is not re-run as the query is typed,
+/// those items keep the range computed when the sigil was the whole query — `[@]` —
+/// so accepting a suggestion after typing `@a` replaces only the `@` and strands the
+/// `a`, yielding `@agy a`. Re-running on each subsequent character recomputes the range
+/// against the live cursor, which is what makes the replacement cover the whole query.
+///
+/// A deletion (empty `new_text`) must re-run too, or backspacing leaves the range
+/// pointing past the end of the shortened text.
+fn is_trigger_text(new_text: &str) -> bool {
+    // A multi-character edit is a paste, not a keystroke — it opens nothing. Any single
+    // non-whitespace character keeps an open query live; if there is no sigil before the
+    // cursor the provider returns no items and the menu closes on its own.
+    new_text.is_empty()
+        || (new_text.chars().count() == 1 && !new_text.chars().all(char::is_whitespace))
 }
 
 #[cfg(test)]
@@ -130,5 +150,42 @@ mod tests {
             extract_completion_query("foo bar", 7),
             None
         );
+    }
+
+    /// The `@a` → `@agy a` bug. The sigil is not the only trigger: typing the query
+    /// after it must re-run the provider, or the accepted item replaces a stale range
+    /// covering only the `@`.
+    #[test]
+    fn typing_the_query_after_a_sigil_keeps_the_provider_live() {
+        assert!(is_trigger_text("@"), "the sigil opens the menu");
+        assert!(is_trigger_text(":"), "the emoji sigil opens the menu");
+        assert!(is_trigger_text("a"), "typing the query must re-run the provider");
+        assert!(is_trigger_text(""), "a deletion must re-run it, or the range outruns the text");
+
+        assert!(!is_trigger_text(" "), "whitespace ends a query");
+        assert!(!is_trigger_text("\n"), "so does a newline");
+        assert!(!is_trigger_text("hello"), "a multi-char paste is not a keystroke");
+    }
+
+    /// The range handed to the editor must cover the WHOLE query, sigil included — the
+    /// editor replaces exactly `[start, end)`. `[0, 1)` is the bug; `[0, 2)` is correct.
+    /// Pinned as a round-trip through the same offset↔position conversions the editor
+    /// uses on accept, since that pair is where a correct `start_offset` could still be
+    /// mistranslated.
+    #[test]
+    fn the_edit_range_spans_the_whole_query_not_just_the_sigil() {
+        use gpui_component::RopeExt;
+        use gpui_component::input::Rope;
+
+        let text = Rope::from("@a");
+        let cursor = 2; // after "@a"
+        let (_, _, start_offset) = extract_completion_query(&text.to_string(), cursor).unwrap();
+
+        // What the provider puts on the item...
+        let start = text.offset_to_position(start_offset);
+        let end = text.offset_to_position(cursor);
+        // ...and what the editor resolves it back to when the item is accepted.
+        assert_eq!(text.position_to_offset(&start), 0, "range starts at the '@'");
+        assert_eq!(text.position_to_offset(&end), 2, "range ends at the cursor, past the 'a'");
     }
 }
