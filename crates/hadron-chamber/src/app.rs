@@ -25,8 +25,10 @@ use gpui_component::stepper::{Stepper, StepperItem};
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::tag::Tag;
 use gpui_component::tooltip::Tooltip;
+use gpui_component::accordion::Accordion;
+use gpui_component::table::{Table, TableRow, TableCell};
 use gpui_component::{
-    h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar,
+    h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar, ChildElement
 };
 use hadron_lattice::{io, load_team, Actor, Event, Kind, Mode, QuarkId, QuarkState, Team};
 
@@ -254,7 +256,7 @@ struct Chamber {
     /// Which view the right rail's segmented tabs are showing, per ChatTab.
     right_rail_tabs: [RightRailTab; 3],
     /// Cached diff string for the Changes rail
-    working_diff: Option<String>,
+    working_diff: Option<Vec<crate::vcs::FileDiff>>,
     /// Scroll position for each of the three tabs.
     chat_scrolls: [ScrollHandle; 3],
     /// A debounced window-bounds save is already in flight, so a drag (which
@@ -551,6 +553,7 @@ impl Chamber {
         // Only reproject on a successful read — a transient read error must not
         // blank the current view (which would flash to empty, then repopulate).
         if let Ok(events) = io::read_events(&self.path) {
+            let mut changed = false;
             if events.len() != self.view.messages.len() {
                 // Decide *before* the content grows: if the user is parked at the
                 // bottom, keep them there as the new message lands; if they've
@@ -562,6 +565,17 @@ impl Chamber {
                         scroll.scroll_to_bottom();
                     }
                 }
+                changed = true;
+            }
+            if self.right_rail_tabs[self.chat_tab.index()] == RightRailTab::Changes {
+                let root = crate::vcs::repo_root_of(&self.path);
+                let diff = crate::vcs::working_diff(root);
+                if diff != self.working_diff {
+                    self.working_diff = diff;
+                    changed = true;
+                }
+            }
+            if changed {
                 cx.notify();
             }
         }
@@ -1220,7 +1234,7 @@ impl Chamber {
                 this.right_rail_tabs[current_chat_ix] = RightRailTab::from_index(*ix);
                 if this.right_rail_tabs[current_chat_ix] == RightRailTab::Changes {
                     let root = crate::vcs::repo_root_of(&this.path);
-                    this.working_diff = Some(crate::vcs::working_diff(root).unwrap_or_default());
+                    this.working_diff = crate::vcs::working_diff(root);
                 }
                 cx.notify();
             }));
@@ -1261,6 +1275,47 @@ impl Chamber {
                     .into_any_element()
             }
             RightRailTab::Changes => {
+                let diff_content = if let Some(diffs) = &self.working_diff {
+                    if diffs.is_empty() {
+                        div().p_4().text_color(theme::text_muted()).child("No changes in working tree.").into_any_element()
+                    } else {
+                        let mut acc = Accordion::new("changes-accordion").multiple(true);
+                        for file in diffs {
+                            let title = h_flex().gap_2().items_center()
+                                .child(div().child(file.path.clone()))
+                                .child(div().text_color(gpui::rgb(0x34d399)).child(format!("+{}", file.added)))
+                                .child(div().text_color(gpui::rgb(0xfb7185)).child(format!("-{}", file.removed)));
+
+                            acc = acc.item(|mut item| {
+                                item = item.title(title);
+                                for (hix, hunk) in file.hunks.iter().enumerate() {
+                                    let mut table = Table::new().with_ix(hix).child(
+                                        TableRow::new().child(TableCell::new().text_color(theme::text_muted()).child(hunk.header.clone()))
+                                    );
+                                    for line in &hunk.lines {
+                                        match line {
+                                            crate::vcs::DiffLine::Context(c) => {
+                                                table = table.child(TableRow::new().child(TableCell::new().child(format!(" {}", c))));
+                                            }
+                                            crate::vcs::DiffLine::Added(a) => {
+                                                table = table.child(TableRow::new().bg(gpui::rgba(0x34d39922)).child(TableCell::new().text_color(gpui::rgb(0x34d399)).child(format!("+{}", a))));
+                                            }
+                                            crate::vcs::DiffLine::Removed(r) => {
+                                                table = table.child(TableRow::new().bg(gpui::rgba(0xfb718522)).child(TableCell::new().text_color(gpui::rgb(0xfb7185)).child(format!("-{}", r))));
+                                            }
+                                        }
+                                    }
+                                    item = item.child(table.into_any_element());
+                                }
+                                item
+                            });
+                        }
+                        acc.into_any_element()
+                    }
+                } else {
+                    div().p_4().text_color(theme::text_muted()).child("Failed to load diff.").into_any_element()
+                };
+
                 v_flex()
                     .id("changes-scroll")
                     .flex_1()
@@ -1269,11 +1324,7 @@ impl Chamber {
                     .p_3()
                     .text_sm()
                     .text_color(theme::text())
-                    .child(
-                        gpui_component::text::markdown(
-                            format!("```diff\n{}\n```", self.working_diff.clone().unwrap_or_default())
-                        )
-                    )
+                    .child(diff_content)
                     .into_any_element()
             }
         };
