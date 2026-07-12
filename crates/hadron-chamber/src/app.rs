@@ -26,7 +26,6 @@ use gpui_component::tab::{Tab, TabBar};
 use gpui_component::tag::Tag;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::accordion::Accordion;
-use gpui_component::table::{Table, TableRow, TableCell};
 use gpui_component::{
     h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar, ChildElement
 };
@@ -257,6 +256,8 @@ struct Chamber {
     right_rail_tabs: [RightRailTab; 3],
     /// Cached diff string for the Changes rail
     working_diff: Option<Vec<crate::vcs::FileDiff>>,
+    changes_open_files: std::collections::HashSet<String>,
+    changes_scroll: ScrollHandle,
     /// Scroll position for each of the three tabs.
     chat_scrolls: [ScrollHandle; 3],
     /// A debounced window-bounds save is already in flight, so a drag (which
@@ -356,9 +357,11 @@ impl Chamber {
             input,
             focus_handle,
             chat_tab: ChatTab::Chat,
-            chat_scrolls,
-            right_rail_tabs: [RightRailTab::Terminal, RightRailTab::Terminal, RightRailTab::Terminal],
+            right_rail_tabs: [RightRailTab::Terminal, RightRailTab::FileTree, RightRailTab::Changes],
             working_diff: None,
+            changes_open_files: std::collections::HashSet::new(),
+            changes_scroll: ScrollHandle::new(),
+            chat_scrolls,
             bounds_save_pending: false,
             palette_open: false,
             palette_input,
