@@ -1781,12 +1781,11 @@ fn mode_tag(mode: Mode, is_override: bool) -> impl IntoElement {
         Mode::Auto => (Tag::warning(), "AUTO"),
         Mode::Bypass => (Tag::danger(), "BYPASS"),
     };
-    let tag = tag.small().child(label);
-    if is_override {
-        tag
-    } else {
-        tag.outline()
-    }
+    // Always an outline tag (matches the status badge). A per-quark override
+    // keeps a subtle leading dot so it stays distinguishable from an inherited
+    // (global) mode now that both share the outline style.
+    let text = if is_override { format!("•{label}") } else { label.to_string() };
+    tag.small().outline().child(text)
 }
 
 /// An overall swarm-status badge for the status bar. Priority: a blocked/error
