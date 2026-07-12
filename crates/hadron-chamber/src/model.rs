@@ -95,6 +95,7 @@ fn render_row(e: &Event) -> MessageRow {
 
 /// Project the field into a renderable view, with no team annotations
 /// (`provider`/`model` blank). Convenience for tests and callers without a team.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn project(events: &[Event]) -> ChamberView {
     project_with_team(events, &Team::default())
 }
