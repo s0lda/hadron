@@ -2199,16 +2199,19 @@ fn markdown_style() -> gpui_component::text::TextViewStyle {
     style
 }
 
-/// Mentions render as a bold, faintly tinted chip rather than coloured text.
+/// Mentions render as coloured, bold text: pink for a quark, purple for a file.
 ///
-/// `gpui-component`'s `TextMark` (`text/node.rs`) has no foreground-colour field —
-/// only `highlight`, which resolves to a *background*. So `<mark>` plus `<strong>`
-/// is the strongest mention treatment the renderer can express. `try_parse_color`
-/// accepts an opacity suffix, which is what keeps the tint a chip instead of a
-/// highlighter block. True foreground colour needs an upstream change.
-const MENTION_QUARK_OPEN: &str = "<mark color=\"pink-400/0.22\"><strong>";
-const MENTION_FILE_OPEN: &str = "<mark color=\"purple-400/0.22\"><strong>";
-const MENTION_CLOSE: &str = "</strong></mark>";
+/// `<span style="color: …">` is honoured by `TextMark::color`, which exists only in
+/// our fork of `gpui-component` (see the `[patch]` in the workspace `Cargo.toml`).
+/// Upstream's `TextMark` can express a highlight — a *background* — but no foreground
+/// colour, so before the fork a mention could only ever be a tinted block.
+const MENTION_QUARK_OPEN: &str = "<span style=\"color: pink-400\"><strong>";
+const MENTION_FILE_OPEN: &str = "<span style=\"color: purple-400\"><strong>";
+const MENTION_CLOSE: &str = "</strong></span>";
+
+/// Routing names that address the swarm rather than one quark. They are mentions of
+/// *us*, so they read as quarks even though no roster row carries the id.
+const SWARM_MENTIONS: [&str; 2] = ["team", "orchestrator"];
 
 fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
     let mut out = String::with_capacity(body.len() + 100);
@@ -2223,9 +2226,11 @@ fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
                     break;
                 }
             }
+            let is_quark =
+                roster.iter().any(|q| q.id == name) || SWARM_MENTIONS.contains(&name.as_str());
             if name.is_empty() {
                 out.push('@');
-            } else if roster.iter().any(|q| q.id == name) {
+            } else if is_quark {
                 out.push_str(&format!("{}@{}{}", MENTION_QUARK_OPEN, name, MENTION_CLOSE));
             } else {
                 out.push_str(&format!("{}@{}{}", MENTION_FILE_OPEN, name, MENTION_CLOSE));
@@ -2462,7 +2467,7 @@ mod tests {
         let colored = color_mentions(body, &roster);
         assert_eq!(
             colored,
-            "Hello <mark color=\"pink-400/0.22\"><strong>@opus</strong></mark>!"
+            "Hello <span style=\"color: pink-400\"><strong>@opus</strong></span>!"
         );
 
         let options = markdown::Options {
@@ -2473,24 +2478,39 @@ mod tests {
             parse: markdown::ParseOptions::gfm(),
         };
         let html = markdown::to_html_with_options(&colored, &options).unwrap();
-        // The HTML should literally contain the mark tag, meaning it wasn't escaped
-        assert!(html.contains("<mark color=\"pink-400/0.22\"><strong>@opus</strong></mark>"));
+        // The HTML should literally contain the span, meaning it wasn't escaped
+        assert!(html.contains("<span style=\"color: pink-400\"><strong>@opus</strong></span>"));
     }
 
-    /// An unparseable colour is not an error in gpui-component — `<mark>` silently
-    /// falls back to yellow. So the tint values have to be proven against the real
-    /// parser, or a typo ships as a yellow highlighter and every test still passes.
+    /// `@team` and `@orchestrator` route to the swarm rather than to a roster row, so
+    /// nothing in the roster carries those ids — they must still read as quarks, not
+    /// as filenames.
     #[test]
-    fn mention_tints_are_colours_the_renderer_can_parse() {
+    fn swarm_mentions_colour_as_quarks_not_files() {
+        let colored = color_mentions("@team and @orchestrator and @src/main.rs", &[]);
+        assert!(colored.contains(&format!("{MENTION_QUARK_OPEN}@team")));
+        assert!(colored.contains(&format!("{MENTION_QUARK_OPEN}@orchestrator")));
+        assert!(colored.contains(&format!("{MENTION_FILE_OPEN}@src/main.rs")));
+    }
+
+    /// An unparseable colour is not an error in gpui-component — it is silently
+    /// dropped. And `TextMark::color` exists only in our fork (see the `[patch]` in
+    /// the workspace Cargo.toml): if that patch ever stops applying, we fall back to
+    /// upstream, mentions render as plain text, and nothing else would notice.
+    #[test]
+    fn mention_colours_are_ones_the_forked_renderer_can_apply() {
         for markup in [MENTION_QUARK_OPEN, MENTION_FILE_OPEN] {
             let color = markup
-                .split_once("color=\"")
+                .split_once("color: ")
                 .and_then(|(_, rest)| rest.split_once('"'))
                 .map(|(c, _)| c)
-                .expect("mention markup carries a color attribute");
+                .expect("mention markup carries a color declaration");
             let parsed = gpui_component::try_parse_color(color)
                 .unwrap_or_else(|e| panic!("{color} is not a colour gpui-component accepts: {e}"));
-            assert!(parsed.a < 1.0, "{color} should be a translucent tint, not a solid block");
+
+            // Fails to compile against upstream gpui-component, which has no `color`.
+            let mark = gpui_component::text::TextMark::default().color(parsed);
+            assert_eq!(mark.color, Some(parsed));
         }
     }
 }
