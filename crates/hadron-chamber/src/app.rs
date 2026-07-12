@@ -25,7 +25,7 @@ use gpui_component::stepper::{Stepper, StepperItem};
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::tag::Tag;
 use gpui_component::tooltip::Tooltip;
-use gpui_component::accordion::Accordion;
+
 // table imports removed
 use gpui_component::{
     h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar
@@ -999,6 +999,7 @@ impl Chamber {
             let mode_el = div()
                 .id(SharedString::from(format!("mode-{}", r.id)))
                 .cursor_pointer()
+                .flex_none()
                 .on_click(cx.listener(move |this, _, _, cx| this.cycle_quark_mode(&qid, cx)))
                 .child(mode_tag(r.mode, r.mode_is_override))
                 .into_any_element();
@@ -1308,7 +1309,7 @@ impl Chamber {
                     if diffs.is_empty() {
                         div().p_4().text_color(theme::text_muted()).child("No changes in working tree.").into_any_element()
                     } else {
-                        let mut acc = Accordion::new("changes-accordion").multiple(true).bordered(false);
+                        let mut list = v_flex().w_full();
                         for (ix, file) in diffs.iter().enumerate() {
                             let title = h_flex().gap_2().items_center()
                                 .child(div().child(file.path.clone()))
@@ -1316,8 +1317,28 @@ impl Chamber {
                                 .child(div().text_color(gpui::rgb(0xfb7185)).child(format!("-{}", file.removed)));
 
                             let is_open = self.changes_open_ixs.contains(&ix);
-                            acc = acc.item(|mut item| {
-                                item = item.title(title).open(is_open);
+
+                            let header = h_flex()
+                                .id(ix)
+                                .w_full()
+                                .justify_between()
+                                .items_center()
+                                .py_1()
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if this.changes_open_ixs.contains(&ix) {
+                                        this.changes_open_ixs.remove(&ix);
+                                    } else {
+                                        this.changes_open_ixs.insert(ix);
+                                    }
+                                    cx.notify();
+                                }))
+                                .child(title)
+                                .child(Icon::new(if is_open { IconName::ChevronUp } else { IconName::ChevronDown }).small().text_color(theme::text_muted()));
+
+                            let mut row = v_flex().w_full().child(header);
+
+                            if is_open {
                                 let mut lines_list = v_flex().w_full().text_sm().pt_2().font_family("Cascadia Code");
                                 for (_, hunk) in file.hunks.iter().enumerate() {
                                     lines_list = lines_list.child(
@@ -1343,16 +1364,12 @@ impl Chamber {
                                         }
                                     }
                                 }
-                                item.child(lines_list)
-                            });
-                        }
-                        acc.on_toggle_click(cx.listener(|this, open_ixs: &[usize], _window, cx| {
-                            this.changes_open_ixs.clear();
-                            for &ix in open_ixs {
-                                this.changes_open_ixs.insert(ix);
+                                row = row.child(lines_list);
                             }
-                            cx.notify();
-                        })).into_any_element()
+
+                            list = list.child(row.border_b_1().border_color(theme::border()));
+                        }
+                        list.into_any_element()
                     }
                 } else {
                     div().p_4().text_color(theme::text_muted()).child("Failed to load diff.").into_any_element()
