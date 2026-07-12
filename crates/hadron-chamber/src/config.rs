@@ -72,13 +72,6 @@ pub fn config_path() -> Option<PathBuf> {
     Some(hadron_lattice::user_hadron_dir()?.join("chamber.json"))
 }
 
-/// Resolve the team roster path (`~/.hadron/team.json`), a sibling of
-/// `chamber.json`. The daemon reads the same file to seat quarks when no
-/// project-level `.hadron/team.json` is present.
-pub fn team_path() -> Option<PathBuf> {
-    config_path().map(|p| p.with_file_name("team.json"))
-}
-
 /// Read preferences from an explicit path; missing or malformed → defaults.
 pub fn load_from(path: &Path) -> ChamberPrefs {
     match std::fs::read_to_string(path) {
