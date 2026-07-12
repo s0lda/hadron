@@ -32,13 +32,13 @@ pub fn border() -> Rgba {
 
 // --- text tiers ---
 pub fn text() -> Rgba {
-    rgb(0xf5f5f6)
+    rgb(0xd4d4d8) // soft off-white (zinc-300)
 }
 pub fn text_secondary() -> Rgba {
-    rgba(0xf5f5f6c2) // 0.76
+    rgba(0xd4d4d8c2) // 0.76
 }
 pub fn text_muted() -> Rgba {
-    rgba(0xf5f5f694) // 0.58
+    rgba(0xd4d4d894) // 0.58
 }
 
 // --- accents (the energy gradient) ---
