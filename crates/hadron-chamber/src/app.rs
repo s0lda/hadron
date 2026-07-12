@@ -2199,6 +2199,17 @@ fn markdown_style() -> gpui_component::text::TextViewStyle {
     style
 }
 
+/// Mentions render as a bold, faintly tinted chip rather than coloured text.
+///
+/// `gpui-component`'s `TextMark` (`text/node.rs`) has no foreground-colour field —
+/// only `highlight`, which resolves to a *background*. So `<mark>` plus `<strong>`
+/// is the strongest mention treatment the renderer can express. `try_parse_color`
+/// accepts an opacity suffix, which is what keeps the tint a chip instead of a
+/// highlighter block. True foreground colour needs an upstream change.
+const MENTION_QUARK_OPEN: &str = "<mark color=\"pink-400/0.22\"><strong>";
+const MENTION_FILE_OPEN: &str = "<mark color=\"purple-400/0.22\"><strong>";
+const MENTION_CLOSE: &str = "</strong></mark>";
+
 fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
     let mut out = String::with_capacity(body.len() + 100);
     let mut chars = body.chars().peekable();
@@ -2215,9 +2226,9 @@ fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
             if name.is_empty() {
                 out.push('@');
             } else if roster.iter().any(|q| q.id == name) {
-                out.push_str(&format!("<mark color=\"pink-400\">@{}</mark>", name));
+                out.push_str(&format!("{}@{}{}", MENTION_QUARK_OPEN, name, MENTION_CLOSE));
             } else {
-                out.push_str(&format!("<mark color=\"purple-400\">@{}</mark>", name));
+                out.push_str(&format!("{}@{}{}", MENTION_FILE_OPEN, name, MENTION_CLOSE));
             }
         } else {
             out.push(c);
@@ -2449,7 +2460,10 @@ mod tests {
         }];
         
         let colored = color_mentions(body, &roster);
-        assert_eq!(colored, "Hello <mark color=\"pink-400\">@opus</mark>!");
+        assert_eq!(
+            colored,
+            "Hello <mark color=\"pink-400/0.22\"><strong>@opus</strong></mark>!"
+        );
 
         let options = markdown::Options {
             compile: markdown::CompileOptions {
@@ -2460,6 +2474,23 @@ mod tests {
         };
         let html = markdown::to_html_with_options(&colored, &options).unwrap();
         // The HTML should literally contain the mark tag, meaning it wasn't escaped
-        assert!(html.contains("<mark color=\"pink-400\">@opus</mark>"));
+        assert!(html.contains("<mark color=\"pink-400/0.22\"><strong>@opus</strong></mark>"));
+    }
+
+    /// An unparseable colour is not an error in gpui-component — `<mark>` silently
+    /// falls back to yellow. So the tint values have to be proven against the real
+    /// parser, or a typo ships as a yellow highlighter and every test still passes.
+    #[test]
+    fn mention_tints_are_colours_the_renderer_can_parse() {
+        for markup in [MENTION_QUARK_OPEN, MENTION_FILE_OPEN] {
+            let color = markup
+                .split_once("color=\"")
+                .and_then(|(_, rest)| rest.split_once('"'))
+                .map(|(c, _)| c)
+                .expect("mention markup carries a color attribute");
+            let parsed = gpui_component::try_parse_color(color)
+                .unwrap_or_else(|e| panic!("{color} is not a colour gpui-component accepts: {e}"));
+            assert!(parsed.a < 1.0, "{color} should be a translucent tint, not a solid block");
+        }
     }
 }
