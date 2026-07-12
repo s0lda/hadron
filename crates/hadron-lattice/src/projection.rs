@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Event, QuarkCard, Risk};
+use crate::{Event, Mode, QuarkCard, Risk};
 
 /// The curated context handed to a quark on excitation. The single chokepoint
 /// where cost-control (what context), invariants (methodology), nucleus (project
@@ -23,6 +23,12 @@ pub struct Projection {
     pub field_window: Vec<Event>,
     /// Current working diff, not whole files. v1: may be empty.
     pub git_diff: String,
+    /// The permission authority this quark runs under this turn. The engine
+    /// resolves it from the field (`resolve_mode`) before excitation; real
+    /// adapters translate it into the CLI's permission posture. Defaults to the
+    /// most restrictive rung.
+    #[serde(default)]
+    pub mode: Mode,
 }
 
 /// What an adapter returns after a turn. File mutations are NOT reported here —
@@ -72,9 +78,23 @@ mod tests {
                 Kind::Message { body: "go".into() },
             )],
             git_diff: String::new(),
+            mode: Mode::Bypass,
         };
         assert_eq!(proj.roster.len(), 1);
         assert_eq!(proj.field_window.len(), 1);
+        assert_eq!(proj.mode, Mode::Bypass);
+    }
+
+    #[test]
+    fn projection_mode_defaults_to_ask_when_absent() {
+        // A pre-mode field snapshot (no `mode` key) deserializes to the most
+        // restrictive rung, not an accidental Bypass.
+        let json = r#"{
+            "task":"x","invariants":"","available_invariants":[],
+            "nucleus_digest":"","roster":[],"field_window":[],"git_diff":""
+        }"#;
+        let proj: Projection = serde_json::from_str(json).unwrap();
+        assert_eq!(proj.mode, Mode::Ask);
     }
 
     #[test]

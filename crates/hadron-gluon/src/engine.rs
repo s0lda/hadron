@@ -230,6 +230,11 @@ impl Engine {
                 
             let (invariants_text, available_invariants) = build_invariants(workspace_root, &requested_invariants);
 
+            // Resolve the quark's effective mode from the field before the turn:
+            // real adapters translate it into the CLI's permission posture, so the
+            // mode must ride along on the projection (not just gate a post-turn ask).
+            let turn_mode = hadron_gatekeeper::resolve_mode(&events, &target);
+
             let projection = Projection {
                 task: task_desc,
                 invariants: invariants_text,
@@ -238,6 +243,7 @@ impl Engine {
                 roster: self.roster.clone(),
                 field_window: events.clone(),
                 git_diff,
+                mode: turn_mode,
             };
 
             let quark = self
