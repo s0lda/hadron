@@ -2241,8 +2241,17 @@ fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
 /// If rows ever get reordered or filtered, key on a stable message id instead — the
 /// cache would silently stop helping, and no test would catch the regression.
 fn markdown_body(view: &'static str, ix: usize, body: &str, roster: &[crate::model::RosterRow]) -> impl IntoElement {
+    let options = markdown::Options {
+        compile: markdown::CompileOptions {
+            allow_dangerous_html: true,
+            ..markdown::CompileOptions::default()
+        },
+        parse: markdown::ParseOptions::gfm(),
+    };
+    let html = markdown::to_html_with_options(&color_mentions(body, roster), &options).unwrap_or_default();
+
     div().text_size(px(13.65)).child(
-        gpui_component::text::TextView::markdown((view, ix), color_mentions(body, roster))
+        gpui_component::text::TextView::html((view, ix), html)
             .selectable(true)
             .style(markdown_style()),
     )
@@ -2417,4 +2426,40 @@ pub fn run(field_path: Option<String>) {
         })
         .detach();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::RosterRow;
+    use hadron_lattice::QuarkState;
+
+    #[test]
+    fn test_mentions_parse_as_raw_html() {
+        let body = "Hello @opus!";
+        let roster = vec![RosterRow {
+            id: "opus".to_string(),
+            state: QuarkState::Excited,
+            mode: hadron_lattice::Mode::Ask,
+            mode_is_override: false,
+            provider: "anthropic".to_string(),
+            model: "Claude Opus 4.6".to_string(),
+            flavor: Some(hadron_lattice::Flavor::Worker),
+            tokens: 0,
+        }];
+        
+        let colored = color_mentions(body, &roster);
+        assert_eq!(colored, "Hello <mark color=\"pink-400\">@opus</mark>!");
+
+        let options = markdown::Options {
+            compile: markdown::CompileOptions {
+                allow_dangerous_html: true,
+                ..markdown::CompileOptions::default()
+            },
+            parse: markdown::ParseOptions::gfm(),
+        };
+        let html = markdown::to_html_with_options(&colored, &options).unwrap();
+        // The HTML should literally contain the mark tag, meaning it wasn't escaped
+        assert!(html.contains("<mark color=\"pink-400\">@opus</mark>"));
+    }
 }

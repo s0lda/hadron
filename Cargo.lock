@@ -2664,6 +2664,7 @@ dependencies = [
  "hadron-gatekeeper",
  "hadron-lattice",
  "lsp-types",
+ "markdown",
  "serde",
  "serde_json",
  "tempfile",
