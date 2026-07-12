@@ -54,6 +54,23 @@ fn head_commit(repo_root: &Path) -> Option<String> {
     git(repo_root, &["rev-parse", "--verify", "HEAD"]).ok()
 }
 
+/// The directory git actually keeps this checkout's private state in — its index,
+/// its in-progress rebase, its refs.
+///
+/// **Never `path.join(".git")`.** That is only true of a *main* checkout. In a linked
+/// worktree — which is now every place a quark works — `.git` is a plain FILE holding
+/// `gitdir: <repo>/.git/worktrees/<name>`, so joining onto it yields a path under a
+/// non-directory and every write there fails with `Not a directory`. Ask git instead:
+/// `--absolute-git-dir` answers `<root>/.git` for a main checkout (byte-identical to
+/// the old behaviour) and `<root>/.git/worktrees/<name>` inside a worktree. It is also
+/// per-worktree, so two concurrent snapshots cannot collide on one index file.
+pub(crate) fn git_dir(path: &Path) -> anyhow::Result<std::path::PathBuf> {
+    Ok(std::path::PathBuf::from(git(
+        path,
+        &["rev-parse", "--absolute-git-dir"],
+    )?))
+}
+
 /// Snapshot the current worktree into a shadow ref without touching the user's
 /// index or HEAD. Uses a throwaway index file, writes a tree, commit-trees it
 /// (parented on HEAD when one exists), and points `refs/hadron/snapshots/<id>`
@@ -61,8 +78,10 @@ fn head_commit(repo_root: &Path) -> Option<String> {
 pub fn create(repo_root: &Path, label: &str) -> anyhow::Result<SnapshotRef> {
     let id = Ulid::new().to_string();
 
-    // Throwaway index so we never disturb the user's staging area.
-    let tmp_index = repo_root.join(format!(".git/hadron-index-{id}"));
+    // Throwaway index so we never disturb the user's staging area. It lives in the
+    // checkout's REAL git dir (see `git_dir`) — in a quark's worktree that is not
+    // `<path>/.git`, which is a file there, not a directory.
+    let tmp_index = git_dir(repo_root)?.join(format!("hadron-index-{id}"));
     let tmp_index_str = tmp_index.to_string_lossy().to_string();
     let env = [("GIT_INDEX_FILE", tmp_index_str.as_str())];
 

@@ -24,6 +24,30 @@ type SharedQuark = Arc<AsyncMutex<Box<dyn Quark>>>;
 /// running one. It bounds how long a quark sits unexcited, not how long a turn takes.
 const FIELD_POLL: std::time::Duration = std::time::Duration::from_millis(150);
 
+/// The event that drives a turn: the *assignment*. Its ULID names the quark's
+/// branch (`quark/<id>/<assignment>`), and its body is the task on the projection —
+/// one event, one source of truth, so the branch a quark commits to and the task it
+/// was handed can never drift apart.
+#[derive(Debug, Clone)]
+struct Driver {
+    assignment: ulid::Ulid,
+    task: String,
+    invariants: Vec<String>,
+}
+
+/// The worktree a turn ran in, carried from dispatch through to `finish_turn` so the
+/// turn can end on a commit in the right branch. `head_before` is HEAD at dispatch:
+/// the turn's commit is detected by **comparing HEAD**, not by assuming we were the
+/// ones who committed — a `Bypass`-mode CLI may have run `git commit` itself, leaving
+/// a clean tree behind an advanced branch.
+#[derive(Debug, Clone)]
+struct TurnTree {
+    wt: crate::worktree::Worktree,
+    base: String,
+    head_before: Option<String>,
+    assignment: ulid::Ulid,
+}
+
 /// The workspace directory that owns `field_path` — the directory every quark's CLI
 /// is spawned in, and the root the nucleus/invariants are read from.
 ///
@@ -168,6 +192,11 @@ pub struct Engine {
     nucleus_digest: String,
     ledger: Option<crate::ledger::Ledger>,
     energy_limit: u32,
+    /// Opt-in merge gate. `None` = off, and off is the default *on purpose*: the
+    /// production runner shells out to `cargo test --workspace`, which a unit test
+    /// must never reach (it would recurse into this very suite). Engine tests inject
+    /// a fake; only the daemon bin seats the real one.
+    merge: Option<Arc<dyn crate::merge::MergeRunner>>,
     /// Serializes every field append the engine makes. `append_event` re-opens the
     /// file O_APPEND each call, so a single line can't tear — but two concurrent
     /// turns finishing at once could still interleave their *sequences* of events.
@@ -206,8 +235,20 @@ impl Engine {
             nucleus_digest: String::new(),
             ledger: None,
             energy_limit: 0,
+            merge: None,
             field_lock: Arc::new(AsyncMutex::new(())),
         }
+    }
+
+    /// Opt in to the merge gate: when an assignment completes, run the workspace tests
+    /// in the quark's worktree and — with a human's approval, asked for over the
+    /// existing permission channel — land the branch on the default branch.
+    ///
+    /// Requires [`with_git`](Self::with_git); without a repo root there are no branches
+    /// to gate.
+    pub fn with_merge_gate(mut self, runner: Arc<dyn crate::merge::MergeRunner>) -> Self {
+        self.merge = Some(runner);
+        self
     }
 
     /// The one way the engine writes to the field: serialized behind `field_lock`,
@@ -310,63 +351,102 @@ impl Engine {
         targets
     }
 
+    /// The event that drives this turn — the *assignment*. Its `Ulid` names the
+    /// quark's branch, so every turn of one assignment (including a turn resumed
+    /// after a permission pause) resolves the **same** ULID and lands back in the
+    /// same worktree on the same branch. A resumed quark that cut a fresh branch
+    /// would orphan the uncommitted work it paused with; that is the exact inverse
+    /// of the intent, and this function is what prevents it.
+    ///
+    /// The resolution order is the one `projection_for` has always used, now with
+    /// the driving event's identity kept instead of thrown away. `None` = no
+    /// task-bearing driver at all.
+    fn driver_for(
+        &self,
+        events: &[Event],
+        target: &QuarkId,
+        fallback_task: Option<&str>,
+    ) -> Option<Driver> {
+        // 1. An unaddressed human message (single- or multi-mention, or default
+        //    routing): the task is that message itself — there is no `to == target`
+        //    event to recover it from.
+        if let Some(task) = fallback_task {
+            let ev = events.iter().rev().find(|e| {
+                matches!(&e.kind, Kind::Message { body } if e.from == Actor::Human
+                    && e.to.is_none()
+                    && self.human_addressees(body).contains(target))
+            })?;
+            return Some(Driver {
+                assignment: ev.id,
+                task: task.to_string(),
+                invariants: vec![],
+            });
+        }
+
+        // 2. The most recent *task-bearing* event addressed to this quark. Skip
+        //    non-task events like a PermissionGrant (also addressed to the quark, to
+        //    re-trigger it) — otherwise a resumed quark would get an empty task, and
+        //    (now) a branch named for the grant rather than the assignment.
+        if let Some(trigger) = events.iter().rev().find(|e| {
+            e.to.as_ref() == Some(target)
+                && matches!(e.kind, Kind::Assign { .. } | Kind::Message { .. })
+        }) {
+            return Some(match &trigger.kind {
+                Kind::Assign { task, invariants } => Driver {
+                    assignment: trigger.id,
+                    task: task.clone(),
+                    invariants: invariants.clone(),
+                },
+                Kind::Message { body } => {
+                    // A follow-up message inherits the invariants of the most recent
+                    // Assign to this quark.
+                    let invariants = events
+                        .iter()
+                        .rev()
+                        .find_map(|e| match (&e.to, &e.kind) {
+                            (Some(to), Kind::Assign { invariants, .. }) if to == target => {
+                                Some(invariants.clone())
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    Driver { assignment: trigger.id, task: body.clone(), invariants }
+                }
+                _ => unreachable!("the find matched Assign | Message"),
+            });
+        }
+
+        // 3. No event is addressed `to == target` — this is a quark resuming after a
+        //    permission grant whose DRIVING message is an unaddressed (`to: None`)
+        //    human message that named this quark in its body (a mention, or an
+        //    unmentioned message the quark orchestrates). Recover the task from that
+        //    message so the resumed turn isn't handed "". Resolution matches
+        //    `human_message_targets` exactly, so both agree which message drives it.
+        let driving = events.iter().rev().find(|e| {
+            matches!(&e.kind, Kind::Message { body } if e.from == Actor::Human && self.human_addressees(body).contains(target))
+        })?;
+        let Kind::Message { body } = &driving.kind else {
+            return None;
+        };
+        Some(Driver { assignment: driving.id, task: body.clone(), invariants: vec![] })
+    }
+
     /// Build the projection handed to `target` for this turn, from the field as read
-    /// at dispatch time. `fallback_task` carries an unaddressed human message body
-    /// (the multi-mention / default-routing case, where no `to == target` event
-    /// exists to recover the task from).
+    /// at dispatch time and the already-resolved [`Driver`] (so the projection's task
+    /// and the quark's branch name cannot disagree — they come from one event).
+    ///
+    /// `cwd` is where the quark works: its own worktree when worktree discipline is
+    /// on, else the workspace root.
     fn projection_for(
         &self,
         events: &[Event],
         target: &QuarkId,
-        fallback_task: Option<String>,
+        driver: Option<&Driver>,
         git_diff: String,
+        cwd: Option<PathBuf>,
     ) -> Projection {
-        let mut requested_invariants = vec![];
-        let mut task_desc = String::new();
-
-        // Find the most recent *task-bearing* event targeting this quark. Skip
-        // non-task events like a PermissionGrant (also addressed to the quark, to
-        // re-trigger it) — otherwise a resumed quark would get an empty task.
-        if let Some(task) = &fallback_task {
-            // Routing an unaddressed human message (single or multi-mention):
-            // the task is that message itself (no `to == target` event exists).
-            task_desc = task.clone();
-        } else if let Some(trigger) = events.iter().rev().find(|e| {
-            e.to.as_ref() == Some(target)
-                && matches!(e.kind, Kind::Assign { .. } | Kind::Message { .. })
-        }) {
-            match &trigger.kind {
-                Kind::Assign { task, invariants } => {
-                    task_desc = task.clone();
-                    requested_invariants = invariants.clone();
-                }
-                Kind::Message { body } => {
-                    task_desc = body.clone();
-                    // For a follow-up message, scan further backward for the most recent Assign to inherit invariants
-                    if let Some(assign_event) = events.iter().rev().find(|e| {
-                        e.to.as_ref() == Some(target) && matches!(e.kind, Kind::Assign { .. })
-                    }) {
-                        if let Kind::Assign { invariants, .. } = &assign_event.kind {
-                            requested_invariants = invariants.clone();
-                        }
-                    }
-                }
-                _ => {}
-            }
-        } else if let Some(driving) = events.iter().rev().find(|e| {
-            // No event is addressed `to == target` — this is a quark resuming
-            // after a permission grant whose DRIVING message is an unaddressed
-            // (`to: None`) human message that named this quark in its body (a
-            // mention, or an unmentioned message the quark orchestrates). Recover
-            // the task from that message so the resumed turn isn't handed "".
-            // Resolution matches `human_message_targets` exactly, so both agree on
-            // which human message drives this quark's turn.
-            matches!(&e.kind, Kind::Message { body } if e.from == Actor::Human && self.human_addressees(body).contains(target))
-        }) {
-            if let Kind::Message { body } = &driving.kind {
-                task_desc = body.clone();
-            }
-        }
+        let task_desc = driver.map(|d| d.task.clone()).unwrap_or_default();
+        let requested_invariants = driver.map(|d| d.invariants.clone()).unwrap_or_default();
 
         // Resolved against the daemon's cwd: a *relative* field path (`.hadron/field.jsonl`,
         // exactly how the daemon is launched) used to bottom out on the empty ancestor —
@@ -394,7 +474,10 @@ impl Engine {
             // E2BIG. Keep the most recent events that fit the byte budget.
             field_window: bounded_window(events, FIELD_WINDOW_BUDGET_BYTES),
             git_diff,
-            cwd: workspace_root,
+            // The quark's own worktree when worktree discipline is on. Without it,
+            // the workspace root — the pre-worktree behaviour, kept for the mock
+            // daemon and every test that doesn't opt into git.
+            cwd: cwd.unwrap_or(workspace_root),
             mode: turn_mode,
         }
     }
@@ -406,7 +489,47 @@ impl Engine {
     /// auto-approved quark is re-dispatched by the grant (`to == quark`, so
     /// `next_pending` re-selects it) and grounds at the end of its *next* turn, and
     /// an ask-the-human quark ends `Waiting` until a human grant resumes it.
-    async fn finish_turn(&self, target: &QuarkId, outcome: TurnOutcome) -> anyhow::Result<()> {
+    /// Refuse to excite `target`, loudly and without stranding it: a Gluon message
+    /// explaining why, then `Status{Blocked}` for the quark. The dispatch loop then
+    /// `continue`s, so the quark's *siblings* still run — the reroute property.
+    ///
+    /// One shape for every refusal (energy depletion, an unusable worktree, a turn
+    /// with no assignment) rather than a new mechanism per reason.
+    async fn reroute_blocked(&self, target: &QuarkId, why: &str) -> anyhow::Result<()> {
+        self.append(Event::new(Actor::Gluon, None, Kind::Message { body: why.to_string() }))
+            .await?;
+        self.append(Event::new(
+            Actor::Quark(target.clone()),
+            None,
+            Kind::Status { state: QuarkState::Blocked },
+        ))
+        .await?;
+        Ok(())
+    }
+
+    async fn finish_turn(
+        &self,
+        target: &QuarkId,
+        outcome: TurnOutcome,
+        tree: Option<&TurnTree>,
+    ) -> anyhow::Result<()> {
+        // Kept before the reply is moved into the field: the commit message names the
+        // quark, its first line, and the assignment — greppable back to the event.
+        let headline = outcome
+            .message
+            .as_deref()
+            .and_then(|m| m.lines().find(|l| !l.trim().is_empty()))
+            .unwrap_or("work")
+            .trim()
+            .chars()
+            .take(72)
+            .collect::<String>();
+        let handed_back = outcome
+            .message
+            .as_deref()
+            .map(|body| parse_addressee(body, &self.roster, Some(target)).is_none())
+            .unwrap_or(true);
+
         if outcome.used_tokens > 0 {
             if let Some(ledger) = &self.ledger {
                 ledger.record_usage(target, outcome.used_tokens)?;
@@ -458,6 +581,11 @@ impl Engine {
                     // Pause: mark the quark waiting. The dispatch loop no longer has
                     // any pending work for it, so once every *other* in-flight turn
                     // finishes the engine quiesces and the human is asked.
+                    //
+                    // NOTE: deliberately NO commit here. A quark pausing mid-assignment
+                    // for permission is not done — its uncommitted work must still be
+                    // sitting in its worktree when the grant resumes it. That is exactly
+                    // why `worktree::ensure` is idempotent for the same assignment.
                     self.append(Event::new(
                         Actor::Quark(target.clone()),
                         None,
@@ -469,6 +597,37 @@ impl Engine {
             }
         }
 
+        // The turn ends on a COMMIT in the quark's branch. Only here, on the Ground
+        // path: both permission branches above return early, uncommitted, on purpose.
+        if let Some(t) = tree {
+            let message = format!("{}: {headline} [{}]", target.as_str(), t.assignment);
+            crate::worktree::commit_turn(&t.wt, &message)?;
+
+            // Compare HEAD; don't assume WE committed. A Bypass-mode CLI may have run
+            // `git commit` itself, leaving a clean tree behind an advanced branch —
+            // `commit_turn` returns `Ok(None)` there, but the work still happened.
+            let head_now = crate::worktree::head(&t.wt.path);
+            if head_now.is_some() && head_now != t.head_before {
+                let git = head_now.unwrap_or_default();
+                let paths = crate::worktree::changed_paths(&t.wt, &t.base)?;
+                // `Kind::Edit` has existed in the lattice since day one and was emitted
+                // by nobody. This is what it was for: a quark's work, attributed.
+                self.append(Event::new(
+                    Actor::Quark(target.clone()),
+                    None,
+                    Kind::Edit { paths, git, summary: headline.clone() },
+                ))
+                .await?;
+            }
+
+            // The assignment is COMPLETE when the quark hands control back (its reply
+            // carries no `@mention`). That is when the merge gate fires — mid-chain
+            // hand-offs keep working on the same branch and are not gated.
+            if handed_back && self.merge.is_some() && self.merge_gate(target, t).await? {
+                return Ok(()); // the gate parked the quark (Waiting / Blocked)
+            }
+        }
+
         self.append(Event::new(
             Actor::Quark(target.clone()),
             None,
@@ -476,6 +635,125 @@ impl Engine {
         ))
         .await?;
         Ok(())
+    }
+
+    /// The merge gate, fired when an assignment completes. Returns `true` if it parked
+    /// the quark (Waiting on a human, or Blocked on red tests), in which case the
+    /// caller must NOT append `Ground`.
+    ///
+    /// The DECISION is pure and lives in `hadron-gatekeeper` (that crate is
+    /// side-effect-free by contract). Only the EFFECTS — `cargo test`, `git merge` —
+    /// live here, behind the [`MergeRunner`](crate::merge::MergeRunner) seam.
+    ///
+    /// Human approval reuses the EXISTING permission channel: a `PermissionReq` from
+    /// the quark, surfaced by `gatekeeper::pending_permission`, rendered by the chamber
+    /// the human already has, answered by the same `PermissionGrant`. No second
+    /// approval mechanism.
+    async fn merge_gate(&self, target: &QuarkId, t: &TurnTree) -> anyhow::Result<bool> {
+        use hadron_gatekeeper::{BlockReason, BranchState, MergeVerdict};
+        let Some(runner) = &self.merge else { return Ok(false) };
+        let Some(root) = &self.repo_root else { return Ok(false) };
+
+        let state = BranchState {
+            commits: crate::worktree::commits_ahead(&t.wt, &t.base)?,
+            dirty: crate::worktree::is_dirty(&t.wt.path)?,
+            is_default_branch: t.wt.branch == t.base,
+        };
+        // Nothing to land (a pure-conversation turn): quiesce normally, silently.
+        if state.commits == 0 {
+            return Ok(false);
+        }
+
+        let events = read_events(&self.field_path)?;
+        let op = hadron_gatekeeper::merge_op(&t.wt.branch, &t.base);
+
+        // Approval: an explicit human grant for THIS branch, or the mode ladder saying
+        // the human already delegated it. A merge is BashExec-class, so `decide` gives
+        // Bypass ⇒ auto-merge for free, and Ask/Write/Auto ⇒ ask. (Auto never remembers
+        // a merge: the op string contains the assignment ULID, so it is never the same
+        // op twice — which is the right answer. You should not blanket-trust merges.)
+        let mode = hadron_gatekeeper::resolve_mode(&events, target);
+        let rules = hadron_gatekeeper::allow_rules(&events);
+        let delegated = matches!(
+            hadron_gatekeeper::decide(mode, hadron_gatekeeper::Risk::BashExec, &op, target, &rules),
+            hadron_gatekeeper::Decision::AutoApprove
+        );
+        let approved = delegated || hadron_gatekeeper::merge_approved(&events, target, &op);
+
+        // Tests run IN the quark's worktree, on the branch as it now stands — so we
+        // never land untested commits, even on the re-asked second pass.
+        let (tests_passed, tail) = runner.tests(&t.wt).await?;
+
+        match hadron_gatekeeper::merge_decision(tests_passed, approved, &state) {
+            MergeVerdict::Merge => {
+                if delegated {
+                    // Bypass: record req + grant for audit, exactly as the existing
+                    // permission path does, then land without asking.
+                    self.append(Event::new(
+                        Actor::Quark(target.clone()),
+                        None,
+                        Kind::PermissionReq {
+                            risk: hadron_gatekeeper::Risk::BashExec,
+                            description: op.clone(),
+                        },
+                    ))
+                    .await?;
+                    self.append(Event::new(
+                        Actor::Gluon,
+                        Some(target.clone()),
+                        Kind::PermissionGrant { approved: true, remember: false },
+                    ))
+                    .await?;
+                }
+                let landed = runner.land(root, &t.wt, &t.base)?;
+                self.append(Event::new(
+                    Actor::Gluon,
+                    None,
+                    Kind::Message { body: landed.describe(&t.wt.branch, &t.base) },
+                ))
+                .await?;
+                Ok(false) // landed → the quark grounds normally
+            }
+            MergeVerdict::Block(BlockReason::NotApproved) => {
+                // Idempotent: if the ask is already outstanding for this branch, stay
+                // Waiting rather than appending a second request.
+                let already_asked = hadron_gatekeeper::pending_permission(&events)
+                    .is_some_and(|p| p.quark == *target && p.description == op);
+                if !already_asked {
+                    self.append(Event::new(
+                        Actor::Quark(target.clone()),
+                        None,
+                        Kind::PermissionReq {
+                            risk: hadron_gatekeeper::Risk::BashExec,
+                            description: op,
+                        },
+                    ))
+                    .await?;
+                }
+                self.append(Event::new(
+                    Actor::Quark(target.clone()),
+                    None,
+                    Kind::Status { state: QuarkState::Waiting },
+                ))
+                .await?;
+                Ok(true)
+            }
+            MergeVerdict::Block(reason) => {
+                // Red tests / a dirty tree / a branch that is somehow the default one.
+                // The branch STAYS. Nothing is deleted — the work is evidence.
+                self.reroute_blocked(
+                    target,
+                    &format!(
+                        "⚠️ merge of `{}` blocked: {}. The branch is preserved at `{}`.\n\n{tail}",
+                        t.wt.branch,
+                        reason.describe(),
+                        t.wt.path.display()
+                    ),
+                )
+                .await?;
+                Ok(true)
+            }
+        }
     }
 
     /// Dispatch every pending quark turn CONCURRENTLY until the field has no pending
@@ -494,7 +772,8 @@ impl Engine {
     pub async fn run_until_quiesce(&mut self) -> anyhow::Result<()> {
         let mut exchanges = 0usize;
         let mut in_flight: HashSet<QuarkId> = HashSet::new();
-        let mut turns: JoinSet<(QuarkId, anyhow::Result<TurnOutcome>)> = JoinSet::new();
+        let mut turns: JoinSet<(QuarkId, Option<TurnTree>, anyhow::Result<TurnOutcome>)> =
+            JoinSet::new();
         // The first turn error wins; siblings still run to completion (and still get
         // their terminal status) so a single failure can't strand the rest as
         // forever-Excited in the field.
@@ -525,14 +804,7 @@ impl Engine {
                     if let Some(ledger) = &self.ledger {
                         if ledger.is_depleted(&target, self.energy_limit)? {
                             let msg = format!("⚠️ Quark {} is depleted (exceeded {} tokens).", target.as_str(), self.energy_limit);
-                            self.append(Event::new(Actor::Gluon, None, Kind::Message { body: msg }))
-                                .await?;
-                            self.append(Event::new(
-                                Actor::Quark(target.clone()),
-                                None,
-                                Kind::Status { state: QuarkState::Blocked },
-                            ))
-                            .await?;
+                            self.reroute_blocked(&target, &msg).await?;
                             continue; // Reroute: skip this quark, dispatch the rest
                         }
                     }
@@ -543,26 +815,87 @@ impl Engine {
                         break;
                     };
 
-                    // TODO(worktrees): this snapshots the SHARED working tree, so under
-                    // concurrent turns the "before <quark>" label no longer attributes a
-                    // diff to one quark — two turns may snapshot the same tree, and the
-                    // diff a quark sees may contain a sibling's edits. It is safe (git
-                    // stash-free, append-only, no panic), just not meaningful attribution.
-                    // Real per-quark attribution needs worktree isolation — a separate task.
-                    let git_diff = if let Some(root) = &self.repo_root {
-                        let snap = crate::snapshot::create(root, &format!("before {}", target.as_str()))?;
+                    // The assignment that drives this turn. Its ULID names the branch,
+                    // and its body is the task — resolved ONCE, so both agree.
+                    let driver = self.driver_for(&events, &target, fallback_task.as_deref());
+
+                    // Worktree discipline (on iff `with_git`): the quark works in its
+                    // own checkout, on its own branch, and never in the human's tree.
+                    let mut tree: Option<TurnTree> = None;
+                    let mut git_diff = String::new();
+                    if let Some(root) = self.repo_root.clone() {
+                        // No task-bearing driver ⇒ no assignment ⇒ no branch to cut.
+                        // Refuse rather than commit a quark's work to an unnamed branch.
+                        let Some(driver) = driver.as_ref() else {
+                            self.reroute_blocked(
+                                &target,
+                                &format!(
+                                    "⚠️ {} has no assignment to work on (no task-bearing event drives this turn); refusing to excite it.",
+                                    target.as_str()
+                                ),
+                            )
+                            .await?;
+                            continue;
+                        };
+
+                        // THE RULE, in the engine and not in a prompt: `ensure` refuses
+                        // any tree whose HEAD is the default branch (or detached) as a
+                        // post-condition, and refuses to cut a new branch from a dirty
+                        // tree. A refusal blocks THIS quark and reroutes — its siblings
+                        // still run — reusing the exact shape of the depletion branch.
+                        let wt = match crate::worktree::ensure(
+                            &root,
+                            &target,
+                            &driver.assignment.to_string(),
+                        ) {
+                            Ok(wt) => wt,
+                            Err(e) => {
+                                self.reroute_blocked(
+                                    &target,
+                                    &format!(
+                                        "⚠️ refusing to excite {}: its worktree is not usable — {e:#}",
+                                        target.as_str()
+                                    ),
+                                )
+                                .await?;
+                                continue;
+                            }
+                        };
+
+                        // The snapshot is the pre-turn escape hatch (undo). It now points
+                        // at the QUARK'S tree, so "before <quark>" means what it says.
+                        let snap = crate::snapshot::create(
+                            &wt.path,
+                            &format!("before {}", target.as_str()),
+                        )?;
                         self.append(Event::new(
                             Actor::Gluon,
                             None,
                             Kind::Snapshot { git: snap.commit.clone(), label: snap.label.clone() },
                         ))
                         .await?;
-                        crate::snapshot::working_diff(root)?
-                    } else {
-                        String::new()
-                    };
 
-                    let projection = self.projection_for(&events, &target, fallback_task, git_diff);
+                        // Attribution comes from the BRANCH, not the working diff: once a
+                        // turn ends on a commit, `git diff HEAD` is empty by construction.
+                        // `<base>...HEAD` is "everything you have done on this assignment",
+                        // and under concurrency it cannot show a sibling's edits.
+                        let base = crate::worktree::default_branch(&root);
+                        git_diff = crate::worktree::branch_diff(&wt, &base)?;
+                        tree = Some(TurnTree {
+                            head_before: crate::worktree::head(&wt.path),
+                            wt,
+                            base,
+                            assignment: driver.assignment,
+                        });
+                    }
+
+                    let projection = self.projection_for(
+                        &events,
+                        &target,
+                        driver.as_ref(),
+                        git_diff,
+                        tree.as_ref().map(|t| t.wt.path.clone()),
+                    );
 
                     // Announce the excitation *before* the turn runs, so the chamber can
                     // show the quark working while it works. The adapter only returns at
@@ -580,10 +913,11 @@ impl Engine {
                     .await?;
 
                     let turn_id = target.clone();
+                    let turn_tree = tree.clone();
                     turns.spawn(async move {
                         let mut quark = quark.lock().await;
                         let outcome = quark.excite(projection).await;
-                        (turn_id, outcome)
+                        (turn_id, turn_tree, outcome)
                     });
                     in_flight.insert(target);
                     exchanges += 1;
@@ -612,15 +946,15 @@ impl Engine {
             };
 
             match joined {
-                Ok((target, Ok(outcome))) => {
+                Ok((target, tree, Ok(outcome))) => {
                     in_flight.remove(&target);
-                    if let Err(err) = self.finish_turn(&target, outcome).await {
+                    if let Err(err) = self.finish_turn(&target, outcome, tree.as_ref()).await {
                         if first_err.is_none() {
                             first_err = Some(err);
                         }
                     }
                 }
-                Ok((target, Err(err))) => {
+                Ok((target, _, Err(err))) => {
                     // A failed turn must still leave a terminal status behind, or the
                     // quark reads as forever-working. Its siblings keep running.
                     in_flight.remove(&target);
@@ -1206,7 +1540,10 @@ mod tests {
                 .status()
                 .unwrap();
         };
-        run(&["init", "-q"]);
+        // `-b main` pinned: otherwise the host's `init.defaultBranch` decides
+        // whether the base branch is `main` or `master`, and every worktree test
+        // that talks about a base branch becomes host-dependent.
+        run(&["init", "-q", "-b", "main"]);
         std::fs::write(root.join("f.txt"), "x\n").unwrap();
         run(&["add", "."]);
         run(&["commit", "-q", "-m", "init"]);
@@ -1668,6 +2005,113 @@ mod tests {
         );
     }
 
+    /// Writes one file into whatever directory it is told it works in, then replies.
+    /// It records the `cwd` it was handed, so a test can prove two concurrent quarks
+    /// were pointed at *different* directories — the property the whole plan exists
+    /// to establish.
+    struct WriterQuark {
+        id: QuarkId,
+        file: &'static str,
+        cwds: Arc<Mutex<Vec<PathBuf>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for WriterQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+            self.cwds.lock().unwrap().push(turn.cwd.clone());
+            // Overlap the sibling's turn: both quarks are inside `excite` at once, so
+            // if they shared one tree they would both be writing into it concurrently.
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            std::fs::write(turn.cwd.join(self.file), format!("from {}\n", self.id.as_str()))?;
+            Ok(TurnOutcome {
+                message: Some(format!("{} wrote {}", self.id.as_str(), self.file)),
+                used_tokens: 0,
+                permission: None,
+            })
+        }
+    }
+
+    /// **THE DISCRIMINATING TEST.** Two quarks named in one message run *at the same
+    /// time*. Each writes a file. Their work must be attributable, disjointly: quark
+    /// `a`'s branch diff shows `a.txt` and NOT `b.txt`, and vice-versa.
+    ///
+    /// On the pre-worktree engine both CLIs inherited one shared checkout, so there
+    /// was no per-quark branch to diff at all and both files landed in the same tree —
+    /// a diff could not attribute a line to a quark even in principle. This test is
+    /// the proof that hazard is closed: two trees, two branches, two disjoint diffs,
+    /// and the human's own checkout (`main`) untouched by either.
+    #[tokio::test]
+    async fn two_concurrent_quarks_produce_disjoint_attribution() {
+        let repo = git_init_repo();
+        let root = repo.path().to_path_buf();
+        std::fs::create_dir_all(root.join(".hadron")).unwrap();
+        let field = root.join(".hadron").join("field.jsonl");
+        append_event(
+            &field,
+            &Event::new(
+                Actor::Human,
+                None,
+                Kind::Message { body: "@a write a.txt and @b write b.txt".into() },
+            ),
+        )
+        .unwrap();
+
+        let cwds = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![
+                Box::new(WriterQuark { id: QuarkId::new("a"), file: "a.txt", cwds: cwds.clone() }),
+                Box::new(WriterQuark { id: QuarkId::new("b"), file: "b.txt", cwds: cwds.clone() }),
+            ],
+            10,
+        )
+        .with_git(root.clone());
+        engine.run_until_quiesce().await.unwrap();
+
+        // 1. The two quarks were pointed at DIFFERENT directories. This is the
+        //    regression guard: a future change that quietly reverts to one shared
+        //    tree fails here even if the branches still exist.
+        let cwds = cwds.lock().unwrap().clone();
+        assert_eq!(cwds.len(), 2, "both quarks ran");
+        assert_ne!(cwds[0], cwds[1], "two concurrent quarks shared one working tree");
+
+        // 2. Each quark has its own worktree on its own branch…
+        let trees = crate::worktree::list(&root).unwrap();
+        let tree_of = |id: &str| {
+            trees
+                .iter()
+                .find(|w| w.quark == QuarkId::new(id))
+                .unwrap_or_else(|| panic!("no worktree for {id}"))
+                .clone()
+        };
+        let (wa, wb) = (tree_of("a"), tree_of("b"));
+        assert!(wa.branch.starts_with("quark/a/"), "branch per quark: {}", wa.branch);
+        assert!(wb.branch.starts_with("quark/b/"), "branch per quark: {}", wb.branch);
+
+        // 3. …and the branch diffs are DISJOINT. This is the attribution property.
+        let base = crate::worktree::default_branch(&root);
+        let da = crate::worktree::branch_diff(&wa, &base).unwrap();
+        let db = crate::worktree::branch_diff(&wb, &base).unwrap();
+        assert!(da.contains("a.txt"), "a's branch carries a's work:\n{da}");
+        assert!(!da.contains("b.txt"), "a's branch is CONTAMINATED with b's work:\n{da}");
+        assert!(db.contains("b.txt"), "b's branch carries b's work:\n{db}");
+        assert!(!db.contains("a.txt"), "b's branch is CONTAMINATED with a's work:\n{db}");
+
+        // 4. The human's own tree is untouched: neither file reached it, and `main`
+        //    has no new commits.
+        assert!(!root.join("a.txt").exists(), "a quark wrote into the human's checkout");
+        assert!(!root.join("b.txt").exists(), "a quark wrote into the human's checkout");
+    }
+
     /// **The E2BIG regression test.** `field_window` used to be `events.to_vec()` —
     /// the *entire* field, unbounded. A long-running swarm's field renders to
     /// hundreds of KB, and `agy` takes its prompt as a single argv element, whose
@@ -1698,7 +2142,14 @@ mod tests {
         );
 
         let engine = Engine::new(field.clone(), vec![], 8);
-        let proj = engine.projection_for(&events, &QuarkId::new("agy"), None, String::new());
+        let driver = engine.driver_for(&events, &QuarkId::new("agy"), None);
+        let proj = engine.projection_for(
+            &events,
+            &QuarkId::new("agy"),
+            driver.as_ref(),
+            String::new(),
+            None,
+        );
 
         let cost: usize = proj.field_window.iter().map(event_cost).sum();
         assert!(
