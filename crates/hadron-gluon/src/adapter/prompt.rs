@@ -77,12 +77,29 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     // it plainly, so nobody goes looking for the parent checkout.
     if !projection.cwd.as_os_str().is_empty() {
         p.push_str("# Where you are\n");
-        p.push_str(&format!(
-            "You are working in `{}` — your own checkout, isolated from every other quark and \
-             from the human's tree. Do all your work here. Do NOT `cd` out of it, and do NOT \
-             touch the parent checkout: your changes reach `main` only through the merge gate.\n\n",
-            projection.cwd.display()
-        ));
+        if projection.isolated {
+            p.push_str(&format!(
+                "You are working in `{}` — your own checkout, isolated from every other quark \
+                 and from the human's tree. Do all your work here. Do NOT `cd` out of it, and \
+                 do NOT touch the parent checkout: your changes reach `main` only through the \
+                 merge gate.\n\n",
+                projection.cwd.display()
+            ));
+        } else {
+            p.push_str(&format!(
+                "You are working in `{}` — the **shared checkout**, the same working tree as \
+                 the human and every other quark. There is no separate worktree for you and \
+                 nothing to route your work through: whatever you leave uncommitted is at risk, \
+                 and whatever you commit lands on the branch that is checked out right now. So \
+                 **commit your own work** on the current branch when it is done and green. Two \
+                 consequences of sharing the tree, and they are not optional: never `git add \
+                 -A` or `git commit -a` (you would sweep up another quark's in-flight edits and \
+                 the human's), and stage only the paths you actually changed. Leave no scratch \
+                 files behind — check `git ls-files --others --exclude-standard` before you \
+                 report.\n\n",
+                projection.cwd.display()
+            ));
+        }
     }
 
     // 4. Recent field transcript.
@@ -200,6 +217,7 @@ mod tests {
                 Kind::Message { body: "start the auth work".into() },
             )],
             git_diff: String::new(),
+            isolated: true,
             cwd: std::path::PathBuf::from("/repo/.hadron/trees/agy"),
             mode: hadron_lattice::Mode::default(),
         }
@@ -212,6 +230,41 @@ mod tests {
         assert!(p.contains("# Where you are"));
         assert!(p.contains("/repo/.hadron/trees/agy"));
         assert!(p.contains("do NOT"), "and told not to touch the parent checkout");
+    }
+
+    /// The bug this pair of tests exists to stop recurring: for the whole of the
+    /// live swarm's life the prompt asserted isolation unconditionally, while the
+    /// engine actually placed every quark in the *shared* workspace root. A worker
+    /// obeying "your changes reach `main` only through the merge gate" then refused
+    /// to commit at all — and its work sat uncommitted in the human's tree, one
+    /// `git checkout` away from being lost. A quark in the shared tree must be told
+    /// to commit its own work, and must NOT be told a merge gate exists.
+    #[test]
+    fn a_quark_in_the_shared_tree_is_told_to_commit_its_own_work() {
+        let mut proj = projection("Build login");
+        proj.isolated = false;
+        proj.cwd = std::path::PathBuf::from("/home/jake/dev/hadron");
+        let p = build(&proj, &QuarkId::new("agy"));
+
+        assert!(p.contains("shared checkout"), "it must know it shares the tree");
+        assert!(p.contains("commit your own work"), "and that committing is ITS job");
+        assert!(
+            !p.contains("merge gate"),
+            "there is no merge gate in the shared tree — promising one is what made agy \
+             refuse to commit, every single time"
+        );
+        // Sharing a tree with in-flight quarks makes a blanket stage a footgun.
+        assert!(p.contains("git add -A"), "and is warned off the blanket stage");
+    }
+
+    /// The isolated arm must keep its old contract intact: a quark that really does
+    /// have its own worktree still routes through the gate rather than committing
+    /// onto whatever branch the human happens to have checked out.
+    #[test]
+    fn a_quark_in_its_own_worktree_still_routes_through_the_merge_gate() {
+        let p = build(&projection("Build login"), &QuarkId::new("agy"));
+        assert!(p.contains("merge gate"));
+        assert!(!p.contains("shared checkout"));
     }
 
     #[test]

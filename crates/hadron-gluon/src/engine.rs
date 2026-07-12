@@ -510,6 +510,7 @@ impl Engine {
             // The quark's own worktree when worktree discipline is on. Without it,
             // the workspace root — the pre-worktree behaviour, kept for the mock
             // daemon and every test that doesn't opt into git.
+            isolated: cwd.is_some(),
             cwd: cwd.unwrap_or(workspace_root),
             mode: turn_mode,
         }
