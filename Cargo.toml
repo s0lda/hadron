@@ -15,3 +15,12 @@ opt-level = 2
 # it *is* one of our own crates' inline generics.
 [profile.dev]
 opt-level = 1
+
+# `gpui-component`'s `TextMark` can express a highlight (a *background*) but has no
+# foreground colour, so a mention could only ever be a tinted block, never coloured
+# text. This fork branches from the same commit we already pinned and adds
+# `TextMark::color`, parsed from `<span style="color: …">`. It is a small, upstreamable
+# patch, not a divergence — drop this section the moment longbridge takes it.
+[patch."https://github.com/longbridge/gpui-component"]
+gpui-component = { git = "https://github.com/s0lda/gpui-component", branch = "text-mark-color" }
+gpui-component-assets = { git = "https://github.com/s0lda/gpui-component", branch = "text-mark-color" }
