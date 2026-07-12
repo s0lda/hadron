@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use hadron_lattice::{Actor, Event, Kind, Projection, QuarkCard, QuarkId, QuarkState};
+use hadron_lattice::{Actor, Event, Flavor, Kind, Projection, QuarkCard, QuarkId, QuarkState};
 
 use crate::field::{append_event, read_events};
 use crate::quark::Quark;
@@ -134,6 +134,32 @@ impl Engine {
         self
     }
 
+    /// Orchestrator default-routing: when nothing is explicitly addressed, the
+    /// human's latest message — if it named no one and no quark has answered it —
+    /// is fielded by the orchestrator, who then decides and delegates. This is
+    /// what lets the human "just type in the chat" instead of always `@mention`-ing.
+    /// Returns the orchestrator's id and the message body to hand it. `None` if
+    /// the last human message was addressed/answered or there is no orchestrator.
+    fn orchestrator_fallback(&self, events: &[Event]) -> Option<(QuarkId, String)> {
+        let idx = events
+            .iter()
+            .rposition(|e| e.from == Actor::Human && matches!(e.kind, Kind::Message { .. }))?;
+        if events[idx].to.is_some() {
+            return None; // last human message was addressed → next_pending owns it
+        }
+        let answered = events[idx + 1..]
+            .iter()
+            .any(|e| matches!(e.from, Actor::Quark(_)));
+        if answered {
+            return None;
+        }
+        let Kind::Message { body } = &events[idx].kind else {
+            return None;
+        };
+        let orch = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator)?;
+        Some((orch.id.clone(), body.clone()))
+    }
+
     /// Excite quarks one at a time until no addressee is pending (quiesce) or the
     /// per-human-turn exchange budget is exhausted (backstop).
     pub async fn run_until_quiesce(&mut self) -> anyhow::Result<()> {
@@ -141,9 +167,15 @@ impl Engine {
         loop {
             let events = read_events(&self.field_path)?;
 
-            let target = match next_pending(&events) {
-                Some(q) => q,
-                None => return Ok(()), // quiesce: control returns to the human
+            // Pick the next quark: an explicit addressee/hand-off first, else the
+            // orchestrator fielding an unaddressed human message (fallback_task
+            // carries that message so it isn't looked up by `to == target`).
+            let (target, fallback_task) = match next_pending(&events) {
+                Some(q) => (q, None),
+                None => match self.orchestrator_fallback(&events) {
+                    Some((q, task)) => (q, Some(task)),
+                    None => return Ok(()), // quiesce: control returns to the human
+                },
             };
 
             if exchanges >= self.max_exchanges {
@@ -200,7 +232,11 @@ impl Engine {
             // Find the most recent *task-bearing* event targeting this quark. Skip
             // non-task events like a PermissionGrant (also addressed to the quark, to
             // re-trigger it) — otherwise a resumed quark would get an empty task.
-            if let Some(trigger) = events.iter().rev().find(|e| {
+            if let Some(task) = &fallback_task {
+                // Orchestrator picking up an unaddressed human message: the task is
+                // that message itself (no `to == target` event exists to find).
+                task_desc = task.clone();
+            } else if let Some(trigger) = events.iter().rev().find(|e| {
                 e.to.as_ref() == Some(&target)
                     && matches!(e.kind, Kind::Assign { .. } | Kind::Message { .. })
             }) {
@@ -743,6 +779,81 @@ mod tests {
         assert!(messages[3].contains("Handing back"));
         // Quiesced cleanly: no backstop message.
         assert!(!messages.iter().any(|m| m.contains("backstop")));
+    }
+
+    #[tokio::test]
+    async fn unaddressed_human_message_routes_to_the_orchestrator() {
+        use hadron_lattice::{Projection, TurnOutcome};
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+        // The human just types — no @mention (to: None).
+        append_event(
+            &path,
+            &Event::new(Actor::Human, None, Kind::Message { body: "hello, anyone home?".into() }),
+        )
+        .unwrap();
+
+        // A probe orchestrator records the task it was handed; the worker must not run.
+        struct OrchProbe {
+            seen: Arc<Mutex<Vec<String>>>,
+        }
+        #[async_trait::async_trait]
+        impl crate::quark::Quark for OrchProbe {
+            fn id(&self) -> QuarkId {
+                QuarkId::new("orch")
+            }
+            fn flavor(&self) -> Flavor {
+                Flavor::Orchestrator
+            }
+            fn energy(&self) -> EnergyState {
+                EnergyState::Available
+            }
+            async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+                self.seen.lock().unwrap().push(turn.task.clone());
+                Ok(TurnOutcome { message: Some("I've got it.".into()), used_tokens: 0, permission: None })
+            }
+        }
+        let seen = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(
+            path.clone(),
+            vec![
+                Box::new(OrchProbe { seen: seen.clone() }),
+                Box::new(MockQuark::scripted(QuarkId::new("worker"), Flavor::Worker, vec![Some("nope".into())])),
+            ],
+            10,
+        );
+        engine.run_until_quiesce().await.unwrap();
+
+        // The orchestrator was handed the exact unaddressed message as its task…
+        assert_eq!(seen.lock().unwrap().as_slice(), &["hello, anyone home?".to_string()]);
+        // …and the worker never ran (an unaddressed message is the orchestrator's).
+        let events = read_events(&path).unwrap();
+        assert!(
+            !events.iter().any(|e| e.from == Actor::Quark(QuarkId::new("worker"))),
+            "worker must not run for an unaddressed message"
+        );
+        // The orchestrator's reply (no @mention) hands control back → quiesce.
+        assert!(next_pending(&events).is_none());
+    }
+
+    #[tokio::test]
+    async fn unaddressed_message_with_no_orchestrator_quiesces() {
+        // No orchestrator on the roster → an unaddressed message routes to no one.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+        append_event(
+            &path,
+            &Event::new(Actor::Human, None, Kind::Message { body: "hi".into() }),
+        )
+        .unwrap();
+        let mut engine = Engine::new(
+            path.clone(),
+            vec![Box::new(MockQuark::scripted(QuarkId::new("worker"), Flavor::Worker, vec![Some("x".into())]))],
+            10,
+        );
+        engine.run_until_quiesce().await.unwrap();
+        let events = read_events(&path).unwrap();
+        assert!(!events.iter().any(|e| matches!(e.from, Actor::Quark(_))), "no quark runs without an orchestrator");
     }
 
     #[tokio::test]
