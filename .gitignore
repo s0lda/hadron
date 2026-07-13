@@ -4,7 +4,14 @@ Cargo.lock.orig
 
 # Session-local hook scratch (remember plugin); not project state.
 .remember/
-.hadron/
+
+# The workspace is half runtime, half project state. The runtime half is
+# machine-local churn; the authored half (invariants, nucleus, team) is the
+# portable thing a fresh clone must inherit — ignoring it would mean the shared
+# rules only ever exist on one laptop.
+.hadron/*
+!.hadron/nucleus/
+!.hadron/team.json
 
 # Claude Code local state (incl. embedded worktrees)
 .claude/
