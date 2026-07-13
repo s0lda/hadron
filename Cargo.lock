@@ -2755,6 +2755,7 @@ dependencies = [
 name = "hadron-chamber"
 version = "0.1.0"
 dependencies = [
+ "agent-client-protocol",
  "anyhow",
  "emojis",
  "gpui",
@@ -2762,6 +2763,7 @@ dependencies = [
  "gpui-component-assets",
  "gpui_platform",
  "hadron-gatekeeper",
+ "hadron-gluon",
  "hadron-lattice",
  "lsp-types",
  "markdown",
