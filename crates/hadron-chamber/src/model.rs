@@ -9,12 +9,13 @@ use hadron_lattice::{Actor, Event, Kind, QuarkId, QuarkState, Team};
 
 /// One rendered chat row. `kind_label` lets the UI style/filter by event type;
 /// `body` is a display string synthesized for non-message events.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MessageRow {
     pub from: String,
     pub to: Option<String>,
     pub body: String,
     pub kind_label: &'static str,
+    pub usage: Option<hadron_lattice::Usage>,
 }
 
 /// One roster entry: a quark, its latest lifecycle state, its effective
@@ -34,7 +35,7 @@ pub struct RosterRow {
 }
 
 /// Everything the chamber needs to render one frame.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChamberView {
     pub messages: Vec<MessageRow>,
     pub roster: Vec<RosterRow>,
@@ -60,7 +61,7 @@ fn note(order: &mut Vec<String>, id: &str) {
     }
 }
 
-fn render_row(e: &Event) -> MessageRow {
+fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -> MessageRow {
     let from = actor_str(&e.from);
     let to = e.to.as_ref().map(|t| t.as_str().to_string());
     let (body, kind_label): (String, &'static str) = match &e.kind {
@@ -98,6 +99,7 @@ fn render_row(e: &Event) -> MessageRow {
         to,
         body,
         kind_label,
+        usage: e.turn.and_then(|t| turn_usages.get(&t.to_string()).cloned()).or_else(|| e.usage.clone()),
     }
 }
 
@@ -118,6 +120,15 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
     let mut tokens: HashMap<String, u32> = HashMap::new();
     let mut states: HashMap<String, QuarkState> = HashMap::new();
 
+    let mut turn_usages: HashMap<String, hadron_lattice::Usage> = HashMap::new();
+    for e in events {
+        if let Some(turn) = e.turn {
+            if let Some(usage) = &e.usage {
+                turn_usages.insert(turn.to_string(), usage.clone());
+            }
+        }
+    }
+
     for e in events {
         // Roster membership: any quark that authors or is addressed.
         if let Actor::Quark(q) = &e.from {
@@ -132,9 +143,10 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
         }
         // Accumulate tokens
         if let (Actor::Quark(q), Kind::EnergyReport { used_tokens }) = (&e.from, &e.kind) {
-            *tokens.entry(q.as_str().to_string()).or_default() += used_tokens;
+            let amount = e.usage.as_ref().and_then(|u| u.spend.fresh()).unwrap_or(*used_tokens);
+            *tokens.entry(q.as_str().to_string()).or_default() += amount;
         }
-        messages.push(render_row(e));
+        messages.push(render_row(e, &turn_usages));
     }
 
     let roster = order
