@@ -3641,8 +3641,9 @@ mod tests {
             transport: hadron_lattice::Transport::Cli,
             enabled: true,
             tokens: 0,
+            unknown_turns: 0,
         }];
-        
+
         let colored = color_mentions(body, &roster);
         assert_eq!(
             colored,

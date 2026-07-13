@@ -34,7 +34,13 @@ pub struct RosterRow {
     pub flavor: Option<hadron_lattice::Flavor>,
     pub transport: hadron_lattice::Transport,
     pub enabled: bool,
+    /// Fresh tokens (input + output, cache excluded) — the one unit every transport
+    /// reports the same way, so the only one comparable across a mixed roster.
     pub tokens: u32,
+    /// Turns whose spend we cannot express in that unit: pre-components turns from an
+    /// ACP seat, whose bare `used_tokens` was ACP's cache-inclusive total. Counted, so
+    /// the UI can say "plus N turns of unknown spend" rather than silently omit them.
+    pub unknown_turns: u32,
 }
 
 /// What one quark spent this session. `context` and `quota` are the *latest*
@@ -202,6 +208,7 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
     let mut messages = Vec::with_capacity(events.len());
     let mut order: Vec<String> = Vec::new();
     let mut tokens: HashMap<String, u32> = HashMap::new();
+    let mut unknown_turns: HashMap<String, u32> = HashMap::new();
     let mut states: HashMap<String, QuarkState> = HashMap::new();
 
     let mut turn_usages: HashMap<String, hadron_lattice::Usage> = HashMap::new();
@@ -225,10 +232,29 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
         if let (Actor::Quark(q), Kind::Status { state }) = (&e.from, &e.kind) {
             states.insert(q.as_str().to_string(), *state);
         }
-        // Accumulate tokens
+        // Accumulate tokens — in ONE unit: fresh (input + output), cache excluded.
         if let (Actor::Quark(q), Kind::EnergyReport { used_tokens }) = (&e.from, &e.kind) {
-            let amount = e.usage.as_ref().and_then(|u| u.spend.fresh()).unwrap_or(*used_tokens);
-            *tokens.entry(q.as_str().to_string()).or_default() += amount;
+            match e.usage.as_ref().and_then(|u| u.spend.fresh()) {
+                // A turn that reports components. Comparable across every transport.
+                Some(f) => *tokens.entry(q.as_str().to_string()).or_default() += f,
+                // A turn from before components existed carries a bare `used_tokens`
+                // whose meaning depends on who wrote it: a CLI adapter summed
+                // input+output — which IS fresh — but an ACP adapter used ACP's
+                // `total_tokens`, cache included. Folding that into the same column is
+                // what put 14.4M against an ACP quark. It is a different unit, so it is
+                // unknown, and unknown is counted as unknown, not as zero and not as tokens.
+                None => {
+                    let cli = team
+                        .get(&QuarkId::new(q.as_str()))
+                        .map(|s| matches!(s.transport, hadron_lattice::Transport::Cli))
+                        .unwrap_or(true);
+                    if cli {
+                        *tokens.entry(q.as_str().to_string()).or_default() += *used_tokens;
+                    } else {
+                        *unknown_turns.entry(q.as_str().to_string()).or_default() += 1;
+                    }
+                }
+            }
         }
         messages.push(render_row(e, &turn_usages));
     }
@@ -243,6 +269,7 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
                 .map(|s| (s.provider.clone(), s.model.clone(), Some(s.flavor.clone()), s.transport, s.enabled))
                 .unwrap_or_else(|| (String::new(), String::new(), None, hadron_lattice::Transport::Cli, true));
             let q_tokens = tokens.get(&id).copied().unwrap_or(0);
+            let q_unknown = unknown_turns.get(&id).copied().unwrap_or(0);
             RosterRow {
                 state,
                 mode: resolve_mode(events, &qid),
@@ -254,6 +281,7 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
                 enabled,
                 id,
                 tokens: q_tokens,
+                unknown_turns: q_unknown,
             }
         })
         .collect();
@@ -331,6 +359,62 @@ mod tests {
         // The human's own message is not a turn, and never a quark's spend.
         assert_eq!(stats.total_turns, 1);
         assert_eq!(stats.total_fresh, 120);
+    }
+
+    /// The roster showed 14.4M against an ACP quark long after `fresh()` landed: the
+    /// legacy fallback still folded a pre-components `used_tokens` into the same column,
+    /// and for an ACP seat that number is ACP's cache-INCLUSIVE total. Different unit.
+    /// A CLI seat's legacy number really is input+output, so that one still counts.
+    #[test]
+    fn a_legacy_acp_total_is_not_counted_as_fresh_tokens() {
+        use hadron_lattice::{AcpCommand, Flavor, Seat, Transport};
+
+        let team = Team {
+            quarks: vec![
+                Seat {
+                    id: QuarkId::new("acp-claude"),
+                    provider: "acp-claude".into(),
+                    model: "x".into(),
+                    flavor: Flavor::Worker,
+                    transport: Transport::Acp,
+                    command: Some(AcpCommand { program: "npx".into(), args: vec![] }),
+                    enabled: true,
+                },
+                Seat {
+                    id: QuarkId::new("opus"),
+                    provider: "claude".into(),
+                    model: "opus".into(),
+                    flavor: Flavor::Orchestrator,
+                    transport: Transport::Cli,
+                    command: None,
+                    enabled: true,
+                },
+            ],
+        };
+
+        // Both legacy: no `usage` on the envelope, just the bare u32.
+        let evs = vec![
+            ev(
+                Actor::Quark(QuarkId::new("acp-claude")),
+                None,
+                Kind::EnergyReport { used_tokens: 1_307_987 },
+            ),
+            ev(
+                Actor::Quark(QuarkId::new("opus")),
+                None,
+                Kind::EnergyReport { used_tokens: 5_338 },
+            ),
+        ];
+        let view = project_with_team(&evs, &team);
+        let row = |id: &str| view.roster.iter().find(|r| r.id == id).unwrap().clone();
+
+        let acp = row("acp-claude");
+        assert_eq!(acp.tokens, 0, "an ACP legacy total is a different unit — not fresh");
+        assert_eq!(acp.unknown_turns, 1, "and it is counted as unknown, not dropped");
+
+        let cli = row("opus");
+        assert_eq!(cli.tokens, 5_338, "a CLI legacy total IS input+output — it counts");
+        assert_eq!(cli.unknown_turns, 0);
     }
 
     /// A provider that cannot see cache reports `None`, which means *unknown*.
