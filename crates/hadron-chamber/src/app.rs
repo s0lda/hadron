@@ -1981,8 +1981,10 @@ impl Chamber {
 
         let card = h_flex()
             .occlude()
-            .w(px(720.0))
-            .h(px(460.0))
+            .w_full()
+            .h_full()
+            .max_w(px(960.0))
+            .max_h(px(640.0))
             .rounded_lg()
             .overflow_hidden()
             .bg(theme::sidebar())
@@ -1995,6 +1997,7 @@ impl Chamber {
             .id("settings-backdrop")
             .absolute()
             .inset_0()
+            .p_8()
             .flex()
             // Center on both axes deterministically (was relying on default
             // align + a top margin, which sank the card to the window's foot).
