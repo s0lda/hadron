@@ -2042,6 +2042,66 @@ mod tests {
         assert!(available.is_empty(), "no repo tier exists here, and that is fine");
     }
 
+    /// The prompt tests prove `prompt.rs` *renders* memory. They prove nothing about
+    /// whether the engine ever *reads* it — which is the exact gap ("correct" vs "runs")
+    /// that cost us a whole session. This is the caller test: put a real file on disk at
+    /// the real path, drive a real turn, and assert the quark received it.
+    #[tokio::test]
+    async fn a_quarks_memory_file_actually_reaches_its_projection() {
+        use std::fs;
+        let ws = tempdir().unwrap();
+        let mem_dir = ws.path().join(".hadron").join("memory");
+        fs::create_dir_all(&mem_dir).unwrap();
+        fs::write(mem_dir.join("worker.md"), "The forge crate is unwired.").unwrap();
+
+        let path = ws.path().join(".hadron").join("field.jsonl");
+        append_event(
+            &path,
+            &Event::new(
+                Actor::Human,
+                Some(QuarkId::new("worker")),
+                Kind::Message { body: "go".into() },
+            ),
+        )
+        .unwrap();
+
+        use hadron_lattice::{Projection, TurnOutcome};
+        struct Probe;
+        #[async_trait::async_trait]
+        impl crate::quark::Quark for Probe {
+            fn id(&self) -> QuarkId {
+                QuarkId::new("worker")
+            }
+            fn flavor(&self) -> Flavor {
+                Flavor::Worker
+            }
+            fn energy(&self) -> hadron_lattice::EnergyState {
+                hadron_lattice::EnergyState::Available
+            }
+            async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+                assert_eq!(
+                    turn.memory.trim(),
+                    "The forge crate is unwired.",
+                    "the engine must load the quark's memory from disk"
+                );
+                assert!(
+                    turn.memory_path.ends_with("worker.md"),
+                    "and tell it where to write, got {:?}",
+                    turn.memory_path
+                );
+                Ok(TurnOutcome {
+                    message: Some("done".into()),
+                    used_tokens: 0,
+                    permission: None,
+                    usage: Default::default(),
+                })
+            }
+        }
+
+        let mut engine = Engine::new(path, vec![Box::new(Probe)], 10);
+        engine.run_until_quiesce().await.unwrap();
+    }
+
     /// Tiers are labelled. A quark that cannot tell a rule Hadron *ships* from a rule
     /// *this project* added cannot reason about which to question when they conflict.
     #[test]
