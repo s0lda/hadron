@@ -39,9 +39,9 @@ pub trait CliRunner: Send + Sync {
 pub fn reply_to_outcome(result: &CliResult) -> TurnOutcome {
     let trimmed = result.stdout.trim();
     if trimmed.is_empty() {
-        TurnOutcome { message: None, used_tokens: 0, permission: None, usage: Default::default() }
+        TurnOutcome { message: None, permission: None, usage: Default::default() }
     } else {
-        TurnOutcome { message: Some(trimmed.to_string()), used_tokens: 0, permission: None, usage: Default::default() }
+        TurnOutcome { message: Some(trimmed.to_string()), permission: None, usage: Default::default() }
     }
 }
 

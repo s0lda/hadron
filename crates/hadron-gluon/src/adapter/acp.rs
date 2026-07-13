@@ -31,7 +31,7 @@
 //!   model's **real** window size. Straight into [`ContextUsage`].
 //! - the `session/prompt` response → `usage` (feature `unstable_end_turn_token_usage`):
 //!   cumulative token totals for the session. The per-turn cost is the **delta**.
-//!   See [`turn_tokens`].
+//!   See [`turn_spend`].
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -39,7 +39,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use hadron_lattice::{
-    ContextUsage, EnergyState, Flavor, Mode, Projection, QuarkId, TurnOutcome, Usage,
+    ContextUsage, EnergyState, Flavor, Mode, Projection, QuarkId, TokenSpend, TurnOutcome, Usage,
 };
 
 use agent_client_protocol::schema::v1::{
@@ -82,31 +82,63 @@ struct AcpSession {
     mode: Arc<Mutex<Mode>>,
 }
 
-/// **The per-turn token cost, from a cumulative counter.**
+/// The cumulative counters an ACP session has reported so far — the watermark the
+/// per-turn deltas are measured against. Cumulative, so `u64`: a long session can
+/// out-grow a `u32` on cache reads alone.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SpendWatermark {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+}
+
+/// **The per-turn spend, by component, from cumulative counters.**
 ///
-/// ACP's end-turn `Usage` is documented as session-cumulative — `total_tokens` is
-/// "sum of all token types across session", `input_tokens` is "total input tokens
-/// across all turns". Hadron's `TurnOutcome::used_tokens` is **per-turn** (it feeds
-/// an energy ledger that sums it), so reporting the cumulative figure would make
-/// every turn re-bill the whole session — the ledger would grow quadratically.
+/// ACP's end-turn `Usage` is documented as session-cumulative — `input_tokens` is
+/// "total input tokens across all turns". Hadron's spend is **per-turn** (it feeds a
+/// ledger that sums it), so reporting the cumulative figure would make every turn
+/// re-bill the whole session and the ledger would grow quadratically.
 ///
-/// So: keep the last cumulative total, and report the difference.
+/// So: keep the last cumulative reading per component, and report the difference.
 ///
-/// Returns `(this_turn, new_last_total)`.
+/// **This no longer touches `total_tokens`**, and that is the point. `total_tokens`
+/// is "sum of all token types" — cache reads included — so using it made an ACP quark
+/// report ~200x what a CLI quark reported for the same work. The components are
+/// carried separately and [`hadron_lattice::TokenSpend::fresh`] is the only thing that
+/// adds any of them up.
 ///
-/// The guard: if the counter goes *backwards*, the agent either restarted its count
-/// or never implemented the extension cumulatively. Treating that as a huge negative
-/// (saturating to 0) would silently drop a turn's cost, so a backwards counter is
+/// The guard, kept per-component: if a counter goes *backwards*, the agent either
+/// restarted its count or reports per-turn despite the schema saying cumulative.
+/// Saturating to 0 would silently drop that turn's cost, so a backwards counter is
 /// read as an absolute for that turn instead.
-pub fn turn_tokens(last_total: u64, usage: Option<&AcpUsage>) -> (u32, u64) {
+pub fn turn_spend(last: SpendWatermark, usage: Option<&AcpUsage>) -> (TokenSpend, SpendWatermark) {
     let Some(u) = usage else {
-        // The agent does not implement end-turn usage. Absent is absent: report 0
-        // and do not move the watermark.
-        return (0, last_total);
+        // The agent does not implement end-turn usage. Absent is absent: report
+        // nothing (not zero) and do not move the watermark.
+        return (TokenSpend::default(), last);
     };
-    let total = u.total_tokens;
-    let this_turn = if total >= last_total { total - last_total } else { total };
-    (this_turn.min(u32::MAX as u64) as u32, total)
+    let delta = |now: u64, prev: u64| -> u32 {
+        let d = if now >= prev { now - prev } else { now };
+        d.min(u32::MAX as u64) as u32
+    };
+    let spend = TokenSpend {
+        input: Some(delta(u.input_tokens, last.input)),
+        output: Some(delta(u.output_tokens, last.output)),
+        // Absent stays absent: an agent that reports no cache columns gets `None`,
+        // never `Some(0)`.
+        cache_read: u.cached_read_tokens.map(|n| delta(n, last.cache_read)),
+        cache_write: u.cached_write_tokens.map(|n| delta(n, last.cache_write)),
+    };
+    let next = SpendWatermark {
+        input: u.input_tokens,
+        output: u.output_tokens,
+        // A component the agent did not report must not reset its watermark, or the
+        // next real reading comes out as a bogus delta against zero.
+        cache_read: u.cached_read_tokens.unwrap_or(last.cache_read),
+        cache_write: u.cached_write_tokens.unwrap_or(last.cache_write),
+    };
+    (spend, next)
 }
 
 /// Translate the resolved permission mode into an answer to ACP's *blocking*
@@ -191,8 +223,8 @@ pub struct AcpQuark {
     /// `None` until the first turn: booting is lazy, exactly as the CLI path spawns
     /// nothing until `excite`.
     session: Option<AcpSession>,
-    /// The watermark for [`turn_tokens`].
-    last_total_tokens: u64,
+    /// The watermark for [`turn_spend`].
+    last_spend: SpendWatermark,
 }
 
 impl AcpQuark {
@@ -203,7 +235,7 @@ impl AcpQuark {
             model: model.into(),
             target,
             session: None,
-            last_total_tokens: 0,
+            last_spend: SpendWatermark::default(),
         }
     }
 
@@ -421,9 +453,9 @@ impl Quark for AcpQuark {
         // not a dead agent — keep the session and let the turn fail on its own.
         let reply = reply?;
 
-        // Per-turn cost from the cumulative counter.
-        let (used_tokens, new_total) = turn_tokens(self.last_total_tokens, reply.usage.as_ref());
-        self.last_total_tokens = new_total;
+        // Per-turn spend, by component, from the cumulative counters.
+        let (spend, new_watermark) = turn_spend(self.last_spend, reply.usage.as_ref());
+        self.last_spend = new_watermark;
 
         // Context, when the agent sent a `usage_update`. NOTE the honesty rule this
         // codebase already enforces (see `telemetry.rs`): ACP has **no quota concept
@@ -431,6 +463,7 @@ impl Quark for AcpQuark {
         // `used_percentage` is computed here only because ACP — unlike agy — does not
         // send one; `size` is the agent's own reported window, never invented.
         let usage = Usage {
+            spend,
             context: reply.context.map(|(used, size)| ContextUsage {
                 used_tokens: used.min(u32::MAX as u64) as u32,
                 context_window_size: size.min(u32::MAX as u64) as u32,
@@ -452,7 +485,7 @@ impl Quark for AcpQuark {
             }
         };
 
-        Ok(TurnOutcome { message, used_tokens, permission: None, usage })
+        Ok(TurnOutcome { message, permission: None, usage })
     }
 }
 
@@ -465,43 +498,83 @@ mod tests {
     }
 
     /// **The delta, and why it exists.** ACP reports token usage *cumulatively across
-    /// the session*, while `TurnOutcome::used_tokens` is what one turn cost. Feed the
+    /// the session*, while a turn's spend is what that one turn cost. Feed the
     /// cumulative number straight through and a 3-turn session bills
-    /// 100 + 250 + 400 = 750 tokens for what actually cost 400 — the ledger would
-    /// grow quadratically in the length of the conversation.
+    /// 100 + 250 + 400 for what actually cost 400 — the ledger would grow
+    /// quadratically in the length of the conversation.
     #[test]
-    fn used_tokens_is_the_delta_not_the_cumulative_total() {
-        // Turn 1: nothing seen before, so the whole total is this turn's cost.
-        let (t1, w1) = turn_tokens(0, Some(&usage(100)));
-        assert_eq!(t1, 100);
-        assert_eq!(w1, 100, "watermark moves to the cumulative total");
+    fn spend_is_the_delta_not_the_cumulative_total() {
+        // usage(n) puts n/2 in input and n/2 in output, so fresh() == n.
+        let (s1, w1) = turn_spend(SpendWatermark::default(), Some(&usage(100)));
+        assert_eq!(s1.fresh(), Some(100));
+        assert_eq!(w1.input, 50, "watermark follows the cumulative components");
+        assert_eq!(w1.output, 50);
 
         // Turn 2: the agent reports 250 cumulative. This turn cost 150, not 250.
-        let (t2, w2) = turn_tokens(w1, Some(&usage(250)));
-        assert_eq!(t2, 150);
-        assert_eq!(w2, 250);
+        let (s2, w2) = turn_spend(w1, Some(&usage(250)));
+        assert_eq!(s2.fresh(), Some(150));
 
         // Turn 3: 400 cumulative → 150 this turn.
-        let (t3, w3) = turn_tokens(w2, Some(&usage(400)));
-        assert_eq!(t3, 150);
-        assert_eq!(w3, 400);
+        let (s3, w3) = turn_spend(w2, Some(&usage(400)));
+        assert_eq!(s3.fresh(), Some(150));
+        assert_eq!(w3.input, 200);
 
         // The ledger sums the per-turn costs and lands on the agent's own total.
-        assert_eq!(t1 + t2 + t3, 400);
+        assert_eq!(s1.fresh().unwrap() + s2.fresh().unwrap() + s3.fresh().unwrap(), 400);
+    }
+
+    /// **The bug this whole type exists to kill.** `total_tokens` is "sum of all token
+    /// types" — cache included — and cache reads dwarf everything: a turn with N tool
+    /// calls re-reads the whole prompt N times. The old adapter reported that total as
+    /// `used_tokens`, so acp-claude logged 1,307,987 for a turn whose real work was a
+    /// few greps, against opus's median of 5,338 for a full engineering turn.
+    ///
+    /// `fresh()` must count input+output ONLY. If cache ever leaks back into it, this
+    /// fails.
+    #[test]
+    fn cache_reads_are_carried_but_never_counted_as_fresh() {
+        let mut u = AcpUsage::new(300_000, 20, 2_400);
+        u.cached_read_tokens = Some(250_000);
+        u.cached_write_tokens = Some(45_000);
+
+        let (spend, _) = turn_spend(SpendWatermark::default(), Some(&u));
+
+        // The comparable unit: what the model actually processed anew.
+        assert_eq!(spend.fresh(), Some(2_420), "input + output, and NOTHING else");
+        // The cache is not discarded — it is just not confused with work.
+        assert_eq!(spend.cached(), Some(295_000));
+        assert_eq!(spend.cache_read, Some(250_000));
+        assert_eq!(spend.cache_write, Some(45_000));
+        // And the 300_000 `total_tokens` the old code used is nowhere in sight.
+        assert_ne!(spend.fresh(), Some(300_000));
     }
 
     /// An agent that does not implement the (unstable) end-turn usage extension
-    /// reports nothing. Absent is absent: 0, and the watermark must NOT move — a
-    /// moved watermark would make the *next* real reading come out as a bogus delta.
+    /// reports nothing. **Absent is absent — `None`, not 0** — and the watermark must
+    /// NOT move, or the next real reading comes out as a bogus delta.
     #[test]
-    fn an_agent_without_usage_reports_zero_and_does_not_move_the_watermark() {
-        let (t, w) = turn_tokens(500, None);
-        assert_eq!(t, 0);
-        assert_eq!(w, 500, "watermark held");
+    fn an_agent_without_usage_reports_unknown_and_does_not_move_the_watermark() {
+        let w0 = SpendWatermark { input: 250, output: 250, ..Default::default() };
+        let (s, w) = turn_spend(w0, None);
+        assert_eq!(s.fresh(), None, "unknown, NOT zero");
+        assert!(s.is_empty());
+        assert_eq!(w, w0, "watermark held");
 
         // and the next real reading is still a correct delta against it
-        let (t2, _) = turn_tokens(w, Some(&usage(560)));
-        assert_eq!(t2, 60);
+        let (s2, _) = turn_spend(w, Some(&usage(560)));
+        assert_eq!(s2.fresh(), Some(60));
+    }
+
+    /// An agent that reports tokens but no cache columns must get `None` for cache,
+    /// never `Some(0)` — a zero would assert a fact we do not have, and the UI could
+    /// not tell "no cache used" from "this agent doesn't report cache".
+    #[test]
+    fn a_missing_cache_column_is_unknown_not_zero() {
+        let (spend, w) = turn_spend(SpendWatermark::default(), Some(&usage(100)));
+        assert_eq!(spend.cache_read, None);
+        assert_eq!(spend.cache_write, None);
+        assert_eq!(spend.cached(), None, "unknown, not 0");
+        assert_eq!(w.cache_read, 0, "and an unreported column does not move its watermark");
     }
 
     /// A counter that goes backwards (the agent restarted its count, or reports
@@ -509,9 +582,10 @@ mod tests {
     /// turn's cost to zero.
     #[test]
     fn a_backwards_counter_is_read_as_an_absolute_not_as_zero() {
-        let (t, w) = turn_tokens(1_000, Some(&usage(42)));
-        assert_eq!(t, 42, "not 0");
-        assert_eq!(w, 42, "and the watermark follows the agent");
+        let w0 = SpendWatermark { input: 500, output: 500, ..Default::default() };
+        let (s, w) = turn_spend(w0, Some(&usage(42)));
+        assert_eq!(s.fresh(), Some(42), "not 0");
+        assert_eq!(w.input, 21, "and the watermark follows the agent");
     }
 
     /// Posture decides the answer to ACP's blocking permission request, and the
@@ -619,14 +693,14 @@ mod tests {
         let o1 = q.excite(t1).await.expect("live ACP turn 1");
         eprintln!("\n=== TURN 1 ===");
         eprintln!("message     : {:?}", o1.message);
-        eprintln!("used_tokens : {}", o1.used_tokens);
+        eprintln!("spend       : {:?}", o1.usage.spend);
         eprintln!("usage       : {:?}", o1.usage);
 
         let m1 = o1.message.as_deref().unwrap_or("").to_lowercase();
         assert!(m1.contains("pong"), "a real reply came back over ACP, got {m1:?}");
 
         // Real, structured, per-turn tokens — the thing the agy adapter cannot do.
-        assert!(o1.used_tokens > 0, "end-turn token usage must be a real number, not 0");
+        assert!(o1.usage.spend.fresh().unwrap_or(0) > 0, "end-turn token usage must be real, not 0");
 
         // --- Turn 2: the SESSION is resident. The agent was booted once and still
         // remembers turn 1 — so we can ask it about turn 1 without re-sending it.
@@ -635,9 +709,9 @@ mod tests {
         let o2 = q.excite(t2).await.expect("live ACP turn 2");
         eprintln!("\n=== TURN 2 ===");
         eprintln!("message     : {:?}", o2.message);
-        eprintln!("used_tokens : {}", o2.used_tokens);
+        eprintln!("spend       : {:?}", o2.usage.spend);
         eprintln!("usage       : {:?}", o2.usage);
-        eprintln!("cumulative watermark: {}", q.last_total_tokens);
+        eprintln!("cumulative watermark: {:?}", q.last_spend);
 
         let m2 = o2.message.as_deref().unwrap_or("").to_lowercase();
         assert!(
@@ -646,14 +720,13 @@ mod tests {
         );
 
         // Turn 2 is billed for turn 2, not for the whole session — the delta is real.
-        assert!(o2.used_tokens > 0, "turn 2 has its own cost");
+        assert!(o2.usage.spend.fresh().unwrap_or(0) > 0, "turn 2 has its own cost");
+        let cumulative = q.last_spend.input + q.last_spend.output;
         assert!(
-            (o1.used_tokens as u64 + o2.used_tokens as u64) <= q.last_total_tokens.max(1),
-            "per-turn deltas must not exceed the agent's own cumulative total \
-             ({} + {} vs {})",
-            o1.used_tokens,
-            o2.used_tokens,
-            q.last_total_tokens
+            (o1.usage.spend.fresh().unwrap_or(0) as u64
+                + o2.usage.spend.fresh().unwrap_or(0) as u64)
+                <= cumulative.max(1),
+            "per-turn deltas must not exceed the agent's own cumulative total"
         );
     }
 }

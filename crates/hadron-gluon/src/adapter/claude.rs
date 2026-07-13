@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use hadron_lattice::{EnergyState, Flavor, Mode, Projection, QuarkId, TurnOutcome};
+use hadron_lattice::{EnergyState, Flavor, Mode, Projection, QuarkId, TokenSpend, TurnOutcome, Usage};
 use std::path::PathBuf;
 
 use crate::adapter::runner::{CliInvocation, CliRunner};
@@ -96,18 +96,24 @@ impl<R: CliRunner> Quark for ClaudeQuark<R> {
                 self.session = Some(sid.to_string());
             }
 
-            // Usage: the envelope reports `input_tokens`/`output_tokens` (there is
-            // no `total_tokens`); sum them for the energy ledger. NOTE: this
-            // excludes `cache_read_input_tokens`/`cache_creation_input_tokens`,
-            // which can dwarf the live counts — the ledger undercounts real token
-            // spend. Strictly better than the old always-0, but revisit if the
-            // ledger needs true billed totals.
-            let used_tokens = v.get("usage")
+            // Usage, by component. The envelope reports all four columns and we used
+            // to keep only two, summing them here — which is precisely the bug: the
+            // adapter decided what "used tokens" meant. It no longer sums anything.
+            // The cache columns dwarf the live counts (a turn with N tool calls
+            // re-reads the whole prompt N times), and they are now *carried* rather
+            // than either discarded or silently folded into the total.
+            let spend = v
+                .get("usage")
                 .map(|u| {
-                    let field = |k| u.get(k).and_then(|t| t.as_u64()).unwrap_or(0);
-                    (field("input_tokens") + field("output_tokens")) as u32
+                    let field = |k: &str| u.get(k).and_then(|t| t.as_u64()).map(|n| n as u32);
+                    TokenSpend {
+                        input: field("input_tokens"),
+                        output: field("output_tokens"),
+                        cache_read: field("cache_read_input_tokens"),
+                        cache_write: field("cache_creation_input_tokens"),
+                    }
                 })
-                .unwrap_or(0);
+                .unwrap_or_default();
 
             // `permission_denials` (top-level array) is where a mid-turn denial
             // would surface — but headless `-p` never populates it (every posture
@@ -118,16 +124,14 @@ impl<R: CliRunner> Quark for ClaudeQuark<R> {
                 let t = text.trim();
                 return Ok(TurnOutcome {
                     message: if t.is_empty() { None } else { Some(t.to_string()) },
-                    used_tokens,
                     permission: None,
                     // KEEPING CLAUDE HONEST. `claude -p` reports real token counts
                     // (above) but says nothing about quota and never reports its
-                    // context-window *size*. So `usage` stays empty: no fake "100%
-                    // quota remaining" (indistinguishable, in the UI, from a real
-                    // untouched budget) and no invented 200k window. Absent is absent;
-                    // the real tokens still ride on `used_tokens` into the ledger and
-                    // the energy report.
-                    usage: Default::default(),
+                    // context-window *size*. So `context` and `quota` stay absent: no
+                    // fake "100% quota remaining" (indistinguishable, in the UI, from a
+                    // real untouched budget) and no invented 200k window. Absent is
+                    // absent. Only `spend` — which claude genuinely reports — is filled.
+                    usage: Usage { spend, ..Default::default() },
                 });
             }
         }
@@ -217,11 +221,11 @@ mod tests {
 
         let o1 = q.excite(projection("start")).await.unwrap();
         assert_eq!(o1.message.as_deref(), Some("hello @worker"));
-        assert_eq!(o1.used_tokens, 42, "input+output tokens summed");
+        assert_eq!(o1.usage.spend.fresh(), Some(42), "input+output, cache excluded");
 
         let o2 = q.excite(projection("continue")).await.unwrap();
         assert_eq!(o2.message.as_deref(), Some("all done"));
-        assert_eq!(o2.used_tokens, 12);
+        assert_eq!(o2.usage.spend.fresh(), Some(12));
 
         // Turn 1 had no --resume; turn 2 resumed the captured session. Both carry
         // the model flag.

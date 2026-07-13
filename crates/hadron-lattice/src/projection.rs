@@ -99,11 +99,16 @@ pub struct PermissionAsk {
 pub struct TurnOutcome {
     pub message: Option<String>,
     #[serde(default)]
-    pub used_tokens: u32,
-    #[serde(default)]
     pub permission: Option<PermissionAsk>,
-    /// Context + quota the provider reported for this turn. Empty when the provider
-    /// reports nothing (a mock) or has no quota concept (claude reports context only).
+    /// Spend + context + quota the provider reported for this turn. Empty when the
+    /// provider reports nothing (a mock) or has no quota concept (claude reports
+    /// context only).
+    ///
+    /// There is deliberately **no `used_tokens: u32`** here any more. An adapter
+    /// cannot report a bare number, because a bare number meant a different thing for
+    /// every transport and we printed all of them in the same column. It reports
+    /// components on [`crate::TokenSpend`]; the engine calls
+    /// [`crate::TokenSpend::fresh`] — the single totaller — to get a figure.
     #[serde(default, skip_serializing_if = "crate::Usage::is_empty")]
     pub usage: crate::Usage,
 }
@@ -164,7 +169,7 @@ mod tests {
     fn turn_outcome_default_is_empty() {
         assert_eq!(
             TurnOutcome::default(),
-            TurnOutcome { message: None, used_tokens: 0, permission: None, usage: Default::default() }
+            TurnOutcome { message: None, permission: None, usage: Default::default() }
         );
     }
 }
