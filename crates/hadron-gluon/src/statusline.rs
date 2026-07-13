@@ -270,7 +270,6 @@ mod tests {
     #[test]
     fn status_line_degrades_without_telemetry() {
         let empty = AgyTelemetry {
-            used_tokens: 0,
             conversation_id: None,
             model: None,
             usage: Usage::default(),
@@ -291,7 +290,7 @@ mod tests {
         persist(LIVE_PAYLOAD, Some(out.clone()), None);
 
         let t = read_turn_capture(&out, Path::new("/nonexistent"), started).unwrap();
-        assert_eq!(t.used_tokens, 927);
+        assert_eq!(t.usage.spend.fresh(), Some(927));
         assert_eq!(t.conversation_id.as_deref(), Some("b66f1126-aa1f-4b87-832a-e3779e49bd71"));
         assert_eq!(t.usage.quota.len(), 4);
         assert!((t.usage.effective_remaining("Gemini 3.1 Pro (High)").unwrap() - 0.0517783).abs() < 1e-9);
@@ -342,6 +341,7 @@ mod tests {
     fn usage_survives_the_shim_with_every_bucket() {
         let t = telemetry();
         let want = Usage {
+            spend: t.usage.spend.clone(),
             context: Some(ContextUsage {
                 used_tokens: 635,
                 context_window_size: 1_048_576,

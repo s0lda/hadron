@@ -36,6 +36,90 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// What one turn actually spent, **by token type, never pre-summed**.
+///
+/// ## Why this is not a `u32`
+///
+/// It used to be. `TurnOutcome::used_tokens` was a bare integer and every adapter
+/// decided for itself what went into it:
+///
+/// - `claude -p` and `agy` summed `input + output` and **excluded** cache.
+/// - ACP used `Usage::total_tokens`, which the ACP schema defines as the sum of
+///   *every* type — cache reads and writes **included**.
+///
+/// Both are locally defensible. Together they made the field meaningless: in the live
+/// `field.jsonl`, opus's median turn reported 5,338 and acp-claude's reported
+/// 1,307,987 for lighter work. Nothing was wrong with either number; they were
+/// different units printed in the same column.
+///
+/// So an adapter can no longer report "a number". It reports *which kind*, and the
+/// one place that sums them is [`TokenSpend::fresh`].
+///
+/// ## Every field is `Option` on purpose
+///
+/// `None` means **the provider did not say**, which is not the same as zero. agy's
+/// statusline has no cache columns at all; reporting `cache_read: 0` would assert a
+/// fact we do not have, and it is exactly the "absent is not zero" rule the rest of
+/// this module already follows for quota.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenSpend {
+    /// Input tokens the model processed anew — i.e. *not* served from cache. Every
+    /// provider here reports this the same way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<u32>,
+    /// Tokens the model generated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<u32>,
+    /// Input tokens served from the prompt cache. Cheap, and usually enormous: a turn
+    /// with N tool calls re-reads the whole prompt N times, so this dwarfs everything
+    /// else and tells you nothing about how much work the quark did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read: Option<u32>,
+    /// Input tokens written *into* the cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write: Option<u32>,
+}
+
+impl TokenSpend {
+    /// **The one totaller.** No adapter computes a total; they all come here.
+    ///
+    /// Fresh tokens = `input + output`, deliberately **excluding cache traffic**.
+    /// That is the only unit all three providers can actually report, so it is the
+    /// only one that is comparable across a mixed roster — which is the entire bug
+    /// this type exists to fix. Cache stays visible as its own components rather than
+    /// being folded in and losing the distinction.
+    ///
+    /// This is **not** a cost. Cost would need per-provider prices (output and cache
+    /// are not priced like input), and we do not have a source for those yet. Summing
+    /// raw counts of differently-priced things produces a number proportional to
+    /// nothing; that mistake is what we are backing out of.
+    ///
+    /// `None` when the provider reported no token counts at all — *unknown*, not zero.
+    pub fn fresh(&self) -> Option<u32> {
+        match (self.input, self.output) {
+            (None, None) => None,
+            (i, o) => Some(i.unwrap_or(0).saturating_add(o.unwrap_or(0))),
+        }
+    }
+
+    /// Cache traffic, for a UI that wants to explain why a number looks enormous.
+    /// `None` when the provider reports no cache columns (agy).
+    pub fn cached(&self) -> Option<u32> {
+        match (self.cache_read, self.cache_write) {
+            (None, None) => None,
+            (r, w) => Some(r.unwrap_or(0).saturating_add(w.unwrap_or(0))),
+        }
+    }
+
+    /// Whether the provider said anything about tokens at all.
+    pub fn is_empty(&self) -> bool {
+        self.input.is_none()
+            && self.output.is_none()
+            && self.cache_read.is_none()
+            && self.cache_write.is_none()
+    }
+}
+
 /// How much of the model's context window a turn is occupying.
 ///
 /// `PartialEq` but not `Eq`: `used_percentage` is a float.
@@ -98,6 +182,10 @@ pub fn quota_family_for_model(model: &str) -> &'static str {
 /// `PartialEq` but not `Eq` (contains floats).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Usage {
+    /// What the turn spent, by token type. The adapter fills the components it can
+    /// see; [`TokenSpend::fresh`] is the only thing that sums them.
+    #[serde(default, skip_serializing_if = "TokenSpend::is_empty")]
+    pub spend: TokenSpend,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<ContextUsage>,
     /// Every bucket the provider reported. **Empty means the provider has no quota
@@ -109,7 +197,7 @@ pub struct Usage {
 impl Usage {
     /// Whether this carries anything at all worth reporting.
     pub fn is_empty(&self) -> bool {
-        self.context.is_none() && self.quota.is_empty()
+        self.spend.is_empty() && self.context.is_none() && self.quota.is_empty()
     }
 
     /// Every bucket that applies to `model` — i.e. every bucket in the model's family.
@@ -156,10 +244,6 @@ impl Usage {
 /// prevention possible instead of reaction.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgyTelemetry {
-    /// Tokens billed for this turn: `total_input_tokens + total_output_tokens`.
-    /// Deliberately parallel to the claude adapter, which sums `input_tokens +
-    /// output_tokens` and likewise excludes cache reads.
-    pub used_tokens: u32,
     /// agy's conversation id — the handle `agy --conversation <id>` resumes.
     pub conversation_id: Option<String>,
     /// The model agy actually ran (which is NOT always the one we asked for).
@@ -184,7 +268,14 @@ pub fn parse_agy_statusline(json: &str) -> serde_json::Result<AgyTelemetry> {
             .unwrap_or(0) as u32
     };
 
-    let used_tokens = num(cw, "total_input_tokens") + num(cw, "total_output_tokens");
+    // agy's statusline has no cache columns at all, so `cache_read`/`cache_write` stay
+    // `None` — *unknown*, not zero. Reporting 0 would assert a fact we do not have.
+    let spend = cw.map(|_| TokenSpend {
+        input: Some(num(cw, "total_input_tokens")),
+        output: Some(num(cw, "total_output_tokens")),
+        cache_read: None,
+        cache_write: None,
+    });
 
     // agy computes `used_percentage` from `total_input_tokens` against the window
     // (635 / 1048576 = 0.0605%, matching the live payload exactly), so that is the
@@ -223,7 +314,6 @@ pub fn parse_agy_statusline(json: &str) -> serde_json::Result<AgyTelemetry> {
     quota.sort_by(|a, b| a.key.cmp(&b.key));
 
     Ok(AgyTelemetry {
-        used_tokens,
         conversation_id: v
             .get("conversation_id")
             .and_then(|s| s.as_str())
@@ -233,7 +323,7 @@ pub fn parse_agy_statusline(json: &str) -> serde_json::Result<AgyTelemetry> {
             .and_then(|m| m.get("id"))
             .and_then(|s| s.as_str())
             .map(str::to_string),
-        usage: Usage { context, quota },
+        usage: Usage { spend: spend.unwrap_or_default(), context, quota },
     })
 }
 
@@ -252,7 +342,9 @@ mod tests {
         let t = parse_agy_statusline(LIVE_PAYLOAD).unwrap();
 
         // Turn cost: total_input + total_output (cache excluded, as in claude).
-        assert_eq!(t.used_tokens, 635 + 292);
+        assert_eq!(t.usage.spend.fresh(), Some(635 + 292));
+        // agy has no cache columns: absent, not zero.
+        assert_eq!(t.usage.spend.cached(), None);
         assert_eq!(t.conversation_id.as_deref(), Some("b66f1126-aa1f-4b87-832a-e3779e49bd71"));
         assert_eq!(t.model.as_deref(), Some("Gemini 3.1 Pro (High)"));
 
@@ -345,6 +437,7 @@ mod tests {
     #[test]
     fn a_provider_without_quota_reports_absent_not_full() {
         let claude = Usage {
+            spend: TokenSpend::default(),
             context: Some(ContextUsage {
                 used_tokens: 12_000,
                 context_window_size: 200_000,
@@ -375,7 +468,7 @@ mod tests {
     #[test]
     fn missing_sections_degrade_to_empty() {
         let t = parse_agy_statusline(r#"{"session_id":"x"}"#).unwrap();
-        assert_eq!(t.used_tokens, 0);
+        assert_eq!(t.usage.spend.fresh(), None, "no context_window: unknown, not zero");
         assert!(t.usage.is_empty());
         assert_eq!(t.usage.effective_remaining("Gemini 3.1 Pro (High)"), None);
         assert!(parse_agy_statusline("not json").is_err());
