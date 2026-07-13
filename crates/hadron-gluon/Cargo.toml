@@ -22,6 +22,7 @@ tokio = { version = "1", features = [
     "sync",
 ] }
 agent-client-protocol = { version = "1.2.0", features = ["unstable_end_turn_token_usage"] }
+futures = "0.3"
 
 [dev-dependencies]
 tempfile = "3"
