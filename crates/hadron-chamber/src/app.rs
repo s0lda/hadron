@@ -317,6 +317,9 @@ struct Chamber {
     wizard_state: WizardState,
     file_tree_paths: Vec<String>,
     file_tree_open: Option<(String, String)>,
+    terminal_history: Vec<(String, String)>,
+    terminal_input: Entity<InputState>,
+    _terminal_sub: Subscription,
 }
 
 impl Chamber {
@@ -412,6 +415,13 @@ impl Chamber {
         // content is laid out.
         let chat_scrolls = [ScrollHandle::new(), ScrollHandle::new(), ScrollHandle::new()];
         chat_scrolls[0].scroll_to_bottom(); // Chat tab
+        let terminal_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .auto_grow(1, 4)
+                .submit_on_enter(true)
+                .placeholder("$ command...")
+        });
+        let _terminal_sub = cx.subscribe_in(&terminal_input, window, Self::on_terminal_submit);
 
         Chamber {
             view,
@@ -444,6 +454,9 @@ impl Chamber {
             wizard_state: WizardState::None,
             file_tree_paths: files,
             file_tree_open: None,
+            terminal_history: Vec::new(),
+            terminal_input,
+            _terminal_sub,
         }
     }
 
@@ -466,6 +479,40 @@ impl Chamber {
             window.focus(&self.focus_handle, cx);
         }
         cx.notify();
+    }
+
+    fn on_terminal_submit(
+        &mut self,
+        input: &Entity<InputState>,
+        event: &InputEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let InputEvent::PressEnter { .. } = event {
+            let cmd = input.read(cx).value().trim().to_string();
+            if cmd.is_empty() { return; }
+            input.update(cx, |state, cx| state.set_value("", window, cx));
+            
+            let repo_root = crate::vcs::repo_root_of(&self.path);
+            let mut output = String::new();
+            if let Ok(cmd_out) = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&cmd)
+                .current_dir(repo_root)
+                .output()
+            {
+                output.push_str(&String::from_utf8_lossy(&cmd_out.stdout));
+                let err = String::from_utf8_lossy(&cmd_out.stderr);
+                if !err.is_empty() {
+                    if !output.is_empty() { output.push_str("\n"); }
+                    output.push_str(&err);
+                }
+            } else {
+                output = "Failed to execute command".to_string();
+            }
+            self.terminal_history.push((cmd, output.trim_end().to_string()));
+            cx.notify();
+        }
     }
 
     /// React to the palette filter: Enter runs the highlighted command; typing
@@ -1396,12 +1443,58 @@ impl Chamber {
 
         let content = match selected {
             RightRailTab::Terminal => {
+                let risk_notice = v_flex()
+                    .p_3()
+                    .gap_2()
+                    .bg(theme::danger().opacity(0.1))
+                    .border_1()
+                    .border_color(theme::danger().opacity(0.5))
+                    .rounded_md()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::danger()).child("⚠️ RISK: Arbitrary Process Execution"))
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_secondary())
+                            .child("This terminal executes subprocesses under the authority of the host user. To prevent unauthorized execution when Bypass is disabled, all quark-issued commands must pause and require explicit human approval via the interaction gate.")
+                    );
+
+                let mut history = v_flex().w_full().gap_2();
+                for (cmd, out) in &self.terminal_history {
+                    history = history.child(
+                        v_flex()
+                            .gap_1()
+                            .child(div().text_sm().font_family("JetBrains Mono").text_color(theme::accent()).child(format!("$ {}", cmd)))
+                            .child(div().text_xs().font_family("JetBrains Mono").text_color(theme::text_muted()).child(out.clone()))
+                    );
+                }
+
                 v_flex()
                     .flex_1()
                     .p_3()
-                    .text_sm()
-                    .text_color(theme::text_muted())
-                    .child("$ terminal coming soon")
+                    .gap_4()
+                    .child(risk_notice)
+                    .child(
+                        div()
+                            .id("terminal-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(history)
+                    )
+                    .child(
+                        div()
+                            .p_2()
+                            .bg(theme::input_bg())
+                            .border_1()
+                            .border_color(theme::border())
+                            .rounded_md()
+                            .child(Input::new(&self.terminal_input))
+                    )
                     .into_any_element()
             }
             RightRailTab::FileTree => {
