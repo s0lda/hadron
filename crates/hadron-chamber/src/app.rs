@@ -315,6 +315,8 @@ struct Chamber {
     _settings_subs: [Subscription; 2],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
+    file_tree_paths: Vec<String>,
+    file_tree_open: Option<(String, String)>,
 }
 
 impl Chamber {
@@ -326,29 +328,31 @@ impl Chamber {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let mut files = vec![];
+        let repo_root = crate::vcs::repo_root_of(&path);
+        if let Ok(output) = std::process::Command::new("git")
+            .arg("ls-files")
+            .current_dir(&repo_root)
+            .output()
+        {
+            if output.status.success() {
+                files = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(|s| s.to_string())
+                    .collect();
+            }
+        }
+        let files_for_completion = files.clone();
+
         let input = cx.new(|cx| {
             let mut state = InputState::new(window, cx)
                 .auto_grow(1, 4)
                 .submit_on_enter(true)
                 .placeholder("Type @quark a message…  (Enter to send · Shift+Enter for newline)");
             let team_quarks = team.quarks.iter().map(|q| q.id.0.clone()).collect::<Vec<_>>();
-            let repo_root = crate::vcs::repo_root_of(&path);
-            let mut files = vec![];
-            if let Ok(output) = std::process::Command::new("git")
-                .arg("ls-files")
-                .current_dir(repo_root)
-                .output()
-            {
-                if output.status.success() {
-                    files = String::from_utf8_lossy(&output.stdout)
-                        .lines()
-                        .map(|s| s.to_string())
-                        .collect();
-                }
-            }
             state.lsp.completion_provider = Some(std::rc::Rc::new(crate::completions::ChatCompletionProvider {
                 quarks: team_quarks,
-                files,
+                files: files_for_completion,
             }));
             state
         });
@@ -438,6 +442,8 @@ impl Chamber {
             _settings_subs,
             providers: Vec::new(),
             wizard_state: WizardState::None,
+            file_tree_paths: files,
+            file_tree_open: None,
         }
     }
 
@@ -1399,13 +1405,74 @@ impl Chamber {
                     .into_any_element()
             }
             RightRailTab::FileTree => {
-                v_flex()
-                    .flex_1()
-                    .p_3()
-                    .text_sm()
-                    .text_color(theme::text_muted())
-                    .child("File tree coming soon")
-                    .into_any_element()
+                let mut list = v_flex().w_full();
+                if let Some((path, content)) = &self.file_tree_open {
+                    list = list
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .items_center()
+                                .p_2()
+                                .bg(theme::surface_raised())
+                                .child(div().text_color(theme::text()).child(path.clone()))
+                                .child(
+                                    text_button("close-file", "Close")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.file_tree_open = None;
+                                            cx.notify();
+                                        }))
+                                )
+                        )
+                        .child(
+                            div()
+                                .id("file-tree-open")
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_y_scroll()
+                                .p_2()
+                                .bg(theme::input_bg())
+                                .text_color(theme::text())
+                                .font_family("JetBrains Mono")
+                                .text_xs()
+                                .child(content.clone())
+                        );
+                    
+                    v_flex()
+                        .flex_1()
+                        .child(list)
+                        .into_any_element()
+                } else {
+                    for (ix, file) in self.file_tree_paths.iter().enumerate() {
+                        let path = file.clone();
+                        let repo_root = crate::vcs::repo_root_of(&self.path);
+                        let full_path = repo_root.join(&path);
+                        let file_name = file.clone();
+                        list = list.child(
+                            div()
+                                .id(ix)
+                                .px_2()
+                                .py_1()
+                                .hover(|s| s.bg(theme::surface_raised()))
+                                .cursor_pointer()
+                                .text_color(theme::text())
+                                .child(path)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    if let Ok(content) = std::fs::read_to_string(&full_path) {
+                                        this.file_tree_open = Some((file_name.clone(), content));
+                                        cx.notify();
+                                    }
+                                }))
+                        );
+                    }
+                    div()
+                        .id("file-tree-list")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .p_2()
+                        .child(list)
+                        .into_any_element()
+                }
             }
             RightRailTab::Changes => {
                 let diff_content = if let Some(diffs) = &self.working_diff {
