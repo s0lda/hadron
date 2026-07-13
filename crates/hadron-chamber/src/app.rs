@@ -165,16 +165,24 @@ enum ChatTab {
     Log,
     /// A vertical stepper over the run's milestones (non-message activity).
     Timeline,
+    /// Per-quark session stats: turns, tokens, context, quota.
+    Session,
 }
 
 impl ChatTab {
-    const ALL: [ChatTab; 3] = [ChatTab::Chat, ChatTab::Log, ChatTab::Timeline];
+    const ALL: [ChatTab; 4] = [ChatTab::Chat, ChatTab::Log, ChatTab::Timeline, ChatTab::Session];
+
+    /// Sizes every per-tab array. A tab added to `ALL` without growing those
+    /// arrays is an index-out-of-bounds the moment the tab is opened, so they
+    /// take their length from here rather than restating it.
+    const COUNT: usize = Self::ALL.len();
 
     fn index(self) -> usize {
         match self {
             ChatTab::Chat => 0,
             ChatTab::Log => 1,
             ChatTab::Timeline => 2,
+            ChatTab::Session => 3,
         }
     }
 
@@ -187,6 +195,21 @@ impl ChatTab {
             ChatTab::Chat => "Chat",
             ChatTab::Log => "Log",
             ChatTab::Timeline => "Timeline",
+            ChatTab::Session => "Session",
+        }
+    }
+}
+
+fn format_num(n: u32) -> String {
+    if n >= 10_000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        let s = n.to_string();
+        if s.len() > 3 {
+            let (head, tail) = s.split_at(s.len() - 3);
+            format!("{},{}", head, tail)
+        } else {
+            s
         }
     }
 }
@@ -279,7 +302,7 @@ struct Chamber {
     /// Which view the chat column's segmented tabs are showing.
     chat_tab: ChatTab,
     /// Which view the right rail's segmented tabs are showing, per ChatTab.
-    right_rail_tabs: [RightRailTab; 3],
+    right_rail_tabs: [RightRailTab; ChatTab::COUNT],
     /// Cached diff string for the Changes rail
     working_diff: Option<Vec<crate::vcs::FileDiff>>,
     changes_open_ixs: std::collections::HashSet<usize>,
@@ -289,7 +312,7 @@ struct Chamber {
     /// Maps a virtual list item index to the message's true index in `view.messages`.
     chat_message_ixs: Vec<usize>,
     /// Scroll position for each of the three tabs.
-    chat_scrolls: [ScrollHandle; 3],
+    chat_scrolls: [ScrollHandle; 4],
     /// Cache of parsed Markdown to HTML, keyed by message index
     parsed_markdown: std::cell::RefCell<std::collections::HashMap<usize, String>>,
     /// A debounced window-bounds save is already in flight, so a drag (which
@@ -323,6 +346,7 @@ struct Chamber {
     _terminal_sub: Subscription,
     terminal: Option<crate::sys::Terminal>,
     context_menu: Option<ContextMenu>,
+    info_panel: Option<String>,
     terminal_scroll: ScrollHandle,
     file_tree_scroll: ScrollHandle,
     file_tree_open_scroll: ScrollHandle,
@@ -334,6 +358,8 @@ pub enum ContextMenuAction {
     OpenInEditor(String),
     OpenInFolder(String),
     CopyPath(String),
+    QuarkInfo(String),
+    ToggleQuark(String),
 }
 
 #[derive(Clone)]
@@ -427,7 +453,7 @@ impl Chamber {
 
         // Open showing the newest message: honoured on the first paint, once the
         // content is laid out.
-        let chat_scrolls = [ScrollHandle::new(), ScrollHandle::new(), ScrollHandle::new()];
+        let chat_scrolls = [ScrollHandle::new(), ScrollHandle::new(), ScrollHandle::new(), ScrollHandle::new()];
         chat_scrolls[0].scroll_to_bottom(); // Chat tab
         let terminal_input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -452,7 +478,12 @@ impl Chamber {
             input,
             focus_handle,
             chat_tab: ChatTab::Chat,
-            right_rail_tabs: [RightRailTab::Terminal, RightRailTab::FileTree, RightRailTab::Changes],
+            right_rail_tabs: [
+                RightRailTab::Terminal,
+                RightRailTab::FileTree,
+                RightRailTab::Changes,
+                RightRailTab::Terminal,
+            ],
             working_diff: None,
             changes_open_ixs: std::collections::HashSet::new(),
             changes_scroll: ScrollHandle::new(),
@@ -481,6 +512,7 @@ impl Chamber {
             _terminal_sub,
             terminal: None,
             context_menu: None,
+            info_panel: None,
             terminal_scroll: ScrollHandle::new(),
             file_tree_scroll: ScrollHandle::new(),
             file_tree_open_scroll: ScrollHandle::new(),
@@ -698,6 +730,99 @@ impl Chamber {
             )
     }
 
+    fn info_panel_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let qid = self.info_panel.as_ref().unwrap();
+        let roster_row = self.view.roster.iter().find(|r| &r.id == qid).unwrap();
+
+        // Calculate session stats for this quark
+        let mut turns = 0;
+        let mut fresh = 0;
+        let mut cached = 0;
+        let mut latest_ctx = None;
+        let mut latest_quota = None;
+
+        for m in &self.view.messages {
+            if &m.from == qid {
+                if m.kind_label == "message" {
+                    turns += 1;
+                }
+                if let Some(u) = &m.usage {
+                    if !u.spend.is_empty() {
+                        fresh += u.spend.fresh().unwrap_or(0);
+                        cached += u.spend.cached().unwrap_or(0);
+                    }
+                    if u.context.is_some() {
+                        latest_ctx = u.context.clone();
+                    }
+                    if !u.quota.is_empty() {
+                        latest_quota = Some(u.quota.clone());
+                    }
+                }
+            }
+        }
+
+        let model_display = if roster_row.model.starts_with("@agentclientprotocol") {
+            "agent default (unknown)"
+        } else {
+            &roster_row.model
+        };
+
+        let transport_str = match roster_row.transport {
+            hadron_lattice::Transport::Cli => "CLI",
+            hadron_lattice::Transport::Acp => "ACP",
+        };
+
+        let mut stats_block = v_flex().gap_1().mt_4()
+            .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::text()).child("Session Stats"))
+            .child(div().text_xs().text_color(theme::text_muted()).child(format!("Turns: {}", turns)))
+            .child(div().text_xs().text_color(theme::text_muted()).child(format!("Spent: {} fresh, {} cached", format_num(fresh), format_num(cached))));
+
+        if let Some(ctx) = latest_ctx {
+            stats_block = stats_block.child(div().text_xs().text_color(theme::text_muted()).child(format!("Context: {:.1}% ({} / {})", ctx.used_percentage, format_num(ctx.used_tokens), format_num(ctx.context_window_size))));
+        }
+        if let Some(quota) = latest_quota {
+            for bucket in quota {
+                stats_block = stats_block.child(div().text_xs().text_color(theme::text_muted()).child(format!("Quota [{}]: {:.1}% remaining", bucket.key, bucket.remaining_fraction * 100.0)));
+            }
+        }
+
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000066))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.info_panel = None;
+                    cx.notify();
+                }),
+            )
+            .child(
+                v_flex()
+                    .occlude()
+                    .w(px(400.0))
+                    .bg(theme::surface())
+                    .border_1()
+                    .border_color(theme::border())
+                    .rounded_lg()
+                    .p_4()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // Prevent overlay dismiss on inner click
+                    .child(div().text_lg().font_weight(gpui::FontWeight::BOLD).text_color(theme::actor_hue(qid)).child(qid.clone()))
+                    .child(
+                        v_flex().gap_1().mt_2()
+                            .child(div().text_sm().text_color(theme::text()).child(format!("Provider: {}", roster_row.provider)))
+                            .child(div().text_sm().text_color(theme::text()).child(format!("Model: {}", model_display)))
+                            .child(div().text_sm().text_color(theme::text()).child(format!("Transport: {}", transport_str)))
+                    )
+                    .child(stats_block)
+            )
+    }
+
     /// Re-read the field; if it grew, re-project and repaint. Comparing event
     /// count to the current row count is a cheap change check (projection emits
     /// exactly one row per event), so an unchanged field costs only a read.
@@ -812,6 +937,12 @@ impl Chamber {
     fn handle_context_menu_action(&mut self, action: ContextMenuAction, cx: &mut Context<Self>) {
         self.context_menu = None;
         match action {
+            ContextMenuAction::QuarkInfo(id) => {
+                self.info_panel = Some(id);
+            }
+            ContextMenuAction::ToggleQuark(id) => {
+                self.toggle_quark_enabled(&id, cx);
+            }
             ContextMenuAction::OpenFile(path) => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
                 if let Some(content) = crate::sys::read_workspace_file(&repo_root, &path) {
@@ -903,6 +1034,7 @@ impl Render for Chamber {
         let status = self.status_bar(cx);
         let overlay = self.palette_open.then(|| self.palette_overlay(cx));
         let settings = self.settings_open.then(|| self.settings_overlay(cx));
+        let info = self.info_panel.is_some().then(|| self.info_panel_overlay(cx));
 
         let content = v_flex()
             .key_context(KEY_CONTEXT)
@@ -922,7 +1054,8 @@ impl Render for Chamber {
             .child(body)
             .child(status)
             .children(overlay)
-            .children(settings);
+            .children(settings)
+            .children(info);
 
         let context_menu_overlay = self.context_menu.as_ref().map(|menu| {
             let mut list = v_flex()
@@ -1253,7 +1386,22 @@ impl Chamber {
                 .on_click(cx.listener(move |this, _, _, cx| this.cycle_quark_mode(&qid, cx)))
                 .child(mode_tag(r.mode, r.mode_is_override))
                 .into_any_element();
-            rows = rows.child(roster_row(&self.resolve_identity(&r.id), r, mode_el));
+            
+            let qid_str = r.id.clone();
+            let enable_str = if r.enabled { "Disable" } else { "Enable" };
+            let row_el = div()
+                .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
+                    this.context_menu = Some(ContextMenu {
+                        position: e.position,
+                        items: vec![
+                            ContextMenuItem { label: "Info".to_string(), action: ContextMenuAction::QuarkInfo(qid_str.clone()) },
+                            ContextMenuItem { label: enable_str.to_string(), action: ContextMenuAction::ToggleQuark(qid_str.clone()) },
+                        ],
+                    });
+                    cx.notify();
+                }))
+                .child(roster_row(&self.resolve_identity(&r.id), r, mode_el));
+            rows = rows.child(row_el);
         }
         if self.view.roster.is_empty() {
             rows = rows.child(
@@ -1345,6 +1493,13 @@ impl Chamber {
                             .overflow_y_scroll()
                             .track_scroll(&self.chat_scrolls[selected.index()])
                             .child(self.timeline_view())
+                            .into_any_element(),
+                        ChatTab::Session => div()
+                            .id("session-scroll")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.chat_scrolls[selected.index()])
+                            .child(self.session_view())
                             .into_any_element(),
                     }),
             )
@@ -1514,6 +1669,35 @@ impl Chamber {
         col
     }
 
+    fn session_view(&self) -> impl IntoElement {
+        let stats = self.view.session_stats();
+
+        let mut col = v_flex().p_4().gap_4();
+        col = col.child(
+            v_flex().gap_1().p_3().bg(theme::surface_raised()).rounded_md()
+                .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::text()).child("Session Totals"))
+                .child(div().text_xs().text_color(theme::text_muted()).child(format!("Turns: {}", stats.total_turns)))
+                .child(div().text_xs().text_color(theme::text_muted()).child(format!("Spent: {} fresh, {} cached", format_num(stats.total_fresh), format_num(stats.total_cached))))
+        );
+
+        for (q, s) in &stats.per_quark {
+            let mut block = v_flex().gap_1().p_3().bg(theme::surface_raised()).rounded_md()
+                .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::actor_hue(q)).child(q.clone()))
+                .child(div().text_xs().text_color(theme::text_muted()).child(format!("Turns: {}", s.turns)))
+                .child(div().text_xs().text_color(theme::text_muted()).child(format!("Spent: {} fresh, {} cached", format_num(s.fresh), format_num(s.cached))));
+
+            if let Some(ctx) = &s.context {
+                block = block.child(div().text_xs().text_color(theme::text_muted()).child(format!("Context: {:.1}% ({} / {})", ctx.used_percentage, format_num(ctx.used_tokens), format_num(ctx.context_window_size))));
+            }
+            // An empty quota list means the provider has no quota concept — not that
+            // the quota is spent. Say nothing rather than render a zero.
+            for bucket in &s.quota {
+                block = block.child(div().text_xs().text_color(theme::text_muted()).child(format!("Quota [{}]: {:.1}% remaining", bucket.key, bucket.remaining_fraction * 100.0)));
+            }
+            col = col.child(block);
+        }
+        col
+    }
 
     /// The right rail: the swappable Terminal / File Tree / Changes pane.
     /// (Internally still `Rail::Inspector` for collapse/size.)
@@ -2100,6 +2284,23 @@ impl Chamber {
             Event::new(Actor::Human, Some(qid), Kind::ModeSet { mode: next }),
             cx,
         );
+    }
+
+    fn toggle_quark_enabled(&mut self, id: &str, cx: &mut Context<Self>) {
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        let team_path = hadron_lattice::team_for_field(&self.path).unwrap_or_else(|| repo_root.join(".hadron").join("team.json"));
+        let mut team = hadron_lattice::load_team(&team_path);
+        let qid = QuarkId::new(id);
+        if let Some(seat) = team.quarks.iter_mut().find(|s| s.id == qid) {
+            seat.enabled = !seat.enabled;
+            if let Err(e) = hadron_lattice::save_team(&team_path, &team) {
+                eprintln!("chamber: failed to save team.json: {}", e);
+            } else {
+                let events = io::read_events(&self.path).unwrap_or_default();
+                self.view = crate::model::project_with_team(&events, &team);
+                cx.notify();
+            }
+        }
     }
 
     /// Append an event to the field and re-project the view (the shared write
@@ -3435,6 +3636,8 @@ mod tests {
             provider: "anthropic".to_string(),
             model: "Claude Opus 4.6".to_string(),
             flavor: Some(hadron_lattice::Flavor::Worker),
+            transport: hadron_lattice::Transport::Cli,
+            enabled: true,
             tokens: 0,
         }];
         
