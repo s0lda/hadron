@@ -10,6 +10,11 @@ mod model;
 mod config;
 mod vcs;
 
+// Pure text logic, deliberately NOT behind `gui`: the emoji crash-guard tests must
+// run in `cargo test --workspace`, the gate we actually judge a change by.
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+mod text;
+
 #[cfg(feature = "gui")]
 mod app;
 #[cfg(feature = "gui")]
