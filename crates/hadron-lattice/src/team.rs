@@ -151,24 +151,51 @@ pub fn team_for_field(field_path: &Path) -> Option<PathBuf> {
     team_config_path()
 }
 
+/// Parse a team from JSON text, **keeping the error**.
+///
+/// The one parser. The daemon re-reads `team.json` while the swarm is live and must
+/// tell "the human seated nobody" apart from "I could not parse this" — a distinction
+/// [`load_team`] cannot make, since it maps both to an empty team. If a malformed read
+/// answered "empty team", a `team.json` caught mid-write would silently unseat the
+/// entire swarm.
+///
+/// It takes text rather than a path on purpose: the daemon detects change by comparing
+/// the file's bytes, and must parse *those* bytes. Re-reading the path to parse it
+/// would be a second read of a file that may have changed in between.
+pub fn parse_team(text: &str) -> std::io::Result<Team> {
+    serde_json::from_str(text).map_err(std::io::Error::other)
+}
+
 /// Load a team from an explicit path. Missing or malformed → an empty team, so
 /// a fresh install (or a viewer with no config) degrades to "no annotations"
 /// rather than an error.
+///
+/// The lossy wrapper over [`parse_team`]: one parser, two error policies.
 pub fn load_team(path: &Path) -> Team {
     match std::fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Ok(text) => parse_team(&text).unwrap_or_default(),
         Err(_) => Team::default(),
     }
 }
 
 /// Save a team to an explicit path, creating the directory if it does not exist.
 /// The chamber calls this when the human seats a provider in Settings.
+///
+/// The write is **atomic**: the JSON goes to a temp file in the *same directory*
+/// (rename is only atomic within one filesystem) and is then renamed over the
+/// target. A plain `fs::write` truncates first, so a reader — and the daemon now
+/// polls this file to re-seat the live swarm — can catch it empty or half-written.
+/// [`try_load_team`] would reject that torn read anyway; this stops it happening at
+/// all. Both layers stay: the parse guard is what makes a *crashed* save safe, and
+/// the rename is what makes a *concurrent* save safe.
 pub fn save_team(path: &Path, team: &Team) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(team).map_err(std::io::Error::other)?;
-    std::fs::write(path, json)
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, path)
 }
 
 #[cfg(test)]
@@ -178,6 +205,70 @@ mod tests {
 
     fn seat(id: &str, provider: &str, model: &str, flavor: Flavor) -> Seat {
         Seat::cli(QuarkId::new(id), provider, model, flavor)
+    }
+
+    /// `parse_team` keeps the error where `load_team` swallows it. The daemon re-reads
+    /// this file while the swarm is live: it MUST be able to tell "the human seated
+    /// nobody" (apply it) from "I cannot parse this" (keep the running roster).
+    #[test]
+    fn parse_team_distinguishes_malformed_from_empty() {
+        assert!(parse_team("{ not json").is_err(), "malformed must be an error");
+        assert_eq!(
+            parse_team("{\"quarks\":[]}").unwrap(),
+            Team::default(),
+            "an explicitly empty team is valid, and is NOT an error"
+        );
+    }
+
+    /// The lossy loader still degrades a malformed file to an empty team — the old
+    /// behaviour, which the chamber and a fresh install rely on. Both policies exist on
+    /// purpose; this pins the one that must not change.
+    #[test]
+    fn load_team_still_degrades_malformed_to_empty() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("team.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        assert_eq!(load_team(&path), Team::default());
+    }
+
+    /// The save is atomic: it must leave no temp file behind, and the target must
+    /// contain the whole document. (A `fs::write` truncates in place, so a concurrent
+    /// reader — the daemon now polls this file — could catch it empty.)
+    #[test]
+    fn save_team_is_atomic_and_leaves_no_litter() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("team.json");
+        let team = Team {
+            quarks: vec![seat("opus", "claude", "opus", Flavor::Orchestrator)],
+        };
+        save_team(&path, &team).unwrap();
+
+        assert_eq!(load_team(&path), team, "the saved team must round-trip");
+        let litter: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "team.json")
+            .collect();
+        assert!(litter.is_empty(), "the temp file was left behind: {litter:?}");
+    }
+
+    /// Overwriting an existing team must also be atomic — the rename replaces the file
+    /// in one step rather than truncating the one a reader may be holding.
+    #[test]
+    fn save_team_overwrites_an_existing_file_in_one_step() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("team.json");
+        save_team(&path, &Team { quarks: vec![seat("a", "claude", "m", Flavor::Worker)] }).unwrap();
+
+        let two = Team {
+            quarks: vec![
+                seat("a", "claude", "m", Flavor::Worker),
+                seat("b", "agy", "g", Flavor::Worker),
+            ],
+        };
+        save_team(&path, &two).unwrap();
+        assert_eq!(load_team(&path), two);
     }
 
     /// THE forward-compat guarantee of the ACP work: a `team.json` written before

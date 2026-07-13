@@ -350,6 +350,59 @@ impl Engine {
         }
     }
 
+    /// Seat a quark on the **live** roster, replacing any quark already holding its id.
+    ///
+    /// Both `quarks` and `roster` are updated here, together, because they are the
+    /// textbook two-fields-that-must-never-disagree: a quark in the map but not the
+    /// roster is unaddressable, and one in the roster but not the map is a name that
+    /// resolves to a turn the engine cannot run. There is no way to mutate one without
+    /// the other.
+    ///
+    /// **Only ever call this at a quiescent point.** `&mut self` is what enforces that:
+    /// [`Engine::run_until_quiesce`] borrows the engine mutably for its entire duration
+    /// and only returns once every spawned turn has been *joined*, so a re-seat racing
+    /// a running turn does not compile.
+    pub fn seat(&mut self, quark: Box<dyn Quark>) {
+        let id = quark.id();
+        let card = QuarkCard {
+            id: id.clone(),
+            flavor: quark.flavor(),
+            energy: quark.energy(),
+            // Left empty exactly as `new` leaves it — the daemon owns legibility, and
+            // a seat added at runtime must not acquire fields a booted one lacks.
+            provider: String::new(),
+            model: String::new(),
+        };
+        self.roster.retain(|c| c.id != id);
+        self.roster.push(card);
+        self.quarks.insert(id, Arc::new(AsyncMutex::new(quark)));
+    }
+
+    /// Remove a quark from the live roster. `true` if it was seated.
+    ///
+    /// Dropping the last `Arc` to its `SharedQuark` drops the adapter, which for an ACP
+    /// seat takes its resident subprocess down with it. That is safe only because no
+    /// turn holds a clone of that `Arc` at a quiescent point — see [`Engine::seat`].
+    pub fn unseat(&mut self, id: &QuarkId) -> bool {
+        self.roster.retain(|c| &c.id != id);
+        self.quarks.remove(id).is_some()
+    }
+
+    /// How many quarks are seated. The daemon refuses a re-seat that would take this
+    /// to zero: a swarm with nobody in it cannot be talked to, and the human would have
+    /// no way to undo it from the chamber.
+    pub fn seated_count(&self) -> usize {
+        self.quarks.len()
+    }
+
+    /// The ids actually seated right now — the engine's own answer, not a caller's
+    /// shadow copy of what it believes it seated. The daemon needs this to evict the
+    /// mock quarks it booted with when a real `team.json` finally appears: those mocks
+    /// correspond to no `Seat`, so no team-vs-team diff can ever see them.
+    pub fn seated_ids(&self) -> Vec<QuarkId> {
+        self.quarks.keys().cloned().collect()
+    }
+
     /// Override the turn watchdog's [deadline](TURN_DEADLINE). Tests use a tiny one;
     /// production takes the default. A deadline of zero is not special-cased — an
     /// engine configured that way would time every turn out immediately, which is a
@@ -2569,6 +2622,117 @@ mod tests {
         assert!(
             matches!(&last.kind, Kind::Message { body } if body.contains("state of things")),
             "the newest event is kept, the oldest are the ones dropped"
+        );
+    }
+
+    // ---- live re-seating -------------------------------------------------------
+    //
+    // `team.json` changes while the swarm is running (the human saves a provider in
+    // Settings). The roster must pick that up — without disturbing the quarks that
+    // did not change, because an ACP seat carries a *resident session*.
+
+    fn engine_with(ids: &[&str], dir: &std::path::Path) -> Engine {
+        let quarks: Vec<Box<dyn Quark>> = ids
+            .iter()
+            .map(|id| {
+                Box::new(MockQuark::scripted(
+                    QuarkId::new(*id),
+                    Flavor::Worker,
+                    vec![None],
+                )) as Box<dyn Quark>
+            })
+            .collect();
+        Engine::new(dir.join("field.jsonl"), quarks, 12)
+    }
+
+    /// **THE DISCRIMINATING TEST.** Seating a *new* quark must leave every existing
+    /// quark as the *same instance* — not an equal one, the same one.
+    ///
+    /// `Arc::ptr_eq` is the only assertion that can tell "reconciled" from "rebuilt
+    /// everything and got lucky". It is what stands between us and silently dropping a
+    /// live ACP session (a booted subprocess whose second turn can see its first) every
+    /// time the human clicks Save in Settings.
+    #[test]
+    fn seating_a_new_quark_leaves_the_others_byte_for_byte_untouched() {
+        let dir = tempdir().unwrap();
+        let mut engine = engine_with(&["opus", "agy"], dir.path());
+
+        let opus_before = engine.quarks.get(&QuarkId::new("opus")).unwrap().clone();
+        let agy_before = engine.quarks.get(&QuarkId::new("agy")).unwrap().clone();
+
+        engine.seat(Box::new(MockQuark::scripted(
+            QuarkId::new("acp-claude"),
+            Flavor::Worker,
+            vec![None],
+        )));
+
+        assert_eq!(engine.seated_count(), 3, "the new seat joined the live roster");
+        assert!(
+            Arc::ptr_eq(&opus_before, engine.quarks.get(&QuarkId::new("opus")).unwrap()),
+            "opus was rebuilt by a re-seat that had nothing to do with it"
+        );
+        assert!(
+            Arc::ptr_eq(&agy_before, engine.quarks.get(&QuarkId::new("agy")).unwrap()),
+            "agy was rebuilt by a re-seat that had nothing to do with it"
+        );
+    }
+
+    /// A newly seated quark is addressable — the roster and the map agreed, so routing
+    /// can actually find it. Seating something the router cannot see is the bug this
+    /// whole change exists to fix, one layer down.
+    #[test]
+    fn a_newly_seated_quark_is_on_the_roster_the_router_reads() {
+        let dir = tempdir().unwrap();
+        let mut engine = engine_with(&["opus"], dir.path());
+        engine.seat(Box::new(MockQuark::scripted(
+            QuarkId::new("acp-claude"),
+            Flavor::Worker,
+            vec![None],
+        )));
+
+        let seated = QuarkId::new("acp-claude");
+        assert!(engine.roster.iter().any(|c| c.id == seated), "not on the roster");
+        assert!(engine.quarks.contains_key(&seated), "not in the quark map");
+    }
+
+    /// Replacing a seat (the human changed its model) swaps the instance — a changed
+    /// seat is a different agent and must NOT inherit the old one's session.
+    #[test]
+    fn replacing_a_seat_actually_swaps_the_instance() {
+        let dir = tempdir().unwrap();
+        let mut engine = engine_with(&["agy"], dir.path());
+        let before = engine.quarks.get(&QuarkId::new("agy")).unwrap().clone();
+
+        engine.seat(Box::new(MockQuark::scripted(
+            QuarkId::new("agy"),
+            Flavor::Worker,
+            vec![None],
+        )));
+
+        assert_eq!(engine.seated_count(), 1, "a replacement must not duplicate the id");
+        assert_eq!(
+            engine.roster.iter().filter(|c| c.id == QuarkId::new("agy")).count(),
+            1,
+            "a replaced seat must not appear on the roster twice"
+        );
+        assert!(
+            !Arc::ptr_eq(&before, engine.quarks.get(&QuarkId::new("agy")).unwrap()),
+            "a changed seat kept its old instance — the old model would keep answering"
+        );
+    }
+
+    #[test]
+    fn unseating_removes_from_both_the_map_and_the_roster() {
+        let dir = tempdir().unwrap();
+        let mut engine = engine_with(&["opus", "agy"], dir.path());
+
+        assert!(engine.unseat(&QuarkId::new("agy")));
+        assert!(!engine.unseat(&QuarkId::new("agy")), "unseating twice is not a lie");
+
+        assert_eq!(engine.seated_count(), 1);
+        assert!(
+            !engine.roster.iter().any(|c| c.id == QuarkId::new("agy")),
+            "unseated quark still on the roster — it would resolve to a turn we cannot run"
         );
     }
 }
