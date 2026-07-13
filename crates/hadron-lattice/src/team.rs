@@ -72,9 +72,51 @@ pub struct Seat {
     /// absent there means "resolve the command from `provider`".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<AcpCommand>,
+    /// Whether this seat **participates**. A disabled quark keeps its seat, its
+    /// identity, and — crucially — its live instance: it is simply never excited.
+    ///
+    /// Defaults to `true`, so every `team.json` written before this field existed
+    /// keeps its exact behaviour without being rewritten.
+    ///
+    /// This is participation, NOT existence. Disabling is not unseating: an ACP seat
+    /// holds a resident subprocess and a conversation, and tearing that down to flip a
+    /// boolean would throw away the session for nothing. See [`Seat::same_agent`],
+    /// which is what stops the re-seat planner from mistaking a toggle for a rebuild.
+    #[serde(default = "enabled_by_default")]
+    pub enabled: bool,
+}
+
+/// `true`. Serde needs a function, and an absent `enabled` must mean *on* — a seat
+/// that predates this field was never disabled.
+fn enabled_by_default() -> bool {
+    true
 }
 
 impl Seat {
+    /// Are these two seats **the same agent**, ignoring whether it is switched on?
+    ///
+    /// This is deliberately *not* `==`. The re-seat planner treats any difference
+    /// between the running seat and the desired one as "this is a different agent, tear
+    /// it down and build the new one" — which is right for a model change, a provider
+    /// change, or a re-pointed ACP binary. It is exactly **wrong** for `enabled`:
+    /// flipping a boolean would rebuild a resident ACP quark and silently discard its
+    /// conversation.
+    ///
+    /// So `enabled` is the one field carved out of the identity comparison, and a
+    /// change to it produces a *toggle* rather than a *replace*. Every other field
+    /// still forces a rebuild, by construction: this destructures the struct, so adding
+    /// a field to `Seat` without deciding which side of this line it falls on will not
+    /// compile.
+    pub fn same_agent(&self, other: &Seat) -> bool {
+        let Seat { id, provider, model, flavor, transport, command, enabled: _ } = self;
+        id == &other.id
+            && provider == &other.provider
+            && model == &other.model
+            && flavor == &other.flavor
+            && transport == &other.transport
+            && command == &other.command
+    }
+
     /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
     /// (and tests) from having to spell out two ACP fields they do not care about.
     pub fn cli(id: QuarkId, provider: impl Into<String>, model: impl Into<String>, flavor: Flavor) -> Seat {
@@ -85,6 +127,7 @@ impl Seat {
             flavor,
             transport: Transport::Cli,
             command: None,
+            enabled: true,
         }
     }
 }
@@ -400,5 +443,62 @@ mod tests {
         let team = load_team(&path);
         assert_eq!(team.quarks.len(), 1);
         assert_eq!(team.get(&QuarkId::new("opus")).unwrap().model, "opus-4.8");
+    }
+}
+
+#[cfg(test)]
+mod enabled_tests {
+    use super::*;
+
+    /// Jake's live `team.json` has no `enabled` key anywhere — it was written before the
+    /// field existed. Every one of those seats must read as **on**. If this ever
+    /// defaults to `false`, a Hadron upgrade silently switches the whole swarm off.
+    #[test]
+    fn a_team_json_written_before_enabled_existed_reads_as_all_on() {
+        // Copied from the shape the wizard actually writes.
+        let legacy = r#"{"quarks":[
+            {"id":"opus","provider":"claude","model":"opus","flavor":"orchestrator","transport":"cli"},
+            {"id":"acp-claude","provider":"acp-claude","model":"claude","flavor":"worker","transport":"acp",
+             "command":{"program":"npx","args":["-y","@agentclientprotocol/claude-agent-acp@latest"]}}
+        ]}"#;
+        let team: Team = serde_json::from_str(legacy).unwrap();
+        assert_eq!(team.quarks.len(), 2);
+        for seat in &team.quarks {
+            assert!(seat.enabled, "{} came back DISABLED from a file that never mentioned it", seat.id.as_str());
+        }
+    }
+
+    #[test]
+    fn an_explicitly_disabled_seat_round_trips() {
+        let mut seat = Seat::cli(QuarkId::new("agy"), "agy", "gemini", Flavor::Worker);
+        seat.enabled = false;
+        let back: Seat = serde_json::from_str(&serde_json::to_string(&seat).unwrap()).unwrap();
+        assert_eq!(back, seat);
+        assert!(!back.enabled);
+    }
+
+    /// `same_agent` is the identity used by the re-seat planner. It must ignore `enabled`
+    /// and NOTHING else — if it ever ignored `model`, changing the model in Settings would
+    /// leave the old model answering.
+    #[test]
+    fn same_agent_ignores_enabled_and_only_enabled() {
+        let base = Seat::cli(QuarkId::new("x"), "claude", "opus", Flavor::Worker);
+
+        let mut off = base.clone();
+        off.enabled = false;
+        assert!(base.same_agent(&off), "the switch is not the identity");
+        assert_ne!(base, off, "but they are still different seats");
+
+        for mutate in [
+            (|s: &mut Seat| s.model = "sonnet".into()) as fn(&mut Seat),
+            |s: &mut Seat| s.provider = "agy".into(),
+            |s: &mut Seat| s.flavor = Flavor::Orchestrator,
+            |s: &mut Seat| s.transport = Transport::Acp,
+            |s: &mut Seat| s.command = Some(AcpCommand { program: "other".into(), args: vec![] }),
+        ] {
+            let mut changed = base.clone();
+            mutate(&mut changed);
+            assert!(!base.same_agent(&changed), "a real change must NOT look like the same agent");
+        }
     }
 }

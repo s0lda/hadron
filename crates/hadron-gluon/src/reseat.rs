@@ -36,13 +36,24 @@ pub struct ReseatPlan {
     pub replaced: Vec<Seat>,
     /// Seats the human removed from `team.json`.
     pub removed: Vec<QuarkId>,
+    /// Seats whose **participation** changed — the same agent, switched on or off.
+    ///
+    /// This carries `(id, enabled)` and **deliberately not a `Seat`**: there is nothing
+    /// here to build a quark *from*, so it is not possible to accidentally rebuild one
+    /// while applying a toggle. That is the guarantee, made structural rather than
+    /// remembered — a disabled ACP quark keeps its resident subprocess and its
+    /// conversation, because the only thing this entry can do is flip a flag.
+    pub toggled: Vec<(QuarkId, bool)>,
 }
 
 impl ReseatPlan {
     /// Nothing to do — the running roster already matches the file. The overwhelmingly
     /// common case: the daemon reconciles on a timer and the team almost never changes.
     pub fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.replaced.is_empty() && self.removed.is_empty()
+        self.added.is_empty()
+            && self.replaced.is_empty()
+            && self.removed.is_empty()
+            && self.toggled.is_empty()
     }
 
     /// A one-line summary for the daemon's log, so a re-seat is something the human
@@ -58,23 +69,36 @@ impl ReseatPlan {
         for id in &self.removed {
             parts.push(format!("-{}", id.as_str()));
         }
+        for (id, on) in &self.toggled {
+            parts.push(format!("{}{}", if *on { "on:" } else { "off:" }, id.as_str()));
+        }
         parts.join(" ")
     }
 }
 
 /// Diff the roster the daemon is *running* against the one `team.json` now *describes*.
 ///
-/// Seat equality is whole-struct equality, so any field the human can change (model,
-/// provider, transport, boot command, flavor) counts as a change and forces a rebuild
-/// of that one seat — and only that one.
+/// Any field the human can change (model, provider, transport, boot command, flavor)
+/// counts as a change and forces a rebuild of that one seat — and only that one.
+///
+/// **`enabled` is the sole exception**, and it has to be. Comparing whole structs would
+/// make switching a quark off a *replace*: the engine would tear down its adapter and
+/// build a new one, which for an ACP seat kills a live subprocess and throws away the
+/// conversation — to flip a boolean. So identity is [`Seat::same_agent`] (everything
+/// but `enabled`), and a participation change becomes a `toggled` entry, which carries
+/// no `Seat` and therefore cannot rebuild anything.
 pub fn plan(running: &Team, desired: &Team) -> ReseatPlan {
     let mut out = ReseatPlan::default();
 
     for want in &desired.quarks {
         match running.get(&want.id) {
+            Some(have) if !have.same_agent(want) => out.replaced.push(want.clone()),
+            // Same agent, different switch: flip it. The instance survives.
+            Some(have) if have.enabled != want.enabled => {
+                out.toggled.push((want.id.clone(), want.enabled))
+            }
             // Unchanged: says nothing, does nothing, keeps its session. The point.
-            Some(have) if have == want => {}
-            Some(_) => out.replaced.push(want.clone()),
+            Some(_) => {}
             None => out.added.push(want.clone()),
         }
     }
@@ -119,6 +143,7 @@ mod tests {
             flavor: Flavor::Worker,
             transport: Transport::Acp,
             command: None,
+            enabled: true,
         };
         let mut desired = running.clone();
         desired.quarks.push(new_seat.clone());
@@ -162,6 +187,7 @@ mod tests {
             model: "claude".into(),
             flavor: Flavor::Worker,
             transport: Transport::Acp,
+            enabled: true,
             command: Some(AcpCommand {
                 program: "npx".into(),
                 args: args.iter().map(|s| s.to_string()).collect(),
@@ -170,5 +196,78 @@ mod tests {
         let running = team(&[seat(&["-y", "old-agent"])]);
         let desired = team(&[seat(&["-y", "new-agent"])]);
         assert_eq!(plan(&running, &desired).replaced, vec![seat(&["-y", "new-agent"])]);
+    }
+}
+
+#[cfg(test)]
+mod enabled_tests {
+    use super::*;
+    use hadron_lattice::{AcpCommand, Flavor, Transport};
+
+    fn acp(id: &str, enabled: bool) -> Seat {
+        Seat {
+            id: QuarkId::new(id),
+            provider: "acp-claude".into(),
+            model: "claude".into(),
+            flavor: Flavor::Worker,
+            transport: Transport::Acp,
+            command: Some(AcpCommand { program: "npx".into(), args: vec![] }),
+            enabled,
+        }
+    }
+    fn team(seats: &[Seat]) -> Team {
+        Team { quarks: seats.to_vec() }
+    }
+
+    /// **The trap this design exists to avoid.** Whole-struct equality would make a
+    /// disable look like a changed seat, and a changed seat is REBUILT — which for an
+    /// ACP quark kills its subprocess and discards the conversation, to flip a boolean.
+    ///
+    /// Disabling must produce a `toggled` entry and *nothing else*. If this ever shows
+    /// up in `replaced`, a live session is being thrown away.
+    #[test]
+    fn disabling_a_quark_toggles_it_and_never_replaces_it() {
+        let running = team(&[acp("acp-claude", true)]);
+        let desired = team(&[acp("acp-claude", false)]);
+
+        let p = plan(&running, &desired);
+
+        assert_eq!(p.toggled, vec![(QuarkId::new("acp-claude"), false)]);
+        assert!(p.replaced.is_empty(), "a disable must NOT rebuild the quark — its ACP session would die");
+        assert!(p.added.is_empty());
+        assert!(p.removed.is_empty(), "disabling is not unseating");
+        assert_eq!(p.summary(), "off:acp-claude");
+    }
+
+    /// And back on again — same shape, and still not a rebuild.
+    #[test]
+    fn enabling_a_quark_toggles_it_and_never_replaces_it() {
+        let p = plan(&team(&[acp("x", false)]), &team(&[acp("x", true)]));
+        assert_eq!(p.toggled, vec![(QuarkId::new("x"), true)]);
+        assert!(p.replaced.is_empty() && p.removed.is_empty() && p.added.is_empty());
+        assert_eq!(p.summary(), "on:x");
+    }
+
+    /// The carve-out is exactly one field wide. A real definition change on a seat that
+    /// is *also* being toggled is still a replace — otherwise "change the model and
+    /// disable it" would keep the old model seated and merely switch it off.
+    #[test]
+    fn a_real_change_still_replaces_even_when_enabled_also_changed() {
+        let running = team(&[acp("x", true)]);
+        let mut want = acp("x", false);
+        want.model = "sonnet".into();
+
+        let p = plan(&running, &team(&[want.clone()]));
+
+        assert_eq!(p.replaced, vec![want], "a different model is a different agent");
+        assert!(p.toggled.is_empty(), "the replace already carries the new enabled flag");
+    }
+
+    /// An unchanged disabled seat is still a no-op. A quark that is off must not be
+    /// re-toggled (and so re-logged) on every reconcile tick.
+    #[test]
+    fn an_unchanged_disabled_seat_is_still_no_work() {
+        let t = team(&[acp("x", false)]);
+        assert!(plan(&t, &t).is_empty(), "off and staying off is nothing to do");
     }
 }

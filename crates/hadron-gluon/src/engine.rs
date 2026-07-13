@@ -311,6 +311,12 @@ pub struct Engine {
     /// The watchdog: how long an excited turn may run before the engine writes its
     /// terminal status *for* it. See [`TURN_DEADLINE`].
     turn_deadline: std::time::Duration,
+    /// Quarks that are seated but **switched off**. They keep their instance (an ACP
+    /// seat keeps its resident subprocess and its conversation); they are simply never
+    /// excited. Absent from this set = participating, so a quark seated by any path
+    /// that never heard of disabling is on, which is the safe default for a *reduction*
+    /// of authority.
+    disabled: HashSet<QuarkId>,
 }
 
 impl Engine {
@@ -347,6 +353,7 @@ impl Engine {
             merge: None,
             field_lock: Arc::new(AsyncMutex::new(())),
             turn_deadline: TURN_DEADLINE,
+            disabled: HashSet::new(),
         }
     }
 
@@ -386,6 +393,33 @@ impl Engine {
     pub fn unseat(&mut self, id: &QuarkId) -> bool {
         self.roster.retain(|c| &c.id != id);
         self.quarks.remove(id).is_some()
+    }
+
+    /// Switch a seated quark's **participation** on or off.
+    ///
+    /// This is NOT [`Engine::unseat`], and the difference is the whole point: the quark
+    /// keeps its entry in `quarks`, so its adapter — and for an ACP seat, its resident
+    /// subprocess and its whole conversation — is never dropped. It keeps its row in
+    /// `roster`, so `@mentions` of it still *resolve* rather than falling through to
+    /// the orchestrator, which is what lets the engine say "that quark is disabled"
+    /// instead of quietly answering as somebody else.
+    ///
+    /// All it changes is whether the dispatch loop will excite it.
+    ///
+    /// `&mut self` for the same reason as [`Engine::seat`]: only safe at a quiescent
+    /// point, and the borrow checker is what enforces that rather than a comment.
+    pub fn set_enabled(&mut self, id: &QuarkId, enabled: bool) {
+        if enabled {
+            self.disabled.remove(id);
+        } else {
+            self.disabled.insert(id.clone());
+        }
+    }
+
+    /// Whether a seated quark will take turns. Unknown ids read as enabled — absence
+    /// from the disabled set is what "on" means.
+    pub fn is_enabled(&self, id: &QuarkId) -> bool {
+        !self.disabled.contains(id)
     }
 
     /// How many quarks are seated. The daemon refuses a re-seat that would take this
@@ -700,6 +734,12 @@ impl Engine {
         outcome: TurnOutcome,
         tree: Option<&TurnTree>,
     ) -> anyhow::Result<()> {
+        // ONE id for everything this turn emits. The reply and the energy report are
+        // separate events, and turns run in parallel — so without this a reader trying
+        // to say "this reply cost X" has only ADJACENCY to join on, and adjacency is
+        // wrong the first time two quarks answer at once. Stamped here, at the single
+        // place a turn's events are written, so they cannot disagree.
+        let turn = ulid::Ulid::new();
         // Kept before the reply is moved into the field: the commit message names the
         // quark, its first line, and the assignment — greppable back to the event.
         let headline = outcome
@@ -747,15 +787,19 @@ impl Engine {
                     None,
                     Kind::EnergyReport { used_tokens: fresh.unwrap_or(0) },
                 )
-                .with_usage(outcome.usage.clone()),
+                .with_usage(outcome.usage.clone())
+                .with_turn(turn),
             )
             .await?;
         }
 
         if let Some(body) = outcome.message {
             let to = parse_addressee(&body, &self.roster, Some(target));
-            self.append(Event::new(Actor::Quark(target.clone()), to, Kind::Message { body }))
-                .await?;
+            self.append(
+                Event::new(Actor::Quark(target.clone()), to, Kind::Message { body })
+                    .with_turn(turn),
+            )
+            .await?;
         }
 
         // A self-declared permission ask: record it, then let the effective mode
@@ -1009,6 +1053,21 @@ impl Engine {
                     if exchanges >= self.max_exchanges {
                         backstop = true;
                         break;
+                    }
+
+                    // Switched off by the human. The quark is still seated and still
+                    // resolves, so we SAY SO in the field rather than dropping the
+                    // mention: a message that goes nowhere with no trace is the failure
+                    // mode this codebase keeps rediscovering. `reroute_blocked` is the
+                    // existing mechanism for exactly this (it also marks the quark
+                    // Blocked, so the roster does not show it as forever-Excited).
+                    if !self.is_enabled(&target) {
+                        let msg = format!(
+                            "⚠️ @{} is disabled and will not take this turn. Enable it in the roster to reach it.",
+                            target.as_str()
+                        );
+                        self.reroute_blocked(&target, &msg).await?;
+                        continue;
                     }
 
                     if let Some(ledger) = &self.ledger {
@@ -2705,6 +2764,171 @@ mod tests {
             Arc::ptr_eq(&agy_before, engine.quarks.get(&QuarkId::new("agy")).unwrap()),
             "agy was rebuilt by a re-seat that had nothing to do with it"
         );
+    }
+
+    // ---- participation (enable / disable) --------------------------------------
+
+    /// **The security property (rule 7).** Disable is an *authority reduction*, so the
+    /// risk runs the other way: the failure is a disabled quark that still takes a turn.
+    ///
+    /// This drives the real engine loop and proves the turn never happens — the quark is
+    /// scripted to shout, and the field must not contain the shout.
+    #[tokio::test]
+    async fn a_disabled_quark_does_not_take_a_turn() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(MockQuark::scripted(
+                QuarkId::new("agy"),
+                Flavor::Worker,
+                vec![Some("I ANSWERED".into())],
+            ))],
+            12,
+        );
+
+        engine.set_enabled(&QuarkId::new("agy"), false);
+        seed_human_message(&field, "agy", "you there?");
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        let spoke = events.iter().any(|e| {
+            matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))
+                && e.from == Actor::Quark(QuarkId::new("agy"))
+        });
+        assert!(!spoke, "a DISABLED quark took a turn — the switch does not switch anything");
+    }
+
+    /// And the mention must not vanish. A message that goes nowhere, with no trace, is
+    /// the failure mode this codebase keeps rediscovering — the human would be left
+    /// staring at a chat that simply never answered.
+    #[tokio::test]
+    async fn a_mention_of_a_disabled_quark_is_answered_in_the_field_not_dropped() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(MockQuark::scripted(
+                QuarkId::new("agy"),
+                Flavor::Worker,
+                vec![Some("hi".into())],
+            ))],
+            12,
+        );
+        engine.set_enabled(&QuarkId::new("agy"), false);
+        seed_human_message(&field, "agy", "you there?");
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(
+            events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("disabled"))),
+            "the field must SAY the quark is disabled, not silently swallow the mention"
+        );
+    }
+
+    /// **Disabling is not unseating.** The quark keeps its exact instance — for an ACP
+    /// seat that is a live subprocess and a whole conversation. `Arc::ptr_eq` is the only
+    /// assertion that can tell "kept" from "rebuilt and got lucky".
+    #[tokio::test]
+    async fn disabling_keeps_the_very_same_instance_and_re_enabling_uses_it() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(MockQuark::scripted(
+                QuarkId::new("agy"),
+                Flavor::Worker,
+                vec![Some("I ANSWERED".into())],
+            ))],
+            12,
+        );
+        let id = QuarkId::new("agy");
+        let before = engine.quarks.get(&id).unwrap().clone();
+
+        engine.set_enabled(&id, false);
+        assert!(!engine.is_enabled(&id));
+        assert_eq!(engine.seated_count(), 1, "disabling must not unseat");
+        assert!(
+            Arc::ptr_eq(&before, engine.quarks.get(&id).unwrap()),
+            "the instance was rebuilt by a mere disable — an ACP session would have died here"
+        );
+        assert!(engine.roster.iter().any(|c| c.id == id), "still on the roster, so @mentions still resolve");
+
+        // Switched back on, it answers — and it is still the SAME quark, which is why
+        // its scripted reply (consumed by nobody, because it never ran) is still queued.
+        engine.set_enabled(&id, true);
+        assert!(Arc::ptr_eq(&before, engine.quarks.get(&id).unwrap()));
+
+        seed_human_message(&field, "agy", "you there?");
+        engine.run_until_quiesce().await.unwrap();
+        let events = read_events(&field).unwrap();
+        assert!(
+            events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
+            "re-enabled, it must take its turn"
+        );
+    }
+
+    /// Every event one turn emits carries the SAME turn id, so a reader can join a reply
+    /// to its own telemetry instead of guessing by adjacency. This is the whole reason
+    /// the field gained a `turn` — without it the chamber cannot honestly say what a
+    /// given reply cost.
+    #[tokio::test]
+    async fn one_turn_stamps_its_reply_and_its_energy_report_with_the_same_id() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let mut engine = Engine::new(field.clone(), vec![Box::new(SpendingQuark)], 12);
+        seed_human_message(&field, "spender", "go");
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        let reply = events
+            .iter()
+            .find(|e| matches!(&e.kind, Kind::Message { body } if body.contains("done")))
+            .expect("the quark replied");
+        let energy = events
+            .iter()
+            .find(|e| matches!(e.kind, Kind::EnergyReport { .. }))
+            .expect("and reported its spend");
+
+        let turn = reply.turn.expect("the reply names its turn");
+        assert_eq!(energy.turn, Some(turn), "the energy report must name the SAME turn");
+        assert_ne!(reply.id, energy.id, "two distinct events, one turn — that is the point");
+
+        // And the join actually yields the components, which is what the chamber needs.
+        let spend = energy.usage.as_ref().expect("telemetry rode along").spend.clone();
+        assert_eq!(spend.fresh(), Some(30), "input+output for THIS reply");
+        assert_eq!(spend.cached(), Some(900), "cache carried, not counted as work");
+    }
+
+    /// A quark that reports real components, so the turn-id join has something to join.
+    struct SpendingQuark;
+
+    #[async_trait::async_trait]
+    impl Quark for SpendingQuark {
+        fn id(&self) -> QuarkId {
+            QuarkId::new("spender")
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, _t: Projection) -> anyhow::Result<TurnOutcome> {
+            Ok(TurnOutcome {
+                message: Some("done".into()),
+                permission: None,
+                usage: hadron_lattice::Usage {
+                    spend: hadron_lattice::TokenSpend {
+                        input: Some(10),
+                        output: Some(20),
+                        cache_read: Some(800),
+                        cache_write: Some(100),
+                    },
+                    ..Default::default()
+                },
+            })
+        }
     }
 
     /// A newly seated quark is addressable — the roster and the map agreed, so routing
