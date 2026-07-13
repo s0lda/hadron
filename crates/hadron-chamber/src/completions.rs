@@ -9,7 +9,11 @@ pub struct ChatCompletionProvider {
 }
 
 pub fn extract_completion_query(text: &str, offset: usize) -> Option<(char, String, usize)> {
-    let before_cursor = &text[..offset];
+    let mut safe_offset = offset.min(text.len());
+    while safe_offset > 0 && !text.is_char_boundary(safe_offset) {
+        safe_offset -= 1;
+    }
+    let before_cursor = &text[..safe_offset];
     for (idx, c) in before_cursor.char_indices().rev() {
         if c == '@' || c == ':' {
             let query = before_cursor[idx + c.len_utf8()..].to_string();
@@ -168,6 +172,18 @@ mod tests {
             extract_completion_query("foo bar", 7),
             None
         );
+    }
+
+    #[test]
+    fn text_with_emoji_does_not_panic_on_offset() {
+        let text = "Hello 🌍 @world";
+        // 🌍 is 4 bytes. So ' ' is at index 5, 🌍 is at 6..10.
+        // If we call with offset 10, it's after the emoji.
+        assert_eq!(extract_completion_query(text, 10), None);
+        // If we call with offset 17 (end), it should find '@'
+        assert_eq!(extract_completion_query(text, text.len()), Some(('@', "world".to_string(), 11)));
+        // If the editor somehow gives an offset INSIDE the emoji, we should not crash.
+        assert_eq!(extract_completion_query(text, 8), None);
     }
 
     /// The `@a` → `@agy a` bug. The sigil is not the only trigger: typing the query
