@@ -13,7 +13,15 @@ pub enum QuarkKind {
 }
 
 impl QuarkKind {
-    /// Map a `Seat.provider` string to a backing CLI.
+    /// Return the list of statically known provider presets (id, display name, command, args).
+    pub fn available_presets() -> Vec<(&'static str, &'static str, &'static str, Vec<&'static str>)> {
+        vec![
+            ("claude", "Claude Code", "npx", vec!["-y", "@zed-industries/claude-code-acp"]),
+            ("agy", "Antigravity CLI", "agy", vec!["acp"]),
+        ]
+    }
+
+    /// Map a `Seat.provider` string to a backing CLI. to a backing CLI.
     pub fn from_provider(provider: &str) -> anyhow::Result<QuarkKind> {
         match provider {
             "claude" => Ok(QuarkKind::Claude),
