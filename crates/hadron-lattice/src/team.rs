@@ -161,6 +161,16 @@ pub fn load_team(path: &Path) -> Team {
     }
 }
 
+/// Save a team to an explicit path, creating the directory if it does not exist.
+/// The chamber calls this when the human seats a provider in Settings.
+pub fn save_team(path: &Path, team: &Team) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(team).map_err(std::io::Error::other)?;
+    std::fs::write(path, json)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
