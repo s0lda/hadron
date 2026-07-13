@@ -35,9 +35,96 @@ pub fn extract_completion_query(text: &str, offset: usize) -> Option<(char, Stri
     None
 }
 
+/// The label and filter text of one completion-menu row, built so the menu cannot
+/// panic on it.
+///
+/// **Jake's `::` crash.** The completion menu highlights the matched prefix of a row
+/// by byte range — `0..filter_text.len()` (gpui-component `completion_menu.rs`) — and
+/// gpui `debug_assert!`s that both ends of a highlight range are char boundaries
+/// (`gpui/src/elements/text.rs`). We used to build emoji rows as `"📺 :tv"`: the label
+/// *starts* with a 4-byte emoji, and `":tv".len()` is 3, so the range `0..3` lands
+/// **inside** the emoji and the assert fires. Instant crash, any query that surfaces
+/// an emoji whose shortcode is shorter than the leading emoji is wide.
+///
+/// The fix is structural, not a check: a label that **begins with its own filter
+/// text** always has a char boundary at `filter_text.len()`, because the filter text
+/// is a prefix of it. This type is the only way to construct a row, so the crashing
+/// shape cannot be written.
+pub struct MenuRow {
+    label: String,
+    filter_text: String,
+}
+
+impl MenuRow {
+    /// `filter_text` is what the user is matching against and what the menu
+    /// highlights; `trailing` is anything shown after it (an emoji glyph, a hint).
+    pub fn new(filter_text: impl Into<String>, trailing: &str) -> Self {
+        let filter_text = filter_text.into();
+        let label = if trailing.is_empty() {
+            filter_text.clone()
+        } else {
+            format!("{filter_text} {trailing}")
+        };
+        Self { label, filter_text }
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub fn filter_text(&self) -> &str {
+        &self.filter_text
+    }
+
+    /// The byte range the menu will highlight. Always a char boundary, by construction.
+    pub fn highlight_len(&self) -> usize {
+        self.filter_text.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The guard for Jake's `::` crash, over **every emoji the picker can offer** —
+    /// not a hand-picked one. `:tv`, `:id` and `:vs` are the short shortcodes that
+    /// actually fired it; an exhaustive sweep does not depend on us guessing right.
+    #[test]
+    fn no_emoji_row_can_put_the_menus_highlight_inside_a_multibyte_char() {
+        for emoji in emojis::iter() {
+            let Some(shortcode) = emoji.shortcode() else {
+                continue;
+            };
+            let row = MenuRow::new(format!(":{shortcode}"), emoji.as_str());
+            assert!(
+                row.label().is_char_boundary(row.highlight_len()),
+                "menu would slice {:?} at byte {} — mid-character, gpui panics",
+                row.label(),
+                row.highlight_len()
+            );
+        }
+    }
+
+    /// The mechanism itself, pinned: the label shape we *used* to build is the crash.
+    /// If this ever stops holding, the bug was fixed somewhere else and `MenuRow` can go.
+    #[test]
+    fn the_old_emoji_first_label_really_does_land_mid_character() {
+        let tv = emojis::get_by_shortcode("tv").expect(":tv is in the emojis crate");
+        let old_label = format!("{} :tv", tv.as_str()); // what completions.rs built
+        assert!(
+            !old_label.is_char_boundary(":tv".len()),
+            "the premise of the crash: byte 3 of {old_label:?} is inside the emoji"
+        );
+    }
+
+    /// A row whose trailing text is a bare mention has nothing after the filter text,
+    /// and the highlight covers the whole label.
+    #[test]
+    fn a_row_with_no_trailing_text_is_all_highlight() {
+        let row = MenuRow::new("@opus", "");
+        assert_eq!(row.label(), "@opus");
+        assert_eq!(row.highlight_len(), row.label().len());
+    }
 
     #[test]
     fn finds_a_mention_and_an_emoji_trigger() {

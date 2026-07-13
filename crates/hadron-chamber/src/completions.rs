@@ -59,8 +59,15 @@ impl CompletionProvider for ChatCompletionProvider {
             for file in &self.files {
                 let file_lower = file.to_lowercase();
                 if query_lower.is_empty() || file_lower.contains(&query_lower) {
+                    // The filter text must be a byte-prefix of the label (see `MenuRow`).
+                    // It was the *lowercased* path, which for a non-ASCII filename can be
+                    // a different byte length than the label — the same mid-character
+                    // highlight that crashed the emoji rows. The menu does not filter on
+                    // it (it only measures it), so the original-case path is safe here;
+                    // case-insensitive matching is done above, by us.
+                    let row = crate::text::MenuRow::new(format!("@{}", file), "");
                     items.push(CompletionItem {
-                        label: format!("@{}", file),
+                        label: row.label().to_string(),
                         insert_text: Some(format!("@{} ", file)),
                         text_edit: Some(lsp_types::CompletionTextEdit::Edit(lsp_types::TextEdit {
                             range,
@@ -68,7 +75,7 @@ impl CompletionProvider for ChatCompletionProvider {
                         })),
                         kind: Some(CompletionItemKind::FILE),
                         detail: Some("File".to_string()),
-                        filter_text: Some(format!("@{}", file_lower)),
+                        filter_text: Some(row.filter_text().to_string()),
                         ..Default::default()
                     });
                 }
@@ -78,8 +85,12 @@ impl CompletionProvider for ChatCompletionProvider {
                 if let Some(shortcode) = emoji.shortcode() {
                     let shortcode_lower = shortcode.to_lowercase();
                     if query_lower.is_empty() || shortcode_lower.contains(&query_lower) {
+                        // `MenuRow` puts the shortcode FIRST. The menu highlights
+                        // `label[0..filter_text.len()]`, and an emoji-leading label put
+                        // that byte range inside the glyph — Jake's `::` crash.
+                        let row = crate::text::MenuRow::new(format!(":{}", shortcode), emoji.as_str());
                         items.push(CompletionItem {
-                            label: format!("{} :{}", emoji.as_str(), shortcode),
+                            label: row.label().to_string(),
                             insert_text: Some(emoji.as_str().to_string()),
                             text_edit: Some(lsp_types::CompletionTextEdit::Edit(lsp_types::TextEdit {
                                 range,
@@ -87,7 +98,7 @@ impl CompletionProvider for ChatCompletionProvider {
                             })),
                             kind: Some(CompletionItemKind::TEXT),
                             detail: Some("Emoji".to_string()),
-                            filter_text: Some(format!(":{}", shortcode)),
+                            filter_text: Some(row.filter_text().to_string()),
                             ..Default::default()
                         });
                     }
