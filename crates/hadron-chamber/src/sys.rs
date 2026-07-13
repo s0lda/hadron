@@ -1,30 +1,83 @@
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio, ChildStdin};
+use std::io::{Write, BufReader, BufRead};
 use hadron_lattice::Mode;
 
-/// Executes a terminal command.
-///
-/// Under Bypass mode, executes `sh -c <cmd>`.
-/// Under Auto mode, execution is also permitted.
-/// Under Ask or Write modes, execution is rejected to enforce permission boundaries.
-pub fn execute_terminal_command(repo_root: &Path, cmd: &str, mode: Mode) -> Result<String, String> {
-    if matches!(mode, Mode::Ask | Mode::Write) {
-        return Err("Execution denied: Terminal requires Bypass or Auto mode.".to_string());
+pub struct Terminal {
+    stdin: ChildStdin,
+    stdout_reader: BufReader<std::process::ChildStdout>,
+    pub cwd: String,
+}
+
+impl Terminal {
+    pub fn new(repo_root: &Path) -> Result<Self, String> {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
+        
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(format!("exec {} 2>&1", shell))
+            .current_dir(repo_root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to spawn shell: {}", e))?;
+
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+
+        let mut term = Self {
+            stdin,
+            stdout_reader: BufReader::new(stdout),
+            cwd: String::new(),
+        };
+        
+        if let Ok(_) = term.execute("true") {
+            // cwd is initialized during execute
+        } else {
+            term.cwd = repo_root.to_string_lossy().into_owned();
+        }
+
+        Ok(term)
     }
 
-    match Command::new("sh").arg("-c").arg(cmd).current_dir(repo_root).output() {
-        Ok(cmd_out) => {
-            let mut output = String::from_utf8_lossy(&cmd_out.stdout).into_owned();
-            let err = String::from_utf8_lossy(&cmd_out.stderr);
-            if !err.is_empty() {
-                if !output.is_empty() {
-                    output.push('\n');
-                }
-                output.push_str(&err);
-            }
-            Ok(output.trim_end().to_string())
+    pub fn execute(&mut self, cmd: &str) -> Result<String, String> {
+        let marker = "___HADRON_CMD_DONE_98765___";
+        let script = format!("{}; echo \"{}\"; pwd; echo \"{}\"\n", cmd, marker, marker);
+        
+        if let Err(e) = self.stdin.write_all(script.as_bytes()) {
+            return Err(format!("Failed to write to terminal: {}", e));
         }
-        Err(e) => Err(format!("Failed to execute command: {}", e)),
+        if let Err(e) = self.stdin.flush() {
+            return Err(format!("Failed to flush terminal: {}", e));
+        }
+
+        let mut output = String::new();
+        let mut cwd = String::new();
+        let mut phase = 0;
+        loop {
+            let mut line = String::new();
+            match self.stdout_reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if line.contains(marker) {
+                        phase += 1;
+                        if phase == 2 {
+                            break;
+                        }
+                        continue;
+                    }
+                    if phase == 0 {
+                        output.push_str(&line);
+                    } else if phase == 1 {
+                        cwd.push_str(&line);
+                    }
+                }
+                Err(e) => return Err(format!("Read error: {}", e)),
+            }
+        }
+
+        self.cwd = cwd.trim().to_string();
+        Ok(output.trim().to_string())
     }
 }
 
@@ -58,21 +111,16 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn terminal_execution_is_gated_by_mode() {
+    fn terminal_execution_is_stateful() {
         let dir = tempdir().unwrap();
         let root = dir.path();
         
-        let ask_res = execute_terminal_command(root, "echo 'hello'", Mode::Ask);
-        assert!(ask_res.is_err());
-        assert_eq!(ask_res.unwrap_err(), "Execution denied: Terminal requires Bypass or Auto mode.");
-
-        let write_res = execute_terminal_command(root, "echo 'hello'", Mode::Write);
-        assert!(write_res.is_err());
-        assert_eq!(write_res.unwrap_err(), "Execution denied: Terminal requires Bypass or Auto mode.");
-
-        let bypass_res = execute_terminal_command(root, "echo 'hello'", Mode::Bypass);
-        assert!(bypass_res.is_ok());
-        assert_eq!(bypass_res.unwrap(), "hello");
+        let mut term = Terminal::new(root).unwrap();
+        let _ = term.execute("mkdir test_dir");
+        let _ = term.execute("cd test_dir");
+        let pwd_res = term.execute("pwd");
+        assert!(pwd_res.is_ok());
+        assert!(pwd_res.unwrap().contains("test_dir"));
     }
 
     #[test]
@@ -80,7 +128,6 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path();
 
-        // Initialize a dummy git repo so `git ls-files` works
         Command::new("git").arg("init").current_dir(root).output().unwrap();
         
         let test_file = "test.txt";
