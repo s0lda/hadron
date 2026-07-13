@@ -60,7 +60,7 @@ pub fn parse_diff(raw: &str) -> Vec<FileDiff> {
                 }
                 files.push(file);
             }
-            
+
             // For cases where there are spaces, we will fallback to parsing +++ and ---,
             // but we can try to extract path from diff --git a/path b/path
             let path = if let Some(b_part) = line.split(" b/").last() {
@@ -68,7 +68,7 @@ pub fn parse_diff(raw: &str) -> Vec<FileDiff> {
             } else {
                 String::new()
             };
-            
+
             current_file = Some(FileDiff {
                 path,
                 added: 0,
@@ -95,7 +95,8 @@ pub fn parse_diff(raw: &str) -> Vec<FileDiff> {
                     file.path = line["--- a/".len()..].to_string();
                 }
             }
-        } else if line.starts_with("--- ") || line.starts_with("+++ ") || line.starts_with("index ") {
+        } else if line.starts_with("--- ") || line.starts_with("+++ ") || line.starts_with("index ")
+        {
             // skip other header lines
         } else if let Some(hunk) = current_hunk.as_mut() {
             if let Some(content) = line.strip_prefix('+') {
@@ -180,13 +181,22 @@ index a1b2c3d..e4f5g6h 100644
         assert_eq!(file.added, 2);
         assert_eq!(file.removed, 1);
         assert_eq!(file.hunks.len(), 1);
-        
+
         let hunk = &file.hunks[0];
         assert_eq!(hunk.header, "@@ -10,3 +10,4 @@");
         assert_eq!(hunk.lines.len(), 5);
         assert_eq!(hunk.lines[0], DiffLine::Context("fn foo() {".to_string()));
-        assert_eq!(hunk.lines[1], DiffLine::Removed("    println!(\"old\");".to_string()));
-        assert_eq!(hunk.lines[2], DiffLine::Added("    println!(\"new\");".to_string()));
-        assert_eq!(hunk.lines[3], DiffLine::Added("    println!(\"added\");".to_string()));
+        assert_eq!(
+            hunk.lines[1],
+            DiffLine::Removed("    println!(\"old\");".to_string())
+        );
+        assert_eq!(
+            hunk.lines[2],
+            DiffLine::Added("    println!(\"new\");".to_string())
+        );
+        assert_eq!(
+            hunk.lines[3],
+            DiffLine::Added("    println!(\"added\");".to_string())
+        );
     }
 }

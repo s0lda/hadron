@@ -22,7 +22,9 @@ impl CompletionProvider for ChatCompletionProvider {
         _cx: &mut Context<InputState>,
     ) -> Task<Result<CompletionResponse>> {
         let text_str = _text.to_string();
-        let Some((trigger_char, query, start_offset)) = extract_completion_query(&text_str, _offset) else {
+        let Some((trigger_char, query, start_offset)) =
+            extract_completion_query(&text_str, _offset)
+        else {
             return Task::ready(Ok(CompletionResponse::Array(vec![])));
         };
 
@@ -88,14 +90,17 @@ impl CompletionProvider for ChatCompletionProvider {
                         // `MenuRow` puts the shortcode FIRST. The menu highlights
                         // `label[0..filter_text.len()]`, and an emoji-leading label put
                         // that byte range inside the glyph — Jake's `::` crash.
-                        let row = crate::text::MenuRow::new(format!(":{}", shortcode), emoji.as_str());
+                        let row =
+                            crate::text::MenuRow::new(format!(":{}", shortcode), emoji.as_str());
                         items.push(CompletionItem {
                             label: row.label().to_string(),
                             insert_text: Some(emoji.as_str().to_string()),
-                            text_edit: Some(lsp_types::CompletionTextEdit::Edit(lsp_types::TextEdit {
-                                range,
-                                new_text: emoji.as_str().to_string(),
-                            })),
+                            text_edit: Some(lsp_types::CompletionTextEdit::Edit(
+                                lsp_types::TextEdit {
+                                    range,
+                                    new_text: emoji.as_str().to_string(),
+                                },
+                            )),
                             kind: Some(CompletionItemKind::TEXT),
                             detail: Some("Emoji".to_string()),
                             filter_text: Some(row.filter_text().to_string()),
@@ -165,10 +170,7 @@ mod tests {
             extract_completion_query("hello@world", 11),
             Some(('@', "world".to_string(), 5))
         );
-        assert_eq!(
-            extract_completion_query("foo bar", 7),
-            None
-        );
+        assert_eq!(extract_completion_query("foo bar", 7), None);
     }
 
     // `text_with_emoji_does_not_panic_on_offset` moved to `text` — it guards a crash,
@@ -181,12 +183,21 @@ mod tests {
     fn typing_the_query_after_a_sigil_keeps_the_provider_live() {
         assert!(is_trigger_text("@"), "the sigil opens the menu");
         assert!(is_trigger_text(":"), "the emoji sigil opens the menu");
-        assert!(is_trigger_text("a"), "typing the query must re-run the provider");
-        assert!(is_trigger_text(""), "a deletion must re-run it, or the range outruns the text");
+        assert!(
+            is_trigger_text("a"),
+            "typing the query must re-run the provider"
+        );
+        assert!(
+            is_trigger_text(""),
+            "a deletion must re-run it, or the range outruns the text"
+        );
 
         assert!(!is_trigger_text(" "), "whitespace ends a query");
         assert!(!is_trigger_text("\n"), "so does a newline");
-        assert!(!is_trigger_text("hello"), "a multi-char paste is not a keystroke");
+        assert!(
+            !is_trigger_text("hello"),
+            "a multi-char paste is not a keystroke"
+        );
     }
 
     /// The range handed to the editor must cover the WHOLE query, sigil included — the
@@ -196,8 +207,8 @@ mod tests {
     /// mistranslated.
     #[test]
     fn the_edit_range_spans_the_whole_query_not_just_the_sigil() {
-        use gpui_component::RopeExt;
         use gpui_component::input::Rope;
+        use gpui_component::RopeExt;
 
         let text = Rope::from("@a");
         let cursor = 2; // after "@a"
@@ -207,7 +218,15 @@ mod tests {
         let start = text.offset_to_position(start_offset);
         let end = text.offset_to_position(cursor);
         // ...and what the editor resolves it back to when the item is accepted.
-        assert_eq!(text.position_to_offset(&start), 0, "range starts at the '@'");
-        assert_eq!(text.position_to_offset(&end), 2, "range ends at the cursor, past the 'a'");
+        assert_eq!(
+            text.position_to_offset(&start),
+            0,
+            "range starts at the '@'"
+        );
+        assert_eq!(
+            text.position_to_offset(&end),
+            2,
+            "range ends at the cursor, past the 'a'"
+        );
     }
 }
