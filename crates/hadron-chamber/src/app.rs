@@ -2075,42 +2075,56 @@ impl Chamber {
     fn providers_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.wizard_state {
             WizardState::None => {
-                let mut list = v_flex().gap_4();
+                let mut list = v_flex().gap_3();
                 for provider in &self.providers {
-                    let state_text = match &provider.state {
-                        ProviderState::NotConnected => "Not Connected".to_string(),
-                        ProviderState::NeedsAuth(_) => "Needs Auth".to_string(),
-                        ProviderState::Ready { model } => format!("Ready ({})", model),
-                        ProviderState::Failed(e) => format!("Failed: {}", e),
+                    let (state_text, state_color) = match &provider.state {
+                        ProviderState::NotConnected => ("Not Connected".to_string(), theme::text_muted()),
+                        ProviderState::NeedsAuth(_) => ("Needs Auth".to_string(), theme::accent()),
+                        ProviderState::Ready { model } => (format!("Ready ({})", model), gpui::rgb(0x22c55e)),
+                        ProviderState::Failed(e) => (format!("Failed: {}", e), theme::danger()),
                     };
                     list = list.child(
                         h_flex()
                             .justify_between()
-                            .p_3()
-                            .rounded_md()
+                            .items_center()
+                            .p_4()
+                            .rounded_lg()
+                            .bg(theme::surface())
                             .border_1()
                             .border_color(theme::border())
                             .child(
                                 v_flex()
-                                    .child(div().text_color(theme::text()).child(provider.id.clone()))
+                                    .gap_1()
+                                    .child(div().text_base().text_color(theme::text()).child(provider.id.clone()))
                                     .child(div().text_xs().text_color(theme::text_muted()).child(format!("Transport: {}", provider.transport)))
                             )
-                            .child(div().text_color(theme::text_secondary()).child(state_text))
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().size(px(8.0)).rounded_full().bg(state_color))
+                                    .child(div().text_sm().text_color(theme::text_secondary()).child(state_text))
+                            )
                     );
                 }
                 
                 v_flex()
                     .size_full()
-                    .gap_4()
-                    .child(div().text_lg().text_color(theme::text()).child("Configured Providers"))
-                    .child(list)
+                    .gap_6()
                     .child(
-                        text_button("add-quark", "Add Quark")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.wizard_state = WizardState::PickPreset;
-                                cx.notify();
-                            }))
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(div().text_lg().text_color(theme::text()).child("Configured Providers"))
+                            .child(
+                                text_button("add-quark", "Add Quark")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.wizard_state = WizardState::PickPreset;
+                                        cx.notify();
+                                    }))
+                            )
                     )
+                    .child(list)
             }
             WizardState::PickPreset => {
                 let presets = vec![
@@ -2127,16 +2141,20 @@ impl Chamber {
                             .id(SharedString::from(format!("preset-{}", preset.id)))
                             .items_center()
                             .justify_between()
-                            .p_3()
-                            .rounded_md()
+                            .p_4()
+                            .rounded_lg()
+                            .bg(theme::surface())
                             .border_1()
                             .border_color(theme::border())
-                            .hover(|s| s.bg(theme::surface()))
+                            .hover(|s| s.bg(theme::surface_raised()))
+                            .cursor_pointer()
                             .child(
                                 v_flex()
-                                    .child(div().text_color(theme::text()).child(preset.name.clone()))
+                                    .gap_1()
+                                    .child(div().text_base().text_color(theme::text()).child(preset.name.clone()))
                                     .child(div().text_xs().text_color(theme::text_muted()).child(format!("{} {}", preset.command, preset.args.join(" "))))
                             )
+                            .child(div().text_sm().text_color(theme::text_muted()).child("Configure →"))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.wizard_state = WizardState::Connecting(preset_clone.clone(), ProviderState::NotConnected);
                                 cx.notify();
@@ -2150,12 +2168,15 @@ impl Chamber {
                         .id("preset-custom")
                         .items_center()
                         .justify_between()
-                        .p_3()
-                        .rounded_md()
+                        .p_4()
+                        .rounded_lg()
+                        .bg(theme::surface())
                         .border_1()
                         .border_color(theme::border())
-                        .hover(|s| s.bg(theme::surface()))
-                        .child(div().text_color(theme::text()).child("Custom command…"))
+                        .hover(|s| s.bg(theme::surface_raised()))
+                        .cursor_pointer()
+                        .child(div().text_base().text_color(theme::text()).child("Custom command…"))
+                        .child(div().text_sm().text_color(theme::text_muted()).child("Configure →"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.wizard_state = WizardState::Connecting(
                                 AgentDescriptor { id: "custom".into(), name: "Custom".into(), command: "".into(), args: vec![] },
@@ -2164,7 +2185,7 @@ impl Chamber {
                             cx.notify();
                         }))
                 );
-
+                
                 v_flex()
                     .size_full()
                     .gap_4()
@@ -2178,6 +2199,8 @@ impl Chamber {
                     .child(div().text_lg().text_color(theme::text()).child("Select a Preset"))
                     .child(list)
             }
+
+
             WizardState::Connecting(desc, state) => {
                 let desc_clone = desc.clone();
                 let state_ui = match state {
