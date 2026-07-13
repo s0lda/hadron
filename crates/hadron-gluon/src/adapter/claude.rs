@@ -159,6 +159,7 @@ mod tests {
             nucleus_digest: String::new(),
             roster: vec![],
             field_window: vec![],
+            field_truncated: false,
             git_diff: String::new(),
             cwd,
             mode,
