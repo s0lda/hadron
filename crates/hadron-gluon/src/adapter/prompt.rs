@@ -60,6 +60,34 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         p.push_str("\n\n");
     }
 
+    // 2b. Memory — what THIS quark learned, on earlier turns and in earlier sessions.
+    //
+    // The gap this closes is the one Jake named: one quark arrives with weeks of
+    // accumulated context and another arrives with nothing, and we mistake the
+    // difference for intelligence. It is not; it is persistence. Always emit the
+    // section, even when empty — a quark that is never shown its memory file does not
+    // know it HAS one, and will not write to it.
+    if !projection.memory_path.as_os_str().is_empty() {
+        p.push_str("# What you have learned (your memory)\n");
+        if projection.memory.trim().is_empty() {
+            p.push_str("_Empty — you have not recorded anything here yet._\n\n");
+        } else {
+            p.push_str(projection.memory.trim());
+            p.push_str("\n\n");
+        }
+        p.push_str(&format!(
+            "This is **yours**, and it persists across turns and sessions. It lives at \
+             `{}`. When you learn something this turn that you would want to know next \
+             time — a fact about this codebase that cost you effort to establish, a rule \
+             that turned out to be false, a mistake worth not repeating — **append it to \
+             that file** (create it if it does not exist). Keep it short and factual; it \
+             is handed back to you verbatim on every future turn, so noise is a tax you \
+             pay forever. Do not record what the code already says: record what you could \
+             only learn by getting it wrong.\n\n",
+            projection.memory_path.display()
+        ));
+    }
+
     // 3. The task.
     p.push_str("# Your task\n");
     p.push_str(projection.task.trim());
@@ -253,6 +281,8 @@ mod tests {
                 Kind::Message { body: "start the auth work".into() },
             )],
             field_truncated: false,
+            memory: String::new(),
+            memory_path: std::path::PathBuf::new(),
             git_diff: String::new(),
             isolated: true,
             cwd: std::path::PathBuf::from("/repo/.hadron/trees/agy"),
@@ -451,6 +481,37 @@ mod tests {
         let worker = build(&proj, &QuarkId::new("agy"));
         assert!(worker.contains("Resolve implementation details yourself"));
         assert!(worker.contains("do NOT stall on the small ones"));
+    }
+
+    /// The asymmetry Jake named: one quark arrives with weeks of accumulated context,
+    /// another with nothing, and we mistake persistence for intelligence. A quark must
+    /// be shown its memory AND told where to write it — "remember this" without a path
+    /// is an instruction it cannot obey.
+    #[test]
+    fn a_quark_is_shown_its_memory_and_told_where_to_write_it() {
+        let mut proj = projection("x");
+        proj.memory_path = std::path::PathBuf::from("/repo/.hadron/memory/agy.md");
+
+        // Empty memory still emits the section — otherwise the quark never learns it HAS one.
+        let empty = build(&proj, &QuarkId::new("agy"));
+        assert!(empty.contains("# What you have learned (your memory)"));
+        assert!(empty.contains("you have not recorded anything here yet"));
+        assert!(empty.contains("/repo/.hadron/memory/agy.md"), "it must know the path");
+        assert!(empty.contains("append it to"), "and that writing is its job");
+
+        // A populated memory comes back verbatim.
+        proj.memory = "The forge crate is sound but has zero consumers.".into();
+        let carried = build(&proj, &QuarkId::new("agy"));
+        assert!(carried.contains("The forge crate is sound but has zero consumers."));
+        assert!(!carried.contains("you have not recorded anything here yet"));
+    }
+
+    /// No memory path (a mock adapter, an old snapshot) → no section, rather than a
+    /// section telling the quark to write to nowhere.
+    #[test]
+    fn no_memory_section_without_a_path() {
+        let p = build(&projection("x"), &QuarkId::new("agy"));
+        assert!(!p.contains("your memory"));
     }
 
     /// Prohibition alone did not stop a blanket stage; give the positive form too.
