@@ -229,7 +229,7 @@ struct AgentDescriptor { pub id: String, pub name: String, pub command: String, 
 struct AuthMethod { pub id: String, pub name: String, pub description: String }
 
 #[derive(Clone, PartialEq, Eq)]
-enum ProviderState { NotConnected, NeedsAuth(Vec<AuthMethod>), Ready { model: String }, Failed(String) }
+enum ProviderState { NotConnected, Connecting, NeedsAuth(Vec<AuthMethod>), Ready { model: String }, Failed(String) }
 
 #[derive(Clone, PartialEq, Eq)]
 struct ConfiguredQuark {
@@ -2542,6 +2542,7 @@ impl Chamber {
                 for provider in &self.providers {
                     let (state_text, state_color) = match &provider.state {
                         ProviderState::NotConnected => ("Not Connected".to_string(), theme::text_muted()),
+                        ProviderState::Connecting => ("Connecting…".to_string(), theme::text_muted()),
                         ProviderState::NeedsAuth(_) => ("Needs Auth".to_string(), theme::accent()),
                         ProviderState::Ready { model } => (format!("Ready ({})", model), gpui::rgb(0x22c55e)),
                         ProviderState::Failed(e) => (format!("Failed: {}", e), theme::danger()),
@@ -2672,7 +2673,9 @@ impl Chamber {
                 let desc_clone = desc.clone();
                 let state_ui = match state {
                     ProviderState::Connecting => {
-                        v_flex().gap_4().child(div().text_sm().text_color(theme::text_muted()).child("Connecting..."))
+                        v_flex().gap_4()
+                            .child(div().text_sm().text_color(theme::text_muted()).child("Connecting..."))
+                            .into_any_element()
                     }
                     ProviderState::NotConnected => {
                         v_flex().gap_4().child(
@@ -2681,38 +2684,27 @@ impl Chamber {
                                     this.wizard_state = WizardState::Connecting(desc_clone.clone(), ProviderState::Connecting);
                                     cx.notify();
                                     
-                                    let cmd_str = format!("{} {}", desc_clone.command, desc_clone.args.join(" "));
+                                    // Connect = boot the agent and complete ACP's `initialize`.
+                                    // The probe lives in the daemon (`hadron-gluon`), which is the
+                                    // thing that will actually drive this agent — so the UI cannot
+                                    // claim a provider works over a client the daemon never uses.
+                                    let target = hadron_gluon::adapter::registry::AcpTarget {
+                                        program: desc_clone.command.clone(),
+                                        args: desc_clone.args.clone(),
+                                    };
                                     let desc_for_task = desc_clone.clone();
-                                    cx.spawn(|this, mut cx| async move {
-                                        use std::str::FromStr;
-                                        use agent_client_protocol::AcpAgent;
-                                        use agent_client_protocol::schema::ProtocolVersion;
-                                        use agent_client_protocol::schema::v1::InitializeRequest;
-                                        
-                                        let result: Result<String, String> = async {
-                                            let agent = AcpAgent::from_str(&cmd_str).map_err(|e| e.to_string())?;
-                                            let mut client = agent_client_protocol::Client::builder();
-                                            // Handle permission requests automatically
-                                            client = client.on_receive_request(
-                                                async move |request: agent_client_protocol::schema::v1::RequestPermissionRequest, responder, _| {
-                                                    match request.options.first().map(|o| o.option_id.clone()) {
-                                                        Some(id) => responder.respond(agent_client_protocol::schema::v1::RequestPermissionResponse::new(
-                                                            agent_client_protocol::schema::v1::RequestPermissionOutcome::Selected(agent_client_protocol::schema::v1::SelectedPermissionOutcome::new(id)),
-                                                        )),
-                                                        None => responder.respond(agent_client_protocol::schema::v1::RequestPermissionResponse::new(
-                                                            agent_client_protocol::schema::v1::RequestPermissionOutcome::Cancelled,
-                                                        )),
-                                                    }
-                                                },
-                                                agent_client_protocol::on_receive_request!()
-                                            );
-                                            client.connect_with(agent, |connection| async move {
-                                                let init = connection.send_request(InitializeRequest::new(ProtocolVersion::V1)).block_task().await.map_err(|e| e.to_string())?;
-                                                let model_name = init.agent_info.map(|i| i.name).unwrap_or_else(|| "default-model".into());
-                                                Ok(model_name)
-                                            }).await.map_err(|e| e.to_string())?
-                                        }.await;
-                                        
+                                    cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                                        // The async block outlives the borrow, so it gets its own
+                                        // handle on the app rather than holding a reference.
+                                        let mut cx = cx.clone();
+                                        async move {
+                                        // Blocking boot, off the UI thread: a slow `npx` must not
+                                        // freeze the window.
+                                        let result = cx
+                                            .background_spawn(async move { hadron_gluon::adapter::acp::probe(&target) })
+                                            .await
+                                            .map_err(|e| e.to_string());
+
                                         this.update(&mut cx, |this, cx| {
                                             let state = match result {
                                                 Ok(model) => ProviderState::Ready { model },
@@ -2721,6 +2713,7 @@ impl Chamber {
                                             this.wizard_state = WizardState::Connecting(desc_for_task, state);
                                             cx.notify();
                                         }).ok();
+                                        }
                                     }).detach();
                                 }))
                         ).into_any_element()
@@ -2766,11 +2759,19 @@ impl Chamber {
                                             state: state_inner.clone()
                                         });
                                         
+                                        // An ACP seat, and it carries the command the wizard
+                                        // just proved boots — so the daemon reaches this agent
+                                        // over the same transport the human tested it on.
                                         this.team.quarks.push(hadron_lattice::Seat {
                                             id: hadron_lattice::QuarkId::new(&desc_inner.id),
                                             provider: desc_inner.id.clone(),
                                             model: model_inner.clone(),
                                             flavor: hadron_lattice::Flavor::Worker, // default flavor
+                                            transport: hadron_lattice::Transport::Acp,
+                                            command: Some(hadron_lattice::AcpCommand {
+                                                program: desc_inner.command.clone(),
+                                                args: desc_inner.args.clone(),
+                                            }),
                                         });
                                         if let Some(team_path) = hadron_lattice::team_for_field(&this.path) {
                                             let _ = hadron_lattice::save_team(&team_path, &this.team);

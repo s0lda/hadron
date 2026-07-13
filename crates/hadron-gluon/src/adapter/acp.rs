@@ -132,6 +132,52 @@ fn permission_choice(mode: Mode) -> PermissionOptionKind {
     }
 }
 
+/// Boot an ACP agent, complete the `initialize` handshake, read back who answered,
+/// and shut it down. **Blocking** — call it off the UI thread.
+///
+/// This is what "Connect" in Settings means: proof that the command in the seat
+/// actually boots and speaks ACP, before the human is told the provider is ready.
+/// It deliberately opens **no session** and answers **no permission request** — a
+/// session is a turn, a turn is the daemon's job, and a UI that can approve a tool
+/// call is a permission ladder with a hole in it.
+///
+/// Returns the agent's own name (ACP's `agent_info`), or the reason it failed.
+pub fn probe(target: &AcpTarget) -> anyhow::Result<String> {
+    let command = target.command_line();
+    let (tx, rx) = std::sync::mpsc::channel::<anyhow::Result<String>>();
+
+    // Same shape as `boot`: the SDK's connection API is scoped to its closure and
+    // wants its own executor, so it gets its own thread.
+    std::thread::Builder::new()
+        .name("hadron-acp-probe".to_string())
+        .spawn(move || {
+            let outcome: anyhow::Result<String> = futures::executor::block_on(async move {
+                let agent = AcpAgent::from_str(&command)
+                    .map_err(|e| anyhow::anyhow!("bad ACP command {command:?}: {e}"))?;
+                let name = agent_client_protocol::Client
+                    .builder()
+                    .name("hadron")
+                    .connect_with(agent, move |cx: ConnectionTo<Agent>| async move {
+                        let init = cx
+                            .send_request(InitializeRequest::new(ProtocolVersion::V1))
+                            .block_task()
+                            .await?;
+                        Ok(init.agent_info.map(|i| i.name).unwrap_or_else(|| "unnamed agent".into()))
+                    })
+                    .await
+                    .map_err(|e| anyhow::anyhow!("ACP handshake failed: {e}"))?;
+                Ok(name)
+            });
+            let _ = tx.send(outcome);
+        })?;
+
+    // A boot that never answers must fail, not hang the Settings window forever.
+    match rx.recv_timeout(std::time::Duration::from_secs(120)) {
+        Ok(result) => result,
+        Err(_) => anyhow::bail!("ACP agent did not answer `initialize` within 120s"),
+    }
+}
+
 /// A quark backed by a resident ACP agent.
 pub struct AcpQuark {
     id: QuarkId,
