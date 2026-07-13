@@ -90,56 +90,97 @@ pub(crate) fn workspace_root_of(field_path: &Path, base: &Path) -> PathBuf {
         .to_path_buf()
 }
 
+/// The Standard Model, **compiled into the binary**.
+///
+/// Not read from disk, and deliberately so. The rules that stop a quark
+/// confabulating a result are worthless if they can be lost by a fresh clone, a
+/// `.gitignore`, or a user deleting a directory — a swarm whose invariants
+/// silently vanish is a swarm that silently gets worse. This tier is handed to
+/// every quark on every turn, always, with no file to go missing.
+pub const STANDARD_MODEL: &str = include_str!("../invariants/standard_model.md");
+
+/// Where a user's own always-on rules live, under their home directory. Their
+/// preferences, across every project they run Hadron in.
+fn global_invariants_dir() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(
+        std::path::PathBuf::from(home)
+            .join(".hadron")
+            .join("nucleus")
+            .join("invariants"),
+    )
+}
+
+/// Read every `*.md` in a directory, sorted by name so the prompt is deterministic
+/// (a projection that reorders itself between turns busts every prompt cache).
+/// A directory that isn't there is not an error — the tier is simply absent.
+fn read_invariant_dir(dir: &std::path::Path) -> Vec<(String, String)> {
+    let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
+
+    let mut found: Vec<(String, String)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let stem = name.strip_suffix(".md")?.to_string();
+            match fs::read_to_string(e.path()) {
+                Ok(body) => Some((stem, body)),
+                Err(err) => {
+                    // Loud, not silent: an unreadable rule file is a rule the quark
+                    // is not being given, and nobody would otherwise ever know.
+                    eprintln!(
+                        "warning: invariant exists but could not be read: {} — {err}",
+                        e.path().display()
+                    );
+                    None
+                }
+            }
+        })
+        .collect();
+
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found
+}
+
+/// Assemble the three tiers of working protocol handed to a quark.
+///
+/// 1. **Hardcoded** — [`STANDARD_MODEL`], compiled in, always present, not optional.
+/// 2. **Global** — `~/.hadron/nucleus/invariants/`, the user's own standing rules.
+/// 3. **Repo** — `<workspace>/.hadron/nucleus/invariants/`, this project's rules.
+///
+/// Ordered narrowest-last, and the prompt *says* which tier each block came from:
+/// a quark that cannot tell a shipped rule from a project rule cannot reason about
+/// which one to question when they conflict. `requested` names extra repo rules to
+/// pull in for this specific turn.
 fn build_invariants(workspace_root: &std::path::Path, requested: &[String]) -> (String, Vec<String>) {
     let mut combined = String::new();
-    let invariants_dir = workspace_root.join(".hadron").join("nucleus").join("invariants");
-    let mut available = Vec::new();
-    
-    // Always include standard_model.md if it exists
-    let sm_path = invariants_dir.join("standard_model.md");
-    if sm_path.exists() {
-        match fs::read_to_string(&sm_path) {
-            Ok(content) => {
-                combined.push_str(&content);
-                combined.push('\n');
-            }
-            Err(e) => {
-                eprintln!("warning: requested invariant file exists but could not be read: {} - {}", sm_path.display(), e);
-            }
+
+    // Tier 1 — always, whatever else is or isn't on disk.
+    combined.push_str(STANDARD_MODEL.trim());
+    combined.push('\n');
+
+    // Tier 2 — the user's preferences, across all their projects.
+    if let Some(global_dir) = global_invariants_dir() {
+        for (name, body) in read_invariant_dir(&global_dir) {
+            combined.push_str(&format!("\n# Your rule: {name}\n{}\n", body.trim()));
         }
     }
 
-    if invariants_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&invariants_dir) {
-            for entry in entries.flatten() {
-                if let Ok(name) = entry.file_name().into_string() {
-                    if name.ends_with(".md") && name != "standard_model.md" {
-                        available.push(name.trim_end_matches(".md").to_string());
-                    }
-                }
-            }
-        }
-    }
-    
+    // Tier 3 — this project. A cybersecurity repo and an indie game do not want the
+    // same rules, so the repo tier is where the domain gets to speak.
+    let repo_dir = workspace_root.join(".hadron").join("nucleus").join("invariants");
+    let repo_rules = read_invariant_dir(&repo_dir);
+
+    let mut available: Vec<String> = repo_rules.iter().map(|(n, _)| n.clone()).collect();
     available.sort();
-    
-    // Sort requested invariants to ensure deterministic cache hits
+
     let mut requested_sorted = requested.to_vec();
     requested_sorted.sort();
 
-    for req in requested_sorted {
-        let req_path = invariants_dir.join(format!("{}.md", req));
-        if req_path.exists() {
-            match fs::read_to_string(&req_path) {
-                Ok(content) => {
-                    combined.push_str(&format!("\n# Rule: {}\n", req));
-                    combined.push_str(&content);
-                    combined.push('\n');
-                }
-                Err(e) => {
-                    eprintln!("warning: requested invariant file exists but could not be read: {} - {}", req_path.display(), e);
-                }
-            }
+    for (name, body) in &repo_rules {
+        // Repo rules named `always.md` load unconditionally; the rest load when the
+        // turn asks for them by name, so a big rulebook doesn't blow the budget.
+        if name == "always" || requested_sorted.contains(name) {
+            combined.push_str(&format!("\n# Project rule: {name}\n{}\n", body.trim()));
         }
     }
 
@@ -1963,16 +2004,51 @@ mod tests {
         assert_eq!(blocks, 1, "Quark should be blocked on the 3rd attempt");
     }
 
+    /// The reason the Standard Model is `include_str!`d rather than read from disk.
+    ///
+    /// Rules that stop a quark confabulating are worthless if a fresh clone, a
+    /// `.gitignore`, or a deleted directory can silently remove them — the swarm
+    /// would just quietly get worse, with nothing to notice. Point the engine at a
+    /// workspace with NO `.hadron` at all: the invariants must still arrive.
+    #[test]
+    fn the_standard_model_survives_a_workspace_with_no_files_at_all() {
+        let empty = tempdir().unwrap();
+        let (text, available) = build_invariants(empty.path(), &[]);
+
+        assert!(text.contains("# The Standard Model"));
+        assert!(text.contains("Prove it runs"), "rule 1 — the one both quarks broke");
+        assert!(text.contains("Make invalid states unrepresentable"), "rule 8 — agy's");
+        assert!(available.is_empty(), "no repo tier exists here, and that is fine");
+    }
+
+    /// Tiers are labelled. A quark that cannot tell a rule Hadron *ships* from a rule
+    /// *this project* added cannot reason about which to question when they conflict.
+    #[test]
+    fn repo_rules_are_labelled_as_the_projects_own() {
+        use std::fs;
+        let ws = tempdir().unwrap();
+        let dir = ws.path().join(".hadron").join("nucleus").join("invariants");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("always.md"), "Threat-model every endpoint.").unwrap();
+
+        let (text, _) = build_invariants(ws.path(), &[]);
+        assert!(text.contains("# The Standard Model"), "tier 1 still first");
+        assert!(text.contains("# Project rule: always"), "tier 3 is named as the project's");
+        assert!(text.contains("Threat-model every endpoint."));
+    }
+
     #[tokio::test]
     async fn engine_injects_invariants() {
         use std::fs;
         let fdir = tempdir().unwrap();
         
-        // Setup .hadron/nucleus/invariants structure
+        // The REPO tier: this project's own rules. `always.md` loads every turn;
+        // the rest load only when a turn asks for them by name.
         let invariants_dir = fdir.path().join(".hadron").join("nucleus").join("invariants");
         fs::create_dir_all(&invariants_dir).unwrap();
-        fs::write(invariants_dir.join("standard_model.md"), "Be nice.").unwrap();
+        fs::write(invariants_dir.join("always.md"), "Be nice.").unwrap();
         fs::write(invariants_dir.join("rust_style.md"), "Use camelCase... wait no.").unwrap();
+        fs::write(invariants_dir.join("unrequested.md"), "SHOULD-NOT-APPEAR").unwrap();
 
         let path = fdir.path().join("field.jsonl");
         
@@ -2000,10 +2076,24 @@ mod tests {
                 hadron_lattice::EnergyState::Available
             }
             async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+                // Tier 1 — the hardcoded Standard Model, present without any file on disk.
+                assert!(
+                    turn.invariants.contains("Prove it runs"),
+                    "the compiled-in Standard Model must reach every turn"
+                );
+                // Tier 3 — this repo's always-on rule, and the one this turn asked for.
                 assert!(turn.invariants.contains("Be nice."));
-                assert!(turn.invariants.contains("# Rule: rust_style"));
+                assert!(turn.invariants.contains("# Project rule: rust_style"));
                 assert!(turn.invariants.contains("Use camelCase... wait no."));
-                assert_eq!(turn.available_invariants, vec!["rust_style".to_string()]);
+                // …but NOT a repo rule nobody asked for.
+                assert!(
+                    !turn.invariants.contains("SHOULD-NOT-APPEAR"),
+                    "an unrequested repo rule must not be injected"
+                );
+                assert_eq!(
+                    turn.available_invariants,
+                    vec!["always".to_string(), "rust_style".to_string(), "unrequested".to_string()]
+                );
                 Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0, permission: None, usage: Default::default() })
             }
         }
