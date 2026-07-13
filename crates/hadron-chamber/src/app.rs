@@ -3214,6 +3214,31 @@ impl Chamber {
                                         .text_color(theme::text_muted())
                                         .child(format!("→ {to}")),
                                 )
+                            })
+                            .when_some(m.usage.as_ref(), |this, u| {
+                                let mut parts = Vec::new();
+                                if let Some(ctx) = &u.context {
+                                    parts.push(format!("ctx: {:.1}%", ctx.used_percentage));
+                                }
+                                if !u.spend.is_empty() {
+                                    let fresh = u.spend.fresh().unwrap_or(0);
+                                    let cached = u.spend.cached().unwrap_or(0);
+                                    if cached > 0 {
+                                        parts.push(format!("spent: {} fresh, {} cached", fresh, cached));
+                                    } else {
+                                        parts.push(format!("spent: {} fresh", fresh));
+                                    }
+                                }
+                                if parts.is_empty() {
+                                    this
+                                } else {
+                                    this.child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::text_muted())
+                                            .child(format!("({})", parts.join(" | ")))
+                                    )
+                                }
                             }),
                     )
                     .child(self.markdown_body("chat-md", ix, &m.body, roster)),
@@ -3228,10 +3253,40 @@ impl Chamber {
         v_flex()
             .gap_1()
             .child(
-                div()
-                    .text_sm()
-                    .text_color(theme::actor_hue(&m.from))
-                    .child(header),
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme::actor_hue(&m.from))
+                            .child(header),
+                    )
+                    .when_some(m.usage.as_ref(), |this, u| {
+                        let mut parts = Vec::new();
+                        if let Some(ctx) = &u.context {
+                            parts.push(format!("ctx: {:.1}%", ctx.used_percentage));
+                        }
+                        if !u.spend.is_empty() {
+                            let fresh = u.spend.fresh().unwrap_or(0);
+                            let cached = u.spend.cached().unwrap_or(0);
+                            if cached > 0 {
+                                parts.push(format!("spent: {} fresh, {} cached", fresh, cached));
+                            } else {
+                                parts.push(format!("spent: {} fresh", fresh));
+                            }
+                        }
+                        if parts.is_empty() {
+                            this
+                        } else {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(format!("({})", parts.join(" | ")))
+                            )
+                        }
+                    }),
             )
             .child(self.markdown_body("log-md", ix, &m.body, roster))
     }
