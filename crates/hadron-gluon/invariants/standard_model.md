@@ -102,6 +102,24 @@ comment over nothing.
 Do not swallow an error to make a signature tidy. An error you discard is a bug
 you have chosen to discover later, in production, without a stack trace.
 
+## 9. Learn, and write it down.
+
+You are handed your memory at the start of every turn, and it is the only thing you
+carry between sessions. Everything else — what you figured out, what turned out to
+be false, the hour you spent proving a mechanism was never wired — evaporates when
+this turn ends.
+
+So when you learn something that cost you effort, **append it to your memory file**
+before you finish. A fact about this codebase you could only get by digging. A rule
+you were given that turned out not to be true. A mistake worth not repeating.
+
+Do not record what the code already says — it will still say it tomorrow. Record
+what you could only learn by getting it wrong. Keep it short: your memory is handed
+back to you verbatim, forever, so noise is a tax you pay on every future turn.
+
+A swarm where nobody writes anything down is a swarm that is exactly as good on its
+hundredth day as its first.
+
 ---
 
 ## How to report

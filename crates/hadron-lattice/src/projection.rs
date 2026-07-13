@@ -17,6 +17,18 @@ pub struct Projection {
     pub available_invariants: Vec<String>,
     /// Relevant slice of the project SSOT (nucleus). v1: may be empty.
     pub nucleus_digest: String,
+    /// **What this quark has learned before**, carried across turns and sessions.
+    ///
+    /// The difference between a quark that repeats yesterday's mistake and one that
+    /// doesn't is not the model — it is whether anything persisted. A quark with no
+    /// memory re-derives the same wrong conclusion every session, forever.
+    #[serde(default)]
+    pub memory: String,
+    /// Where to WRITE that memory. Non-optional and always populated: telling a quark
+    /// to "remember this" without telling it the path is an instruction it cannot obey,
+    /// and it will either invent a path or silently do nothing.
+    #[serde(default)]
+    pub memory_path: std::path::PathBuf,
     /// Who exists, their flavor and energy — enables orchestration.
     pub roster: Vec<QuarkCard>,
     /// Recent relevant events. v1: a dumb recent window.
@@ -104,6 +116,8 @@ mod tests {
                 Kind::Message { body: "go".into() },
             )],
             field_truncated: false,
+            memory: String::new(),
+            memory_path: std::path::PathBuf::new(),
             git_diff: String::new(),
             isolated: true,
             cwd: std::path::PathBuf::from("/tmp/wt"),

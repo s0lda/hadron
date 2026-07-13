@@ -99,6 +99,23 @@ pub(crate) fn workspace_root_of(field_path: &Path, base: &Path) -> PathBuf {
 /// every quark on every turn, always, with no file to go missing.
 pub const STANDARD_MODEL: &str = include_str!("../invariants/standard_model.md");
 
+/// Where a quark's accumulated memory lives for THIS project: one file per quark,
+/// under the workspace. Per-quark rather than shared, because memory is a record of
+/// what *you* got wrong and had to learn — merging every quark's into one file makes
+/// it nobody's and it rots.
+fn memory_path_for(workspace_root: &std::path::Path, quark: &QuarkId) -> std::path::PathBuf {
+    workspace_root
+        .join(".hadron")
+        .join("memory")
+        .join(format!("{}.md", quark.as_str()))
+}
+
+/// Read a quark's memory. A missing file is the normal first-run case, not an error —
+/// it simply means this quark has learned nothing here yet.
+fn read_memory(path: &std::path::Path) -> String {
+    fs::read_to_string(path).unwrap_or_default()
+}
+
 /// Where a user's own always-on rules live, under their home directory. Their
 /// preferences, across every project they run Hadron in.
 fn global_invariants_dir() -> Option<std::path::PathBuf> {
@@ -543,7 +560,11 @@ impl Engine {
         let window = bounded_window(events, FIELD_WINDOW_BUDGET_BYTES);
         let truncated = window.len() < events.len();
 
+        let memory_path = memory_path_for(&workspace_root, target);
+
         Projection {
+            memory: read_memory(&memory_path),
+            memory_path,
             task: task_desc,
             invariants: invariants_text,
             available_invariants,

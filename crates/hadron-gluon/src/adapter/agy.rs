@@ -239,6 +239,8 @@ mod tests {
             roster: vec![],
             field_window: vec![],
             field_truncated: false,
+            memory: String::new(),
+            memory_path: std::path::PathBuf::new(),
             git_diff: String::new(),
             cwd,
             mode,
