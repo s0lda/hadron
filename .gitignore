@@ -5,13 +5,14 @@ Cargo.lock.orig
 # Session-local hook scratch (remember plugin); not project state.
 .remember/
 
-# The workspace is half runtime, half project state. The runtime half is
-# machine-local churn; the authored half (invariants, nucleus, team) is the
-# portable thing a fresh clone must inherit — ignoring it would mean the shared
-# rules only ever exist on one laptop.
-.hadron/*
-!.hadron/nucleus/
-!.hadron/team.json
+# A project's own Hadron workspace: the user's team, their field, their
+# repo-specific rules. This one (ours) is a live workspace, not source we ship —
+# publishing it would show the world our bus, not our app.
+#
+# The rules Hadron *ships* with are NOT here. The Standard Model is compiled into
+# the binary from crates/hadron-gluon/invariants/, so it is handed to every quark
+# on every turn without depending on any file surviving a clone.
+.hadron/
 
 # Claude Code local state (incl. embedded worktrees)
 .claude/

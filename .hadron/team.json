@@ -1,7 +1,0 @@
-{
-  "_note": "Per-project team. provider = backing CLI (claude|agy). claude model: alias (haiku|sonnet|opus) or full id. agy model: display name from `agy models`. Edit + restart the daemon to change the team.",
-  "quarks": [
-    { "id": "opus", "provider": "claude", "model": "opus", "flavor": "orchestrator" },
-    { "id": "agy",  "provider": "agy",    "model": "Gemini 3.1 Pro (High)", "flavor": "worker" }
-  ]
-}
