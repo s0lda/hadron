@@ -129,6 +129,24 @@ pub struct Event {
     /// telemetry is envelope-shaped rather than payload-shaped; if `Kind` ever gains
     /// a wildcard arm downstream, this is the first thing that should move into it.
     pub usage: Option<crate::Usage>,
+    /// **Which turn produced this event.** Every event one turn emits — its reply, its
+    /// energy report, its edits — carries the same id.
+    ///
+    /// WHY IT EXISTS: telemetry rides on the `energy_report` and the reply rides on a
+    /// *separate* `message`. Without this, a reader wanting to say "this reply cost X"
+    /// has nothing to join on but **adjacency** — and adjacency is a guess that breaks
+    /// the first time two quarks answer at once, which is the normal case here (turns
+    /// run in parallel, and the field is a single interleaved log). A number that is
+    /// right most of the time is the exact class of quiet lie this codebase keeps
+    /// finding, so the link is made explicit on the wire instead of inferred in the UI.
+    ///
+    /// WHY A TURN ID AND NOT A COPY OF `Usage` ON THE MESSAGE: that would give one fact
+    /// two homes, which is the SSOT violation `TokenSpend` was just built to end. It
+    /// also only links those two events, where an id groups the whole turn.
+    ///
+    /// `None` for every event written before this existed, and for events the engine
+    /// emits outside a turn (a human message, a mode set).
+    pub turn: Option<Ulid>,
 }
 
 impl Event {
@@ -142,7 +160,16 @@ impl Event {
             to,
             kind,
             usage: None,
+            turn: None,
         }
+    }
+
+    /// Stamp this event with the turn that produced it. The engine calls it on every
+    /// event a single turn emits, so a reader can join a reply to its own telemetry
+    /// instead of guessing by adjacency.
+    pub fn with_turn(mut self, turn: Ulid) -> Self {
+        self.turn = Some(turn);
+        self
     }
 
     /// Attach telemetry to an event. Empty usage attaches nothing, so a provider with
@@ -167,6 +194,9 @@ impl Serialize for Event {
         m.serialize_entry("to", &self.to)?;
         if let Some(usage) = &self.usage {
             m.serialize_entry("usage", usage)?;
+        }
+        if let Some(turn) = &self.turn {
+            m.serialize_entry("turn", turn)?;
         }
         match &self.kind {
             Kind::Message { body } => {
@@ -259,6 +289,12 @@ impl<'de> Deserialize<'de> for Event {
             None | Some(Value::Null) => None,
             Some(val) => Some(serde_json::from_value(val).map_err(D::Error::custom)?),
         };
+        // Additive, and taken BEFORE the kind tag so it never leaks into
+        // `Kind::Unknown`'s `raw`. Absent on every line written before turn ids existed.
+        let turn: Option<Ulid> = match map.remove("turn") {
+            None | Some(Value::Null) => None,
+            Some(val) => Some(serde_json::from_value(val).map_err(D::Error::custom)?),
+        };
         let kind_tag: String = take_field(&mut map, "kind")?;
         let kind = match kind_tag.as_str() {
             "message" => Kind::Message {
@@ -308,7 +344,7 @@ impl<'de> Deserialize<'de> for Event {
                 raw: Value::Object(map.clone()),
             },
         };
-        Ok(Event { v, id, ts, from, to, kind, usage })
+        Ok(Event { v, id, ts, from, to, kind, usage, turn })
     }
 }
 
@@ -638,6 +674,54 @@ mod event_tests {
         }
         assert!(energy > 0, "the live field should hold energy reports; found none");
         eprintln!("live field: {} lines, {energy} energy_report", text.lines().count());
+    }
+
+    /// The turn id is additive. Every line already in Jake's `field.jsonl` was written
+    /// without one, and must still parse — with `turn: None`, which honestly means
+    /// "we do not know", not a fabricated link.
+    #[test]
+    fn legacy_lines_have_no_turn_id_and_still_parse() {
+        // Verbatim from the live field.
+        let legacy = r#"{"v":1,"id":"01KXEKRWQXCMV9CAW3E11WSH3F","ts":"2026-07-13T20:47:50.525410311Z","from":"acp-claude","to":null,"kind":"energy_report","used_tokens":298033}"#;
+        let ev: Event = serde_json::from_str(legacy).unwrap();
+        assert_eq!(ev.turn, None, "unknown, not invented");
+        assert_eq!(ev.kind, Kind::EnergyReport { used_tokens: 298_033 });
+
+        // And an event with no turn writes no phantom key.
+        let plain = Event::new(Actor::Human, None, Kind::Message { body: "hi".into() });
+        let line = serde_json::to_string(&plain).unwrap();
+        assert!(!line.contains("turn"), "no phantom turn key: {line}");
+    }
+
+    /// The join the chamber will actually do: two separate events, one turn.
+    #[test]
+    fn a_turn_id_links_a_reply_to_its_own_telemetry_across_two_events() {
+        use crate::{TokenSpend, Usage};
+        let turn = Ulid::new();
+        let q = QuarkId::new("acp-claude");
+
+        let reply = Event::new(Actor::Quark(q.clone()), None, Kind::Message { body: "done".into() })
+            .with_turn(turn);
+        let energy = Event::new(Actor::Quark(q.clone()), None, Kind::EnergyReport { used_tokens: 2_398 })
+            .with_usage(Usage {
+                spend: TokenSpend { input: Some(8), output: Some(2_390), cache_read: Some(190_454), cache_write: None },
+                ..Default::default()
+            })
+            .with_turn(turn);
+
+        // Through the wire and back — the link has to survive serialization to be worth
+        // anything, since the chamber reads the file, not these structs.
+        let reply: Event = serde_json::from_str(&serde_json::to_string(&reply).unwrap()).unwrap();
+        let energy: Event = serde_json::from_str(&serde_json::to_string(&energy).unwrap()).unwrap();
+
+        assert_eq!(reply.turn, energy.turn);
+        assert_ne!(reply.id, energy.id, "distinct events");
+        let joined = [&reply, &energy]
+            .into_iter()
+            .find(|e| e.turn == reply.turn && e.usage.is_some())
+            .and_then(|e| e.usage.clone())
+            .expect("joined on the turn id, not on adjacency");
+        assert_eq!(joined.spend.fresh(), Some(2_398));
     }
 
     #[test]

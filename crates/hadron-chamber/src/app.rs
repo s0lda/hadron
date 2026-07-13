@@ -2784,6 +2784,8 @@ impl Chamber {
                                                 program: desc_inner.command.clone(),
                                                 args: desc_inner.args.clone(),
                                             }),
+                                            // A seat the human just proved and saved is on.
+                                            enabled: true,
                                         });
                                         if let Some(team_path) = hadron_lattice::team_for_field(&this.path) {
                                             let _ = hadron_lattice::save_team(&team_path, &this.team);

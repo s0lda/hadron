@@ -169,8 +169,22 @@ fn apply_reseat(engine: &mut Engine, running: &Team, plan: &reseat::ReseatPlan) 
         let touched =
             plan.removed.contains(&seat.id) || plan.replaced.iter().any(|r| r.id == seat.id);
         if !touched {
-            out.quarks.push(seat.clone());
+            // A toggled seat is NOT rebuilt — it keeps its exact instance, and for an
+            // ACP seat that means its live subprocess and its conversation survive. The
+            // only thing that changes is the flag, here and in the engine. Its new
+            // `enabled` must be recorded in the seated truth too, or the next tick would
+            // diff the same difference and toggle it forever.
+            let mut seat = seat.clone();
+            if let Some((_, on)) = plan.toggled.iter().find(|(id, _)| id == &seat.id) {
+                seat.enabled = *on;
+            }
+            out.quarks.push(seat);
         }
+    }
+
+    for (id, on) in &plan.toggled {
+        engine.set_enabled(id, *on);
+        eprintln!("  {} {}", id.as_str(), if *on { "ENABLED" } else { "DISABLED (instance kept, session intact)" });
     }
 
     for id in &plan.removed {
@@ -183,6 +197,10 @@ fn apply_reseat(engine: &mut Engine, running: &Team, plan: &reseat::ReseatPlan) 
         match registry::build_seat(seat) {
             Ok(q) => {
                 engine.seat(q);
+                // Set participation explicitly, both ways. A seat added or re-pointed
+                // while switched off must not start answering; and one switched back on
+                // must not inherit a stale disabled flag from the id it replaced.
+                engine.set_enabled(&seat.id, seat.enabled);
                 out.quarks.push(seat.clone());
                 eprintln!(
                     "  seated {} — {} · {} ({:?})",
@@ -233,6 +251,14 @@ async fn main() {
         std::process::exit(2);
     }
     let mut engine = Engine::new(args.field_path.clone(), quarks, 12);
+    // A seat can boot switched OFF. It is still seated (still addressable, still owns
+    // its instance) — it just does not take turns until the human enables it.
+    for seat in &team.quarks {
+        if !seat.enabled {
+            engine.set_enabled(&seat.id, false);
+            eprintln!("  {} is seated but DISABLED — it will not take turns", seat.id.as_str());
+        }
+    }
 
     eprintln!(
         "hadron-gluon ({mode_label}) watching {}",
