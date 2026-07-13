@@ -331,20 +331,8 @@ impl Chamber {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut files = vec![];
         let repo_root = crate::vcs::repo_root_of(&path);
-        if let Ok(output) = std::process::Command::new("git")
-            .arg("ls-files")
-            .current_dir(&repo_root)
-            .output()
-        {
-            if output.status.success() {
-                files = String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .map(|s| s.to_string())
-                    .collect();
-            }
-        }
+        let files = crate::sys::list_workspace_files(&repo_root);
         let files_for_completion = files.clone();
 
         let input = cx.new(|cx| {
@@ -494,23 +482,11 @@ impl Chamber {
             input.update(cx, |state, cx| state.set_value("", window, cx));
             
             let repo_root = crate::vcs::repo_root_of(&self.path);
-            let mut output = String::new();
-            if let Ok(cmd_out) = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(&cmd)
-                .current_dir(repo_root)
-                .output()
-            {
-                output.push_str(&String::from_utf8_lossy(&cmd_out.stdout));
-                let err = String::from_utf8_lossy(&cmd_out.stderr);
-                if !err.is_empty() {
-                    if !output.is_empty() { output.push_str("\n"); }
-                    output.push_str(&err);
-                }
-            } else {
-                output = "Failed to execute command".to_string();
-            }
-            self.terminal_history.push((cmd, output.trim_end().to_string()));
+            let output = match crate::sys::execute_terminal_command(&repo_root, &cmd, self.view.global_mode.clone()) {
+                Ok(out) => out,
+                Err(err) => err,
+            };
+            self.terminal_history.push((cmd, output));
             cx.notify();
         }
     }
@@ -1537,8 +1513,7 @@ impl Chamber {
                 } else {
                     for (ix, file) in self.file_tree_paths.iter().enumerate() {
                         let path = file.clone();
-                        let repo_root = crate::vcs::repo_root_of(&self.path);
-                        let full_path = repo_root.join(&path);
+                        let repo_root = crate::vcs::repo_root_of(std::path::Path::new(&self.path)).to_path_buf();
                         let file_name = file.clone();
                         list = list.child(
                             div()
@@ -1549,8 +1524,8 @@ impl Chamber {
                                 .cursor_pointer()
                                 .text_color(theme::text())
                                 .child(path)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    if let Ok(content) = std::fs::read_to_string(&full_path) {
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    if let Some(content) = crate::sys::read_workspace_file(&repo_root, &file_name) {
                                         this.file_tree_open = Some((file_name.clone(), content));
                                         cx.notify();
                                     }
