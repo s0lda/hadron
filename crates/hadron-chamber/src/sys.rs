@@ -1,6 +1,6 @@
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Command, Stdio, ChildStdin};
-use std::io::{Write, BufReader, BufRead};
+use std::process::{ChildStdin, Command, Stdio};
 
 pub struct Terminal {
     stdin: ChildStdin,
@@ -11,7 +11,7 @@ pub struct Terminal {
 impl Terminal {
     pub fn new(repo_root: &Path) -> Result<Self, String> {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
-        
+
         let mut child = Command::new("sh")
             .arg("-c")
             .arg(format!("exec {} 2>&1", shell))
@@ -29,7 +29,7 @@ impl Terminal {
             stdout_reader: BufReader::new(stdout),
             cwd: String::new(),
         };
-        
+
         if let Ok(_) = term.execute("true") {
             // cwd is initialized during execute
         } else {
@@ -42,7 +42,7 @@ impl Terminal {
     pub fn execute(&mut self, cmd: &str) -> Result<String, String> {
         let marker = "___HADRON_CMD_DONE_98765___";
         let script = format!("{}; echo \"{}\"; pwd; echo \"{}\"\n", cmd, marker, marker);
-        
+
         if let Err(e) = self.stdin.write_all(script.as_bytes()) {
             return Err(format!("Failed to write to terminal: {}", e));
         }
@@ -113,7 +113,7 @@ mod tests {
     fn terminal_execution_is_stateful() {
         let dir = tempdir().unwrap();
         let root = dir.path();
-        
+
         let mut term = Terminal::new(root).unwrap();
         let _ = term.execute("mkdir test_dir");
         let _ = term.execute("cd test_dir");
@@ -127,12 +127,20 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path();
 
-        Command::new("git").arg("init").current_dir(root).output().unwrap();
-        
+        Command::new("git")
+            .arg("init")
+            .current_dir(root)
+            .output()
+            .unwrap();
+
         let test_file = "test.txt";
         fs::write(root.join(test_file), "hello world").unwrap();
-        
-        Command::new("git").args(["add", test_file]).current_dir(root).output().unwrap();
+
+        Command::new("git")
+            .args(["add", test_file])
+            .current_dir(root)
+            .output()
+            .unwrap();
 
         let files = list_workspace_files(root);
         assert_eq!(files, vec!["test.txt"]);

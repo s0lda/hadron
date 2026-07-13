@@ -46,6 +46,12 @@ pub struct RosterRow {
 /// What one quark spent this session. `context` and `quota` are the *latest*
 /// the provider reported, not a sum: occupancy and remaining allowance are
 /// levels, and adding them up would mean nothing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnSpend {
+    pub turn: u32,
+    pub fresh: u32,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct QuarkStats {
     pub turns: u32,
@@ -55,6 +61,7 @@ pub struct QuarkStats {
     pub quota: Vec<hadron_lattice::QuotaBucket>,
     pub first_seen: Option<chrono::DateTime<chrono::Utc>>,
     pub last_active: Option<chrono::DateTime<chrono::Utc>>,
+    pub spend_history: Vec<TurnSpend>,
 }
 
 /// Per-quark session statistics plus the totals that are meaningful to add.
@@ -66,6 +73,7 @@ pub struct SessionStats {
     pub total_turns: u32,
     pub total_fresh: u32,
     pub total_cached: u32,
+    pub spend_history: Vec<TurnSpend>,
 }
 
 /// Everything the chamber needs to render one frame.
@@ -114,6 +122,15 @@ impl ChamberView {
             if let Some(f) = u.spend.fresh() {
                 s.fresh += f;
                 out.total_fresh += f;
+
+                s.spend_history.push(TurnSpend {
+                    turn: s.turns,
+                    fresh: f,
+                });
+                out.spend_history.push(TurnSpend {
+                    turn: out.total_turns,
+                    fresh: f,
+                });
             }
             if let Some(c) = u.spend.cached() {
                 s.cached += c;
@@ -130,7 +147,12 @@ impl ChamberView {
         out.per_quark = self
             .roster
             .iter()
-            .map(|r| (r.id.clone(), stats.remove(r.id.as_str()).unwrap_or_default()))
+            .map(|r| {
+                (
+                    r.id.clone(),
+                    stats.remove(r.id.as_str()).unwrap_or_default(),
+                )
+            })
             .collect();
         out
     }
@@ -188,7 +210,10 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
         to,
         body,
         kind_label,
-        usage: e.turn.and_then(|t| turn_usages.get(&t.to_string()).cloned()).or_else(|| e.usage.clone()),
+        usage: e
+            .turn
+            .and_then(|t| turn_usages.get(&t.to_string()).cloned())
+            .or_else(|| e.usage.clone()),
         ts: e.ts,
     }
 }
@@ -266,8 +291,24 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
             let qid = QuarkId::new(&id);
             let (provider, model, flavor, transport, enabled) = team
                 .get(&qid)
-                .map(|s| (s.provider.clone(), s.model.clone(), Some(s.flavor.clone()), s.transport, s.enabled))
-                .unwrap_or_else(|| (String::new(), String::new(), None, hadron_lattice::Transport::Cli, true));
+                .map(|s| {
+                    (
+                        s.provider.clone(),
+                        s.model.clone(),
+                        Some(s.flavor.clone()),
+                        s.transport,
+                        s.enabled,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    (
+                        String::new(),
+                        String::new(),
+                        None,
+                        hadron_lattice::Transport::Cli,
+                        true,
+                    )
+                });
             let q_tokens = tokens.get(&id).copied().unwrap_or(0);
             let q_unknown = unknown_turns.get(&id).copied().unwrap_or(0);
             RosterRow {
@@ -335,12 +376,18 @@ mod tests {
         let mut reply = ev(
             Actor::Quark(QuarkId::new("opus")),
             None,
-            Kind::Message { body: "done".into() },
+            Kind::Message {
+                body: "done".into(),
+            },
         );
         reply.usage = Some(usage);
 
         let evs = vec![
-            ev(Actor::Human, Some("opus"), Kind::Message { body: "go".into() }),
+            ev(
+                Actor::Human,
+                Some("opus"),
+                Kind::Message { body: "go".into() },
+            ),
             reply,
         ];
         let stats = project(&evs).session_stats();
@@ -377,7 +424,10 @@ mod tests {
                     model: "x".into(),
                     flavor: Flavor::Worker,
                     transport: Transport::Acp,
-                    command: Some(AcpCommand { program: "npx".into(), args: vec![] }),
+                    command: Some(AcpCommand {
+                        program: "npx".into(),
+                        args: vec![],
+                    }),
                     enabled: true,
                 },
                 Seat {
@@ -397,7 +447,9 @@ mod tests {
             ev(
                 Actor::Quark(QuarkId::new("acp-claude")),
                 None,
-                Kind::EnergyReport { used_tokens: 1_307_987 },
+                Kind::EnergyReport {
+                    used_tokens: 1_307_987,
+                },
             ),
             ev(
                 Actor::Quark(QuarkId::new("opus")),
@@ -409,11 +461,20 @@ mod tests {
         let row = |id: &str| view.roster.iter().find(|r| r.id == id).unwrap().clone();
 
         let acp = row("acp-claude");
-        assert_eq!(acp.tokens, 0, "an ACP legacy total is a different unit — not fresh");
-        assert_eq!(acp.unknown_turns, 1, "and it is counted as unknown, not dropped");
+        assert_eq!(
+            acp.tokens, 0,
+            "an ACP legacy total is a different unit — not fresh"
+        );
+        assert_eq!(
+            acp.unknown_turns, 1,
+            "and it is counted as unknown, not dropped"
+        );
 
         let cli = row("opus");
-        assert_eq!(cli.tokens, 5_338, "a CLI legacy total IS input+output — it counts");
+        assert_eq!(
+            cli.tokens, 5_338,
+            "a CLI legacy total IS input+output — it counts"
+        );
         assert_eq!(cli.unknown_turns, 0);
     }
 
@@ -424,7 +485,9 @@ mod tests {
         let mut reply = ev(
             Actor::Quark(QuarkId::new("agy")),
             None,
-            Kind::Message { body: "done".into() },
+            Kind::Message {
+                body: "done".into(),
+            },
         );
         reply.usage = Some(hadron_lattice::Usage {
             spend: hadron_lattice::TokenSpend {
@@ -441,7 +504,10 @@ mod tests {
         assert_eq!(s.fresh, 10);
         assert_eq!(s.cached, 0, "no cache reported — nothing added");
         assert!(s.context.is_none());
-        assert!(s.quota.is_empty(), "empty means no quota concept, not exhausted");
+        assert!(
+            s.quota.is_empty(),
+            "empty means no quota concept, not exhausted"
+        );
     }
 
     #[test]

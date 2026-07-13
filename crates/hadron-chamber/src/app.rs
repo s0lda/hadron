@@ -11,14 +11,16 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
-    actions, div, prelude::*, px, rgb, rgba, App, Context, Decorations, Entity, FocusHandle, Hsla,
-    KeyBinding, MouseButton, Pixels, Render, Rgba, ScrollHandle, SharedString, Subscription,
-    Window, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowDecorations,
-    WindowOptions, AnimationExt,
+    actions, div, prelude::*, px, rgb, rgba, AnimationExt, App, Context, Decorations, Entity,
+    FocusHandle, Hsla, KeyBinding, MouseButton, Pixels, Render, Rgba, ScrollHandle, SharedString,
+    Subscription, Window, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowDecorations, WindowOptions,
 };
 use gpui_component::avatar::Avatar;
 // badge removed
+use gpui_component::chart::{BarChart, LineChart};
 use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
+use gpui_component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use gpui_component::stepper::{Stepper, StepperItem};
@@ -28,7 +30,7 @@ use gpui_component::tooltip::Tooltip;
 
 // table imports removed
 use gpui_component::{
-    h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar
+    h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar,
 };
 use hadron_lattice::{io, load_team, Actor, Event, Kind, Mode, QuarkId, QuarkState, Team};
 
@@ -170,7 +172,12 @@ enum ChatTab {
 }
 
 impl ChatTab {
-    const ALL: [ChatTab; 4] = [ChatTab::Chat, ChatTab::Log, ChatTab::Timeline, ChatTab::Session];
+    const ALL: [ChatTab; 4] = [
+        ChatTab::Chat,
+        ChatTab::Log,
+        ChatTab::Timeline,
+        ChatTab::Session,
+    ];
 
     /// Sizes every per-tab array. A tab added to `ALL` without growing those
     /// arrays is an index-out-of-bounds the moment the tab is opened, so they
@@ -222,7 +229,11 @@ enum RightRailTab {
 }
 
 impl RightRailTab {
-    const ALL: [RightRailTab; 3] = [RightRailTab::Terminal, RightRailTab::FileTree, RightRailTab::Changes];
+    const ALL: [RightRailTab; 3] = [
+        RightRailTab::Terminal,
+        RightRailTab::FileTree,
+        RightRailTab::Changes,
+    ];
 
     fn index(self) -> usize {
         match self {
@@ -246,13 +257,28 @@ impl RightRailTab {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-struct AgentDescriptor { pub id: String, pub name: String, pub command: String, pub args: Vec<String> }
+struct AgentDescriptor {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+}
 
 #[derive(Clone, PartialEq, Eq)]
-struct AuthMethod { pub id: String, pub name: String, pub description: String }
+struct AuthMethod {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
 
 #[derive(Clone, PartialEq, Eq)]
-enum ProviderState { NotConnected, Connecting, NeedsAuth(Vec<AuthMethod>), Ready { model: String }, Failed(String) }
+enum ProviderState {
+    NotConnected,
+    Connecting,
+    NeedsAuth(Vec<AuthMethod>),
+    Ready { model: String },
+    Failed(String),
+}
 
 #[derive(Clone, PartialEq, Eq)]
 struct ConfiguredQuark {
@@ -345,7 +371,6 @@ struct Chamber {
     terminal_input: Entity<InputState>,
     _terminal_sub: Subscription,
     terminal: Option<crate::sys::Terminal>,
-    context_menu: Option<ContextMenu>,
     info_panel: Option<String>,
     terminal_scroll: ScrollHandle,
     file_tree_scroll: ScrollHandle,
@@ -360,18 +385,7 @@ pub enum ContextMenuAction {
     CopyPath(String),
     QuarkInfo(String),
     ToggleQuark(String),
-}
-
-#[derive(Clone)]
-pub struct ContextMenuItem {
-    pub label: String,
-    pub action: ContextMenuAction,
-}
-
-#[derive(Clone)]
-pub struct ContextMenu {
-    pub position: gpui::Point<gpui::Pixels>,
-    pub items: Vec<ContextMenuItem>,
+    SetFlavor(String, hadron_lattice::Flavor),
 }
 
 impl Chamber {
@@ -392,11 +406,17 @@ impl Chamber {
                 .auto_grow(1, 4)
                 .submit_on_enter(true)
                 .placeholder("Type @quark a message…  (Enter to send · Shift+Enter for newline)");
-            let team_quarks = team.quarks.iter().map(|q| q.id.0.clone()).collect::<Vec<_>>();
-            state.lsp.completion_provider = Some(std::rc::Rc::new(crate::completions::ChatCompletionProvider {
-                quarks: team_quarks,
-                files: files_for_completion,
-            }));
+            let team_quarks = team
+                .quarks
+                .iter()
+                .map(|q| q.id.0.clone())
+                .collect::<Vec<_>>();
+            state.lsp.completion_provider = Some(std::rc::Rc::new(
+                crate::completions::ChatCompletionProvider {
+                    quarks: team_quarks,
+                    files: files_for_completion,
+                },
+            ));
             state
         });
         let _input_sub = cx.subscribe_in(&input, window, Self::on_input_submit);
@@ -441,10 +461,13 @@ impl Chamber {
         .detach();
 
         // Precompute the message indices for the virtualized chat.
-        let chat_message_ixs: Vec<usize> = view.messages.iter().enumerate()
+        let chat_message_ixs: Vec<usize> = view
+            .messages
+            .iter()
+            .enumerate()
             .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
             .collect();
-            
+
         let chat_list_state = gpui::ListState::new(
             chat_message_ixs.len(),
             gpui::ListAlignment::Bottom,
@@ -453,7 +476,12 @@ impl Chamber {
 
         // Open showing the newest message: honoured on the first paint, once the
         // content is laid out.
-        let chat_scrolls = [ScrollHandle::new(), ScrollHandle::new(), ScrollHandle::new(), ScrollHandle::new()];
+        let chat_scrolls = [
+            ScrollHandle::new(),
+            ScrollHandle::new(),
+            ScrollHandle::new(),
+            ScrollHandle::new(),
+        ];
         chat_scrolls[0].scroll_to_bottom(); // Chat tab
         let terminal_input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -462,13 +490,17 @@ impl Chamber {
                 .placeholder("$ command...")
         });
         let _terminal_sub = cx.subscribe_in(&terminal_input, window, Self::on_terminal_submit);
-        let providers: Vec<ConfiguredQuark> = team.quarks.iter().map(|seat| {
-            ConfiguredQuark {
+        let providers: Vec<ConfiguredQuark> = team
+            .quarks
+            .iter()
+            .map(|seat| ConfiguredQuark {
                 id: seat.id.0.clone(),
                 transport: seat.provider.clone(),
-                state: ProviderState::Ready { model: seat.model.clone() },
-            }
-        }).collect();
+                state: ProviderState::Ready {
+                    model: seat.model.clone(),
+                },
+            })
+            .collect();
 
         Chamber {
             view,
@@ -511,7 +543,6 @@ impl Chamber {
             terminal_input,
             _terminal_sub,
             terminal: None,
-            context_menu: None,
             info_panel: None,
             terminal_scroll: ScrollHandle::new(),
             file_tree_scroll: ScrollHandle::new(),
@@ -549,11 +580,13 @@ impl Chamber {
     ) {
         if let InputEvent::PressEnter { .. } = event {
             let cmd = input.read(cx).value().trim().to_string();
-            if cmd.is_empty() { return; }
+            if cmd.is_empty() {
+                return;
+            }
             input.update(cx, |state, cx| state.set_value("", window, cx));
-            
+
             let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-            
+
             if self.terminal.is_none() {
                 match crate::sys::Terminal::new(&repo_root) {
                     Ok(term) => self.terminal = Some(term),
@@ -735,16 +768,30 @@ impl Chamber {
         let roster_row = self.view.roster.iter().find(|r| &r.id == qid).unwrap();
 
         let stats = self.view.session_stats();
-        let q_stats = stats.per_quark.into_iter().find(|(id, _)| id == qid).map(|(_, s)| s).unwrap_or_default();
+        let q_stats = stats
+            .per_quark
+            .into_iter()
+            .find(|(id, _)| id == qid)
+            .map(|(_, s)| s)
+            .unwrap_or_default();
 
         let (agent_str, model_str) = match roster_row.transport {
             hadron_lattice::Transport::Acp => {
-                let agent = if roster_row.model.is_empty() { "unknown" } else { &roster_row.model };
+                let agent = if roster_row.model.is_empty() {
+                    "unknown"
+                } else {
+                    &roster_row.model
+                };
                 (agent, "unknown")
             }
-            hadron_lattice::Transport::Cli => {
-                ("hadron-adapter", if roster_row.model.is_empty() { "unknown" } else { &roster_row.model })
-            }
+            hadron_lattice::Transport::Cli => (
+                "hadron-adapter",
+                if roster_row.model.is_empty() {
+                    "unknown"
+                } else {
+                    &roster_row.model
+                },
+            ),
         };
 
         let flavor_str = match &roster_row.flavor {
@@ -758,29 +805,131 @@ impl Chamber {
             hadron_lattice::Transport::Acp => "ACP (resident)",
         };
 
-        let enabled_str = if roster_row.enabled { "Enabled" } else { "Disabled" };
+        let enabled_str = if roster_row.enabled {
+            "Enabled"
+        } else {
+            "Disabled"
+        };
         let mode_str = if roster_row.mode_is_override {
             format!("{:?} (override)", roster_row.mode)
         } else {
             format!("{:?} (global default)", roster_row.mode)
         };
 
-        let first_seen_str = q_stats.first_seen.map(|ts| ts.format("%Y-%m-%d %H:%M:%S UTC").to_string()).unwrap_or_else(|| "Never".to_string());
-        let last_active_str = q_stats.last_active.map(|ts| ts.format("%Y-%m-%d %H:%M:%S UTC").to_string()).unwrap_or_else(|| "Never".to_string());
+        let first_seen_str = q_stats
+            .first_seen
+            .map(|ts| ts.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+            .unwrap_or_else(|| "Never".to_string());
+        let last_active_str = q_stats
+            .last_active
+            .map(|ts| ts.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+            .unwrap_or_else(|| "Never".to_string());
 
-        let mut stats_block = v_flex().gap_1().mt_4()
-            .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::text()).child("Session Stats"))
-            .child(div().text_xs().text_color(theme::text_muted()).child(format!("Turns: {}", q_stats.turns)))
-            .child(div().text_xs().text_color(theme::text_muted()).child(format!("Spent: {} fresh, {} cached", format_num(q_stats.fresh), format_num(q_stats.cached))))
-            .child(div().text_xs().text_color(theme::text_muted()).child(format!("First Seen: {}", first_seen_str)))
-            .child(div().text_xs().text_color(theme::text_muted()).child(format!("Last Active: {}", last_active_str)));
+        let mut stats_block = v_flex()
+            .gap_1()
+            .mt_4()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(theme::text())
+                    .child("Session Stats"),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(format!("Turns: {}", q_stats.turns)),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(format!(
+                        "Spent: {} fresh, {} cached",
+                        format_num(q_stats.fresh),
+                        format_num(q_stats.cached)
+                    )),
+            );
 
-        if let Some(ctx) = q_stats.context {
-            stats_block = stats_block.child(div().text_xs().text_color(theme::text_muted()).child(format!("Context: {:.1}% ({} / {})", ctx.used_percentage, format_num(ctx.used_tokens), format_num(ctx.context_window_size))));
+        if roster_row.unknown_turns > 0 {
+            stats_block = stats_block.child(div().text_xs().text_color(theme::text_muted()).child(
+                format!("+{} turns of unknown spend", roster_row.unknown_turns),
+            ));
+        }
+
+        stats_block = stats_block
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(format!("First Seen: {}", first_seen_str)),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(format!("Last Active: {}", last_active_str)),
+            );
+
+        if let Some(ctx) = q_stats.context.as_ref() {
+            stats_block = stats_block.child(div().text_xs().text_color(theme::text_muted()).child(
+                format!(
+                    "Context: {:.1}% ({} / {})",
+                    ctx.used_percentage,
+                    format_num(ctx.used_tokens),
+                    format_num(ctx.context_window_size)
+                ),
+            ));
+            let q_color = theme::actor_hue(&roster_row.id);
+            let ctx_data = vec![
+                ("Used".to_string(), ctx.used_percentage as f64),
+                (
+                    "Remaining".to_string(),
+                    100.0 - (ctx.used_percentage as f64).min(100.0),
+                ),
+            ];
+            stats_block = stats_block.child(
+                div().h(px(60.0)).w_full().child(
+                    BarChart::new(ctx_data)
+                        .id(format!("info-ctx-chart-{}", roster_row.id))
+                        .name("Context %")
+                        .band(|d| d.0.clone())
+                        .value(|d| d.1)
+                        .fill(move |d, _, _, _| -> gpui::Background {
+                            if d.0 == "Used" {
+                                q_color.into()
+                            } else {
+                                gpui::rgba(0x00000033).into()
+                            }
+                        }),
+                ),
+            );
+        }
+
+        if !q_stats.spend_history.is_empty() {
+            let q_color = theme::actor_hue(&roster_row.id);
+            stats_block = stats_block.child(
+                div().h(px(100.0)).w_full().mt_2().child(
+                    LineChart::new(q_stats.spend_history.clone())
+                        .id(format!("info-spend-chart-{}", roster_row.id))
+                        .name("Fresh Spent")
+                        .x(|d| format!("T{}", d.turn))
+                        .y(|d| d.fresh as f64)
+                        .stroke(q_color),
+                ),
+            );
         }
         if !q_stats.quota.is_empty() {
             for bucket in q_stats.quota {
-                stats_block = stats_block.child(div().text_xs().text_color(theme::text_muted()).child(format!("Quota [{}]: {:.1}% remaining", bucket.key, bucket.remaining_fraction * 100.0)));
+                stats_block =
+                    stats_block.child(div().text_xs().text_color(theme::text_muted()).child(
+                        format!(
+                            "Quota [{}]: {:.1}% remaining",
+                            bucket.key,
+                            bucket.remaining_fraction * 100.0
+                        ),
+                    ));
             }
         }
 
@@ -810,18 +959,61 @@ impl Chamber {
                     .rounded_lg()
                     .p_4()
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // Prevent overlay dismiss on inner click
-                    .child(div().text_lg().font_weight(gpui::FontWeight::BOLD).text_color(theme::actor_hue(qid)).child(qid.clone()))
                     .child(
-                        v_flex().gap_1().mt_2()
-                            .child(div().text_sm().text_color(theme::text()).child(format!("Flavor: {}", flavor_str)))
-                            .child(div().text_sm().text_color(theme::text()).child(format!("Provider: {}", roster_row.provider)))
-                            .child(div().text_sm().text_color(theme::text()).child(format!("Agent: {}", agent_str)))
-                            .child(div().text_sm().text_color(theme::text()).child(format!("Model: {}", model_str)))
-                            .child(div().text_sm().text_color(theme::text()).child(format!("Transport: {}", transport_str)))
-                            .child(div().text_sm().text_color(theme::text()).child(format!("Mode: {}", mode_str)))
-                            .child(div().text_sm().text_color(theme::text()).child(format!("State: {}", enabled_str)))
+                        div()
+                            .text_lg()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::actor_hue(qid))
+                            .child(qid.clone()),
                     )
-                    .child(stats_block)
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .mt_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text())
+                                    .child(format!("Flavor: {}", flavor_str)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text())
+                                    .child(format!("Provider: {}", roster_row.provider)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text())
+                                    .child(format!("Agent: {}", agent_str)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text())
+                                    .child(format!("Model: {}", model_str)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text())
+                                    .child(format!("Transport: {}", transport_str)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text())
+                                    .child(format!("Mode: {}", mode_str)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text())
+                                    .child(format!("State: {}", enabled_str)),
+                            ),
+                    )
+                    .child(stats_block),
             )
     }
 
@@ -839,15 +1031,22 @@ impl Chamber {
                 // scrolled up to read history, leave their position alone.
                 let follow = self.chat_at_bottom();
                 self.view = model::project_with_team(&events, &self.team);
-                
+
                 let old_chat_count = self.chat_message_ixs.len();
-                self.chat_message_ixs = self.view.messages.iter().enumerate()
+                self.chat_message_ixs = self
+                    .view
+                    .messages
+                    .iter()
+                    .enumerate()
                     .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
                     .collect();
                 let new_chat_count = self.chat_message_ixs.len();
-                
+
                 if new_chat_count > old_chat_count {
-                    self.chat_list_state.splice(old_chat_count..old_chat_count, new_chat_count - old_chat_count);
+                    self.chat_list_state.splice(
+                        old_chat_count..old_chat_count,
+                        new_chat_count - old_chat_count,
+                    );
                 } else if new_chat_count < old_chat_count {
                     // Should not happen since field is append-only, but just in case
                     self.chat_list_state.reset(new_chat_count);
@@ -857,7 +1056,8 @@ impl Chamber {
                     for scroll in &self.chat_scrolls {
                         scroll.scroll_to_bottom();
                     }
-                    self.chat_list_state.scroll_to_reveal_item(new_chat_count.saturating_sub(1));
+                    self.chat_list_state
+                        .scroll_to_reveal_item(new_chat_count.saturating_sub(1));
                 }
                 changed = true;
             }
@@ -919,31 +1119,67 @@ impl Chamber {
         input.update(cx, |state, cx| state.set_value("", window, cx));
         let events = io::read_events(&self.path).unwrap_or_default();
         self.view = model::project_with_team(&events, &self.team);
-        
+
         let old_chat_count = self.chat_message_ixs.len();
-        self.chat_message_ixs = self.view.messages.iter().enumerate()
+        self.chat_message_ixs = self
+            .view
+            .messages
+            .iter()
+            .enumerate()
             .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
             .collect();
         let new_chat_count = self.chat_message_ixs.len();
         if new_chat_count > old_chat_count {
-            self.chat_list_state.splice(old_chat_count..old_chat_count, new_chat_count - old_chat_count);
+            self.chat_list_state.splice(
+                old_chat_count..old_chat_count,
+                new_chat_count - old_chat_count,
+            );
         }
 
         // The human just spoke — always snap to their new message.
         for scroll in &self.chat_scrolls {
             scroll.scroll_to_bottom();
         }
-        self.chat_list_state.scroll_to_reveal_item(new_chat_count.saturating_sub(1));
+        self.chat_list_state
+            .scroll_to_reveal_item(new_chat_count.saturating_sub(1));
         cx.notify();
     }
     fn handle_context_menu_action(&mut self, action: ContextMenuAction, cx: &mut Context<Self>) {
-        self.context_menu = None;
         match action {
             ContextMenuAction::QuarkInfo(id) => {
                 self.info_panel = Some(id);
             }
             ContextMenuAction::ToggleQuark(id) => {
                 self.toggle_quark_enabled(&id, cx);
+            }
+            ContextMenuAction::SetFlavor(id, flavor) => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let team_path = hadron_lattice::team_for_field(&self.path)
+                    .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"));
+                let mut team = hadron_lattice::load_team(&team_path);
+
+                let mut new_team = team.clone();
+                if let Some(seat) = new_team.quarks.iter_mut().find(|s| s.id.0 == id) {
+                    seat.flavor = flavor;
+
+                    let orchestrators = new_team
+                        .quarks
+                        .iter()
+                        .filter(|s| s.flavor == hadron_lattice::Flavor::Orchestrator)
+                        .count();
+                    if orchestrators > 0 {
+                        let _ = hadron_lattice::save_team(&team_path, &new_team);
+                        let events = io::read_events(&self.path).unwrap_or_default();
+                        self.team = new_team;
+                        self.view = model::project_with_team(&events, &self.team);
+                        cx.notify();
+                    } else {
+                        eprintln!(
+                            "Refusing to change flavor of {}: cannot have zero orchestrators.",
+                            id
+                        );
+                    }
+                }
             }
             ContextMenuAction::OpenFile(path) => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
@@ -957,14 +1193,14 @@ impl Chamber {
             ContextMenuAction::OpenInEditor(path) => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
                 let full_path = repo_root.join(path);
-                
+
                 #[cfg(target_os = "macos")]
                 let default_cmd = "open";
                 #[cfg(target_os = "windows")]
                 let default_cmd = "explorer";
                 #[cfg(target_os = "linux")]
                 let default_cmd = "xdg-open";
-                
+
                 let editor = std::env::var("EDITOR").unwrap_or_else(|_| default_cmd.to_string());
                 let _ = std::process::Command::new(&editor).arg(&full_path).spawn();
             }
@@ -976,14 +1212,14 @@ impl Chamber {
                 } else {
                     full_path
                 };
-                
+
                 #[cfg(target_os = "macos")]
                 let cmd = "open";
                 #[cfg(target_os = "windows")]
                 let cmd = "explorer";
                 #[cfg(target_os = "linux")]
                 let cmd = "xdg-open";
-                
+
                 let _ = std::process::Command::new(cmd).arg(&target).spawn();
             }
         }
@@ -1036,7 +1272,10 @@ impl Render for Chamber {
         let status = self.status_bar(cx);
         let overlay = self.palette_open.then(|| self.palette_overlay(cx));
         let settings = self.settings_open.then(|| self.settings_overlay(cx));
-        let info = self.info_panel.is_some().then(|| self.info_panel_overlay(cx));
+        let info = self
+            .info_panel
+            .is_some()
+            .then(|| self.info_panel_overlay(cx));
 
         let content = v_flex()
             .key_context(KEY_CONTEXT)
@@ -1059,52 +1298,9 @@ impl Render for Chamber {
             .children(settings)
             .children(info);
 
-        let context_menu_overlay = self.context_menu.as_ref().map(|menu| {
-            let mut list = v_flex()
-                .p_1()
-                .bg(theme::surface_raised())
-                .border_1()
-                .border_color(theme::border())
-                .rounded_md()
-                .shadow_lg();
-            for item in &menu.items {
-                let action = item.action.clone();
-                list = list.child(
-                    div()
-                        .px_2()
-                        .py_1()
-                        .text_color(theme::text())
-                        .hover(|s| s.bg(theme::surface_raised()))
-                        .cursor_pointer()
-                        .rounded_sm()
-                        .child(item.label.clone())
-                        .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _window, cx| {
-                            this.handle_context_menu_action(action.clone(), cx);
-                        }))
-                );
-            }
-            div()
-                .absolute()
-                .left(menu.position.x)
-                .top(menu.position.y)
-                .child(list)
-                .into_any_element()
-        });
-
         let wrapped_content = crate::window_frame::window_frame(window, cx, content);
 
-        div()
-            .size_full()
-            .child(wrapped_content)
-            .children(context_menu_overlay)
-            // dismiss context menu if clicked outside
-            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _window, cx| {
-                if this.context_menu.is_some() {
-                    this.context_menu = None;
-                    cx.notify();
-                }
-            }))
-            .into_any_element()
+        div().size_full().child(wrapped_content).into_any_element()
     }
 }
 
@@ -1206,17 +1402,20 @@ impl Chamber {
             .text_color(theme::text_muted())
             .child(swarm_status_tag(&self.view))
             .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child(
-                        self.path
-                            .parent()
-                            .and_then(|p| if p.file_name() == Some(std::ffi::OsStr::new(".hadron")) { p.parent() } else { Some(p) })
-                            .unwrap_or(&self.path)
-                            .display()
-                            .to_string()
-                    ),
+                div().text_xs().text_color(theme::text_muted()).child(
+                    self.path
+                        .parent()
+                        .and_then(|p| {
+                            if p.file_name() == Some(std::ffi::OsStr::new(".hadron")) {
+                                p.parent()
+                            } else {
+                                Some(p)
+                            }
+                        })
+                        .unwrap_or(&self.path)
+                        .display()
+                        .to_string(),
+                ),
             )
             .child(
                 h_flex()
@@ -1388,20 +1587,78 @@ impl Chamber {
                 .on_click(cx.listener(move |this, _, _, cx| this.cycle_quark_mode(&qid, cx)))
                 .child(mode_tag(r.mode, r.mode_is_override))
                 .into_any_element();
-            
-            let qid_str = r.id.clone();
-            let enable_str = if r.enabled { "Disable" } else { "Enable" };
+
             let row_el = div()
-                .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
-                    this.context_menu = Some(ContextMenu {
-                        position: e.position,
-                        items: vec![
-                            ContextMenuItem { label: "Info".to_string(), action: ContextMenuAction::QuarkInfo(qid_str.clone()) },
-                            ContextMenuItem { label: enable_str.to_string(), action: ContextMenuAction::ToggleQuark(qid_str.clone()) },
-                        ],
-                    });
-                    cx.notify();
-                }))
+                .context_menu({
+                    let qid_str = r.id.clone();
+                    let enable_str = if r.enabled { "Disable" } else { "Enable" };
+                    let r_flavor = r.flavor.clone();
+                    let view = cx.entity().clone();
+                    move |mut menu, _, _| {
+                        let qid1 = qid_str.clone();
+                        let view1 = view.clone();
+                        menu = menu.item(PopupMenuItem::new("Info").on_click(move |_, _, cx| {
+                            view1.update(cx, |this, cx| {
+                                this.handle_context_menu_action(
+                                    ContextMenuAction::QuarkInfo(qid1.clone()),
+                                    cx,
+                                );
+                            });
+                        }));
+                        let qid2 = qid_str.clone();
+                        let view2 = view.clone();
+                        menu =
+                            menu.item(PopupMenuItem::new(enable_str).on_click(move |_, _, cx| {
+                                view2.update(cx, |this, cx| {
+                                    this.handle_context_menu_action(
+                                        ContextMenuAction::ToggleQuark(qid2.clone()),
+                                        cx,
+                                    );
+                                });
+                            }));
+                        if let Some(flavor) = &r_flavor {
+                            match flavor {
+                                hadron_lattice::Flavor::Orchestrator => {
+                                    let qid3 = qid_str.clone();
+                                    let view3 = view.clone();
+                                    menu = menu.item(PopupMenuItem::new("Make Worker").on_click(
+                                        move |_, _, cx| {
+                                            view3.update(cx, |this, cx| {
+                                                this.handle_context_menu_action(
+                                                    ContextMenuAction::SetFlavor(
+                                                        qid3.clone(),
+                                                        hadron_lattice::Flavor::Worker,
+                                                    ),
+                                                    cx,
+                                                );
+                                            });
+                                        },
+                                    ));
+                                }
+                                hadron_lattice::Flavor::Worker => {
+                                    let qid4 = qid_str.clone();
+                                    let view4 = view.clone();
+                                    menu =
+                                        menu
+                                            .item(PopupMenuItem::new("Make Orchestrator").on_click(
+                                            move |_, _, cx| {
+                                                view4.update(cx, |this, cx| {
+                                                    this.handle_context_menu_action(
+                                                        ContextMenuAction::SetFlavor(
+                                                            qid4.clone(),
+                                                            hadron_lattice::Flavor::Orchestrator,
+                                                        ),
+                                                        cx,
+                                                    );
+                                                });
+                                            },
+                                        ));
+                                }
+                            }
+                        }
+                        menu
+                    }
+                })
                 .child(roster_row(&self.resolve_identity(&r.id), r, mode_el));
             rows = rows.child(row_el);
         }
@@ -1505,57 +1762,69 @@ impl Chamber {
                             .into_any_element(),
                     }),
             )
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .right_0()
-                    .bottom_0()
-                    .when(selected != ChatTab::Chat, |this| {
-                        this.child(
-                            Scrollbar::vertical(&self.chat_scrolls[selected.index()]).scrollbar_show(ScrollbarShow::Hover),
-                        )
-                    }),
-            );
+            .child(div().absolute().top_0().right_0().bottom_0().when(
+                selected != ChatTab::Chat,
+                |this| {
+                    this.child(
+                        Scrollbar::vertical(&self.chat_scrolls[selected.index()])
+                            .scrollbar_show(ScrollbarShow::Hover),
+                    )
+                },
+            ));
 
         // The message box is only meaningful in Chat — you talk to the field
         // there. Log and Timeline are read-only views, so they get no input.
-        let input = matches!(selected, ChatTab::Chat).then(|| {
-            v_flex()
-                .flex_none()
-                .m_4()
-                .child(
-                    h_flex()
-                        .px_1()
-                        .rounded_lg()
-                        .bg(theme::input_bg())
-                        .child(Input::new(&self.input))
-                )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .mt_2()
-                        .items_center()
-                        .child(
-                            h_flex().gap_2().items_center()
-                                .child(div().text_xs().text_color(theme::text_muted()).child("Global Mode:"))
-                                .child(
-                                    div()
-                                        .id("global-mode")
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(|this, _, _, cx| this.cycle_global_mode(cx)))
-                                        .tooltip(|window, cx| {
-                                            Tooltip::new("Permission mode — Shift+Tab or click to cycle").build(window, cx)
-                                        })
-                                        .child(mode_tag(self.view.global_mode, true)),
-                                )
-                        )
-                        .child(
-                            div().text_xs().text_color(theme::text_muted()).child(crate::vcs::repo_root_of(&self.path).display().to_string())
-                        )
-                )
-        });
+        let input =
+            matches!(selected, ChatTab::Chat).then(|| {
+                v_flex()
+                    .flex_none()
+                    .m_4()
+                    .child(
+                        h_flex()
+                            .px_1()
+                            .rounded_lg()
+                            .bg(theme::input_bg())
+                            .child(Input::new(&self.input)),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .mt_2()
+                            .items_center()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::text_muted())
+                                            .child("Global Mode:"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("global-mode")
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.cycle_global_mode(cx)
+                                            }))
+                                            .tooltip(|window, cx| {
+                                                Tooltip::new(
+                                                    "Permission mode — Shift+Tab or click to cycle",
+                                                )
+                                                .build(window, cx)
+                                            })
+                                            .child(mode_tag(self.view.global_mode, true)),
+                                    ),
+                            )
+                            .child(
+                                div().text_xs().text_color(theme::text_muted()).child(
+                                    crate::vcs::repo_root_of(&self.path).display().to_string(),
+                                ),
+                            ),
+                    )
+            });
 
         // The floating chat card: darker + rounded, inset from the lighter
         // unified space that shows around it.
@@ -1583,23 +1852,33 @@ impl Chamber {
     /// with each author's avatar and name.
     fn chat_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         if self.chat_message_ixs.is_empty() {
-            return v_flex().p_4().child(empty_hint("No messages yet — say something below.")).into_any_element();
+            return v_flex()
+                .p_4()
+                .child(empty_hint("No messages yet — say something below."))
+                .into_any_element();
         }
-        
+
         let weak_view = cx.entity().downgrade();
-        
+
         // Wrap the virtual list with padding
-        v_flex().size_full().p_4().child(
-            gpui::list(
-                self.chat_list_state.clone(),
-                move |ix, _window, cx| {
+        v_flex()
+            .size_full()
+            .p_4()
+            .child(
+                gpui::list(self.chat_list_state.clone(), move |ix, _window, cx| {
                     if let Some(view) = weak_view.upgrade() {
                         view.update(cx, |this, _cx| {
                             if let Some(&real_ix) = this.chat_message_ixs.get(ix) {
                                 if let Some(m) = this.view.messages.get(real_ix) {
-                                    return div().pb(px(16.0)).child(
-                                        this.chat_message_row(&this.resolve_identity(&m.from), m, real_ix, &this.view.roster)
-                                    ).into_any_element();
+                                    return div()
+                                        .pb(px(16.0))
+                                        .child(this.chat_message_row(
+                                            &this.resolve_identity(&m.from),
+                                            m,
+                                            real_ix,
+                                            &this.view.roster,
+                                        ))
+                                        .into_any_element();
                                 }
                             }
                             div().into_any_element()
@@ -1607,9 +1886,10 @@ impl Chamber {
                     } else {
                         div().into_any_element()
                     }
-                }
-            ).size_full()
-        ).into_any_element()
+                })
+                .size_full(),
+            )
+            .into_any_element()
     }
 
     /// The Log tab: every event on the field, compact (the raw activity).
@@ -1676,25 +1956,156 @@ impl Chamber {
 
         let mut col = v_flex().p_4().gap_4();
         col = col.child(
-            v_flex().gap_1().p_3().bg(theme::surface_raised()).rounded_md()
-                .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::text()).child("Session Totals"))
-                .child(div().text_xs().text_color(theme::text_muted()).child(format!("Turns: {}", stats.total_turns)))
-                .child(div().text_xs().text_color(theme::text_muted()).child(format!("Spent: {} fresh, {} cached", format_num(stats.total_fresh), format_num(stats.total_cached))))
+            v_flex()
+                .gap_1()
+                .p_3()
+                .bg(theme::surface_raised())
+                .rounded_md()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(theme::text())
+                        .child("Session Totals"),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(format!("Turns: {}", stats.total_turns)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(format!(
+                            "Spent: {} fresh, {} cached",
+                            format_num(stats.total_fresh),
+                            format_num(stats.total_cached)
+                        )),
+                ),
         );
 
+        if !stats.per_quark.is_empty() {
+            let mut fresh_data = Vec::new();
+            for (q, s) in &stats.per_quark {
+                fresh_data.push((q.clone(), s.fresh as f64));
+            }
+            col = col.child(
+                v_flex()
+                    .gap_1()
+                    .p_3()
+                    .bg(theme::surface_raised())
+                    .rounded_md()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::text())
+                            .child("Fresh Spend per Quark"),
+                    )
+                    .child(
+                        div().h(px(150.0)).w_full().child(
+                            BarChart::new(fresh_data)
+                                .id("session-fresh-chart")
+                                .name("Fresh Tokens")
+                                .band(|d| d.0.clone())
+                                .value(|d| d.1)
+                                .fill(move |_, _, _, _| -> gpui::Background {
+                                    theme::accent().into()
+                                }),
+                        ),
+                    ),
+            );
+        }
+
         for (q, s) in &stats.per_quark {
-            let mut block = v_flex().gap_1().p_3().bg(theme::surface_raised()).rounded_md()
-                .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::actor_hue(q)).child(q.clone()))
-                .child(div().text_xs().text_color(theme::text_muted()).child(format!("Turns: {}", s.turns)))
-                .child(div().text_xs().text_color(theme::text_muted()).child(format!("Spent: {} fresh, {} cached", format_num(s.fresh), format_num(s.cached))));
+            let q_color = theme::actor_hue(q);
+            let mut block = v_flex()
+                .gap_1()
+                .p_3()
+                .bg(theme::surface_raised())
+                .rounded_md()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(q_color)
+                        .child(q.clone()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(format!("Turns: {}", s.turns)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(format!(
+                            "Spent: {} fresh, {} cached",
+                            format_num(s.fresh),
+                            format_num(s.cached)
+                        )),
+                );
+
+            if !s.spend_history.is_empty() {
+                block = block.child(
+                    div().h(px(100.0)).w_full().mt_2().child(
+                        LineChart::new(s.spend_history.clone())
+                            .id(format!("spend-chart-{}", q))
+                            .name("Fresh Spent")
+                            .x(|d| format!("T{}", d.turn))
+                            .y(|d| d.fresh as f64)
+                            .stroke(q_color),
+                    ),
+                );
+            }
 
             if let Some(ctx) = &s.context {
-                block = block.child(div().text_xs().text_color(theme::text_muted()).child(format!("Context: {:.1}% ({} / {})", ctx.used_percentage, format_num(ctx.used_tokens), format_num(ctx.context_window_size))));
+                block = block.child(div().text_xs().text_color(theme::text_muted()).child(
+                    format!(
+                        "Context: {:.1}% ({} / {})",
+                        ctx.used_percentage,
+                        format_num(ctx.used_tokens),
+                        format_num(ctx.context_window_size)
+                    ),
+                ));
+                let ctx_data = vec![
+                    ("Used".to_string(), ctx.used_percentage as f64),
+                    (
+                        "Remaining".to_string(),
+                        100.0 - (ctx.used_percentage as f64).min(100.0),
+                    ),
+                ];
+                block = block.child(
+                    div().h(px(60.0)).w_full().child(
+                        BarChart::new(ctx_data)
+                            .id(format!("ctx-chart-{}", q))
+                            .name("Context %")
+                            .band(|d| d.0.clone())
+                            .value(|d| d.1)
+                            .fill(move |d, _, _, _| -> gpui::Background {
+                                if d.0 == "Used" {
+                                    q_color.into()
+                                } else {
+                                    gpui::rgba(0x00000033).into()
+                                }
+                            }),
+                    ),
+                );
             }
             // An empty quota list means the provider has no quota concept — not that
             // the quota is spent. Say nothing rather than render a zero.
             for bucket in &s.quota {
-                block = block.child(div().text_xs().text_color(theme::text_muted()).child(format!("Quota [{}]: {:.1}% remaining", bucket.key, bucket.remaining_fraction * 100.0)));
+                block = block.child(div().text_xs().text_color(theme::text_muted()).child(
+                    format!(
+                        "Quota [{}]: {:.1}% remaining",
+                        bucket.key,
+                        bucket.remaining_fraction * 100.0
+                    ),
+                ));
             }
             col = col.child(block);
         }
@@ -1776,18 +2187,36 @@ impl Chamber {
                     let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
                     let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "local".to_string());
                     let prompt = format!("{}@{}: {}$ {}", user, host, display_cwd, cmd);
-                    let mut block = v_flex().gap_1()
-                        .child(div().text_sm().font_family("JetBrains Mono").text_color(theme::accent()).child(prompt));
+                    let mut block = v_flex().gap_1().child(
+                        div()
+                            .text_sm()
+                            .font_family("JetBrains Mono")
+                            .text_color(theme::accent())
+                            .child(prompt),
+                    );
                     if !out.is_empty() {
-                        block = block.child(div().text_xs().font_family("JetBrains Mono").text_color(theme::text_muted()).child(out.clone()));
+                        block = block.child(
+                            div()
+                                .text_xs()
+                                .font_family("JetBrains Mono")
+                                .text_color(theme::text_muted())
+                                .child(out.clone()),
+                        );
                     }
                     history = history.child(block);
                 }
 
-                let current_cwd = self.terminal.as_ref().map(|t| t.cwd.clone()).unwrap_or_else(|| {
-                    crate::vcs::repo_root_of(&self.path).to_string_lossy().into_owned()
-                });
-                let display_cwd = current_cwd.replace(&std::env::var("HOME").unwrap_or_default(), "~");
+                let current_cwd = self
+                    .terminal
+                    .as_ref()
+                    .map(|t| t.cwd.clone())
+                    .unwrap_or_else(|| {
+                        crate::vcs::repo_root_of(&self.path)
+                            .to_string_lossy()
+                            .into_owned()
+                    });
+                let display_cwd =
+                    current_cwd.replace(&std::env::var("HOME").unwrap_or_default(), "~");
                 let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
                 let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "local".to_string());
                 let prompt_str = format!("{}@{}: {}$ ", user, host, display_cwd);
@@ -1809,16 +2238,14 @@ impl Chamber {
                                     .size_full()
                                     .overflow_y_scroll()
                                     .track_scroll(&self.terminal_scroll)
-                                    .child(history)
+                                    .child(history),
                             )
                             .child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .bottom_0()
-                                    .right_0()
-                                    .child(Scrollbar::vertical(&self.terminal_scroll).scrollbar_show(ScrollbarShow::Hover))
-                            )
+                                div().absolute().top_0().bottom_0().right_0().child(
+                                    Scrollbar::vertical(&self.terminal_scroll)
+                                        .scrollbar_show(ScrollbarShow::Hover),
+                                ),
+                            ),
                     )
                     .child(
                         h_flex()
@@ -1829,8 +2256,14 @@ impl Chamber {
                             .rounded_md()
                             .gap_2()
                             .items_center()
-                            .child(div().text_sm().font_family("JetBrains Mono").text_color(theme::accent()).child(prompt_str))
-                            .child(div().flex_1().child(Input::new(&self.terminal_input)))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_family("JetBrains Mono")
+                                    .text_color(theme::accent())
+                                    .child(prompt_str),
+                            )
+                            .child(div().flex_1().child(Input::new(&self.terminal_input))),
                     )
                     .into_any_element()
             }
@@ -1845,13 +2278,12 @@ impl Chamber {
                                 .p_2()
                                 .bg(theme::surface_raised())
                                 .child(div().text_color(theme::text()).child(path.clone()))
-                                .child(
-                                    text_button("close-file", "Close")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.file_tree_open = None;
-                                            cx.notify();
-                                        }))
-                                )
+                                .child(text_button("close-file", "Close").on_click(cx.listener(
+                                    |this, _, window, cx| {
+                                        this.file_tree_open = None;
+                                        cx.notify();
+                                    },
+                                ))),
                         )
                         .child(
                             div()
@@ -1869,22 +2301,22 @@ impl Chamber {
                                         .bg(theme::input_bg())
                                         .text_color(theme::text())
                                         // Use a fixed index like usize::MAX for the file tree markdown cache
-                                        .child(self.markdown_body("file-tree-open", usize::MAX, content, &[]))
+                                        .child(self.markdown_body(
+                                            "file-tree-open",
+                                            usize::MAX,
+                                            content,
+                                            &[],
+                                        )),
                                 )
                                 .child(
-                                    div()
-                                        .absolute()
-                                        .top_0()
-                                        .bottom_0()
-                                        .right_0()
-                                        .child(Scrollbar::vertical(&self.file_tree_open_scroll).scrollbar_show(ScrollbarShow::Hover))
-                                )
+                                    div().absolute().top_0().bottom_0().right_0().child(
+                                        Scrollbar::vertical(&self.file_tree_open_scroll)
+                                            .scrollbar_show(ScrollbarShow::Hover),
+                                    ),
+                                ),
                         );
-                    
-                    v_flex()
-                        .flex_1()
-                        .child(list)
-                        .into_any_element()
+
+                    v_flex().flex_1().child(list).into_any_element()
                 } else {
                     #[derive(Default)]
                     struct FileTreeNode {
@@ -1898,11 +2330,18 @@ impl Chamber {
                             let parts: Vec<&str> = path.split('/').collect();
                             for (i, part) in parts.iter().enumerate() {
                                 let is_file = i == parts.len() - 1;
-                                current = current.children.entry(part.to_string()).or_insert_with(|| FileTreeNode {
-                                    children: std::collections::BTreeMap::new(),
-                                    is_file,
-                                    full_path: if is_file { full_path.to_string() } else { String::new() },
-                                });
+                                current =
+                                    current.children.entry(part.to_string()).or_insert_with(|| {
+                                        FileTreeNode {
+                                            children: std::collections::BTreeMap::new(),
+                                            is_file,
+                                            full_path: if is_file {
+                                                full_path.to_string()
+                                            } else {
+                                                String::new()
+                                            },
+                                        }
+                                    });
                             }
                         }
                     }
@@ -1911,9 +2350,10 @@ impl Chamber {
                     for file in &self.file_tree_paths {
                         root_node.insert(file, file);
                     }
-                    
-                    let repo_root = crate::vcs::repo_root_of(std::path::Path::new(&self.path)).to_path_buf();
-                    
+
+                    let repo_root =
+                        crate::vcs::repo_root_of(std::path::Path::new(&self.path)).to_path_buf();
+
                     fn render_node(
                         name: &str,
                         node: &FileTreeNode,
@@ -1928,7 +2368,15 @@ impl Chamber {
                         if name.is_empty() {
                             for (child_name, child_node) in &node.children {
                                 let child_path = child_name.clone();
-                                list = list.child(render_node(child_name, child_node, depth, cx, repo_root, child_path, expanded_set));
+                                list = list.child(render_node(
+                                    child_name,
+                                    child_node,
+                                    depth,
+                                    cx,
+                                    repo_root,
+                                    child_path,
+                                    expanded_set,
+                                ));
                             }
                             return list.into_any_element();
                         }
@@ -1946,9 +2394,19 @@ impl Chamber {
                             .text_size(gpui::px(13.56))
                             .gap_2()
                             .child(if node.is_file {
-                                Icon::new(IconName::File).small().text_color(theme::text_muted()).into_any_element()
+                                Icon::new(IconName::File)
+                                    .small()
+                                    .text_color(theme::text_muted())
+                                    .into_any_element()
                             } else {
-                                Icon::new(if is_expanded { IconName::FolderOpen } else { IconName::Folder }).small().text_color(theme::text_muted()).into_any_element()
+                                Icon::new(if is_expanded {
+                                    IconName::FolderOpen
+                                } else {
+                                    IconName::Folder
+                                })
+                                .small()
+                                .text_color(theme::text_muted())
+                                .into_any_element()
                             })
                             .child(div().child(name.to_string()));
 
@@ -1956,89 +2414,175 @@ impl Chamber {
                             let file_name = node.full_path.clone();
                             let file_path = node.full_path.clone();
                             let repo = repo_root.clone();
-                            let on_dbl_click = cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
-                                if event.button == gpui::MouseButton::Left && event.click_count == 2 {
-                                    if let Some(content) = crate::sys::read_workspace_file(&repo, &file_name) {
-                                        this.file_tree_open = Some((file_name.clone(), content));
-                                        cx.notify();
+                            let on_dbl_click = cx.listener(
+                                move |this, event: &gpui::MouseDownEvent, _window, cx| {
+                                    if event.button == gpui::MouseButton::Left
+                                        && event.click_count == 2
+                                    {
+                                        if let Some(content) =
+                                            crate::sys::read_workspace_file(&repo, &file_name)
+                                        {
+                                            this.file_tree_open =
+                                                Some((file_name.clone(), content));
+                                            cx.notify();
+                                        }
                                     }
-                                }
-                            });
-                            
-                            let path_clone = file_path.clone();
-                            let on_right_click = cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
-                                if event.button == gpui::MouseButton::Right {
-                                    this.context_menu = Some(ContextMenu {
-                                        position: event.position,
-                                        items: vec![
-                                            ContextMenuItem {
-                                                label: "Open File".to_string(),
-                                                action: ContextMenuAction::OpenFile(path_clone.clone()),
-                                            },
-                                            ContextMenuItem {
-                                                label: "Open in Editor".to_string(),
-                                                action: ContextMenuAction::OpenInEditor(path_clone.clone()),
-                                            },
-                                            ContextMenuItem {
-                                                label: "Open in Folder".to_string(),
-                                                action: ContextMenuAction::OpenInFolder(path_clone.clone()),
-                                            },
-                                            ContextMenuItem {
-                                                label: "Copy Path".to_string(),
-                                                action: ContextMenuAction::CopyPath(path_clone.clone()),
-                                            },
-                                        ]
-                                    });
-                                    cx.notify();
-                                }
-                            });
+                                },
+                            );
 
-                            list = list.child(row.on_mouse_down(gpui::MouseButton::Left, on_dbl_click)
-                                                 .on_mouse_down(gpui::MouseButton::Right, on_right_click));
+                            let path_clone = file_path.clone();
+                            let view = cx.entity().clone();
+
+                            list = list.child(
+                                row.on_mouse_down(gpui::MouseButton::Left, on_dbl_click)
+                                    .context_menu(move |mut menu, _, _| {
+                                        let path1 = path_clone.clone();
+                                        let view1 = view.clone();
+                                        menu = menu.item(PopupMenuItem::new("Open File").on_click(
+                                            move |_, _, cx| {
+                                                view1.update(cx, |this, cx| {
+                                                    this.handle_context_menu_action(
+                                                        ContextMenuAction::OpenFile(path1.clone()),
+                                                        cx,
+                                                    )
+                                                })
+                                            },
+                                        ));
+
+                                        let path2 = path_clone.clone();
+                                        let view2 = view.clone();
+                                        menu = menu.item(
+                                            PopupMenuItem::new("Open in Editor").on_click(
+                                                move |_, _, cx| {
+                                                    view2.update(cx, |this, cx| {
+                                                        this.handle_context_menu_action(
+                                                            ContextMenuAction::OpenInEditor(
+                                                                path2.clone(),
+                                                            ),
+                                                            cx,
+                                                        )
+                                                    })
+                                                },
+                                            ),
+                                        );
+
+                                        let path3 = path_clone.clone();
+                                        let view3 = view.clone();
+                                        menu = menu.item(
+                                            PopupMenuItem::new("Open in Folder").on_click(
+                                                move |_, _, cx| {
+                                                    view3.update(cx, |this, cx| {
+                                                        this.handle_context_menu_action(
+                                                            ContextMenuAction::OpenInFolder(
+                                                                path3.clone(),
+                                                            ),
+                                                            cx,
+                                                        )
+                                                    })
+                                                },
+                                            ),
+                                        );
+
+                                        let path4 = path_clone.clone();
+                                        let view4 = view.clone();
+                                        menu = menu.item(PopupMenuItem::new("Copy Path").on_click(
+                                            move |_, _, cx| {
+                                                view4.update(cx, |this, cx| {
+                                                    this.handle_context_menu_action(
+                                                        ContextMenuAction::CopyPath(path4.clone()),
+                                                        cx,
+                                                    )
+                                                })
+                                            },
+                                        ));
+
+                                        menu
+                                    }),
+                            );
                         } else {
                             let toggle_path = current_path.clone();
-                            let on_click = cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
-                                if event.button == gpui::MouseButton::Left {
-                                    if this.file_tree_expanded.contains(&toggle_path) {
-                                        this.file_tree_expanded.remove(&toggle_path);
-                                    } else {
-                                        this.file_tree_expanded.insert(toggle_path.clone());
+                            let on_click = cx.listener(
+                                move |this, event: &gpui::MouseDownEvent, _window, cx| {
+                                    if event.button == gpui::MouseButton::Left {
+                                        if this.file_tree_expanded.contains(&toggle_path) {
+                                            this.file_tree_expanded.remove(&toggle_path);
+                                        } else {
+                                            this.file_tree_expanded.insert(toggle_path.clone());
+                                        }
+                                        cx.notify();
                                     }
-                                    cx.notify();
-                                }
-                            });
-                            
+                                },
+                            );
+
                             let folder_path = node.full_path.clone();
-                            let on_right_click = cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
-                                if event.button == gpui::MouseButton::Right {
-                                    this.context_menu = Some(ContextMenu {
-                                        position: event.position,
-                                        items: vec![
-                                            ContextMenuItem {
-                                                label: "Open in Editor".to_string(),
-                                                action: ContextMenuAction::OpenInEditor(folder_path.clone()),
+                            let view = cx.entity().clone();
+
+                            list = list.child(
+                                row.on_mouse_down(gpui::MouseButton::Left, on_click)
+                                    .context_menu(move |mut menu, _, _| {
+                                        let path1 = folder_path.clone();
+                                        let view1 = view.clone();
+                                        menu = menu.item(
+                                            PopupMenuItem::new("Open in Editor").on_click(
+                                                move |_, _, cx| {
+                                                    view1.update(cx, |this, cx| {
+                                                        this.handle_context_menu_action(
+                                                            ContextMenuAction::OpenInEditor(
+                                                                path1.clone(),
+                                                            ),
+                                                            cx,
+                                                        )
+                                                    })
+                                                },
+                                            ),
+                                        );
+
+                                        let path2 = folder_path.clone();
+                                        let view2 = view.clone();
+                                        menu = menu.item(
+                                            PopupMenuItem::new("Open in Folder").on_click(
+                                                move |_, _, cx| {
+                                                    view2.update(cx, |this, cx| {
+                                                        this.handle_context_menu_action(
+                                                            ContextMenuAction::OpenInFolder(
+                                                                path2.clone(),
+                                                            ),
+                                                            cx,
+                                                        )
+                                                    })
+                                                },
+                                            ),
+                                        );
+
+                                        let path3 = folder_path.clone();
+                                        let view3 = view.clone();
+                                        menu = menu.item(PopupMenuItem::new("Copy Path").on_click(
+                                            move |_, _, cx| {
+                                                view3.update(cx, |this, cx| {
+                                                    this.handle_context_menu_action(
+                                                        ContextMenuAction::CopyPath(path3.clone()),
+                                                        cx,
+                                                    )
+                                                })
                                             },
-                                            ContextMenuItem {
-                                                label: "Open in Folder".to_string(),
-                                                action: ContextMenuAction::OpenInFolder(folder_path.clone()),
-                                            },
-                                            ContextMenuItem {
-                                                label: "Copy Path".to_string(),
-                                                action: ContextMenuAction::CopyPath(folder_path.clone()),
-                                            },
-                                        ]
-                                    });
-                                    cx.notify();
-                                }
-                            });
-                            
-                            list = list.child(row.on_mouse_down(gpui::MouseButton::Left, on_click)
-                                                 .on_mouse_down(gpui::MouseButton::Right, on_right_click));
-                            
+                                        ));
+
+                                        menu
+                                    }),
+                            );
+
                             if is_expanded {
                                 for (child_name, child_node) in &node.children {
                                     let child_path = format!("{}/{}", current_path, child_name);
-                                    list = list.child(render_node(child_name, child_node, depth + 1, cx, repo_root, child_path, expanded_set));
+                                    list = list.child(render_node(
+                                        child_name,
+                                        child_node,
+                                        depth + 1,
+                                        cx,
+                                        repo_root,
+                                        child_path,
+                                        expanded_set,
+                                    ));
                                 }
                             }
                         }
@@ -2057,15 +2601,21 @@ impl Chamber {
                                 .overflow_y_scroll()
                                 .track_scroll(&self.file_tree_scroll)
                                 .p_2()
-                                .child(render_node("", &root_node, 0, cx, &repo_root, String::new(), &self.file_tree_expanded))
+                                .child(render_node(
+                                    "",
+                                    &root_node,
+                                    0,
+                                    cx,
+                                    &repo_root,
+                                    String::new(),
+                                    &self.file_tree_expanded,
+                                )),
                         )
                         .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .bottom_0()
-                                .right_0()
-                                .child(Scrollbar::vertical(&self.file_tree_scroll).scrollbar_show(ScrollbarShow::Hover))
+                            div().absolute().top_0().bottom_0().right_0().child(
+                                Scrollbar::vertical(&self.file_tree_scroll)
+                                    .scrollbar_show(ScrollbarShow::Hover),
+                            ),
                         )
                         .into_any_element()
                 }
@@ -2073,14 +2623,28 @@ impl Chamber {
             RightRailTab::Changes => {
                 let diff_content = if let Some(diffs) = &self.working_diff {
                     if diffs.is_empty() {
-                        div().p_4().text_color(theme::text_muted()).child("No changes in working tree.").into_any_element()
+                        div()
+                            .p_4()
+                            .text_color(theme::text_muted())
+                            .child("No changes in working tree.")
+                            .into_any_element()
                     } else {
                         let mut list = v_flex().w_full();
                         for (ix, file) in diffs.iter().enumerate() {
-                            let title = h_flex().gap_2().items_center()
+                            let title = h_flex()
+                                .gap_2()
+                                .items_center()
                                 .child(div().child(file.path.clone()))
-                                .child(div().text_color(gpui::rgb(0x34d399)).child(format!("+{}", file.added)))
-                                .child(div().text_color(gpui::rgb(0xfb7185)).child(format!("-{}", file.removed)));
+                                .child(
+                                    div()
+                                        .text_color(gpui::rgb(0x34d399))
+                                        .child(format!("+{}", file.added)),
+                                )
+                                .child(
+                                    div()
+                                        .text_color(gpui::rgb(0xfb7185))
+                                        .child(format!("-{}", file.removed)),
+                                );
 
                             let is_open = self.changes_open_ixs.contains(&ix);
 
@@ -2100,31 +2664,62 @@ impl Chamber {
                                     cx.notify();
                                 }))
                                 .child(title)
-                                .child(Icon::new(if is_open { IconName::ChevronUp } else { IconName::ChevronDown }).small().text_color(theme::text_muted()));
+                                .child(
+                                    Icon::new(if is_open {
+                                        IconName::ChevronUp
+                                    } else {
+                                        IconName::ChevronDown
+                                    })
+                                    .small()
+                                    .text_color(theme::text_muted()),
+                                );
 
                             let mut row = v_flex().w_full().child(header);
 
                             if is_open {
-                                let mut lines_list = v_flex().w_full().text_sm().pt_2().font_family("Cascadia Code");
+                                let mut lines_list = v_flex()
+                                    .w_full()
+                                    .text_sm()
+                                    .pt_2()
+                                    .font_family("Cascadia Code");
                                 for (_, hunk) in file.hunks.iter().enumerate() {
                                     lines_list = lines_list.child(
-                                        div().w_full().px_2().py_1().text_color(theme::text_muted()).child(hunk.header.clone())
+                                        div()
+                                            .w_full()
+                                            .px_2()
+                                            .py_1()
+                                            .text_color(theme::text_muted())
+                                            .child(hunk.header.clone()),
                                     );
                                     for line in &hunk.lines {
                                         match line {
                                             crate::vcs::DiffLine::Context(c) => {
                                                 lines_list = lines_list.child(
-                                                    div().w_full().px_2().text_color(theme::text()).child(format!(" {}", c))
+                                                    div()
+                                                        .w_full()
+                                                        .px_2()
+                                                        .text_color(theme::text())
+                                                        .child(format!(" {}", c)),
                                                 );
                                             }
                                             crate::vcs::DiffLine::Added(a) => {
                                                 lines_list = lines_list.child(
-                                                    div().w_full().px_2().bg(gpui::rgba(0x34d39922)).text_color(gpui::rgb(0x34d399)).child(format!("+{}", a))
+                                                    div()
+                                                        .w_full()
+                                                        .px_2()
+                                                        .bg(gpui::rgba(0x34d39922))
+                                                        .text_color(gpui::rgb(0x34d399))
+                                                        .child(format!("+{}", a)),
                                                 );
                                             }
                                             crate::vcs::DiffLine::Removed(r) => {
                                                 lines_list = lines_list.child(
-                                                    div().w_full().px_2().bg(gpui::rgba(0xfb718522)).text_color(gpui::rgb(0xfb7185)).child(format!("-{}", r))
+                                                    div()
+                                                        .w_full()
+                                                        .px_2()
+                                                        .bg(gpui::rgba(0xfb718522))
+                                                        .text_color(gpui::rgb(0xfb7185))
+                                                        .child(format!("-{}", r)),
                                                 );
                                             }
                                         }
@@ -2138,7 +2733,11 @@ impl Chamber {
                         list.into_any_element()
                     }
                 } else {
-                    div().p_4().text_color(theme::text_muted()).child("Failed to load diff.").into_any_element()
+                    div()
+                        .p_4()
+                        .text_color(theme::text_muted())
+                        .child("Failed to load diff.")
+                        .into_any_element()
                 };
 
                 div()
@@ -2154,15 +2753,13 @@ impl Chamber {
                             .p_3()
                             .text_sm()
                             .text_color(theme::text())
-                            .child(diff_content)
+                            .child(diff_content),
                     )
                     .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .bottom_0()
-                            .right_0()
-                            .child(Scrollbar::vertical(&self.changes_scroll).scrollbar_show(ScrollbarShow::Hover))
+                        div().absolute().top_0().bottom_0().right_0().child(
+                            Scrollbar::vertical(&self.changes_scroll)
+                                .scrollbar_show(ScrollbarShow::Hover),
+                        ),
                     )
                     .into_any_element()
             }
@@ -2290,7 +2887,8 @@ impl Chamber {
 
     fn toggle_quark_enabled(&mut self, id: &str, cx: &mut Context<Self>) {
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let team_path = hadron_lattice::team_for_field(&self.path).unwrap_or_else(|| repo_root.join(".hadron").join("team.json"));
+        let team_path = hadron_lattice::team_for_field(&self.path)
+            .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"));
         let mut team = hadron_lattice::load_team(&team_path);
         let qid = QuarkId::new(id);
         if let Some(seat) = team.quarks.iter_mut().find(|s| s.id == qid) {
@@ -2326,7 +2924,9 @@ impl Chamber {
         } else {
             self.prefs.quarks.get(actor)
         };
-        let default_name = if actor == "human" { "You".to_string() } else { 
+        let default_name = if actor == "human" {
+            "You".to_string()
+        } else {
             let mut c = actor.chars();
             match c.next() {
                 None => String::new(),
@@ -2568,15 +3168,13 @@ impl Chamber {
             .flex_none()
             .items_center()
             .justify_between()
-            .child(
-                div()
-                    .text_color(theme::text_secondary())
-                    .child(if target == SettingsTarget::Providers {
-                        "Providers".to_string()
-                    } else {
-                        format!("Editing {}", preview.name)
-                    }),
-            )
+            .child(div().text_color(theme::text_secondary()).child(
+                if target == SettingsTarget::Providers {
+                    "Providers".to_string()
+                } else {
+                    format!("Editing {}", preview.name)
+                },
+            ))
             .child(
                 div()
                     .id("settings-close")
@@ -2609,7 +3207,9 @@ impl Chamber {
                         .items_center()
                         .child(div().flex_1().child(Input::new(&self.settings_path)))
                         .child(text_button("settings-clear-img", "Clear").on_click(
-                            cx.listener(|this, _, window, cx| this.clear_settings_image(window, cx)),
+                            cx.listener(|this, _, window, cx| {
+                                this.clear_settings_image(window, cx)
+                            }),
                         ))
                         .into_any_element(),
                 ))
@@ -2637,7 +3237,9 @@ impl Chamber {
                         .hover(|s| s.opacity(0.9))
                         .active(|s| s.opacity(0.8))
                         .child("Done")
-                        .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx))),
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.close_settings(window, cx)),
+                        ),
                 )
                 .into_any_element()
         };
@@ -2714,7 +3316,14 @@ impl Chamber {
             })
             .hover(|s| s.bg(theme::surface()))
             .child(if who == SettingsTarget::Providers {
-                div().flex().items_center().justify_center().size(px(24.0)).text_color(theme::text_muted()).child(Icon::new(IconName::Cpu).small()).into_any_element()
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.0))
+                    .text_color(theme::text_muted())
+                    .child(Icon::new(IconName::Cpu).small())
+                    .into_any_element()
             } else {
                 identity_avatar(&resolved, 24.0).into_any_element()
             })
@@ -2757,10 +3366,16 @@ impl Chamber {
                 let mut list = v_flex().gap_3();
                 for provider in &self.providers {
                     let (state_text, state_color) = match &provider.state {
-                        ProviderState::NotConnected => ("Not Connected".to_string(), theme::text_muted()),
-                        ProviderState::Connecting => ("Connecting…".to_string(), theme::text_muted()),
+                        ProviderState::NotConnected => {
+                            ("Not Connected".to_string(), theme::text_muted())
+                        }
+                        ProviderState::Connecting => {
+                            ("Connecting…".to_string(), theme::text_muted())
+                        }
                         ProviderState::NeedsAuth(_) => ("Needs Auth".to_string(), theme::accent()),
-                        ProviderState::Ready { model } => (format!("Ready ({})", model), gpui::rgb(0x22c55e)),
+                        ProviderState::Ready { model } => {
+                            (format!("Ready ({})", model), gpui::rgb(0x22c55e))
+                        }
                         ProviderState::Failed(e) => (format!("Failed: {}", e), theme::danger()),
                     };
                     list = list.child(
@@ -2775,19 +3390,34 @@ impl Chamber {
                             .child(
                                 v_flex()
                                     .gap_1()
-                                    .child(div().text_base().text_color(theme::text()).child(provider.id.clone()))
-                                    .child(div().text_xs().text_color(theme::text_muted()).child(format!("Transport: {}", provider.transport)))
+                                    .child(
+                                        div()
+                                            .text_base()
+                                            .text_color(theme::text())
+                                            .child(provider.id.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::text_muted())
+                                            .child(format!("Transport: {}", provider.transport)),
+                                    ),
                             )
                             .child(
                                 h_flex()
                                     .items_center()
                                     .gap_2()
                                     .child(div().size(px(8.0)).rounded_full().bg(state_color))
-                                    .child(div().text_sm().text_color(theme::text_secondary()).child(state_text))
-                            )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme::text_secondary())
+                                            .child(state_text),
+                                    ),
+                            ),
                     );
                 }
-                
+
                 v_flex()
                     .size_full()
                     .gap_6()
@@ -2795,14 +3425,18 @@ impl Chamber {
                         h_flex()
                             .justify_between()
                             .items_center()
-                            .child(div().text_lg().text_color(theme::text()).child("Configured Providers"))
                             .child(
-                                text_button("add-quark", "Add Quark")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.wizard_state = WizardState::PickPreset;
-                                        cx.notify();
-                                    }))
+                                div()
+                                    .text_lg()
+                                    .text_color(theme::text())
+                                    .child("Configured Providers"),
                             )
+                            .child(text_button("add-quark", "Add Quark").on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.wizard_state = WizardState::PickPreset;
+                                    cx.notify();
+                                },
+                            ))),
                     )
                     .child(list)
             }
@@ -2816,7 +3450,7 @@ impl Chamber {
                         args: args.into_iter().map(String::from).collect(),
                     })
                     .collect::<Vec<_>>();
-                
+
                 let mut list = v_flex().gap_2();
                 for preset in presets {
                     let preset_clone = preset.clone();
@@ -2835,17 +3469,32 @@ impl Chamber {
                             .child(
                                 v_flex()
                                     .gap_1()
-                                    .child(div().text_base().text_color(theme::text()).child(preset.name.clone()))
-                                    .child(div().text_xs().text_color(theme::text_muted()).child(format!("{} {}", preset.command, preset.args.join(" "))))
+                                    .child(
+                                        div()
+                                            .text_base()
+                                            .text_color(theme::text())
+                                            .child(preset.name.clone()),
+                                    )
+                                    .child(div().text_xs().text_color(theme::text_muted()).child(
+                                        format!("{} {}", preset.command, preset.args.join(" ")),
+                                    )),
                             )
-                            .child(div().text_sm().text_color(theme::text_muted()).child("Configure →"))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text_muted())
+                                    .child("Configure →"),
+                            )
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.wizard_state = WizardState::Connecting(preset_clone.clone(), ProviderState::NotConnected);
+                                this.wizard_state = WizardState::Connecting(
+                                    preset_clone.clone(),
+                                    ProviderState::NotConnected,
+                                );
                                 cx.notify();
-                            }))
+                            })),
                     );
                 }
-                
+
                 // Add custom option
                 list = list.child(
                     h_flex()
@@ -2859,47 +3508,73 @@ impl Chamber {
                         .border_color(theme::border())
                         .hover(|s| s.bg(theme::surface_raised()))
                         .cursor_pointer()
-                        .child(div().text_base().text_color(theme::text()).child("Custom command…"))
-                        .child(div().text_sm().text_color(theme::text_muted()).child("Configure →"))
+                        .child(
+                            div()
+                                .text_base()
+                                .text_color(theme::text())
+                                .child("Custom command…"),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text_muted())
+                                .child("Configure →"),
+                        )
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.wizard_state = WizardState::Connecting(
-                                AgentDescriptor { id: "custom".into(), name: "Custom".into(), command: "".into(), args: vec![] },
-                                ProviderState::NotConnected
+                                AgentDescriptor {
+                                    id: "custom".into(),
+                                    name: "Custom".into(),
+                                    command: "".into(),
+                                    args: vec![],
+                                },
+                                ProviderState::NotConnected,
                             );
                             cx.notify();
-                        }))
+                        })),
                 );
-                
+
                 v_flex()
                     .size_full()
                     .gap_4()
+                    .child(text_button("back-wizard", "← Back").on_click(cx.listener(
+                        |this, _, window, cx| {
+                            this.wizard_state = WizardState::None;
+                            cx.notify();
+                        },
+                    )))
                     .child(
-                        text_button("back-wizard", "← Back")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.wizard_state = WizardState::None;
-                                cx.notify();
-                            }))
+                        div()
+                            .text_lg()
+                            .text_color(theme::text())
+                            .child("Select a Preset"),
                     )
-                    .child(div().text_lg().text_color(theme::text()).child("Select a Preset"))
                     .child(list)
             }
-
 
             WizardState::Connecting(desc, state) => {
                 let desc_clone = desc.clone();
                 let state_ui = match state {
-                    ProviderState::Connecting => {
-                        v_flex().gap_4()
-                            .child(div().text_sm().text_color(theme::text_muted()).child("Connecting..."))
-                            .into_any_element()
-                    }
+                    ProviderState::Connecting => v_flex()
+                        .gap_4()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text_muted())
+                                .child("Connecting..."),
+                        )
+                        .into_any_element(),
                     ProviderState::NotConnected => {
-                        v_flex().gap_4().child(
-                            text_button("connect-btn", "Connect")
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.wizard_state = WizardState::Connecting(desc_clone.clone(), ProviderState::Connecting);
+                        v_flex()
+                            .gap_4()
+                            .child(text_button("connect-btn", "Connect").on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    this.wizard_state = WizardState::Connecting(
+                                        desc_clone.clone(),
+                                        ProviderState::Connecting,
+                                    );
                                     cx.notify();
-                                    
+
                                     // Connect = boot the agent and complete ACP's `initialize`.
                                     // The probe lives in the daemon (`hadron-gluon`), which is the
                                     // thing that will actually drive this agent — so the UI cannot
@@ -2909,30 +3584,40 @@ impl Chamber {
                                         args: desc_clone.args.clone(),
                                     };
                                     let desc_for_task = desc_clone.clone();
-                                    cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                                        // The async block outlives the borrow, so it gets its own
-                                        // handle on the app rather than holding a reference.
-                                        let mut cx = cx.clone();
-                                        async move {
-                                        // Blocking boot, off the UI thread: a slow `npx` must not
-                                        // freeze the window.
-                                        let result = cx
-                                            .background_spawn(async move { hadron_gluon::adapter::acp::probe(&target) })
-                                            .await
-                                            .map_err(|e| e.to_string());
+                                    cx.spawn(
+                                        |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                                            // The async block outlives the borrow, so it gets its own
+                                            // handle on the app rather than holding a reference.
+                                            let mut cx = cx.clone();
+                                            async move {
+                                                // Blocking boot, off the UI thread: a slow `npx` must not
+                                                // freeze the window.
+                                                let result = cx
+                                                    .background_spawn(async move {
+                                                        hadron_gluon::adapter::acp::probe(&target)
+                                                    })
+                                                    .await
+                                                    .map_err(|e| e.to_string());
 
-                                        this.update(&mut cx, |this, cx| {
-                                            let state = match result {
-                                                Ok(model) => ProviderState::Ready { model },
-                                                Err(e) => ProviderState::Failed(e),
-                                            };
-                                            this.wizard_state = WizardState::Connecting(desc_for_task, state);
-                                            cx.notify();
-                                        }).ok();
-                                        }
-                                    }).detach();
-                                }))
-                        ).into_any_element()
+                                                this.update(&mut cx, |this, cx| {
+                                                    let state = match result {
+                                                        Ok(model) => ProviderState::Ready { model },
+                                                        Err(e) => ProviderState::Failed(e),
+                                                    };
+                                                    this.wizard_state = WizardState::Connecting(
+                                                        desc_for_task,
+                                                        state,
+                                                    );
+                                                    cx.notify();
+                                                })
+                                                .ok();
+                                            }
+                                        },
+                                    )
+                                    .detach();
+                                },
+                            )))
+                            .into_any_element()
                     }
                     ProviderState::NeedsAuth(methods) => {
                         let mut auth_list = v_flex().gap_2();
@@ -2946,15 +3631,30 @@ impl Chamber {
                                     .border_1()
                                     .border_color(theme::border())
                                     .rounded_md()
-                                    .child(div().text_color(theme::text()).child(method.name.clone()))
-                                    .child(div().text_sm().text_color(theme::text_muted()).child(method.description.clone()))
                                     .child(
-                                        text_button(&format!("auth-btn-{}", method.id), &method.name)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.wizard_state = WizardState::Connecting(desc_inner.clone(), ProviderState::Ready { model: "".into() });
-                                                cx.notify();
-                                            }))
+                                        div().text_color(theme::text()).child(method.name.clone()),
                                     )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme::text_muted())
+                                            .child(method.description.clone()),
+                                    )
+                                    .child(
+                                        text_button(
+                                            &format!("auth-btn-{}", method.id),
+                                            &method.name,
+                                        )
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.wizard_state = WizardState::Connecting(
+                                                    desc_inner.clone(),
+                                                    ProviderState::Ready { model: "".into() },
+                                                );
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    ),
                             );
                         }
                         auth_list.into_any_element()
@@ -2963,59 +3663,70 @@ impl Chamber {
                         let desc_inner = desc.clone();
                         let state_inner = state.clone();
                         let model_inner = model.clone();
-                        v_flex().gap_4()
-                            .child(div().text_color(theme::accent()).child(format!("Ready! Model available: {}", model)))
+                        v_flex()
+                            .gap_4()
                             .child(
-                                text_button("save-provider", "Save Provider")
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.providers.push(ConfiguredQuark {
-                                            id: desc_inner.id.clone(),
-                                            transport: "acp".to_string(),
-                                            state: state_inner.clone()
-                                        });
-                                        
-                                        // An ACP seat, and it carries the command the wizard
-                                        // just proved boots — so the daemon reaches this agent
-                                        // over the same transport the human tested it on.
-                                        this.team.quarks.push(hadron_lattice::Seat {
-                                            id: hadron_lattice::QuarkId::new(&desc_inner.id),
-                                            provider: desc_inner.id.clone(),
-                                            model: model_inner.clone(),
-                                            flavor: hadron_lattice::Flavor::Worker, // default flavor
-                                            transport: hadron_lattice::Transport::Acp,
-                                            command: Some(hadron_lattice::AcpCommand {
-                                                program: desc_inner.command.clone(),
-                                                args: desc_inner.args.clone(),
-                                            }),
-                                            // A seat the human just proved and saved is on.
-                                            enabled: true,
-                                        });
-                                        if let Some(team_path) = hadron_lattice::team_for_field(&this.path) {
-                                            let _ = hadron_lattice::save_team(&team_path, &this.team);
-                                        }
-
-                                        this.wizard_state = WizardState::None;
-                                        cx.notify();
-                                    }))
+                                div()
+                                    .text_color(theme::accent())
+                                    .child(format!("Ready! Model available: {}", model)),
                             )
+                            .child(text_button("save-provider", "Save Provider").on_click(
+                                cx.listener(move |this, _, window, cx| {
+                                    this.providers.push(ConfiguredQuark {
+                                        id: desc_inner.id.clone(),
+                                        transport: "acp".to_string(),
+                                        state: state_inner.clone(),
+                                    });
+
+                                    // An ACP seat, and it carries the command the wizard
+                                    // just proved boots — so the daemon reaches this agent
+                                    // over the same transport the human tested it on.
+                                    this.team.quarks.push(hadron_lattice::Seat {
+                                        id: hadron_lattice::QuarkId::new(&desc_inner.id),
+                                        provider: desc_inner.id.clone(),
+                                        model: model_inner.clone(),
+                                        flavor: hadron_lattice::Flavor::Worker, // default flavor
+                                        transport: hadron_lattice::Transport::Acp,
+                                        command: Some(hadron_lattice::AcpCommand {
+                                            program: desc_inner.command.clone(),
+                                            args: desc_inner.args.clone(),
+                                        }),
+                                        // A seat the human just proved and saved is on.
+                                        enabled: true,
+                                    });
+                                    if let Some(team_path) =
+                                        hadron_lattice::team_for_field(&this.path)
+                                    {
+                                        let _ = hadron_lattice::save_team(&team_path, &this.team);
+                                    }
+
+                                    this.wizard_state = WizardState::None;
+                                    cx.notify();
+                                }),
+                            ))
                             .into_any_element()
                     }
-                    ProviderState::Failed(err) => {
-                        div().text_color(theme::text_secondary()).child(err.clone()).into_any_element()
-                    }
+                    ProviderState::Failed(err) => div()
+                        .text_color(theme::text_secondary())
+                        .child(err.clone())
+                        .into_any_element(),
                 };
 
                 v_flex()
                     .size_full()
                     .gap_4()
+                    .child(text_button("back-presets", "← Back").on_click(cx.listener(
+                        |this, _, window, cx| {
+                            this.wizard_state = WizardState::PickPreset;
+                            cx.notify();
+                        },
+                    )))
                     .child(
-                        text_button("back-presets", "← Back")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.wizard_state = WizardState::PickPreset;
-                                cx.notify();
-                            }))
+                        div()
+                            .text_lg()
+                            .text_color(theme::text())
+                            .child(format!("Connecting to {}", desc.name)),
                     )
-                    .child(div().text_lg().text_color(theme::text()).child(format!("Connecting to {}", desc.name)))
                     .child(state_ui)
             }
         }
@@ -3139,15 +3850,21 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
         format!("{} · {}", cap(&r.provider), cap(&r.model)).into()
     };
 
-    let detail_2: SharedString = if flavor_str.is_empty() {
-        format!("{} tokens", tokens_str).into()
+    let unknown_str = if r.unknown_turns > 0 {
+        format!(" (+{} turns of unknown spend)", r.unknown_turns)
     } else {
-        format!("{} · {} tokens", flavor_str, tokens_str).into()
+        "".to_string()
+    };
+
+    let detail_2: SharedString = if flavor_str.is_empty() {
+        format!("{} tokens{}", tokens_str, unknown_str).into()
+    } else {
+        format!("{} · {} tokens{}", flavor_str, tokens_str, unknown_str).into()
     };
 
     let is_excited = r.state == hadron_lattice::QuarkState::Excited;
     let dot_color = theme::presence(r.state);
-    
+
     let dot = div()
         .absolute()
         .bottom_0()
@@ -3165,8 +3882,9 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
             move |div, delta| {
                 let v: f32 = 0.3 + (delta * std::f32::consts::PI * 2.0).sin() * 0.7;
                 div.opacity(v.max(0.3_f32))
-            }
-        ).into_any_element()
+            },
+        )
+        .into_any_element()
     } else {
         dot.into_any_element()
     };
@@ -3184,7 +3902,7 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
                 .relative()
                 .mt_1()
                 .child(identity_avatar(id, 28.0))
-                .child(dot)
+                .child(dot),
         )
         .child(
             v_flex()
@@ -3229,7 +3947,10 @@ fn settings_field(label: &'static str, content: gpui::AnyElement) -> impl IntoEl
 }
 
 /// A small, subtle text button for secondary actions (caller attaches on_click).
-fn text_button(id: impl Into<gpui::SharedString>, label: impl Into<gpui::SharedString>) -> gpui::Stateful<gpui::Div> {
+fn text_button(
+    id: impl Into<gpui::SharedString>,
+    label: impl Into<gpui::SharedString>,
+) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id.into())
         .font_family("Inter")
@@ -3257,7 +3978,11 @@ fn next_mode(mode: Mode) -> Mode {
 /// renders outlined.
 fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
     if !is_override {
-        return Tag::secondary().small().outline().child(div().font_family("Inter").child("DEFAULT")).into_any_element();
+        return Tag::secondary()
+            .small()
+            .outline()
+            .child(div().font_family("Inter").child("DEFAULT"))
+            .into_any_element();
     }
     let (tag, label): (Tag, &'static str) = match mode {
         Mode::Ask => (Tag::secondary(), "ASK"),
@@ -3265,7 +3990,10 @@ fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
         Mode::Auto => (Tag::warning(), "AUTO"),
         Mode::Bypass => (Tag::danger(), "BYPASS"),
     };
-    tag.small().outline().child(div().font_family("Inter").child(label.to_string())).into_any_element()
+    tag.small()
+        .outline()
+        .child(div().font_family("Inter").child(label.to_string()))
+        .into_any_element()
 }
 
 /// An overall swarm-status badge for the status bar. Priority: a blocked/error
@@ -3288,7 +4016,9 @@ fn swarm_status_tag(view: &ChamberView) -> impl IntoElement {
     } else {
         (Tag::success(), "ready")
     };
-    tag.small().outline().child(div().font_family("Inter").child(label))
+    tag.small()
+        .outline()
+        .child(div().font_family("Inter").child(label))
 }
 
 /// A muted placeholder line shown when a tab view has nothing to render.
@@ -3376,18 +4106,28 @@ fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
 /// If rows ever get reordered or filtered, key on a stable message id instead — the
 /// cache would silently stop helping, and no test would catch the regression.
 impl Chamber {
-    fn markdown_body(&self, view: &'static str, ix: usize, body: &str, roster: &[crate::model::RosterRow]) -> impl IntoElement {
+    fn markdown_body(
+        &self,
+        view: &'static str,
+        ix: usize,
+        body: &str,
+        roster: &[crate::model::RosterRow],
+    ) -> impl IntoElement {
         let mut cache = self.parsed_markdown.borrow_mut();
-        let html = cache.entry(ix).or_insert_with(|| {
-            let options = markdown::Options {
-                compile: markdown::CompileOptions {
-                    allow_dangerous_html: true,
-                    ..markdown::CompileOptions::default()
-                },
-                parse: markdown::ParseOptions::gfm(),
-            };
-            markdown::to_html_with_options(&color_mentions(body, roster), &options).unwrap_or_default()
-        }).clone();
+        let html = cache
+            .entry(ix)
+            .or_insert_with(|| {
+                let options = markdown::Options {
+                    compile: markdown::CompileOptions {
+                        allow_dangerous_html: true,
+                        ..markdown::CompileOptions::default()
+                    },
+                    parse: markdown::ParseOptions::gfm(),
+                };
+                markdown::to_html_with_options(&color_mentions(body, roster), &options)
+                    .unwrap_or_default()
+            })
+            .clone();
 
         div().text_size(px(13.65)).child(
             gpui_component::text::TextView::html((view, ix), html)
@@ -3396,7 +4136,13 @@ impl Chamber {
         )
     }
 
-    fn chat_message_row(&self, id: &ResolvedIdentity, m: &MessageRow, ix: usize, roster: &[crate::model::RosterRow]) -> impl IntoElement {
+    fn chat_message_row(
+        &self,
+        id: &ResolvedIdentity,
+        m: &MessageRow,
+        ix: usize,
+        roster: &[crate::model::RosterRow],
+    ) -> impl IntoElement {
         h_flex()
             .items_start()
             .gap_2p5()
@@ -3427,7 +4173,10 @@ impl Chamber {
                                     let fresh = u.spend.fresh().unwrap_or(0);
                                     let cached = u.spend.cached().unwrap_or(0);
                                     if cached > 0 {
-                                        parts.push(format!("spent: {} fresh, {} cached", fresh, cached));
+                                        parts.push(format!(
+                                            "spent: {} fresh, {} cached",
+                                            fresh, cached
+                                        ));
                                     } else {
                                         parts.push(format!("spent: {} fresh", fresh));
                                     }
@@ -3439,7 +4188,7 @@ impl Chamber {
                                         div()
                                             .text_xs()
                                             .text_color(theme::text_muted())
-                                            .child(format!("({})", parts.join(" | ")))
+                                            .child(format!("({})", parts.join(" | "))),
                                     )
                                 }
                             }),
@@ -3448,7 +4197,12 @@ impl Chamber {
             )
     }
 
-    fn message_row(&self, m: &MessageRow, ix: usize, roster: &[crate::model::RosterRow]) -> impl IntoElement {
+    fn message_row(
+        &self,
+        m: &MessageRow,
+        ix: usize,
+        roster: &[crate::model::RosterRow],
+    ) -> impl IntoElement {
         let header = match &m.to {
             Some(to) => format!("{} → {}  ·  {}", m.from, to, m.kind_label),
             None => format!("{}  ·  {}", m.from, m.kind_label),
@@ -3486,7 +4240,7 @@ impl Chamber {
                                 div()
                                     .text_xs()
                                     .text_color(theme::text_muted())
-                                    .child(format!("({})", parts.join(" | ")))
+                                    .child(format!("({})", parts.join(" | "))),
                             )
                         }
                     }),
@@ -3555,7 +4309,8 @@ pub fn run(field_path: Option<String>) {
             // window frame (crate::window_frame) shows the shadow through the
             // corners instead of a square fill.
             t.tokens.background = gpui::hsla(0.0, 0.0, 0.0, 0.0).into();
-            t.font_family = "Cascadia Code, Inter, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
+            t.font_family =
+                "Cascadia Code, Inter, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
         }
         cx.bind_keys([
             KeyBinding::new("ctrl-shift-p", TogglePalette, Some(KEY_CONTEXT)),
