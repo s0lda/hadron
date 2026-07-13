@@ -25,8 +25,10 @@ use hadron_gluon::adapter::registry;
 use hadron_gluon::engine::Engine;
 use hadron_gluon::field::read_events;
 use hadron_gluon::quark::Quark;
+use hadron_gluon::reseat;
 use hadron_lattice::{
-    load_team, team_config_path, EnergyState, Flavor, Projection, QuarkId, Team, TurnOutcome,
+    load_team, parse_team, team_config_path, EnergyState, Flavor, Projection, QuarkId, Team,
+    TurnOutcome,
 };
 
 /// A deterministic stand-in for a real adapter: it acknowledges whatever task it
@@ -150,6 +152,63 @@ fn seat_quarks(team: &Team) -> (Vec<Box<dyn Quark>>, &'static str) {
     (quarks, "live mode (real CLIs — real budget)")
 }
 
+/// Apply a [`reseat::ReseatPlan`] to the live engine, and return the team that is
+/// **actually seated** afterwards.
+///
+/// The return value is the seated truth, not the requested one: a seat whose adapter
+/// fails to build (an unknown provider, an ACP seat with no boot command) is reported
+/// and left out, so the daemon's idea of the running team never claims a quark that
+/// isn't there. If it did, the seat would never be retried and `@its-id` would resolve
+/// to nobody — the exact failure this whole mechanism exists to end.
+fn apply_reseat(engine: &mut Engine, running: &Team, plan: &reseat::ReseatPlan) -> Team {
+    let mut out = Team::default();
+
+    // Everything the plan does not mention keeps its exact quark instance — and, for an
+    // ACP seat, its live session. This is the whole point of reconciling.
+    for seat in &running.quarks {
+        let touched =
+            plan.removed.contains(&seat.id) || plan.replaced.iter().any(|r| r.id == seat.id);
+        if !touched {
+            out.quarks.push(seat.clone());
+        }
+    }
+
+    for id in &plan.removed {
+        if engine.unseat(id) {
+            eprintln!("  unseated {}", id.as_str());
+        }
+    }
+
+    for seat in plan.added.iter().chain(plan.replaced.iter()) {
+        match registry::build_seat(seat) {
+            Ok(q) => {
+                engine.seat(q);
+                out.quarks.push(seat.clone());
+                eprintln!(
+                    "  seated {} — {} · {} ({:?})",
+                    seat.id.as_str(),
+                    seat.provider,
+                    seat.model,
+                    seat.flavor
+                );
+            }
+            Err(e) => {
+                // Not fatal, and deliberately not silent: the swarm keeps running with
+                // the seats it has, and the human is told which one did not take.
+                eprintln!("  ⚠ could not seat {}: {e:#}", seat.id.as_str());
+                // A *replacement* that failed to build never displaced anything — the
+                // old quark is still seated and still answering. Record the OLD seat, or
+                // the daemon's picture of the swarm would disagree with the swarm.
+                if let Some(old) = running.get(&seat.id) {
+                    eprintln!("    → {} keeps its previous seat", seat.id.as_str());
+                    out.quarks.push(old.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
 #[tokio::main]
 async fn main() {
     let Some(args) = parse_args() else {
@@ -181,6 +240,17 @@ async fn main() {
     );
     eprintln!("  address quarks from the chamber: '@<id> …'. Ctrl-C to stop.");
 
+    // The team the engine is actually running, and the exact bytes we last read from
+    // `team.json`. Change is detected on the *bytes*, not on the mtime: a coarse
+    // filesystem clock can hide a fast save, and the file is tiny enough that reading it
+    // once per interval costs nothing.
+    // True when the roster is the DemoQuark pair rather than anything from a file.
+    let mut mock_mode = team.is_empty();
+    let mut running_team = team;
+    let mut last_seen: Option<String> = team_path
+        .as_deref()
+        .and_then(|p| std::fs::read_to_string(p).ok());
+
     loop {
         let before = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
         // Mock quarks never error; a real daemon would decide abort-vs-continue here.
@@ -191,8 +261,76 @@ async fn main() {
         if after > before {
             eprintln!("gluon: appended {} event(s) → {after} total", after - before);
         }
+
+        // ---- THE SAFE POINT ---------------------------------------------------
+        //
+        // `run_until_quiesce` has returned, and it only returns when the field has no
+        // pending work AND its `JoinSet` is empty — every turn it spawned has been
+        // *joined*, not merely abandoned. So right here, and nowhere else, there is
+        // provably no quark mid-turn and no turn task holding a clone of a quark's
+        // `Arc`. Re-seating anywhere else could tear an agent out from under a running
+        // turn; that is why `Engine::seat`/`unseat` take `&mut self`, which the borrow
+        // checker will not hand us while a turn is in flight.
+        if let Some(path) = team_path.as_deref() {
+            if let Some(text) = poll_team_file(path, &mut last_seen) {
+                match parse_team(&text) {
+                    // A `team.json` caught mid-write parses as garbage. Keep the swarm
+                    // exactly as it is and say so — the alternative (treating an
+                    // unparseable file as an empty team) would unseat everybody.
+                    Err(e) => eprintln!(
+                        "gluon: team.json changed but does not parse — keeping the running roster: {e}"
+                    ),
+                    // A team with nobody in it is never applied. It is almost certainly a
+                    // mistake, and obeying it would leave a swarm the human cannot talk
+                    // to and cannot fix from the chamber.
+                    Ok(desired) if desired.is_empty() => eprintln!(
+                        "gluon: team.json now seats nobody — keeping the running roster ({} quark(s))",
+                        engine.seated_count()
+                    ),
+                    Ok(desired) => {
+                        // Booted with no usable team.json ⇒ the roster is the DemoQuark
+                        // pair. Those answer to no `Seat`, so no team-vs-team diff can
+                        // see them: evict them by hand the first time a real team lands,
+                        // or a fake '@claude' outlives the real one forever.
+                        if mock_mode {
+                            for id in engine.seated_ids() {
+                                if desired.get(&id).is_none() && engine.unseat(&id) {
+                                    eprintln!("  unseated mock {}", id.as_str());
+                                }
+                            }
+                            mock_mode = false;
+                        }
+                        let plan = reseat::plan(&running_team, &desired);
+                        if !plan.is_empty() {
+                            eprintln!("gluon: team.json changed — re-seating [{}]", plan.summary());
+                            running_team = apply_reseat(&mut engine, &running_team, &plan);
+                            eprintln!(
+                                "gluon: roster is now {} quark(s)",
+                                engine.seated_count()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         tokio::time::sleep(args.interval).await;
     }
+}
+
+/// Read `team.json` and return its text **only if it differs from the last read**.
+///
+/// `last_seen` is updated on every successful read, good content or bad. That is
+/// deliberate: if it tracked the last *valid* content instead, a file left malformed
+/// would be re-read, re-rejected and re-logged on every tick, forever. The human gets
+/// one warning per change, which is what a warning is worth.
+fn poll_team_file(path: &Path, last_seen: &mut Option<String>) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    if last_seen.as_deref() == Some(text.as_str()) {
+        return None;
+    }
+    *last_seen = Some(text.clone());
+    Some(text)
 }
 
 #[cfg(test)]
@@ -221,6 +359,50 @@ mod tests {
         let sibling = hadron.join("team.json");
         std::fs::write(&sibling, "{}").unwrap();
         assert_eq!(resolve_team_path(None, &field), Some(sibling));
+    }
+
+    /// Change detection is on the bytes, and it fires **once** per change.
+    #[test]
+    fn the_team_file_is_only_reported_when_it_actually_changes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("team.json");
+        std::fs::write(&path, "{\"quarks\":[]}").unwrap();
+
+        let mut last_seen = None;
+        assert!(poll_team_file(&path, &mut last_seen).is_some(), "first read is a change");
+        assert!(poll_team_file(&path, &mut last_seen).is_none(), "unchanged file must be silent");
+
+        std::fs::write(&path, "{\"quarks\":[],\"x\":1}").unwrap();
+        assert!(poll_team_file(&path, &mut last_seen).is_some(), "a real edit must be seen");
+        assert!(poll_team_file(&path, &mut last_seen).is_none());
+    }
+
+    /// A malformed file must not re-warn on every tick — `last_seen` tracks the last
+    /// bytes *read*, not the last bytes that parsed.
+    #[test]
+    fn a_file_left_malformed_is_reported_once_not_forever() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("team.json");
+        std::fs::write(&path, "{ this is not json").unwrap();
+
+        let mut last_seen = None;
+        let text = poll_team_file(&path, &mut last_seen).expect("the change is seen");
+        assert!(parse_team(&text).is_err(), "and it is rejected, not read as an empty team");
+        assert!(
+            poll_team_file(&path, &mut last_seen).is_none(),
+            "the same broken bytes must not be re-reported every interval"
+        );
+    }
+
+    /// The torn-write guard, stated as the property that matters: a half-written
+    /// `team.json` is an ERROR, never an empty team. If it parsed as empty, the daemon
+    /// would unseat the entire swarm mid-save.
+    #[test]
+    fn a_truncated_team_file_is_an_error_and_not_an_empty_team() {
+        let full = "{\"quarks\":[{\"id\":\"opus\",\"provider\":\"claude\",\"model\":\"opus\",\"flavor\":\"orchestrator\"}]}";
+        let torn = &full[..full.len() / 2];
+        assert!(parse_team(torn).is_err(), "a torn read must not be mistaken for 'nobody is seated'");
+        assert_eq!(parse_team(full).unwrap().quarks.len(), 1);
     }
 
     #[test]
