@@ -16,6 +16,7 @@ pub struct MessageRow {
     pub body: String,
     pub kind_label: &'static str,
     pub usage: Option<hadron_lattice::Usage>,
+    pub ts: chrono::DateTime<chrono::Utc>,
 }
 
 /// One roster entry: a quark, its latest lifecycle state, its effective
@@ -46,6 +47,8 @@ pub struct QuarkStats {
     pub cached: u32,
     pub context: Option<hadron_lattice::ContextUsage>,
     pub quota: Vec<hadron_lattice::QuotaBucket>,
+    pub first_seen: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_active: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Per-quark session statistics plus the totals that are meaningful to add.
@@ -87,6 +90,11 @@ impl ChamberView {
                 continue; // human, gluon, or an actor with no seat
             };
             let s = stats.entry(row.id.as_str()).or_default();
+
+            if s.first_seen.is_none() {
+                s.first_seen = Some(m.ts);
+            }
+            s.last_active = Some(m.ts);
 
             if m.kind_label == "message" {
                 s.turns += 1;
@@ -175,6 +183,7 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
         body,
         kind_label,
         usage: e.turn.and_then(|t| turn_usages.get(&t.to_string()).cloned()).or_else(|| e.usage.clone()),
+        ts: e.ts,
     }
 }
 
