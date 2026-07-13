@@ -717,15 +717,38 @@ impl Engine {
             .map(|body| parse_addressee(body, &self.roster, Some(target)).is_none())
             .unwrap_or(true);
 
-        if outcome.used_tokens > 0 {
+        // THE ONE TOTALLER. No adapter computes this; they report components and
+        // `TokenSpend::fresh` sums the comparable ones (input + output, cache
+        // excluded). `None` means the provider said nothing about tokens — unknown,
+        // which is not the same as zero, so we report nothing rather than a hollow 0.
+        let fresh = outcome.usage.spend.fresh();
+
+        // The event fires when there is *anything* to say — spend, context, or quota.
+        // It used to fire only on `used_tokens > 0`, which meant a provider that
+        // reported context but no tokens had its telemetry silently dropped.
+        if fresh.unwrap_or(0) > 0 || !outcome.usage.is_empty() {
             if let Some(ledger) = &self.ledger {
-                ledger.record_usage(target, outcome.used_tokens)?;
+                // The depletion gate reads this ledger (`is_depleted`). It is fed the
+                // cache-excluded figure on purpose: the old cross-provider sum would
+                // have tripped an ACP quark ~200x early on cache reads it never paid
+                // for. See `the-depletion-gate-is-a-loaded-gun` in the shared memory.
+                if let Some(t) = fresh.filter(|t| *t > 0) {
+                    ledger.record_usage(target, t)?;
+                }
             }
-            self.append(Event::new(
-                Actor::Quark(target.clone()),
-                None,
-                Kind::EnergyReport { used_tokens: outcome.used_tokens },
-            ))
+            // `used_tokens` stays a `u32` on the Kind because the chamber matches
+            // `Kind` exhaustively with no wildcard arm (see the note on `Event.usage`
+            // in `event.rs`): widening the variant would break a crate this one does
+            // not own. The components ride on the envelope's `usage` instead, which is
+            // additive and which every existing reader already ignores safely.
+            self.append(
+                Event::new(
+                    Actor::Quark(target.clone()),
+                    None,
+                    Kind::EnergyReport { used_tokens: fresh.unwrap_or(0) },
+                )
+                .with_usage(outcome.usage.clone()),
+            )
             .await?;
         }
 
@@ -1302,11 +1325,10 @@ mod tests {
             self.tasks.lock().unwrap().push(turn.task.clone());
             self.calls += 1;
             if self.calls == 1 {
-                Ok(TurnOutcome { message: None, used_tokens: 0, permission: Some(self.ask.clone()), usage: Default::default() })
+                Ok(TurnOutcome { message: None, permission: Some(self.ask.clone()), usage: Default::default() })
             } else {
                 Ok(TurnOutcome {
                     message: Some(self.reply.clone()),
-                    used_tokens: 0,
                     permission: None,
                     usage: Default::default(),
                 })
@@ -1362,7 +1384,7 @@ mod tests {
         }
         async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
             self.seen.lock().unwrap().push(turn.mode);
-            Ok(TurnOutcome { message: Some("ok".into()), used_tokens: 0, permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some("ok".into()), permission: None, usage: Default::default() })
         }
     }
 
@@ -1518,7 +1540,6 @@ mod tests {
                 }
                 Ok(TurnOutcome {
                     message: Some("back from the dead".into()),
-                    used_tokens: 0,
                     permission: None,
                     usage: Default::default(),
                 })
@@ -1663,7 +1684,7 @@ mod tests {
                 self.seen.lock().unwrap().push(format!("{}:{}", self.id, turn.task));
                 // Reply with no @mention → hand back, so the loop advances to the
                 // next unserved addressee rather than a hand-off chain.
-                Ok(TurnOutcome { message: Some(format!("{} done", self.id)), used_tokens: 0, permission: None, usage: Default::default() })
+                Ok(TurnOutcome { message: Some(format!("{} done", self.id)), permission: None, usage: Default::default() })
             }
         }
 
@@ -1905,7 +1926,7 @@ mod tests {
             }
             async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
                 assert!(turn.nucleus_digest.contains("## map.md"));
-                Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0, permission: None, usage: Default::default() })
+                Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
             }
         }
 
@@ -1989,7 +2010,7 @@ mod tests {
             }
             async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
                 self.seen.lock().unwrap().push(turn.task.clone());
-                Ok(TurnOutcome { message: Some("I've got it.".into()), used_tokens: 0, permission: None, usage: Default::default() })
+                Ok(TurnOutcome { message: Some("I've got it.".into()), permission: None, usage: Default::default() })
             }
         }
         let seen = Arc::new(Mutex::new(vec![]));
@@ -2080,7 +2101,18 @@ mod tests {
             fn energy(&self) -> hadron_lattice::EnergyState { hadron_lattice::EnergyState::Available }
             async fn excite(&mut self, _turn: Projection) -> anyhow::Result<hadron_lattice::TurnOutcome> {
                 // Consume 100 tokens per turn
-                Ok(hadron_lattice::TurnOutcome { message: None, used_tokens: 100, permission: None, usage: Default::default() })
+                Ok(hadron_lattice::TurnOutcome {
+                    message: None,
+                    permission: None,
+                    usage: hadron_lattice::Usage {
+                        spend: hadron_lattice::TokenSpend {
+                            input: Some(60),
+                            output: Some(40),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                })
             }
         }
 
@@ -2184,7 +2216,6 @@ mod tests {
                 assert!(!turn.memory_truncated, "this index is two lines long");
                 Ok(TurnOutcome {
                     message: Some("done".into()),
-                    used_tokens: 0,
                     permission: None,
                     usage: Default::default(),
                 })
@@ -2299,7 +2330,7 @@ mod tests {
                     turn.available_invariants,
                     vec!["always".to_string(), "rust_style".to_string(), "unrequested".to_string()]
                 );
-                Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0, permission: None, usage: Default::default() })
+                Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
             }
         }
 
@@ -2341,7 +2372,7 @@ mod tests {
             self.running.store(true, Ordering::SeqCst);
             tokio::time::sleep(self.hold).await;
             self.running.store(false, Ordering::SeqCst);
-            Ok(TurnOutcome { message: Some("done".into()), used_tokens: 0, permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
         }
     }
 
@@ -2492,7 +2523,6 @@ mod tests {
             std::fs::write(turn.cwd.join(self.file), format!("from {}\n", self.id.as_str()))?;
             Ok(TurnOutcome {
                 message: Some(format!("{} wrote {}", self.id.as_str(), self.file)),
-                used_tokens: 0,
                 permission: None,
                 usage: Default::default(),
             })

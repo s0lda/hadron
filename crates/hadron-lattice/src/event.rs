@@ -465,9 +465,10 @@ mod event_tests {
     /// An energy report carries the turn's context + quota, and survives a round trip.
     #[test]
     fn energy_report_carries_usage_and_round_trips() {
-        use crate::{ContextUsage, QuotaBucket, Usage};
+        use crate::{ContextUsage, QuotaBucket, TokenSpend, Usage};
 
         let usage = Usage {
+            spend: TokenSpend::default(),
             context: Some(ContextUsage {
                 used_tokens: 635,
                 context_window_size: 1_048_576,
@@ -509,7 +510,7 @@ mod event_tests {
         let ev = Event::new(
             Actor::Quark(QuarkId::new("agy")),
             None,
-            Kind::EnergyReport { used_tokens: t.used_tokens },
+            Kind::EnergyReport { used_tokens: t.usage.spend.fresh().unwrap_or(0) },
         )
         .with_usage(t.usage);
 
@@ -542,6 +543,101 @@ mod event_tests {
         let ev: Event = serde_json::from_str(legacy).unwrap();
         assert_eq!(ev.usage, None);
         assert_eq!(ev.kind, Kind::EnergyReport { used_tokens: 42 });
+    }
+
+    /// **The history must not break.** `field.jsonl` is an append-only log, and Jake's
+    /// live one holds 70 `energy_report` events written in the OLD shape — a bare
+    /// `used_tokens` and no `usage` at all. Widening the event must keep reading every
+    /// one of them, or the token split silently eats his history.
+    ///
+    /// These four lines are copied **verbatim** out of the live
+    /// `.hadron/field.jsonl`, not hand-written to match the parser. (They have to be
+    /// embedded: `.hadron/` is gitignored, so a test that only read the real file
+    /// would silently pass by never running anywhere else — see
+    /// [`the_live_field_still_parses`], which does read it, when it is there.)
+    #[test]
+    fn real_legacy_energy_reports_from_the_live_field_still_parse() {
+        let real_lines = [
+            r#"{"v":1,"id":"01KXANDETK9A8MBT5YPZKQYQXK","ts":"2026-07-12T07:59:35.251134877Z","from":"opus","to":null,"kind":"energy_report","used_tokens":66}"#,
+            r#"{"v":1,"id":"01KXANF0Q8HBFFAT3V5G43DJXZ","ts":"2026-07-12T08:00:26.344776590Z","from":"opus","to":null,"kind":"energy_report","used_tokens":202}"#,
+            // The 298k turn that started all of this — the old ACP total, cache included.
+            r#"{"v":1,"id":"01KXEKRWQXCMV9CAW3E11WSH3F","ts":"2026-07-13T20:47:50.525410311Z","from":"acp-claude","to":null,"kind":"energy_report","used_tokens":298033}"#,
+            r#"{"v":1,"id":"01KXEKMHH7HDRVK54X4JED1JHH","ts":"2026-07-13T20:45:27.975116252Z","from":"opus","to":null,"kind":"energy_report","used_tokens":2318}"#,
+        ];
+
+        let want = [66u32, 202, 298_033, 2318];
+        for (line, expect) in real_lines.iter().zip(want) {
+            let ev: Event = serde_json::from_str(line).expect("a real logged line must still parse");
+            assert_eq!(ev.kind, Kind::EnergyReport { used_tokens: expect });
+            // The old lines carry no components, and that is honest: we never knew them.
+            assert_eq!(ev.usage, None, "a legacy line has no telemetry to invent");
+        }
+    }
+
+    /// A new-shape event carries the components on the envelope while keeping the
+    /// legacy `used_tokens` on the payload — so an old reader (the chamber, which
+    /// matches `Kind` exhaustively) still sees a number it understands, and a new one
+    /// can tell fresh work from cache traffic.
+    #[test]
+    fn a_new_energy_report_carries_components_and_stays_readable_by_old_readers() {
+        use crate::{TokenSpend, Usage};
+
+        // acp-claude's real turn-1 numbers.
+        let spend = TokenSpend {
+            input: Some(8),
+            output: Some(2_390),
+            cache_read: Some(190_454),
+            cache_write: Some(44_338),
+        };
+        let fresh = spend.fresh().unwrap();
+        assert_eq!(fresh, 2_398, "the comparable unit: cache is NOT in here");
+
+        let ev = Event::new(
+            Actor::Quark(QuarkId::new("acp-claude")),
+            None,
+            Kind::EnergyReport { used_tokens: fresh },
+        )
+        .with_usage(Usage { spend: spend.clone(), ..Default::default() });
+
+        let line = serde_json::to_string(&ev).unwrap();
+        let back: Event = serde_json::from_str(&line).unwrap();
+
+        // The legacy payload field is still there, and now it means something
+        // comparable to what a CLI quark reports — not a cache-inflated total.
+        assert_eq!(back.kind, Kind::EnergyReport { used_tokens: 2_398 });
+        // And the cache is carried, not discarded: this is what makes a big number
+        // explicable instead of alarming.
+        let got = back.usage.expect("components ride on the envelope").spend;
+        assert_eq!(got, spend);
+        assert_eq!(got.cached(), Some(234_792));
+    }
+
+    /// Parse Jake's **actual** log, every line of it, if it is present. This is the
+    /// one that would catch a shape we never thought to embed above. It is skipped
+    /// (not failed) when `.hadron/` is absent, because it is gitignored and will not
+    /// exist in a fresh clone — the embedded test above is what runs there.
+    #[test]
+    fn the_live_field_still_parses() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.hadron/field.jsonl");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            eprintln!("skipped: no live field at {}", path.display());
+            return;
+        };
+
+        let mut energy = 0usize;
+        for (n, line) in text.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let ev: Event = serde_json::from_str(line)
+                .unwrap_or_else(|e| panic!("live field line {} no longer parses: {e}", n + 1));
+            if matches!(ev.kind, Kind::EnergyReport { .. }) {
+                energy += 1;
+            }
+        }
+        assert!(energy > 0, "the live field should hold energy reports; found none");
+        eprintln!("live field: {} lines, {energy} energy_report", text.lines().count());
     }
 
     #[test]
