@@ -17,18 +17,35 @@ pub struct Projection {
     pub available_invariants: Vec<String>,
     /// Relevant slice of the project SSOT (nucleus). v1: may be empty.
     pub nucleus_digest: String,
-    /// **What this quark has learned before**, carried across turns and sessions.
+    /// **What the swarm has learned**, carried across turns and sessions — the memory
+    /// INDEX, and the only part of memory that is loaded every turn.
     ///
     /// The difference between a quark that repeats yesterday's mistake and one that
     /// doesn't is not the model — it is whether anything persisted. A quark with no
-    /// memory re-derives the same wrong conclusion every session, forever.
+    /// memory re-derives the same wrong conclusion every session, forever. It is one
+    /// file for the whole swarm, not one per quark: a lesson agy paid for is a lesson
+    /// opus should not have to pay for again.
+    ///
+    /// It is an INDEX: one short line per lesson, each optionally naming a note that
+    /// holds the long version. The index is always in the prompt, so it must stay
+    /// small; the notes are read on demand, by the quark, only when the line it just
+    /// read turns out to matter.
     #[serde(default)]
     pub memory: String,
-    /// Where to WRITE that memory. Non-optional and always populated: telling a quark
-    /// to "remember this" without telling it the path is an instruction it cannot obey,
+    /// Whether the index was cut to fit the budget. A memory silently dropped for size
+    /// is the failure mode we keep killing everywhere else: the quark cannot tell
+    /// "never learned" from "not shown".
+    #[serde(default)]
+    pub memory_truncated: bool,
+    /// Where to WRITE the index. Non-optional and always populated: telling a quark to
+    /// "remember this" without telling it the path is an instruction it cannot obey,
     /// and it will either invent a path or silently do nothing.
     #[serde(default)]
     pub memory_path: std::path::PathBuf,
+    /// Where the long-form notes live. The index points into this directory; the quark
+    /// opens a note with its own tools when it needs the detail.
+    #[serde(default)]
+    pub memory_notes_dir: std::path::PathBuf,
     /// Who exists, their flavor and energy — enables orchestration.
     pub roster: Vec<QuarkCard>,
     /// Recent relevant events. v1: a dumb recent window.
@@ -118,6 +135,8 @@ mod tests {
             field_truncated: false,
             memory: String::new(),
             memory_path: std::path::PathBuf::new(),
+            memory_truncated: false,
+            memory_notes_dir: std::path::PathBuf::new(),
             git_diff: String::new(),
             isolated: true,
             cwd: std::path::PathBuf::from("/tmp/wt"),

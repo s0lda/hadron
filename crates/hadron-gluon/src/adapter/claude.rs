@@ -162,6 +162,8 @@ mod tests {
             field_truncated: false,
             memory: String::new(),
             memory_path: std::path::PathBuf::new(),
+            memory_truncated: false,
+            memory_notes_dir: std::path::PathBuf::new(),
             git_diff: String::new(),
             cwd,
             mode,

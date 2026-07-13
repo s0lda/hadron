@@ -68,23 +68,40 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     // section, even when empty — a quark that is never shown its memory file does not
     // know it HAS one, and will not write to it.
     if !projection.memory_path.as_os_str().is_empty() {
-        p.push_str("# What you have learned (your memory)\n");
+        p.push_str("# What the swarm has learned (memory index)\n");
         if projection.memory.trim().is_empty() {
-            p.push_str("_Empty — you have not recorded anything here yet._\n\n");
+            p.push_str("_Empty — nothing has been recorded here yet._\n\n");
         } else {
             p.push_str(projection.memory.trim());
             p.push_str("\n\n");
         }
+        if projection.memory_truncated {
+            p.push_str(
+                "**The index above is CUT — it did not fit the budget, and lessons are \
+                 missing from it.** Do not read the end of it as the end of what is known. \
+                 It has stopped being an index: prune it to one line per lesson and move \
+                 the long versions into notes.\n\n",
+            );
+        }
         p.push_str(&format!(
-            "This is **yours**, and it persists across turns and sessions. It lives at \
-             `{}`. When you learn something this turn that you would want to know next \
-             time — a fact about this codebase that cost you effort to establish, a rule \
-             that turned out to be false, a mistake worth not repeating — **append it to \
-             that file** (create it if it does not exist). Keep it short and factual; it \
-             is handed back to you verbatim on every future turn, so noise is a tax you \
-             pay forever. Do not record what the code already says: record what you could \
-             only learn by getting it wrong.\n\n",
-            projection.memory_path.display()
+            "This memory is **shared by every quark**, and it persists across turns and \
+             sessions. A lesson one of you paid for is a lesson none of you should pay for \
+             twice, so write for the others, not just for yourself.\n\n\
+             It is an **index**: one short line per lesson, because it is handed to every \
+             quark on every turn and every word in it is a tax paid forever. A line that \
+             needs more than a line names a **note** that holds the long version. The \
+             engine does NOT load the notes — you open one yourself, with your own tools, \
+             on the turn its line turns out to matter.\n\n\
+             - The index lives at `{index}` — append to it (create it if it does not exist).\n\
+             - Notes live in `{notes}/` — one file per lesson, named after its slug.\n\
+             - A line is `- **<slug>** — <the lesson, in one sentence>` and, if it has a \
+             note, ends with ` → `{notes}/<slug>.md`. Many lessons need no note at all.\n\n\
+             Record what you could only learn by getting it wrong: a fact about this \
+             codebase that cost you effort, a rule you were given that turned out to be \
+             false, a mistake worth not repeating. Do not record what the code already \
+             says — it will still say it tomorrow.\n\n",
+            index = projection.memory_path.display(),
+            notes = projection.memory_notes_dir.display()
         ));
     }
 
@@ -283,6 +300,8 @@ mod tests {
             field_truncated: false,
             memory: String::new(),
             memory_path: std::path::PathBuf::new(),
+            memory_truncated: false,
+            memory_notes_dir: std::path::PathBuf::new(),
             git_diff: String::new(),
             isolated: true,
             cwd: std::path::PathBuf::from("/repo/.hadron/trees/agy"),
@@ -485,25 +504,44 @@ mod tests {
 
     /// The asymmetry Jake named: one quark arrives with weeks of accumulated context,
     /// another with nothing, and we mistake persistence for intelligence. A quark must
-    /// be shown its memory AND told where to write it — "remember this" without a path
-    /// is an instruction it cannot obey.
+    /// be shown the memory AND told where to write it — "remember this" without a path
+    /// is an instruction it cannot obey. It must also be told where the NOTES are, or
+    /// the index's `→ path` lines point at something it was never told it may open.
     #[test]
-    fn a_quark_is_shown_its_memory_and_told_where_to_write_it() {
+    fn a_quark_is_shown_the_memory_index_and_told_where_to_write_it() {
         let mut proj = projection("x");
-        proj.memory_path = std::path::PathBuf::from("/repo/.hadron/memory/agy.md");
+        proj.memory_path = std::path::PathBuf::from("/repo/.hadron/memory/index.md");
+        proj.memory_notes_dir = std::path::PathBuf::from("/repo/.hadron/memory/notes");
 
         // Empty memory still emits the section — otherwise the quark never learns it HAS one.
         let empty = build(&proj, &QuarkId::new("agy"));
-        assert!(empty.contains("# What you have learned (your memory)"));
-        assert!(empty.contains("you have not recorded anything here yet"));
-        assert!(empty.contains("/repo/.hadron/memory/agy.md"), "it must know the path");
-        assert!(empty.contains("append it to"), "and that writing is its job");
+        assert!(empty.contains("# What the swarm has learned (memory index)"));
+        assert!(empty.contains("nothing has been recorded here yet"));
+        assert!(empty.contains("/repo/.hadron/memory/index.md"), "it must know the path");
+        assert!(empty.contains("/repo/.hadron/memory/notes"), "and where notes live");
+        assert!(empty.contains("shared by every quark"), "and that it is not private");
+        assert!(empty.contains("append to it"), "and that writing is its job");
 
-        // A populated memory comes back verbatim.
-        proj.memory = "The forge crate is sound but has zero consumers.".into();
+        // A populated index comes back verbatim.
+        proj.memory = "- **forge-unwired** — the forge has zero consumers.".into();
         let carried = build(&proj, &QuarkId::new("agy"));
-        assert!(carried.contains("The forge crate is sound but has zero consumers."));
-        assert!(!carried.contains("you have not recorded anything here yet"));
+        assert!(carried.contains("- **forge-unwired** — the forge has zero consumers."));
+        assert!(!carried.contains("nothing has been recorded here yet"));
+        assert!(!carried.contains("index above is CUT"), "it was not truncated");
+    }
+
+    /// A memory cut for size must SAY it was cut. Silent truncation is the failure we
+    /// killed in the field window: the quark cannot tell "never learned" from "not shown"
+    /// and treats the last line it can see as the end of what is known.
+    #[test]
+    fn a_truncated_memory_index_says_so() {
+        let mut proj = projection("x");
+        proj.memory_path = std::path::PathBuf::from("/repo/.hadron/memory/index.md");
+        proj.memory = "- **a** — a lesson.".into();
+        proj.memory_truncated = true;
+
+        let p = build(&proj, &QuarkId::new("agy"));
+        assert!(p.contains("index above is CUT"));
     }
 
     /// No memory path (a mock adapter, an old snapshot) → no section, rather than a

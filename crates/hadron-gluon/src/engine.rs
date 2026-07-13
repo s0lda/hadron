@@ -99,21 +99,49 @@ pub(crate) fn workspace_root_of(field_path: &Path, base: &Path) -> PathBuf {
 /// every quark on every turn, always, with no file to go missing.
 pub const STANDARD_MODEL: &str = include_str!("../invariants/standard_model.md");
 
-/// Where a quark's accumulated memory lives for THIS project: one file per quark,
-/// under the workspace. Per-quark rather than shared, because memory is a record of
-/// what *you* got wrong and had to learn — merging every quark's into one file makes
-/// it nobody's and it rots.
-fn memory_path_for(workspace_root: &std::path::Path, quark: &QuarkId) -> std::path::PathBuf {
-    workspace_root
-        .join(".hadron")
-        .join("memory")
-        .join(format!("{}.md", quark.as_str()))
+/// The swarm's memory INDEX for this project — one file, shared by every quark.
+///
+/// It was one file *per quark*, which meant a lesson agy paid for in blood was one
+/// opus would pay for again. Shared, so the swarm learns once.
+fn memory_index_path(workspace_root: &std::path::Path) -> std::path::PathBuf {
+    memory_dir(workspace_root).join("index.md")
 }
 
-/// Read a quark's memory. A missing file is the normal first-run case, not an error —
-/// it simply means this quark has learned nothing here yet.
-fn read_memory(path: &std::path::Path) -> String {
-    fs::read_to_string(path).unwrap_or_default()
+/// Where the long-form notes live: `.hadron/memory/notes/<slug>.md`. The index names
+/// them; the engine never loads them. That is the whole token argument — an index of
+/// one-liners stays cheap forever, and the detail is paid for only on the turn a quark
+/// actually opens it.
+fn memory_notes_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
+    memory_dir(workspace_root).join("notes")
+}
+
+fn memory_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
+    workspace_root.join(".hadron").join("memory")
+}
+
+/// The index is in **every** prompt of **every** turn, so its size is a tax paid
+/// forever. At one line per lesson this holds hundreds of them; a file that outgrows
+/// it has stopped being an index and needs pruning, which is what the marker says.
+const MEMORY_INDEX_BUDGET: usize = 16 * 1024;
+
+/// Read the memory index, capped. A missing file is the normal first-run case, not an
+/// error — it simply means the swarm has learned nothing here yet.
+///
+/// Returns the text and whether it was cut. Cutting silently is the one thing we do
+/// not do: a quark that cannot see a lesson, and cannot tell that it cannot see it,
+/// acts confidently on a partial picture.
+fn read_memory_index(path: &std::path::Path) -> (String, bool) {
+    let raw = fs::read_to_string(path).unwrap_or_default();
+    if raw.len() <= MEMORY_INDEX_BUDGET {
+        return (raw, false);
+    }
+    // Cut on a char boundary — a byte-sliced multi-byte char is a panic, and this file
+    // is written by hand and full of prose.
+    let mut end = MEMORY_INDEX_BUDGET;
+    while end > 0 && !raw.is_char_boundary(end) {
+        end -= 1;
+    }
+    (raw[..end].to_string(), true)
 }
 
 /// Where a user's own always-on rules live, under their home directory. Their
@@ -560,11 +588,14 @@ impl Engine {
         let window = bounded_window(events, FIELD_WINDOW_BUDGET_BYTES);
         let truncated = window.len() < events.len();
 
-        let memory_path = memory_path_for(&workspace_root, target);
+        let memory_path = memory_index_path(&workspace_root);
+        let (memory, memory_truncated) = read_memory_index(&memory_path);
 
         Projection {
-            memory: read_memory(&memory_path),
+            memory,
+            memory_truncated,
             memory_path,
+            memory_notes_dir: memory_notes_dir(&workspace_root),
             task: task_desc,
             invariants: invariants_text,
             available_invariants,
@@ -2046,13 +2077,16 @@ mod tests {
     /// whether the engine ever *reads* it — which is the exact gap ("correct" vs "runs")
     /// that cost us a whole session. This is the caller test: put a real file on disk at
     /// the real path, drive a real turn, and assert the quark received it.
+    ///
+    /// The index is SHARED: the file is `index.md`, not `worker.md`. A lesson one quark
+    /// paid for has to reach the others, or the swarm learns nothing as a swarm.
     #[tokio::test]
-    async fn a_quarks_memory_file_actually_reaches_its_projection() {
+    async fn the_shared_memory_index_actually_reaches_a_quarks_projection() {
         use std::fs;
         let ws = tempdir().unwrap();
         let mem_dir = ws.path().join(".hadron").join("memory");
         fs::create_dir_all(&mem_dir).unwrap();
-        fs::write(mem_dir.join("worker.md"), "The forge crate is unwired.").unwrap();
+        fs::write(mem_dir.join("index.md"), "The forge crate is unwired.").unwrap();
 
         let path = ws.path().join(".hadron").join("field.jsonl");
         append_event(
@@ -2082,13 +2116,19 @@ mod tests {
                 assert_eq!(
                     turn.memory.trim(),
                     "The forge crate is unwired.",
-                    "the engine must load the quark's memory from disk"
+                    "the engine must load the shared memory index from disk"
                 );
                 assert!(
-                    turn.memory_path.ends_with("worker.md"),
-                    "and tell it where to write, got {:?}",
+                    turn.memory_path.ends_with("memory/index.md"),
+                    "one index for the whole swarm, not one file per quark, got {:?}",
                     turn.memory_path
                 );
+                assert!(
+                    turn.memory_notes_dir.ends_with("memory/notes"),
+                    "and it must know where the long-form notes live, got {:?}",
+                    turn.memory_notes_dir
+                );
+                assert!(!turn.memory_truncated, "this index is two lines long");
                 Ok(TurnOutcome {
                     message: Some("done".into()),
                     used_tokens: 0,
@@ -2100,6 +2140,37 @@ mod tests {
 
         let mut engine = Engine::new(path, vec![Box::new(Probe)], 10);
         engine.run_until_quiesce().await.unwrap();
+    }
+
+    /// The index is in every prompt of every turn, so an unbounded one is a bill that
+    /// grows forever. Cap it — but never silently: a lesson dropped for size that nobody
+    /// is told about is indistinguishable from a lesson never learned.
+    #[test]
+    fn an_oversized_memory_index_is_cut_and_says_so() {
+        use std::fs;
+        let ws = tempdir().unwrap();
+        let path = memory_index_path(ws.path());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+        // Multi-byte on purpose: cutting a UTF-8 file at a fixed byte offset is a panic
+        // unless the cut walks back to a char boundary. Same crash family as the emoji bug.
+        let fat = "é".repeat(MEMORY_INDEX_BUDGET);
+        fs::write(&path, &fat).unwrap();
+
+        let (text, truncated) = read_memory_index(&path);
+        assert!(truncated, "an index over budget must report that it was cut");
+        assert!(text.len() <= MEMORY_INDEX_BUDGET);
+        assert!(!text.is_empty(), "cut, not discarded");
+
+        // A small index is passed through whole and NOT flagged.
+        fs::write(&path, "- **a** — a lesson.").unwrap();
+        let (text, truncated) = read_memory_index(&path);
+        assert_eq!(text, "- **a** — a lesson.");
+        assert!(!truncated);
+
+        // A missing index is the first-run case, not an error.
+        let empty = tempdir().unwrap();
+        assert_eq!(read_memory_index(&memory_index_path(empty.path())), (String::new(), false));
     }
 
     /// Tiers are labelled. A quark that cannot tell a rule Hadron *ships* from a rule
