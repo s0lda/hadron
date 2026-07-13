@@ -16,6 +16,12 @@ only prove the first. Before you report that a mechanism works, **find its
 caller**: a real call site in code that actually executes. Search by symbol, by
 trait, and by module path — a single `grep` miss is not proof of absence.
 
+**Text search does not see every caller.** Macro-generated code, dynamic dispatch
+through a trait object, and registry/plugin lookups by string all invoke things
+that no `grep` will find. If the thing you are checking could be reached that
+way, say so, and prove it a different way: break it on purpose and see what fails
+to compile, or write a test that exercises the path.
+
 If nothing calls it, that is a fine outcome — say **"implemented, unwired"** and
 name what would have to call it. That sentence is not a failure; it is the
 result. Adding a file is never the whole job: something must reference it, or it
@@ -53,6 +59,10 @@ second one is invisible until the day the first one fails.
 Run the project's gate **before** you start, and record what it says. That number
 is your baseline; you own only the delta.
 
+Find the real gate before you run one — read the build manifest, the task runner,
+and the CI config. Do not assume the obvious command is the project's command; a
+baseline recorded with the wrong gate is worse than no baseline.
+
 Run the **full** gate at the end, not a filtered subset — the guard tests that
 catch your class of bug are exactly the ones a narrow filter skips. If something
 fails that also failed at baseline, **report it as pre-existing with the numbers,
@@ -77,6 +87,20 @@ execution, network boundaries, secrets, or untrusted input, include a short
 
 If your change is a colour, a label, or a layout, this rule does not apply —
 do not invent a risk to satisfy it.
+
+## 8. Make invalid states unrepresentable.
+
+Rules 1–7 are how you check. This one is how you build.
+
+Push constraints into the type system instead of enforcing them at runtime. If a
+value can only be one of a few things, it is an enum, not a string. If a
+collection must not be empty, give it a type that cannot be empty. If two fields
+must never disagree, make it impossible to construct them disagreeing. Prefer a
+compiler error over a runtime check, a runtime check over a comment, and a
+comment over nothing.
+
+Do not swallow an error to make a signature tidy. An error you discard is a bug
+you have chosen to discover later, in production, without a stack trace.
 
 ---
 

@@ -496,6 +496,12 @@ impl Engine {
         // mode must ride along on the projection (not just gate a post-turn ask).
         let turn_mode = hadron_gatekeeper::resolve_mode(events, target);
 
+        // Truncation must be *observable*, not just performed: a quark that cannot
+        // see an earlier instruction, and is not told so, acts on a partial field
+        // as confidently as on a whole one.
+        let window = bounded_window(events, FIELD_WINDOW_BUDGET_BYTES);
+        let truncated = window.len() < events.len();
+
         Projection {
             task: task_desc,
             invariants: invariants_text,
@@ -505,7 +511,8 @@ impl Engine {
             // NOT `events.to_vec()`. The whole field is unbounded; it grew past the
             // kernel's 128 KiB single-argv limit and killed every agy turn with
             // E2BIG. Keep the most recent events that fit the byte budget.
-            field_window: bounded_window(events, FIELD_WINDOW_BUDGET_BYTES),
+            field_window: window,
+            field_truncated: truncated,
             git_diff,
             // The quark's own worktree when worktree discipline is on. Without it,
             // the workspace root — the pre-worktree behaviour, kept for the mock
