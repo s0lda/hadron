@@ -317,9 +317,34 @@ struct Chamber {
     wizard_state: WizardState,
     file_tree_paths: Vec<String>,
     file_tree_open: Option<(String, String)>,
-    terminal_history: Vec<(String, String)>,
+    file_tree_expanded: std::collections::HashSet<String>,
+    terminal_history: Vec<(String, String, String)>,
     terminal_input: Entity<InputState>,
     _terminal_sub: Subscription,
+    terminal: Option<crate::sys::Terminal>,
+    context_menu: Option<ContextMenu>,
+    terminal_scroll: ScrollHandle,
+    file_tree_scroll: ScrollHandle,
+}
+
+#[derive(Clone, Debug)]
+pub enum ContextMenuAction {
+    OpenFile(String),
+    OpenInEditor(String),
+    OpenInFolder(String),
+    CopyPath(String),
+}
+
+#[derive(Clone)]
+pub struct ContextMenuItem {
+    pub label: String,
+    pub action: ContextMenuAction,
+}
+
+#[derive(Clone)]
+pub struct ContextMenu {
+    pub position: gpui::Point<gpui::Pixels>,
+    pub items: Vec<ContextMenuItem>,
 }
 
 impl Chamber {
@@ -410,6 +435,13 @@ impl Chamber {
                 .placeholder("$ command...")
         });
         let _terminal_sub = cx.subscribe_in(&terminal_input, window, Self::on_terminal_submit);
+        let providers: Vec<ConfiguredQuark> = team.quarks.iter().map(|seat| {
+            ConfiguredQuark {
+                id: seat.id.0.clone(),
+                transport: seat.provider.clone(),
+                state: ProviderState::Ready { model: seat.model.clone() },
+            }
+        }).collect();
 
         Chamber {
             view,
@@ -438,13 +470,18 @@ impl Chamber {
             _input_sub,
             _palette_sub,
             _settings_subs,
-            providers: Vec::new(),
+            providers,
             wizard_state: WizardState::None,
             file_tree_paths: files,
             file_tree_open: None,
+            file_tree_expanded: std::collections::HashSet::new(),
             terminal_history: Vec::new(),
             terminal_input,
             _terminal_sub,
+            terminal: None,
+            context_menu: None,
+            terminal_scroll: ScrollHandle::new(),
+            file_tree_scroll: ScrollHandle::new(),
         }
     }
 
@@ -481,12 +518,28 @@ impl Chamber {
             if cmd.is_empty() { return; }
             input.update(cx, |state, cx| state.set_value("", window, cx));
             
-            let repo_root = crate::vcs::repo_root_of(&self.path);
-            let output = match crate::sys::execute_terminal_command(&repo_root, &cmd, self.view.global_mode.clone()) {
-                Ok(out) => out,
-                Err(err) => err,
-            };
-            self.terminal_history.push((cmd, output));
+            let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+            
+            if self.terminal.is_none() {
+                match crate::sys::Terminal::new(&repo_root) {
+                    Ok(term) => self.terminal = Some(term),
+                    Err(err) => {
+                        self.terminal_history.push((String::new(), cmd, err));
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
+
+            if let Some(term) = &mut self.terminal {
+                let cwd = term.cwd.clone();
+                let output = match term.execute(&cmd) {
+                    Ok(out) => out,
+                    Err(err) => err,
+                };
+                self.terminal_history.push((cwd, cmd, output));
+                self.terminal_scroll.scroll_to_bottom();
+            }
             cx.notify();
         }
     }
@@ -754,6 +807,53 @@ impl Chamber {
         self.chat_list_state.scroll_to_reveal_item(new_chat_count.saturating_sub(1));
         cx.notify();
     }
+    fn handle_context_menu_action(&mut self, action: ContextMenuAction, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        match action {
+            ContextMenuAction::OpenFile(path) => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                if let Some(content) = crate::sys::read_workspace_file(&repo_root, &path) {
+                    self.file_tree_open = Some((path, content));
+                }
+            }
+            ContextMenuAction::CopyPath(path) => {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(path));
+            }
+            ContextMenuAction::OpenInEditor(path) => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let full_path = repo_root.join(path);
+                
+                #[cfg(target_os = "macos")]
+                let default_cmd = "open";
+                #[cfg(target_os = "windows")]
+                let default_cmd = "explorer";
+                #[cfg(target_os = "linux")]
+                let default_cmd = "xdg-open";
+                
+                let editor = std::env::var("EDITOR").unwrap_or_else(|_| default_cmd.to_string());
+                let _ = std::process::Command::new(&editor).arg(&full_path).spawn();
+            }
+            ContextMenuAction::OpenInFolder(path) => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let full_path = repo_root.join(path);
+                let target = if full_path.is_file() {
+                    full_path.parent().unwrap_or(&full_path).to_path_buf()
+                } else {
+                    full_path
+                };
+                
+                #[cfg(target_os = "macos")]
+                let cmd = "open";
+                #[cfg(target_os = "windows")]
+                let cmd = "explorer";
+                #[cfg(target_os = "linux")]
+                let cmd = "xdg-open";
+                
+                let _ = std::process::Command::new(cmd).arg(&target).spawn();
+            }
+        }
+        cx.notify();
+    }
 }
 
 impl Render for Chamber {
@@ -822,8 +922,52 @@ impl Render for Chamber {
             .children(overlay)
             .children(settings);
 
-        // Wrap in our transparent, rounded, shadowed client-side frame.
-        crate::window_frame::window_frame(window, cx, content)
+        let context_menu_overlay = self.context_menu.as_ref().map(|menu| {
+            let mut list = v_flex()
+                .p_1()
+                .bg(theme::surface_raised())
+                .border_1()
+                .border_color(theme::border())
+                .rounded_md()
+                .shadow_lg();
+            for item in &menu.items {
+                let action = item.action.clone();
+                list = list.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .text_color(theme::text())
+                        .hover(|s| s.bg(theme::surface_raised()))
+                        .cursor_pointer()
+                        .rounded_sm()
+                        .child(item.label.clone())
+                        .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _window, cx| {
+                            this.handle_context_menu_action(action.clone(), cx);
+                        }))
+                );
+            }
+            div()
+                .absolute()
+                .left(menu.position.x)
+                .top(menu.position.y)
+                .child(list)
+                .into_any_element()
+        });
+
+        let wrapped_content = crate::window_frame::window_frame(window, cx, content);
+
+        div()
+            .size_full()
+            .child(wrapped_content)
+            .children(context_menu_overlay)
+            // dismiss context menu if clicked outside
+            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _window, cx| {
+                if this.context_menu.is_some() {
+                    this.context_menu = None;
+                    cx.notify();
+                }
+            }))
+            .into_any_element()
     }
 }
 
@@ -1440,14 +1584,26 @@ impl Chamber {
                     );
 
                 let mut history = v_flex().w_full().gap_2();
-                for (cmd, out) in &self.terminal_history {
-                    history = history.child(
-                        v_flex()
-                            .gap_1()
-                            .child(div().text_sm().font_family("JetBrains Mono").text_color(theme::accent()).child(format!("$ {}", cmd)))
-                            .child(div().text_xs().font_family("JetBrains Mono").text_color(theme::text_muted()).child(out.clone()))
-                    );
+                for (cwd, cmd, out) in &self.terminal_history {
+                    let display_cwd = cwd.replace(&std::env::var("HOME").unwrap_or_default(), "~");
+                    let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
+                    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "local".to_string());
+                    let prompt = format!("{}@{}: {}$ {}", user, host, display_cwd, cmd);
+                    let mut block = v_flex().gap_1()
+                        .child(div().text_sm().font_family("JetBrains Mono").text_color(theme::accent()).child(prompt));
+                    if !out.is_empty() {
+                        block = block.child(div().text_xs().font_family("JetBrains Mono").text_color(theme::text_muted()).child(out.clone()));
+                    }
+                    history = history.child(block);
                 }
+
+                let current_cwd = self.terminal.as_ref().map(|t| t.cwd.clone()).unwrap_or_else(|| {
+                    crate::vcs::repo_root_of(&self.path).to_string_lossy().into_owned()
+                });
+                let display_cwd = current_cwd.replace(&std::env::var("HOME").unwrap_or_default(), "~");
+                let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
+                let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "local".to_string());
+                let prompt_str = format!("{}@{}: {}$ ", user, host, display_cwd);
 
                 v_flex()
                     .flex_1()
@@ -1459,17 +1615,36 @@ impl Chamber {
                             .id("terminal-scroll")
                             .flex_1()
                             .min_h_0()
-                            .overflow_y_scroll()
-                            .child(history)
+                            .relative()
+                            .child(
+                                div()
+                                    .id("terminal-history-scroll")
+                                    .size_full()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.terminal_scroll)
+                                    .child(history)
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .left_0()
+                                    .bottom_0()
+                                    .right_0()
+                                    .child(Scrollbar::vertical(&self.terminal_scroll).scrollbar_show(ScrollbarShow::Hover))
+                            )
                     )
                     .child(
-                        div()
+                        h_flex()
                             .p_2()
                             .bg(theme::input_bg())
                             .border_1()
                             .border_color(theme::border())
                             .rounded_md()
-                            .child(Input::new(&self.terminal_input))
+                            .gap_2()
+                            .items_center()
+                            .child(div().text_sm().font_family("JetBrains Mono").text_color(theme::accent()).child(prompt_str))
+                            .child(div().flex_1().child(Input::new(&self.terminal_input)))
                     )
                     .into_any_element()
             }
@@ -1501,9 +1676,8 @@ impl Chamber {
                                 .p_2()
                                 .bg(theme::input_bg())
                                 .text_color(theme::text())
-                                .font_family("JetBrains Mono")
-                                .text_xs()
-                                .child(content.clone())
+                                // Use a fixed index like usize::MAX for the file tree markdown cache
+                                .child(self.markdown_body("file-tree-open", usize::MAX, content, &[]))
                         );
                     
                     v_flex()
@@ -1511,34 +1685,188 @@ impl Chamber {
                         .child(list)
                         .into_any_element()
                 } else {
-                    for (ix, file) in self.file_tree_paths.iter().enumerate() {
-                        let path = file.clone();
-                        let repo_root = crate::vcs::repo_root_of(std::path::Path::new(&self.path)).to_path_buf();
-                        let file_name = file.clone();
-                        list = list.child(
-                            div()
-                                .id(ix)
-                                .px_2()
-                                .py_1()
-                                .hover(|s| s.bg(theme::surface_raised()))
-                                .cursor_pointer()
-                                .text_color(theme::text())
-                                .child(path)
-                                .on_click(cx.listener(move |this, _, _window, cx| {
-                                    if let Some(content) = crate::sys::read_workspace_file(&repo_root, &file_name) {
+                    #[derive(Default)]
+                    struct FileTreeNode {
+                        children: std::collections::BTreeMap<String, FileTreeNode>,
+                        is_file: bool,
+                        full_path: String,
+                    }
+                    impl FileTreeNode {
+                        fn insert(&mut self, path: &str, full_path: &str) {
+                            let mut current = self;
+                            let parts: Vec<&str> = path.split('/').collect();
+                            for (i, part) in parts.iter().enumerate() {
+                                let is_file = i == parts.len() - 1;
+                                current = current.children.entry(part.to_string()).or_insert_with(|| FileTreeNode {
+                                    children: std::collections::BTreeMap::new(),
+                                    is_file,
+                                    full_path: if is_file { full_path.to_string() } else { String::new() },
+                                });
+                            }
+                        }
+                    }
+
+                    let mut root_node = FileTreeNode::default();
+                    for file in &self.file_tree_paths {
+                        root_node.insert(file, file);
+                    }
+                    
+                    let repo_root = crate::vcs::repo_root_of(std::path::Path::new(&self.path)).to_path_buf();
+                    
+                    fn render_node(
+                        name: &str,
+                        node: &FileTreeNode,
+                        depth: usize,
+                        cx: &mut Context<Chamber>,
+                        repo_root: &std::path::PathBuf,
+                        current_path: String,
+                        expanded_set: &std::collections::HashSet<String>,
+                    ) -> gpui::AnyElement {
+                        let mut list = v_flex().w_full();
+                        // root node has empty name and we don't render it directly
+                        if name.is_empty() {
+                            for (child_name, child_node) in &node.children {
+                                let child_path = child_name.clone();
+                                list = list.child(render_node(child_name, child_node, depth, cx, repo_root, child_path, expanded_set));
+                            }
+                            return list.into_any_element();
+                        }
+
+                        let is_expanded = expanded_set.contains(&current_path);
+
+                        let row = h_flex()
+                            .px_2()
+                            .py_1()
+                            .ml(gpui::px(depth as f32 * 12.0))
+                            .hover(|s| s.bg(theme::surface_raised()))
+                            .cursor_pointer()
+                            .text_color(theme::text())
+                            .font_family("Cascadia Code")
+                            .text_size(gpui::px(13.56))
+                            .gap_2()
+                            .child(if node.is_file {
+                                Icon::new(IconName::File).small().text_color(theme::text_muted()).into_any_element()
+                            } else {
+                                Icon::new(if is_expanded { IconName::FolderOpen } else { IconName::Folder }).small().text_color(theme::text_muted()).into_any_element()
+                            })
+                            .child(div().child(name.to_string()));
+
+                        if node.is_file {
+                            let file_name = node.full_path.clone();
+                            let file_path = node.full_path.clone();
+                            let repo = repo_root.clone();
+                            let on_dbl_click = cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
+                                if event.button == gpui::MouseButton::Left && event.click_count == 2 {
+                                    if let Some(content) = crate::sys::read_workspace_file(&repo, &file_name) {
                                         this.file_tree_open = Some((file_name.clone(), content));
                                         cx.notify();
                                     }
-                                }))
-                        );
+                                }
+                            });
+                            
+                            let path_clone = file_path.clone();
+                            let on_right_click = cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
+                                if event.button == gpui::MouseButton::Right {
+                                    this.context_menu = Some(ContextMenu {
+                                        position: event.position,
+                                        items: vec![
+                                            ContextMenuItem {
+                                                label: "Open File".to_string(),
+                                                action: ContextMenuAction::OpenFile(path_clone.clone()),
+                                            },
+                                            ContextMenuItem {
+                                                label: "Open in Editor".to_string(),
+                                                action: ContextMenuAction::OpenInEditor(path_clone.clone()),
+                                            },
+                                            ContextMenuItem {
+                                                label: "Open in Folder".to_string(),
+                                                action: ContextMenuAction::OpenInFolder(path_clone.clone()),
+                                            },
+                                            ContextMenuItem {
+                                                label: "Copy Path".to_string(),
+                                                action: ContextMenuAction::CopyPath(path_clone.clone()),
+                                            },
+                                        ]
+                                    });
+                                    cx.notify();
+                                }
+                            });
+
+                            list = list.child(row.on_mouse_down(gpui::MouseButton::Left, on_dbl_click)
+                                                 .on_mouse_down(gpui::MouseButton::Right, on_right_click));
+                        } else {
+                            let toggle_path = current_path.clone();
+                            let on_click = cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
+                                if event.button == gpui::MouseButton::Left {
+                                    if this.file_tree_expanded.contains(&toggle_path) {
+                                        this.file_tree_expanded.remove(&toggle_path);
+                                    } else {
+                                        this.file_tree_expanded.insert(toggle_path.clone());
+                                    }
+                                    cx.notify();
+                                }
+                            });
+                            
+                            let folder_path = node.full_path.clone();
+                            let on_right_click = cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
+                                if event.button == gpui::MouseButton::Right {
+                                    this.context_menu = Some(ContextMenu {
+                                        position: event.position,
+                                        items: vec![
+                                            ContextMenuItem {
+                                                label: "Open in Editor".to_string(),
+                                                action: ContextMenuAction::OpenInEditor(folder_path.clone()),
+                                            },
+                                            ContextMenuItem {
+                                                label: "Open in Folder".to_string(),
+                                                action: ContextMenuAction::OpenInFolder(folder_path.clone()),
+                                            },
+                                            ContextMenuItem {
+                                                label: "Copy Path".to_string(),
+                                                action: ContextMenuAction::CopyPath(folder_path.clone()),
+                                            },
+                                        ]
+                                    });
+                                    cx.notify();
+                                }
+                            });
+                            
+                            list = list.child(row.on_mouse_down(gpui::MouseButton::Left, on_click)
+                                                 .on_mouse_down(gpui::MouseButton::Right, on_right_click));
+                            
+                            if is_expanded {
+                                for (child_name, child_node) in &node.children {
+                                    let child_path = format!("{}/{}", current_path, child_name);
+                                    list = list.child(render_node(child_name, child_node, depth + 1, cx, repo_root, child_path, expanded_set));
+                                }
+                            }
+                        }
+                        list.into_any_element()
                     }
+
                     div()
                         .id("file-tree-list")
                         .flex_1()
                         .min_h_0()
-                        .overflow_y_scroll()
-                        .p_2()
-                        .child(list)
+                        .relative()
+                        .child(
+                            div()
+                                .id("file-tree-scroll-content")
+                                .size_full()
+                                .overflow_y_scroll()
+                                .track_scroll(&self.file_tree_scroll)
+                                .p_2()
+                                .child(render_node("", &root_node, 0, cx, &repo_root, String::new(), &self.file_tree_expanded))
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .bottom_0()
+                                .right_0()
+                                .child(Scrollbar::vertical(&self.file_tree_scroll).scrollbar_show(ScrollbarShow::Hover))
+                        )
                         .into_any_element()
                 }
             }
@@ -2262,11 +2590,15 @@ impl Chamber {
                     .child(list)
             }
             WizardState::PickPreset => {
-                let presets = vec![
-                    AgentDescriptor { id: "claude".into(), name: "Claude Code".into(), command: "npx".into(), args: vec!["-y".into(), "@zed-industries/claude-code-acp".into()] },
-                    AgentDescriptor { id: "gemini".into(), name: "Gemini CLI".into(), command: "gemini".into(), args: vec!["acp".into()] },
-                    AgentDescriptor { id: "ollama".into(), name: "Ollama".into(), command: "ollama".into(), args: vec!["acp".into()] },
-                ];
+                let presets = hadron_gluon::adapter::registry::QuarkKind::available_presets()
+                    .into_iter()
+                    .map(|(id, name, cmd, args)| AgentDescriptor {
+                        id: id.into(),
+                        name: name.into(),
+                        command: cmd.into(),
+                        args: args.into_iter().map(String::from).collect(),
+                    })
+                    .collect::<Vec<_>>();
                 
                 let mut list = v_flex().gap_2();
                 for preset in presets {
@@ -2339,25 +2671,57 @@ impl Chamber {
             WizardState::Connecting(desc, state) => {
                 let desc_clone = desc.clone();
                 let state_ui = match state {
+                    ProviderState::Connecting => {
+                        v_flex().gap_4().child(div().text_sm().text_color(theme::text_muted()).child("Connecting..."))
+                    }
                     ProviderState::NotConnected => {
                         v_flex().gap_4().child(
                             text_button("connect-btn", "Connect")
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    let new_state = match desc_clone.id.as_str() {
-                                        "claude" => ProviderState::NeedsAuth(vec![AuthMethod {
-                                            id: "claude-login".into(),
-                                            name: "Log in with Claude Code".into(),
-                                            description: "Run `claude /login` in the terminal".into()
-                                        }]),
-                                        "gemini" => ProviderState::NeedsAuth(vec![AuthMethod {
-                                            id: "gemini-login".into(),
-                                            name: "Log in with Google".into(),
-                                            description: "Run `gcloud auth application-default login`".into()
-                                        }]),
-                                        _ => ProviderState::Ready { model: "default-model".into() }
-                                    };
-                                    this.wizard_state = WizardState::Connecting(desc_clone.clone(), new_state);
+                                    this.wizard_state = WizardState::Connecting(desc_clone.clone(), ProviderState::Connecting);
                                     cx.notify();
+                                    
+                                    let cmd_str = format!("{} {}", desc_clone.command, desc_clone.args.join(" "));
+                                    let desc_for_task = desc_clone.clone();
+                                    cx.spawn(|this, mut cx| async move {
+                                        use std::str::FromStr;
+                                        use agent_client_protocol::AcpAgent;
+                                        use agent_client_protocol::schema::ProtocolVersion;
+                                        use agent_client_protocol::schema::v1::InitializeRequest;
+                                        
+                                        let result: Result<String, String> = async {
+                                            let agent = AcpAgent::from_str(&cmd_str).map_err(|e| e.to_string())?;
+                                            let mut client = agent_client_protocol::Client::builder();
+                                            // Handle permission requests automatically
+                                            client = client.on_receive_request(
+                                                async move |request: agent_client_protocol::schema::v1::RequestPermissionRequest, responder, _| {
+                                                    match request.options.first().map(|o| o.option_id.clone()) {
+                                                        Some(id) => responder.respond(agent_client_protocol::schema::v1::RequestPermissionResponse::new(
+                                                            agent_client_protocol::schema::v1::RequestPermissionOutcome::Selected(agent_client_protocol::schema::v1::SelectedPermissionOutcome::new(id)),
+                                                        )),
+                                                        None => responder.respond(agent_client_protocol::schema::v1::RequestPermissionResponse::new(
+                                                            agent_client_protocol::schema::v1::RequestPermissionOutcome::Cancelled,
+                                                        )),
+                                                    }
+                                                },
+                                                agent_client_protocol::on_receive_request!()
+                                            );
+                                            client.connect_with(agent, |connection| async move {
+                                                let init = connection.send_request(InitializeRequest::new(ProtocolVersion::V1)).block_task().await.map_err(|e| e.to_string())?;
+                                                let model_name = init.agent_info.map(|i| i.name).unwrap_or_else(|| "default-model".into());
+                                                Ok(model_name)
+                                            }).await.map_err(|e| e.to_string())?
+                                        }.await;
+                                        
+                                        this.update(&mut cx, |this, cx| {
+                                            let state = match result {
+                                                Ok(model) => ProviderState::Ready { model },
+                                                Err(e) => ProviderState::Failed(e),
+                                            };
+                                            this.wizard_state = WizardState::Connecting(desc_for_task, state);
+                                            cx.notify();
+                                        }).ok();
+                                    }).detach();
                                 }))
                         ).into_any_element()
                     }
@@ -2390,6 +2754,7 @@ impl Chamber {
                     ProviderState::Ready { model } => {
                         let desc_inner = desc.clone();
                         let state_inner = state.clone();
+                        let model_inner = model.clone();
                         v_flex().gap_4()
                             .child(div().text_color(theme::accent()).child(format!("Ready! Model available: {}", model)))
                             .child(
@@ -2400,6 +2765,17 @@ impl Chamber {
                                             transport: "acp".to_string(),
                                             state: state_inner.clone()
                                         });
+                                        
+                                        this.team.quarks.push(hadron_lattice::Seat {
+                                            id: hadron_lattice::QuarkId::new(&desc_inner.id),
+                                            provider: desc_inner.id.clone(),
+                                            model: model_inner.clone(),
+                                            flavor: hadron_lattice::Flavor::Worker, // default flavor
+                                        });
+                                        if let Some(team_path) = hadron_lattice::team_for_field(&this.path) {
+                                            let _ = hadron_lattice::save_team(&team_path, &this.team);
+                                        }
+
                                         this.wizard_state = WizardState::None;
                                         cx.notify();
                                     }))
