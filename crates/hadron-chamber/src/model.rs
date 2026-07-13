@@ -210,12 +210,12 @@ mod tests {
     fn roster_row_inherits_global_and_carries_team_legibility() {
         use hadron_lattice::{Flavor, Seat};
         let team = Team {
-            quarks: vec![Seat {
-                id: QuarkId::new("agy"),
-                provider: "agy".into(),
-                model: "gemini-3-pro".into(),
-                flavor: Flavor::Worker,
-            }],
+            quarks: vec![Seat::cli(
+                QuarkId::new("agy"),
+                "agy",
+                "gemini-3-pro",
+                Flavor::Worker,
+            )],
         };
         let evs = vec![
             ev(Actor::Human, None, Kind::ModeSet { mode: Mode::Write }),

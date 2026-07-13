@@ -12,6 +12,48 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Flavor, QuarkId};
 
+/// How the gluon *talks to* a seat's agent. Two transports, one seam:
+///
+/// - [`Transport::Cli`] — the original: one `claude`/`agy` subprocess per turn,
+///   whole prompt in, stdout out. Every seat written before ACP existed uses it,
+///   which is exactly why it is the [`Default`]: an existing `team.json` that has
+///   never heard of a `transport` key keeps resolving to the CLI adapters,
+///   byte-for-byte.
+/// - [`Transport::Acp`] — JSON-RPC over stdio to an [Agent Client Protocol] agent.
+///   The seat names an ACP agent binary (or takes one of the known shorthands);
+///   the gluon speaks the protocol's *client* side.
+///
+/// This is a **config** switch, deliberately, not an inference from `provider`:
+/// `claude` the CLI and `claude` over an ACP adapter are the same vendor reached
+/// two different ways, and a seat must say which one it means.
+///
+/// [Agent Client Protocol]: https://agentclientprotocol.com/
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Transport {
+    /// One-shot CLI subprocess per turn. The default, forever, for `agy`.
+    #[default]
+    Cli,
+    /// A resident ACP agent spoken to over JSON-RPC on stdio.
+    Acp,
+}
+
+/// How to boot an ACP agent: the program and its args. Comes
+/// straight out of `team.json`, so reaching a *new* ACP agent is a config change
+/// rather than a code change — which is the entire point of standing on a
+/// protocol instead of a vendor's CLI.
+///
+/// Only read when [`Seat::transport`] is [`Transport::Acp`]. When absent, the
+/// gluon resolves a default command from the seat's `provider` (e.g.
+/// `acp-claude` → `npx -y @agentclientprotocol/claude-agent-acp@latest`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcpCommand {
+    /// The executable to spawn, e.g. `npx` or an absolute path to an agent binary.
+    pub program: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
 /// One seat: an identity bound to a provider (CLI/vendor) and a model. Same
 /// provider with a different model is a different seat (independent trust).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +64,29 @@ pub struct Seat {
     /// The model this seat runs, e.g. "opus-4.8", "gemini-3-pro".
     pub model: String,
     pub flavor: Flavor,
+    /// How the gluon reaches this seat's agent. Absent → [`Transport::Cli`], so
+    /// every `team.json` written before ACP existed keeps its exact behaviour.
+    #[serde(default)]
+    pub transport: Transport,
+    /// The ACP agent to boot. Ignored unless `transport` is [`Transport::Acp`];
+    /// absent there means "resolve the command from `provider`".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<AcpCommand>,
+}
+
+impl Seat {
+    /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
+    /// (and tests) from having to spell out two ACP fields they do not care about.
+    pub fn cli(id: QuarkId, provider: impl Into<String>, model: impl Into<String>, flavor: Flavor) -> Seat {
+        Seat {
+            id,
+            provider: provider.into(),
+            model: model.into(),
+            flavor,
+            transport: Transport::Cli,
+            command: None,
+        }
+    }
 }
 
 /// The full team: every seat the human has added.
@@ -102,7 +167,51 @@ mod tests {
     use tempfile::tempdir;
 
     fn seat(id: &str, provider: &str, model: &str, flavor: Flavor) -> Seat {
-        Seat { id: QuarkId::new(id), provider: provider.into(), model: model.into(), flavor }
+        Seat::cli(QuarkId::new(id), provider, model, flavor)
+    }
+
+    /// THE forward-compat guarantee of the ACP work: a `team.json` written before
+    /// the transport seam existed — no `transport` key anywhere — still parses, and
+    /// every seat in it still resolves to the CLI transport. If this ever flips,
+    /// every existing team silently changes how it is driven.
+    #[test]
+    fn a_seat_without_a_transport_key_is_still_cli() {
+        let old = r#"{"quarks":[
+            {"id":"opus","provider":"claude","model":"opus-4.8","flavor":"orchestrator"},
+            {"id":"agy","provider":"agy","model":"gemini-3-pro","flavor":"worker"}
+        ]}"#;
+        let team: Team = serde_json::from_str(old).unwrap();
+        assert_eq!(team.quarks.len(), 2);
+        assert!(team.quarks.iter().all(|s| s.transport == Transport::Cli));
+        assert!(team.quarks.iter().all(|s| s.command.is_none()));
+    }
+
+    #[test]
+    fn an_acp_seat_parses_its_command() {
+        let cfg = r#"{"quarks":[{
+            "id":"acp","provider":"acp-claude","model":"opus-4.8","flavor":"worker",
+            "transport":"acp",
+            "command":{"program":"npx","args":["-y","@agentclientprotocol/claude-agent-acp@latest"]}
+        }]}"#;
+        let team: Team = serde_json::from_str(cfg).unwrap();
+        let s = &team.quarks[0];
+        assert_eq!(s.transport, Transport::Acp);
+        let cmd = s.command.as_ref().unwrap();
+        assert_eq!(cmd.program, "npx");
+        assert_eq!(cmd.args[1], "@agentclientprotocol/claude-agent-acp@latest");
+    }
+
+    /// A CLI seat must not start *emitting* ACP keys either: a round-trip through
+    /// serde has to leave an old team.json looking like an old team.json, or the
+    /// chamber rewrites the human's config with fields they never asked for.
+    #[test]
+    fn a_cli_seat_serializes_without_an_acp_command() {
+        let json = serde_json::to_string(&seat("agy", "agy", "g", Flavor::Worker)).unwrap();
+        assert!(!json.contains("command"), "no empty ACP command: {json}");
+        // `transport` does serialize (it is a plain enum with a default), and it
+        // round-trips to the same seat either way.
+        let back: Seat = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.transport, Transport::Cli);
     }
 
     #[test]
