@@ -1352,7 +1352,6 @@ impl Chamber {
                 div()
                     .absolute()
                     .top_0()
-                    .left_0()
                     .right_0()
                     .bottom_0()
                     .when(selected != ChatTab::Chat, |this| {
@@ -1975,7 +1974,6 @@ impl Chamber {
                         div()
                             .absolute()
                             .top_0()
-                            .left_0()
                             .bottom_0()
                             .right_0()
                             .child(Scrollbar::vertical(&self.changes_scroll).scrollbar_show(ScrollbarShow::Hover))

@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::process::{Command, Stdio, ChildStdin};
 use std::io::{Write, BufReader, BufRead};
-use hadron_lattice::Mode;
 
 pub struct Terminal {
     stdin: ChildStdin,
