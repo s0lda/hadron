@@ -31,7 +31,32 @@ pub struct RosterRow {
     pub provider: String,
     pub model: String,
     pub flavor: Option<hadron_lattice::Flavor>,
+    pub transport: hadron_lattice::Transport,
+    pub enabled: bool,
     pub tokens: u32,
+}
+
+/// What one quark spent this session. `context` and `quota` are the *latest*
+/// the provider reported, not a sum: occupancy and remaining allowance are
+/// levels, and adding them up would mean nothing.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct QuarkStats {
+    pub turns: u32,
+    pub fresh: u32,
+    pub cached: u32,
+    pub context: Option<hadron_lattice::ContextUsage>,
+    pub quota: Vec<hadron_lattice::QuotaBucket>,
+}
+
+/// Per-quark session statistics plus the totals that are meaningful to add.
+/// Deliberately no total context or quota — see [`QuarkStats`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SessionStats {
+    /// In roster order, so the tab and the roster agree.
+    pub per_quark: Vec<(String, QuarkStats)>,
+    pub total_turns: u32,
+    pub total_fresh: u32,
+    pub total_cached: u32,
 }
 
 /// Everything the chamber needs to render one frame.
@@ -45,6 +70,56 @@ pub struct ChamberView {
     /// An outstanding permission request awaiting the human's Approve/Deny, if any.
     /// The UI renders this as a toast; `None` means nothing to decide.
     pub pending_permission: Option<hadron_gatekeeper::PendingPermission>,
+}
+
+impl ChamberView {
+    /// Aggregate the session's telemetry, per quark and in total.
+    ///
+    /// A quark is one that holds a **roster seat** — `actor_str` renders a quark
+    /// as its bare id, so testing `from` for an `@` sigil matches nothing and
+    /// silently zeroes every statistic.
+    pub fn session_stats(&self) -> SessionStats {
+        let mut stats: HashMap<&str, QuarkStats> = HashMap::new();
+        let mut out = SessionStats::default();
+
+        for m in &self.messages {
+            let Some(row) = self.roster.iter().find(|r| r.id == m.from) else {
+                continue; // human, gluon, or an actor with no seat
+            };
+            let s = stats.entry(row.id.as_str()).or_default();
+
+            if m.kind_label == "message" {
+                s.turns += 1;
+                out.total_turns += 1;
+            }
+            let Some(u) = &m.usage else { continue };
+
+            // `fresh()`/`cached()` are lattice's single totallers. Absent is not zero:
+            // a provider blind to cache reports `None`, and adding 0 would claim it
+            // spent nothing rather than that we do not know.
+            if let Some(f) = u.spend.fresh() {
+                s.fresh += f;
+                out.total_fresh += f;
+            }
+            if let Some(c) = u.spend.cached() {
+                s.cached += c;
+                out.total_cached += c;
+            }
+            if let Some(ctx) = &u.context {
+                s.context = Some(ctx.clone());
+            }
+            if !u.quota.is_empty() {
+                s.quota = u.quota.clone();
+            }
+        }
+
+        out.per_quark = self
+            .roster
+            .iter()
+            .map(|r| (r.id.clone(), stats.remove(r.id.as_str()).unwrap_or_default()))
+            .collect();
+        out
+    }
 }
 
 fn actor_str(a: &Actor) -> String {
@@ -154,10 +229,10 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
         .map(|id| {
             let state = states.get(&id).copied().unwrap_or(QuarkState::Ground);
             let qid = QuarkId::new(&id);
-            let (provider, model, flavor) = team
+            let (provider, model, flavor, transport, enabled) = team
                 .get(&qid)
-                .map(|s| (s.provider.clone(), s.model.clone(), Some(s.flavor.clone())))
-                .unwrap_or_default();
+                .map(|s| (s.provider.clone(), s.model.clone(), Some(s.flavor.clone()), s.transport, s.enabled))
+                .unwrap_or_else(|| (String::new(), String::new(), None, hadron_lattice::Transport::Cli, true));
             let q_tokens = tokens.get(&id).copied().unwrap_or(0);
             RosterRow {
                 state,
@@ -166,6 +241,8 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
                 provider,
                 model,
                 flavor,
+                transport,
+                enabled,
                 id,
                 tokens: q_tokens,
             }
@@ -194,6 +271,84 @@ mod tests {
 
     fn ev(from: Actor, to: Option<&str>, kind: Kind) -> Event {
         Event::new(from, to.map(QuarkId::new), kind)
+    }
+
+    /// The Session tab reported zeros for every quark: it decided who was a quark by
+    /// testing `from` for an `@` prefix, and `actor_str` renders a quark as its bare
+    /// id. The filter matched nothing, so every statistic silently read as 0 — the
+    /// tab looked like a swarm that had never spent a token.
+    #[test]
+    fn session_stats_attribute_to_the_quark_that_earned_them() {
+        let spend = hadron_lattice::TokenSpend {
+            input: Some(100),
+            output: Some(20),
+            cache_read: Some(9_000),
+            cache_write: None,
+        };
+        let usage = hadron_lattice::Usage {
+            spend: spend.clone(),
+            context: Some(hadron_lattice::ContextUsage {
+                used_tokens: 57_000,
+                context_window_size: 200_000,
+                used_percentage: 28.5,
+            }),
+            quota: vec![],
+        };
+
+        let mut reply = ev(
+            Actor::Quark(QuarkId::new("opus")),
+            None,
+            Kind::Message { body: "done".into() },
+        );
+        reply.usage = Some(usage);
+
+        let evs = vec![
+            ev(Actor::Human, Some("opus"), Kind::Message { body: "go".into() }),
+            reply,
+        ];
+        let stats = project(&evs).session_stats();
+
+        let (id, s) = stats
+            .per_quark
+            .iter()
+            .find(|(id, _)| id == "opus")
+            .expect("opus holds a roster seat");
+        assert_eq!(id, "opus");
+        assert_eq!(s.turns, 1);
+        assert_eq!(s.fresh, 120, "fresh is input+output, and it is NOT zero");
+        assert_eq!(s.cached, 9_000, "cache is carried, separately");
+        assert_eq!(s.context.as_ref().unwrap().used_tokens, 57_000);
+
+        // The human's own message is not a turn, and never a quark's spend.
+        assert_eq!(stats.total_turns, 1);
+        assert_eq!(stats.total_fresh, 120);
+    }
+
+    /// A provider that cannot see cache reports `None`, which means *unknown*.
+    /// Counting it as 0 would claim we know it spent nothing.
+    #[test]
+    fn an_absent_component_is_not_counted_as_zero() {
+        let mut reply = ev(
+            Actor::Quark(QuarkId::new("agy")),
+            None,
+            Kind::Message { body: "done".into() },
+        );
+        reply.usage = Some(hadron_lattice::Usage {
+            spend: hadron_lattice::TokenSpend {
+                input: Some(5),
+                output: Some(5),
+                cache_read: None,
+                cache_write: None,
+            },
+            context: None,
+            quota: vec![],
+        });
+        let stats = project(&[reply]).session_stats();
+        let (_, s) = &stats.per_quark[0];
+        assert_eq!(s.fresh, 10);
+        assert_eq!(s.cached, 0, "no cache reported — nothing added");
+        assert!(s.context.is_none());
+        assert!(s.quota.is_empty(), "empty means no quota concept, not exhausted");
     }
 
     #[test]
