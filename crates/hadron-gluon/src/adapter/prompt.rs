@@ -92,19 +92,29 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
                  nothing to route your work through: whatever you leave uncommitted is at risk, \
                  and whatever you commit lands on the branch that is checked out right now. So \
                  **commit your own work** on the current branch when it is done and green. Two \
-                 consequences of sharing the tree, and they are not optional: never `git add \
-                 -A` or `git commit -a` (you would sweep up another quark's in-flight edits and \
-                 the human's), and stage only the paths you actually changed. Leave no scratch \
-                 files behind — check `git ls-files --others --exclude-standard` before you \
-                 report.\n\n",
+                 consequences of sharing the tree, and they are not optional. **Stage by \
+                 explicit path — `git add <path> <path>` — listing only the files you \
+                 authored this turn.** Never `git add -A`, `git add .` or `git commit -a`: \
+                 those sweep up another quark's in-flight edits and the human's, and commit \
+                 them under your name. Leave no scratch files behind — check `git ls-files \
+                 --others --exclude-standard` before you report.\n\n",
                 projection.cwd.display()
             ));
         }
     }
 
-    // 4. Recent field transcript.
+    // 4. Recent field transcript. If older events were dropped to fit the byte
+    // budget, SAY SO. A silent truncation is indistinguishable, from inside the
+    // model, from the human never having said the thing — and it acts accordingly.
     if !projection.field_window.is_empty() {
         p.push_str("# Recent field (most recent last)\n");
+        if projection.field_truncated {
+            p.push_str(
+                "_Older events were dropped to fit the context budget — this transcript is \
+                 INCOMPLETE. If what you need to act correctly is not here, say so and ask, \
+                 rather than assuming it was never said._\n\n",
+            );
+        }
         for e in &projection.field_window {
             if let Kind::Message { body } = &e.kind {
                 p.push_str(&render_event_line(&e.from, &e.to, body));
@@ -114,9 +124,23 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         p.push('\n');
     }
 
-    // 5. Working diff.
+    // 5. Working diff — ATTRIBUTED. In the shared tree this diff is the whole
+    // tree's uncommitted state: the human's edits and other quarks' in-flight work,
+    // not the quark's own prior output. Handed over unlabelled, a quark reads it as
+    // its own and "continues" work it never did. Same fiction class as the merge gate.
     if !projection.git_diff.trim().is_empty() {
-        p.push_str("# Current working diff\n```diff\n");
+        p.push_str("# Current working diff\n");
+        if projection.isolated {
+            p.push_str("This is the uncommitted diff in your own worktree — your work.\n\n");
+        } else {
+            p.push_str(
+                "This is the uncommitted diff of the **whole shared tree**. It is NOT \
+                 necessarily yours: it may contain the human's edits and other quarks' \
+                 in-flight work. Do not assume you wrote it, and do not commit any part of \
+                 it you did not author.\n\n",
+            );
+        }
+        p.push_str("```diff\n");
         p.push_str(projection.git_diff.trim());
         p.push_str("\n```\n\n");
     }
@@ -136,11 +160,14 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     // `team.json` retargets escalation without touching this text.
     if is_worker(projection, self_id) {
         p.push_str(
-            "You are a **worker**: you execute the work you are handed. If you hit a decision, \
-             an ambiguity, or a question that is not yours to settle — a design fork, a scope \
-             change, anything the task does not already answer — do NOT guess. Start a line with \
-             `@orchestrator` and put the question there; it routes to whoever currently holds \
-             that role.\n\n",
+            "You are a **worker**: you execute the work you are handed, and you report to the \
+             orchestrator, not to the human. Resolve implementation details yourself — naming, \
+             layout, which helper to use, how to structure a function. Those are yours; make \
+             the call and move on. Escalate ONLY what is genuinely not yours to settle: an \
+             architectural fork, a scope change, a constraint you cannot satisfy, or a fact \
+             that contradicts your task. To escalate, start a line with `@orchestrator` and put \
+             the question there; it routes to whoever currently holds that role. Do NOT guess \
+             on those, and do NOT stall on the small ones.\n\n",
         );
     }
 
@@ -150,13 +177,22 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     // dispatch the long work and hand back, rather than doing it inline.
     if is_orchestrator(projection, self_id) {
         p.push_str(
-            "You are the **orchestrator**: you are the human's conversational partner, and the \
-             human waits on your turn. Stay available. When a request implies long work, do NOT \
-             grind through it inline — decide, hand it to a worker (start a line with \
-             `@<quark-id>`) or to your own sub-agents, and reply promptly so the human can keep \
-             talking to you. Doing the long work yourself is what makes the chat feel frozen. \
-             Short answers, quick questions, and decisions you can settle immediately are yours \
-             to answer directly — it is the long, grinding work that should be dispatched.\n\n",
+            "You are the **orchestrator**: you are the human's conversational partner, the \
+             workers report to you, and you carry their work to the human. Three duties.\n\n\
+             **Stay available.** The human waits on your turn, and turns run serially — a long \
+             orchestrator turn IS the chat freezing. When a request implies long work, do NOT \
+             grind through it inline: decide, hand it to a worker (start a line with \
+             `@<quark-id>`) or to your own sub-agents, and reply promptly.\n\n\
+             **But do not bounce trivial work.** If a task is one or two steps — a small edit, \
+             a direct question, a decision you can settle now — just do it. Delegating \
+             something you could have finished in the time it took to write the handoff wastes \
+             a turn and the human's patience.\n\n\
+             **Verify before you relay.** A worker's report is a claim, not a fact. You are the \
+             human's only reliable narrator: before you tell the human something is done, check \
+             it against the repo — the commit exists, the tests actually pass, the file really \
+             changed. If a worker's claim and the repo disagree, the repo wins; say so plainly \
+             and without blame. If you did not verify a claim, pass it on as the worker's claim, \
+             not as your own finding.\n\n",
         );
     }
 
@@ -216,6 +252,7 @@ mod tests {
                 Some(QuarkId::new("claude")),
                 Kind::Message { body: "start the auth work".into() },
             )],
+            field_truncated: false,
             git_diff: String::new(),
             isolated: true,
             cwd: std::path::PathBuf::from("/repo/.hadron/trees/agy"),
@@ -355,6 +392,75 @@ mod tests {
         // The base projection's roster is a lone worker (`agy`).
         let p = build(&projection("x"), &QuarkId::new("agy"));
         assert!(!p.contains("You are a **worker**"));
+    }
+
+    /// A dropped event must be *announced*. Silent truncation is the merge-gate bug
+    /// wearing a different hat: the quark cannot tell "never said" from "can't see it",
+    /// so it acts on the partial field with full confidence.
+    #[test]
+    fn a_truncated_field_window_says_so() {
+        let mut proj = projection("x");
+        assert!(!build(&proj, &QuarkId::new("agy")).contains("INCOMPLETE"));
+
+        proj.field_truncated = true;
+        let p = build(&proj, &QuarkId::new("agy"));
+        assert!(p.contains("INCOMPLETE"), "the quark must be told the transcript is partial");
+        assert!(p.contains("rather than assuming it was never said"));
+    }
+
+    /// In the shared tree the diff is the WHOLE tree's uncommitted state — the human's
+    /// edits and other quarks' in-flight work. Unlabelled, a quark reads it as its own
+    /// prior output and "continues" work it never did.
+    #[test]
+    fn the_working_diff_is_attributed_to_the_tree_it_came_from() {
+        let mut proj = projection("x");
+        proj.git_diff = "--- a/x\n+++ b/x".into();
+
+        proj.isolated = true;
+        let own = build(&proj, &QuarkId::new("agy"));
+        assert!(own.contains("your own worktree"));
+
+        proj.isolated = false;
+        let shared = build(&proj, &QuarkId::new("agy"));
+        assert!(shared.contains("whole shared tree"));
+        assert!(shared.contains("It is NOT necessarily yours"));
+        assert!(shared.contains("do not commit any part of it you did not author"));
+    }
+
+    /// Jake's ask, made structural: the orchestrator is the human's narrator, so a
+    /// worker's claim must be checked against the repo before it is relayed as fact.
+    /// This was my habit; a habit is not architecture.
+    #[test]
+    fn the_orchestrator_must_verify_a_workers_claim_before_relaying_it() {
+        let mut proj = projection("x");
+        proj.roster.push(QuarkCard {
+            id: QuarkId::new("opus"),
+            flavor: Flavor::Orchestrator,
+            energy: EnergyState::Available,
+            provider: String::new(),
+            model: String::new(),
+        });
+
+        let orch = build(&proj, &QuarkId::new("opus"));
+        assert!(orch.contains("Verify before you relay"));
+        assert!(orch.contains("the repo wins"), "ground truth beats a self-report");
+        // …and the floor, so it doesn't become a lazy delegator.
+        assert!(orch.contains("do not bounce trivial work"));
+
+        // The worker is told to settle small calls itself rather than stalling.
+        let worker = build(&proj, &QuarkId::new("agy"));
+        assert!(worker.contains("Resolve implementation details yourself"));
+        assert!(worker.contains("do NOT stall on the small ones"));
+    }
+
+    /// Prohibition alone did not stop a blanket stage; give the positive form too.
+    #[test]
+    fn the_shared_tree_prescribes_staging_by_explicit_path() {
+        let mut proj = projection("x");
+        proj.isolated = false;
+        let p = build(&proj, &QuarkId::new("agy"));
+        assert!(p.contains("git add <path>"), "say what TO do, not only what not to");
+        assert!(p.contains("git add -A"), "and still name the footgun");
     }
 
     #[test]

@@ -21,6 +21,13 @@ pub struct Projection {
     pub roster: Vec<QuarkCard>,
     /// Recent relevant events. v1: a dumb recent window.
     pub field_window: Vec<Event>,
+    /// Whether older events were dropped to fit the window's byte budget. The
+    /// truncation used to be silent, so a quark whose earlier instruction had
+    /// aged out could not tell the difference between "the human never said it"
+    /// and "I can no longer see it" — and confidently acted on the partial
+    /// picture. Same class as the merge-gate fiction: say what is missing.
+    #[serde(default)]
+    pub field_truncated: bool,
     /// Current working diff, not whole files. v1: may be empty.
     pub git_diff: String,
     /// **Where this quark works.** The directory every tool the adapter spawns
@@ -96,6 +103,7 @@ mod tests {
                 Some(QuarkId::new("claude")),
                 Kind::Message { body: "go".into() },
             )],
+            field_truncated: false,
             git_diff: String::new(),
             isolated: true,
             cwd: std::path::PathBuf::from("/tmp/wt"),
