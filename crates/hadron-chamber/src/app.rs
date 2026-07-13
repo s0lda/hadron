@@ -325,6 +325,7 @@ struct Chamber {
     context_menu: Option<ContextMenu>,
     terminal_scroll: ScrollHandle,
     file_tree_scroll: ScrollHandle,
+    file_tree_open_scroll: ScrollHandle,
 }
 
 #[derive(Clone, Debug)]
@@ -482,6 +483,7 @@ impl Chamber {
             context_menu: None,
             terminal_scroll: ScrollHandle::new(),
             file_tree_scroll: ScrollHandle::new(),
+            file_tree_open_scroll: ScrollHandle::new(),
         }
     }
 
@@ -1628,7 +1630,6 @@ impl Chamber {
                                 div()
                                     .absolute()
                                     .top_0()
-                                    .left_0()
                                     .bottom_0()
                                     .right_0()
                                     .child(Scrollbar::vertical(&self.terminal_scroll).scrollbar_show(ScrollbarShow::Hover))
@@ -1669,15 +1670,30 @@ impl Chamber {
                         )
                         .child(
                             div()
-                                .id("file-tree-open")
+                                .id("file-tree-open-container")
                                 .flex_1()
                                 .min_h_0()
-                                .overflow_y_scroll()
-                                .p_2()
-                                .bg(theme::input_bg())
-                                .text_color(theme::text())
-                                // Use a fixed index like usize::MAX for the file tree markdown cache
-                                .child(self.markdown_body("file-tree-open", usize::MAX, content, &[]))
+                                .relative()
+                                .child(
+                                    div()
+                                        .id("file-tree-open")
+                                        .size_full()
+                                        .overflow_y_scroll()
+                                        .track_scroll(&self.file_tree_open_scroll)
+                                        .p_2()
+                                        .bg(theme::input_bg())
+                                        .text_color(theme::text())
+                                        // Use a fixed index like usize::MAX for the file tree markdown cache
+                                        .child(self.markdown_body("file-tree-open", usize::MAX, content, &[]))
+                                )
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .top_0()
+                                        .bottom_0()
+                                        .right_0()
+                                        .child(Scrollbar::vertical(&self.file_tree_open_scroll).scrollbar_show(ScrollbarShow::Hover))
+                                )
                         );
                     
                     v_flex()
@@ -1862,7 +1878,6 @@ impl Chamber {
                             div()
                                 .absolute()
                                 .top_0()
-                                .left_0()
                                 .bottom_0()
                                 .right_0()
                                 .child(Scrollbar::vertical(&self.file_tree_scroll).scrollbar_show(ScrollbarShow::Hover))
@@ -2734,9 +2749,8 @@ impl Chamber {
                                     .child(div().text_sm().text_color(theme::text_muted()).child(method.description.clone()))
                                     .child(
                                         text_button(&format!("auth-btn-{}", method.id), &method.name)
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                let final_model = if desc_inner.id == "claude" { "claude-3-5-sonnet" } else { "gemini-1.5-pro" };
-                                                this.wizard_state = WizardState::Connecting(desc_inner.clone(), ProviderState::Ready { model: final_model.into() });
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.wizard_state = WizardState::Connecting(desc_inner.clone(), ProviderState::Ready { model: "".into() });
                                                 cx.notify();
                                             }))
                                     )
