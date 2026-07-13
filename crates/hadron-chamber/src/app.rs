@@ -734,54 +734,52 @@ impl Chamber {
         let qid = self.info_panel.as_ref().unwrap();
         let roster_row = self.view.roster.iter().find(|r| &r.id == qid).unwrap();
 
-        // Calculate session stats for this quark
-        let mut turns = 0;
-        let mut fresh = 0;
-        let mut cached = 0;
-        let mut latest_ctx = None;
-        let mut latest_quota = None;
+        let stats = self.view.session_stats();
+        let q_stats = stats.per_quark.into_iter().find(|(id, _)| id == qid).map(|(_, s)| s).unwrap_or_default();
 
-        for m in &self.view.messages {
-            if &m.from == qid {
-                if m.kind_label == "message" {
-                    turns += 1;
-                }
-                if let Some(u) = &m.usage {
-                    if !u.spend.is_empty() {
-                        fresh += u.spend.fresh().unwrap_or(0);
-                        cached += u.spend.cached().unwrap_or(0);
-                    }
-                    if u.context.is_some() {
-                        latest_ctx = u.context.clone();
-                    }
-                    if !u.quota.is_empty() {
-                        latest_quota = Some(u.quota.clone());
-                    }
-                }
+        let (agent_str, model_str) = match roster_row.transport {
+            hadron_lattice::Transport::Acp => {
+                let agent = if roster_row.model.is_empty() { "unknown" } else { &roster_row.model };
+                (agent, "unknown")
             }
-        }
+            hadron_lattice::Transport::Cli => {
+                ("hadron-adapter", if roster_row.model.is_empty() { "unknown" } else { &roster_row.model })
+            }
+        };
 
-        let model_display = if roster_row.model.starts_with("@agentclientprotocol") {
-            "agent default (unknown)"
-        } else {
-            &roster_row.model
+        let flavor_str = match &roster_row.flavor {
+            Some(hadron_lattice::Flavor::Orchestrator) => "Orchestrator",
+            Some(hadron_lattice::Flavor::Worker) => "Worker",
+            None => "None",
         };
 
         let transport_str = match roster_row.transport {
-            hadron_lattice::Transport::Cli => "CLI",
-            hadron_lattice::Transport::Acp => "ACP",
+            hadron_lattice::Transport::Cli => "CLI (one-shot)",
+            hadron_lattice::Transport::Acp => "ACP (resident)",
         };
+
+        let enabled_str = if roster_row.enabled { "Enabled" } else { "Disabled" };
+        let mode_str = if roster_row.mode_is_override {
+            format!("{:?} (override)", roster_row.mode)
+        } else {
+            format!("{:?} (global default)", roster_row.mode)
+        };
+
+        let first_seen_str = q_stats.first_seen.map(|ts| ts.format("%Y-%m-%d %H:%M:%S UTC").to_string()).unwrap_or_else(|| "Never".to_string());
+        let last_active_str = q_stats.last_active.map(|ts| ts.format("%Y-%m-%d %H:%M:%S UTC").to_string()).unwrap_or_else(|| "Never".to_string());
 
         let mut stats_block = v_flex().gap_1().mt_4()
             .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::text()).child("Session Stats"))
-            .child(div().text_xs().text_color(theme::text_muted()).child(format!("Turns: {}", turns)))
-            .child(div().text_xs().text_color(theme::text_muted()).child(format!("Spent: {} fresh, {} cached", format_num(fresh), format_num(cached))));
+            .child(div().text_xs().text_color(theme::text_muted()).child(format!("Turns: {}", q_stats.turns)))
+            .child(div().text_xs().text_color(theme::text_muted()).child(format!("Spent: {} fresh, {} cached", format_num(q_stats.fresh), format_num(q_stats.cached))))
+            .child(div().text_xs().text_color(theme::text_muted()).child(format!("First Seen: {}", first_seen_str)))
+            .child(div().text_xs().text_color(theme::text_muted()).child(format!("Last Active: {}", last_active_str)));
 
-        if let Some(ctx) = latest_ctx {
+        if let Some(ctx) = q_stats.context {
             stats_block = stats_block.child(div().text_xs().text_color(theme::text_muted()).child(format!("Context: {:.1}% ({} / {})", ctx.used_percentage, format_num(ctx.used_tokens), format_num(ctx.context_window_size))));
         }
-        if let Some(quota) = latest_quota {
-            for bucket in quota {
+        if !q_stats.quota.is_empty() {
+            for bucket in q_stats.quota {
                 stats_block = stats_block.child(div().text_xs().text_color(theme::text_muted()).child(format!("Quota [{}]: {:.1}% remaining", bucket.key, bucket.remaining_fraction * 100.0)));
             }
         }
@@ -815,9 +813,13 @@ impl Chamber {
                     .child(div().text_lg().font_weight(gpui::FontWeight::BOLD).text_color(theme::actor_hue(qid)).child(qid.clone()))
                     .child(
                         v_flex().gap_1().mt_2()
+                            .child(div().text_sm().text_color(theme::text()).child(format!("Flavor: {}", flavor_str)))
                             .child(div().text_sm().text_color(theme::text()).child(format!("Provider: {}", roster_row.provider)))
-                            .child(div().text_sm().text_color(theme::text()).child(format!("Model: {}", model_display)))
+                            .child(div().text_sm().text_color(theme::text()).child(format!("Agent: {}", agent_str)))
+                            .child(div().text_sm().text_color(theme::text()).child(format!("Model: {}", model_str)))
                             .child(div().text_sm().text_color(theme::text()).child(format!("Transport: {}", transport_str)))
+                            .child(div().text_sm().text_color(theme::text()).child(format!("Mode: {}", mode_str)))
+                            .child(div().text_sm().text_color(theme::text()).child(format!("State: {}", enabled_str)))
                     )
                     .child(stats_block)
             )
