@@ -15,6 +15,9 @@ mod vcs;
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 mod text;
 
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+mod sys;
+
 #[cfg(feature = "gui")]
 mod app;
 #[cfg(feature = "gui")]
