@@ -1106,6 +1106,18 @@ impl Chamber {
             return;
         }
 
+        if text.starts_with('/') && text.len() > 1 {
+            let (cmd_name, args) = match text[1..].split_once(char::is_whitespace) {
+                Some((n, a)) => (n, a.trim()),
+                None => (&text[1..], ""),
+            };
+
+            if self.handle_chat_command(cmd_name, args, window, cx) {
+                input.update(cx, |state, cx| state.set_value("", window, cx));
+                return;
+            }
+        }
+
         // Write the raw text with `to: None`, leaving any `@mentions` in the body.
         // The daemon resolves addressees from the body, so ONE message can address
         // several quarks ("@opus do X and @agy do Y") — each is fanned out in turn.
@@ -1144,6 +1156,58 @@ impl Chamber {
             .scroll_to_reveal_item(new_chat_count.saturating_sub(1));
         cx.notify();
     }
+    fn handle_chat_command(
+        &mut self,
+        cmd: &str,
+        args: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match cmd {
+            "team-brainstorm" => {
+                let body = format!("@team Let's brainstorm. {args}").trim().to_string();
+                let ev = Event::new(Actor::Human, None, Kind::Message { body });
+                if let Err(e) = io::append_event(&self.path, &ev) {
+                    eprintln!("chamber: failed to append team-brainstorm message: {e}");
+                } else {
+                    let events = io::read_events(&self.path).unwrap_or_default();
+                    self.view = model::project_with_team(&events, &self.team);
+                    
+                    let old_chat_count = self.chat_message_ixs.len();
+                    self.chat_message_ixs = self
+                        .view
+                        .messages
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
+                        .collect();
+                    let new_chat_count = self.chat_message_ixs.len();
+                    if new_chat_count > old_chat_count {
+                        self.chat_list_state.splice(
+                            old_chat_count..old_chat_count,
+                            new_chat_count - old_chat_count,
+                        );
+                    }
+                    for scroll in &self.chat_scrolls {
+                        scroll.scroll_to_bottom();
+                    }
+                    self.chat_list_state.scroll_to_reveal_item(new_chat_count.saturating_sub(1));
+                    cx.notify();
+                }
+                true
+            }
+            _ => {
+                // If it contains a slash, it's probably a path. 
+                // Return false to let it pass through as a normal message.
+                if cmd.contains('/') {
+                    return false;
+                }
+                // Later we could show a local error message for unknown commands.
+                false
+            }
+        }
+    }
+
     fn handle_context_menu_action(&mut self, action: ContextMenuAction, cx: &mut Context<Self>) {
         match action {
             ContextMenuAction::QuarkInfo(id) => {
