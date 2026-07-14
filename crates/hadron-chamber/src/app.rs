@@ -361,6 +361,8 @@ struct Chamber {
     /// Settings editor fields (display name + image path for the current target).
     settings_name: Entity<InputState>,
     settings_path: Entity<InputState>,
+    settings_effort: Entity<InputState>,
+    settings_mode_config: Entity<InputState>,
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
@@ -437,8 +439,9 @@ impl Chamber {
         let _palette_sub = cx.subscribe_in(&palette_input, window, Self::on_palette_submit);
 
         let settings_name = cx.new(|cx| InputState::new(window, cx).placeholder("Display name"));
-        let settings_path = cx
-            .new(|cx| InputState::new(window, cx).placeholder("Path to an image file… (optional)"));
+        let settings_path = cx.new(|cx| InputState::new(window, cx).placeholder("/path/to/image.png"));
+        let settings_effort = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. low, standard, high"));
+        let settings_mode_config = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. architect, code, ask"));
         // Repaint the Settings overlay on every edit so its preview is live.
         let _settings_subs = [
             cx.subscribe_in(&settings_name, window, |_, _, _: &InputEvent, _, cx| {
@@ -540,6 +543,8 @@ impl Chamber {
             settings_target: SettingsTarget::Human,
             settings_name,
             settings_path,
+            settings_effort,
+            settings_mode_config,
             _input_sub,
             _palette_sub,
             _settings_subs,
@@ -2123,9 +2128,10 @@ impl Chamber {
                         .text_xs()
                         .text_color(theme::text_muted())
                         .child(format!(
-                            "Spent: {} fresh, {} cached",
+                            "Spent: {} fresh, {} cached{}",
                             format_num(stats.total_fresh),
-                            format_num(stats.total_cached)
+                            format_num(stats.total_cached),
+                            if let Some(c) = stats.total_cost_usd { format!(" (${:.2})", c) } else { "".to_string() }
                         )),
                 ),
         );
@@ -3218,28 +3224,56 @@ impl Chamber {
 
     /// Load the current target's name + image path into the editor inputs.
     fn load_settings_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (name, path) = {
+        let (name, path, effort, mode) = {
             let key = self.settings_target.key();
+            let mut eff = None;
+            let mut mod_cfg = None;
             let id = if key == "human" {
                 Some(&self.prefs.human)
             } else {
+                if let Some(seat) = self.team.quarks.iter().find(|s| s.id.as_str() == key) {
+                    eff = seat.effort.clone();
+                    mod_cfg = seat.mode_config.clone();
+                }
                 self.prefs.quarks.get(key)
             };
             (
                 id.and_then(|i| i.display_name.clone()).unwrap_or_default(),
                 id.and_then(|i| i.image_path.clone()).unwrap_or_default(),
+                eff.unwrap_or_default(),
+                mod_cfg.unwrap_or_default(),
             )
         };
         self.settings_name
             .update(cx, |s, cx| s.set_value(name, window, cx));
         self.settings_path
             .update(cx, |s, cx| s.set_value(path, window, cx));
+        self.settings_effort
+            .update(cx, |s, cx| s.set_value(effort, window, cx));
+        self.settings_mode_config
+            .update(cx, |s, cx| s.set_value(mode, window, cx));
     }
 
     /// Write the editor inputs back into the current target identity and persist.
     fn commit_settings_inputs(&mut self, cx: &mut Context<Self>) {
         let name = self.settings_name.read(cx).value().trim().to_string();
         let path = self.settings_path.read(cx).value().trim().to_string();
+        let effort_val = self.settings_effort.read(cx).value().trim().to_string();
+        let mode_val = self.settings_mode_config.read(cx).value().trim().to_string();
+        
+        let key = self.settings_target.key();
+        if key != "human" && key != "providers" {
+            let qid = QuarkId::new(key);
+            if let Some(seat) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
+                seat.effort = (!effort_val.is_empty()).then_some(effort_val);
+                seat.mode_config = (!mode_val.is_empty()).then_some(mode_val);
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let team_path = hadron_lattice::team_for_field(&self.path)
+                    .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"));
+                let _ = hadron_lattice::save_team(&team_path, &self.team);
+            }
+        }
+        
         if let Some(id) = self.settings_identity_mut() {
             id.display_name = (!name.is_empty()).then_some(name);
             id.image_path = (!path.is_empty()).then_some(path);
@@ -3429,6 +3463,14 @@ impl Chamber {
                 .child(settings_field(
                     "Display name",
                     Input::new(&self.settings_name).into_any_element(),
+                ))
+                .child(settings_field(
+                    "Effort",
+                    Input::new(&self.settings_effort).into_any_element(),
+                ))
+                .child(settings_field(
+                    "Mode",
+                    Input::new(&self.settings_mode_config).into_any_element(),
                 ))
                 .child(settings_field("Color", swatches.into_any_element()))
                 .child(settings_field(
@@ -3876,15 +3918,48 @@ impl Chamber {
                                             &format!("auth-btn-{}", method.id),
                                             &method.name,
                                         )
-                                        .on_click(
-                                            cx.listener(move |this, _, _, cx| {
+                                        .on_click(cx.listener(
+                                            move |this, _, _, cx| {
                                                 this.wizard_state = WizardState::Connecting(
                                                     desc_inner.clone(),
-                                                    ProviderState::Ready { model: "".into() },
+                                                    ProviderState::Connecting,
                                                 );
                                                 cx.notify();
-                                            }),
-                                        ),
+
+                                                let target = hadron_gluon::adapter::registry::AcpTarget {
+                                                    program: desc_inner.command.clone(),
+                                                    args: desc_inner.args.clone(),
+                                                };
+                                                let desc_for_task = desc_inner.clone();
+                                                cx.spawn(
+                                                    |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                                                        let mut cx = cx.clone();
+                                                        async move {
+                                                            let result = cx
+                                                                .background_spawn(async move {
+                                                                    hadron_gluon::adapter::acp::probe(&target)
+                                                                })
+                                                                .await
+                                                                .map_err(|e| e.to_string());
+
+                                                            this.update(&mut cx, |this, cx| {
+                                                                let state = match result {
+                                                                    Ok(model) => ProviderState::Ready { model },
+                                                                    Err(e) => ProviderState::Failed(e),
+                                                                };
+                                                                this.wizard_state = WizardState::Connecting(
+                                                                    desc_for_task,
+                                                                    state,
+                                                                );
+                                                                cx.notify();
+                                                            })
+                                                            .ok();
+                                                        }
+                                                    },
+                                                )
+                                                .detach();
+                                            },
+                                        )),
                                     ),
                             );
                         }
@@ -4440,13 +4515,14 @@ impl Chamber {
                                 if !u.spend.is_empty() {
                                     let fresh = u.spend.fresh().unwrap_or(0);
                                     let cached = u.spend.cached().unwrap_or(0);
+                                    let cost_str = if let Some(c) = u.cost_usd() { format!(" (${:.2})", c) } else { "".to_string() };
                                     if cached > 0 {
                                         parts.push(format!(
-                                            "spent: {} fresh, {} cached",
-                                            fresh, cached
+                                            "spent: {} fresh, {} cached{}",
+                                            fresh, cached, cost_str
                                         ));
                                     } else {
-                                        parts.push(format!("spent: {} fresh", fresh));
+                                        parts.push(format!("spent: {} fresh{}", fresh, cost_str));
                                     }
                                 }
                                 if parts.is_empty() {
@@ -4504,10 +4580,11 @@ impl Chamber {
             if !u.spend.is_empty() {
                 let fresh = u.spend.fresh().unwrap_or(0);
                 let cached = u.spend.cached().unwrap_or(0);
+                let cost_str = if let Some(c) = u.cost_usd() { format!(" (${:.2})", c) } else { "".to_string() };
                 if cached > 0 {
-                    parts.push(format!("spent: {} fresh, {} cached", fresh, cached));
+                    parts.push(format!("spent: {} fresh, {} cached{}", fresh, cached, cost_str));
                 } else {
-                    parts.push(format!("spent: {} fresh", fresh));
+                    parts.push(format!("spent: {} fresh{}", fresh, cost_str));
                 }
             }
             if !parts.is_empty() {

@@ -201,9 +201,21 @@ pub struct ModelSelector {
 /// Boolean options (`Fast mode`) and non-model selects (`Mode`, `Thought level`) are
 /// not models and are ignored here.
 pub fn model_selector(options: &[SessionConfigOption]) -> Option<ModelSelector> {
+    config_selector(options, SessionConfigOptionCategory::Model)
+}
+
+pub fn effort_selector(options: &[SessionConfigOption]) -> Option<ModelSelector> {
+    config_selector(options, SessionConfigOptionCategory::ThoughtLevel)
+}
+
+pub fn mode_selector(options: &[SessionConfigOption]) -> Option<ModelSelector> {
+    config_selector(options, SessionConfigOptionCategory::Mode)
+}
+
+pub fn config_selector(options: &[SessionConfigOption], category: SessionConfigOptionCategory) -> Option<ModelSelector> {
     let opt = options
         .iter()
-        .find(|o| o.category == Some(SessionConfigOptionCategory::Model))?;
+        .find(|o| o.category.as_ref() == Some(&category))?;
 
     let SessionConfigKind::Select(select) = &opt.kind else {
         // A model you cannot choose from a list is not a picker. Say nothing rather
@@ -304,7 +316,17 @@ pub fn probe(target: &AcpTarget) -> anyhow::Result<String> {
                             .send_request(InitializeRequest::new(ProtocolVersion::V1))
                             .block_task()
                             .await?;
-                        Ok(init.agent_info.map(|i| i.name).unwrap_or_else(|| "unnamed agent".into()))
+                        let sess = cx
+                            .send_request(NewSessionRequest::new(std::env::temp_dir()))
+                            .block_task()
+                            .await?;
+                        let opts = sess.config_options.unwrap_or_default();
+                        
+                        if let Some(selector) = model_selector(&opts) {
+                            Ok(selector.current)
+                        } else {
+                            Ok(init.agent_info.map(|i| i.name).unwrap_or_else(|| "unnamed agent".into()))
+                        }
                     })
                     .await
                     .map_err(|e| anyhow::anyhow!("ACP handshake failed: {e}"))?;
@@ -366,6 +388,9 @@ pub struct AcpQuark {
     /// (see [`model_selector`] and [`resolve_model`]). The model that actually ran is
     /// on [`AcpSession::model`], because only the agent knows it.
     model: String,
+    effort: Option<String>,
+    mode_config: Option<String>,
+    /// How to boot this agent.
     target: AcpTarget,
     /// `None` until the first turn: booting is lazy, exactly as the CLI path spawns
     /// nothing until `excite`.
@@ -378,11 +403,13 @@ pub struct AcpQuark {
 }
 
 impl AcpQuark {
-    pub fn new(id: QuarkId, flavor: Flavor, model: impl Into<String>, target: AcpTarget) -> Self {
+    pub fn new(id: QuarkId, flavor: Flavor, model: impl Into<String>, effort: Option<String>, mode_config: Option<String>, target: AcpTarget) -> Self {
         AcpQuark {
             id,
             flavor,
             model: model.into(),
+            effort,
+            mode_config,
             target,
             session: None,
             last_spend: SpendWatermark::default(),
@@ -427,6 +454,8 @@ impl AcpQuark {
         target: &AcpTarget,
         cwd: PathBuf,
         want_model: String,
+        want_effort: Option<String>,
+        want_mode: Option<String>,
         live: Option<LiveFeed>,
     ) -> anyhow::Result<AcpSession> {
         let (turns_tx, mut turns_rx) = tokio::sync::mpsc::unbounded_channel::<TurnRequest>();
@@ -635,6 +664,32 @@ impl AcpQuark {
                                 }
                             }
 
+                            if let Some(want_eff) = want_effort {
+                                if let Some(selector) = effort_selector(&offered) {
+                                    if let Some(value) = resolve_model(&selector, &want_eff) {
+                                        let _ = cx.send_request(SetSessionConfigOptionRequest::new(
+                                            sid.clone(),
+                                            selector.config_id,
+                                            value.as_str(),
+                                        )).block_task().await;
+                                        eprintln!("[acp] effort set to {:?}", value);
+                                    }
+                                }
+                            }
+
+                            if let Some(want_m) = want_mode {
+                                if let Some(selector) = mode_selector(&offered) {
+                                    if let Some(value) = resolve_model(&selector, &want_m) {
+                                        let _ = cx.send_request(SetSessionConfigOptionRequest::new(
+                                            sid.clone(),
+                                            selector.config_id,
+                                            value.as_str(),
+                                        )).block_task().await;
+                                        eprintln!("[acp] mode set to {:?}", value);
+                                    }
+                                }
+                            }
+
                             // The agent is up and has a session. Unblock `boot`.
                             let _ = ready_tx.send(Ok(()));
 
@@ -727,10 +782,12 @@ impl AcpQuark {
 
         // Boot on the first turn, in the quark's own worktree, and keep it.
         if self.session.is_none() {
-            self.session = Some(AcpQuark::boot(
+            self.session = Some(Self::boot(
                 &self.target,
                 turn.cwd.clone(),
                 self.model.clone(),
+                self.effort.clone(),
+                self.mode_config.clone(),
                 self.live.clone(),
             )?);
         }
@@ -778,6 +835,7 @@ impl AcpQuark {
                 context_window_size: size.min(u32::MAX as u64) as u32,
                 used_percentage: if size > 0 { (used as f64 / size as f64) * 100.0 } else { 0.0 },
             }),
+            model: self.session.as_ref().and_then(|s| s.model.lock().unwrap().clone()),
             quota: vec![],
         };
 
@@ -1070,7 +1128,7 @@ mod tests {
             program: "hadron-definitely-not-a-real-acp-agent".into(),
             args: vec![],
         };
-        let mut q = AcpQuark::new(QuarkId::new("dead"), Flavor::Worker, "", target);
+        let mut q = AcpQuark::new(QuarkId::new("dead"), Flavor::Worker, "", None, None, target);
 
         for attempt in 1..=2 {
             let err =
@@ -1213,6 +1271,8 @@ mod tests {
             QuarkId::new("acp"),
             Flavor::Worker,
             "haiku",
+            None,
+            None,
             AcpTarget::claude_adapter(),
         );
 
@@ -1252,6 +1312,8 @@ mod tests {
             QuarkId::new("acp"),
             Flavor::Worker,
             "",
+            None,
+            None,
             AcpTarget::claude_adapter(),
         );
 
@@ -1316,7 +1378,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("hadron-live-test-{}", ulid::Ulid::new()));
         let id = QuarkId::new("acp");
 
-        let mut q = AcpQuark::new(id.clone(), Flavor::Worker, "", AcpTarget::claude_adapter())
+        let mut q = AcpQuark::new(id.clone(), Flavor::Worker, "", None, None, AcpTarget::claude_adapter())
             .watching(dir.clone());
 
         // Watch the live dir while the turn is in flight.

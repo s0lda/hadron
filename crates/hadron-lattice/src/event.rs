@@ -548,6 +548,7 @@ mod event_tests {
         use crate::{ContextUsage, QuotaBucket, TokenSpend, Usage};
 
         let usage = Usage {
+            model: Some("haiku".to_string()),
             spend: TokenSpend::default(),
             context: Some(ContextUsage {
                 used_tokens: 635,
