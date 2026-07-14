@@ -24,7 +24,7 @@ pub fn extract_completion_query(text: &str, offset: usize) -> Option<(char, Stri
 
     let before_cursor = &text[..safe_offset];
     for (idx, c) in before_cursor.char_indices().rev() {
-        if c == '@' || c == ':' {
+        if c == '@' || c == ':' || (c == '/' && idx == 0) {
             let query = before_cursor[idx + c.len_utf8()..].to_string();
             return Some((c, query, idx));
         }
