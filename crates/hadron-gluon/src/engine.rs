@@ -570,15 +570,38 @@ impl Engine {
         let Kind::Message { body } = &events[idx].kind else {
             return Vec::new();
         };
+        let msg_id = events[idx].id;
         self.human_addressees(body)
             .into_iter()
-            .filter(|addressee| {
-                !events[idx + 1..]
-                    .iter()
-                    .any(|e| e.from == Actor::Quark(addressee.clone()))
-            })
+            .filter(|addressee| !Self::has_answered(&events[idx + 1..], addressee, msg_id))
             .map(|addressee| (addressee, body.clone()))
             .collect()
+    }
+
+    /// Has `addressee` answered the human message `msg_id`?
+    ///
+    /// The obvious reading — *"has it authored anything since?"* — is **wrong the moment
+    /// the human speaks while the quark is already working.** The quark finishes the turn
+    /// it was on, its reply lands after the newer message, and that reply gets counted as
+    /// an answer to a message it could not possibly have seen. The newer message is then
+    /// dropped, silently and permanently. Jake hit exactly this by typing twice.
+    ///
+    /// So an event answers a message only if it **says** it does: the engine stamps
+    /// `answers` with the assignment the turn was dispatched for.
+    ///
+    /// The `answers.is_none()` arm is not a loophole, it is the legacy reading, and it
+    /// has to stay: every event written before this field existed carries `None`, and
+    /// treating those as "has not answered" would re-excite a quark for every historical
+    /// message in the field the next time the daemon starts. Absent is unknown, and for
+    /// unknown we keep the old, order-based answer. New events are precise.
+    fn has_answered(after: &[Event], addressee: &QuarkId, msg_id: ulid::Ulid) -> bool {
+        after.iter().any(|e| {
+            e.from == Actor::Quark(addressee.clone())
+                && match e.answers {
+                    Some(a) => a == msg_id,
+                    None => true, // legacy event: fall back to "it spoke after the message"
+                }
+        })
     }
 
     /// Everyone the field is currently waiting on, in dispatch order: the explicit
@@ -775,6 +798,10 @@ impl Engine {
         target: &QuarkId,
         outcome: TurnOutcome,
         tree: Option<&TurnTree>,
+        // The message this turn was dispatched to answer. Stamped onto everything the
+        // turn emits, so a reader can ask "is the human still waiting?" and get a fact
+        // rather than an inference from what happens to come after what.
+        assignment: Option<ulid::Ulid>,
     ) -> anyhow::Result<()> {
         // ONE id for everything this turn emits. The reply and the energy report are
         // separate events, and turns run in parallel — so without this a reader trying
@@ -830,7 +857,8 @@ impl Engine {
                     Kind::EnergyReport { used_tokens: fresh.unwrap_or(0) },
                 )
                 .with_usage(outcome.usage.clone())
-                .with_turn(turn),
+                .with_turn(turn)
+                .answering(assignment),
             )
             .await?;
         }
@@ -839,7 +867,8 @@ impl Engine {
             let to = parse_addressee(&body, &self.roster, Some(target));
             self.append(
                 Event::new(Actor::Quark(target.clone()), to, Kind::Message { body })
-                    .with_turn(turn),
+                    .with_turn(turn)
+                    .answering(assignment),
             )
             .await?;
         }
@@ -882,11 +911,15 @@ impl Engine {
                     // for permission is not done — its uncommitted work must still be
                     // sitting in its worktree when the grant resumes it. That is exactly
                     // why `worktree::ensure` is idempotent for the same assignment.
-                    self.append(Event::new(
-                        Actor::Quark(target.clone()),
-                        None,
-                        Kind::Status { state: QuarkState::Waiting },
-                    ))
+                    self.append(
+                        Event::new(
+                            Actor::Quark(target.clone()),
+                            None,
+                            Kind::Status { state: QuarkState::Waiting },
+                        )
+                        .with_turn(turn)
+                        .answering(assignment),
+                    )
                     .await?;
                     return Ok(());
                 }
@@ -908,11 +941,15 @@ impl Engine {
                 let paths = crate::worktree::changed_paths(&t.wt, &t.base)?;
                 // `Kind::Edit` has existed in the lattice since day one and was emitted
                 // by nobody. This is what it was for: a quark's work, attributed.
-                self.append(Event::new(
-                    Actor::Quark(target.clone()),
-                    None,
-                    Kind::Edit { paths, git, summary: headline.clone() },
-                ))
+                self.append(
+                    Event::new(
+                        Actor::Quark(target.clone()),
+                        None,
+                        Kind::Edit { paths, git, summary: headline.clone() },
+                    )
+                    .with_turn(turn)
+                    .answering(assignment),
+                )
                 .await?;
             }
 
@@ -924,11 +961,15 @@ impl Engine {
             }
         }
 
-        self.append(Event::new(
-            Actor::Quark(target.clone()),
-            None,
-            Kind::Status { state: QuarkState::Ground },
-        ))
+        self.append(
+            Event::new(
+                Actor::Quark(target.clone()),
+                None,
+                Kind::Status { state: QuarkState::Ground },
+            )
+            .with_turn(turn)
+            .answering(assignment),
+        )
         .await?;
         Ok(())
     }
@@ -1068,8 +1109,16 @@ impl Engine {
     pub async fn run_until_quiesce(&mut self) -> anyhow::Result<()> {
         let mut exchanges = 0usize;
         let mut in_flight: HashSet<QuarkId> = HashSet::new();
-        let mut turns: JoinSet<(QuarkId, Option<TurnTree>, anyhow::Result<TurnOutcome>)> =
-            JoinSet::new();
+        // The assignment rides along with the turn so that `finish_turn` can stamp
+        // `answers` on what the turn emits. Without it, "has this quark answered the
+        // human?" degenerates into "has it said anything since?", which silently eats
+        // any message the human sends while the quark is already working.
+        let mut turns: JoinSet<(
+            QuarkId,
+            Option<TurnTree>,
+            Option<ulid::Ulid>,
+            anyhow::Result<TurnOutcome>,
+        )> = JoinSet::new();
         // The first turn error wins; siblings still run to completion (and still get
         // their terminal status) so a single failure can't strand the rest as
         // forever-Excited in the field.
@@ -1225,6 +1274,7 @@ impl Engine {
 
                     let turn_id = target.clone();
                     let turn_tree = tree.clone();
+                    let assignment = driver.as_ref().map(|d| d.assignment);
                     let deadline = self.turn_deadline;
                     turns.spawn(async move {
                         let mut quark = quark.lock().await;
@@ -1256,7 +1306,7 @@ impl Engine {
                                 deadline.as_secs(),
                             )),
                         };
-                        (turn_id, turn_tree, outcome)
+                        (turn_id, turn_tree, assignment, outcome)
                     });
                     in_flight.insert(target);
                     exchanges += 1;
@@ -1285,15 +1335,17 @@ impl Engine {
             };
 
             match joined {
-                Ok((target, tree, Ok(outcome))) => {
+                Ok((target, tree, assignment, Ok(outcome))) => {
                     in_flight.remove(&target);
-                    if let Err(err) = self.finish_turn(&target, outcome, tree.as_ref()).await {
+                    if let Err(err) =
+                        self.finish_turn(&target, outcome, tree.as_ref(), assignment).await
+                    {
                         if first_err.is_none() {
                             first_err = Some(err);
                         }
                     }
                 }
-                Ok((target, _, Err(err))) => {
+                Ok((target, _, _, Err(err))) => {
                     // A failed turn must still leave a terminal status behind, or the
                     // quark reads as forever-working. Its siblings keep running.
                     in_flight.remove(&target);
@@ -2135,6 +2187,85 @@ mod tests {
         );
         // The orchestrator's reply (no @mention) hands control back → quiesce.
         assert!(next_pending(&events).is_none());
+    }
+
+    /// **THE HUMAN TYPED WHILE THE ORCHESTRATOR WAS WORKING.** Jake asked whether his
+    /// messages stack if he speaks while a quark is mid-turn. They must — a chat where
+    /// the second thing you say is thrown away is not a chat.
+    ///
+    /// The trap this pins: "has the quark answered the human?" used to mean *"has it
+    /// authored anything since?"*. The quark finishes the turn it was already on, its
+    /// reply lands **after** the newer message, and the newer message is marked answered
+    /// by a reply that could not possibly have seen it. The human's second message is
+    /// then dropped, silently, forever.
+    ///
+    /// The probe types the second message *from inside the first turn*, which is exactly
+    /// the race, made deterministic.
+    #[tokio::test]
+    async fn a_message_sent_while_the_quark_is_working_is_not_lost() {
+        use hadron_lattice::{Projection, TurnOutcome};
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+        append_event(
+            &path,
+            &Event::new(Actor::Human, None, Kind::Message { body: "first".into() }),
+        )
+        .unwrap();
+
+        /// Answers "first", and while it is doing so the human types "second".
+        struct Interrupted {
+            field: std::path::PathBuf,
+            seen: Arc<Mutex<Vec<String>>>,
+        }
+        #[async_trait::async_trait]
+        impl crate::quark::Quark for Interrupted {
+            fn id(&self) -> QuarkId {
+                QuarkId::new("orch")
+            }
+            fn flavor(&self) -> Flavor {
+                Flavor::Orchestrator
+            }
+            fn energy(&self) -> EnergyState {
+                EnergyState::Available
+            }
+            async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+                self.seen.lock().unwrap().push(turn.task.clone());
+                // THE RACE: the human speaks again, mid-turn. This turn cannot see it —
+                // its projection was already built — and it is about to reply anyway.
+                if turn.task == "first" {
+                    append_event(
+                        &self.field,
+                        &Event::new(
+                            Actor::Human,
+                            None,
+                            Kind::Message { body: "second".into() },
+                        ),
+                    )
+                    .unwrap();
+                }
+                Ok(TurnOutcome {
+                    message: Some(format!("done with {}", turn.task)),
+                    permission: None,
+                    usage: Default::default(),
+                })
+            }
+        }
+
+        let seen = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(
+            path.clone(),
+            vec![Box::new(Interrupted { field: path.clone(), seen: seen.clone() })],
+            10,
+        );
+        engine.run_until_quiesce().await.unwrap();
+
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(
+            seen,
+            vec!["first".to_string(), "second".to_string()],
+            "the human spoke twice and must be answered twice — a message sent while the \
+             quark was working is QUEUED, not swallowed by the reply to the previous one"
+        );
     }
 
     #[tokio::test]
