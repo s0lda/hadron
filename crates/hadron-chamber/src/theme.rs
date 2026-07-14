@@ -26,6 +26,9 @@ pub fn surface_raised() -> Rgba {
 pub fn input_bg() -> Rgba {
     rgb(0x191a1b)
 }
+pub fn popover() -> Rgba {
+    rgb(0x252627) // slightly raised for context menus and popovers
+}
 pub fn border() -> Rgba {
     rgb(0x303133)
 }
