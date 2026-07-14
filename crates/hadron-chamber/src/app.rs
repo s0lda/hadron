@@ -1284,6 +1284,7 @@ impl Render for Chamber {
             .on_action(cx.listener(|this, _: &CycleMode, _, cx| this.cycle_global_mode(cx)))
             .relative()
             .size_full()
+            .overflow_hidden()
             .bg(theme::sidebar())
             .rounded_tl(top_radius)
             .rounded_tr(top_radius)
@@ -1597,24 +1598,27 @@ impl Chamber {
                     move |mut menu, _, _| {
                         let qid1 = qid_str.clone();
                         let view1 = view.clone();
-                        menu = menu.item(PopupMenuItem::new("Info").on_click(move |_, _, cx| {
+                        menu = menu.item(PopupMenuItem::new("Info").on_click(move |_, window, cx| {
+                            println!("==== INFO CONTEXT MENU CLICKED ====");
                             view1.update(cx, |this, cx| {
                                 this.handle_context_menu_action(
                                     ContextMenuAction::QuarkInfo(qid1.clone()),
                                     cx,
                                 );
                             });
+                            window.refresh();
                         }));
                         let qid2 = qid_str.clone();
                         let view2 = view.clone();
                         menu =
-                            menu.item(PopupMenuItem::new(enable_str).on_click(move |_, _, cx| {
+                            menu.item(PopupMenuItem::new(enable_str).on_click(move |_, window, cx| {
                                 view2.update(cx, |this, cx| {
                                     this.handle_context_menu_action(
                                         ContextMenuAction::ToggleQuark(qid2.clone()),
                                         cx,
                                     );
                                 });
+                                window.refresh();
                             }));
                         if let Some(flavor) = &r_flavor {
                             match flavor {
@@ -1622,7 +1626,7 @@ impl Chamber {
                                     let qid3 = qid_str.clone();
                                     let view3 = view.clone();
                                     menu = menu.item(PopupMenuItem::new("Make Worker").on_click(
-                                        move |_, _, cx| {
+                                        move |_, window, cx| {
                                             view3.update(cx, |this, cx| {
                                                 this.handle_context_menu_action(
                                                     ContextMenuAction::SetFlavor(
@@ -1632,6 +1636,7 @@ impl Chamber {
                                                     cx,
                                                 );
                                             });
+                                            window.refresh();
                                         },
                                     ));
                                 }
@@ -1641,7 +1646,7 @@ impl Chamber {
                                     menu =
                                         menu
                                             .item(PopupMenuItem::new("Make Orchestrator").on_click(
-                                            move |_, _, cx| {
+                                            move |_, window, cx| {
                                                 view4.update(cx, |this, cx| {
                                                     this.handle_context_menu_action(
                                                         ContextMenuAction::SetFlavor(
@@ -1651,6 +1656,7 @@ impl Chamber {
                                                         cx,
                                                     );
                                                 });
+                                                window.refresh();
                                             },
                                         ));
                                 }
@@ -2439,13 +2445,14 @@ impl Chamber {
                                         let path1 = path_clone.clone();
                                         let view1 = view.clone();
                                         menu = menu.item(PopupMenuItem::new("Open File").on_click(
-                                            move |_, _, cx| {
+                                            move |_, window, cx| {
                                                 view1.update(cx, |this, cx| {
                                                     this.handle_context_menu_action(
                                                         ContextMenuAction::OpenFile(path1.clone()),
                                                         cx,
                                                     )
-                                                })
+                                                });
+                                                window.refresh();
                                             },
                                         ));
 
@@ -2453,7 +2460,7 @@ impl Chamber {
                                         let view2 = view.clone();
                                         menu = menu.item(
                                             PopupMenuItem::new("Open in Editor").on_click(
-                                                move |_, _, cx| {
+                                                move |_, window, cx| {
                                                     view2.update(cx, |this, cx| {
                                                         this.handle_context_menu_action(
                                                             ContextMenuAction::OpenInEditor(
@@ -2461,7 +2468,8 @@ impl Chamber {
                                                             ),
                                                             cx,
                                                         )
-                                                    })
+                                                    });
+                                                    window.refresh();
                                                 },
                                             ),
                                         );
@@ -2470,7 +2478,7 @@ impl Chamber {
                                         let view3 = view.clone();
                                         menu = menu.item(
                                             PopupMenuItem::new("Open in Folder").on_click(
-                                                move |_, _, cx| {
+                                                move |_, window, cx| {
                                                     view3.update(cx, |this, cx| {
                                                         this.handle_context_menu_action(
                                                             ContextMenuAction::OpenInFolder(
@@ -2478,7 +2486,8 @@ impl Chamber {
                                                             ),
                                                             cx,
                                                         )
-                                                    })
+                                                    });
+                                                    window.refresh();
                                                 },
                                             ),
                                         );
@@ -2486,13 +2495,14 @@ impl Chamber {
                                         let path4 = path_clone.clone();
                                         let view4 = view.clone();
                                         menu = menu.item(PopupMenuItem::new("Copy Path").on_click(
-                                            move |_, _, cx| {
+                                            move |_, window, cx| {
                                                 view4.update(cx, |this, cx| {
                                                     this.handle_context_menu_action(
                                                         ContextMenuAction::CopyPath(path4.clone()),
                                                         cx,
                                                     )
-                                                })
+                                                });
+                                                window.refresh();
                                             },
                                         ));
 
@@ -2524,7 +2534,7 @@ impl Chamber {
                                         let view1 = view.clone();
                                         menu = menu.item(
                                             PopupMenuItem::new("Open in Editor").on_click(
-                                                move |_, _, cx| {
+                                                move |_, window, cx| {
                                                     view1.update(cx, |this, cx| {
                                                         this.handle_context_menu_action(
                                                             ContextMenuAction::OpenInEditor(
@@ -2532,7 +2542,8 @@ impl Chamber {
                                                             ),
                                                             cx,
                                                         )
-                                                    })
+                                                    });
+                                                    window.refresh();
                                                 },
                                             ),
                                         );
@@ -2541,7 +2552,7 @@ impl Chamber {
                                         let view2 = view.clone();
                                         menu = menu.item(
                                             PopupMenuItem::new("Open in Folder").on_click(
-                                                move |_, _, cx| {
+                                                move |_, window, cx| {
                                                     view2.update(cx, |this, cx| {
                                                         this.handle_context_menu_action(
                                                             ContextMenuAction::OpenInFolder(
@@ -2549,7 +2560,8 @@ impl Chamber {
                                                             ),
                                                             cx,
                                                         )
-                                                    })
+                                                    });
+                                                    window.refresh();
                                                 },
                                             ),
                                         );
@@ -2557,13 +2569,14 @@ impl Chamber {
                                         let path3 = folder_path.clone();
                                         let view3 = view.clone();
                                         menu = menu.item(PopupMenuItem::new("Copy Path").on_click(
-                                            move |_, _, cx| {
+                                            move |_, window, cx| {
                                                 view3.update(cx, |this, cx| {
                                                     this.handle_context_menu_action(
                                                         ContextMenuAction::CopyPath(path3.clone()),
                                                         cx,
                                                     )
-                                                })
+                                                });
+                                                window.refresh();
                                             },
                                         ));
 
