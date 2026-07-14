@@ -59,8 +59,9 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at
-**81304425+s0lda@users.noreply.github.com**.
+reported privately to the community leaders responsible for enforcement, by
+**contacting the maintainers through GitHub** — open a private report on this
+repository, or reach a maintainer directly via their GitHub profile.
 
 All complaints will be reviewed and investigated promptly and fairly.
 
