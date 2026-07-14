@@ -1,4 +1,5 @@
 mod event;
+pub mod live;
 mod nucleus;
 mod projection;
 mod quark;
@@ -10,6 +11,7 @@ mod workspace;
 pub mod io;
 
 pub use event::*;
+pub use live::*;
 pub use nucleus::*;
 pub use projection::*;
 pub use quark::*;

@@ -120,7 +120,7 @@ fn resolve_team_path(explicit: Option<PathBuf>, field_path: &Path) -> Option<Pat
 
 /// Seat the quarks: real adapters from `team.json` when present, else the
 /// deterministic mock pair (zero-spend). Returns the quarks and a mode label.
-fn seat_quarks(team: &Team) -> (Vec<Box<dyn Quark>>, &'static str) {
+fn seat_quarks(team: &Team, live_dir: &Path) -> (Vec<Box<dyn Quark>>, &'static str) {
     if team.is_empty() {
         eprintln!(
             "  ⚠ no usable team.json — running MOCK quarks: only '@claude' and '@agy' exist \
@@ -135,7 +135,7 @@ fn seat_quarks(team: &Team) -> (Vec<Box<dyn Quark>>, &'static str) {
     }
     let mut quarks: Vec<Box<dyn Quark>> = Vec::new();
     for seat in &team.quarks {
-        match registry::build_seat(seat) {
+        match registry::build_seat_watched(seat, live_dir) {
             Ok(q) => {
                 eprintln!(
                     "  seated {} — {} · {} ({:?})",
@@ -160,7 +160,12 @@ fn seat_quarks(team: &Team) -> (Vec<Box<dyn Quark>>, &'static str) {
 /// and left out, so the daemon's idea of the running team never claims a quark that
 /// isn't there. If it did, the seat would never be retried and `@its-id` would resolve
 /// to nobody — the exact failure this whole mechanism exists to end.
-fn apply_reseat(engine: &mut Engine, running: &Team, plan: &reseat::ReseatPlan) -> Team {
+fn apply_reseat(
+    engine: &mut Engine,
+    running: &Team,
+    plan: &reseat::ReseatPlan,
+    live_dir: &Path,
+) -> Team {
     let mut out = Team::default();
 
     // Everything the plan does not mention keeps its exact quark instance — and, for an
@@ -194,7 +199,7 @@ fn apply_reseat(engine: &mut Engine, running: &Team, plan: &reseat::ReseatPlan) 
     }
 
     for seat in plan.added.iter().chain(plan.replaced.iter()) {
-        match registry::build_seat(seat) {
+        match registry::build_seat_watched(seat, live_dir) {
             Ok(q) => {
                 engine.seat(q);
                 // Set participation explicitly, both ways. A seat added or re-pointed
@@ -245,7 +250,19 @@ async fn main() {
         None => eprintln!("hadron-gluon: no team.json found (looked next to the field, then the config dir)"),
     }
     let team = team_path.as_deref().map(load_team).unwrap_or_default();
-    let (quarks, mode_label) = seat_quarks(&team);
+
+    // Where quarks publish what they are doing mid-turn, for the chamber to render.
+    // Derived from the field path, so both processes agree without a second setting.
+    //
+    // A daemon killed mid-turn leaves its quarks' activity behind. `live::read`
+    // already refuses to believe a stale file, but sweeping on boot means the
+    // chamber does not show a ghost for the two minutes it takes to go stale.
+    let live_dir = hadron_lattice::live::live_dir(&args.field_path);
+    for seat in &team.quarks {
+        let _ = hadron_lattice::live::clear(&live_dir, &seat.id);
+    }
+
+    let (quarks, mode_label) = seat_quarks(&team, &live_dir);
     if quarks.is_empty() {
         eprintln!("hadron-gluon: team.json had no usable quarks; nothing to run.");
         std::process::exit(2);
@@ -329,7 +346,8 @@ async fn main() {
                         let plan = reseat::plan(&running_team, &desired);
                         if !plan.is_empty() {
                             eprintln!("gluon: team.json changed — re-seating [{}]", plan.summary());
-                            running_team = apply_reseat(&mut engine, &running_team, &plan);
+                            running_team =
+                                apply_reseat(&mut engine, &running_team, &plan, &live_dir);
                             eprintln!(
                                 "gluon: roster is now {} quark(s)",
                                 engine.seated_count()
