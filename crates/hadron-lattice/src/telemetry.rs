@@ -188,6 +188,8 @@ pub struct Usage {
     pub spend: TokenSpend,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<ContextUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// Every bucket the provider reported. **Empty means the provider has no quota
     /// concept** (claude) — NOT that the quota is full.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -195,9 +197,31 @@ pub struct Usage {
 }
 
 impl Usage {
-    /// Whether this carries anything at all worth reporting.
     pub fn is_empty(&self) -> bool {
-        self.spend.is_empty() && self.context.is_none() && self.quota.is_empty()
+        self.spend.is_empty() && self.context.is_none() && self.quota.is_empty() && self.model.is_none()
+    }
+
+    /// Compute the cost in USD for this turn's spend, if the model is known.
+    pub fn cost_usd(&self) -> Option<f64> {
+        let model = self.model.as_ref()?;
+        let m = model.to_lowercase();
+        let (in_price, out_price, cw_price, cr_price) = if m.contains("opus") {
+            (15.0, 75.0, 18.75, 1.50)
+        } else if m.contains("sonnet") {
+            (3.0, 15.0, 3.75, 0.30)
+        } else if m.contains("gemini") && m.contains("pro") {
+            (3.50, 10.50, 3.50, 1.75)
+        } else {
+            return None;
+        };
+
+        let mut cost = 0.0;
+        if let Some(i) = self.spend.input { cost += (i as f64 / 1_000_000.0) * in_price; }
+        if let Some(o) = self.spend.output { cost += (o as f64 / 1_000_000.0) * out_price; }
+        if let Some(cw) = self.spend.cache_write { cost += (cw as f64 / 1_000_000.0) * cw_price; }
+        if let Some(cr) = self.spend.cache_read { cost += (cr as f64 / 1_000_000.0) * cr_price; }
+        
+        if cost > 0.0 { Some(cost) } else { None }
     }
 
     /// Every bucket that applies to `model` — i.e. every bucket in the model's family.
@@ -323,7 +347,16 @@ pub fn parse_agy_statusline(json: &str) -> serde_json::Result<AgyTelemetry> {
             .and_then(|m| m.get("id"))
             .and_then(|s| s.as_str())
             .map(str::to_string),
-        usage: Usage { spend: spend.unwrap_or_default(), context, quota },
+        usage: Usage {
+            spend: spend.unwrap_or_default(),
+            context,
+            quota,
+            model: v
+                .get("model")
+                .and_then(|m| m.get("id"))
+                .and_then(|s| s.as_str())
+                .map(str::to_string),
+        },
     })
 }
 
@@ -437,6 +470,7 @@ mod tests {
     #[test]
     fn a_provider_without_quota_reports_absent_not_full() {
         let claude = Usage {
+            model: Some("opus".to_string()),
             spend: TokenSpend::default(),
             context: Some(ContextUsage {
                 used_tokens: 12_000,

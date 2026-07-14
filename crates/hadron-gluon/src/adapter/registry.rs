@@ -172,6 +172,8 @@ pub struct QuarkSpec {
     pub flavor: Flavor,
     pub kind: QuarkKind,
     pub model: String,
+    pub effort: Option<String>,
+    pub mode_config: Option<String>,
 }
 
 /// Enforce the naming contract: ids must be non-empty, whitespace-free tokens
@@ -205,10 +207,8 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
             Box::new(ClaudeQuark::new(spec.id, spec.flavor, spec.model, ProcessRunner))
         }
         QuarkKind::Agy => Box::new(AgyQuark::new(spec.id, spec.flavor, spec.model, ProcessRunner)),
-        // Booting the agent is lazy — the subprocess is spawned on the first
-        // `excite`, exactly as the CLI path spawns nothing at wiring time.
         QuarkKind::Acp(target) => {
-            Box::new(AcpQuark::new(spec.id, spec.flavor, spec.model, target))
+            Box::new(AcpQuark::new(spec.id, spec.flavor, spec.model, spec.effort, spec.mode_config, target))
         }
     };
     Ok(quark)
@@ -222,6 +222,8 @@ pub fn build_seat(seat: &Seat) -> anyhow::Result<Box<dyn Quark>> {
         flavor: seat.flavor.clone(),
         kind: QuarkKind::from_seat(seat)?,
         model: seat.model.clone(),
+        effort: seat.effort.clone(),
+        mode_config: seat.mode_config.clone(),
     })
 }
 
@@ -236,7 +238,7 @@ pub fn build_seat_watched(seat: &Seat, live_dir: &std::path::Path) -> anyhow::Re
     let kind = QuarkKind::from_seat(seat)?;
     if let QuarkKind::Acp(target) = kind {
         return Ok(Box::new(
-            AcpQuark::new(seat.id.clone(), seat.flavor.clone(), seat.model.clone(), target)
+            AcpQuark::new(seat.id.clone(), seat.flavor.clone(), seat.model.clone(), seat.effort.clone(), seat.mode_config.clone(), target)
                 .watching(live_dir.to_path_buf()),
         ));
     }
@@ -271,6 +273,8 @@ mod tests {
             flavor: Flavor::Orchestrator,
             kind: QuarkKind::Claude,
             model: "opus-4.8".into(),
+            effort: None,
+            mode_config: None,
         })
         .unwrap();
         assert_eq!(claude.id(), QuarkId::new("claude"));
@@ -281,6 +285,8 @@ mod tests {
             flavor: Flavor::Worker,
             kind: QuarkKind::Agy,
             model: String::new(),
+            effort: None,
+            mode_config: None,
         })
         .unwrap();
         assert_eq!(agy.id(), QuarkId::new("agy"));
@@ -294,6 +300,8 @@ mod tests {
             flavor: Flavor::Worker,
             kind: QuarkKind::Agy,
             model: String::new(),
+            effort: None,
+            mode_config: None,
         });
         assert!(err.is_err());
     }

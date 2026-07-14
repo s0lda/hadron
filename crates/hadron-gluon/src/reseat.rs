@@ -145,6 +145,8 @@ mod tests {
             transport: Transport::Acp,
             command: None,
             enabled: true,
+            effort: None,
+            mode_config: None,
         };
         let mut desired = running.clone();
         desired.quarks.push(new_seat.clone());
@@ -194,6 +196,8 @@ mod tests {
                 program: "npx".into(),
                 args: args.iter().map(|s| s.to_string()).collect(),
             }),
+            effort: None,
+            mode_config: None,
         };
         let running = team(&[seat(&["-y", "old-agent"])]);
         let desired = team(&[seat(&["-y", "new-agent"])]);
@@ -216,6 +220,8 @@ mod enabled_tests {
             transport: Transport::Acp,
             command: Some(AcpCommand { program: "npx".into(), args: vec![] }),
             enabled,
+            effort: None,
+            mode_config: None,
         }
     }
     fn team(seats: &[Seat]) -> Team {
