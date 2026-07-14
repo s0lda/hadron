@@ -7,6 +7,28 @@
 //! never ran in the gate that decides whether we ship. A crash guard invisible to
 //! the gate is a crash guard that will be broken again without anyone noticing.
 
+/// The two `@names` that are **not** roster ids but still route: `@orchestrator`
+/// resolves to whoever currently holds the Orchestrator seat, and `@team` fans out
+/// to every quark. The chat field is the human's, and `@team` is human-only, so
+/// both belong in its completion list — they were missing, so the one mention Jake
+/// uses most often was the one the menu would not offer.
+///
+/// The names come from the router's own constants rather than being retyped here:
+/// they are the single source of truth for what actually routes, and a completion
+/// that offers a name the router does not resolve is worse than no completion.
+pub const MENTION_ALIASES: [(&str, &str); 2] = [
+    (
+        hadron_gluon::router::ORCHESTRATOR_ALIAS,
+        "Whoever holds the Orchestrator seat",
+    ),
+    (hadron_gluon::router::TEAM_ALIAS, "Everyone on the roster"),
+];
+
+/// Case-insensitive substring match, the same rule the quark and file rows use.
+pub fn mention_matches(name: &str, query_lower: &str) -> bool {
+    query_lower.is_empty() || name.to_lowercase().contains(query_lower)
+}
+
 /// Find the `@`/`:` completion trigger immediately before the cursor.
 ///
 /// Returns the trigger char, the query typed after it, and its byte index.
@@ -85,6 +107,33 @@ impl MenuRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `@team` and `@orchestrator` route, but the completion menu never offered
+    /// them: it only listed roster ids, and neither alias is one. The names are
+    /// asserted against the router's own constants, so a rename over there breaks
+    /// this test rather than silently leaving the menu offering a dead mention.
+    #[test]
+    fn the_routing_aliases_are_offered_and_are_the_ones_that_actually_route() {
+        let names: Vec<&str> = MENTION_ALIASES.iter().map(|(n, _)| *n).collect();
+        assert!(
+            names.contains(&hadron_gluon::router::TEAM_ALIAS),
+            "@team routes but was not offered: {names:?}"
+        );
+        assert!(
+            names.contains(&hadron_gluon::router::ORCHESTRATOR_ALIAS),
+            "@orchestrator routes but was not offered: {names:?}"
+        );
+
+        // Typing `@te` must reach `team`, and `@ORCH` must reach `orchestrator` —
+        // the router matches case-insensitively, so the menu must too.
+        assert!(mention_matches(hadron_gluon::router::TEAM_ALIAS, "te"));
+        assert!(mention_matches(
+            hadron_gluon::router::ORCHESTRATOR_ALIAS,
+            "orch"
+        ));
+        assert!(mention_matches(hadron_gluon::router::TEAM_ALIAS, ""));
+        assert!(!mention_matches(hadron_gluon::router::TEAM_ALIAS, "zzz"));
+    }
 
     /// The guard for Jake's `::` crash, over **every emoji the picker can offer** —
     /// not a hand-picked one. `:tv`, `:id` and `:vs` are the short shortcodes that
