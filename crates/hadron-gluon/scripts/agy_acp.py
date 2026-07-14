@@ -43,7 +43,7 @@ async def handle_prompt(msg_id, session_id, prompt):
     )
     
     try:
-        response = agent.chat(prompt_text)
+        response = await agent.chat(prompt_text)
         async for chunk in response:
             if chunk:
                 send_notification("session/notification", {
