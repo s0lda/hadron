@@ -79,7 +79,7 @@ pub const ACP_AGENTS: &[AcpAgentSpec] = &[
     AcpAgentSpec {
         provider: "acp-agy",
         name: "Antigravity (SDK)",
-        program: "python3",
+        program: "crates/hadron-gluon/scripts/venv/bin/python",
         args: &["crates/hadron-gluon/scripts/agy_acp.py"],
         proven: false,
     },
