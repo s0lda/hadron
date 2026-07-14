@@ -5,7 +5,7 @@ use lsp_types::{CompletionContext, CompletionItem, CompletionItemKind, Completio
 
 pub struct ChatCompletionProvider {
     pub quarks: Vec<(String, Option<String>)>,
-    pub files: Vec<String>,
+    pub files: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
 }
 
 // The query parser lives in `text`, which is not feature-gated, so its emoji
@@ -81,7 +81,7 @@ impl CompletionProvider for ChatCompletionProvider {
                     });
                 }
             }
-            for file in &self.files {
+            for file in self.files.borrow().iter() {
                 let file_lower = file.to_lowercase();
                 if query_lower.is_empty() || file_lower.contains(&query_lower) {
                     // The filter text must be a byte-prefix of the label (see `MenuRow`).
@@ -182,10 +182,9 @@ impl CompletionProvider for ChatCompletionProvider {
 /// pointing past the end of the shortened text.
 fn is_trigger_text(new_text: &str) -> bool {
     // A multi-character edit is a paste, not a keystroke — it opens nothing. Any single
-    // non-whitespace character keeps an open query live; if there is no sigil before the
+    // character keeps an open query live (even spaces); if there is no sigil before the
     // cursor the provider returns no items and the menu closes on its own.
-    new_text.is_empty()
-        || (new_text.chars().count() == 1 && !new_text.chars().all(char::is_whitespace))
+    new_text.is_empty() || new_text.chars().count() == 1
 }
 
 #[cfg(test)]
@@ -236,8 +235,8 @@ mod tests {
             "a deletion must re-run it, or the range outruns the text"
         );
 
-        assert!(!is_trigger_text(" "), "whitespace ends a query");
-        assert!(!is_trigger_text("\n"), "so does a newline");
+        assert!(is_trigger_text(" "), "whitespace ends a query, triggering a close");
+        assert!(is_trigger_text("\n"), "so does a newline");
         assert!(
             !is_trigger_text("hello"),
             "a multi-char paste is not a keystroke"
