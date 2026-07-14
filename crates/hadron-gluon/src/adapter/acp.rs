@@ -45,8 +45,9 @@ use hadron_lattice::{
 use agent_client_protocol::schema::v1::{
     ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionKind, PromptRequest,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionNotification, SessionUpdate, StopReason, TextContent,
-    Usage as AcpUsage,
+    SelectedPermissionOutcome, SessionConfigId, SessionConfigKind, SessionConfigOption,
+    SessionConfigOptionCategory, SessionConfigSelectOptions, SessionNotification, SessionUpdate,
+    SetSessionConfigOptionRequest, StopReason, TextContent, Usage as AcpUsage,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, ConnectionTo};
@@ -80,6 +81,10 @@ struct AcpSession {
     /// Shared because ACP's `session/request_permission` arrives on the *connection*,
     /// not on the turn, so the handler needs a way to see the current turn's mode.
     mode: Arc<Mutex<Mode>>,
+    /// The model the agent is **actually** running, as the agent itself reported it —
+    /// not the one the seat asked for. `None` means the agent advertised no selector,
+    /// so we genuinely do not know. Absent is not "the default"; it is unknown.
+    model: Arc<Mutex<Option<String>>>,
 }
 
 /// The cumulative counters an ACP session has reported so far — the watermark the
@@ -164,6 +169,109 @@ fn permission_choice(mode: Mode) -> PermissionOptionKind {
     }
 }
 
+/// One model the seated agent says it can actually run: the id that goes on the wire,
+/// and the label a human should see.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpModel {
+    pub value: String,
+    pub label: String,
+}
+
+/// The agent's **model selector**, exactly as it advertised it on `session/new`.
+///
+/// This is not a thing we invent — it is a thing the agent hands us and which, until
+/// today, Hadron threw away. `config_options` is on `NewSessionResponse` in **v1**;
+/// the model picker never needed a protocol migration, only a reader.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelSelector {
+    /// What `session/set_config_option` must name to change it.
+    pub config_id: SessionConfigId,
+    pub current: String,
+    pub available: Vec<AcpModel>,
+}
+
+/// Find the model selector among the options the agent advertised.
+///
+/// Selection is by `category == Model`, **not** by matching the option's id against a
+/// name we guessed: an id like `"model"` is that agent's private business, and a client
+/// that hard-codes it works for exactly one agent. The category is the contract.
+///
+/// Boolean options (`Fast mode`) and non-model selects (`Mode`, `Thought level`) are
+/// not models and are ignored here.
+pub fn model_selector(options: &[SessionConfigOption]) -> Option<ModelSelector> {
+    let opt = options
+        .iter()
+        .find(|o| o.category == Some(SessionConfigOptionCategory::Model))?;
+
+    let SessionConfigKind::Select(select) = &opt.kind else {
+        // A model you cannot choose from a list is not a picker. Say nothing rather
+        // than guess a shape.
+        return None;
+    };
+
+    // The agent may group its models (e.g. by family). A group is a UI affordance;
+    // for choosing, flatten it.
+    let available: Vec<AcpModel> = match &select.options {
+        SessionConfigSelectOptions::Ungrouped(opts) => opts
+            .iter()
+            .map(|o| AcpModel { value: o.value.to_string(), label: o.name.clone() })
+            .collect(),
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|g| g.options.iter())
+            .map(|o| AcpModel { value: o.value.to_string(), label: o.name.clone() })
+            .collect(),
+        // The enum is `#[non_exhaustive]`: a future ACP may add a shape we have never
+        // seen. An unknown shape means we cannot enumerate the models — which is not
+        // the same as the agent having none, so offer nothing rather than a wrong list.
+        _ => return None,
+    };
+
+    Some(ModelSelector {
+        config_id: opt.id.clone(),
+        current: select.current_value.to_string(),
+        available,
+    })
+}
+
+/// Resolve what the **seat** asked for against what the **agent** actually offers, and
+/// return the wire value to set — or `None` to leave the agent's own default alone.
+///
+/// Matching is deliberately forgiving, because a seat's `model` is typed by a human:
+/// exact id first, then the human label, then a case-insensitive substring of either.
+/// `"opus"` should find `"claude-opus-4-8"`, and `"Sonnet"` should find `"Sonnet 4.5"`.
+///
+/// It returns `None` when the seat asked for nothing, when the request is *already* the
+/// current model, or when nothing matches. That last case is the important one: an
+/// unmatched model is **not** an error that should kill the turn — the agent has a
+/// perfectly good default — but it must be visible, so the caller warns.
+pub fn resolve_model(selector: &ModelSelector, wanted: &str) -> Option<String> {
+    let wanted = wanted.trim();
+    if wanted.is_empty() {
+        return None;
+    }
+    let lower = wanted.to_lowercase();
+
+    let hit = selector
+        .available
+        .iter()
+        .find(|m| m.value == wanted)
+        .or_else(|| selector.available.iter().find(|m| m.value.eq_ignore_ascii_case(wanted)))
+        .or_else(|| selector.available.iter().find(|m| m.label.eq_ignore_ascii_case(wanted)))
+        .or_else(|| {
+            selector.available.iter().find(|m| {
+                m.value.to_lowercase().contains(&lower) || m.label.to_lowercase().contains(&lower)
+            })
+        })?;
+
+    // Already there. Setting it again is a needless round trip, and it would make the
+    // "we switched the model" log line a lie.
+    if hit.value == selector.current {
+        return None;
+    }
+    Some(hit.value.clone())
+}
+
 /// Boot an ACP agent, complete the `initialize` handshake, read back who answered,
 /// and shut it down. **Blocking** — call it off the UI thread.
 ///
@@ -214,10 +322,10 @@ pub fn probe(target: &AcpTarget) -> anyhow::Result<String> {
 pub struct AcpQuark {
     id: QuarkId,
     flavor: Flavor,
-    /// Carried for parity with the CLI adapters and for quota-family lookup. ACP has
-    /// no model-selection method in v1, so the agent picks; this is what we *asked*
-    /// for, not necessarily what ran.
-    #[allow(dead_code)]
+    /// The model this seat **asks** for. It is not necessarily the one that runs: the
+    /// agent advertises what it can offer on `session/new` and we match against that
+    /// (see [`model_selector`] and [`resolve_model`]). The model that actually ran is
+    /// on [`AcpSession::model`], because only the agent knows it.
     model: String,
     target: AcpTarget,
     /// `None` until the first turn: booting is lazy, exactly as the CLI path spawns
@@ -239,6 +347,19 @@ impl AcpQuark {
         }
     }
 
+    /// The model the agent reported it is **actually** running, once a session is open.
+    ///
+    /// **Implemented, unwired.** Nothing consumes this yet, and that is a deliberate
+    /// stopping point rather than an oversight: its home is a `model` field on
+    /// `hadron_lattice::Usage`, so that a turn's telemetry records the model that ran
+    /// and a turn can finally be *priced* (you cannot cost a turn you cannot attribute
+    /// to a model). Adding that field touches every exhaustive `Usage { .. }` literal,
+    /// two of which are in files another quark is mid-write in. It lands next, on a
+    /// tree that is not moving.
+    pub fn running_model(&self) -> Option<String> {
+        self.session.as_ref()?.model.lock().unwrap().clone()
+    }
+
     /// Boot the agent and open one session in `cwd`. Blocks until the agent has
     /// answered `initialize` and `session/new`, so a boot failure (missing `npx`, a
     /// dead adapter, an unauthenticated CLI) surfaces as a failed turn rather than a
@@ -247,12 +368,16 @@ impl AcpQuark {
     /// `cwd` is the quark's own worktree, straight off the `Projection` — ACP's
     /// `session/new` takes a required `cwd`, so hadron's existing cwd chain lands on
     /// the protocol with no adaptation.
-    fn boot(target: &AcpTarget, cwd: PathBuf) -> anyhow::Result<AcpSession> {
+    fn boot(target: &AcpTarget, cwd: PathBuf, want_model: String) -> anyhow::Result<AcpSession> {
         let (turns_tx, mut turns_rx) = tokio::sync::mpsc::unbounded_channel::<TurnRequest>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<()>>();
 
         let mode = Arc::new(Mutex::new(Mode::default()));
         let handler_mode = Arc::clone(&mode);
+
+        // What the agent says it is running, written once at boot by the pump.
+        let model = Arc::new(Mutex::new(None::<String>));
+        let pump_model = Arc::clone(&model);
 
         let command = target.command_line();
         // The reply accumulator and the context watermark are written by the
@@ -345,6 +470,80 @@ impl AcpQuark {
                                 .await?;
                             let sid = session.session_id;
 
+                            // THE MODEL PICKER. The agent volunteers its models here, in
+                            // `config_options`, and Hadron used to drop them on the floor.
+                            // Ask for the seat's model if the agent offers one that matches.
+                            //
+                            // A model we cannot find is NOT fatal: the agent has its own
+                            // default and a turn on the wrong model beats no turn at all.
+                            // But it must be loud, or the roster will claim a model that
+                            // never ran.
+                            let offered = session.config_options.unwrap_or_default();
+                            match model_selector(&offered) {
+                                Some(selector) => {
+                                    match resolve_model(&selector, &want_model) {
+                                        Some(value) => {
+                                            let set = cx
+                                                .send_request(SetSessionConfigOptionRequest::new(
+                                                    sid.clone(),
+                                                    selector.config_id.clone(),
+                                                    value.as_str(),
+                                                ))
+                                                .block_task()
+                                                .await;
+                                            match set {
+                                                Ok(_) => {
+                                                    *pump_model.lock().unwrap() = Some(value.clone());
+                                                    eprintln!(
+                                                        "[acp] model set to {value:?} (asked for {want_model:?})"
+                                                    );
+                                                }
+                                                Err(e) => eprintln!(
+                                                    "[acp] the agent refused model {value:?}: {e} — \
+                                                     staying on its default {:?}",
+                                                    selector.current
+                                                ),
+                                            }
+                                        }
+                                        None => {
+                                            // Either the seat asked for nothing, or it asked
+                                            // for the model already running, or it asked for
+                                            // one this agent does not have.
+                                            *pump_model.lock().unwrap() =
+                                                Some(selector.current.clone());
+                                            if !want_model.trim().is_empty()
+                                                && !selector
+                                                    .available
+                                                    .iter()
+                                                    .any(|m| m.value == selector.current
+                                                        && (m.value.eq_ignore_ascii_case(&want_model)
+                                                            || m.label
+                                                                .eq_ignore_ascii_case(&want_model)))
+                                            {
+                                                eprintln!(
+                                                    "[acp] seat asked for model {want_model:?}; \
+                                                     agent runs {:?} and offers {:?}",
+                                                    selector.current,
+                                                    selector
+                                                        .available
+                                                        .iter()
+                                                        .map(|m| &m.value)
+                                                        .collect::<Vec<_>>()
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                None => {
+                                    if !want_model.trim().is_empty() {
+                                        eprintln!(
+                                            "[acp] seat asked for model {want_model:?} but this \
+                                             agent advertises no model selector"
+                                        );
+                                    }
+                                }
+                            }
+
                             // The agent is up and has a session. Unblock `boot`.
                             let _ = ready_tx.send(Ok(()));
 
@@ -395,7 +594,7 @@ impl AcpQuark {
         // `recv` errors only if the thread died without reporting — surface that as a
         // boot failure rather than hanging.
         match ready_rx.recv() {
-            Ok(Ok(())) => Ok(AcpSession { turns: turns_tx, mode }),
+            Ok(Ok(())) => Ok(AcpSession { turns: turns_tx, mode, model }),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(anyhow::anyhow!(
                 "the ACP agent ({}) exited before opening a session",
@@ -423,7 +622,8 @@ impl Quark for AcpQuark {
 
         // Boot on the first turn, in the quark's own worktree, and keep it.
         if self.session.is_none() {
-            self.session = Some(AcpQuark::boot(&self.target, turn.cwd.clone())?);
+            self.session =
+                Some(AcpQuark::boot(&self.target, turn.cwd.clone(), self.model.clone())?);
         }
         let session = self.session.as_ref().expect("just booted");
 
@@ -598,6 +798,141 @@ mod tests {
         assert_eq!(permission_choice(Mode::Bypass), PermissionOptionKind::AllowOnce);
     }
 
+    /// Build the shape the agent actually sends: a `Model` select alongside the other
+    /// config options it advertises (a `Mode` select, a `Fast mode` boolean), so the
+    /// tests below prove we pick the model out of a realistic crowd, not out of a list
+    /// of one.
+    fn advertised_options() -> Vec<SessionConfigOption> {
+        use agent_client_protocol::schema::v1::{
+            SessionConfigBoolean, SessionConfigSelect, SessionConfigSelectOption,
+        };
+
+        let model = SessionConfigOption::new(
+            "model",
+            "Model",
+            SessionConfigKind::Select(SessionConfigSelect::new(
+                "claude-sonnet-4-5",
+                vec![
+                    SessionConfigSelectOption::new("claude-opus-4-8", "Opus 4.8"),
+                    SessionConfigSelectOption::new("claude-sonnet-4-5", "Sonnet 4.5"),
+                    SessionConfigSelectOption::new("claude-haiku-4-5", "Haiku 4.5"),
+                ],
+            )),
+        )
+        .category(SessionConfigOptionCategory::Model);
+
+        // A NON-model select. If we picked by position, or by the id "model" happening
+        // to sort first, this is what would catch it.
+        let mode = SessionConfigOption::new(
+            "mode",
+            "Mode",
+            SessionConfigKind::Select(SessionConfigSelect::new(
+                "default",
+                vec![
+                    SessionConfigSelectOption::new("default", "Always ask"),
+                    SessionConfigSelectOption::new("bypassPermissions", "Bypass"),
+                ],
+            )),
+        )
+        .category(SessionConfigOptionCategory::Mode);
+
+        let fast = SessionConfigOption::new(
+            "fast-mode",
+            "Fast mode",
+            SessionConfigKind::Boolean(SessionConfigBoolean::new(false)),
+        );
+
+        vec![mode, fast, model]
+    }
+
+    /// The model picker is found by **category**, not by guessing the option's id — an
+    /// id is that agent's private business and a client that hard-codes one works for
+    /// exactly one agent.
+    #[test]
+    fn the_model_selector_is_found_by_category_not_by_name() {
+        let s = model_selector(&advertised_options()).expect("a Model category is advertised");
+        assert_eq!(s.config_id.to_string(), "model");
+        assert_eq!(s.current, "claude-sonnet-4-5");
+        assert_eq!(s.available.len(), 3, "the Mode select and the boolean are not models");
+    }
+
+    /// An agent that offers no model selector is not an error — it just cannot be
+    /// re-modelled. We must say "no picker", not invent one.
+    #[test]
+    fn an_agent_with_no_model_option_offers_no_picker() {
+        let no_models: Vec<SessionConfigOption> = advertised_options()
+            .into_iter()
+            .filter(|o| o.category != Some(SessionConfigOptionCategory::Model))
+            .collect();
+        assert_eq!(model_selector(&no_models), None);
+    }
+
+    /// A seat's `model` is typed by a human, so resolution is forgiving — but it only
+    /// ever returns a value the **agent** offered. We never send a model we invented.
+    #[test]
+    fn a_seat_resolves_its_model_against_what_the_agent_offers() {
+        let s = model_selector(&advertised_options()).unwrap();
+
+        // Exact id.
+        assert_eq!(resolve_model(&s, "claude-opus-4-8").as_deref(), Some("claude-opus-4-8"));
+        // The human label.
+        assert_eq!(resolve_model(&s, "Opus 4.8").as_deref(), Some("claude-opus-4-8"));
+        // A bare family name — what Jake actually types in `team.json`.
+        assert_eq!(resolve_model(&s, "opus").as_deref(), Some("claude-opus-4-8"));
+        assert_eq!(resolve_model(&s, "HAIKU").as_deref(), Some("claude-haiku-4-5"));
+
+        // Asking for nothing changes nothing.
+        assert_eq!(resolve_model(&s, ""), None);
+        assert_eq!(resolve_model(&s, "   "), None);
+
+        // Asking for what is ALREADY running is not a change — setting it again would
+        // be a needless round trip and would make "we switched the model" a lie.
+        assert_eq!(resolve_model(&s, "claude-sonnet-4-5"), None);
+        assert_eq!(resolve_model(&s, "sonnet"), None);
+
+        // A model this agent does not have resolves to nothing — we do NOT pass the
+        // human's string through to the wire and hope.
+        assert_eq!(resolve_model(&s, "gpt-5"), None);
+        assert_eq!(resolve_model(&s, "gemini-3-pro"), None);
+    }
+
+    /// Agents may group their models by family. A group is a display affordance; for
+    /// *choosing*, the list is flat — and a grouped agent must be just as pickable.
+    #[test]
+    fn grouped_models_are_flattened_for_choosing() {
+        use agent_client_protocol::schema::v1::{
+            SessionConfigSelect, SessionConfigSelectGroup, SessionConfigSelectOption,
+        };
+
+        let grouped = SessionConfigOption::new(
+            "model",
+            "Model",
+            SessionConfigKind::Select(SessionConfigSelect::new(
+                "claude-sonnet-4-5",
+                vec![
+                    SessionConfigSelectGroup::new(
+                        "frontier",
+                        "Frontier",
+                        vec![SessionConfigSelectOption::new("claude-opus-4-8", "Opus 4.8")],
+                    ),
+                    SessionConfigSelectGroup::new(
+                        "fast",
+                        "Fast",
+                        vec![
+                            SessionConfigSelectOption::new("claude-sonnet-4-5", "Sonnet 4.5"),
+                            SessionConfigSelectOption::new("claude-haiku-4-5", "Haiku 4.5"),
+                        ],
+                    ),
+                ],
+            )),
+        )
+        .category(SessionConfigOptionCategory::Model);
+
+        let s = model_selector(&[grouped]).expect("a grouped Model selector is still a selector");
+        assert_eq!(s.available.len(), 3, "groups are flattened, not dropped");
+        assert_eq!(resolve_model(&s, "opus").as_deref(), Some("claude-opus-4-8"));
+    }
+
     /// The default boot command for `acp-claude`, and the free-form one. A seat is a
     /// config row, so this is the whole "new provider without a code change" claim.
     #[test]
@@ -659,6 +994,129 @@ mod tests {
             isolated: false,
             mode: Mode::Ask,
         }
+    }
+
+    /// **WHAT THE AGENT ACTUALLY ADVERTISES.** The model picker rested on a belief —
+    /// mine and agy's both — that it needed ACP **v2**. It does not. `config_options`
+    /// is on **v1**'s `NewSessionResponse`, and the agent has been sending it to us on
+    /// every single `session/new` while we discarded it.
+    ///
+    /// This test is the receipt. It opens a real session against the real agent and
+    /// asserts a `Model` selector comes back with more than one model in it. If a future
+    /// agent stops advertising models, this is the test that says so.
+    ///
+    /// Note the `env -u CLAUDECODE`: Claude Code refuses to boot inside another Claude
+    /// Code session, and it fails *by hanging*, not by erroring. That is what stopped
+    /// the previous attempt to reach this agent.
+    ///
+    /// ```text
+    /// env -u CLAUDECODE cargo test -p hadron-gluon --lib \
+    ///     acp::tests::the_agent_advertises_its_models -- --ignored --nocapture
+    /// ```
+    #[tokio::test]
+    #[ignore = "live: needs node + npx + an authenticated claude"]
+    async fn the_agent_advertises_its_models() {
+        let command = AcpTarget::claude_adapter().command_line();
+        let (tx, rx) = std::sync::mpsc::channel::<anyhow::Result<Option<ModelSelector>>>();
+
+        std::thread::Builder::new()
+            .name("hadron-acp-model-probe".to_string())
+            .spawn(move || {
+                let found = futures::executor::block_on(async move {
+                    let agent = AcpAgent::from_str(&command)
+                        .map_err(|e| anyhow::anyhow!("bad command: {e}"))?;
+                    agent_client_protocol::Client
+                        .builder()
+                        .name("hadron")
+                        .connect_with(agent, move |cx: ConnectionTo<Agent>| async move {
+                            let init = cx
+                                .send_request(InitializeRequest::new(ProtocolVersion::V1))
+                                .block_task()
+                                .await?;
+                            eprintln!(
+                                "agent: {:?} — it negotiated protocol {:?}",
+                                init.agent_info.map(|i| i.name),
+                                init.protocol_version,
+                            );
+
+                            let sess = cx
+                                .send_request(NewSessionRequest::new(std::env::temp_dir()))
+                                .block_task()
+                                .await?;
+                            let opts = sess.config_options.unwrap_or_default();
+                            eprintln!(
+                                "config_options it volunteered: {:?}",
+                                opts.iter().map(|o| (&o.name, &o.category)).collect::<Vec<_>>()
+                            );
+                            Ok(model_selector(&opts))
+                        })
+                        .await
+                        .map_err(|e| anyhow::anyhow!("ACP handshake failed: {e}"))
+                });
+                let _ = tx.send(found);
+            })
+            .expect("probe thread");
+
+        let selector = rx
+            .recv_timeout(std::time::Duration::from_secs(180))
+            .expect("the agent must answer within 180s")
+            .expect("the handshake must succeed")
+            .expect("the agent MUST advertise a Model config option — that is the picker");
+
+        eprintln!("\n=== the model picker, over ACP v1 ===");
+        eprintln!("config_id : {:?}", selector.config_id);
+        eprintln!("current   : {}", selector.current);
+        for m in &selector.available {
+            eprintln!("  - {} ({})", m.label, m.value);
+        }
+
+        assert!(
+            selector.available.len() > 1,
+            "a picker with one model is not a picker: {:?}",
+            selector.available
+        );
+        // And the resolution the seat will actually do, end to end.
+        assert!(
+            selector.available.iter().any(|m| m.value.to_lowercase().contains("opus")
+                || m.label.to_lowercase().contains("opus")),
+            "expected an Opus among the offered models: {:?}",
+            selector.available
+        );
+    }
+
+    /// **THE PICKER, END TO END.** A seat says `model: "haiku"`; the agent must come up
+    /// running Haiku. This is the whole feature, and it is the difference between
+    /// "the protocol permits model selection" (a schema fact) and "Hadron selects the
+    /// model" (a Hadron fact).
+    ///
+    /// It asks for Haiku deliberately: the agent's own default is Opus, so a pass
+    /// cannot be a false positive from us simply not changing anything.
+    ///
+    /// ```text
+    /// env -u CLAUDECODE cargo test -p hadron-gluon --lib \
+    ///     acp::tests::a_seat_gets_the_model_it_asked_for -- --ignored --nocapture
+    /// ```
+    #[tokio::test]
+    #[ignore = "live: needs node + npx + an authenticated claude"]
+    async fn a_seat_gets_the_model_it_asked_for() {
+        let mut q = AcpQuark::new(
+            QuarkId::new("acp"),
+            Flavor::Worker,
+            "haiku",
+            AcpTarget::claude_adapter(),
+        );
+
+        let out = q.excite(projection()).await.expect("live ACP turn");
+        eprintln!("reply: {:?}", out.message);
+
+        let running = q.running_model().expect("the agent must report the model it is running");
+        eprintln!("seat asked for : haiku");
+        eprintln!("agent is running: {running}");
+        assert_eq!(
+            running, "haiku",
+            "the seat asked for haiku and the agent's own default is opus — \
+             if this says opus, the picker did not take"
+        );
     }
 
     /// **THE LIVE ROUND TRIP.** Hadron speaks ACP to a real agent binary — the Claude
