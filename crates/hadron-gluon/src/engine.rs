@@ -2885,6 +2885,129 @@ mod tests {
         assert!(!root.join("b.txt").exists(), "a quark wrote into the human's checkout");
     }
 
+    /// **THE ATTRIBUTION TEST.** Two quarks commit *concurrently*, and each turn's
+    /// `Kind::Edit` must carry that quark's OWN commit — not its sibling's.
+    ///
+    /// This is the property every enforcement idea rests on (a machine-checked
+    /// Definition of Done can only judge a turn whose work it can name), and it is the
+    /// one nothing had observed. `finish_turn` decides "this turn committed" by
+    /// `head_now != t.head_before` (l. 939). That test is only sound because each turn
+    /// owns its tree: `head_before` is read from the quark's *own* worktree, so a
+    /// sibling's commit cannot move it. Here both turns are inside `excite` at the same
+    /// time (`WriterQuark` sleeps to guarantee the overlap), so a shared-HEAD
+    /// implementation would cross-attribute and fail.
+    #[tokio::test]
+    async fn concurrent_commits_are_attributed_to_the_turn_that_made_them() {
+        let repo = git_init_repo();
+        let root = repo.path().to_path_buf();
+        std::fs::create_dir_all(root.join(".hadron")).unwrap();
+        let field = root.join(".hadron").join("field.jsonl");
+        append_event(
+            &field,
+            &Event::new(
+                Actor::Human,
+                None,
+                Kind::Message { body: "@a write a.txt and @b write b.txt".into() },
+            ),
+        )
+        .unwrap();
+
+        let cwds = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![
+                Box::new(WriterQuark { id: QuarkId::new("a"), file: "a.txt", cwds: cwds.clone() }),
+                Box::new(WriterQuark { id: QuarkId::new("b"), file: "b.txt", cwds: cwds.clone() }),
+            ],
+            10,
+        )
+        .with_git(root.clone());
+        engine.run_until_quiesce().await.unwrap();
+
+        // The turn ended on a commit, and the engine said so — one `Edit` per quark.
+        let edits: Vec<(QuarkId, Vec<String>, String)> = read_events(&field)
+            .unwrap()
+            .into_iter()
+            .filter_map(|e| match (e.from, e.kind) {
+                (Actor::Quark(q), Kind::Edit { paths, git, .. }) => Some((q, paths, git)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(edits.len(), 2, "each turn reported its own commit: {edits:?}");
+
+        let of = |id: &str| {
+            edits
+                .iter()
+                .find(|(q, ..)| *q == QuarkId::new(id))
+                .unwrap_or_else(|| panic!("no Edit event attributed to {id}: {edits:?}"))
+                .clone()
+        };
+        let (_, paths_a, sha_a) = of("a");
+        let (_, paths_b, sha_b) = of("b");
+
+        // 1. Each quark is credited with its own file, and ONLY its own. In a shared
+        //    tree both files land in one checkout and this cannot hold even in principle.
+        assert_eq!(paths_a, vec!["a.txt".to_string()], "a was credited with b's work");
+        assert_eq!(paths_b, vec!["b.txt".to_string()], "b was credited with a's work");
+
+        // 2. The commits are DISTINCT, and each is the head of that quark's own branch.
+        //    This is what `head_now != head_before` is actually asserting, and it is the
+        //    line that would silently mis-fire on a shared HEAD.
+        assert_ne!(sha_a, sha_b, "both turns were credited with the SAME commit");
+        let trees = crate::worktree::list(&root).unwrap();
+        let head_of = |id: &str| {
+            let w = trees.iter().find(|w| w.quark == QuarkId::new(id)).expect("worktree");
+            crate::worktree::head(&w.path).expect("the turn committed")
+        };
+        assert_eq!(sha_a, head_of("a"), "a's Edit does not name the commit on a's branch");
+        assert_eq!(sha_b, head_of("b"), "b's Edit does not name the commit on b's branch");
+
+        // 3. Neither commit reached the human's branch: nothing lands without the gate.
+        let main_head = crate::snapshot::git(&root, &["rev-parse", "HEAD"]).unwrap();
+        assert_ne!(main_head, sha_a);
+        assert_ne!(main_head, sha_b);
+    }
+
+    /// The other half of the truth, and the reason the daemon attributes nothing today:
+    /// **without `with_git`, `TurnTree` is never constructed** (l. 1186), so the whole
+    /// `if let Some(t) = tree` block — `head_before`, `commit_turn`, `Kind::Edit` — is
+    /// skipped entirely.
+    ///
+    /// Worth stating precisely, because it corrects the obvious guess: in a shared
+    /// checkout a turn's commit is not *mis*-attributed to a sibling, it is not
+    /// attributed **at all**. The engine emits no `Edit` events and never compares HEAD.
+    /// Attribution is dormant, not broken — and this guard fails the moment someone
+    /// wires commit-attribution to a shared tree, where it could not be sound.
+    #[tokio::test]
+    async fn without_worktree_isolation_the_engine_attributes_no_commit() {
+        let repo = git_init_repo();
+        let root = repo.path().to_path_buf();
+        std::fs::create_dir_all(root.join(".hadron")).unwrap();
+        let field = root.join(".hadron").join("field.jsonl");
+        append_event(
+            &field,
+            &Event::new(Actor::Human, None, Kind::Message { body: "@a write a.txt".into() }),
+        )
+        .unwrap();
+
+        let cwds = Arc::new(Mutex::new(vec![]));
+        // NO `.with_git(..)` — exactly how `bin/hadron-gluon.rs` builds the engine today.
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(WriterQuark { id: QuarkId::new("a"), file: "a.txt", cwds: cwds.clone() })],
+            10,
+        );
+        engine.run_until_quiesce().await.unwrap();
+
+        assert_eq!(cwds.lock().unwrap().len(), 1, "the quark ran");
+        let edits = read_events(&field)
+            .unwrap()
+            .into_iter()
+            .filter(|e| matches!(e.kind, Kind::Edit { .. }))
+            .count();
+        assert_eq!(edits, 0, "the engine attributed a commit without owning the tree to prove it");
+    }
+
     /// **The E2BIG regression test.** `field_window` used to be `events.to_vec()` —
     /// the *entire* field, unbounded. A long-running swarm's field renders to
     /// hundreds of KB, and `agy` takes its prompt as a single argv element, whose
