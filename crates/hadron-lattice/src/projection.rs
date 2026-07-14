@@ -127,6 +127,7 @@ mod tests {
             nucleus_digest: String::new(),
             roster: vec![QuarkCard {
                 id: QuarkId::new("agy"),
+                display_name: None,
                 flavor: Flavor::Worker,
                 energy: EnergyState::Available,
                 provider: String::new(),

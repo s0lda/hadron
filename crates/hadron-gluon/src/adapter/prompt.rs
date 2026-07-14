@@ -309,6 +309,7 @@ mod tests {
             nucleus_digest: "## map.md\nauth lives in src/auth".into(),
             roster: vec![QuarkCard {
                 id: QuarkId::new("agy"),
+                display_name: None,
                 flavor: Flavor::Worker,
                 energy: EnergyState::Available,
                 provider: String::new(),
@@ -421,6 +422,7 @@ mod tests {
         let mut proj = projection("x");
         proj.roster.push(QuarkCard {
             id: QuarkId::new("opus"),
+            display_name: None,
             flavor: Flavor::Orchestrator,
             energy: EnergyState::Available,
             provider: String::new(),
@@ -445,6 +447,7 @@ mod tests {
         let mut proj = projection("x");
         proj.roster.push(QuarkCard {
             id: QuarkId::new("opus"),
+            display_name: None,
             flavor: Flavor::Orchestrator,
             energy: EnergyState::Available,
             provider: String::new(),
@@ -483,6 +486,7 @@ mod tests {
         let mut proj = projection("x");
         proj.roster.push(QuarkCard {
             id: QuarkId::new("opus"),
+            display_name: None,
             flavor: Flavor::Orchestrator,
             energy: EnergyState::Available,
             provider: String::new(),
@@ -547,6 +551,7 @@ mod tests {
         let mut proj = projection("x");
         proj.roster.push(QuarkCard {
             id: QuarkId::new("opus"),
+            display_name: None,
             flavor: Flavor::Orchestrator,
             energy: EnergyState::Available,
             provider: String::new(),

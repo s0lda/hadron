@@ -59,6 +59,9 @@ pub struct AcpCommand {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Seat {
     pub id: QuarkId,
+    /// The human-readable name of the quark, e.g. "Google Girl".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     /// The backing CLI/vendor, e.g. "claude", "agy".
     pub provider: String,
     /// The model this seat runs, e.g. "opus-4.8", "gemini-3-pro".
@@ -108,7 +111,7 @@ impl Seat {
     /// a field to `Seat` without deciding which side of this line it falls on will not
     /// compile.
     pub fn same_agent(&self, other: &Seat) -> bool {
-        let Seat { id, provider, model, flavor, transport, command, enabled: _ } = self;
+        let Seat { id, display_name: _, provider, model, flavor, transport, command, enabled: _ } = self;
         id == &other.id
             && provider == &other.provider
             && model == &other.model
@@ -122,6 +125,7 @@ impl Seat {
     pub fn cli(id: QuarkId, provider: impl Into<String>, model: impl Into<String>, flavor: Flavor) -> Seat {
         Seat {
             id,
+            display_name: None,
             provider: provider.into(),
             model: model.into(),
             flavor,

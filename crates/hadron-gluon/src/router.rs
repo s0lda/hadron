@@ -36,20 +36,54 @@ pub const ORCHESTRATOR_ALIAS: &str = "orchestrator";
 /// wants.
 pub const TEAM_ALIAS: &str = "team";
 
-/// Resolve one `@name` to a roster quark: the `@orchestrator` role alias resolves
-/// to whoever currently holds `Flavor::Orchestrator`, anything else matches an id
-/// verbatim. Shared by both parsers so the two routing paths cannot drift.
-fn resolve_mention<'a>(name: &str, roster: &'a [QuarkCard]) -> Option<&'a QuarkCard> {
-    if name.eq_ignore_ascii_case(ORCHESTRATOR_ALIAS) {
-        return roster.iter().find(|c| c.flavor == Flavor::Orchestrator);
-    }
-    roster.iter().find(|c| c.id.as_str().eq_ignore_ascii_case(name))
+#[derive(Clone)]
+enum ResolvedMention<'a> {
+    Quark(&'a QuarkCard),
+    Team,
 }
 
-/// Read the `@name` token at the start of `s` (the chars after a leading `@`).
-/// Empty when `s` opens with a non-id character.
-fn mention_token(s: &str) -> String {
-    s.chars().take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_').collect()
+/// Tries to find the longest target that matches the START of `text` (case-insensitively).
+/// To prevent partial word matches (e.g. `@Google` matching `@GoogleBot`),
+/// the character immediately following the match in `text` must NOT be a valid
+/// intra-word mention character (alphanumeric, '-', '_'). Note that spaces ARE
+/// allowed inside display names, but a matched name's boundary still applies.
+fn match_longest_mention<'a>(text: &str, roster: &'a [QuarkCard]) -> Option<(usize, ResolvedMention<'a>)> {
+    let mut best_match: Option<(usize, ResolvedMention<'a>)> = None;
+
+    let mut try_match = |target_name: &str, resolution: ResolvedMention<'a>| {
+        if text.len() >= target_name.len() {
+            let prefix = &text[..target_name.len()];
+            if prefix.eq_ignore_ascii_case(target_name) {
+                let next_char = text[target_name.len()..].chars().next();
+                let boundary_ok = match next_char {
+                    Some(c) if c.is_alphanumeric() || c == '-' || c == '_' => false,
+                    _ => true,
+                };
+                
+                if boundary_ok {
+                    let len = target_name.len();
+                    if best_match.as_ref().map_or(true, |(best_len, _)| len > *best_len) {
+                        best_match = Some((len, resolution.clone()));
+                    }
+                }
+            }
+        }
+    };
+
+    try_match(TEAM_ALIAS, ResolvedMention::Team);
+    
+    if let Some(orch) = roster.iter().find(|c| c.flavor == Flavor::Orchestrator) {
+        try_match(ORCHESTRATOR_ALIAS, ResolvedMention::Quark(orch));
+    }
+
+    for card in roster {
+        try_match(card.id.as_str(), ResolvedMention::Quark(card));
+        if let Some(dn) = &card.display_name {
+            try_match(dn.as_str(), ResolvedMention::Quark(card));
+        }
+    }
+
+    best_match
 }
 
 /// Extract the addressee from a Markdown message: the first line that **starts**
@@ -69,22 +103,22 @@ pub fn parse_addressee(body: &str, roster: &[QuarkCard], sender: Option<&QuarkId
         let Some(rest) = line.trim_start().strip_prefix('@') else {
             continue;
         };
-        let name = mention_token(rest);
-        if name.is_empty() {
-            continue;
-        }
-        if let Some(card) = resolve_mention(&name, roster) {
-            // Sender-exclusion also makes `@orchestrator` a no-op for the
-            // orchestrator itself: its own reply falls through to "no addressee"
-            // and control returns to the human, as it should.
-            if Some(&card.id) != sender {
-                return Some(card.id.clone());
+        if let Some((_, resolution)) = match_longest_mention(rest, roster) {
+            match resolution {
+                ResolvedMention::Quark(card) => {
+                    // Sender-exclusion also makes `@orchestrator` a no-op for the
+                    // orchestrator itself: its own reply falls through to "no addressee"
+                    // and control returns to the human, as it should.
+                    if Some(&card.id) != sender {
+                        return Some(card.id.clone());
+                    }
+                }
+                ResolvedMention::Team => {}
             }
         }
     }
     None
 }
-
 
 /// Every roster quark id `@mentioned` ANYWHERE in a human message, in first-seen
 /// order, deduped. Unlike `parse_addressee` (line-start only, for quark replies
@@ -94,29 +128,33 @@ pub fn parse_addressee(body: &str, roster: &[QuarkCard], sender: Option<&QuarkId
 /// ignored; an `@` not starting a word (e.g. inside `email@host`) is not a mention.
 pub fn human_mentions(body: &str, roster: &[QuarkCard]) -> Vec<QuarkId> {
     let mut out: Vec<QuarkId> = Vec::new();
-    for word in body.split_whitespace() {
-        let Some(rest) = word.strip_prefix('@') else {
-            continue;
-        };
-        let name = mention_token(rest);
-        if name.is_empty() {
-            continue;
-        }
-        // `@team` expands to the whole roster in roster order — the daemon then
-        // fans the turn out to each in sequence, so one message can rally everyone.
-        if name.eq_ignore_ascii_case(TEAM_ALIAS) {
-            for card in roster {
-                if !out.contains(&card.id) {
-                    out.push(card.id.clone());
+    let mut i = 0;
+    while let Some(at_idx) = body[i..].find('@') {
+        let actual_at = i + at_idx;
+        let valid_start = actual_at == 0 || body.as_bytes()[actual_at - 1].is_ascii_whitespace();
+        
+        if valid_start {
+            let rest = &body[actual_at + 1..];
+            if let Some((match_len, resolution)) = match_longest_mention(rest, roster) {
+                match resolution {
+                    ResolvedMention::Team => {
+                        for card in roster {
+                            if !out.contains(&card.id) {
+                                out.push(card.id.clone());
+                            }
+                        }
+                    }
+                    ResolvedMention::Quark(card) => {
+                        if !out.contains(&card.id) {
+                            out.push(card.id.clone());
+                        }
+                    }
                 }
-            }
-            continue;
-        }
-        if let Some(card) = resolve_mention(&name, roster) {
-            if !out.contains(&card.id) {
-                out.push(card.id.clone());
+                i = actual_at + 1 + match_len;
+                continue;
             }
         }
+        i = actual_at + 1;
     }
     out
 }
@@ -132,8 +170,8 @@ mod tests {
 
     fn roster() -> Vec<QuarkCard> {
         vec![
-            QuarkCard { id: QuarkId::new("orch"), flavor: Flavor::Orchestrator, energy: EnergyState::Available, provider: String::new(), model: String::new() },
-            QuarkCard { id: QuarkId::new("worker"), flavor: Flavor::Worker, energy: EnergyState::Available, provider: String::new(), model: String::new() },
+            QuarkCard { id: QuarkId::new("orch"), display_name: None, flavor: Flavor::Orchestrator, energy: EnergyState::Available, provider: String::new(), model: String::new() },
+            QuarkCard { id: QuarkId::new("worker"), display_name: None, flavor: Flavor::Worker, energy: EnergyState::Available, provider: String::new(), model: String::new() },
         ]
     }
 

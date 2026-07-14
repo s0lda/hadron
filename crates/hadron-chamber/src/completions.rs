@@ -4,7 +4,7 @@ use gpui_component::input::{CompletionProvider, InputState, Rope};
 use lsp_types::{CompletionContext, CompletionItem, CompletionItemKind, CompletionResponse};
 
 pub struct ChatCompletionProvider {
-    pub quarks: Vec<String>,
+    pub quarks: Vec<(String, Option<String>)>,
     pub files: Vec<String>,
 }
 
@@ -59,19 +59,20 @@ impl CompletionProvider for ChatCompletionProvider {
                     });
                 }
             }
-            for quark in &self.quarks {
-                let quark_lower = quark.to_lowercase();
-                if query_lower.is_empty() || quark_lower.contains(&query_lower) {
+            for (quark_id, display_name) in &self.quarks {
+                let name = display_name.as_ref().unwrap_or(quark_id);
+                let name_lower = name.to_lowercase();
+                if query_lower.is_empty() || name_lower.contains(&query_lower) {
                     items.push(CompletionItem {
-                        label: format!("@{}", quark_lower),
-                        insert_text: Some(format!("@{} ", quark_lower)),
+                        label: format!("@{}", name),
+                        insert_text: Some(format!("@{} ", name)),
                         text_edit: Some(lsp_types::CompletionTextEdit::Edit(lsp_types::TextEdit {
                             range,
-                            new_text: format!("@{} ", quark_lower),
+                            new_text: format!("@{} ", name),
                         })),
                         kind: Some(CompletionItemKind::KEYWORD),
                         detail: Some("Quark".to_string()),
-                        filter_text: Some(format!("@{}", quark_lower)),
+                        filter_text: Some(format!("@{}", name_lower)),
                         ..Default::default()
                     });
                 }

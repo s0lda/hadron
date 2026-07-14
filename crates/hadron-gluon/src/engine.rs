@@ -369,6 +369,7 @@ impl Engine {
             .iter()
             .map(|q| QuarkCard {
                 id: q.id(),
+                display_name: None,
                 flavor: q.flavor(),
                 energy: q.energy(),
                 // Populated from the team config in the daemon bin (Task 6);
@@ -413,6 +414,7 @@ impl Engine {
         let id = quark.id();
         let card = QuarkCard {
             id: id.clone(),
+            display_name: None,
             flavor: quark.flavor(),
             energy: quark.energy(),
             // Left empty exactly as `new` leaves it — the daemon owns legibility, and
