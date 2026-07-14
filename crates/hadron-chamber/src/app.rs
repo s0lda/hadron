@@ -707,11 +707,11 @@ impl Chamber {
                         .py_1p5()
                         .rounded_md()
                         .bg(if selected {
-                            theme::surface_raised()
+                            theme::bg_surface_raised()
                         } else {
-                            theme::surface()
+                            theme::bg_surface()
                         })
-                        .hover(|s| s.bg(theme::surface_raised()))
+                        .hover(|s| s.bg(theme::bg_surface_raised()))
                         .active(|s| s.opacity(0.8))
                         .child(cmd.label(&self.prefs).to_string())
                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -765,7 +765,7 @@ impl Chamber {
                     .w(px(480.0))
                     .p_2()
                     .rounded_lg()
-                    .bg(theme::sidebar())
+                    .bg(theme::bg_elevated())
                     .border_1()
                     .border_color(theme::border())
                     .child(Input::new(&self.palette_input))
@@ -963,7 +963,7 @@ impl Chamber {
                 v_flex()
                     .occlude()
                     .w(px(400.0))
-                    .bg(theme::surface())
+                    .bg(theme::bg_surface())
                     .border_1()
                     .border_color(theme::border())
                     .rounded_lg()
@@ -1128,6 +1128,14 @@ impl Chamber {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let InputEvent::Change = event {
+            input.update(cx, |state, cx| {
+                let pos = state.cursor_position();
+                state.set_cursor_position(pos, window, cx);
+            });
+            return;
+        }
+
         let InputEvent::PressEnter { shift, .. } = event else {
             return;
         };
@@ -1394,7 +1402,7 @@ impl Render for Chamber {
             .relative()
             .size_full()
             .overflow_hidden()
-            .bg(theme::sidebar())
+            .bg(theme::bg_elevated())
             .rounded_tl(top_radius)
             .rounded_tr(top_radius)
             .rounded_bl(bottom_radius)
@@ -1428,10 +1436,10 @@ impl Chamber {
             .py_1p5()
             .w(px(380.0))
             .rounded_md()
-            .bg(theme::bg()) // darker than the titlebar → a recessed search field
+            .bg(theme::bg_base()) // darker than the titlebar → a recessed search field
             .text_sm()
             .text_color(theme::text_muted())
-            .hover(|s| s.bg(theme::surface()))
+            .hover(|s| s.bg(theme::bg_surface()))
             .active(|s| s.opacity(0.85))
             // Don't let a press on the bar start a window move.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -1630,7 +1638,7 @@ impl Chamber {
             .py_2()
             .items_center()
             .gap_2()
-            .bg(theme::sidebar())
+            .bg(theme::bg_elevated())
             .child(
                 div()
                     .id("expand")
@@ -1662,7 +1670,7 @@ impl Chamber {
             .rounded_md()
             .text_sm()
             .text_color(theme::text_muted())
-            .hover(|s| s.bg(theme::surface()))
+            .hover(|s| s.bg(theme::bg_surface()))
             .active(|s| s.opacity(0.7))
             .child(Icon::new(IconName::Settings).small())
             .when(!icon_only, |this| this.child("Settings"))
@@ -1794,7 +1802,7 @@ impl Chamber {
             .h_full()
             .p_2()
             .gap_2()
-            .bg(theme::sidebar())
+            .bg(theme::bg_elevated())
             .child(header) // pinned top
             .child(
                 div()
@@ -1945,7 +1953,7 @@ impl Chamber {
             .min_h_0()
             .rounded(INNER_RADIUS)
             .overflow_hidden()
-            .bg(theme::bg())
+            .bg(theme::bg_base())
             .child(header)
             .children(self.permission_toast(cx))
             .child(body)
@@ -1956,7 +1964,7 @@ impl Chamber {
             .h_full()
             .min_h_0()
             .p_2()
-            .bg(theme::sidebar())
+            .bg(theme::bg_elevated())
             .child(card)
     }
 
@@ -2095,7 +2103,7 @@ impl Chamber {
             v_flex()
                 .gap_1()
                 .p_3()
-                .bg(theme::surface_raised())
+                .bg(theme::bg_surface_raised())
                 .rounded_md()
                 .child(
                     div()
@@ -2131,7 +2139,7 @@ impl Chamber {
                 v_flex()
                     .gap_1()
                     .p_3()
-                    .bg(theme::surface_raised())
+                    .bg(theme::bg_surface_raised())
                     .rounded_md()
                     .child(
                         div()
@@ -2160,7 +2168,7 @@ impl Chamber {
             let mut block = v_flex()
                 .gap_1()
                 .p_3()
-                .bg(theme::surface_raised())
+                .bg(theme::bg_surface_raised())
                 .rounded_md()
                 .child(
                     div()
@@ -2409,7 +2417,7 @@ impl Chamber {
                                 .justify_between()
                                 .items_center()
                                 .p_2()
-                                .bg(theme::surface_raised())
+                                .bg(theme::bg_surface_raised())
                                 .child(div().text_color(theme::text()).child(path.clone()))
                                 .child(text_button("close-file", "Close").on_click(cx.listener(
                                     |this, _, window, cx| {
@@ -2523,7 +2531,7 @@ impl Chamber {
                             .px_2()
                             .py_1()
                             .ml(gpui::px(depth as f32 * 12.0))
-                            .hover(|s| s.bg(theme::surface_raised()))
+                            .hover(|s| s.bg(theme::bg_surface_raised()))
                             .cursor_pointer()
                             .text_color(theme::text())
                             .font_family("Cascadia Code")
@@ -2913,7 +2921,7 @@ impl Chamber {
             .min_h_0()
             .rounded(INNER_RADIUS)
             .overflow_hidden()
-            .bg(theme::bg())
+            .bg(theme::bg_base())
             .child(header)
             .child(content);
 
@@ -2922,7 +2930,7 @@ impl Chamber {
             .h_full()
             .min_h_0()
             .p_2()
-            .bg(theme::sidebar())
+            .bg(theme::bg_elevated())
             .child(card)
     }
 
@@ -2966,7 +2974,7 @@ impl Chamber {
                 .gap_3()
                 .items_center()
                 .rounded_lg()
-                .bg(theme::surface_raised())
+                .bg(theme::bg_surface_raised())
                 .child(
                     div()
                         .flex_1()
@@ -3123,7 +3131,7 @@ impl Chamber {
                     .p_5()
                     .gap_3()
                     .rounded_lg()
-                    .bg(theme::surface())
+                    .bg(theme::bg_surface())
                     .border_1()
                     .border_color(theme::border())
                     .child(
@@ -3161,7 +3169,7 @@ impl Chamber {
                             .px_3()
                             .py_1()
                             .rounded_md()
-                            .bg(theme::surface_raised())
+                            .bg(theme::bg_surface_raised())
                             .cursor_pointer()
                             .hover(|s| s.opacity(0.85))
                             .text_sm()
@@ -3365,7 +3373,7 @@ impl Chamber {
             .h_full()
             .p_2()
             .gap_2()
-            .bg(theme::bg())
+            .bg(theme::bg_base())
             .border_r(px(1.0))
             .border_color(theme::border())
             .child(div().px_1().text_color(theme::text()).child("Settings"))
@@ -3407,7 +3415,7 @@ impl Chamber {
                     .size(px(24.0))
                     .rounded_full()
                     .text_color(theme::text_secondary())
-                    .hover(|s| s.bg(theme::surface_raised()).text_color(theme::text()))
+                    .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
                     .child(Icon::new(IconName::WindowClose).small())
                     .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx))),
             );
@@ -3491,7 +3499,7 @@ impl Chamber {
             .max_h(px(640.0))
             .rounded_lg()
             .overflow_hidden()
-            .bg(theme::sidebar())
+            .bg(theme::bg_elevated())
             .border_1()
             .border_color(theme::border())
             .child(sidebar)
@@ -3533,11 +3541,11 @@ impl Chamber {
             .py_1p5()
             .rounded_md()
             .bg(if selected {
-                theme::surface_raised()
+                theme::bg_surface_raised()
             } else {
-                theme::bg()
+                theme::bg_base()
             })
-            .hover(|s| s.bg(theme::surface()))
+            .hover(|s| s.bg(theme::bg_surface()))
             .child(if who == SettingsTarget::Providers {
                 div()
                     .flex()
@@ -3607,7 +3615,7 @@ impl Chamber {
                             .items_center()
                             .p_4()
                             .rounded_lg()
-                            .bg(theme::surface())
+                            .bg(theme::bg_surface())
                             .border_1()
                             .border_color(theme::border())
                             .child(
@@ -3684,10 +3692,10 @@ impl Chamber {
                             .justify_between()
                             .p_4()
                             .rounded_lg()
-                            .bg(theme::surface())
+                            .bg(theme::bg_surface())
                             .border_1()
                             .border_color(theme::border())
-                            .hover(|s| s.bg(theme::surface_raised()))
+                            .hover(|s| s.bg(theme::bg_surface_raised()))
                             .cursor_pointer()
                             .child(
                                 v_flex()
@@ -3726,10 +3734,10 @@ impl Chamber {
                         .justify_between()
                         .p_4()
                         .rounded_lg()
-                        .bg(theme::surface())
+                        .bg(theme::bg_surface())
                         .border_1()
                         .border_color(theme::border())
-                        .hover(|s| s.bg(theme::surface_raised()))
+                        .hover(|s| s.bg(theme::bg_surface_raised()))
                         .cursor_pointer()
                         .child(
                             div()
@@ -4036,7 +4044,7 @@ fn control_button(id: &'static str, icon: IconName, is_close: bool) -> impl Into
     let hover_bg = if is_close {
         theme::danger()
     } else {
-        theme::surface_raised()
+        theme::bg_surface_raised()
     };
     div()
         .id(id)
@@ -4138,7 +4146,7 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
         .rounded_full()
         .bg(dot_color)
         .border_2()
-        .border_color(theme::sidebar());
+        .border_color(theme::bg_elevated());
 
     let dot = if is_excited {
         dot.with_animation(
@@ -4161,7 +4169,7 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
         .px_2()
         .py_1p5()
         .rounded_md()
-        .hover(|s| s.bg(theme::surface()))
+        .hover(|s| s.bg(theme::bg_surface()))
         .child(
             div()
                 .relative()
@@ -4223,7 +4231,7 @@ fn text_button(
         .rounded_md()
         .text_sm()
         .text_color(theme::text_secondary())
-        .hover(|s| s.bg(theme::surface_raised()).text_color(theme::text()))
+        .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
         .child(label.into())
 }
 
