@@ -71,6 +71,24 @@ pub(crate) fn git_dir(path: &Path) -> anyhow::Result<std::path::PathBuf> {
     )?))
 }
 
+/// The **main** checkout's root, asked from anywhere — including a linked worktree.
+///
+/// The sibling of [`git_dir`], and the opposite question: `git_dir` answers "where is
+/// *this* checkout's private state", this answers "where is the repo every worktree
+/// shares". `--git-common-dir` is `<root>/.git` from a main checkout *and* from a
+/// linked worktree, so its parent is the root in both cases. `--path-format=absolute`
+/// because git otherwise answers a *relative* path from inside a worktree.
+pub(crate) fn main_repo_root(path: &Path) -> anyhow::Result<std::path::PathBuf> {
+    let common = std::path::PathBuf::from(git(
+        path,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?);
+    common
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| anyhow!("git common dir has no parent: {}", common.display()))
+}
+
 /// Snapshot the current worktree into a shadow ref without touching the user's
 /// index or HEAD. Uses a throwaway index file, writes a tree, commit-trees it
 /// (parented on HEAD when one exists), and points `refs/hadron/snapshots/<id>`
