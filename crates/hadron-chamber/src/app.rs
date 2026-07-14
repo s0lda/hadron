@@ -1998,8 +1998,33 @@ impl Chamber {
                         view.update(cx, |this, _cx| {
                             if let Some(&real_ix) = this.chat_message_ixs.get(ix) {
                                 if let Some(m) = this.view.messages.get(real_ix) {
-                                    return div()
-                                        .pb(px(16.0))
+                                    let mut add_divider = false;
+                                    if ix > 0 {
+                                        if let Some(&prev_real_ix) = this.chat_message_ixs.get(ix - 1) {
+                                            if let Some(prev_m) = this.view.messages.get(prev_real_ix) {
+                                                if prev_m.time.date_naive() != m.time.date_naive() {
+                                                    add_divider = true;
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        add_divider = true;
+                                    }
+                                    
+                                    let mut row = v_flex().pb(px(16.0));
+                                    if add_divider {
+                                        let label = crate::model::date_divider_label(
+                                            m.time.date_naive(),
+                                            chrono::Local::now().date_naive(),
+                                        );
+                                        row = row.child(
+                                            div().flex().items_center().justify_center().pt_2().pb_6().child(
+                                                div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::text_muted()).child(label)
+                                            )
+                                        );
+                                    }
+                                    
+                                    return row
                                         .child(this.chat_message_row(
                                             &this.resolve_identity(&m.from),
                                             m,
@@ -2038,10 +2063,34 @@ impl Chamber {
                     if let Some(view) = weak_view.upgrade() {
                         view.update(cx, |this, cx| {
                             if let Some(m) = this.view.messages.get(ix) {
+                                let mut add_divider = false;
+                                if ix > 0 {
+                                    if let Some(prev_m) = this.view.messages.get(ix - 1) {
+                                        if prev_m.time.date_naive() != m.time.date_naive() {
+                                            add_divider = true;
+                                        }
+                                    }
+                                } else {
+                                    add_divider = true;
+                                }
+                                
                                 let m_clone = m.clone();
                                 let roster_clone = this.view.roster.clone();
-                                return div()
-                                    .pb(px(16.0))
+                                
+                                let mut row = v_flex().pb(px(16.0));
+                                if add_divider {
+                                    let label = crate::model::date_divider_label(
+                                        m.time.date_naive(),
+                                        chrono::Local::now().date_naive(),
+                                    );
+                                    row = row.child(
+                                        div().flex().items_center().justify_center().pt_2().pb_6().child(
+                                            div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::text_muted()).child(label)
+                                        )
+                                    );
+                                }
+                                
+                                return row
                                     .child(this.message_row(&m_clone, ix, &roster_clone, cx))
                                     .into_any_element();
                             }
@@ -3282,6 +3331,7 @@ impl Chamber {
             if let Some(seat) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
                 seat.effort = (!effort_val.is_empty()).then_some(effort_val);
                 seat.mode_config = (!mode_val.is_empty()).then_some(mode_val);
+                seat.display_name = (!name.is_empty()).then_some(name.clone());
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
                 let team_path = hadron_lattice::team_for_field(&self.path)
                     .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"));
@@ -4428,20 +4478,63 @@ fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
         if c == '@' {
             let mut name = String::new();
             while let Some(&nc) = chars.peek() {
-                if nc.is_alphanumeric() || nc == '.' || nc == '/' || nc == '-' || nc == '_' {
+                if nc.is_alphanumeric() || nc == '.' || nc == '/' || nc == '-' || nc == '_' || nc == ' ' || nc == '(' || nc == ')' {
                     name.push(chars.next().unwrap());
                 } else {
                     break;
                 }
             }
-            let is_quark =
-                roster.iter().any(|q| q.id == name) || SWARM_MENTIONS.contains(&name.as_str());
-            if name.is_empty() {
-                out.push('@');
-            } else if is_quark {
-                out.push_str(&format!("{}@{}{}", MENTION_QUARK_OPEN, name, MENTION_CLOSE));
+            
+            // Because we greedily consumed spaces and parens, the name might have trailing characters
+            // that aren't actually part of a mention (e.g., "@Agy said hi"). 
+            // We need to find the longest matching display name or id.
+            let mut matched_quark = false;
+            let mut best_match_len = 0;
+            
+            for q in roster {
+                let q_id = &q.id;
+                let q_name = q.display_name.as_ref().unwrap_or(q_id);
+                if name.starts_with(q_name) && q_name.len() > best_match_len {
+                    best_match_len = q_name.len();
+                    matched_quark = true;
+                } else if name.starts_with(q_id) && q_id.len() > best_match_len {
+                    best_match_len = q_id.len();
+                    matched_quark = true;
+                }
+            }
+            
+            let is_swarm = SWARM_MENTIONS.iter().find(|&&m| name.starts_with(m));
+            if let Some(m) = is_swarm {
+                if m.len() > best_match_len {
+                    best_match_len = m.len();
+                    matched_quark = true;
+                }
+            }
+            
+            if matched_quark {
+                let matched_name = name[..best_match_len].to_string();
+                let remainder = name[best_match_len..].to_string();
+                out.push_str(&format!("{}@{}{}", MENTION_QUARK_OPEN, matched_name, MENTION_CLOSE));
+                out.push_str(&remainder);
             } else {
-                out.push_str(&format!("{}@{}{}", MENTION_FILE_OPEN, name, MENTION_CLOSE));
+                // If it's a file, we shouldn't have consumed spaces/parens. 
+                // We fallback to the old behavior for files: break at first space/paren.
+                let mut file_name = String::new();
+                for c in name.chars() {
+                    if c.is_alphanumeric() || c == '.' || c == '/' || c == '-' || c == '_' {
+                        file_name.push(c);
+                    } else {
+                        break;
+                    }
+                }
+                if file_name.is_empty() {
+                    out.push('@');
+                    out.push_str(&name);
+                } else {
+                    let remainder = name[file_name.len()..].to_string();
+                    out.push_str(&format!("{}@{}{}", MENTION_FILE_OPEN, file_name, MENTION_CLOSE));
+                    out.push_str(&remainder);
+                }
             }
         } else {
             out.push(c);
@@ -4515,6 +4608,12 @@ impl Chamber {
                             .items_center()
                             .gap_2()
                             .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(id.color).child(id.name.clone()))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(crate::model::format_clock(m.time.with_timezone(&chrono::Local))),
+                            )
                             .when_some(m.to.clone(), |this, to| {
                                 this.child(
                                     div()
@@ -4596,6 +4695,12 @@ impl Chamber {
                                 .child(format!("→ {}", to)),
                         )
                     })
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child(crate::model::format_clock(m.time.with_timezone(&chrono::Local))),
+                    )
                     .child(
                         div()
                             .text_xs()

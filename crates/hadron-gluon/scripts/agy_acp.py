@@ -111,25 +111,33 @@ async def main():
                 )
             )
             
-            sessions[session_id] = {
-                "agent": agent,
-                "model": "gemini-2.5-pro"
-            }
-            
-            send_response(msg_id, {
-                "sessionId": session_id,
-                "configOptions": [
-                    {
-                        "id": "model",
-                        "name": "Model",
-                        "type": "select",
-                        "currentValue": "gemini-2.5-pro",
-                        "options": [
-                            {"value": "gemini-2.5-pro", "name": "Gemini 2.5 Pro"}
-                        ]
+            async def init_session(msg_id, session_id, agent):
+                try:
+                    await agent.__aenter__()
+                    sessions[session_id] = {
+                        "agent": agent,
+                        "model": "gemini-2.5-pro"
                     }
-                ]
-            })
+                    send_response(msg_id, {
+                        "sessionId": session_id,
+                        "configOptions": [
+                            {
+                                "id": "model",
+                                "name": "Model",
+                                "type": "select",
+                                "category": "model",
+                                "currentValue": "gemini-2.5-pro",
+                                "options": [
+                                    {"value": "gemini-2.5-pro", "name": "Gemini 2.5 Pro"}
+                                ]
+                            }
+                        ]
+                    })
+                except Exception as e:
+                    logger.error(f"Error starting agent: {e}")
+                    send_response(msg_id, {"error": {"code": -32000, "message": str(e)}})
+            
+            asyncio.create_task(init_session(msg_id, session_id, agent))
             
         elif method == "session/set_config_option":
             session_id = params.get("sessionId")
