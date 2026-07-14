@@ -203,6 +203,15 @@ pub fn team_for_field(field_path: &Path) -> Option<PathBuf> {
             return Some(sibling);
         }
     }
+    // Fall back to walking up the directory tree looking for a project `.hadron/team.json`.
+    let mut current = field_path.parent();
+    while let Some(dir) = current {
+        let repo_config = dir.join(".hadron").join("team.json");
+        if repo_config.exists() {
+            return Some(repo_config);
+        }
+        current = dir.parent();
+    }
     team_config_path()
 }
 
