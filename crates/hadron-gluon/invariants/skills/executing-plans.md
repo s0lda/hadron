@@ -1,49 +1,70 @@
-# Skill: Executing plans
+---
+name: executing-plans
+description: Use when you have a written implementation plan to execute in a separate session with review checkpoints
+---
 
-You are executing a written plan this turn. Someone else wrote it, and they are
-not here — the plan is the whole of what they can tell you.
+# Executing Plans
 
-## 1. Read it critically, before you touch anything
+## Overview
 
-Open the plan file. Then check it against the repo, because a plan is a claim
-about a codebase that may have moved since it was written:
+Load plan, review critically, execute all tasks, report when complete.
 
-- Do the files it names still exist, at the paths it gives?
-- Do the functions and types it references actually exist?
-- Is its recorded **baseline** still the baseline? Run the gate yourself and
-  compare. A plan written against a green tree does not authorise you to inherit
-  someone else's red one — and a failure you did not cause is not yours to fix.
+**Announce at start:** "I'm using the executing-plans skill to implement this plan."
 
-If the plan is wrong about the world, **say so and stop**. A confidently executed
-fiction is the most expensive thing you can produce. Report what contradicts it
-and hand it back to the author.
+**Note:** Tell your human partner that Superpowers works much better with access to subagents. The quality of its work will be significantly higher if run on a platform with subagent support (Claude Code, Codex CLI, Codex App, and Copilot CLI all qualify; see the per-platform tool refs in `../using-superpowers/references/`). If subagents are available, use superpowers:subagent-driven-development instead of this skill.
 
-## 2. Execute it exactly
+## The Process
 
-Task by task, step by step, in order. The steps are bite-sized on purpose.
+### Step 1: Load and Review Plan
+1. Read plan file
+2. Review critically - identify any questions or concerns about the plan
+3. If concerns: Raise them with your human partner before starting
+4. If no concerns: Create todos for the plan items and proceed
 
-- Run every verification the plan specifies. Do not skip one because the code
-  "obviously" works — that is the assumption the verification exists to kill.
-- **Commit as each task goes green**, staging by explicit path (`git add <path>`).
-  Never `git add -A`: the tree is shared with the human and every other quark, and
-  a sweep commits their in-flight work under your name. A turn that dies with
-  uncommitted work loses it entirely.
-- Tick the `- [ ]` boxes in the plan file as you go, and commit that too. That
-  checklist is the only thing that tells the next quark where you stopped.
+### Step 2: Execute Tasks
 
-## 3. Stop when blocked — do not improvise
+For each task:
+1. Mark as in_progress
+2. Follow each step exactly (plan has bite-sized steps)
+3. Run verifications as specified
+4. Mark as completed
 
-Stop and report if a dependency is missing, a step's instruction is ambiguous, a
-verification fails repeatedly, or the plan contradicts what you find in the code.
-Guessing produces work that looks finished and is not. Say plainly which task you
-reached, what stopped you, and what you left committed.
+### Step 3: Complete Development
 
-## 4. Do not verify your own execution
+After all tasks complete and verified:
+- Announce: "I'm using the finishing-a-development-branch skill to complete this work."
+- **REQUIRED SUB-SKILL:** Use superpowers:finishing-a-development-branch
+- Follow that skill to verify tests, present options, execute choice
 
-When the tasks are done, the work needs a reviewer who is not you. Hand it to a
-peer **by name** from the eligible list below, and tell them what to check: the
-plan, your commits, and the gate.
+## When to Stop and Ask for Help
 
-Report honestly, in three buckets — **verified** (you ran it and watched it),
-**landed but unclicked** (it compiles and is committed; nobody has exercised it),
-and **not done**. Only the first is finished.
+**STOP executing immediately when:**
+- Hit a blocker (missing dependency, test fails, instruction unclear)
+- Plan has critical gaps preventing starting
+- You don't understand an instruction
+- Verification fails repeatedly
+
+**Ask for clarification rather than guessing.**
+
+## When to Revisit Earlier Steps
+
+**Return to Review (Step 1) when:**
+- Partner updates the plan based on your feedback
+- Fundamental approach needs rethinking
+
+**Don't force through blockers** - stop and ask.
+
+## Remember
+- Review plan critically first
+- Follow plan steps exactly
+- Don't skip verifications
+- Reference skills when plan says to
+- Stop when blocked, don't guess
+- Never start implementation on main/master branch without explicit user consent
+
+## Integration
+
+**Required workflow skills:**
+- **superpowers:using-git-worktrees** - Ensures isolated workspace (creates one or verifies existing)
+- **superpowers:writing-plans** - Creates the plan this skill executes
+- **superpowers:finishing-a-development-branch** - Complete development after all tasks
