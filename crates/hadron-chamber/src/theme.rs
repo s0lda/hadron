@@ -10,27 +10,27 @@ use gpui::{rgb, rgba, Rgba};
 
 use hadron_lattice::QuarkState;
 
-// --- surfaces (darkest → raised) --- Jake's greyscale: 0x121314 / 0x191a1b / 0x252627.
-pub fn bg() -> Rgba {
-    rgb(0x121314) // base canvas
+// --- surfaces (darkest → raised) --- Zinc palette for tiered elevation.
+pub fn bg_base() -> Rgba {
+    rgb(0x09090b) // zinc-950 - main workspace background
 }
-pub fn sidebar() -> Rgba {
-    rgb(0x191a1b) // rails
+pub fn bg_elevated() -> Rgba {
+    rgb(0x18181b) // zinc-900 - sidebars and tabs
 }
-pub fn surface() -> Rgba {
-    rgb(0x202122) // chips/cards on the rails (a step above sidebar so they read)
+pub fn bg_surface() -> Rgba {
+    rgb(0x27272a) // zinc-800 - modals, cards, chips
 }
-pub fn surface_raised() -> Rgba {
-    rgb(0x252627) // hover / active
+pub fn bg_surface_raised() -> Rgba {
+    rgb(0x3f3f46) // zinc-700 - hover / active
 }
 pub fn input_bg() -> Rgba {
-    rgb(0x191a1b)
+    rgb(0x18181b) // zinc-900
 }
 pub fn popover() -> Rgba {
-    rgb(0x252627) // slightly raised for context menus and popovers
+    rgb(0x27272a) // zinc-800 - context menus
 }
 pub fn border() -> Rgba {
-    rgb(0x303133)
+    rgb(0x3f3f46) // zinc-700
 }
 
 // --- text tiers ---
