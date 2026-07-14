@@ -120,9 +120,12 @@ fn memory_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// The index is in **every** prompt of **every** turn, so its size is a tax paid
-/// forever. At one line per lesson this holds hundreds of them; a file that outgrows
-/// it has stopped being an index and needs pruning, which is what the marker says.
-const MEMORY_INDEX_BUDGET: usize = 16 * 1024;
+/// forever — and the tax is *context*, not money. Prompt caching makes re-sending it
+/// cheap; it does not make it free, because every token here is a token the model is
+/// not spending on the task. It is also the wrong thing to grow: the index is a
+/// routing table (one line per lesson) and the detail belongs in `notes/`, which the
+/// engine never loads. A file that outgrows this has stopped being an index.
+const MEMORY_INDEX_BUDGET: usize = 32 * 1024;
 
 /// Read the memory index, capped. A missing file is the normal first-run case, not an
 /// error — it simply means the swarm has learned nothing here yet.
@@ -130,18 +133,55 @@ const MEMORY_INDEX_BUDGET: usize = 16 * 1024;
 /// Returns the text and whether it was cut. Cutting silently is the one thing we do
 /// not do: a quark that cannot see a lesson, and cannot tell that it cannot see it,
 /// acts confidently on a partial picture.
+///
+/// **What we cut matters as much as that we cut.** Slicing the first N bytes keeps the
+/// OLDEST lessons and throws away the newest — exactly backwards, since the index is
+/// appended to and the freshest lesson is the one just paid for. So we keep the header
+/// (it defines the format a quark must write back in) and then the most recent lines
+/// that fit, dropping the middle.
 fn read_memory_index(path: &std::path::Path) -> (String, bool) {
     let raw = fs::read_to_string(path).unwrap_or_default();
     if raw.len() <= MEMORY_INDEX_BUDGET {
         return (raw, false);
     }
-    // Cut on a char boundary — a byte-sliced multi-byte char is a panic, and this file
-    // is written by hand and full of prose.
-    let mut end = MEMORY_INDEX_BUDGET;
-    while end > 0 && !raw.is_char_boundary(end) {
-        end -= 1;
+
+    let lines: Vec<&str> = raw.lines().collect();
+    // The header is everything before the first lesson line: it carries the format.
+    let first_lesson = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with("- **"))
+        .unwrap_or(0);
+    let (header, lessons) = lines.split_at(first_lesson);
+
+    let header_text = header.join("\n");
+    // Reserve room for the header; if the header alone blows the budget the file is
+    // not an index at all, and the old head-slice is the only honest thing left.
+    if header_text.len() >= MEMORY_INDEX_BUDGET {
+        let mut end = MEMORY_INDEX_BUDGET;
+        while end > 0 && !raw.is_char_boundary(end) {
+            end -= 1;
+        }
+        return (raw[..end].to_string(), true);
     }
-    (raw[..end].to_string(), true)
+
+    // Take lessons from the END backwards — newest first — until the budget is spent.
+    let mut kept: Vec<&str> = Vec::new();
+    let mut used = header_text.len();
+    for line in lessons.iter().rev() {
+        let cost = line.len() + 1; // +1 for the newline
+        if used + cost > MEMORY_INDEX_BUDGET {
+            break;
+        }
+        used += cost;
+        kept.push(line);
+    }
+    kept.reverse();
+
+    let mut out = header_text;
+    out.push('\n');
+    out.push_str(&kept.join("\n"));
+    out.push('\n');
+    (out, true)
 }
 
 /// Where a user's own always-on rules live, under their home directory. Their
@@ -2215,6 +2255,58 @@ mod tests {
         assert!(text.contains("Prove it runs"), "rule 1 — the one both quarks broke");
         assert!(text.contains("Make invalid states unrepresentable"), "rule 8 — agy's");
         assert!(available.is_empty(), "no repo tier exists here, and that is fine");
+    }
+
+    /// An over-budget index must lose its OLDEST lessons, never its newest. The index
+    /// is appended to, so a head-slice throws away the lesson a quark just paid for and
+    /// keeps the one from a month ago — and it silently truncated mid-sentence, leaving
+    /// a half-written lesson that reads as a whole one.
+    #[test]
+    fn an_over_budget_index_drops_the_oldest_lessons_and_keeps_the_newest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.md");
+
+        let mut raw = String::from("# Memory index\n\nFormat: `- **<slug>** — <lesson>`\n\n");
+        // Enough padded lessons to blow the budget several times over.
+        for i in 0..400 {
+            raw.push_str(&format!(
+                "- **lesson-{i}** — {}\n",
+                "x".repeat(200) // padding, so the budget is exceeded by bulk
+            ));
+        }
+        raw.push_str("- **the-newest-lesson** — the one just paid for\n");
+        assert!(raw.len() > MEMORY_INDEX_BUDGET, "the fixture must overflow");
+        fs::write(&path, &raw).unwrap();
+
+        let (out, truncated) = read_memory_index(&path);
+        assert!(truncated, "an over-budget index must report that it was cut");
+        assert!(out.len() <= MEMORY_INDEX_BUDGET);
+
+        assert!(
+            out.contains("the-newest-lesson"),
+            "the newest lesson is the one just paid for — it must survive the cut"
+        );
+        assert!(
+            out.contains("# Memory index") && out.contains("Format:"),
+            "the header defines the format a quark must write back in; it must survive"
+        );
+        assert!(
+            !out.contains("**lesson-0**"),
+            "the oldest lesson is what should be dropped"
+        );
+    }
+
+    /// An index that fits is handed over whole, and is not reported as cut.
+    #[test]
+    fn an_index_within_budget_is_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.md");
+        let raw = "# Memory index\n\n- **a** — one\n- **b** — two\n";
+        fs::write(&path, raw).unwrap();
+
+        let (out, truncated) = read_memory_index(&path);
+        assert_eq!(out, raw);
+        assert!(!truncated);
     }
 
     /// The prompt tests prove `prompt.rs` *renders* memory. They prove nothing about
