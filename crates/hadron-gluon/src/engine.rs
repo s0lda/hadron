@@ -2667,7 +2667,7 @@ mod tests {
                     "the engine must select the skill from the task text:\n{prompt}"
                 );
                 assert!(
-                    prompt.contains("Read it critically, before you touch anything"),
+                    prompt.contains("Load plan, review critically"),
                     "the skill BODY must be injected, not just its name"
                 );
                 // The Standard Model is still there — a skill augments the protocol,
