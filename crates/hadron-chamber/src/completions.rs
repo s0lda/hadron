@@ -41,6 +41,24 @@ impl CompletionProvider for ChatCompletionProvider {
         let mut items = Vec::new();
 
         if is_mention {
+            // The routing aliases come first: they address the whole team or the
+            // seat rather than one id, and they are what the human reaches for most.
+            for (alias, detail) in crate::text::MENTION_ALIASES {
+                if crate::text::mention_matches(alias, &query_lower) {
+                    items.push(CompletionItem {
+                        label: format!("@{}", alias),
+                        insert_text: Some(format!("@{} ", alias)),
+                        text_edit: Some(lsp_types::CompletionTextEdit::Edit(lsp_types::TextEdit {
+                            range,
+                            new_text: format!("@{} ", alias),
+                        })),
+                        kind: Some(CompletionItemKind::KEYWORD),
+                        detail: Some(detail.to_string()),
+                        filter_text: Some(format!("@{}", alias)),
+                        ..Default::default()
+                    });
+                }
+            }
             for quark in &self.quarks {
                 let quark_lower = quark.to_lowercase();
                 if query_lower.is_empty() || quark_lower.contains(&query_lower) {
