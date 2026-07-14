@@ -2002,7 +2002,7 @@ impl Chamber {
                                     if ix > 0 {
                                         if let Some(&prev_real_ix) = this.chat_message_ixs.get(ix - 1) {
                                             if let Some(prev_m) = this.view.messages.get(prev_real_ix) {
-                                                if prev_m.time.date_naive() != m.time.date_naive() {
+                                                if prev_m.ts.date_naive() != m.ts.date_naive() {
                                                     add_divider = true;
                                                 }
                                             }
@@ -2014,7 +2014,7 @@ impl Chamber {
                                     let mut row = v_flex().pb(px(16.0));
                                     if add_divider {
                                         let label = crate::model::date_divider_label(
-                                            m.time.date_naive(),
+                                            m.ts.date_naive(),
                                             chrono::Local::now().date_naive(),
                                         );
                                         row = row.child(
@@ -2066,7 +2066,7 @@ impl Chamber {
                                 let mut add_divider = false;
                                 if ix > 0 {
                                     if let Some(prev_m) = this.view.messages.get(ix - 1) {
-                                        if prev_m.time.date_naive() != m.time.date_naive() {
+                                        if prev_m.ts.date_naive() != m.ts.date_naive() {
                                             add_divider = true;
                                         }
                                     }
@@ -2080,7 +2080,7 @@ impl Chamber {
                                 let mut row = v_flex().pb(px(16.0));
                                 if add_divider {
                                     let label = crate::model::date_divider_label(
-                                        m.time.date_naive(),
+                                        m.ts.date_naive(),
                                         chrono::Local::now().date_naive(),
                                     );
                                     row = row.child(
@@ -4612,7 +4612,7 @@ impl Chamber {
                                 div()
                                     .text_xs()
                                     .text_color(theme::text_muted())
-                                    .child(crate::model::format_clock(m.time.with_timezone(&chrono::Local))),
+                                    .child(crate::model::format_clock(m.ts.with_timezone(&chrono::Local))),
                             )
                             .when_some(m.to.clone(), |this, to| {
                                 this.child(
@@ -4699,7 +4699,7 @@ impl Chamber {
                         div()
                             .text_xs()
                             .text_color(theme::text_muted())
-                            .child(crate::model::format_clock(m.time.with_timezone(&chrono::Local))),
+                            .child(crate::model::format_clock(m.ts.with_timezone(&chrono::Local))),
                     )
                     .child(
                         div()

@@ -68,6 +68,7 @@ fn resolve_fresh(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RosterRow {
     pub id: String,
+    pub display_name: Option<String>,
     pub state: QuarkState,
     pub mode: Mode,
     pub mode_is_override: bool,
@@ -340,10 +341,11 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
         .map(|id| {
             let state = states.get(&id).copied().unwrap_or(QuarkState::Ground);
             let qid = QuarkId::new(&id);
-            let (provider, model, flavor, transport, enabled) = team
+            let (display_name, provider, model, flavor, transport, enabled) = team
                 .get(&qid)
                 .map(|s| {
                     (
+                        s.display_name.clone(),
                         s.provider.clone(),
                         s.model.clone(),
                         Some(s.flavor.clone()),
@@ -353,6 +355,7 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
                 })
                 .unwrap_or_else(|| {
                     (
+                        None,
                         String::new(),
                         String::new(),
                         None,
@@ -366,6 +369,7 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
                 state,
                 mode: resolve_mode(events, &qid),
                 mode_is_override: has_override(events, &qid),
+                display_name,
                 provider,
                 model,
                 flavor,

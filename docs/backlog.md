@@ -32,8 +32,8 @@ Update this file in the same commit as the work. Whoever lands it moves the line
 | 11 | Font-weight hierarchy (names bold, metadata muted/xs) | ✅ | **agy, completed** |
 | 12 | Chat input: paste long text does not scroll to cursor | ✅ | **agy, completed** |
 | 13 | Timeline → card feed, **grouped by turn** not by event | ⬜ | design agreed; unassigned |
-| 14 | Log timestamps | ⬜ | |
-| 15 | Discord-style date dividers in chat | ⬜ | |
+| 14 | Log timestamps | ✅ | **agy, completed** |
+| 15 | Discord-style date dividers in chat | ✅ | **agy, completed** |
 | 16 | Session → **Stats** with session/day/week/month/total | ⬜ | needs a **cached rollup**, not a per-frame replay of `field.jsonl` |
 | 17 | Mode tag anchored top-right + wider rail | ⬜ | no `left_0` on the overlay — it eats clicks |
 | 18 | Changes pane: show which quark authored a diff | ⬜ | blocked on worktree isolation (#24) |
