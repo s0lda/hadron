@@ -103,9 +103,24 @@ pub async fn run_tests_with(
     program: &str,
     args: &[&str],
 ) -> anyhow::Result<(bool, String)> {
-    let out = tokio::process::Command::new(program)
-        .args(args)
-        .current_dir(&wt.path)
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(args).current_dir(&wt.path);
+
+    // **The gate's cost lives or dies on this line.** A quark's worktree is a *fresh*
+    // checkout with no `target/` of its own, so an unqualified `cargo test` there is a
+    // full cold build of the workspace — minutes, and a duplicate artifact tree per
+    // quark (this workspace's `target/` is 41 GB). Pointing every worktree at the main
+    // checkout's `target/` makes the gate reuse the warm cache instead: measured at
+    // **13s in a fresh worktree, against a cold build's minutes**.
+    //
+    // Safe under concurrency: cargo takes a file lock on the target dir, so two gate
+    // runs queue rather than corrupt each other. Best-effort — if git cannot name the
+    // root (not a repo), we simply do not set it and cargo behaves as before.
+    if let Ok(root) = crate::snapshot::main_repo_root(&wt.path) {
+        cmd.env("CARGO_TARGET_DIR", root.join("target"));
+    }
+
+    let out = cmd
         .output()
         .await
         .map_err(|e| anyhow::anyhow!("failed to run the gate's tests ({program}): {e}"))?;
@@ -253,6 +268,35 @@ mod tests {
             wt.path.canonicalize().unwrap(),
             "the gate must test the quark's branch, in the quark's tree"
         );
+    }
+
+    /// **The gate's cost.** A quark's worktree has no `target/` of its own, so without
+    /// this the first `cargo test` in each quark's tree is a full cold build of the
+    /// workspace — minutes each, and a duplicate 41 GB artifact tree per quark. The gate
+    /// must point every worktree at the MAIN checkout's `target/`, or the enforcement it
+    /// exists to provide costs more than it is worth.
+    ///
+    /// Asserted by having "the tests" print the variable, so no real cargo is spawned.
+    #[tokio::test]
+    async fn the_gate_reuses_the_main_checkouts_target_dir() {
+        let repo = git_repo();
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+        // Both sides get canonicalized, so the dir has to exist to be resolved.
+        std::fs::create_dir_all(repo.path().join("target")).unwrap();
+
+        let (passed, out) = run_tests_with(&wt, "sh", &["-c", "echo $CARGO_TARGET_DIR"])
+            .await
+            .unwrap();
+        assert!(passed);
+
+        let got = std::path::PathBuf::from(out.trim());
+        assert_eq!(
+            got.canonicalize().unwrap(),
+            repo.path().join("target").canonicalize().unwrap(),
+            "the gate must build into the main checkout's target, not the worktree's"
+        );
+        // And emphatically NOT the worktree's own (cold, duplicated) target dir.
+        assert_ne!(got, wt.path.join("target"));
     }
 
     #[tokio::test]
