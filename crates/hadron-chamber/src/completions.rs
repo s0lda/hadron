@@ -65,7 +65,8 @@ impl CompletionProvider for ChatCompletionProvider {
             for (quark_id, display_name) in &self.quarks {
                 let name = display_name.as_ref().unwrap_or(quark_id);
                 let name_lower = name.to_lowercase();
-                if query_lower.is_empty() || name_lower.contains(&query_lower) {
+                let id_lower = quark_id.to_lowercase();
+                if query_lower.is_empty() || name_lower.contains(&query_lower) || id_lower.contains(&query_lower) {
                     items.push(CompletionItem {
                         label: format!("@{}", name),
                         insert_text: Some(format!("@{} ", name)),
