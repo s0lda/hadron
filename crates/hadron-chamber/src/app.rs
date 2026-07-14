@@ -20,7 +20,8 @@ use gpui_component::avatar::Avatar;
 // badge removed
 use gpui_component::chart::{BarChart, LineChart};
 use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
-use gpui_component::menu::{ContextMenuExt, PopupMenuItem};
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use gpui_component::stepper::{Stepper, StepperItem};
@@ -373,6 +374,8 @@ struct Chamber {
     _terminal_sub: Subscription,
     terminal: Option<crate::sys::Terminal>,
     info_panel: Option<String>,
+    /// The About dialog, opened from the app menu.
+    about_open: bool,
     terminal_scroll: ScrollHandle,
     file_tree_scroll: ScrollHandle,
     file_tree_open_scroll: ScrollHandle,
@@ -540,6 +543,7 @@ impl Chamber {
             _terminal_sub,
             terminal: None,
             info_panel: None,
+            about_open: false,
             terminal_scroll: ScrollHandle::new(),
             file_tree_scroll: ScrollHandle::new(),
             file_tree_open_scroll: ScrollHandle::new(),
@@ -1346,6 +1350,7 @@ impl Render for Chamber {
             .info_panel
             .is_some()
             .then(|| self.info_panel_overlay(cx));
+        let about = self.about_open.then(|| self.about_overlay(cx));
 
         let content = v_flex()
             .key_context(KEY_CONTEXT)
@@ -1366,7 +1371,8 @@ impl Render for Chamber {
             .child(status)
             .children(overlay)
             .children(settings)
-            .children(info);
+            .children(info)
+            .children(about);
 
         let wrapped_content = crate::window_frame::window_frame(window, cx, content);
 
@@ -1440,7 +1446,7 @@ impl Chamber {
                     .flex_shrink_0()
                     .items_center()
                     .pl(px(8.0))
-                    .child(menu_button()),
+                    .child(menu_button(&cx.entity())),
             )
             .child(drag_region("drag-l"))
             .child(command_bar)
@@ -3033,6 +3039,86 @@ impl Chamber {
         ResolvedIdentity { name, color, image }
     }
 
+    /// The About dialog. Every value here is read from the build, not typed in: the
+    /// version comes from the crate's own manifest, so it cannot drift from what
+    /// shipped.
+    fn about_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let close = cx.listener(|this, _, _, cx| {
+            this.about_open = false;
+            cx.notify();
+        });
+
+        let row = |label: &'static str, value: String| {
+            h_flex()
+                .w_full()
+                .justify_between()
+                .gap_4()
+                .text_sm()
+                .child(div().text_color(theme::text_muted()).child(label))
+                .child(div().text_color(theme::text()).child(value))
+        };
+
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::black().opacity(0.5))
+            .child(
+                v_flex()
+                    .w(px(420.0))
+                    .p_5()
+                    .gap_3()
+                    .rounded_lg()
+                    .bg(theme::surface())
+                    .border_1()
+                    .border_color(theme::border())
+                    .child(
+                        div()
+                            .text_lg()
+                            .text_color(theme::text())
+                            .child("Hadron"),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme::text_muted())
+                            .child("A multi-agent operating system. Quarks take turns in one shared workspace, on one shared field."),
+                    )
+                    .child(row("Version", env!("CARGO_PKG_VERSION").to_string()))
+                    .child(row("Licence", "Apache-2.0".to_string()))
+                    .child(row(
+                        "Workspace",
+                        crate::vcs::repo_root_of(&self.path)
+                            .to_string_lossy()
+                            .to_string(),
+                    ))
+                    .child(row("Quarks seated", self.view.roster.len().to_string()))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child("Built on GPUI (Zed) and gpui-component (Longbridge), and speaks the Agent Client Protocol."),
+                    )
+                    .child(
+                        div()
+                            .id("about-close")
+                            .mt_2()
+                            .self_end()
+                            .px_3()
+                            .py_1()
+                            .rounded_md()
+                            .bg(theme::surface_raised())
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.85))
+                            .text_sm()
+                            .child("Close")
+                            .on_click(close),
+                    ),
+            )
+    }
+
     /// Open the Settings overlay, editing the human's identity first.
     fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.settings_open = true;
@@ -3837,22 +3923,59 @@ fn frame_corner_radii(window: &Window) -> (Pixels, Pixels) {
 /// The titlebar's app/options menu — a 3-line "hamburger" with circular hover.
 /// Placeholder for now: opening a menu of options lands later. Stops propagation
 /// so a press here can't start a window move.
-fn menu_button() -> impl IntoElement {
-    div()
-        .id("app-menu")
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(px(26.0))
-        .rounded_full()
-        .text_color(theme::text_secondary())
-        .hover(|s| s.bg(theme::surface_raised()).text_color(theme::text()))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(|_, _window, cx| {
-            cx.stop_propagation();
-            // TODO: open the options menu (placeholder — items TBD with Jake).
+/// The app menu behind the 3-line icon.
+///
+/// Every item here does something real. "Open Folder / Recent Projects" is
+/// deliberately absent: the daemon is bound to one workspace at boot, so the chamber
+/// alone cannot repoint the swarm at another one — an item that opened a folder the
+/// quarks could not see would be a lie with a file dialog attached.
+fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
+    let view = chamber.clone();
+    Button::new("app-menu")
+        .ghost()
+        .icon(Icon::new(IconName::Menu).small())
+        .dropdown_menu(move |menu, _, _| {
+            let palette = view.clone();
+            let settings = view.clone();
+            let folder = view.clone();
+            let about = view.clone();
+            menu.item(
+                PopupMenuItem::new("Command Palette…").on_click(move |_, window, cx| {
+                    palette.update(cx, |this, cx| {
+                        this.on_toggle_palette(&TogglePalette, window, cx)
+                    });
+                }),
+            )
+            .item(
+                PopupMenuItem::new("Settings…").on_click(move |_, window, cx| {
+                    settings.update(cx, |this, cx| this.open_settings(window, cx));
+                }),
+            )
+            .separator()
+            .item(
+                PopupMenuItem::new("Reveal Workspace in File Manager").on_click(
+                    move |_, _, cx| {
+                        folder.update(cx, |this, cx| {
+                            this.handle_context_menu_action(
+                                ContextMenuAction::OpenInFolder(String::from(".")),
+                                cx,
+                            );
+                        });
+                    },
+                ),
+            )
+            .separator()
+            .item(
+                PopupMenuItem::new("About Hadron").on_click(move |_, _, cx| {
+                    about.update(cx, |this, cx| {
+                        this.about_open = true;
+                        cx.notify();
+                    });
+                }),
+            )
+            .separator()
+            .item(PopupMenuItem::new("Quit Hadron").on_click(|_, _, cx| cx.quit()))
         })
-        .child(Icon::new(IconName::Menu).small())
 }
 
 /// A circular window-control button (min / max / close) with circular hover.
