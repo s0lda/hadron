@@ -6,6 +6,7 @@ pub mod nucleus;
 pub mod quark;
 pub mod reseat;
 pub mod router;
+pub mod skills;
 pub mod snapshot;
 pub mod ledger;
 pub mod watch;
