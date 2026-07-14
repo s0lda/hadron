@@ -76,6 +76,13 @@ pub const ACP_AGENTS: &[AcpAgentSpec] = &[
         // Command line written down from the agent's own docs, never driven here.
         proven: false,
     },
+    AcpAgentSpec {
+        provider: "acp-agy",
+        name: "Antigravity (SDK)",
+        program: "python3",
+        args: &["crates/hadron-gluon/scripts/agy_acp.py"],
+        proven: false,
+    },
 ];
 
 impl AcpTarget {
