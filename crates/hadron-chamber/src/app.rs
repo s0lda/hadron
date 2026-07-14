@@ -371,6 +371,7 @@ struct Chamber {
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
     file_tree_paths: Vec<String>,
+    completion_files: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     file_tree_open: Option<(String, String)>,
     file_tree_expanded: std::collections::HashSet<String>,
     terminal_history: Vec<(String, String, String)>,
@@ -407,7 +408,8 @@ impl Chamber {
     ) -> Self {
         let repo_root = crate::vcs::repo_root_of(&path);
         let files = crate::sys::list_workspace_files(&repo_root);
-        let files_for_completion = files.clone();
+        let completion_files = std::rc::Rc::new(std::cell::RefCell::new(files.clone()));
+        let files_for_completion = completion_files.clone();
 
         let input = cx.new(|cx| {
             let mut state = InputState::new(window, cx)
@@ -551,6 +553,7 @@ impl Chamber {
             providers,
             wizard_state: WizardState::None,
             file_tree_paths: files,
+            completion_files,
             file_tree_open: None,
             file_tree_expanded: std::collections::HashSet::new(),
             terminal_history: Vec::new(),
@@ -1103,6 +1106,7 @@ impl Chamber {
                 let root = crate::vcs::repo_root_of(&self.path);
                 let files = crate::sys::list_workspace_files(root);
                 if files != self.file_tree_paths {
+                    *self.completion_files.borrow_mut() = files.clone();
                     self.file_tree_paths = files;
                     changed = true;
                 }
@@ -1147,6 +1151,7 @@ impl Chamber {
         let InputEvent::PressEnter { shift, .. } = event else {
             return;
         };
+        println!("App received PressEnter! shift={}", shift);
         if *shift {
             return;
         }
