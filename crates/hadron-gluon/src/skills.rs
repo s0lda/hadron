@@ -111,6 +111,66 @@ pub const SKILLS: &[Skill] = &[
         ],
         body: include_str!("../invariants/skills/reviewing-work.md"),
     },
+    Skill {
+        id: "brainstorming",
+        triggers: &["brainstorm", "explore ideas", "think about", "design feature", "design the feature"],
+        body: include_str!("../invariants/skills/brainstorming.md"),
+    },
+    Skill {
+        id: "dispatching-parallel-agents",
+        triggers: &["dispatch agents", "parallel tasks", "run in parallel", "do these in parallel"],
+        body: include_str!("../invariants/skills/dispatching-parallel-agents.md"),
+    },
+    Skill {
+        id: "finishing-a-development-branch",
+        triggers: &["finish the branch", "ready to merge", "create pr", "cleanup branch", "wrap up the branch"],
+        body: include_str!("../invariants/skills/finishing-a-development-branch.md"),
+    },
+    Skill {
+        id: "receiving-code-review",
+        triggers: &["received code review", "review feedback", "address comments", "fix the review comments"],
+        body: include_str!("../invariants/skills/receiving-code-review.md"),
+    },
+    Skill {
+        id: "requesting-code-review",
+        triggers: &["request review", "ready for review", "please review", "needs review"],
+        body: include_str!("../invariants/skills/requesting-code-review.md"),
+    },
+    Skill {
+        id: "subagent-driven-development",
+        triggers: &["use subagents", "dispatch subagents", "subagent driven"],
+        body: include_str!("../invariants/skills/subagent-driven-development.md"),
+    },
+    Skill {
+        id: "systematic-debugging",
+        triggers: &["debug", "fix bug", "test failure", "investigate error", "why does it fail", "systematic debugging"],
+        body: include_str!("../invariants/skills/systematic-debugging.md"),
+    },
+    Skill {
+        id: "test-driven-development",
+        triggers: &["tdd", "write tests first", "test driven"],
+        body: include_str!("../invariants/skills/test-driven-development.md"),
+    },
+    Skill {
+        id: "using-git-worktrees",
+        triggers: &["use worktree", "create worktree", "isolated workspace", "git worktree"],
+        body: include_str!("../invariants/skills/using-git-worktrees.md"),
+    },
+    Skill {
+        id: "using-superpowers",
+        triggers: &["use superpowers", "what are your superpowers"],
+        body: include_str!("../invariants/skills/using-superpowers.md"),
+    },
+    Skill {
+        id: "verification-before-completion",
+        triggers: &["verify completion", "check before done", "verify before", "double check completion"],
+        body: include_str!("../invariants/skills/verification-before-completion.md"),
+    },
+    Skill {
+        id: "writing-skills",
+        triggers: &["write a skill", "create skill", "edit skill", "create a skill", "new skill"],
+        body: include_str!("../invariants/skills/writing-skills.md"),
+    },
 ];
 
 /// The skill a turn is in, and the phrase that decided it.
