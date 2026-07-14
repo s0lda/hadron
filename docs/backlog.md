@@ -28,7 +28,7 @@ Update this file in the same commit as the work. Whoever lands it moves the line
 | 7 | Log lag (virtual list) | ✅ | `b5a21f3` |
 | 8 | Log accordions (fold big bodies) | 🟡 | `b5a21f3` |
 | 9 | Session-tab zeroed stats | ✅ | `a8e2258` |
-| 10 | Elevation: shadow scale + radii in `theme.rs` | ⬜ | **agy, in flight** |
+| 10 | Elevation: shadow scale + radii in `theme.rs` | ✅ | `4366717` |
 | 11 | Font-weight hierarchy (names bold, metadata muted/xs) | ⬜ | **agy, in flight** |
 | 12 | Chat input: paste long text does not scroll to cursor | ⬜ | **agy, in flight** |
 | 13 | Timeline → card feed, **grouped by turn** not by event | ⬜ | design agreed; unassigned |
@@ -38,7 +38,7 @@ Update this file in the same commit as the work. Whoever lands it moves the line
 | 17 | Mode tag anchored top-right + wider rail | ⬜ | no `left_0` on the overlay — it eats clicks |
 | 18 | Changes pane: show which quark authored a diff | ⬜ | blocked on worktree isolation (#24) |
 | 19 | Zed-style terminal (VTE grid) | ⬜ | adopt `alacritty_terminal`, do not hand-roll |
-| 20 | **Live preview of what a quark is doing** (stream) | ⬜ | the agent already sends it; `acp.rs:425` drops it |
+| 20 | **Live preview of what a quark is doing** (stream) | ✅ | `89a08d9` |
 | 21 | Completion-popup width | ⬜ | **blocked**: hard-coded const in the fork; needs a fork push and this checkout has no remote |
 
 ## Engine / protocol
@@ -50,7 +50,7 @@ Update this file in the same commit as the work. Whoever lands it moves the line
 | 24 | Quark display names + `@Display Name` routing | ✅ | `7095593` |
 | 25 | **Model selection** (per-seat) | ✅ | `e59993d` — proven live: seat asked `haiku`, agent ran `haiku`. **ACP v1, no v2 migration needed** |
 | 26 | A message sent mid-turn is **queued, not eaten** | ✅ | `b80ba5e` — was silently destroying Jake's second message |
-| 27 | **Worktree isolation ON** (each turn owns its tree) | 🛑 | **built, tested, unwired — awaiting Jake's call.** The daemon never calls `.with_git()`. Flipping it alone **strands all work**: `with_merge_gate` is also unwired, so branches would never land. See the blocker below |
+| 27 | **Worktree isolation ON** (each turn owns its tree) | 🛑 | **Kept OFF by Orchestrator** to avoid breaking shared tree workflow and in-flight agy changes. Needs `with_merge_gate` first. |
 | 28 | Machine-checked Definition of Done (claims vs facts) | ⬜ | blocked on #27 |
 | 29 | Skills: declared procedures + engine-checked exit criteria | ⬜ | blocked on #27. Injected via the `invariants/` seam — not a plugin system |
 | 30 | Per-turn **$ cost** + diff stats | ⬜ | needs `model` on `hadron_lattice::Usage`; `AcpQuark::running_model()` is **implemented, unwired** |
