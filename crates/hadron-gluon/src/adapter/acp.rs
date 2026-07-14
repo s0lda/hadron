@@ -1360,6 +1360,53 @@ mod tests {
         );
     }
 
+    /// **The Antigravity seat says WHY it cannot start.** This is the fix for the seat
+    /// that "responded and automatically errored": the adapter used to return its
+    /// failure inside `result`, which a JSON-RPC client reads as *success*, so the
+    /// reason never reached Hadron and the turn died with a bare `stopReason: error`.
+    ///
+    /// The assertion is on the **reason**, not on the failure. Any broken seat fails;
+    /// only a correctly-reporting one tells you it needs a key — and it must arrive
+    /// through Hadron's own ACP client (`probe`, what the chamber's "Connect" runs),
+    /// because that is the path that was swallowing it.
+    ///
+    /// No credential needed — the *absence* of one is the case under test:
+    ///
+    /// ```text
+    /// cargo test -p hadron-gluon --lib acp::tests::the_antigravity_seat_names_the_credential_it_lacks -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "live: spawns the Antigravity SDK venv (crates/hadron-gluon/scripts/venv)"]
+    fn the_antigravity_seat_names_the_credential_it_lacks() {
+        // The SDK authenticates by API key ONLY — it has no OAuth path, so it cannot
+        // reuse the agy CLI's login. Guarantee the key is absent: that is the state
+        // Jake's daemon is actually in.
+        unsafe { std::env::remove_var("GEMINI_API_KEY") };
+
+        // The catalogue owns the command. But it stores a path RELATIVE to the
+        // workspace root, and a test runs from the crate dir — so anchor it rather
+        // than restate it. (That relativity is a live hazard: the seat only spawns
+        // while the daemon's cwd IS the workspace root.)
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("crates/hadron-gluon sits two levels under the workspace root");
+        let preset = AcpTarget::for_provider("acp-agy").expect("acp-agy is in the catalogue");
+        let target = AcpTarget {
+            program: root.join(&preset.program).display().to_string(),
+            args: preset.args.iter().map(|a| root.join(a).display().to_string()).collect(),
+        };
+
+        let outcome = probe(&target);
+
+        let err = outcome.expect_err("without a key the Antigravity agent cannot start").to_string();
+        eprintln!("\n=== what Hadron is told ===\n{err}\n");
+        assert!(
+            err.contains("GEMINI_API_KEY"),
+            "the seat must name the credential it lacks, not just fail; got {err:?}"
+        );
+    }
+
     /// **The live-preview proof.** The agent streams its thoughts and tool calls to
     /// us on every turn — we used to drop them on the floor. This asserts that a real
     /// turn now *publishes* them, and that the quark goes **idle** when it ends.
