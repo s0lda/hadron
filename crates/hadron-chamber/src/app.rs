@@ -2011,7 +2011,7 @@ impl Chamber {
                                         add_divider = true;
                                     }
                                     
-                                    let mut row = v_flex().pb(px(16.0));
+                                    let mut row = div().pb(px(16.0));
                                     if add_divider {
                                         let label = crate::model::date_divider_label(
                                             m.ts.date_naive(),
@@ -2077,7 +2077,7 @@ impl Chamber {
                                 let m_clone = m.clone();
                                 let roster_clone = this.view.roster.clone();
                                 
-                                let mut row = v_flex().pb(px(16.0));
+                                let mut row = div().pb(px(16.0));
                                 if add_divider {
                                     let label = crate::model::date_divider_label(
                                         m.ts.date_naive(),
