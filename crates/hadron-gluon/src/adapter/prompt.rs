@@ -196,9 +196,31 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         "Reply in Markdown. If a message addresses several quarks (e.g. `@opus do X and @agy \
          do Y`), act ONLY on the part directed at you — the others handle theirs. To delegate, \
          start a line with `@<quark-id>` and the request (only a mention at the START of a line \
-         routes — mentions inside prose are ignored). When the overall task is complete, reply \
-         WITHOUT any `@mention` to hand control back to the human.\n\n",
+         routes — mentions inside prose are ignored).\n\n",
     );
+
+    // 6a. Who a finished turn goes back TO — and this depends on the role, because
+    // an unaddressed reply excites nobody: it lands in the field for the human.
+    //
+    // Telling a worker "you report to the orchestrator" and then "drop the @mention
+    // when you are done" is a contradiction, and the worker obeys the second one:
+    // it finishes, drops the mention, and the orchestrator is never woken. Observed
+    // live — agy reported a completed task and the orchestrator took no action,
+    // because it was never told there was one. A worker therefore hands back UP the
+    // chain; only the quark that actually answers to the human hands back to them.
+    if is_worker(projection, self_id) {
+        p.push_str(
+            "**When your task is complete, start a line with `@orchestrator` and report there.** \
+             You report to the orchestrator, not to the human — a reply with no `@mention` \
+             excites nobody and your work stops dead in the field. Do not hand back to the \
+             human directly.\n\n",
+        );
+    } else {
+        p.push_str(
+            "When the overall task is complete, reply WITHOUT any `@mention` to hand control \
+             back to the human.\n\n",
+        );
+    }
 
     // 6b. Escalation — a worker owns execution, not the call. Addressed by ROLE
     // (`@orchestrator`), never by a hardcoded id, so re-flavouring the team in
@@ -411,6 +433,47 @@ mod tests {
 
         let orch_prompt = build(&proj, &QuarkId::new("opus"));
         assert!(!orch_prompt.contains("You are a **worker**"));
+    }
+
+    /// A finished worker turn must wake the orchestrator, not fall through to the
+    /// human. An unaddressed reply excites nobody, so telling a worker both "you
+    /// report to the orchestrator" and "drop the @mention when you are done" made it
+    /// obey the second: it reported a completed task into the void and the
+    /// orchestrator never acted on it. Observed live.
+    #[test]
+    fn a_finished_worker_reports_up_and_is_never_told_to_drop_the_mention() {
+        let mut proj = projection("x");
+        proj.roster.push(QuarkCard {
+            id: QuarkId::new("opus"),
+            flavor: Flavor::Orchestrator,
+            energy: EnergyState::Available,
+            provider: String::new(),
+            model: String::new(),
+        });
+
+        let worker = build(&proj, &QuarkId::new("agy"));
+        assert!(
+            worker.contains("When your task is complete, start a line with `@orchestrator`"),
+            "a worker must be told to report its completed work UP to the orchestrator"
+        );
+        assert!(
+            !worker.contains("reply WITHOUT any `@mention`"),
+            "a worker told to drop the mention hands its result to nobody"
+        );
+
+        // The orchestrator answers to the human, so it keeps the original rule.
+        let orch = build(&proj, &QuarkId::new("opus"));
+        assert!(orch.contains("reply WITHOUT any `@mention`"));
+        assert!(!orch.contains("start a line with `@orchestrator` and report there"));
+    }
+
+    /// With no orchestrator seated there is nobody to report to, so a lone quark must
+    /// still hand back to the human rather than address a role that does not exist.
+    #[test]
+    fn with_no_orchestrator_a_quark_still_hands_back_to_the_human() {
+        let p = build(&projection("x"), &QuarkId::new("agy"));
+        assert!(p.contains("reply WITHOUT any `@mention`"));
+        assert!(!p.contains("start a line with `@orchestrator` and report there"));
     }
 
     /// The orchestrator is told to stay available and dispatch long work; a worker

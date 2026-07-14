@@ -2,9 +2,9 @@
 
 ## Reporting a vulnerability
 
-Please report security issues **privately** to **81304425+s0lda@users.noreply.github.com**, or via
-GitHub's private vulnerability reporting on this repository. Do not open a public
-issue for a vulnerability.
+Please report security issues **privately**, using **GitHub's private vulnerability
+reporting** on this repository (Security → Report a vulnerability). Do not open a
+public issue for a vulnerability.
 
 Include what you did, what happened, and what you expected. If you have a proof of
 concept, say so — but you do not need one to file a report.
