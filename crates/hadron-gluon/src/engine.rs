@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use hadron_lattice::{
-    Actor, Event, Flavor, Kind, Projection, QuarkCard, QuarkId, QuarkState, TurnOutcome,
+    Actor, EnergyState, Event, Flavor, Kind, Projection, QuarkCard, QuarkId, QuarkState,
+    TurnOutcome,
 };
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinSet;
@@ -11,6 +12,7 @@ use tokio::task::JoinSet;
 use crate::field::{append_event, read_events};
 use crate::quark::Quark;
 use crate::router::{human_mentions, next_pending, parse_addressee};
+use crate::skills;
 use std::fs;
 
 /// A quark, shareable across concurrent turns. The `Mutex` is what lets a single
@@ -727,7 +729,41 @@ impl Engine {
         let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let workspace_root = workspace_root_of(&self.field_path, &base);
 
-        let (invariants_text, available_invariants) = build_invariants(&workspace_root, &requested_invariants);
+        let (mut invariants_text, available_invariants) =
+            build_invariants(&workspace_root, &requested_invariants);
+
+        // The skill for THIS turn, appended after the static tiers so the long,
+        // byte-stable prefix (Standard Model → global → repo) keeps its prompt cache
+        // and only the tail varies per task.
+        //
+        // The engine picks it, and the engine computes who could take the next step —
+        // both on purpose. A model asked to decide whether to follow a process skips it
+        // under pressure, and a model asked who is available guesses; a disabled seat
+        // keeps its roster card (`disable-is-not-unseat`), so naming it as a reviewer
+        // routes the work into a void. Here, "available" is checked at dispatch.
+        if let Some(m) = skills::select(&task_desc) {
+            let peers = self
+                .roster
+                .iter()
+                .filter(|c| &c.id != target)
+                .filter(|c| c.energy != EnergyState::Depleted)
+                .filter(|c| self.is_enabled(&c.id))
+                .map(|c| c.id.clone())
+                .collect();
+
+            // Provenance read off DISK, not taken from the turn's word for it: this is
+            // the one part of separation-of-duties the engine can actually prove.
+            let plan_author = skills::plan_ref(&task_desc)
+                .map(|rel| workspace_root.join(rel))
+                .and_then(|path| fs::read_to_string(path).ok())
+                .and_then(|md| skills::plan_author(&md));
+
+            invariants_text.push_str(&skills::render(
+                &m,
+                target,
+                &skills::Handoff { peers, plan_author },
+            ));
+        }
 
         // Resolve the quark's effective mode from the field before the turn:
         // real adapters translate it into the CLI's permission posture, so the
@@ -2555,6 +2591,163 @@ mod tests {
         assert!(text.contains("# The Standard Model"), "tier 1 still first");
         assert!(text.contains("# Project rule: always"), "tier 3 is named as the project's");
         assert!(text.contains("Threat-model every endpoint."));
+    }
+
+    /// The whole point, driven end to end: a task that says "execute the plan" must
+    /// arrive at the quark's CLI as the executing-plans procedure — and because the
+    /// plan on disk records THIS quark as its author, the same prompt must refuse to
+    /// let it grade its own homework and name a peer who can.
+    ///
+    /// Asserted against `prompt::build`, not just the projection: a field the prompt
+    /// never renders is a rule the model never sees (`available_invariants` is exactly
+    /// that today — set on every projection, printed nowhere).
+    #[tokio::test]
+    async fn a_quark_handed_its_own_plan_is_told_to_hand_verification_to_a_peer() {
+        use std::fs;
+        let fdir = tempdir().unwrap();
+
+        // Anchor the workspace root, so `docs/plans/...` in the task resolves.
+        fs::create_dir_all(fdir.path().join(".hadron")).unwrap();
+        let plans = fdir.path().join("docs").join("plans");
+        fs::create_dir_all(&plans).unwrap();
+        fs::write(
+            plans.join("2026-07-14-acp-auth.md"),
+            "---\nauthor: worker\nstatus: draft\n---\n\n# ACP auth — implementation plan\n",
+        )
+        .unwrap();
+
+        let path = fdir.path().join("field.jsonl");
+        append_event(
+            &path,
+            &Event::new(
+                Actor::Human,
+                Some(QuarkId::new("worker")),
+                Kind::Message {
+                    body: "@worker execute the plan at docs/plans/2026-07-14-acp-auth.md".into(),
+                },
+            ),
+        )
+        .unwrap();
+
+        use hadron_lattice::{Projection, TurnOutcome};
+        struct Probe;
+        #[async_trait::async_trait]
+        impl crate::quark::Quark for Probe {
+            fn id(&self) -> QuarkId {
+                QuarkId::new("worker")
+            }
+            fn flavor(&self) -> Flavor {
+                Flavor::Worker
+            }
+            fn energy(&self) -> EnergyState {
+                EnergyState::Available
+            }
+            async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+                // The rendered prompt is what the model actually reads.
+                let prompt = crate::adapter::prompt::build(&turn, &QuarkId::new("worker"));
+
+                assert!(
+                    prompt.contains("# Skill for this turn: executing-plans"),
+                    "the engine must select the skill from the task text:\n{prompt}"
+                );
+                assert!(
+                    prompt.contains("Read it critically, before you touch anything"),
+                    "the skill BODY must be injected, not just its name"
+                );
+                // The Standard Model is still there — a skill augments the protocol,
+                // it does not replace it.
+                assert!(prompt.contains("Prove it runs"));
+
+                // Ground truth from disk: this quark wrote the plan it was handed.
+                assert!(
+                    prompt.contains("you wrote this plan"),
+                    "must refuse self-verification:\n{prompt}"
+                );
+                // …and the peer it may hand to is named, because a disabled or absent
+                // seat would be a handoff into the void.
+                assert!(prompt.contains("`@reviewer`"), "must name the available peer");
+
+                Ok(TurnOutcome {
+                    message: Some("done".into()),
+                    permission: None,
+                    usage: Default::default(),
+                })
+            }
+        }
+
+        struct Peer;
+        #[async_trait::async_trait]
+        impl crate::quark::Quark for Peer {
+            fn id(&self) -> QuarkId {
+                QuarkId::new("reviewer")
+            }
+            fn flavor(&self) -> Flavor {
+                Flavor::Worker
+            }
+            fn energy(&self) -> EnergyState {
+                EnergyState::Available
+            }
+            async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+                Ok(TurnOutcome {
+                    message: Some("idle".into()),
+                    permission: None,
+                    usage: Default::default(),
+                })
+            }
+        }
+
+        let mut engine =
+            Engine::new(path.clone(), vec![Box::new(Probe), Box::new(Peer)], 10);
+        engine.run_until_quiesce().await.unwrap();
+    }
+
+    /// A turn that is not plan work must be byte-for-byte what it was before skills
+    /// existed. A router that fires on everything is a tax on every turn.
+    #[tokio::test]
+    async fn an_ordinary_task_gets_no_skill_and_no_extra_prompt() {
+        use std::fs;
+        let fdir = tempdir().unwrap();
+        fs::create_dir_all(fdir.path().join(".hadron")).unwrap();
+        let path = fdir.path().join("field.jsonl");
+        append_event(
+            &path,
+            &Event::new(
+                Actor::Human,
+                Some(QuarkId::new("worker")),
+                Kind::Message { body: "@worker fix the clipped completion popup".into() },
+            ),
+        )
+        .unwrap();
+
+        use hadron_lattice::{Projection, TurnOutcome};
+        struct Probe;
+        #[async_trait::async_trait]
+        impl crate::quark::Quark for Probe {
+            fn id(&self) -> QuarkId {
+                QuarkId::new("worker")
+            }
+            fn flavor(&self) -> Flavor {
+                Flavor::Worker
+            }
+            fn energy(&self) -> EnergyState {
+                EnergyState::Available
+            }
+            async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+                assert!(
+                    !turn.invariants.contains("Skill for this turn"),
+                    "no trigger, no skill — the no-match path must be a true no-op"
+                );
+                assert!(turn.invariants.contains("Prove it runs"), "protocol still arrives");
+                Ok(TurnOutcome {
+                    message: Some("done".into()),
+                    permission: None,
+                    usage: Default::default(),
+                })
+            }
+        }
+
+        let mut engine = Engine::new(path.clone(), vec![Box::new(Probe)], 10);
+        engine.run_until_quiesce().await.unwrap();
     }
 
     #[tokio::test]
