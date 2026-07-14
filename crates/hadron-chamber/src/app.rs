@@ -337,6 +337,8 @@ struct Chamber {
     changes_scroll: ScrollHandle,
     /// Virtual list state for the Chat tab.
     chat_list_state: gpui::ListState,
+    log_list_state: gpui::ListState,
+    log_expanded_ixs: std::collections::HashSet<usize>,
     /// Maps a virtual list item index to the message's true index in `view.messages`.
     chat_message_ixs: Vec<usize>,
     /// Scroll position for each of the three tabs.
@@ -475,7 +477,13 @@ impl Chamber {
         let chat_list_state = gpui::ListState::new(
             chat_message_ixs.len(),
             gpui::ListAlignment::Bottom,
-            px(20.0),
+            px(1000.),
+        );
+
+        let log_list_state = gpui::ListState::new(
+            view.messages.len(),
+            gpui::ListAlignment::Bottom,
+            px(1000.),
         );
 
         // Open showing the newest message: honoured on the first paint, once the
@@ -519,6 +527,8 @@ impl Chamber {
             changes_open_ixs: std::collections::HashSet::new(),
             changes_scroll: ScrollHandle::new(),
             chat_list_state,
+            log_list_state,
+            log_expanded_ixs: std::collections::HashSet::new(),
             chat_message_ixs,
             chat_scrolls,
             parsed_markdown: std::cell::RefCell::new(std::collections::HashMap::new()),
@@ -1030,6 +1040,7 @@ impl Chamber {
                 // bottom, keep them there as the new message lands; if they've
                 // scrolled up to read history, leave their position alone.
                 let follow = self.chat_at_bottom();
+                let old_log_count = self.view.messages.len();
                 self.view = model::project_with_team(&events, &self.team);
 
                 let old_chat_count = self.chat_message_ixs.len();
@@ -1041,6 +1052,7 @@ impl Chamber {
                     .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
                     .collect();
                 let new_chat_count = self.chat_message_ixs.len();
+                let new_log_count = self.view.messages.len();
 
                 if new_chat_count > old_chat_count {
                     self.chat_list_state.splice(
@@ -1052,12 +1064,23 @@ impl Chamber {
                     self.chat_list_state.reset(new_chat_count);
                 }
 
+                if new_log_count > old_log_count {
+                    self.log_list_state.splice(
+                        old_log_count..old_log_count,
+                        new_log_count - old_log_count,
+                    );
+                } else if new_log_count < old_log_count {
+                    self.log_list_state.reset(new_log_count);
+                }
+
                 if follow {
                     for scroll in &self.chat_scrolls {
                         scroll.scroll_to_bottom();
                     }
                     self.chat_list_state
                         .scroll_to_reveal_item(new_chat_count.saturating_sub(1));
+                    self.log_list_state
+                        .scroll_to_reveal_item(new_log_count.saturating_sub(1));
                 }
                 changed = true;
             }
@@ -1140,6 +1163,7 @@ impl Chamber {
 
         input.update(cx, |state, cx| state.set_value("", window, cx));
         let events = io::read_events(&self.path).unwrap_or_default();
+        let old_log_count = self.view.messages.len();
         self.view = model::project_with_team(&events, &self.team);
 
         let old_chat_count = self.chat_message_ixs.len();
@@ -1151,10 +1175,18 @@ impl Chamber {
             .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
             .collect();
         let new_chat_count = self.chat_message_ixs.len();
+        let new_log_count = self.view.messages.len();
+        
         if new_chat_count > old_chat_count {
             self.chat_list_state.splice(
                 old_chat_count..old_chat_count,
                 new_chat_count - old_chat_count,
+            );
+        }
+        if new_log_count > old_log_count {
+            self.log_list_state.splice(
+                old_log_count..old_log_count,
+                new_log_count - old_log_count,
             );
         }
 
@@ -1164,6 +1196,8 @@ impl Chamber {
         }
         self.chat_list_state
             .scroll_to_reveal_item(new_chat_count.saturating_sub(1));
+        self.log_list_state
+            .scroll_to_reveal_item(new_log_count.saturating_sub(1));
         cx.notify();
     }
     fn handle_chat_command(
@@ -1823,13 +1857,7 @@ impl Chamber {
                     .size_full()
                     .child(match selected {
                         ChatTab::Chat => self.chat_view(cx).into_any_element(),
-                        ChatTab::Log => div()
-                            .id("log-scroll")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.chat_scrolls[selected.index()])
-                            .child(self.log_view())
-                            .into_any_element(),
+                        ChatTab::Log => self.log_view(cx).into_any_element(),
                         ChatTab::Timeline => div()
                             .id("timeline-scroll")
                             .size_full()
@@ -1977,15 +2005,39 @@ impl Chamber {
     }
 
     /// The Log tab: every event on the field, compact (the raw activity).
-    fn log_view(&self) -> impl IntoElement {
-        let mut col = v_flex().gap_3().p_4();
+    fn log_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         if self.view.messages.is_empty() {
-            col = col.child(empty_hint("The field is empty."));
+            return v_flex().gap_3().p_4()
+                .child(empty_hint("The field is empty."))
+                .into_any_element();
         }
-        for (ix, m) in self.view.messages.iter().enumerate() {
-            col = col.child(self.message_row(m, ix, &self.view.roster));
-        }
-        col
+
+        let weak_view = cx.entity().downgrade();
+
+        v_flex()
+            .size_full()
+            .p_4()
+            .child(
+                gpui::list(self.log_list_state.clone(), move |ix, _window, cx| {
+                    if let Some(view) = weak_view.upgrade() {
+                        view.update(cx, |this, cx| {
+                            if let Some(m) = this.view.messages.get(ix) {
+                                let m_clone = m.clone();
+                                let roster_clone = this.view.roster.clone();
+                                return div()
+                                    .pb(px(16.0))
+                                    .child(this.message_row(&m_clone, ix, &roster_clone, cx))
+                                    .into_any_element();
+                            }
+                            div().into_any_element()
+                        })
+                    } else {
+                        div().into_any_element()
+                    }
+                })
+                .size_full(),
+            )
+            .into_any_element()
     }
 
     /// The Timeline tab: a vertical [`Stepper`] over the run's milestones — the
@@ -4409,50 +4461,72 @@ impl Chamber {
         m: &MessageRow,
         ix: usize,
         roster: &[crate::model::RosterRow],
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let is_expanded = self.log_expanded_ixs.contains(&ix);
         let header = match &m.to {
             Some(to) => format!("{} → {}  ·  {}", m.from, to, m.kind_label),
             None => format!("{}  ·  {}", m.from, m.kind_label),
         };
-        v_flex()
-            .gap_1()
+        
+        let mut header_row = h_flex()
+            .gap_2()
+            .items_center()
+            .cursor_pointer()
+            .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _window, _cx| {
+                if this.log_expanded_ixs.contains(&ix) {
+                    this.log_expanded_ixs.remove(&ix);
+                } else {
+                    this.log_expanded_ixs.insert(ix);
+                }
+            }))
             .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme::actor_hue(&m.from))
-                            .child(header),
-                    )
-                    .when_some(m.usage.as_ref(), |this, u| {
-                        let mut parts = Vec::new();
-                        if let Some(ctx) = &u.context {
-                            parts.push(format!("ctx: {:.1}%", ctx.used_percentage));
-                        }
-                        if !u.spend.is_empty() {
-                            let fresh = u.spend.fresh().unwrap_or(0);
-                            let cached = u.spend.cached().unwrap_or(0);
-                            if cached > 0 {
-                                parts.push(format!("spent: {} fresh, {} cached", fresh, cached));
-                            } else {
-                                parts.push(format!("spent: {} fresh", fresh));
-                            }
-                        }
-                        if parts.is_empty() {
-                            this
-                        } else {
-                            this.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme::text_muted())
-                                    .child(format!("({})", parts.join(" | "))),
-                            )
-                        }
-                    }),
-            )
-            .child(self.markdown_body("log-md", ix, &m.body, roster))
+                div()
+                    .text_sm()
+                    .text_color(theme::actor_hue(&m.from))
+                    .child(if is_expanded { format!("▼ {}", header) } else { format!("▶ {}", header) }),
+            );
+            
+        if let Some(u) = m.usage.as_ref() {
+            let mut parts = Vec::new();
+            if let Some(ctx) = &u.context {
+                parts.push(format!("ctx: {:.1}%", ctx.used_percentage));
+            }
+            if !u.spend.is_empty() {
+                let fresh = u.spend.fresh().unwrap_or(0);
+                let cached = u.spend.cached().unwrap_or(0);
+                if cached > 0 {
+                    parts.push(format!("spent: {} fresh, {} cached", fresh, cached));
+                } else {
+                    parts.push(format!("spent: {} fresh", fresh));
+                }
+            }
+            if !parts.is_empty() {
+                header_row = header_row.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(format!("({})", parts.join(" | "))),
+                );
+            }
+        }
+        
+        let mut row = v_flex().gap_1().child(header_row);
+        
+        if is_expanded {
+            row = row.child(self.markdown_body("log-md", ix, &m.body, roster));
+        } else {
+            let snippet = m.body.lines().next().unwrap_or("").chars().take(80).collect::<String>();
+            let suffix = if m.body.len() > snippet.len() { "..." } else { "" };
+            row = row.child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(format!("{}{}", snippet, suffix))
+            );
+        }
+        
+        row
     }
 }
 
