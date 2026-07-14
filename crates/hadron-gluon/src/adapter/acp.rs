@@ -36,15 +36,17 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use async_trait::async_trait;
 use hadron_lattice::{
-    ContextUsage, EnergyState, Flavor, Mode, Projection, QuarkId, TokenSpend, TurnOutcome, Usage,
+    live, Activity, ContextUsage, Doing, EnergyState, Flavor, Mode, Projection, QuarkId,
+    TokenSpend, TurnOutcome, Usage,
 };
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionKind, PromptRequest,
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionKind, PlanEntryStatus,
+    PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SelectedPermissionOutcome, SessionConfigId, SessionConfigKind, SessionConfigOption,
     SessionConfigOptionCategory, SessionConfigSelectOptions, SessionNotification, SessionUpdate,
     SetSessionConfigOptionRequest, StopReason, TextContent, Usage as AcpUsage,
@@ -319,6 +321,43 @@ pub fn probe(target: &AcpTarget) -> anyhow::Result<String> {
 }
 
 /// A quark backed by a resident ACP agent.
+/// Publishes what this quark is doing, mid-turn, for the chamber to render.
+///
+/// Cheap to clone (it is moved into the ACP notification handler, which the SDK
+/// drives on its own thread) and **throttled**: an agent emits a thought chunk
+/// every few tokens, and a file write per token would be a hot loop that helps
+/// nobody read faster.
+#[derive(Clone)]
+struct LiveFeed {
+    dir: PathBuf,
+    quark: QuarkId,
+    last: Arc<Mutex<Option<Instant>>>,
+}
+
+impl LiveFeed {
+    /// The minimum gap between two published activities. A tool call ignores it —
+    /// it is the one update the human is actually reading.
+    const THROTTLE: std::time::Duration = std::time::Duration::from_millis(200);
+
+    fn publish(&self, doing: Doing, detail: &str) {
+        let forced = matches!(doing, Doing::Working | Doing::Planning);
+        {
+            let mut last = self.last.lock().unwrap();
+            let now = Instant::now();
+            match *last {
+                Some(t) if !forced && now.duration_since(t) < Self::THROTTLE => return,
+                _ => *last = Some(now),
+            }
+        }
+        // A failed publish must never kill a turn: this is a view, not the record.
+        let _ = live::publish(&self.dir, &Activity::new(self.quark.clone(), doing, detail));
+    }
+
+    fn clear(&self) {
+        let _ = live::clear(&self.dir, &self.quark);
+    }
+}
+
 pub struct AcpQuark {
     id: QuarkId,
     flavor: Flavor,
@@ -333,6 +372,9 @@ pub struct AcpQuark {
     session: Option<AcpSession>,
     /// The watermark for [`turn_spend`].
     last_spend: SpendWatermark,
+    /// Where to publish mid-turn activity. `None` = nobody is watching (tests, and
+    /// any caller that has no field on disk), and the stream is simply dropped.
+    live: Option<LiveFeed>,
 }
 
 impl AcpQuark {
@@ -344,7 +386,20 @@ impl AcpQuark {
             target,
             session: None,
             last_spend: SpendWatermark::default(),
+            live: None,
         }
+    }
+
+    /// Stream this quark's mid-turn activity into `dir` (see `hadron_lattice::live`).
+    /// The daemon calls this; a test that has no field does not, and the quark then
+    /// publishes nothing.
+    pub fn watching(mut self, dir: PathBuf) -> Self {
+        self.live = Some(LiveFeed {
+            dir,
+            quark: self.id.clone(),
+            last: Arc::new(Mutex::new(None)),
+        });
+        self
     }
 
     /// The model the agent reported it is **actually** running, once a session is open.
@@ -368,7 +423,12 @@ impl AcpQuark {
     /// `cwd` is the quark's own worktree, straight off the `Projection` — ACP's
     /// `session/new` takes a required `cwd`, so hadron's existing cwd chain lands on
     /// the protocol with no adaptation.
-    fn boot(target: &AcpTarget, cwd: PathBuf, want_model: String) -> anyhow::Result<AcpSession> {
+    fn boot(
+        target: &AcpTarget,
+        cwd: PathBuf,
+        want_model: String,
+        live: Option<LiveFeed>,
+    ) -> anyhow::Result<AcpSession> {
         let (turns_tx, mut turns_rx) = tokio::sync::mpsc::unbounded_channel::<TurnRequest>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<()>>();
 
@@ -418,10 +478,41 @@ impl AcpQuark {
                                     SessionUpdate::UsageUpdate(u) => {
                                         *context.lock().unwrap() = Some((u.used, u.size));
                                     }
-                                    // Thoughts, tool calls and plans are mid-turn
-                                    // presence. Deliberately dropped: surfacing them
-                                    // needs a mid-turn channel on `Quark::excite`,
-                                    // which does not exist yet.
+                                    // The agent's reasoning, streamed. Volatile: it
+                                    // is published for the chamber to render live and
+                                    // never written to the field.
+                                    SessionUpdate::AgentThoughtChunk(chunk) => {
+                                        if let (Some(feed), ContentBlock::Text(t)) =
+                                            (&live, chunk.content)
+                                        {
+                                            feed.publish(Doing::Thinking, &t.text);
+                                        }
+                                    }
+                                    // A tool call is the update the human is actually
+                                    // reading — "what is it DOING" — so it is never
+                                    // throttled away.
+                                    SessionUpdate::ToolCall(call) => {
+                                        if let Some(feed) = &live {
+                                            feed.publish(Doing::Working, &call.title);
+                                        }
+                                    }
+                                    SessionUpdate::Plan(plan) => {
+                                        if let Some(feed) = &live {
+                                            let step = plan
+                                                .entries
+                                                .iter()
+                                                .find(|e| {
+                                                    e.status == PlanEntryStatus::InProgress
+                                                })
+                                                .or_else(|| plan.entries.first());
+                                            if let Some(step) = step {
+                                                feed.publish(Doing::Planning, &step.content);
+                                            }
+                                        }
+                                    }
+                                    // Everything else (user echoes, tool-call updates,
+                                    // command lists, mode changes) is protocol
+                                    // bookkeeping with nothing for a human to read.
                                     _ => {}
                                 }
                                 Ok(())
@@ -616,14 +707,32 @@ impl Quark for AcpQuark {
         EnergyState::Available
     }
 
+    /// The turn ends the moment this returns, however it returns. Clearing the live
+    /// feed here — rather than on the happy path inside [`AcpQuark::run_turn`] — is
+    /// what makes "a turn that died still goes idle" true by construction: a quark
+    /// whose agent crashed must not sit in the chamber `thinking` forever.
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+        let outcome = self.run_turn(turn).await;
+        if let Some(feed) = &self.live {
+            feed.clear();
+        }
+        outcome
+    }
+}
+
+impl AcpQuark {
+    async fn run_turn(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let mode = turn.mode;
         let prompt = crate::adapter::prompt::build(&turn, &self.id);
 
         // Boot on the first turn, in the quark's own worktree, and keep it.
         if self.session.is_none() {
-            self.session =
-                Some(AcpQuark::boot(&self.target, turn.cwd.clone(), self.model.clone())?);
+            self.session = Some(AcpQuark::boot(
+                &self.target,
+                turn.cwd.clone(),
+                self.model.clone(),
+                self.live.clone(),
+            )?);
         }
         let session = self.session.as_ref().expect("just booted");
 
@@ -692,6 +801,7 @@ impl Quark for AcpQuark {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     fn usage(total: u64) -> AcpUsage {
         AcpUsage::new(total, total / 2, total / 2)
@@ -1185,6 +1295,67 @@ mod tests {
                 + o2.usage.spend.fresh().unwrap_or(0) as u64)
                 <= cumulative.max(1),
             "per-turn deltas must not exceed the agent's own cumulative total"
+        );
+    }
+
+    /// **The live-preview proof.** The agent streams its thoughts and tool calls to
+    /// us on every turn — we used to drop them on the floor. This asserts that a real
+    /// turn now *publishes* them, and that the quark goes **idle** when it ends.
+    ///
+    /// It watches the live dir from a second task while the turn runs, because the
+    /// whole point is what is visible **mid-turn**: an assertion made after `excite`
+    /// returns could never tell the difference between "it streamed" and "it never
+    /// did", since a finished turn is idle either way.
+    ///
+    /// ```text
+    /// cargo test -p hadron-gluon --lib acp::tests::a_live_turn_publishes_what_it_is_doing -- --ignored --nocapture
+    /// ```
+    #[tokio::test]
+    #[ignore = "live: needs node + npx + an authenticated claude"]
+    async fn a_live_turn_publishes_what_it_is_doing() {
+        let dir = std::env::temp_dir().join(format!("hadron-live-test-{}", ulid::Ulid::new()));
+        let id = QuarkId::new("acp");
+
+        let mut q = AcpQuark::new(id.clone(), Flavor::Worker, "", AcpTarget::claude_adapter())
+            .watching(dir.clone());
+
+        // Watch the live dir while the turn is in flight.
+        let (watch_dir, watch_id) = (dir.clone(), id.clone());
+        let seen = tokio::spawn(async move {
+            let mut seen: Vec<Doing> = Vec::new();
+            for _ in 0..600 {
+                if let Some(a) = live::read(&watch_dir, &watch_id, Utc::now()) {
+                    if seen.last() != Some(&a.doing) {
+                        eprintln!("[live] {} — {}", a.doing.label(), a.detail);
+                        seen.push(a.doing);
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            seen
+        });
+
+        let mut t = projection();
+        // A task that forces a tool call: the agent must LOOK at the tree, so we get
+        // a `ToolCall` update and not just thought chunks.
+        t.task = "List the files in the current directory using your tools, then reply with the word: done.".into();
+        let out = q.excite(t).await.expect("live ACP turn");
+        eprintln!("reply: {:?}", out.message);
+
+        seen.abort();
+        let seen = seen.await.unwrap_or_default();
+
+        assert!(
+            !seen.is_empty(),
+            "the agent's mid-turn stream must reach the live feed — this is the \
+             `acp.rs` `_ => {{}}` arm that used to throw it away"
+        );
+
+        // The turn is over, so the quark is idle. Absence IS idle: the file is gone.
+        assert_eq!(
+            live::read(&dir, &id, Utc::now()),
+            None,
+            "a finished turn must leave no activity behind"
         );
     }
 }
