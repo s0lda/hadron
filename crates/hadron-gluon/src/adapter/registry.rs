@@ -218,6 +218,24 @@ pub fn build_seat(seat: &Seat) -> anyhow::Result<Box<dyn Quark>> {
     })
 }
 
+/// As [`build_seat`], but the quark also publishes what it is doing mid-turn into
+/// `live_dir` (see `hadron_lattice::live`) so the chamber can render it.
+///
+/// Only the ACP transport has a mid-turn stream to publish: the CLI adapters run a
+/// process to completion and hand back one blob, so there is nothing to watch until
+/// it is over. That is a fact about the transports, not an omission here.
+pub fn build_seat_watched(seat: &Seat, live_dir: &std::path::Path) -> anyhow::Result<Box<dyn Quark>> {
+    validate_quark_id(&seat.id)?;
+    let kind = QuarkKind::from_seat(seat)?;
+    if let QuarkKind::Acp(target) = kind {
+        return Ok(Box::new(
+            AcpQuark::new(seat.id.clone(), seat.flavor.clone(), seat.model.clone(), target)
+                .watching(live_dir.to_path_buf()),
+        ));
+    }
+    build_seat(seat)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
