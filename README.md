@@ -57,11 +57,10 @@ this repository — if it is named here, it is in a `Cargo.toml`.
 - **[gpui-component](https://github.com/longbridge/gpui-component)**, by
   **[Longbridge](https://longbridge.com)** (Apache-2.0) — the component library that
   gives the Chamber its title bar, docks, inputs, tabs, menus, charts and theme. Almost
-  every widget you see is theirs. We run a **small fork**
-  ([`s0lda/gpui-component@text-mark-color`](https://github.com/s0lda/gpui-component/tree/text-mark-color))
-  that adds a foreground colour to `TextMark` so an `@mention` can be coloured text
-  rather than a tinted block. It is one patch off their tree and meant to go home —
-  the `[patch]` in our root `Cargo.toml` disappears the day it is upstreamed.
+  every widget you see is theirs. We run a **small fork** that adds a foreground
+  colour to `TextMark`, so an `@mention` can be coloured text rather than a tinted
+  block. It is a patch off their tree and meant to go home — the `[patch]` in our
+  root `Cargo.toml` disappears the day it is upstreamed.
 - **[Agent Client Protocol](https://agentclientprotocol.com)** and its
   [Rust SDK](https://github.com/agentclientprotocol/rust-sdk), by **Zed** (Apache-2.0) —
   how Hadron talks to resident agents. ACP is the reason a quark can be a live session
