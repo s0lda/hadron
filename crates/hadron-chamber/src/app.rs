@@ -1361,7 +1361,6 @@ impl Render for Chamber {
             .rounded_bl(bottom_radius)
             .rounded_br(bottom_radius)
             .text_color(theme::text())
-            .font_family("Cascadia Code")
             .child(titlebar)
             .child(body)
             .child(status)
@@ -2203,12 +2202,11 @@ impl Chamber {
                 if t.index() == selected.index() {
                     Tab::new().child(
                         div()
-                            .font_family("Inter")
                             .text_color(theme::accent())
                             .child(t.label().to_string()),
                     )
                 } else {
-                    Tab::new().child(div().font_family("Inter").child(t.label()))
+                    Tab::new().child(div().child(t.label()))
                 }
             }))
             .on_click(cx.listener(move |this, ix: &usize, _window, cx| {
@@ -2267,7 +2265,7 @@ impl Chamber {
                     let mut block = v_flex().gap_1().child(
                         div()
                             .text_sm()
-                            .font_family("JetBrains Mono")
+                            .font_family("Cascadia Code")
                             .text_color(theme::accent())
                             .child(prompt),
                     );
@@ -2275,7 +2273,7 @@ impl Chamber {
                         block = block.child(
                             div()
                                 .text_xs()
-                                .font_family("JetBrains Mono")
+                                .font_family("Cascadia Code")
                                 .text_color(theme::text_muted())
                                 .child(out.clone()),
                         );
@@ -2336,7 +2334,7 @@ impl Chamber {
                             .child(
                                 div()
                                     .text_sm()
-                                    .font_family("JetBrains Mono")
+                                    .font_family("Cascadia Code")
                                     .text_color(theme::accent())
                                     .child(prompt_str),
                             )
@@ -3943,10 +3941,14 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
         "".to_string()
     };
 
-    let detail_2: SharedString = if flavor_str.is_empty() {
-        format!("{} tokens{}", tokens_str, unknown_str).into()
+    let detail_2: gpui::AnyElement = if flavor_str.is_empty() {
+        div().font_family("Cascadia Code").child(format!("{} tokens{}", tokens_str, unknown_str)).into_any_element()
     } else {
-        format!("{} · {} tokens{}", flavor_str, tokens_str, unknown_str).into()
+        h_flex().gap_1()
+            .child(flavor_str)
+            .child("·")
+            .child(div().font_family("Cascadia Code").child(format!("{} tokens{}", tokens_str, unknown_str)))
+            .into_any_element()
     };
 
     let is_excited = r.state == hadron_lattice::QuarkState::Excited;
@@ -4040,7 +4042,6 @@ fn text_button(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id.into())
-        .font_family("Inter")
         .px_2()
         .py_1()
         .rounded_md()
@@ -4065,11 +4066,7 @@ fn next_mode(mode: Mode) -> Mode {
 /// renders outlined.
 fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
     if !is_override {
-        return Tag::secondary()
-            .small()
-            .outline()
-            .child(div().font_family("Inter").child("DEFAULT"))
-            .into_any_element();
+        return div().into_any_element();
     }
     let (tag, label): (Tag, &'static str) = match mode {
         Mode::Ask => (Tag::secondary(), "ASK"),
@@ -4079,7 +4076,7 @@ fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
     };
     tag.small()
         .outline()
-        .child(div().font_family("Inter").child(label.to_string()))
+        .child(div().child(label.to_string()))
         .into_any_element()
 }
 
@@ -4370,7 +4367,7 @@ pub fn run(field_path: Option<String>) {
             t.input = rgb(0x191a1b).into();
             t.secondary = rgb(0x191a1b).into();
             t.secondary_hover = rgb(0x252627).into();
-            t.popover = rgb(0x191a1b).into();
+            t.popover = theme::popover().into();
             // Borderless: the resize handle paints `border` when idle, so match
             // it to the sidebar and it disappears into the unified space; while
             // dragging it paints `drag_border` — keep that on-brand pink so the
@@ -4397,7 +4394,7 @@ pub fn run(field_path: Option<String>) {
             // corners instead of a square fill.
             t.tokens.background = gpui::hsla(0.0, 0.0, 0.0, 0.0).into();
             t.font_family =
-                "Cascadia Code, Inter, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
+                "Inter, Segoe UI, sans-serif, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
         }
         cx.bind_keys([
             KeyBinding::new("ctrl-shift-p", TogglePalette, Some(KEY_CONTEXT)),
