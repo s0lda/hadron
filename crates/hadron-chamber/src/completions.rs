@@ -109,6 +109,25 @@ impl CompletionProvider for ChatCompletionProvider {
                     }
                 }
             }
+        } else if trigger_char == '/' {
+            let commands = ["team-brainstorm"];
+            for cmd in commands {
+                if query_lower.is_empty() || cmd.contains(&query_lower) {
+                    let row = crate::text::MenuRow::new(format!("/{}", cmd), "");
+                    items.push(CompletionItem {
+                        label: row.label().to_string(),
+                        insert_text: Some(format!("/{} ", cmd)),
+                        text_edit: Some(lsp_types::CompletionTextEdit::Edit(lsp_types::TextEdit {
+                            range,
+                            new_text: format!("/{} ", cmd),
+                        })),
+                        kind: Some(CompletionItemKind::FUNCTION),
+                        detail: Some("Command".to_string()),
+                        filter_text: Some(row.filter_text().to_string()),
+                        ..Default::default()
+                    });
+                }
+            }
         }
 
         Task::ready(Ok(CompletionResponse::Array(items)))
