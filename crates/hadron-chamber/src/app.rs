@@ -1134,9 +1134,12 @@ impl Chamber {
         cx: &mut Context<Self>,
     ) {
         if let InputEvent::Change = event {
-            input.update(cx, |state, cx| {
-                let pos = state.cursor_position();
-                state.set_cursor_position(pos, window, cx);
+            let input = input.clone();
+            window.on_next_frame(move |window, cx| {
+                input.update(cx, |state, cx| {
+                    let pos = state.cursor_position();
+                    state.set_cursor_position(pos, window, cx);
+                });
             });
             return;
         }
@@ -2083,10 +2086,22 @@ impl Chamber {
                         v_flex()
                             .gap_0p5()
                             .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text())
-                                    .child(format!("{}  ·  {}", m.from, m.kind_label)),
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(theme::actor_hue(&m.from))
+                                            .child(m.from.clone())
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::text_muted())
+                                            .child(format!("· {}", m.kind_label))
+                                    )
                             )
                             .child(
                                 div()
@@ -4499,7 +4514,7 @@ impl Chamber {
                         h_flex()
                             .items_center()
                             .gap_2()
-                            .child(div().text_sm().text_color(id.color).child(id.name.clone()))
+                            .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(id.color).child(id.name.clone()))
                             .when_some(m.to.clone(), |this, to| {
                                 this.child(
                                     div()
@@ -4550,10 +4565,6 @@ impl Chamber {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let is_expanded = self.log_expanded_ixs.contains(&ix);
-        let header = match &m.to {
-            Some(to) => format!("{} → {}  ·  {}", m.from, to, m.kind_label),
-            None => format!("{}  ·  {}", m.from, m.kind_label),
-        };
         
         let mut header_row = h_flex()
             .gap_2()
@@ -4567,10 +4578,30 @@ impl Chamber {
                 }
             }))
             .child(
-                div()
-                    .text_sm()
-                    .text_color(theme::actor_hue(&m.from))
-                    .child(if is_expanded { format!("▼ {}", header) } else { format!("▶ {}", header) }),
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::actor_hue(&m.from))
+                            .child(if is_expanded { format!("▼ {}", m.from) } else { format!("▶ {}", m.from) }),
+                    )
+                    .when_some(m.to.clone(), |this, to| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child(format!("→ {}", to)),
+                        )
+                    })
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child(format!("· {}", m.kind_label)),
+                    ),
             );
             
         if let Some(u) = m.usage.as_ref() {
