@@ -17,6 +17,24 @@ pub struct MessageRow {
     pub kind_label: &'static str,
     pub usage: Option<hadron_lattice::Usage>,
     pub ts: chrono::DateTime<chrono::Utc>,
+    pub legacy_used_tokens: Option<u32>,
+}
+
+fn resolve_fresh(
+    usage: Option<&hadron_lattice::Usage>,
+    legacy_used_tokens: u32,
+    transport: hadron_lattice::Transport,
+) -> Result<u32, u32> {
+    match usage.and_then(|u| u.spend.fresh()) {
+        Some(f) => Ok(f),
+        None => {
+            if matches!(transport, hadron_lattice::Transport::Cli) {
+                Ok(legacy_used_tokens)
+            } else {
+                Err(1)
+            }
+        }
+    }
 }
 
 /// One roster entry: a quark, its latest lifecycle state, its effective
@@ -114,12 +132,16 @@ impl ChamberView {
                 s.turns += 1;
                 out.total_turns += 1;
             }
-            let Some(u) = &m.usage else { continue };
 
-            // `fresh()`/`cached()` are lattice's single totallers. Absent is not zero:
-            // a provider blind to cache reports `None`, and adding 0 would claim it
-            // spent nothing rather than that we do not know.
-            if let Some(f) = u.spend.fresh() {
+            let fresh = if let Some(u) = &m.usage {
+                u.spend.fresh()
+            } else if let Some(used) = m.legacy_used_tokens {
+                resolve_fresh(None, used, row.transport).ok()
+            } else {
+                None
+            };
+
+            if let Some(f) = fresh {
                 s.fresh += f;
                 out.total_fresh += f;
 
@@ -132,6 +154,9 @@ impl ChamberView {
                     fresh: f,
                 });
             }
+
+            let Some(u) = &m.usage else { continue };
+
             if let Some(c) = u.spend.cached() {
                 s.cached += c;
                 out.total_cached += c;
@@ -175,6 +200,7 @@ fn note(order: &mut Vec<String>, id: &str) {
 fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -> MessageRow {
     let from = actor_str(&e.from);
     let to = e.to.as_ref().map(|t| t.as_str().to_string());
+    let mut legacy_used_tokens = None;
     let (body, kind_label): (String, &'static str) = match &e.kind {
         Kind::Message { body } => (body.clone(), "message"),
         Kind::Status { state } => (format!("{state:?}").to_lowercase(), "status"),
@@ -184,6 +210,7 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
         Kind::Command { cmd, exit, .. } => (format!("$ {cmd} (exit {exit})"), "command"),
         Kind::Snapshot { label, .. } => (format!("snapshot: {label}"), "snapshot"),
         Kind::EnergyReport { used_tokens } => {
+            legacy_used_tokens = Some(*used_tokens);
             (format!("used {used_tokens} tokens"), "energy_report")
         }
         Kind::Assign { task, invariants } => (
@@ -215,6 +242,7 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
             .and_then(|t| turn_usages.get(&t.to_string()).cloned())
             .or_else(|| e.usage.clone()),
         ts: e.ts,
+        legacy_used_tokens,
     }
 }
 
@@ -259,26 +287,14 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
         }
         // Accumulate tokens — in ONE unit: fresh (input + output), cache excluded.
         if let (Actor::Quark(q), Kind::EnergyReport { used_tokens }) = (&e.from, &e.kind) {
-            match e.usage.as_ref().and_then(|u| u.spend.fresh()) {
-                // A turn that reports components. Comparable across every transport.
-                Some(f) => *tokens.entry(q.as_str().to_string()).or_default() += f,
-                // A turn from before components existed carries a bare `used_tokens`
-                // whose meaning depends on who wrote it: a CLI adapter summed
-                // input+output — which IS fresh — but an ACP adapter used ACP's
-                // `total_tokens`, cache included. Folding that into the same column is
-                // what put 14.4M against an ACP quark. It is a different unit, so it is
-                // unknown, and unknown is counted as unknown, not as zero and not as tokens.
-                None => {
-                    let cli = team
-                        .get(&QuarkId::new(q.as_str()))
-                        .map(|s| matches!(s.transport, hadron_lattice::Transport::Cli))
-                        .unwrap_or(true);
-                    if cli {
-                        *tokens.entry(q.as_str().to_string()).or_default() += *used_tokens;
-                    } else {
-                        *unknown_turns.entry(q.as_str().to_string()).or_default() += 1;
-                    }
-                }
+            let cli = team
+                .get(&QuarkId::new(q.as_str()))
+                .map(|s| s.transport)
+                .unwrap_or(hadron_lattice::Transport::Cli);
+
+            match resolve_fresh(e.usage.as_ref(), *used_tokens, cli) {
+                Ok(f) => *tokens.entry(q.as_str().to_string()).or_default() += f,
+                Err(u) => *unknown_turns.entry(q.as_str().to_string()).or_default() += u,
             }
         }
         messages.push(render_row(e, &turn_usages));
