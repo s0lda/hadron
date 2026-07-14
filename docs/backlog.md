@@ -53,14 +53,14 @@ Update this file in the same commit as the work. Whoever lands it moves the line
 | 27 | **Worktree isolation ON** (each turn owns its tree) | 🛑 | **Kept OFF by Orchestrator** to avoid breaking shared tree workflow and in-flight agy changes. Needs `with_merge_gate` first. |
 | 28 | Machine-checked Definition of Done (claims vs facts) | ⬜ | blocked on #27 |
 | 29 | Skills: declared procedures + engine-checked exit criteria | ⬜ | blocked on #27. Injected via the `invariants/` seam — not a plugin system |
-| 30 | Per-turn **$ cost** + diff stats | ⬜ | needs `model` on `hadron_lattice::Usage`; `AcpQuark::running_model()` is **implemented, unwired** |
+| 30 | Per-turn **$ cost** + diff stats | ✅ | `bbda914` |
 | 31 | **ACP provider catalogue** — which *agents* can we seat | ⬜ | **never answered.** `docs/research/acp-clients.md` answers who *consumes* ACP, a different question |
 | 32 | Add a **GPT/Codex** seat | ⬜ | see #31; the seat mechanism takes any ACP command, the *catalogue* is what is missing |
-| 33 | Settings → Providers actually **probes** the agent | ⬜ | "Connect" flips a state enum; it never boots the agent, so `model` comes back empty |
+| 33 | Settings → Providers actually **probes** the agent | ✅ | `bbda914` — "Connect" now spawns a probe task and transitions to `Ready { model }` |
 | 34 | Agy on an SDK instead of the CLI | ✅ | Python adapter built using JSON-RPC via venv |
 | 35 | Retire the redundant Claude CLI seat | ⬜ | after #27 |
 | 36 | `/quark::command` syntax | ⬜ | |
-| 37 | Effort / Mode pickers per quark | ⬜ | **free** — same v1 `session/set_config_option` call as #25 |
+| 37 | Effort / Mode pickers per quark | ✅ | `bbda914` |
 | 38 | Warn once when the GPU is a software rasterizer | ⬜ | this box renders Hadron on **lavapipe**; the "lag" is a missing Vulkan driver |
 
 ---
