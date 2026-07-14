@@ -16,6 +16,8 @@ Cargo.lock.orig
 
 # Claude Code local state (incl. embedded worktrees)
 .claude/
+.remember/
+.superpowers/
 
 # Screenshot and recording files
 assets/screenshots/

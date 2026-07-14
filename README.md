@@ -4,6 +4,10 @@
 
 A single Quark cannot build complex software in isolation. It requires an environment to bind it to tools, files, and other agents. Hadron is that environment.
 
+<div align="center">
+    <img src="assets/hadron_full_size.jpg" alt="Hadron" width="800" />
+</div>
+
 # 🔭 The Vision
 
 `The ultimate endgame of this project is the integration of Quark, your custom, highly-specialized AI model.
