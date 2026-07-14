@@ -28,12 +28,11 @@ The following types **changed shape** in v2 (fields added, removed, renamed, or 
 *(Types with no shape changes: `PromptRequest`, `SelectedPermissionOutcome`, `TextContent`, `Usage`)*
 
 ## 2. Backward Compatibility of `ProtocolVersion::V2` Negotiation
-Yes, `ProtocolVersion::V2` negotiation is backward-compatible. 
-According to the `InitializeResponse` schema in v2, the `protocol_version` field represents:
-> "The protocol version the client specified if supported by the agent, or the latest protocol version supported by the agent. The client should disconnect, if it doesn't support this version."
-
-This means if we send `ProtocolVersion::V2` in our `InitializeRequest` to an agent that only speaks v1, the agent will reply with `protocol_version: ProtocolVersion::V1`. We can inspect the response and either gracefully fall back to parsing and sending v1 messages (if we retain v1 support), or disconnect if we strict-require v2.
+**No, `ProtocolVersion::V2` negotiation is NOT gracefully backward-compatible in practice.**
+While the spec suggests an agent should reply with the protocol version it supports, offering `ProtocolVersion::V2` to `claude-agent-acp 0.59.0` fails. It answers with `protocolVersion: 1` inside a v1-shaped body that the strict v2 types cannot deserialize, causing the connection to die immediately. Migrating our types to v2 would break our only working ACP agent.
 
 ## 3. Does `claude-code-acp` advertise model config options?
-**I could not reach `claude-code-acp` to check its response.**
-Attempts to spawn `npx -y @agentclientprotocol/claude-agent-acp` (with and without `CLAUDECODE` unset) and send an `initialize` JSON-RPC request hung without yielding a response on `stdout`. Per instructions, I am stating this rather than guessing its capabilities.
+**Yes, and it was in v1 all along.**
+`claude-agent-acp` advertises FIVE config selectors over **v1** on the `session/new` response: `Mode`, `Model`, `Effort`, `Fast mode`, and `Agent`. We were receiving this model list on every session and discarding it. `session/set_config_option` with the `Model` category exists in v1, and model selection requires no protocol migration.
+
+*Correction on earlier hanging behavior:* The previous probe hung (rather than erroring) because `CLAUDECODE` was set in the environment. Claude Code refuses to nest inside another Claude Code session. Running it with `env -u CLAUDECODE` answers correctly.
