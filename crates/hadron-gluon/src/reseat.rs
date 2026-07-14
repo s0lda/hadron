@@ -137,8 +137,9 @@ mod tests {
     fn a_seat_the_wizard_added_is_the_only_work_in_the_plan() {
         let running = team(&[cli("opus", "opus"), cli("agy", "gemini")]);
         let new_seat = Seat {
-            id: QuarkId::new("acp-claude"),
-            provider: "acp-claude".into(),
+            id: QuarkId::new("new-guy"),
+            display_name: None,
+            provider: "claude".into(),
             model: "claude".into(),
             flavor: Flavor::Worker,
             transport: Transport::Acp,
@@ -152,7 +153,7 @@ mod tests {
         assert_eq!(p.added, vec![new_seat]);
         assert!(p.replaced.is_empty(), "the working quarks must not be rebuilt");
         assert!(p.removed.is_empty());
-        assert_eq!(p.summary(), "+acp-claude");
+        assert_eq!(p.summary(), "+new-guy");
     }
 
     #[test]
@@ -182,8 +183,9 @@ mod tests {
     #[test]
     fn changing_only_the_acp_boot_command_still_counts_as_a_change() {
         let seat = |args: &[&str]| Seat {
-            id: QuarkId::new("acp-claude"),
-            provider: "acp-claude".into(),
+            id: QuarkId::new("agent"),
+            display_name: None,
+            provider: "agent".into(),
             model: "claude".into(),
             flavor: Flavor::Worker,
             transport: Transport::Acp,
@@ -207,7 +209,8 @@ mod enabled_tests {
     fn acp(id: &str, enabled: bool) -> Seat {
         Seat {
             id: QuarkId::new(id),
-            provider: "acp-claude".into(),
+            display_name: None,
+            provider: "claude".into(),
             model: "claude".into(),
             flavor: Flavor::Worker,
             transport: Transport::Acp,
