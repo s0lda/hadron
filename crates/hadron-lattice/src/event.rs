@@ -147,6 +147,24 @@ pub struct Event {
     /// `None` for every event written before this existed, and for events the engine
     /// emits outside a turn (a human message, a mode set).
     pub turn: Option<Ulid>,
+    /// **Which message this event is an answer to** — the id of the *assignment* that
+    /// drove the turn that emitted it.
+    ///
+    /// WHY IT EXISTS: without it, "has this quark answered the human yet?" can only be
+    /// asked as *"has it authored anything since?"* — and that is **wrong whenever the
+    /// human speaks while the quark is already working.** The quark finishes the turn it
+    /// was on, its reply lands after the newer message, and the newer message is marked
+    /// answered by a reply that could not possibly have seen it. The human's message is
+    /// then dropped, silently, forever. That is not a hypothetical: it is what happens
+    /// every time Jake types a second time while the orchestrator is mid-turn.
+    ///
+    /// So the link is made explicit on the wire rather than inferred from order. An
+    /// event that answers assignment `A` says so; a message nobody has answered stays
+    /// pending, however many other replies have flown past it.
+    ///
+    /// `None` for events written before this existed (they keep the old, order-based
+    /// reading — see `human_message_targets`) and for events emitted outside a turn.
+    pub answers: Option<Ulid>,
 }
 
 impl Event {
@@ -161,7 +179,23 @@ impl Event {
             kind,
             usage: None,
             turn: None,
+            answers: None,
         }
+    }
+
+    /// Record which assignment this event answers. The engine stamps it on every event
+    /// a turn emits, so "the human is still waiting" is a fact in the log rather than a
+    /// guess about what came after what.
+    pub fn with_answers(mut self, assignment: Ulid) -> Self {
+        self.answers = Some(assignment);
+        self
+    }
+
+    /// [`Event::with_answers`] for a caller that may or may not have an assignment —
+    /// a turn with no task-bearing driver answers nothing, and must not claim to.
+    pub fn answering(mut self, assignment: Option<Ulid>) -> Self {
+        self.answers = assignment;
+        self
     }
 
     /// Stamp this event with the turn that produced it. The engine calls it on every
@@ -197,6 +231,9 @@ impl Serialize for Event {
         }
         if let Some(turn) = &self.turn {
             m.serialize_entry("turn", turn)?;
+        }
+        if let Some(answers) = &self.answers {
+            m.serialize_entry("answers", answers)?;
         }
         match &self.kind {
             Kind::Message { body } => {
@@ -295,6 +332,13 @@ impl<'de> Deserialize<'de> for Event {
             None | Some(Value::Null) => None,
             Some(val) => Some(serde_json::from_value(val).map_err(D::Error::custom)?),
         };
+        // Same treatment, same reason. Absent on every line written before an event
+        // could say WHICH message it answers — and `None` there means "unknown", which
+        // is exactly why the legacy reading has to be kept alongside the new one.
+        let answers: Option<Ulid> = match map.remove("answers") {
+            None | Some(Value::Null) => None,
+            Some(val) => Some(serde_json::from_value(val).map_err(D::Error::custom)?),
+        };
         let kind_tag: String = take_field(&mut map, "kind")?;
         let kind = match kind_tag.as_str() {
             "message" => Kind::Message {
@@ -344,7 +388,7 @@ impl<'de> Deserialize<'de> for Event {
                 raw: Value::Object(map.clone()),
             },
         };
-        Ok(Event { v, id, ts, from, to, kind, usage, turn })
+        Ok(Event { v, id, ts, from, to, kind, usage, turn, answers })
     }
 }
 
