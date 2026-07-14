@@ -4,8 +4,32 @@
 
 use std::collections::HashMap;
 
+use chrono::{DateTime, NaiveDate, TimeZone};
 use hadron_gatekeeper::{global_mode, has_override, resolve_mode, Mode};
 use hadron_lattice::{Actor, Event, Kind, QuarkId, QuarkState, Team};
+
+/// Wall-clock of an event, to the second.
+///
+/// Generic over the timezone so the *conversion* stays at the render site
+/// (which uses `Local`) and this stays deterministic under test.
+pub fn format_clock<Tz: TimeZone>(ts: DateTime<Tz>) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    ts.format("%H:%M:%S").to_string()
+}
+
+/// The label on a Discord-style date divider: relative for the two days a
+/// reader thinks of by name, absolute before that.
+pub fn date_divider_label(day: NaiveDate, today: NaiveDate) -> String {
+    if day == today {
+        "Today".to_string()
+    } else if today.pred_opt() == Some(day) {
+        "Yesterday".to_string()
+    } else {
+        day.format("%A, %B %-d, %Y").to_string()
+    }
+}
 
 /// One rendered chat row. `kind_label` lets the UI style/filter by event type;
 /// `body` is a display string synthesized for non-message events.

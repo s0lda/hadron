@@ -2797,6 +2797,7 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "async-trait",
+ "chrono",
  "futures",
  "hadron-gatekeeper",
  "hadron-lattice",
