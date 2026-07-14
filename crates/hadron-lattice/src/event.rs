@@ -165,6 +165,17 @@ pub struct Event {
     /// `None` for events written before this existed (they keep the old, order-based
     /// reading — see `human_message_targets`) and for events emitted outside a turn.
     pub answers: Option<Ulid>,
+    /// **The reply as the quark actually wrote it, when the engine trimmed it.**
+    ///
+    /// The engine caps how long a reply may be (`gluon::brevity`) because asking a model
+    /// to be brief is prompt text, and prompt text does not enforce. The cap changes what
+    /// the human and the other quarks are made to *read* — it must not change what the
+    /// swarm can still recover, or a trim would be a quiet deletion of evidence.
+    ///
+    /// So `body` carries the capped text and this carries the original. `None` is the
+    /// normal case and means exactly "nothing was cut" — absent is not "the same as
+    /// `body`", and a reader must not synthesise one from the other.
+    pub full: Option<String>,
 }
 
 impl Event {
@@ -180,7 +191,15 @@ impl Event {
             usage: None,
             turn: None,
             answers: None,
+            full: None,
         }
+    }
+
+    /// Keep the untrimmed reply alongside the trimmed one. Called by the engine when —
+    /// and only when — [`crate::Event::full`] would differ from the body it is shipping.
+    pub fn with_full(mut self, full: String) -> Self {
+        self.full = Some(full);
+        self
     }
 
     /// Record which assignment this event answers. The engine stamps it on every event
@@ -234,6 +253,9 @@ impl Serialize for Event {
         }
         if let Some(answers) = &self.answers {
             m.serialize_entry("answers", answers)?;
+        }
+        if let Some(full) = &self.full {
+            m.serialize_entry("full", full)?;
         }
         match &self.kind {
             Kind::Message { body } => {
@@ -339,6 +361,12 @@ impl<'de> Deserialize<'de> for Event {
             None | Some(Value::Null) => None,
             Some(val) => Some(serde_json::from_value(val).map_err(D::Error::custom)?),
         };
+        // The untrimmed reply, when the engine capped one. Taken before the kind tag for
+        // the same reason as the others: otherwise it lands in `Kind::Unknown`'s `raw`.
+        let full: Option<String> = match map.remove("full") {
+            None | Some(Value::Null) => None,
+            Some(val) => Some(serde_json::from_value(val).map_err(D::Error::custom)?),
+        };
         let kind_tag: String = take_field(&mut map, "kind")?;
         let kind = match kind_tag.as_str() {
             "message" => Kind::Message {
@@ -388,7 +416,7 @@ impl<'de> Deserialize<'de> for Event {
                 raw: Value::Object(map.clone()),
             },
         };
-        Ok(Event { v, id, ts, from, to, kind, usage, turn, answers })
+        Ok(Event { v, id, ts, from, to, kind, usage, turn, answers, full })
     }
 }
 
