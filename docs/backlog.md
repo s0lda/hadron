@@ -57,7 +57,7 @@ Update this file in the same commit as the work. Whoever lands it moves the line
 | 31 | **ACP provider catalogue** — which *agents* can we seat | ✅ | `docs/research/acp-providers.md` — the 36 agents upstream lists as ACP **servers**, with what it takes to seat each. Distinct from `acp-clients.md` (editors) |
 | 32 | Add a **GPT/Codex** seat | 🟡 | preset `acp-codex` is in `ACP_AGENTS` and pinned by a test; boots `npx -y @agentclientprotocol/codex-acp@latest` (bundles its own codex; needs a ChatGPT login or `OPENAI_API_KEY`). **`proven: false`** — never live-booted here, the sandbox refused to run an unnamed npm package. One "Connect" with a human present closes it |
 | 33 | Settings → Providers actually **probes** the agent | ✅ | `bbda914` — "Connect" now spawns a probe task and transitions to `Ready { model }` |
-| 34 | Agy on an SDK instead of the CLI | ✅ | Python adapter built using JSON-RPC via venv |
+| 34 | Agy on an SDK instead of the CLI | 🟡 | **Was marked ✅; the seat has never taken a turn.** The Python ACP adapter is real and the full handshake is proven (`initialize` → `session/new` → `session/prompt` reaches Gemini), but the SDK authenticates by **API key only — it has no OAuth path**, so it cannot reuse the agy CLI's login and dies on every turn with `400 API key not valid`. Needs `GEMINI_API_KEY` in the **daemon's** env. **Jake's call:** an SDK seat bills AI-Studio tokens, so it does *not* retire the CLI seat's rate limits — it trades them for a metered key |
 | 35 | Retire the redundant Claude CLI seat | ⬜ | after #27 |
 | 36 | `/quark::command` syntax | ⬜ | |
 | 37 | Effort / Mode pickers per quark | ✅ | `bbda914` |

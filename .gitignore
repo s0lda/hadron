@@ -21,3 +21,7 @@ Cargo.lock.orig
 
 # Screenshot and recording files
 assets/screenshots/
+
+# Python bytecode from the Antigravity SDK adapter (crates/hadron-gluon/scripts/)
+__pycache__/
+*.pyc
