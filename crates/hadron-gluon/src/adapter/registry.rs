@@ -69,6 +69,18 @@ pub const ACP_AGENTS: &[AcpAgentSpec] = &[
         proven: true,
     },
     AcpAgentSpec {
+        provider: "acp-codex",
+        name: "Codex CLI (ACP)",
+        program: "npx",
+        args: &["-y", "@agentclientprotocol/codex-acp@latest"],
+        // Same publisher and the same npx shape as the Claude adapter above, and the
+        // package bundles its own `@openai/codex` — so this seat needs no separate
+        // Codex install, only auth (a ChatGPT login, or `OPENAI_API_KEY`/`CODEX_API_KEY`
+        // in the daemon's environment). Command line taken from the adapter's README;
+        // never driven here, so it does not get to claim `proven`.
+        proven: false,
+    },
+    AcpAgentSpec {
         provider: "acp-gemini",
         name: "Gemini CLI (ACP)",
         program: "gemini",
@@ -347,6 +359,18 @@ mod tests {
     fn acp_claude_defaults_to_the_claude_adapter() {
         let kind = QuarkKind::from_seat(&acp_seat("acp", "acp-claude")).unwrap();
         assert_eq!(kind, QuarkKind::Acp(AcpTarget::claude_adapter()));
+    }
+
+    /// The GPT seat. Nothing structural ever stopped one — the ACP transport takes
+    /// any agent that speaks the protocol — so seating Codex is a catalogue entry and
+    /// a `provider` string, not an adapter. This pins the boot command so a typo in it
+    /// is a red test rather than a seat that silently boots nothing.
+    #[test]
+    fn a_codex_seat_boots_the_openai_acp_adapter() {
+        let QuarkKind::Acp(t) = QuarkKind::from_seat(&acp_seat("gpt", "acp-codex")).unwrap() else {
+            panic!("expected an ACP transport");
+        };
+        assert_eq!(t.command_line(), "npx -y @agentclientprotocol/codex-acp@latest");
     }
 
     /// …but the seat may override it — which is how a pinned version or a local

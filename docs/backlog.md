@@ -54,8 +54,8 @@ Update this file in the same commit as the work. Whoever lands it moves the line
 | 28 | Machine-checked Definition of Done (claims vs facts) | ⬜ | blocked on #27 |
 | 29 | Skills: declared procedures + engine-checked exit criteria | ⬜ | blocked on #27. Injected via the `invariants/` seam — not a plugin system |
 | 30 | Per-turn **$ cost** + diff stats | ✅ | `bbda914` |
-| 31 | **ACP provider catalogue** — which *agents* can we seat | ⬜ | **never answered.** `docs/research/acp-clients.md` answers who *consumes* ACP, a different question |
-| 32 | Add a **GPT/Codex** seat | ⬜ | see #31; the seat mechanism takes any ACP command, the *catalogue* is what is missing |
+| 31 | **ACP provider catalogue** — which *agents* can we seat | ✅ | `docs/research/acp-providers.md` — the 36 agents upstream lists as ACP **servers**, with what it takes to seat each. Distinct from `acp-clients.md` (editors) |
+| 32 | Add a **GPT/Codex** seat | 🟡 | preset `acp-codex` is in `ACP_AGENTS` and pinned by a test; boots `npx -y @agentclientprotocol/codex-acp@latest` (bundles its own codex; needs a ChatGPT login or `OPENAI_API_KEY`). **`proven: false`** — never live-booted here, the sandbox refused to run an unnamed npm package. One "Connect" with a human present closes it |
 | 33 | Settings → Providers actually **probes** the agent | ✅ | `bbda914` — "Connect" now spawns a probe task and transitions to `Ready { model }` |
 | 34 | Agy on an SDK instead of the CLI | ✅ | Python adapter built using JSON-RPC via venv |
 | 35 | Retire the redundant Claude CLI seat | ⬜ | after #27 |
