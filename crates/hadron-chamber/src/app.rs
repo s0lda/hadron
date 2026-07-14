@@ -4000,12 +4000,13 @@ impl Chamber {
                                         }),
                                         // A seat the human just proved and saved is on.
                                         enabled: true,
+                                        effort: None,
+                                        mode_config: None,
                                     });
-                                    if let Some(team_path) =
-                                        hadron_lattice::team_for_field(&this.path)
-                                    {
-                                        let _ = hadron_lattice::save_team(&team_path, &this.team);
-                                    }
+                                    let repo_root = crate::vcs::repo_root_of(&this.path).to_path_buf();
+                                    let team_path = hadron_lattice::team_for_field(&this.path)
+                                        .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"));
+                                    let _ = hadron_lattice::save_team(&team_path, &this.team);
 
                                     this.wizard_state = WizardState::None;
                                     cx.notify();
