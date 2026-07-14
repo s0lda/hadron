@@ -57,7 +57,7 @@ Update this file in the same commit as the work. Whoever lands it moves the line
 | 31 | **ACP provider catalogue** — which *agents* can we seat | ⬜ | **never answered.** `docs/research/acp-clients.md` answers who *consumes* ACP, a different question |
 | 32 | Add a **GPT/Codex** seat | ⬜ | see #31; the seat mechanism takes any ACP command, the *catalogue* is what is missing |
 | 33 | Settings → Providers actually **probes** the agent | ⬜ | "Connect" flips a state enum; it never boots the agent, so `model` comes back empty |
-| 34 | Agy on an SDK instead of the CLI | ⬜ | map done (`ec71852`); **the SDK is Python-only** — see risk below |
+| 34 | Agy on an SDK instead of the CLI | ✅ | Python adapter built using JSON-RPC via venv |
 | 35 | Retire the redundant Claude CLI seat | ⬜ | after #27 |
 | 36 | `/quark::command` syntax | ⬜ | |
 | 37 | Effort / Mode pickers per quark | ⬜ | **free** — same v1 `session/set_config_option` call as #25 |
