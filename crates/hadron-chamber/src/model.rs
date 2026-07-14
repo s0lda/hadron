@@ -68,6 +68,7 @@ pub struct RosterRow {
 pub struct TurnSpend {
     pub turn: u32,
     pub fresh: u32,
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -75,6 +76,7 @@ pub struct QuarkStats {
     pub turns: u32,
     pub fresh: u32,
     pub cached: u32,
+    pub cost_usd: Option<f64>,
     pub context: Option<hadron_lattice::ContextUsage>,
     pub quota: Vec<hadron_lattice::QuotaBucket>,
     pub first_seen: Option<chrono::DateTime<chrono::Utc>>,
@@ -91,6 +93,7 @@ pub struct SessionStats {
     pub total_turns: u32,
     pub total_fresh: u32,
     pub total_cached: u32,
+    pub total_cost_usd: Option<f64>,
     pub spend_history: Vec<TurnSpend>,
 }
 
@@ -145,13 +148,21 @@ impl ChamberView {
                 s.fresh += f;
                 out.total_fresh += f;
 
+                let cost_usd = m.usage.as_ref().and_then(|u| u.cost_usd());
+                if let Some(c) = cost_usd {
+                    s.cost_usd = Some(s.cost_usd.unwrap_or(0.0) + c);
+                    out.total_cost_usd = Some(out.total_cost_usd.unwrap_or(0.0) + c);
+                }
+
                 s.spend_history.push(TurnSpend {
                     turn: s.turns,
                     fresh: f,
+                    cost_usd,
                 });
                 out.spend_history.push(TurnSpend {
                     turn: out.total_turns,
                     fresh: f,
+                    cost_usd,
                 });
             }
 
@@ -380,6 +391,7 @@ mod tests {
             cache_write: None,
         };
         let usage = hadron_lattice::Usage {
+            model: Some("claude-3-opus-20240229".to_string()),
             spend: spend.clone(),
             context: Some(hadron_lattice::ContextUsage {
                 used_tokens: 57_000,
@@ -439,6 +451,8 @@ mod tests {
                     display_name: None,
                     provider: "acp-claude".into(),
                     model: "x".into(),
+                    effort: None,
+                    mode_config: None,
                     flavor: Flavor::Worker,
                     transport: Transport::Acp,
                     command: Some(AcpCommand {
@@ -452,6 +466,8 @@ mod tests {
                     display_name: None,
                     provider: "claude".into(),
                     model: "opus".into(),
+                    effort: None,
+                    mode_config: None,
                     flavor: Flavor::Orchestrator,
                     transport: Transport::Cli,
                     command: None,
@@ -508,6 +524,7 @@ mod tests {
             },
         );
         reply.usage = Some(hadron_lattice::Usage {
+            model: Some("gemini-1.5-pro".to_string()),
             spend: hadron_lattice::TokenSpend {
                 input: Some(5),
                 output: Some(5),

@@ -341,6 +341,7 @@ mod tests {
     fn usage_survives_the_shim_with_every_bucket() {
         let t = telemetry();
         let want = Usage {
+            model: Some("Gemini 3.1 Pro (High)".to_string()),
             spend: t.usage.spend.clone(),
             context: Some(ContextUsage {
                 used_tokens: 635,

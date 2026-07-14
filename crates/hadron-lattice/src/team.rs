@@ -66,6 +66,10 @@ pub struct Seat {
     pub provider: String,
     /// The model this seat runs, e.g. "opus-4.8", "gemini-3-pro".
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode_config: Option<String>,
     pub flavor: Flavor,
     /// How the gluon reaches this seat's agent. Absent → [`Transport::Cli`], so
     /// every `team.json` written before ACP existed keeps its exact behaviour.
@@ -111,13 +115,15 @@ impl Seat {
     /// a field to `Seat` without deciding which side of this line it falls on will not
     /// compile.
     pub fn same_agent(&self, other: &Seat) -> bool {
-        let Seat { id, display_name: _, provider, model, flavor, transport, command, enabled: _ } = self;
+        let Seat { id, display_name: _, provider, model, flavor, transport, command, enabled: _, effort, mode_config } = self;
         id == &other.id
             && provider == &other.provider
             && model == &other.model
             && flavor == &other.flavor
             && transport == &other.transport
             && command == &other.command
+            && effort == &other.effort
+            && mode_config == &other.mode_config
     }
 
     /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
@@ -132,6 +138,8 @@ impl Seat {
             transport: Transport::Cli,
             command: None,
             enabled: true,
+            effort: None,
+            mode_config: None,
         }
     }
 }
