@@ -327,8 +327,9 @@ struct Chamber {
     focus_handle: FocusHandle,
     /// Which view the chat column's segmented tabs are showing.
     chat_tab: ChatTab,
-    /// Which view the right rail's segmented tabs are showing, per ChatTab.
-    right_rail_tabs: [RightRailTab; ChatTab::COUNT],
+    /// Which view the right rail's segmented tabs are showing. The right rail is
+    /// independent of the chat column: changing the chat tab must not move it.
+    right_rail_tab: RightRailTab,
     /// Cached diff string for the Changes rail
     working_diff: Option<Vec<crate::vcs::FileDiff>>,
     changes_open_ixs: std::collections::HashSet<usize>,
@@ -510,12 +511,7 @@ impl Chamber {
             input,
             focus_handle,
             chat_tab: ChatTab::Chat,
-            right_rail_tabs: [
-                RightRailTab::Terminal,
-                RightRailTab::FileTree,
-                RightRailTab::Changes,
-                RightRailTab::Terminal,
-            ],
+            right_rail_tab: RightRailTab::Terminal,
             working_diff: None,
             changes_open_ixs: std::collections::HashSet::new(),
             changes_scroll: ScrollHandle::new(),
@@ -1061,11 +1057,21 @@ impl Chamber {
                 }
                 changed = true;
             }
-            if self.right_rail_tabs[self.chat_tab.index()] == RightRailTab::Changes {
+            if self.right_rail_tab == RightRailTab::Changes {
                 let root = crate::vcs::repo_root_of(&self.path);
                 let diff = crate::vcs::working_diff(root);
                 if diff != self.working_diff {
                     self.working_diff = diff;
+                    changed = true;
+                }
+            }
+            // The file tree is a live view of the disk, not a boot-time snapshot:
+            // rescan while it is on screen, exactly as the Changes pane does.
+            if self.right_rail_tab == RightRailTab::FileTree {
+                let root = crate::vcs::repo_root_of(&self.path);
+                let files = crate::sys::list_workspace_files(root);
+                if files != self.file_tree_paths {
+                    self.file_tree_paths = files;
                     changed = true;
                 }
             }
@@ -1653,7 +1659,11 @@ impl Chamber {
                 .child(mode_tag(r.mode, r.mode_is_override))
                 .into_any_element();
 
+            // The row needs a stable id: `ContextMenuExt` derives the popup's
+            // ElementId from its parent's, and with no parent id it falls back to
+            // a stack address — every row in the loop then shares one menu state.
             let row_el = div()
+                .id(SharedString::from(format!("roster-row-{}", r.id)))
                 .context_menu({
                     let qid_str = r.id.clone();
                     let enable_str = if r.enabled { "Disable" } else { "Enable" };
@@ -1663,7 +1673,6 @@ impl Chamber {
                         let qid1 = qid_str.clone();
                         let view1 = view.clone();
                         menu = menu.item(PopupMenuItem::new("Info").on_click(move |_, window, cx| {
-                            println!("==== INFO CONTEXT MENU CLICKED ====");
                             view1.update(cx, |this, cx| {
                                 this.handle_context_menu_action(
                                     ContextMenuAction::QuarkInfo(qid1.clone()),
@@ -2185,8 +2194,7 @@ impl Chamber {
     /// The right rail: the swappable Terminal / File Tree / Changes pane.
     /// (Internally still `Rail::Inspector` for collapse/size.)
     fn terminal_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let chat_ix = self.chat_tab.index();
-        let selected = self.right_rail_tabs[chat_ix];
+        let selected = self.right_rail_tab;
 
         let tabs = TabBar::new("right-rail-tabs")
             .segmented()
@@ -2204,9 +2212,8 @@ impl Chamber {
                 }
             }))
             .on_click(cx.listener(move |this, ix: &usize, _window, cx| {
-                let current_chat_ix = this.chat_tab.index();
-                this.right_rail_tabs[current_chat_ix] = RightRailTab::from_index(*ix);
-                if this.right_rail_tabs[current_chat_ix] == RightRailTab::Changes {
+                this.right_rail_tab = RightRailTab::from_index(*ix);
+                if this.right_rail_tab == RightRailTab::Changes {
                     let root = crate::vcs::repo_root_of(&this.path);
                     this.working_diff = crate::vcs::working_diff(root);
                 }
@@ -2453,7 +2460,10 @@ impl Chamber {
 
                         let is_expanded = expanded_set.contains(&current_path);
 
+                        // Stable per-path id — see the roster row: a context menu on
+                        // an id-less element shares its state with every sibling.
                         let row = h_flex()
+                            .id(SharedString::from(format!("tree-row-{}", node.full_path)))
                             .px_2()
                             .py_1()
                             .ml(gpui::px(depth as f32 * 12.0))

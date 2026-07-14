@@ -80,21 +80,37 @@ impl Terminal {
     }
 }
 
-/// Lists files in the workspace using `git ls-files`.
+/// Lists the files in the workspace *as they are on disk*, honouring `.gitignore`.
+///
+/// `git ls-files` alone lists the **index**, which is not what a file tree means:
+/// a file deleted from the working tree is still in the index (so it would keep
+/// showing), and a new untracked file is not in it at all (so it would never
+/// appear). `--cached --others --exclude-standard` unions tracked and untracked,
+/// and the `exists()` filter drops anything that is only in the index.
 pub fn list_workspace_files(repo_root: &Path) -> Vec<String> {
-    if let Ok(output) = Command::new("git")
-        .arg("ls-files")
+    let Ok(output) = Command::new("git")
+        .args([
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--deduplicate",
+        ])
         .current_dir(repo_root)
         .output()
-    {
-        if output.status.success() {
-            return String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(String::from)
-                .collect();
-        }
+    else {
+        return vec![];
+    };
+    if !output.status.success() {
+        return vec![];
     }
-    vec![]
+    let mut files: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|p| repo_root.join(p).exists())
+        .map(String::from)
+        .collect();
+    files.sort();
+    files
 }
 
 /// Reads the contents of a workspace file.
@@ -147,5 +163,50 @@ mod tests {
 
         let content = read_workspace_file(root, "test.txt");
         assert_eq!(content, Some("hello world".to_string()));
+    }
+
+    /// The file tree is a view of the **disk**, not of git's index. Jake deleted
+    /// two screenshots and added five; the tree kept showing the deleted ones and
+    /// never showed the new ones, because `git ls-files` reports the index.
+    #[test]
+    fn the_file_tree_shows_the_disk_not_the_index() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        Command::new("git")
+            .arg("init")
+            .current_dir(root)
+            .output()
+            .unwrap();
+
+        // Tracked and staged, then deleted from the working tree: still in the
+        // index, gone from disk — it must NOT be listed.
+        fs::write(root.join("deleted.png"), "old").unwrap();
+        Command::new("git")
+            .args(["add", "deleted.png"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        fs::remove_file(root.join("deleted.png")).unwrap();
+
+        // Never added to git: it must be listed anyway.
+        fs::write(root.join("brand-new.png"), "new").unwrap();
+
+        // Ignored: it must not be listed.
+        fs::write(root.join(".gitignore"), "ignored.tmp\n").unwrap();
+        fs::write(root.join("ignored.tmp"), "noise").unwrap();
+
+        let files = list_workspace_files(root);
+        assert!(
+            files.contains(&"brand-new.png".to_string()),
+            "an untracked file on disk must appear in the tree, got {files:?}"
+        );
+        assert!(
+            !files.contains(&"deleted.png".to_string()),
+            "a file deleted from disk must not linger because it is still in the index, got {files:?}"
+        );
+        assert!(
+            !files.contains(&"ignored.tmp".to_string()),
+            "a gitignored file must stay out of the tree, got {files:?}"
+        );
     }
 }
