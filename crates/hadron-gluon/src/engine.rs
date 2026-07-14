@@ -9,6 +9,7 @@ use hadron_lattice::{
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinSet;
 
+use crate::brevity;
 use crate::field::{append_event, read_events};
 use crate::quark::Quark;
 use crate::router::{human_mentions, next_pending, parse_addressee};
@@ -900,13 +901,28 @@ impl Engine {
         }
 
         if let Some(body) = outcome.message {
-            let to = parse_addressee(&body, &self.roster, Some(target));
-            self.append(
-                Event::new(Actor::Quark(target.clone()), to, Kind::Message { body })
-                    .with_turn(turn)
-                    .answering(assignment),
-            )
-            .await?;
+            // THE CAP. Every quark is told to lead with the outcome and every quark still
+            // files a bible, because a rule in the prompt is a request the model can talk
+            // itself out of. Here it is arithmetic on the bytes instead.
+            //
+            // Applied to the reply BEFORE the addressee is parsed from it, so what routes
+            // is what the field will actually carry — parsing the original and shipping a
+            // trim that had lost its `@orchestrator` line would route an event that no
+            // reader could see was addressed. `brevity::enforce` keeps mention lines for
+            // exactly that reason; parsing the trimmed text is what *proves* it did.
+            let brief = brevity::enforce(&body);
+            let to = parse_addressee(&brief.body, &self.roster, Some(target));
+            let mut event = Event::new(Actor::Quark(target.clone()), to, Kind::Message {
+                body: brief.body,
+            })
+            .with_turn(turn)
+            .answering(assignment);
+            // Nothing is destroyed: the field keeps every word the quark wrote. What the
+            // cap changes is what the humans and the other quarks are made to read.
+            if let Some(full) = brief.full {
+                event = event.with_full(full);
+            }
+            self.append(event).await?;
         }
 
         // A self-declared permission ask: record it, then let the effective mode
@@ -3528,6 +3544,72 @@ mod tests {
         assert!(
             !engine.roster.iter().any(|c| c.id == QuarkId::new("agy")),
             "unseated quark still on the roster — it would resolve to a turn we cannot run"
+        );
+    }
+
+    // ---- brevity ----------------------------------------------------------------
+
+    /// **The cap, driven through the real engine loop.** `brevity::enforce` has its own
+    /// unit tests, but those only prove a function trims a string. This proves the thing
+    /// Jake actually asked for: that a quark which files a bible has it CUT on the way
+    /// into the field — and, in the same breath, that the cut did not cost the swarm its
+    /// routing, which is the way this feature would break while every test stayed green.
+    #[tokio::test]
+    async fn a_bible_is_cut_on_its_way_into_the_field_and_still_routes() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+
+        // 300 lines of the exact thing the human is tired of reading, handing back the
+        // way every worker hands back: an `@orchestrator` line at the very bottom.
+        let bible = format!(
+            "{}\n@orchestrator done, all green.",
+            (1..=300).map(|i| format!("Furthermore, point {i}.")).collect::<Vec<_>>().join("\n")
+        );
+
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![
+                Box::new(MockQuark::scripted(
+                    QuarkId::new("orch"),
+                    Flavor::Orchestrator,
+                    vec![Some("ack".into())],
+                )),
+                Box::new(MockQuark::scripted(
+                    QuarkId::new("agy"),
+                    Flavor::Worker,
+                    vec![Some(bible.clone())],
+                )),
+            ],
+            12,
+        );
+        seed_human_message(&field, "agy", "status?");
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        let reply = events
+            .iter()
+            .find(|e| e.from == Actor::Quark(QuarkId::new("agy")) && matches!(e.kind, Kind::Message { .. }))
+            .expect("agy replied");
+
+        let Kind::Message { body } = &reply.kind else { unreachable!() };
+        assert!(
+            body.lines().count() <= brevity::MAX_LINES + 4,
+            "the bible reached the field uncut — {} lines",
+            body.lines().count()
+        );
+        assert!(body.contains("engine: trimmed"), "the cut is declared to the reader");
+
+        // Nothing was destroyed — the field still holds every word the quark wrote.
+        let full = reply.full.as_deref().expect("the untrimmed reply rides on the envelope");
+        assert!(full.contains("point 300"), "the original is kept in full");
+
+        // And the load-bearing half: the trimmed reply still woke the orchestrator. If the
+        // cut had eaten the trailing `@orchestrator` line, `to` would be None here, the
+        // work would stop dead in the field, and nothing else in this suite would notice.
+        assert_eq!(
+            reply.to,
+            Some(QuarkId::new("orch")),
+            "the trim unaddressed the reply — it now excites nobody"
         );
     }
 }
