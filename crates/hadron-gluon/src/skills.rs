@@ -45,14 +45,23 @@ pub struct Skill {
 pub const SKILLS: &[Skill] = &[
     Skill {
         id: "writing-plans",
+        // A trigger that MISSES is invisible — the turn just silently gets no
+        // procedure — so cover the phrasings a tired human actually types, not the
+        // one canonical form.
         triggers: &[
             "write a plan",
             "write the plan",
+            "write up a plan",
             "writing a plan",
             "draft a plan",
+            "draft the plan",
             "create a plan",
             "make a plan",
+            "prepare a plan",
+            "come up with a plan",
+            "put together a plan",
             "implementation plan",
+            "plan out",
             "plan for",
         ],
         body: include_str!("../invariants/skills/writing-plans.md"),
@@ -61,12 +70,18 @@ pub const SKILLS: &[Skill] = &[
         id: "executing-plans",
         triggers: &[
             "execute the plan",
+            "execute this plan",
             "execute plan",
             "executing the plan",
             "implement the plan",
+            "implement this plan",
             "carry out the plan",
             "work through the plan",
             "follow the plan",
+            "pick up the plan",
+            "start on the plan",
+            "run the plan",
+            // A bare path to a plan file is itself an instruction to execute it.
             "docs/plans/",
         ],
         body: include_str!("../invariants/skills/executing-plans.md"),
@@ -76,17 +91,23 @@ pub const SKILLS: &[Skill] = &[
         triggers: &[
             "review the plan",
             "review this plan",
-            "peer review",
-            "code review",
             "review the work",
             "review his work",
             "review her work",
+            "review my work",
+            "review the commit",
+            "review the change",
+            "peer review",
+            "code review",
             "verify the work",
+            "verify the plan",
             "verify his",
             "verify her",
             "check his work",
             "check her work",
+            "check the plan",
             "test the plan",
+            "double-check the work",
         ],
         body: include_str!("../invariants/skills/reviewing-work.md"),
     },
@@ -319,6 +340,41 @@ mod tests {
 
         let m = select("Review the plan, do not write a plan yourself").expect("match");
         assert_eq!(m.skill.id, "reviewing-work");
+    }
+
+    /// A MISSED trigger is silent — the turn simply gets no procedure and nobody can
+    /// tell — so the phrasings a tired human actually types must all land.
+    #[test]
+    fn the_phrasings_a_human_actually_types_all_land() {
+        for task in [
+            "write up a plan for the auth work",
+            "draft the plan first",
+            "put together a plan for #34",
+            "come up with a plan",
+            "plan out the ACP auth work",
+        ] {
+            assert_eq!(
+                select(task).map(|m| m.skill.id),
+                Some("writing-plans"),
+                "missed: {task:?}"
+            );
+        }
+
+        for task in ["implement this plan", "pick up the plan", "run the plan and commit"] {
+            assert_eq!(
+                select(task).map(|m| m.skill.id),
+                Some("executing-plans"),
+                "missed: {task:?}"
+            );
+        }
+
+        for task in ["review my work", "check the plan agy wrote", "verify the plan"] {
+            assert_eq!(
+                select(task).map(|m| m.skill.id),
+                Some("reviewing-work"),
+                "missed: {task:?}"
+            );
+        }
     }
 
     #[test]
