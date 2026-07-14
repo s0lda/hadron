@@ -415,7 +415,7 @@ impl Chamber {
             let team_quarks = team
                 .quarks
                 .iter()
-                .map(|q| q.id.0.clone())
+                .map(|q| (q.id.0.clone(), q.display_name.clone()))
                 .collect::<Vec<_>>();
             state.lsp.completion_provider = Some(std::rc::Rc::new(
                 crate::completions::ChatCompletionProvider {
@@ -3906,6 +3906,7 @@ impl Chamber {
                                     // over the same transport the human tested it on.
                                     this.team.quarks.push(hadron_lattice::Seat {
                                         id: hadron_lattice::QuarkId::new(&desc_inner.id),
+                                        display_name: None,
                                         provider: desc_inner.id.clone(),
                                         model: model_inner.clone(),
                                         flavor: hadron_lattice::Flavor::Worker, // default flavor

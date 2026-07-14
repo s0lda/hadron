@@ -37,6 +37,8 @@ pub enum EnergyState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuarkCard {
     pub id: QuarkId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub flavor: Flavor,
     pub energy: EnergyState,
     #[serde(default)]
@@ -53,16 +55,14 @@ mod tests {
     fn quark_card_round_trips() {
         let card = QuarkCard {
             id: QuarkId::new("claude"),
+            display_name: Some("Claude".into()),
             flavor: Flavor::Orchestrator,
             energy: EnergyState::Available,
             provider: "claude".into(),
             model: "opus-4.8".into(),
         };
         let json = serde_json::to_string(&card).unwrap();
-        assert_eq!(
-            json,
-            r#"{"id":"claude","flavor":"orchestrator","energy":"available","provider":"claude","model":"opus-4.8"}"#
-        );
+        assert_eq!(json, r#"{"id":"claude","display_name":"Claude","flavor":"orchestrator","energy":"available","provider":"claude","model":"opus-4.8"}"#);
         let back: QuarkCard = serde_json::from_str(&json).unwrap();
         assert_eq!(card, back);
     }

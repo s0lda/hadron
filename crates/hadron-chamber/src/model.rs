@@ -436,6 +436,7 @@ mod tests {
             quarks: vec![
                 Seat {
                     id: QuarkId::new("acp-claude"),
+                    display_name: None,
                     provider: "acp-claude".into(),
                     model: "x".into(),
                     flavor: Flavor::Worker,
@@ -448,6 +449,7 @@ mod tests {
                 },
                 Seat {
                     id: QuarkId::new("opus"),
+                    display_name: None,
                     provider: "claude".into(),
                     model: "opus".into(),
                     flavor: Flavor::Orchestrator,
