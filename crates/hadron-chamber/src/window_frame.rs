@@ -91,10 +91,10 @@ pub fn window_frame(window: &mut Window, cx: &App, content: impl IntoElement) ->
                         .min_h_0()
                         .min_w_0()
                         .overflow_hidden()
-                        // Match the content's own rounded fill (crate::theme::sidebar):
+                        // Match the content's own rounded fill (crate::theme::bg_elevated):
                         // where the content rounds a hair tighter than this border,
                         // the exposed sliver is the same colour, so no seam shows.
-                        .bg(crate::theme::sidebar())
+                        .bg(crate::theme::bg_elevated())
                         .border_color(border_color)
                         .when(!tiling.top, |d| d.border_t(BORDER_SIZE))
                         .when(!tiling.bottom, |d| d.border_b(BORDER_SIZE))
