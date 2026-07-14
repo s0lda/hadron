@@ -29,8 +29,8 @@ Update this file in the same commit as the work. Whoever lands it moves the line
 | 8 | Log accordions (fold big bodies) | 🟡 | `b5a21f3` |
 | 9 | Session-tab zeroed stats | ✅ | `a8e2258` |
 | 10 | Elevation: shadow scale + radii in `theme.rs` | ✅ | `4366717` |
-| 11 | Font-weight hierarchy (names bold, metadata muted/xs) | ⬜ | **agy, in flight** |
-| 12 | Chat input: paste long text does not scroll to cursor | ⬜ | **agy, in flight** |
+| 11 | Font-weight hierarchy (names bold, metadata muted/xs) | ✅ | **agy, completed** |
+| 12 | Chat input: paste long text does not scroll to cursor | ✅ | **agy, completed** |
 | 13 | Timeline → card feed, **grouped by turn** not by event | ⬜ | design agreed; unassigned |
 | 14 | Log timestamps | ⬜ | |
 | 15 | Discord-style date dividers in chat | ⬜ | |
