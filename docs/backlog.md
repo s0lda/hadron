@@ -50,7 +50,7 @@ Update this file in the same commit as the work. Whoever lands it moves the line
 | 24 | Quark display names + `@Display Name` routing | ✅ | `7095593` |
 | 25 | **Model selection** (per-seat) | ✅ | `e59993d` — proven live: seat asked `haiku`, agent ran `haiku`. **ACP v1, no v2 migration needed** |
 | 26 | A message sent mid-turn is **queued, not eaten** | ✅ | `b80ba5e` — was silently destroying Jake's second message |
-| 27 | **Worktree isolation ON** (each turn owns its tree) | ⬜ | **opus, in flight** — precondition for #18, #28, #29 |
+| 27 | **Worktree isolation ON** (each turn owns its tree) | 🛑 | **built, tested, unwired — awaiting Jake's call.** The daemon never calls `.with_git()`. Flipping it alone **strands all work**: `with_merge_gate` is also unwired, so branches would never land. See the blocker below |
 | 28 | Machine-checked Definition of Done (claims vs facts) | ⬜ | blocked on #27 |
 | 29 | Skills: declared procedures + engine-checked exit criteria | ⬜ | blocked on #27. Injected via the `invariants/` seam — not a plugin system |
 | 30 | Per-turn **$ cost** + diff stats | ⬜ | needs `model` on `hadron_lattice::Usage`; `AcpQuark::running_model()` is **implemented, unwired** |
@@ -67,6 +67,12 @@ Update this file in the same commit as the work. Whoever lands it moves the line
 
 ## Known blockers, stated plainly
 
-- **Worktree isolation (#27) is load-bearing.** `engine.rs` falls back to `cwd.unwrap_or(workspace_root)`, so turns share one checkout. Nothing that attributes work to a turn — authorship, enforcement, a Definition of Done — is sound until it is on.
+- **Worktree isolation (#27) is load-bearing, fully built, and OFF by one line — but turning it on is a product decision, not a refactor.**
+  - *Why it is off:* not a bug. `bin/hadron-gluon.rs:253` builds the engine with `Engine::new`, never `.with_git(repo)`, so `repo_root` is `None`. The bin's own module doc still calls `with_git` a deliberate mock-era hold ("held for a human-present session") — a comment that went stale when the bin grew real adapters. `with_git` is the one line left behind.
+  - *What is already built:* per-quark worktree, per-assignment branch, branch-diff attribution, `Kind::Edit`, a merge gate with rebase-on-concurrency. All of it, tested.
+  - *Correction to the earlier read:* with `repo_root = None` a turn's commit is **not mis-attributed to a sibling — it is not attributed at all.** `TurnTree` is never constructed (`engine.rs:1186`), so the `head_before` comparison and `Kind::Edit` never run. Attribution is dormant, not broken. Pinned by `without_worktree_isolation_the_engine_attributes_no_commit`.
+  - *The attribution property is now proven* (`concurrent_commits_are_attributed_to_the_turn_that_made_them`): two turns committing concurrently are each credited with their own commit and their own files. Negative control: forced onto one shared tree, quark `a` is credited with `["a.txt", "b.txt"]` — the misattribution, reproduced.
+  - **The trap:** `with_merge_gate` is *also* unwired (no caller outside tests), and `merge_gate` early-returns when it is `None`. So flipping `with_git` **alone** parks every quark's work on a `quark/<id>/<ulid>` branch inside gitignored `.hadron/trees/` that nothing ever merges. Jake's tree would show nothing and the swarm would look dead. **Isolation must land together with `with_merge_gate(CargoMergeRunner)`, or not at all.**
+  - **What Jake gives up if it goes on:** (a) he stops seeing quarks edit files in his own tree; (b) every completed assignment runs `cargo test --workspace` in the quark's worktree before landing — minutes per turn; (c) landing does `git merge --ff-only` in his checkout, which fails if he has uncommitted edits to a file the quark touched. That last one bites today: the tree is dirty right now.
 - **Agy's SDK (#34) is Python-only.** There is no Rust SDK and no documented HTTP surface for the agent abstraction. An SDK agy means Hadron drives a Python process; that is a real decision, not a detail.
 - **This checkout has no git remote.** Anything needing a fork push (#21) cannot be done by a quark.
