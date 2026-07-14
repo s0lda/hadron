@@ -1,6 +1,8 @@
 /target
 **/*.rs.bk
 Cargo.lock.orig
+gpui-component
+.venv/
 
 # Session-local hook scratch (remember plugin); not project state.
 .remember/
