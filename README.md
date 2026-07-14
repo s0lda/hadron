@@ -93,5 +93,21 @@ Hadron orchestrates models it did not build. Credit where it is due:
 [`emojis`](https://github.com/rossmacarthur/emojis) ·
 [`tempfile`](https://github.com/Stebalien/tempfile)
 
-Every dependency above is used under its own licence. Hadron itself does not yet
-carry a `LICENSE` file — it needs one before the repository goes public.
+Every dependency above is used under its own licence.
+
+## Licence
+
+Hadron is licensed under the **[Apache License 2.0](LICENSE)** — the same licence
+as GPUI, gpui-component and the Agent Client Protocol, so there is no friction
+where our code meets theirs, and it carries an explicit patent grant.
+
+## Contributing
+
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — how to build, the two test gates you
+  must run (the workspace gate does **not** compile the GUI), and the Standard
+  Model invariants every contributor works to.
+- **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** — Contributor Covenant 2.1.
+- **[SECURITY.md](SECURITY.md)** — how to report a vulnerability, and an honest
+  account of what Hadron does to your machine. **Read it before you deploy this:
+  Hadron runs AI agents that execute code as you, in your repository. It is not a
+  sandbox.**
