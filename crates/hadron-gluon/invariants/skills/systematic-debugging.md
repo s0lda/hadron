@@ -107,17 +107,33 @@ You MUST complete each phase before proceeding to the next.
 
    **This reveals:** Which layer fails (secrets → workflow ✓, workflow → build ✗)
 
-5. **Trace Data Flow**
+5. **Trace Data Flow (Root-Cause Tracing)**
 
-   **WHEN error is deep in call stack:**
+   **WHEN error is deep in call stack:** bugs often manifest far from their
+   origin (git init in the wrong directory, a file created in the wrong
+   place, a DB opened with the wrong path). Fixing where the error *appears*
+   treats a symptom. Trace backward through the call chain to the original
+   trigger, then fix at the source.
 
-   See `root-cause-tracing.md` in this directory for the complete backward tracing technique.
+   The tracing loop:
+   - **Observe the symptom** — the exact error and where it surfaces.
+   - **Find the immediate cause** — what code directly triggers it.
+   - **Ask "what called this, with what value?"** — walk one level up the
+     call chain. What value was passed? Where did *that* value come from?
+   - **Keep tracing up** until you reach the original trigger (e.g. an empty
+     string that resolved to `process.cwd()`; a getter read before setup ran).
+   - **Fix at the source, not the symptom** — then add validation at each
+     layer the bad value passed through (see Phase 4's layered validation).
 
-   **Quick version:**
-   - Where does bad value originate?
-   - What called this with bad value?
-   - Keep tracing up until you find the source
-   - Fix at source, not at symptom
+   **When you can't trace by reading, instrument.** Before the dangerous
+   operation (not after it fails), log the suspect value, the ambient
+   context (cwd, relevant env vars, timestamps), and a captured stack
+   (`new Error().stack` or your language's equivalent) so you see the full
+   call chain. In tests, write to stderr / a channel that is never
+   suppressed — a normal logger may be swallowed. Run once, capture, and
+   read the stack for the triggering caller and parameter.
+
+   **NEVER fix just where the error appears.** Trace back to the trigger.
 
 ### Phase 2: Pattern Analysis
 
@@ -183,6 +199,25 @@ You MUST complete each phase before proceeding to the next.
    - ONE change at a time
    - No "while I'm here" improvements
    - No bundled refactoring
+
+   **Add defense-in-depth for invalid-data bugs.** When the root cause was
+   bad data flowing through the system, a single check where you found it
+   can be bypassed by a different code path, a refactor, or a mock. Validate
+   at EVERY layer the data passes through so the bug becomes structurally
+   impossible, not merely patched:
+   - **Entry point** — reject obviously invalid input at the API boundary
+     (empty, missing, wrong type, doesn't exist).
+   - **Business logic** — assert the data makes sense for this operation.
+   - **Environment guard** — refuse dangerous operations in the wrong
+     context (e.g. in tests, refuse to operate outside a temp dir).
+   - **Debug instrumentation** — log context before the dangerous operation
+     so a future failure is forensically traceable.
+   Different layers catch different cases: entry validation catches most
+   bugs, business logic catches edge cases, environment guards catch
+   context-specific dangers, logging catches the rest. Adding one check
+   says "we fixed the bug"; adding them at every layer says "we made the bug
+   impossible." Keep each fix a single logical change — the layers together
+   address one root cause.
 
 3. **Verify Fix**
    - Test passes now?
@@ -275,15 +310,34 @@ If systematic investigation reveals issue is truly environmental, timing-depende
 
 **But:** 95% of "no root cause" cases are incomplete investigation.
 
-## Supporting Techniques
+## Debugging Flaky Timing (Condition-Based Waiting)
 
-These techniques are part of systematic debugging and available in this directory:
+When the "bug" is a flaky test — passes locally, fails under load or in CI —
+the root cause is usually an arbitrary delay guessing at timing. A fixed
+`sleep`/`setTimeout` races: it's too short under load and wastes time when
+things are fast.
 
-- **`root-cause-tracing.md`** - Trace bugs backward through call stack to find original trigger
-- **`defense-in-depth.md`** - Add validation at multiple layers after finding root cause
-- **`condition-based-waiting.md`** - Replace arbitrary timeouts with condition polling
+**Fix:** wait for the actual condition you care about, not a guess about how
+long it takes. Poll the real predicate on a short interval, with a timeout
+that throws a clear error:
 
-**Related skills:**
+```
+waitFor(predicate, description, timeoutMs = 5000):
+  loop:
+    if predicate() is truthy: return it
+    if elapsed > timeoutMs: throw "Timeout waiting for {description}"
+    sleep 10ms   # poll interval — not 1ms (burns CPU), not unbounded
+```
+
+Wait for the event, the state, the count, the file — `waitFor(() => machine.state === 'ready')`, `waitFor(() => items.length >= 5)`. Common mistakes: polling too fast (wastes CPU), no timeout (hangs forever), or caching state before the loop instead of re-reading it fresh each iteration.
+
+**When a real timeout IS correct** (testing debounce/throttle, or waiting a
+known number of ticks): first wait for the triggering *condition*, then wait
+the timed interval, and comment WHY the duration is what it is. Never guess a
+duration to "give it time."
+
+## Related Skills
+
 - **superpowers:test-driven-development** - For creating failing test case (Phase 4, Step 1)
 - **superpowers:verification-before-completion** - Verify fix worked before claiming success
 

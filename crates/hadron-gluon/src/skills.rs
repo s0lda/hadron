@@ -253,21 +253,71 @@ pub fn plan_author(markdown: &str) -> Option<QuarkId> {
     })
 }
 
-/// Render the selected skill into the working-protocol block: the procedure, who is
-/// actually available to take the next step, and — when the engine can prove it — the
-/// refusal to let a quark verify its own plan.
-pub fn render(m: &Match, self_id: &QuarkId, handoff: &Handoff) -> String {
+/// The `description:` line from a skill's YAML front-matter — the one-liner that goes in
+/// the always-on index. Absent front-matter yields `None` rather than a guess.
+pub fn description(body: &str) -> Option<&str> {
+    let rest = body.strip_prefix("---")?;
+    let (front, _) = rest.split_once("\n---")?;
+    front.lines().find_map(|line| {
+        let value = line.trim().strip_prefix("description:")?.trim();
+        (!value.is_empty()).then_some(value)
+    })
+}
+
+/// The always-on skill index: one line per skill, injected every turn so a quark always
+/// knows the full set of procedures available to it and can invoke the right one as the
+/// work crosses phases. This is hadron's analog of the Superpowers `using-superpowers`
+/// bootstrap (the SessionStart hook), which does not exist over ACP.
+pub fn index() -> String {
+    let mut out = String::from(
+        "\n# Your skills\n\n\
+         These are your built-in procedures. The engine hands you a starting one below; \
+         invoke any of the others yourself as the work crosses into its kind (a bug while \
+         you execute → systematic-debugging; work done → requesting-code-review).\n\n",
+    );
+    for s in SKILLS {
+        out.push_str(&format!("- **{}** — {}\n", s.id, description(s.body).unwrap_or("")));
+    }
+    out
+}
+
+/// The whole skill library, every body concatenated. Injected once into a **resident**
+/// (ACP) quark's cache-stable prefix so the entire set sits in its context all session:
+/// composition is then free (it already has systematic-debugging when a bug appears) and
+/// no skill's cross-reference to another dangles. A one-shot (CLI) quark cannot hold this
+/// across turns, so it gets only the selected skill's body instead (see [`render`]).
+pub fn corpus() -> String {
+    let mut out = String::from("\n# Your skill library (full procedures)\n");
+    for s in SKILLS {
+        out.push_str(&format!("\n## {}\n\n{}\n", s.id, s.body.trim()));
+    }
+    out
+}
+
+/// Render the selected skill into the working-protocol block: the procedure (or, when the
+/// full library is already in context, a pointer to it), who is actually available to take
+/// the next step, and — when the engine can prove it — the refusal to let a quark verify
+/// its own plan.
+///
+/// `include_body` is `true` for a one-shot (CLI) quark, which has nothing but this prompt,
+/// and `false` for a resident (ACP) quark, whose [`corpus`] already carries every body —
+/// so it is only told which skill to *start* in, not handed the text twice.
+pub fn render(m: &Match, self_id: &QuarkId, handoff: &Handoff, include_body: bool) -> String {
     let mut out = String::new();
 
+    let procedure = if include_body {
+        format!("\n\n{}\n", m.skill.body.trim())
+    } else {
+        "\nThe full procedure is in your skill library above — follow it.\n".to_string()
+    };
     out.push_str(&format!(
         "\n# Skill for this turn: {id}\n\n\
          The engine selected this procedure because your task says \"{trigger}\". It is \
          part of your working protocol for this turn — not a suggestion, and not \
          optional. If it is the wrong procedure for what you were actually asked, say so \
-         in your report instead of half-following it.\n\n{body}\n",
+         in your report instead of half-following it.\n{procedure}",
         id = m.skill.id,
         trigger = m.trigger,
-        body = m.skill.body.trim(),
     ));
 
     // Who can take the next step. A named peer is a handoff; "@<quark-id>" is a wish.
@@ -355,6 +405,63 @@ mod tests {
             );
             assert!(!s.triggers.is_empty(), "skill `{}` can never be selected", s.id);
         }
+    }
+
+    /// The always-on index names every skill with the description from its front-matter
+    /// — the "here are your procedures" list a quark gets every turn.
+    #[test]
+    fn the_index_lists_every_skill_with_its_description() {
+        let idx = index();
+        for s in SKILLS {
+            assert!(idx.contains(s.id), "index is missing skill `{}`", s.id);
+        }
+        assert!(
+            description(SKILLS[0].body).is_some(),
+            "a skill must carry a `description:` line for the index to quote"
+        );
+    }
+
+    /// The corpus carries every skill body in full — that is what a resident quark holds
+    /// in context so composition is free.
+    #[test]
+    fn the_corpus_carries_every_skill_body() {
+        let c = corpus();
+        for s in SKILLS {
+            let probe = s.body.trim().lines().next().unwrap_or("").trim();
+            assert!(!probe.is_empty() && c.contains(probe), "corpus is missing `{}`", s.id);
+        }
+    }
+
+    /// **The self-contained invariant.** No skill body may point at a companion file the
+    /// quark cannot open — the whole reason the corpus was folded flat. "in this
+    /// directory" and "references/" are the Superpowers dangling-reference shapes; if one
+    /// creeps back with the next skill sync, this fails instead of shipping a dead end.
+    #[test]
+    fn no_skill_body_dangles_a_reference_the_quark_cannot_follow() {
+        for s in SKILLS {
+            let b = s.body.to_lowercase();
+            assert!(!b.contains("in this directory"), "`{}` still says 'in this directory'", s.id);
+            assert!(!b.contains("references/"), "`{}` still points at 'references/'", s.id);
+        }
+    }
+
+    /// A resident quark is told which skill to START in but NOT handed the body again —
+    /// its [`corpus`] already carries it. A one-shot quark gets the full body inline.
+    #[test]
+    fn render_points_a_resident_and_inlines_for_a_one_shot() {
+        let m = select("write a plan for X").unwrap();
+        let me = QuarkId::new("opus");
+
+        let full = render(&m, &me, &Handoff::default(), true);
+        assert!(full.contains("author: <your quark id>"), "a one-shot quark must get the body");
+
+        let pointer = render(&m, &me, &Handoff::default(), false);
+        assert!(pointer.contains("writing-plans"), "the resident is still told which skill");
+        assert!(
+            !pointer.contains("author: <your quark id>"),
+            "the resident must NOT be handed the body — the corpus already has it"
+        );
+        assert!(pointer.contains("skill library above"), "and must be pointed at the corpus");
     }
 
     #[test]
@@ -480,7 +587,7 @@ mod tests {
             plan_author: Some(QuarkId::new("opus")),
         };
 
-        let out = render(&m, &me, &handoff);
+        let out = render(&m, &me, &handoff, true);
         assert!(out.contains("you wrote this plan"), "must refuse self-verification:\n{out}");
         assert!(out.contains("`@agy`"), "must name the peer who can take it:\n{out}");
     }
@@ -496,7 +603,7 @@ mod tests {
             plan_author: Some(QuarkId::new("agy")),
         };
 
-        let out = render(&m, &me, &handoff);
+        let out = render(&m, &me, &handoff, true);
         assert!(!out.contains("you wrote this plan"));
         assert!(out.contains("independent pair of eyes"));
     }
@@ -508,7 +615,7 @@ mod tests {
     fn a_lone_quark_is_told_it_is_alone_rather_than_routed_into_the_void() {
         let me = QuarkId::new("opus");
         let m = select("write a plan for X").unwrap();
-        let out = render(&m, &me, &Handoff::default());
+        let out = render(&m, &me, &Handoff::default(), true);
 
         assert!(out.contains("only quark"), "must say it is alone:\n{out}");
         assert!(out.contains("NOT been independently reviewed"));
@@ -529,6 +636,7 @@ mod tests {
                 peers: vec![QuarkId::new("agy"), QuarkId::new("acp-claude")],
                 plan_author: Some(QuarkId::new("opus")),
             },
+            true,
         );
         println!("=== task: {task}\n{out}");
     }
@@ -536,7 +644,7 @@ mod tests {
     #[test]
     fn the_selected_body_is_actually_injected() {
         let m = select("write a plan for X").unwrap();
-        let out = render(&m, &QuarkId::new("opus"), &Handoff::default());
+        let out = render(&m, &QuarkId::new("opus"), &Handoff::default(), true);
         assert!(out.contains("Skill for this turn: writing-plans"));
         assert!(out.contains("author: <your quark id>"), "the real body must be present");
         assert!(out.contains("\"write a plan\""), "the trigger must be quoted back");
