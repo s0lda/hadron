@@ -161,7 +161,7 @@ mod tests {
             invariants: String::new(),
             available_invariants: vec![],
             nucleus_digest: String::new(),
-            roster: vec![],
+            live_activities: vec![], roster: vec![],
             field_window: vec![],
             field_truncated: false,
             memory: String::new(),
