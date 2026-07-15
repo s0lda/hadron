@@ -148,6 +148,21 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         }
     }
 
+    // 3d. Live Activity. What other quarks are doing *right now*.
+    if !projection.live_activities.is_empty() {
+        p.push_str("# Live Activity\n");
+        p.push_str("The following quarks are currently working in parallel:\n");
+        for act in &projection.live_activities {
+            p.push_str(&format!(
+                "- **@{id}** is {doing}: {detail}\n",
+                id = act.quark.as_str(),
+                doing = act.doing.label(),
+                detail = act.detail
+            ));
+        }
+        p.push_str("\n");
+    }
+
     // 4. Recent field transcript. If older events were dropped to fit the byte
     // budget, SAY SO. A silent truncation is indistinguishable, from inside the
     // model, from the human never having said the thing — and it acts accordingly.
@@ -318,7 +333,7 @@ mod tests {
             invariants: "Snapshot before editing. Use @mentions.".into(),
             available_invariants: vec![],
             nucleus_digest: "## map.md\nauth lives in src/auth".into(),
-            roster: vec![QuarkCard {
+            live_activities: vec![], roster: vec![QuarkCard {
                 id: QuarkId::new("agy"),
                 display_name: None,
                 flavor: Flavor::Worker,

@@ -48,6 +48,9 @@ pub struct Projection {
     pub memory_notes_dir: std::path::PathBuf,
     /// Who exists, their flavor and energy — enables orchestration.
     pub roster: Vec<QuarkCard>,
+    /// What other quarks are doing right now, if they are currently mid-turn.
+    #[serde(default)]
+    pub live_activities: Vec<crate::live::Activity>,
     /// Recent relevant events. v1: a dumb recent window.
     pub field_window: Vec<Event>,
     /// Whether older events were dropped to fit the window's byte budget. The
@@ -143,6 +146,7 @@ mod tests {
             memory_path: std::path::PathBuf::new(),
             memory_truncated: false,
             memory_notes_dir: std::path::PathBuf::new(),
+            live_activities: vec![],
             git_diff: String::new(),
             isolated: true,
             cwd: std::path::PathBuf::from("/tmp/wt"),

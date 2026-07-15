@@ -1154,7 +1154,7 @@ mod tests {
             memory_truncated: false,
             memory_path: std::path::PathBuf::new(),
             memory_notes_dir: std::path::PathBuf::new(),
-            roster: vec![],
+            live_activities: vec![], roster: vec![],
             field_window: vec![],
             field_truncated: false,
             git_diff: String::new(),
