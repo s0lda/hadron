@@ -18,6 +18,12 @@ mod text;
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 mod sys;
 
+// The real PTY/VTE terminal engine. Deliberately NOT behind `gui`, so its
+// headless tests (pump bytes through a real PTY, assert on the parsed grid) run
+// in `cargo test --workspace` — the evidence that it is a terminal, not styling.
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+mod pty;
+
 #[cfg(feature = "gui")]
 mod app;
 #[cfg(feature = "gui")]
