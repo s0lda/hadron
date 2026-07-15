@@ -22,14 +22,11 @@ impl CompletionProvider for ChatCompletionProvider {
         _cx: &mut Context<InputState>,
     ) -> Task<Result<CompletionResponse>> {
         let text_str = _text.to_string();
-        println!("completions called: offset={}, text={:?}", _offset, text_str);
         let Some((trigger_char, query, start_offset)) =
             extract_completion_query(&text_str, _offset)
         else {
-            println!("completions: extract_completion_query returned None");
             return Task::ready(Ok(CompletionResponse::Array(vec![])));
         };
-        println!("completions: extracted trigger_char={}, query={:?}", trigger_char, query);
 
         let is_mention = trigger_char == '@';
         let is_emoji = trigger_char == ':';
@@ -162,9 +159,7 @@ impl CompletionProvider for ChatCompletionProvider {
         new_text: &str,
         _cx: &mut Context<InputState>,
     ) -> bool {
-        let trigger = is_trigger_text(new_text);
-        println!("is_completion_trigger: new_text={:?} -> {}", new_text, trigger);
-        trigger
+        is_trigger_text(new_text)
     }
 }
 
