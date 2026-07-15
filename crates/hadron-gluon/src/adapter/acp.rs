@@ -1346,6 +1346,11 @@ mod tests {
         // --- Turn 2: the SESSION is resident. The agent was booted once and still
         // remembers turn 1 — so we can ask it about turn 1 without re-sending it.
         let mut t2 = projection();
+        t2.field_window = vec![hadron_lattice::Event::new(
+            hadron_lattice::Actor::Human,
+            None,
+            hadron_lattice::Kind::Message { body: "Dummy message to prevent session reset".into() },
+        )];
         t2.task = "What single word did you just say? Reply with only that word.".into();
         let o2 = q.excite(t2).await.expect("live ACP turn 2");
         eprintln!("\n=== TURN 2 ===");
