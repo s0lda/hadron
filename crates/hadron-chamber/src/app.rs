@@ -4492,8 +4492,28 @@ const SWARM_MENTIONS: [&str; 2] = ["team", "orchestrator"];
 fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
     let mut out = String::with_capacity(body.len() + 100);
     let mut chars = body.chars().peekable();
+    let mut in_code_block = false;
+    let mut in_inline_code = false;
+
     while let Some(c) = chars.next() {
-        if c == '@' {
+        if c == '`' {
+            let mut backtick_count = 1;
+            while chars.peek() == Some(&'`') {
+                chars.next();
+                backtick_count += 1;
+            }
+            if backtick_count >= 3 {
+                in_code_block = !in_code_block;
+            } else if !in_code_block {
+                in_inline_code = !in_inline_code;
+            }
+            for _ in 0..backtick_count {
+                out.push('`');
+            }
+            continue;
+        }
+
+        if c == '@' && !in_code_block && !in_inline_code {
             let mut name = String::new();
             while let Some(&nc) = chars.peek() {
                 if nc.is_alphanumeric() || nc == '.' || nc == '/' || nc == '-' || nc == '_' || nc == ' ' || nc == '(' || nc == ')' {
@@ -4948,6 +4968,37 @@ mod tests {
         assert!(colored.contains(&format!("{MENTION_QUARK_OPEN}@team")));
         assert!(colored.contains(&format!("{MENTION_QUARK_OPEN}@orchestrator")));
         assert!(colored.contains(&format!("{MENTION_FILE_OPEN}@src/main.rs")));
+    }
+
+    #[test]
+    fn color_mentions_ignores_mentions_in_code() {
+        let roster = vec![crate::model::RosterRow {
+            id: "opus".to_string(),
+            display_name: None,
+            state: QuarkState::Excited,
+            mode: hadron_lattice::Mode::Ask,
+            mode_is_override: false,
+            provider: "anthropic".to_string(),
+            model: "Claude Opus 4.6".to_string(),
+            flavor: Some(hadron_lattice::Flavor::Worker),
+            transport: hadron_lattice::Transport::Cli,
+            enabled: true,
+            tokens: 0,
+            unknown_turns: 0,
+        }];
+
+        // Inline code mention
+        let colored_inline = color_mentions("Here is `@opus` inside inline code.", &roster);
+        assert_eq!(colored_inline, "Here is `@opus` inside inline code.");
+
+        // Code block mention
+        let colored_block = color_mentions("```rust\n@opus\n```", &roster);
+        assert_eq!(colored_block, "```rust\n@opus\n```");
+
+        // Code block mention with multiple ticks and mixed text
+        let colored_mixed = color_mentions("Before `@opus` inside, and @opus outside.", &roster);
+        assert!(colored_mixed.contains(&format!("{MENTION_QUARK_OPEN}@opus")));
+        assert!(colored_mixed.contains("`@opus`"));
     }
 
     /// An unparseable colour is not an error in gpui-component — it is silently
