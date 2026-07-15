@@ -4868,10 +4868,11 @@ pub fn run(field_path: Option<String>) {
         let window_options = WindowOptions {
             titlebar: Some(TitleBar::title_bar_options()),
             window_decorations: Some(WindowDecorations::Client),
-            // Transparent so the client-side shadow + rounded frame composite
-            // over the desktop (Zed's approach). On WSLg this is the open
-            // question — if the compositor ignores it, the inset shows black.
-            window_background: WindowBackgroundAppearance::Transparent,
+            // Opaque. A transparent window recomposites against the desktop on every
+            // repaint, which under WSL software rendering (llvmpipe) is the bulk of the
+            // chamber's idle CPU. The frame is now flat and square (see window_frame),
+            // so there is no rounded corner or drop shadow that needs an alpha channel.
+            window_background: WindowBackgroundAppearance::Opaque,
             window_bounds: Some(bounds),
             ..Default::default()
         };
