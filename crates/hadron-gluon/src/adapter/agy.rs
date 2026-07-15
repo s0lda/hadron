@@ -253,12 +253,18 @@ mod tests {
     /// long-lived swarm's field, which is what actually blew up in production.
     fn huge_projection(n: usize, body_bytes: usize) -> Projection {
         let mut p = projection_mode("summarise the work so far", Mode::Bypass);
+        let line_len = 80;
+        let lines_count = (body_bytes / line_len).max(1).min(10);
         p.field_window = (0..n)
             .map(|i| {
+                let lines_data = (0..lines_count)
+                    .map(|_| "x".repeat(line_len))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 Event::new(
                     Actor::Human,
                     None,
-                    Kind::Message { body: format!("event{i} {}", "x".repeat(body_bytes)) },
+                    Kind::Message { body: format!("event{i}\n{lines_data}") },
                 )
             })
             .collect();
@@ -306,7 +312,7 @@ mod tests {
         let mut p = huge_projection(200, 2000);
         // Bookend the window: the oldest event must go, the newest must survive.
         p.field_window.first_mut().unwrap().kind =
-            Kind::Message { body: format!("OLDEST-CANARY {}", "x".repeat(2000)) };
+            Kind::Message { body: format!("OLDEST-CANARY\n{}", "x\n".repeat(5)) };
         p.field_window.last_mut().unwrap().kind =
             Kind::Message { body: "NEWEST-CANARY the thing I just asked for".into() };
 
