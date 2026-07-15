@@ -208,11 +208,22 @@ pub fn completion_candidates(
             }
         }
         '/' => {
-            for cmd in ["team-brainstorm"] {
+            let cmds = [
+                ("team-brainstorm", "Kick off brainstorming with the team"),
+                ("toggle-roster", "Toggle the Roster sidebar"),
+                ("toggle-inspector", "Toggle the Inspector sidebar"),
+                ("goal", "Run a long-running task thoroughly"),
+                ("plan", "Create a step-by-step implementation plan"),
+                ("schedule", "Set a recurring cron job or one-shot timer"),
+                ("grill-me", "Start an interactive plan alignment interview"),
+                ("teamwork-preview", "Preview a team of autonomous agents working"),
+                ("learn", "Persist a corrected behavior or setup"),
+            ];
+            for (cmd, detail) in cmds {
                 if query_lower.is_empty() || cmd.contains(&query_lower) {
                     out.push(Candidate {
                         label: format!("/{cmd}"),
-                        detail: "Command".into(),
+                        detail: detail.to_string(),
                         new_text: format!("/{cmd} "),
                     });
                 }
@@ -288,9 +299,12 @@ mod tests {
 
     #[test]
     fn a_slash_command_is_offered_only_at_the_line_start() {
-        assert!(completion_candidates("/team", 5, &[], &[]).is_some());
+        let c = completion_candidates("/tog", 4, &[], &[]).expect("has rows");
+        let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"/toggle-roster"), "matched toggle-roster offered: {labels:?}");
+        assert!(completion_candidates("/goa", 4, &[], &[]).is_some());
         // Mid-line `/` is not a trigger (see extract_completion_query).
-        assert!(completion_candidates("hi /team", 8, &[], &[]).is_none());
+        assert!(completion_candidates("hi /goa", 8, &[], &[]).is_none());
     }
 
     #[test]
