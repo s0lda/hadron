@@ -1,50 +1,46 @@
-//! The chamber's color system — Jake's palette mapped to gpui colors. A near-black
-//! layered-surface dark theme with a pink→purple energy accent. Discipline: the
-//! accent is for active/interactive only; surfaces carry the space.
+//! The chamber's color system — a near-black **flat instrument-panel** theme with a
+//! pink→purple energy accent. Discipline: the accent is for active/interactive only;
+//! solid tiered surfaces carry the space.
 //!
-//! The full palette is exposed even where not yet consumed (input focus, selected
-//! states land next), so callers reach for the named token, not a raw hex.
+//! **Flat by design, for a reason.** Under WSL the app software-renders (llvmpipe, no
+//! GPU), so translucency and blur are the expensive kind of pixel — a transparent
+//! window recomposites against the desktop and every alpha layer is re-blended each
+//! frame. So depth here comes from *solid tone steps and hairline borders*, never from
+//! alpha or gradients. Every surface is opaque; the window is opaque; there is no blur.
+//!
+//! The full palette is exposed even where not yet consumed, so callers reach for the
+//! named token, not a raw hex.
 #![allow(dead_code)]
 
-use gpui::{linear_color_stop, linear_gradient, rgb, rgba, Background, Rgba};
+use gpui::{rgb, rgba, Rgba};
 
 use hadron_lattice::QuarkState;
 
-// --- surfaces (darkest → raised) --- Zinc palette for tiered elevation.
+// --- surfaces (darkest → raised) --- a solid tiered ladder, no gradients.
 pub fn bg_base() -> Rgba {
     rgb(0x09090b) // zinc-950 - main workspace background
 }
 
-/// The window's background: `bg_elevated` with a faint top-down glint — a hair
-/// lighter at the very top, settling to the flat base by ~a third down. One home
-/// for the gradient so every surface that wants the same depth reads from here.
-pub fn window_glint() -> Background {
-    linear_gradient(
-        180.0,
-        linear_color_stop(rgb(0x202024), 0.0),
-        linear_color_stop(bg_elevated(), 0.34),
-    )
+/// The window/content background — a flat solid, no glint gradient. (Kept as a named
+/// token so the one place that sets the window fill still reads from the palette.)
+pub fn window_glint() -> Rgba {
+    bg_base()
 }
 pub fn bg_elevated() -> Rgba {
     rgb(0x18181b) // zinc-900 - sidebars and tabs
 }
 
-/// The fill for the two darkest layers (chat + right rail cards): a faint
-/// top-down sheen over the near-black base, so the surface reads as a lit glass
-/// panel instead of a flat black rectangle. Pairs with [`glass_highlight`] on the
-/// top edge. GPUI has no backdrop blur, so depth is faked with layered tone.
-pub fn glass_surface() -> Background {
-    linear_gradient(
-        180.0,
-        linear_color_stop(rgba(0x09090b40), 0.0), // 25% opacity top sheen
-        linear_color_stop(rgba(0x09090b73), 1.0), // 45% opacity base
-    )
+/// The fill for the raised panels (chat + right rail cards): a **solid** tone one step
+/// above the base, so a panel reads as lifted off the workspace by its colour step and
+/// its [`glass_highlight`] hairline edge — not by a translucent sheen. Flat and cheap.
+pub fn glass_surface() -> Rgba {
+    rgb(0x131318)
 }
 
-/// Hairline top-edge highlight for the glass layers — white at ~8%, the light
-/// catching the lip of the panel.
+/// The crisp hairline edge on a raised panel — a solid line a step above the panel
+/// fill, the instrument-panel seam. (Was a translucent white sheen; now opaque.)
 pub fn glass_highlight() -> Rgba {
-    rgba(0xffffff14)
+    rgb(0x26262c)
 }
 
 // --- terminal (a Zed-like screen) ---
@@ -71,7 +67,7 @@ pub fn input_bg() -> Rgba {
     rgb(0x18181b) // zinc-900
 }
 pub fn popover() -> Rgba {
-    rgba(0x27272abf) // zinc-800 - translucent context menus (~75% opacity)
+    rgb(0x1f1f25) // solid context-menu surface (opaque — no translucency to re-blend)
 }
 pub fn border() -> Rgba {
     rgb(0x3f3f46) // zinc-700
