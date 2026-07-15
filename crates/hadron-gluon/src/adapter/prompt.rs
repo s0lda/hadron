@@ -303,14 +303,15 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
          completed work — commits, passing tests, file edits — that you did not perform. If you \
          could not do something, say so.\n\n\
          # CRITICAL: Response Format Requirement\n\
-         You MUST structure your final response exactly as follows. Do NOT skip the evidence (you must copy-paste actual command lines and a concise summary of the output from tests/checks — do NOT dump full logs or entire test suites; keep it under 10 lines of summary output):\n\n\
+         If you performed actual work (e.g. edited files, ran commands, or committed changes) this turn, you MUST structure your final response exactly as follows. Do NOT skip the evidence (you must copy-paste actual command lines and a concise summary of the output from tests/checks — do NOT dump full logs or entire test suites; keep it under 10 lines of summary output):\n\n\
          **Done**: [Brief outcome summary, including commit hash]\n\n\
          - **Done**:\n\
            - [Brief list of key completed tasks and files changed]\n\
          - **Evidence**: [Copy-paste the exact command and a concise/trimmed summary of the test/check output showing it works — keep it to the summary or last few lines]\n\
          - **Risks**: [Rule 7 security risk note or 'no new attack surface' with explanation]\n\
          - **What I did not verify / clean up**: [Explicitly specify what you did not check or clean up]\n\n\
-         Lead directly with the outcome. Avoid preambles like 'I have completed the task', 'Here is the report', or general pleasantries.\n",
+         If this turn was a normal conversation, query, or liveness check without any workspace modifications or tool execution, do NOT use this structured format. Instead, reply with a short, direct, and concise answer.\n\n\
+         Lead directly with the outcome or answer. Avoid preambles like 'I have completed the task', 'Here is the report', or general pleasantries.\n",
     );
 
     p
