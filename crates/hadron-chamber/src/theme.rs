@@ -28,6 +28,39 @@ pub fn window_glint() -> Background {
 pub fn bg_elevated() -> Rgba {
     rgb(0x18181b) // zinc-900 - sidebars and tabs
 }
+
+/// The fill for the two darkest layers (chat + right rail cards): a faint
+/// top-down sheen over the near-black base, so the surface reads as a lit glass
+/// panel instead of a flat black rectangle. Pairs with [`glass_highlight`] on the
+/// top edge. GPUI has no backdrop blur, so depth is faked with layered tone.
+pub fn glass_surface() -> Background {
+    linear_gradient(
+        180.0,
+        linear_color_stop(rgb(0x131316), 0.0),
+        linear_color_stop(bg_base(), 0.42),
+    )
+}
+
+/// Hairline top-edge highlight for the glass layers — white at ~8%, the light
+/// catching the lip of the panel.
+pub fn glass_highlight() -> Rgba {
+    rgba(0xffffff14)
+}
+
+// --- terminal (a Zed-like screen) ---
+/// The terminal screen surface — a touch off pure black so text has contrast.
+pub fn term_bg() -> Rgba {
+    rgb(0x0c0c0e)
+}
+/// Default terminal output foreground — a soft off-white, brighter than muted
+/// body text so command output reads like a real console.
+pub fn term_fg() -> Rgba {
+    rgb(0xd0d3d8)
+}
+/// The shell prompt (`user@host: cwd$`) — the classic terminal green.
+pub fn term_prompt() -> Rgba {
+    rgb(0x4ade80)
+}
 pub fn bg_surface() -> Rgba {
     rgb(0x27272a) // zinc-800 - modals, cards, chips
 }
