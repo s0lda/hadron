@@ -104,9 +104,207 @@ impl MenuRow {
     }
 }
 
+/// One row the completion card offers: what to show, a short right-hand hint, and
+/// the exact text that replaces the query span when the row is accepted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Candidate {
+    pub label: String,
+    pub detail: String,
+    pub new_text: String,
+}
+
+/// The live completion query and the rows that answer it.
+///
+/// `start` is the BYTE offset of the trigger char (`@`/`:`/`/`); accepting a row
+/// replaces `text[start..cursor]` with the row's `new_text`. Both offsets are
+/// UTF-8 byte offsets — the same unit the editor's `cursor()`/`set_selected_range`
+/// use — so the accept is a plain string splice with no UTF-16 conversion.
+pub struct Completions {
+    pub start: usize,
+    pub candidates: Vec<Candidate>,
+}
+
+/// Cap on rows built. A bare `:` matches every emoji (thousands); without this the
+/// card would be thousands of rows tall. The card scrolls, but building them all is
+/// pointless — the user narrows with a query.
+pub const MAX_CANDIDATES: usize = 50;
+
+/// Build the completion rows for the trigger immediately before `cursor`, or `None`
+/// when there is no live trigger (so the card closes).
+///
+/// This is the single source of truth for what the chat completion card offers. It
+/// is pure `&str`/`&[..]` work — no `gpui` — so its behaviour is pinned by tests in
+/// the workspace gate, unlike the fork's `CompletionProvider` which only compiled
+/// under `--features gui`.
+pub fn completion_candidates(
+    text: &str,
+    cursor: usize,
+    quarks: &[(String, Option<String>)],
+    files: &[String],
+) -> Option<Completions> {
+    let (trigger, query, start) = extract_completion_query(text, cursor)?;
+    let query_lower = query.to_lowercase();
+    let mut out: Vec<Candidate> = Vec::new();
+
+    match trigger {
+        '@' => {
+            // Routing aliases first — `@team`/`@orchestrator` are what the human
+            // reaches for most, and neither is a roster id.
+            for (alias, detail) in MENTION_ALIASES {
+                if mention_matches(alias, &query_lower) {
+                    out.push(Candidate {
+                        label: format!("@{alias}"),
+                        detail: detail.to_string(),
+                        new_text: format!("@{alias} "),
+                    });
+                }
+            }
+            for (id, display) in quarks {
+                let name = display.as_ref().unwrap_or(id);
+                let name_l = name.to_lowercase();
+                let id_l = id.to_lowercase();
+                if query_lower.is_empty()
+                    || name_l.contains(&query_lower)
+                    || id_l.contains(&query_lower)
+                {
+                    out.push(Candidate {
+                        label: format!("@{name}"),
+                        detail: "Quark".into(),
+                        new_text: format!("@{name} "),
+                    });
+                }
+            }
+            for file in files {
+                if out.len() >= MAX_CANDIDATES {
+                    break;
+                }
+                if query_lower.is_empty() || file.to_lowercase().contains(&query_lower) {
+                    out.push(Candidate {
+                        label: format!("@{file}"),
+                        detail: "File".into(),
+                        new_text: format!("@{file} "),
+                    });
+                }
+            }
+        }
+        ':' => {
+            for emoji in emojis::iter() {
+                if out.len() >= MAX_CANDIDATES {
+                    break;
+                }
+                let Some(shortcode) = emoji.shortcode() else {
+                    continue;
+                };
+                if query_lower.is_empty() || shortcode.to_lowercase().contains(&query_lower) {
+                    // The card renders the label as one plain string (no byte-range
+                    // prefix highlight), so the emoji-first shape that crashed the
+                    // fork menu cannot slice mid-character here.
+                    out.push(Candidate {
+                        label: format!(":{shortcode} {}", emoji.as_str()),
+                        detail: "Emoji".into(),
+                        new_text: emoji.as_str().to_string(),
+                    });
+                }
+            }
+        }
+        '/' => {
+            for cmd in ["team-brainstorm"] {
+                if query_lower.is_empty() || cmd.contains(&query_lower) {
+                    out.push(Candidate {
+                        label: format!("/{cmd}"),
+                        detail: "Command".into(),
+                        new_text: format!("/{cmd} "),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+
+    if out.is_empty() {
+        return None;
+    }
+    Some(Completions { start, candidates: out })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn quarks() -> Vec<(String, Option<String>)> {
+        vec![
+            ("acp-claude".into(), None),
+            ("agy".into(), Some("Agy".into())),
+        ]
+    }
+
+    #[test]
+    fn a_mention_query_offers_matching_quarks_and_aliases() {
+        let c = completion_candidates("@ag", 3, &quarks(), &[]).expect("has rows");
+        assert_eq!(c.start, 0, "replace span starts at the '@'");
+        let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"@Agy"), "matched quark offered: {labels:?}");
+        // The accepted text carries the sigil and a trailing space, ready to type on.
+        let agy = c.candidates.iter().find(|c| c.label == "@Agy").unwrap();
+        assert_eq!(agy.new_text, "@Agy ");
+    }
+
+    #[test]
+    fn an_empty_mention_query_offers_the_routing_aliases_first() {
+        let c = completion_candidates("@", 1, &quarks(), &[]).expect("has rows");
+        assert_eq!(
+            c.candidates[0].label,
+            format!("@{}", hadron_gluon::router::ORCHESTRATOR_ALIAS),
+            "aliases lead the list"
+        );
+    }
+
+    #[test]
+    fn a_file_query_offers_files() {
+        let files = vec!["src/app.rs".to_string(), "README.md".to_string()];
+        let c = completion_candidates("@app", 4, &[], &files).expect("has rows");
+        assert_eq!(c.candidates.len(), 1);
+        assert_eq!(c.candidates[0].new_text, "@src/app.rs ");
+    }
+
+    #[test]
+    fn a_bare_emoji_trigger_is_capped_not_thousands() {
+        let c = completion_candidates(":", 1, &[], &[]).expect("has rows");
+        assert!(
+            c.candidates.len() <= MAX_CANDIDATES,
+            "a bare ':' must not build thousands of rows: got {}",
+            c.candidates.len()
+        );
+    }
+
+    #[test]
+    fn an_emoji_query_accepts_the_glyph_not_the_shortcode() {
+        let c = completion_candidates(":smile", 6, &[], &[]).expect("has rows");
+        let first = &c.candidates[0];
+        assert!(first.label.starts_with(":smile"));
+        // Accepting inserts the glyph itself, not the `:smile:` text.
+        assert!(!first.new_text.starts_with(':'));
+    }
+
+    #[test]
+    fn a_slash_command_is_offered_only_at_the_line_start() {
+        assert!(completion_candidates("/team", 5, &[], &[]).is_some());
+        // Mid-line `/` is not a trigger (see extract_completion_query).
+        assert!(completion_candidates("hi /team", 8, &[], &[]).is_none());
+    }
+
+    #[test]
+    fn no_trigger_yields_no_card() {
+        assert!(completion_candidates("just talking", 12, &quarks(), &[]).is_none());
+    }
+
+    #[test]
+    fn a_cursor_past_the_end_or_mid_emoji_does_not_panic() {
+        let hostile = "hi 🌍 @a";
+        for cursor in 0..=hostile.len() + 4 {
+            let _ = completion_candidates(hostile, cursor, &quarks(), &[]);
+        }
+    }
 
     /// `@team` and `@orchestrator` route, but the completion menu never offered
     /// them: it only listed roster ids, and neither alias is one. The names are

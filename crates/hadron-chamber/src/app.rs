@@ -314,6 +314,19 @@ impl SettingsTarget {
     }
 }
 
+/// The live completion card for the chat box: the rows it offers and which one
+/// Enter accepts. Held as `Option<CompletionCard>` on the chamber — `None` is
+/// "no card", so the open-flag and the rows can never disagree (there is no
+/// separate bool to fall out of sync). Rebuilt on every `InputEvent::Change`.
+struct CompletionCard {
+    /// Byte offset of the trigger char in the input; the accept replaces
+    /// `input[start..cursor]` with the chosen row's `new_text`.
+    start: usize,
+    candidates: Vec<crate::text::Candidate>,
+    /// The highlighted row (Up/Down move it, Enter/click accept it).
+    selected: usize,
+}
+
 struct Chamber {
     view: ChamberView,
     prefs: ChamberPrefs,
@@ -324,6 +337,9 @@ struct Chamber {
     path: PathBuf,
     /// The human's message box at the foot of the chat column.
     input: Entity<InputState>,
+    /// The completion card floating above the message box, or `None` when no
+    /// `@`/`:`/`/` query is live. Our own overlay, not the fork's LSP menu.
+    completion: Option<CompletionCard>,
     /// Root focus target, so Ctrl+Shift+P dispatches regardless of what's focused.
     focus_handle: FocusHandle,
     /// Which view the chat column's segmented tabs are showing.
@@ -409,25 +425,16 @@ impl Chamber {
         let repo_root = crate::vcs::repo_root_of(&path);
         let files = crate::sys::list_workspace_files(&repo_root);
         let completion_files = std::rc::Rc::new(std::cell::RefCell::new(files.clone()));
-        let files_for_completion = completion_files.clone();
 
+        // No `completion_provider`: the fork's LSP menu is drawn with `deferred()`
+        // and paints off the bottom of the window (seven fixes could not move it —
+        // see `completion-menu-draws-out-of-bounds`). The chat completions are our
+        // own card instead (`completion_card_overlay`), driven from `InputEvent`.
         let input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx)
+            InputState::new(window, cx)
                 .auto_grow(1, 4)
                 .submit_on_enter(true)
-                .placeholder("Type @quark a message…  (Enter to send · Shift+Enter for newline)");
-            let team_quarks = team
-                .quarks
-                .iter()
-                .map(|q| (q.id.0.clone(), q.display_name.clone()))
-                .collect::<Vec<_>>();
-            state.lsp.completion_provider = Some(std::rc::Rc::new(
-                crate::completions::ChatCompletionProvider {
-                    quarks: team_quarks,
-                    files: files_for_completion,
-                },
-            ));
-            state
+                .placeholder("Type @quark a message…  (Enter to send · Shift+Enter for newline)")
         });
         let _input_sub = cx.subscribe_in(&input, window, Self::on_input_submit);
 
@@ -525,6 +532,7 @@ impl Chamber {
             team,
             path,
             input,
+            completion: None,
             focus_handle,
             chat_tab: ChatTab::Chat,
             right_rail_tab: RightRailTab::Terminal,
@@ -1137,9 +1145,22 @@ impl Chamber {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Typing rebuilds the completion card from the live text; it is our own
+        // overlay, not the fork's LSP menu, so we drive it from the edit stream.
+        if let InputEvent::Change = event {
+            self.recompute_completion(cx);
+            cx.notify();
+            return;
+        }
         let InputEvent::PressEnter { shift, .. } = event else {
             return;
         };
+        // A live card claims Enter: it accepts the highlighted row instead of
+        // sending the message (Shift+Enter always means newline, never accept).
+        if !*shift && self.completion.is_some() {
+            self.accept_completion(window, cx);
+            return;
+        }
         if *shift {
             return;
         }
@@ -1209,6 +1230,130 @@ impl Chamber {
             .scroll_to_reveal_item(new_log_count.saturating_sub(1));
         cx.notify();
     }
+    /// Rebuild the completion card from the input's current text and cursor.
+    /// Sets `self.completion` to `None` when no `@`/`:`/`/` query is live.
+    fn recompute_completion(&mut self, cx: &mut Context<Self>) {
+        let state = self.input.read(cx);
+        let text = state.value().to_string();
+        let cursor = state.cursor();
+        let quarks: Vec<(String, Option<String>)> = self
+            .team
+            .quarks
+            .iter()
+            .map(|q| (q.id.0.clone(), q.display_name.clone()))
+            .collect();
+        let files = self.completion_files.borrow();
+        let result = crate::text::completion_candidates(&text, cursor, &quarks, files.as_slice());
+        drop(files);
+        self.completion = result.map(|c| CompletionCard {
+            start: c.start,
+            candidates: c.candidates,
+            selected: 0,
+        });
+    }
+
+    /// Move the card's highlight by `delta`, clamped to the list. No-op with no card.
+    fn move_completion_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if let Some(card) = &mut self.completion {
+            let len = card.candidates.len();
+            if len == 0 {
+                return;
+            }
+            let max = len as isize - 1;
+            card.selected = (card.selected as isize + delta).clamp(0, max) as usize;
+            cx.notify();
+        }
+    }
+
+    /// Accept the highlighted row: splice its `new_text` over `input[start..cursor]`
+    /// and put the caret just after it. Byte offsets throughout — `cursor()` and
+    /// `set_selected_range` are both documented UTF-8, and the cursor is clamped to a
+    /// char boundary first, so this cannot slice mid-character (the emoji crash class).
+    fn accept_completion(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(card) = self.completion.take() else {
+            return;
+        };
+        let Some(cand) = card.candidates.get(card.selected).or_else(|| card.candidates.first())
+        else {
+            cx.notify();
+            return;
+        };
+        let new_text = cand.new_text.clone();
+        let value = self.input.read(cx).value().to_string();
+        let mut cursor = self.input.read(cx).cursor().min(value.len());
+        while cursor > 0 && !value.is_char_boundary(cursor) {
+            cursor -= 1;
+        }
+        let start = card.start.min(cursor);
+        let new_value = format!("{}{}{}", &value[..start], new_text, &value[cursor..]);
+        let new_cursor = start + new_text.len();
+        self.input.update(cx, |state, cx| {
+            state.set_value(new_value, window, cx);
+            state.set_selected_range(new_cursor..new_cursor, cx);
+        });
+        cx.notify();
+    }
+
+    /// The completion card: rows floating just above the message box, spanning the
+    /// input's full width. It is a normal render-tree descendant — `.absolute()`
+    /// with `.bottom(100%)` inside the input area's `.relative()` wrapper — so it
+    /// draws *upward* and stays inside the window, unlike the fork's `deferred()`
+    /// menu that painted off the bottom edge (`completion-menu-draws-out-of-bounds`).
+    fn completion_card_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let card = self.completion.as_ref();
+        let mut list = v_flex()
+            .id("completion-card")
+            .absolute()
+            .bottom(gpui::relative(1.0))
+            .left_0()
+            .right_0()
+            .mb_2()
+            .occlude()
+            .max_h(px(280.0))
+            .overflow_y_scroll()
+            .p_1()
+            .gap_1()
+            .rounded_lg()
+            .bg(theme::bg_surface())
+            .border_1()
+            .border_color(theme::border());
+
+        if let Some(card) = card {
+            let sel = card.selected.min(card.candidates.len().saturating_sub(1));
+            for (i, cand) in card.candidates.iter().enumerate() {
+                let selected = i == sel;
+                let label = cand.label.clone();
+                let detail = cand.detail.clone();
+                list = list.child(
+                    div()
+                        .id(("completion-row", i))
+                        .flex()
+                        .justify_between()
+                        .items_center()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .when(selected, |s| s.bg(theme::bg_surface_raised()))
+                        .hover(|s| s.bg(theme::bg_surface_raised()))
+                        .child(div().text_sm().text_color(theme::text()).child(label))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child(detail),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if let Some(c) = this.completion.as_mut() {
+                                c.selected = i;
+                            }
+                            this.accept_completion(window, cx);
+                        })),
+                );
+            }
+        }
+        list
+    }
+
     fn handle_chat_command(
         &mut self,
         cmd: &str,
@@ -1900,6 +2045,34 @@ impl Chamber {
                 v_flex()
                     .flex_none()
                     .m_4()
+                    // Anchor for the completion card, which is `.absolute()` above.
+                    .relative()
+                    // The focused Input binds Up/Down/Escape at the deepest node, so
+                    // intercept those actions in the capture phase (ancestor-first)
+                    // while a card is open — move the highlight / close it instead of
+                    // moving the caret. Gated on `is_some()` so normal cursor movement
+                    // is untouched when there is no card (advisor's trap #1).
+                    .capture_action(cx.listener(|this, _: &MoveDown, _window, cx| {
+                        if this.completion.is_some() {
+                            this.move_completion_selection(1, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .capture_action(cx.listener(|this, _: &MoveUp, _window, cx| {
+                        if this.completion.is_some() {
+                            this.move_completion_selection(-1, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .capture_action(cx.listener(|this, _: &Escape, _window, cx| {
+                        if this.completion.take().is_some() {
+                            cx.notify();
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .when(self.completion.is_some(), |el| {
+                        el.child(self.completion_card_overlay(cx))
+                    })
                     .child(
                         h_flex()
                             .px_1()
