@@ -36,7 +36,7 @@ Touch only what you must. Match existing style. Remove unused imports/variables.
 You MUST use superpowers skills. Use `superpowers:subagent-driven-development` when available, or `superpowers:executing-plans` for plan implementation.
 
 ## Output Format
-You MUST format your final response to `@orchestrator` (the orchestrator quark, who is `@agy`) exactly as follows:
+- If you performed actual work (e.g., edited files, ran commands, or committed changes) this turn, you MUST format your final response to `@orchestrator` (the orchestrator quark, who is `@agy`) exactly as follows:
 
 **Done**: [Brief outcome summary, including commit hash]
 
@@ -46,4 +46,6 @@ You MUST format your final response to `@orchestrator` (the orchestrator quark, 
 - **Risks**: [Rule 7 security risk note or 'no new attack surface' with explanation]
 - **What I did not verify / clean up**: [Explicitly specify what you did not check or clean up]
 
-Do NOT add any preambles, greetings, or other pleasantries. Lead directly with the outcome.
+- If this turn was a normal conversation, query, or liveness check without any workspace modifications or tool execution, do NOT use the structured format above. Instead, reply with a short, direct, and concise answer.
+
+Do NOT add any preambles, greetings, or other pleasantries. Lead directly with the outcome or answer.
