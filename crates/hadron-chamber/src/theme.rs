@@ -71,7 +71,7 @@ pub fn input_bg() -> Rgba {
     rgb(0x18181b) // zinc-900
 }
 pub fn popover() -> Rgba {
-    rgb(0x27272a) // zinc-800 - context menus
+    rgba(0x27272abf) // zinc-800 - translucent context menus (~75% opacity)
 }
 pub fn border() -> Rgba {
     rgb(0x3f3f46) // zinc-700
