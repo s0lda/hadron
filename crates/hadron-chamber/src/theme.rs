@@ -6,13 +6,24 @@
 //! states land next), so callers reach for the named token, not a raw hex.
 #![allow(dead_code)]
 
-use gpui::{rgb, rgba, Rgba};
+use gpui::{linear_color_stop, linear_gradient, rgb, rgba, Background, Rgba};
 
 use hadron_lattice::QuarkState;
 
 // --- surfaces (darkest → raised) --- Zinc palette for tiered elevation.
 pub fn bg_base() -> Rgba {
     rgb(0x09090b) // zinc-950 - main workspace background
+}
+
+/// The window's background: `bg_elevated` with a faint top-down glint — a hair
+/// lighter at the very top, settling to the flat base by ~a third down. One home
+/// for the gradient so every surface that wants the same depth reads from here.
+pub fn window_glint() -> Background {
+    linear_gradient(
+        180.0,
+        linear_color_stop(rgb(0x202024), 0.0),
+        linear_color_stop(bg_elevated(), 0.34),
+    )
 }
 pub fn bg_elevated() -> Rgba {
     rgb(0x18181b) // zinc-900 - sidebars and tabs
