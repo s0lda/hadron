@@ -9,6 +9,10 @@ the most expensive thing you can produce.
 
 ---
 
+## Use Superpowers whenever you can.
+
+---
+
 ## 1. Prove it runs. Don't prove it compiles.
 
 "The code is correct" and "the code runs" are different claims, and passing tests
@@ -27,8 +31,8 @@ name what would have to call it. That sentence is not a failure; it is the
 result. Adding a file is never the whole job: something must reference it, or it
 never runs.
 
-*(`hadron-forge` passed 9 tests and had zero consumers. Both quarks reported it
-as live on the same day.)*
+_(`hadron-forge` passed 9 tests and had zero consumers. Both quarks reported it
+as live on the same day.)_
 
 ## 2. Reuse before you create.
 
@@ -42,7 +46,7 @@ not fit. "I didn't find anything" is only credible if you name where you looked.
 ## 3. One definition, one place (SSOT).
 
 A value, rule, or type has exactly one home. Copying it somewhere else creates
-drift, and a test that compares the two copies is a *guard*, not a source — it
+drift, and a test that compares the two copies is a _guard_, not a source — it
 tells you they diverged, after they diverged.
 
 This is about production code paths. Restating a literal inside a test assertion
@@ -120,7 +124,7 @@ It is an **index**, and the shape matters:
 - **A lesson that needs more than a line gets a note** — a separate file, named in the
   line. The engine does not load the notes; you open one yourself, on the turn its line
   turns out to matter. That is what keeps the index cheap while the detail stays exact:
-  the line says *agy's turns die at 29 minutes*, the note says **where** the constant
+  the line says _agy's turns die at 29 minutes_, the note says **where** the constant
   is and **why** it is set that way.
 
 So when you learn something that cost you effort, **append a line to the index** before
@@ -131,8 +135,23 @@ mistake worth not repeating.
 Do not record what the code already says — it will still say it tomorrow. Record what
 you could only learn by getting it wrong.
 
+If you writing a lesson that is contradicted by a previous lesson, **append a new line** instead of editing the old one.
+The index is a log, not a wiki. The old lesson is still true for the turns that read it,
+and the new lesson is true for the turns that read it after you wrote it.
+The index is a **ledger**, not a notebook. If you need to change a lesson, write a new one and say what it replaces.
+If you need to delete a lesson, write a new one and say what it replaces, and mark the old one as **deprecated**.
+
 A swarm where nobody writes anything down is a swarm that is exactly as good on its
 hundredth day as its first.
+
+## 10 Working with the codebase
+
+Simplicity first. Minimum code that solves the problem. Nothing speculative.
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+If you write 200 lines and it could be 50, rewrite it.
+Touch only what you must. Clean up only your own mess.
+Match existing style, even if you'd do it differently.
+Remove imports/variables/functions that YOUR changes made unused.
 
 ---
 
