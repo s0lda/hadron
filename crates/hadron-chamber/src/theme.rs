@@ -89,6 +89,10 @@ pub fn presence(state: QuarkState) -> Rgba {
     }
 }
 
+pub fn presence_disabled() -> Rgba {
+    rgb(0x71717a) // zinc-500 gray
+}
+
 /// One-word presence label matching [`presence`], for tooltips/subtitles.
 pub fn presence_label(state: QuarkState) -> &'static str {
     match state {
