@@ -780,6 +780,11 @@ impl AcpQuark {
         let mode = turn.mode;
         let prompt = crate::adapter::prompt::build(&turn, &self.id);
 
+        // If the chat history has been cleared/reset, discard the resident session so the agent boots fresh.
+        if turn.field_window.is_empty() {
+            self.session = None;
+        }
+
         // Boot on the first turn, in the quark's own worktree, and keep it.
         if self.session.is_none() {
             self.session = Some(Self::boot(

@@ -209,6 +209,7 @@ pub fn completion_candidates(
         }
         '/' => {
             let cmds = [
+                ("clear", "Archive and clear the current chat history"),
                 ("team-brainstorm", "Kick off brainstorming with the team"),
                 ("toggle-roster", "Toggle the Roster sidebar"),
                 ("toggle-inspector", "Toggle the Inspector sidebar"),

@@ -1447,6 +1447,34 @@ impl Chamber {
                 self.toggle_rail(Rail::Inspector, _window, cx);
                 true
             }
+            "clear" => {
+                let session_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+                let hadron_dir = match self.path.parent() {
+                    Some(p) => p.to_path_buf(),
+                    None => std::path::PathBuf::from(".hadron"),
+                };
+                let session_dir = hadron_dir.join("sessions").join(&session_id);
+                if let Err(e) = std::fs::create_dir_all(&session_dir) {
+                    eprintln!("chamber: failed to create session archive directory: {e}");
+                } else {
+                    let archive_path = session_dir.join("field.jsonl");
+                    if let Err(e) = std::fs::copy(&self.path, &archive_path) {
+                        eprintln!("chamber: failed to archive field.jsonl: {e}");
+                    } else if let Err(e) = std::fs::write(&self.path, "") {
+                        eprintln!("chamber: failed to clear field.jsonl: {e}");
+                    } else {
+                        let events = io::read_events(&self.path).unwrap_or_default();
+                        self.view = model::project_with_team(&events, &self.team);
+                        self.chat_message_ixs.clear();
+                        self.chat_list_state.reset(0);
+                        for scroll in &self.chat_scrolls {
+                            scroll.scroll_to_bottom();
+                        }
+                        cx.notify();
+                    }
+                }
+                true
+            }
             "team-brainstorm" => {
                 let body = format!("@team Let's brainstorm. {args}").trim().to_string();
                 let ev = Event::new(Actor::Human, None, Kind::Message { body });
@@ -2634,26 +2662,6 @@ impl Chamber {
 
         let content = match selected {
             RightRailTab::Terminal => {
-                let risk_notice = v_flex()
-                    .p_2()
-                    .gap_1()
-                    .bg(theme::danger().opacity(0.1))
-                    .border_1()
-                    .border_color(theme::danger().opacity(0.5))
-                    .rounded_md()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(div().text_xs().font_weight(gpui::FontWeight::BOLD).text_color(theme::danger()).child("⚠️ RISK: Arbitrary Process Execution"))
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme::text_secondary())
-                            .child("This terminal executes subprocesses under the authority of the host user. To prevent unauthorized execution when Bypass is disabled, all quark-issued commands must pause and require explicit human approval via the interaction gate.")
-                    );
-
                 // The live grid: one styled row per terminal line, each line a
                 // few coalesced same-colour runs (not one element per cell — this
                 // box CPU-rasterises every frame). The block cursor is an inverted
@@ -2730,8 +2738,6 @@ impl Chamber {
                 v_flex()
                     .flex_1()
                     .p_3()
-                    .gap_3()
-                    .child(risk_notice)
                     .child(screen)
                     .into_any_element()
             }
