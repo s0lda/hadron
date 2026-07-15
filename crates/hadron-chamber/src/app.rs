@@ -4411,7 +4411,11 @@ fn drag_region(id: &'static str) -> impl IntoElement {
 /// tooltip on hover.
 fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -> impl IntoElement {
     let name = id.name.clone();
-    let label = theme::presence_label(r.state);
+    let label = if r.enabled {
+        theme::presence_label(r.state)
+    } else {
+        "disabled"
+    };
     let tip: SharedString = format!("{name} — {label}").into();
 
     // Legibility line: "provider · model" when the seat is in team.json, else
@@ -4463,8 +4467,12 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
             .into_any_element()
     };
 
-    let is_excited = r.state == hadron_lattice::QuarkState::Excited;
-    let dot_color = theme::presence(r.state);
+    let is_excited = r.enabled && r.state == hadron_lattice::QuarkState::Excited;
+    let dot_color = if r.enabled {
+        theme::presence(r.state)
+    } else {
+        theme::presence_disabled()
+    };
 
     let dot = div()
         .absolute()
@@ -4502,7 +4510,11 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
             div()
                 .relative()
                 .mt_1()
-                .child(identity_avatar(id, 28.0))
+                .child(
+                    div()
+                        .child(identity_avatar(id, 28.0))
+                        .map(|el| if r.enabled { el } else { el.opacity(0.6) })
+                )
                 .child(dot),
         )
         .child(
@@ -4513,7 +4525,7 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
                 .child(
                     div()
                         .text_sm()
-                        .text_color(theme::text())
+                        .text_color(if r.enabled { theme::text() } else { theme::text_muted() })
                         .truncate()
                         .child(name),
                 )
@@ -4521,7 +4533,7 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
                     div()
                         .text_xs()
                         .text_color(theme::text())
-                        .opacity(0.8)
+                        .opacity(if r.enabled { 0.8 } else { 0.5 })
                         .truncate()
                         .child(detail_1),
                 )
@@ -4529,7 +4541,7 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
                     div()
                         .text_xs()
                         .text_color(theme::text())
-                        .opacity(0.7)
+                        .opacity(if r.enabled { 0.7 } else { 0.4 })
                         .truncate()
                         .child(detail_2),
                 ),
