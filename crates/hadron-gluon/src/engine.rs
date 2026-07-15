@@ -780,6 +780,17 @@ impl Engine {
         let memory_path = memory_index_path(&workspace_root);
         let (memory, memory_truncated) = read_memory_index(&memory_path);
 
+        let live_dir = hadron_lattice::live::live_dir(&self.field_path);
+        let mut live_activities = Vec::new();
+        let now = chrono::Utc::now();
+        for c in &self.roster {
+            if c.id != *target {
+                if let Some(act) = hadron_lattice::live::read(&live_dir, &c.id, now) {
+                    live_activities.push(act);
+                }
+            }
+        }
+
         Projection {
             memory,
             memory_truncated,
@@ -790,6 +801,7 @@ impl Engine {
             available_invariants,
             nucleus_digest: self.nucleus_digest.clone(),
             roster: self.roster.clone(),
+            live_activities,
             // NOT `events.to_vec()`. The whole field is unbounded; it grew past the
             // kernel's 128 KiB single-argv limit and killed every agy turn with
             // E2BIG. Keep the most recent events that fit the byte budget.
