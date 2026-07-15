@@ -761,6 +761,12 @@ impl Quark for AcpQuark {
     fn energy(&self) -> EnergyState {
         EnergyState::Available
     }
+    /// An ACP quark is a **resident** session: the agent is booted once and keeps the
+    /// conversation across turns, so the skill library injected on the first turn stays
+    /// in its context (and is a prompt-cache read thereafter).
+    fn resident(&self) -> bool {
+        true
+    }
 
     /// The turn ends the moment this returns, however it returns. Clearing the live
     /// feed here — rather than on the happy path inside [`AcpQuark::run_turn`] — is

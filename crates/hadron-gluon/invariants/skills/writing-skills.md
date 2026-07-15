@@ -17,7 +17,25 @@ You write test cases (pressure scenarios with subagents), watch them fail (basel
 
 **REQUIRED BACKGROUND:** You MUST understand superpowers:test-driven-development before using this skill. That skill defines the fundamental RED-GREEN-REFACTOR cycle. This skill adapts TDD to documentation.
 
-**Official guidance:** For Anthropic's official skill authoring best practices, see anthropic-best-practices.md. This document provides additional patterns and guidelines that complement the TDD-focused approach in this skill.
+**Anthropic authoring principles** (they complement the TDD approach here):
+
+- **Concise is key.** The context window is a public good; a skill shares it
+  with the system prompt, history, and the request. Assume the agent is
+  already smart — only add context it doesn't have. Challenge each sentence:
+  "does the agent need this? does this paragraph justify its token cost?"
+- **Set appropriate degrees of freedom.** Match specificity to the task's
+  fragility. High freedom (loose text steps) when many approaches are valid
+  and context decides. Low freedom (an exact command, "do not modify") when
+  the operation is fragile and consistency is critical. Think of it as a
+  narrow bridge with cliffs (exact guardrails) vs. an open field (general
+  direction, trust the agent).
+- **Consistent terminology.** Pick one term per concept and use it
+  throughout ("field" everywhere, never "field/box/element/control").
+- **Avoid time-sensitive information.** Don't write "before August 2025, use
+  X"; state the current method, and relegate deprecated approaches to an "old
+  patterns" note.
+- **Test across the models you'll run it on.** A skill is an addition to a
+  model; what works for a strong model may under-specify for a weaker one.
 
 ## What is a Skill?
 
@@ -313,13 +331,10 @@ digraph when_flowchart {
 - Linear instructions → Numbered lists
 - Labels without semantic meaning (step1, helper2)
 
-See `graphviz-conventions.dot` in this directory for graphviz style rules.
-
-**Visualizing for your human partner:** Use `render-graphs.js` in this directory to render a skill's flowcharts to SVG:
-```bash
-./render-graphs.js ../some-skill           # Each diagram separately
-./render-graphs.js ../some-skill --combine # All diagrams in one SVG
-```
+Write flowcharts as inline `dot` code blocks. Use shapes semantically:
+`diamond` for decisions, `box` for actions/processes, `ellipse` for
+start/end states. Keep labels meaningful (what the step does), never generic
+(`step1`, `helper2`).
 
 ## Code Examples
 
@@ -479,7 +494,24 @@ Skills that enforce discipline (like TDD) need to resist rationalization. Agents
 
 **Scope:** this toolkit is for discipline failures — an agent that knows the rule and skips it under pressure. For wrong-shaped output or omitted elements, prohibition-based bulletproofing backfires; use the forms in Match the Form to the Failure instead.
 
-**Psychology note:** Understanding WHY persuasion techniques work helps you apply them systematically. See persuasion-principles.md for research foundation (Cialdini, 2021; Meincke et al., 2025) on authority, commitment, scarcity, social proof, and unity principles.
+**Psychology note:** LLMs respond to the same persuasion principles as humans
+(Cialdini, 2021; Meincke et al., 2025 found persuasion techniques more than
+doubled compliance, 33% → 72%). Apply them deliberately — not to manipulate,
+but to ensure critical practices survive pressure:
+
+| Principle | How it works in a skill | Use for |
+|-----------|-------------------------|---------|
+| **Authority** | Imperative, non-negotiable language: "YOU MUST", "Never", "No exceptions" — removes decision fatigue | Discipline/safety-critical rules |
+| **Commitment** | Require announcements, force explicit A/B/C choices, track with todos | Making sure the skill is actually followed |
+| **Scarcity** | Time-bind the action: "Before proceeding", "IMMEDIATELY after X" | Preventing "I'll do it later" |
+| **Social proof** | State the norm and the failure mode: "X without Y = failure. Every time." | Universal practices, common failures |
+| **Unity** | Collaborative framing: "we're colleagues", "our codebase", shared goals | Collaborative/honest-feedback workflows |
+
+**Avoid** Reciprocity (feels manipulative, rarely needed) and **Liking**
+(breeds sycophancy — conflicts with honest feedback). Don't stack all of
+them; discipline skills usually want Authority + Commitment + Social Proof.
+The ethical test: would this technique serve the user's genuine interests if
+they fully understood it?
 
 ### Close Every Loophole Explicitly
 
@@ -584,11 +616,31 @@ Full pressure-scenario runs are the final gate, but they are slow and expensive 
 
 Micro-tests verify wording; they do not replace pressure scenarios for discipline skills.
 
-**Testing methodology:** See [testing-skills-with-subagents.md](testing-skills-with-subagents.md) for the complete testing methodology:
-- How to write pressure scenarios
-- Pressure types (time, sunk cost, authority, exhaustion)
-- Plugging holes systematically
-- Meta-testing techniques
+**Pressure-scenario methodology** (for discipline skills):
+
+- **Write scenarios that make the agent WANT to violate.** Academic ("what
+  does the skill say?") just gets a recitation. A good scenario forces an
+  explicit A/B/C choice under real constraints: concrete options, specific
+  times and consequences, real file paths, "what do you DO?" (not "should"),
+  no easy out ("I'd ask the human" without choosing).
+- **Combine 3+ pressures.** Agents resist one, break under several. Pressure
+  types: **time** (deadline, deploy window), **sunk cost** (hours of work,
+  "waste" to delete), **authority** (senior says skip it), **economic** (job,
+  company at stake), **exhaustion** (end of day), **social** (looking
+  dogmatic), **pragmatic** ("being pragmatic vs. dogmatic").
+- **Plug holes systematically.** For every new rationalization the agent
+  produces: add an explicit negation in the rules, a row in the
+  rationalization table, a red-flag entry, and a violation symptom in the
+  description. Then re-test the same scenario.
+- **Meta-test when GREEN won't hold.** If the agent read the skill and still
+  chose wrong, ask it: "how could the skill have been written to make it
+  crystal clear that A was the only acceptable answer?" Three answers, three
+  fixes: "it was clear, I ignored it" → add a stronger foundational principle
+  ("violating the letter is violating the spirit"); "it should have said X" →
+  add X verbatim; "I didn't see section Y" → make Y more prominent.
+- **Bulletproof looks like:** the agent picks the right option under maximum
+  pressure, cites the skill's sections, and acknowledges the temptation but
+  follows the rule anyway.
 
 ## Anti-Patterns
 
