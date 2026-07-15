@@ -39,7 +39,7 @@ use crate::config::{self, ChamberPrefs, Identity};
 use crate::model::{self, ChamberView, MessageRow, RosterRow};
 use crate::theme;
 
-actions!(chamber, [TogglePalette, CycleMode]);
+actions!(chamber, [CycleMode]);
 
 /// Key-dispatch context for the chamber's window-level actions.
 const KEY_CONTEXT: &str = "Chamber";
@@ -141,36 +141,7 @@ fn identity_avatar(id: &ResolvedIdentity, diameter: f32) -> gpui::AnyElement {
     }
 }
 
-/// Commands offered by the Ctrl+Shift+P palette. v1: the two rail toggles.
-#[derive(Clone, Copy)]
-enum PaletteCmd {
-    ToggleRoster,
-    ToggleInspector,
-}
 
-impl PaletteCmd {
-    const ALL: [PaletteCmd; 2] = [PaletteCmd::ToggleRoster, PaletteCmd::ToggleInspector];
-
-    /// Label reflects the current rail state, so the verb matches what will happen.
-    fn label(self, prefs: &ChamberPrefs) -> &'static str {
-        match self {
-            PaletteCmd::ToggleRoster => {
-                if prefs.roster_collapsed {
-                    "Show Quarks rail"
-                } else {
-                    "Hide Quarks rail"
-                }
-            }
-            PaletteCmd::ToggleInspector => {
-                if prefs.inspector_collapsed {
-                    "Show Terminal"
-                } else {
-                    "Hide Terminal"
-                }
-            }
-        }
-    }
-}
 
 /// The three views over the field, selected by the chat column's segmented tabs.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -377,13 +348,6 @@ struct Chamber {
     /// A debounced window-bounds save is already in flight, so a drag (which
     /// re-renders every frame) coalesces into one write instead of one per frame.
     bounds_save_pending: bool,
-    /// Whether the Ctrl+Shift+P command palette overlay is showing.
-    palette_open: bool,
-    /// The palette's filter box.
-    palette_input: Entity<InputState>,
-    /// Which filtered command the palette has highlighted (Up/Down move it,
-    /// Enter runs it). Reset to 0 on open and whenever the query changes.
-    palette_selected: usize,
     /// Whether the Settings overlay is showing, and which identity it edits.
     settings_open: bool,
     settings_target: SettingsTarget,
@@ -395,7 +359,6 @@ struct Chamber {
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
-    _palette_sub: Subscription,
     _settings_subs: [Subscription; 2],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
@@ -455,12 +418,6 @@ impl Chamber {
 
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
-        let palette_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .submit_on_enter(true)
-                .placeholder("Run a command…")
-        });
-        let _palette_sub = cx.subscribe_in(&palette_input, window, Self::on_palette_submit);
 
         let settings_name = cx.new(|cx| InputState::new(window, cx).placeholder("Display name"));
         let settings_path = cx.new(|cx| InputState::new(window, cx).placeholder("/path/to/image.png"));
@@ -571,9 +528,6 @@ impl Chamber {
             chat_scrolls,
             parsed_markdown: std::cell::RefCell::new(std::collections::HashMap::new()),
             bounds_save_pending: false,
-            palette_open: false,
-            palette_input,
-            palette_selected: 0,
             settings_open: false,
             settings_target: SettingsTarget::Human,
             settings_name,
@@ -581,7 +535,6 @@ impl Chamber {
             settings_effort,
             settings_mode_config,
             _input_sub,
-            _palette_sub,
             _settings_subs,
             providers,
             wizard_state: WizardState::None,
@@ -599,26 +552,7 @@ impl Chamber {
         }
     }
 
-    /// Toggle the command palette (Ctrl+Shift+P, or the titlebar bar). Opening
-    /// clears + focuses the filter box; closing returns focus to the root.
-    fn on_toggle_palette(
-        &mut self,
-        _: &TogglePalette,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.palette_open = !self.palette_open;
-        if self.palette_open {
-            self.palette_selected = 0;
-            self.palette_input.update(cx, |state, cx| {
-                state.set_value("", window, cx);
-                state.focus(window, cx);
-            });
-        } else {
-            window.focus(&self.focus_handle, cx);
-        }
-        cx.notify();
-    }
+
 
     /// Drive the live terminal each tick: spawn the PTY lazily when the Terminal
     /// tab is open, size it to the measured screen, and repaint only when the
@@ -708,157 +642,7 @@ impl Chamber {
         cx.notify();
     }
 
-    /// React to the palette filter: Enter runs the highlighted command; typing
-    /// re-filters, so the highlight resets to the top match.
-    fn on_palette_submit(
-        &mut self,
-        input: &Entity<InputState>,
-        event: &InputEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            InputEvent::PressEnter { .. } => {
-                let query = input.read(cx).value().to_lowercase();
-                let cmds = self.filtered_commands(&query);
-                if let Some(&cmd) = cmds.get(self.palette_selected).or_else(|| cmds.first()) {
-                    self.run_command(cmd, window, cx);
-                }
-            }
-            InputEvent::Change => {
-                self.palette_selected = 0;
-                cx.notify();
-            }
-            _ => {}
-        }
-    }
 
-    /// Move the palette highlight by `delta`, clamped to the filtered list.
-    fn move_palette_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let query = self.palette_input.read(cx).value().to_lowercase();
-        let len = self.filtered_commands(&query).len();
-        if len == 0 {
-            self.palette_selected = 0;
-            return;
-        }
-        let max = len as isize - 1;
-        self.palette_selected = (self.palette_selected as isize + delta).clamp(0, max) as usize;
-        cx.notify();
-    }
-
-    /// Commands whose label contains the (lowercased) query.
-    fn filtered_commands(&self, query: &str) -> Vec<PaletteCmd> {
-        PaletteCmd::ALL
-            .into_iter()
-            .filter(|c| c.label(&self.prefs).to_lowercase().contains(query))
-            .collect()
-    }
-
-    /// Execute a palette command and dismiss the overlay.
-    fn run_command(&mut self, cmd: PaletteCmd, window: &mut Window, cx: &mut Context<Self>) {
-        match cmd {
-            PaletteCmd::ToggleRoster => self.toggle_rail(Rail::Roster, window, cx),
-            PaletteCmd::ToggleInspector => self.toggle_rail(Rail::Inspector, window, cx),
-        }
-        self.palette_open = false;
-        window.focus(&self.focus_handle, cx);
-        cx.notify();
-    }
-
-    /// The command-palette overlay: a dim backdrop (click to dismiss) behind a
-    /// centered box with the filter input and the matching commands.
-    fn palette_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let query = self.palette_input.read(cx).value().to_lowercase();
-        let cmds = self.filtered_commands(&query);
-        // The highlighted row (Up/Down move it, Enter runs it), clamped in case
-        // the filtered list shrank since the selection last moved.
-        let sel = self.palette_selected.min(cmds.len().saturating_sub(1));
-
-        let mut list = v_flex().gap_1().mt_2();
-        if cmds.is_empty() {
-            list = list.child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .text_sm()
-                    .text_color(theme::text_muted())
-                    .child("no matching command"),
-            );
-        } else {
-            for (i, cmd) in cmds.into_iter().enumerate() {
-                let selected = i == sel; // the Enter target
-                list = list.child(
-                    div()
-                        .id(("palette-cmd", i))
-                        .px_2()
-                        .py_1p5()
-                        .rounded_md()
-                        .bg(if selected {
-                            theme::bg_surface_raised()
-                        } else {
-                            theme::bg_surface()
-                        })
-                        .hover(|s| s.bg(theme::bg_surface_raised()))
-                        .active(|s| s.opacity(0.8))
-                        .child(cmd.label(&self.prefs).to_string())
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.run_command(cmd, window, cx)
-                        })),
-                );
-            }
-        }
-
-        div()
-            .id("palette-backdrop")
-            .absolute()
-            .inset_0()
-            .flex()
-            // Column so items_center handles the horizontal centering and the
-            // card sits at a fixed top offset — deterministic, not leaning on the
-            // default stretch/align that was dropping it to the window's foot.
-            .flex_col()
-            .items_center()
-            .justify_start()
-            .bg(rgba(0x00000066))
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.palette_open = false;
-                window.focus(&this.focus_handle, cx);
-                cx.notify();
-            }))
-            .child(
-                v_flex()
-                    .occlude()
-                    // The focused Input binds Up/Down/Escape (to cursor moves /
-                    // clear) at the deepest node, so an ancestor *key* binding
-                    // can't outrank it. Intercept the resulting Input *actions*
-                    // in the capture phase — which runs ancestor-first, before
-                    // the Input's own bubble handler — and stop them there. Enter
-                    // still flows to the Input's submit (see on_palette_submit).
-                    .capture_action(cx.listener(|this, _: &MoveDown, _window, cx| {
-                        this.move_palette_selection(1, cx);
-                        cx.stop_propagation();
-                    }))
-                    .capture_action(cx.listener(|this, _: &MoveUp, _window, cx| {
-                        this.move_palette_selection(-1, cx);
-                        cx.stop_propagation();
-                    }))
-                    .capture_action(cx.listener(|this, _: &Escape, window, cx| {
-                        this.palette_open = false;
-                        window.focus(&this.focus_handle, cx);
-                        cx.notify();
-                        cx.stop_propagation();
-                    }))
-                    .mt(px(96.0))
-                    .w(px(480.0))
-                    .p_2()
-                    .rounded_lg()
-                    .bg(theme::bg_elevated())
-                    .border_1()
-                    .border_color(theme::border())
-                    .child(Input::new(&self.palette_input))
-                    .child(list),
-            )
-    }
 
     fn info_panel_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let qid = self.info_panel.as_ref().unwrap();
@@ -1645,7 +1429,6 @@ impl Render for Chamber {
         let titlebar = self.titlebar(window, cx);
         let body = self.body(cx);
         let status = self.status_bar(cx);
-        let overlay = self.palette_open.then(|| self.palette_overlay(cx));
         let settings = self.settings_open.then(|| self.settings_overlay(cx));
         let info = self
             .info_panel
@@ -1656,7 +1439,6 @@ impl Render for Chamber {
         let content = v_flex()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::on_toggle_palette))
             .on_action(cx.listener(|this, _: &CycleMode, _, cx| this.cycle_global_mode(cx)))
             .relative()
             .size_full()
@@ -1673,7 +1455,6 @@ impl Render for Chamber {
             .child(titlebar)
             .child(body)
             .child(status)
-            .children(overlay)
             .children(settings)
             .children(info)
             .children(about);
@@ -1685,38 +1466,7 @@ impl Render for Chamber {
 }
 
 impl Chamber {
-    /// Our own titlebar: a centered command bar (Ctrl+Shift+P), draggable side
-    /// regions, and custom min/max/close controls with *circular* hover — Zed-like,
-    /// and a circle can't poke a square corner past the rounded frame.
     fn titlebar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let command_bar = h_flex()
-            .id("command-bar")
-            .items_center()
-            .gap_3()
-            .my_2()
-            .px_3()
-            .py_1p5()
-            .w(px(380.0))
-            .rounded_md()
-            .bg(theme::bg_base()) // darker than the titlebar → a recessed search field
-            .text_sm()
-            .text_color(theme::text_muted())
-            .hover(|s| s.bg(theme::bg_surface()))
-            .active(|s| s.opacity(0.85))
-            // Don't let a press on the bar start a window move.
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(div().child("Run a command…"))
-            .child(
-                div()
-                    .ml_auto()
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child("Ctrl ⇧ P"),
-            )
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.on_toggle_palette(&TogglePalette, window, cx);
-            }));
-
         let controls = h_flex()
             .items_center()
             .gap_1()
@@ -1752,15 +1502,13 @@ impl Chamber {
                     .pl(px(8.0))
                     .child(menu_button(&cx.entity())),
             )
-            .child(drag_region("drag-l"))
-            .child(command_bar)
+            .child(drag_region("drag-c"))
             .child(
                 h_flex()
-                    .flex_1()
+                    .flex_shrink_0()
                     .h_full()
                     .items_center()
                     .justify_end()
-                    .child(drag_region("drag-r"))
                     .child(controls),
             )
     }
@@ -4403,18 +4151,10 @@ fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
         .ghost()
         .icon(Icon::new(IconName::Menu).small())
         .dropdown_menu(move |menu, _, _| {
-            let palette = view.clone();
             let settings = view.clone();
             let folder = view.clone();
             let about = view.clone();
             menu.item(
-                PopupMenuItem::new("Command Palette…").on_click(move |_, window, cx| {
-                    palette.update(cx, |this, cx| {
-                        this.on_toggle_palette(&TogglePalette, window, cx)
-                    });
-                }),
-            )
-            .item(
                 PopupMenuItem::new("Settings…").on_click(move |_, window, cx| {
                     settings.update(cx, |this, cx| this.open_settings(window, cx));
                 }),
@@ -5095,8 +4835,6 @@ pub fn run(field_path: Option<String>) {
                 "Inter, Segoe UI, sans-serif, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
         }
         cx.bind_keys([
-            KeyBinding::new("ctrl-shift-p", TogglePalette, Some(KEY_CONTEXT)),
-            KeyBinding::new("cmd-shift-p", TogglePalette, Some(KEY_CONTEXT)),
             KeyBinding::new("shift-tab", CycleMode, Some(KEY_CONTEXT)),
         ]);
 

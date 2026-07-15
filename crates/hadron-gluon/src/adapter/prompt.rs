@@ -41,6 +41,11 @@ fn render_event_line(from: &Actor, to: &Option<QuarkId>, body: &str) -> String {
 pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     let mut p = String::new();
 
+    p.push_str(
+        "# CRITICAL DIRECTIVE: YOU MUST USE SUPERPOWERS AND FOLLOW THE STANDARD MODEL\n\
+         You are a quark in the hadron chamber. You MUST obey the Standard Model invariants and use the Superpowers skills (such as `superpowers:subagent-driven-development` or `superpowers:executing-plans`) to plan and execute tasks. Do NOT ignore the invariants under any circumstances.\n\n"
+    );
+
     // 0. Identity — which quark is being excited. A multi-addressee human
     // message hands the SAME text to each named quark, so the model must know
     // its own handle to act on only its part.
