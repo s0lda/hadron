@@ -57,6 +57,19 @@ const CHAT_MIN: f32 = 360.0;
 /// Corner radius for floating panels/containers on the unified canvas.
 const INNER_RADIUS: Pixels = px(12.0);
 
+/// Terminal grid metrics: the render font size and one cell's width/height for
+/// Cascadia Code at that size. The pump loop divides the measured screen by
+/// these to pick the PTY's columns/rows, so they must track the values used in
+/// the grid render. (Cascadia's advance is ~0.6em; line height ~1.3em.)
+const TERM_FONT: f32 = 13.0;
+const TERM_CELL_W: f32 = 7.8;
+const TERM_CELL_H: f32 = 17.0;
+
+/// Pack an `(r, g, b)` triple into the `0xRRGGBB` gpui [`gpui::rgb`] expects.
+fn pack_rgb((r, g, b): (u8, u8, u8)) -> u32 {
+    ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+}
+
 /// The two collapsible side rails.
 #[derive(Clone, Copy)]
 enum Rail {
@@ -390,14 +403,16 @@ struct Chamber {
     completion_files: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     file_tree_open: Option<(String, String)>,
     file_tree_expanded: std::collections::HashSet<String>,
-    terminal_history: Vec<(String, String, String)>,
-    terminal_input: Entity<InputState>,
-    _terminal_sub: Subscription,
-    terminal: Option<crate::sys::Terminal>,
+    terminal: Option<crate::pty::PtyTerminal>,
+    /// Keyboard focus for the terminal grid — keystrokes flow to the PTY only
+    /// while this holds focus.
+    terminal_focus: FocusHandle,
+    /// The terminal screen's measured pixel size, written by a paint-time canvas
+    /// probe and read by the pump loop to size the PTY to fit.
+    terminal_px: std::rc::Rc<std::cell::Cell<Option<(f32, f32)>>>,
     info_panel: Option<String>,
     /// The About dialog, opened from the app menu.
     about_open: bool,
-    terminal_scroll: ScrollHandle,
     file_tree_scroll: ScrollHandle,
     file_tree_open_scroll: ScrollHandle,
 }
@@ -478,6 +493,23 @@ impl Chamber {
         })
         .detach();
 
+        // Terminal pump: while the Terminal tab holds a live PTY, size it to the
+        // measured screen and repaint when new output arrives. ~30fps, but does
+        // nothing (and forces no frame) when the terminal is closed or idle — the
+        // software rasteriser only pays for real output.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(33))
+                .await;
+            if this
+                .update(cx, |chamber, cx| chamber.pump_terminal(cx))
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+
         // Precompute the message indices for the virtualized chat.
         let chat_message_ixs: Vec<usize> = view
             .messages
@@ -507,13 +539,6 @@ impl Chamber {
             ScrollHandle::new(),
         ];
         chat_scrolls[0].scroll_to_bottom(); // Chat tab
-        let terminal_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .auto_grow(1, 4)
-                .submit_on_enter(true)
-                .placeholder("$ command...")
-        });
-        let _terminal_sub = cx.subscribe_in(&terminal_input, window, Self::on_terminal_submit);
         let providers: Vec<ConfiguredQuark> = team
             .quarks
             .iter()
@@ -564,13 +589,11 @@ impl Chamber {
             completion_files,
             file_tree_open: None,
             file_tree_expanded: std::collections::HashSet::new(),
-            terminal_history: Vec::new(),
-            terminal_input,
-            _terminal_sub,
             terminal: None,
+            terminal_focus: cx.focus_handle(),
+            terminal_px: std::rc::Rc::new(std::cell::Cell::new(None)),
             info_panel: None,
             about_open: false,
-            terminal_scroll: ScrollHandle::new(),
             file_tree_scroll: ScrollHandle::new(),
             file_tree_open_scroll: ScrollHandle::new(),
         }
@@ -597,44 +620,92 @@ impl Chamber {
         cx.notify();
     }
 
-    fn on_terminal_submit(
+    /// Drive the live terminal each tick: spawn the PTY lazily when the Terminal
+    /// tab is open, size it to the measured screen, and repaint only when the
+    /// child has produced new output (an idle terminal forces no frames).
+    fn pump_terminal(&mut self, cx: &mut Context<Self>) {
+        if self.right_rail_tab != RightRailTab::Terminal || self.prefs.inspector_collapsed {
+            return;
+        }
+        // Translate the last painted screen size into columns/rows (default until
+        // the first frame has measured it).
+        let (cols, rows) = match self.terminal_px.get() {
+            Some((w, h)) => (
+                ((w / TERM_CELL_W).floor() as usize).max(2),
+                ((h / TERM_CELL_H).floor() as usize).max(2),
+            ),
+            None => (80, 24),
+        };
+        if self.terminal.is_none() {
+            let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+            if let Ok(term) = crate::pty::PtyTerminal::new(&root, cols, rows) {
+                self.terminal = Some(term);
+                cx.notify();
+            }
+            return;
+        }
+        if let Some(term) = &mut self.terminal {
+            term.resize(cols, rows);
+            if term.take_dirty() {
+                cx.notify();
+            }
+        }
+    }
+
+    /// Translate a keystroke into the bytes a TTY expects and stream them to the
+    /// child. Covers the printable range, the essential control keys, Ctrl+letter
+    /// control codes, and the arrow/nav escape sequences. (Function keys, mouse
+    /// reporting, and the kitty keyboard protocol are not wired yet.)
+    fn on_terminal_key(
         &mut self,
-        input: &Entity<InputState>,
-        event: &InputEvent,
-        window: &mut Window,
+        event: &gpui::KeyDownEvent,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let InputEvent::PressEnter { .. } = event {
-            let cmd = input.read(cx).value().trim().to_string();
-            if cmd.is_empty() {
-                return;
-            }
-            input.update(cx, |state, cx| state.set_value("", window, cx));
-
-            let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-
-            if self.terminal.is_none() {
-                match crate::sys::Terminal::new(&repo_root) {
-                    Ok(term) => self.terminal = Some(term),
-                    Err(err) => {
-                        self.terminal_history.push((String::new(), cmd, err));
-                        cx.notify();
+        let Some(term) = &mut self.terminal else {
+            return;
+        };
+        let ks = &event.keystroke;
+        let m = &ks.modifiers;
+        let bytes: Vec<u8> = match ks.key.as_str() {
+            "enter" => vec![b'\r'],
+            "backspace" => vec![0x7f],
+            "tab" => vec![b'\t'],
+            "escape" => vec![0x1b],
+            "space" => vec![b' '],
+            "up" => vec![0x1b, b'[', b'A'],
+            "down" => vec![0x1b, b'[', b'B'],
+            "right" => vec![0x1b, b'[', b'C'],
+            "left" => vec![0x1b, b'[', b'D'],
+            "home" => vec![0x1b, b'[', b'H'],
+            "end" => vec![0x1b, b'[', b'F'],
+            "delete" => vec![0x1b, b'[', b'3', b'~'],
+            _ => {
+                if m.control && ks.key.len() == 1 {
+                    // Ctrl+letter → its control byte (Ctrl-C = 0x03, Ctrl-D = 0x04…).
+                    let c = ks.key.as_bytes()[0].to_ascii_lowercase();
+                    if c.is_ascii_lowercase() {
+                        vec![c - b'a' + 1]
+                    } else {
                         return;
                     }
+                } else if !m.control && !m.alt {
+                    // A printable key: prefer the platform-resolved character
+                    // (handles Shift and dead keys), else the single-char key.
+                    if let Some(ch) = &ks.key_char {
+                        ch.clone().into_bytes()
+                    } else if ks.key.chars().count() == 1 {
+                        ks.key.clone().into_bytes()
+                    } else {
+                        return;
+                    }
+                } else {
+                    return;
                 }
             }
-
-            if let Some(term) = &mut self.terminal {
-                let cwd = term.cwd.clone();
-                let output = match term.execute(&cmd) {
-                    Ok(out) => out,
-                    Err(err) => err,
-                };
-                self.terminal_history.push((cwd, cmd, output));
-                self.terminal_scroll.scroll_to_bottom();
-            }
-            cx.notify();
-        }
+        };
+        term.send_input(&bytes);
+        cx.notify();
     }
 
     /// React to the palette filter: Enter runs the highlighted command; typing
@@ -2583,96 +2654,78 @@ impl Chamber {
                             .child("This terminal executes subprocesses under the authority of the host user. To prevent unauthorized execution when Bypass is disabled, all quark-issued commands must pause and require explicit human approval via the interaction gate.")
                     );
 
-                let mut history = v_flex().w_full().gap_2();
-                for (cwd, cmd, out) in &self.terminal_history {
-                    let display_cwd = cwd.replace(&std::env::var("HOME").unwrap_or_default(), "~");
-                    let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
-                    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "local".to_string());
-                    let prompt = format!("{}@{}: {}$ {}", user, host, display_cwd, cmd);
-                    let mut block = v_flex().gap_1().child(
-                        div()
-                            .text_sm()
-                            .font_family("Cascadia Code")
-                            .text_color(theme::term_prompt())
-                            .child(prompt),
-                    );
-                    if !out.is_empty() {
-                        block = block.child(
-                            div()
-                                .text_xs()
-                                .font_family("Cascadia Code")
-                                .text_color(theme::term_fg())
-                                .child(out.clone()),
-                        );
+                // The live grid: one styled row per terminal line, each line a
+                // few coalesced same-colour runs (not one element per cell — this
+                // box CPU-rasterises every frame). The block cursor is an inverted
+                // cell baked into the snapshot.
+                let grid: gpui::AnyElement = if let Some(term) = &self.terminal {
+                    let snap = term.snapshot();
+                    let mut rows = v_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .p_2()
+                        .font_family("Cascadia Code")
+                        .text_size(px(TERM_FONT))
+                        .line_height(px(TERM_CELL_H));
+                    for line in &snap.lines {
+                        let mut row = h_flex().h(px(TERM_CELL_H));
+                        for run in &line.runs {
+                            row = row.child(
+                                div()
+                                    .text_color(rgb(pack_rgb(run.fg)))
+                                    .bg(rgb(pack_rgb(run.bg)))
+                                    .child(run.text.clone()),
+                            );
+                        }
+                        rows = rows.child(row);
                     }
-                    history = history.child(block);
-                }
+                    rows.into_any_element()
+                } else {
+                    div()
+                        .flex_1()
+                        .p_3()
+                        .font_family("Cascadia Code")
+                        .text_size(px(TERM_FONT))
+                        .text_color(theme::text_muted())
+                        .child("starting shell…")
+                        .into_any_element()
+                };
 
-                let current_cwd = self
-                    .terminal
-                    .as_ref()
-                    .map(|t| t.cwd.clone())
-                    .unwrap_or_else(|| {
-                        crate::vcs::repo_root_of(&self.path)
-                            .to_string_lossy()
-                            .into_owned()
-                    });
-                let display_cwd =
-                    current_cwd.replace(&std::env::var("HOME").unwrap_or_default(), "~");
-                let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
-                let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "local".to_string());
-                let prompt_str = format!("{}@{}: {}$ ", user, host, display_cwd);
+                // A paint-time probe: report the screen's pixel bounds so the pump
+                // loop can size the PTY to fit. It paints nothing.
+                let px_cell = self.terminal_px.clone();
+                let size_probe = gpui::canvas(
+                    move |bounds, _, _| {
+                        px_cell.set(Some((
+                            f32::from(bounds.size.width),
+                            f32::from(bounds.size.height),
+                        )));
+                    },
+                    |_, _: (), _, _| {},
+                )
+                .absolute()
+                .size_full();
 
-                // The terminal "screen": one dark, monospace surface that holds the
-                // scrollback and the live prompt line, framed like Zed's terminal —
-                // the input reads as a continuation of the console, not a form field.
-                let screen = v_flex()
+                // The terminal "screen": a focusable dark surface. Clicking focuses
+                // it; while focused, keystrokes stream to the PTY (`on_terminal_key`).
+                let screen = div()
+                    .id("terminal-screen")
+                    .track_focus(&self.terminal_focus)
                     .flex_1()
                     .min_h_0()
+                    .relative()
                     .rounded_md()
                     .overflow_hidden()
                     .border_1()
                     .border_color(theme::border())
                     .bg(theme::term_bg())
-                    .child(
-                        div()
-                            .id("terminal-scroll")
-                            .flex_1()
-                            .min_h_0()
-                            .relative()
-                            .child(
-                                div()
-                                    .id("terminal-history-scroll")
-                                    .size_full()
-                                    .overflow_y_scroll()
-                                    .track_scroll(&self.terminal_scroll)
-                                    .p_3()
-                                    .child(history),
-                            )
-                            .child(
-                                div().absolute().top_0().bottom_0().right_0().child(
-                                    Scrollbar::vertical(&self.terminal_scroll)
-                                        .scrollbar_show(ScrollbarShow::Hover),
-                                ),
-                            ),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| window.focus(&this.terminal_focus, cx)),
                     )
-                    .child(
-                        h_flex()
-                            .px_3()
-                            .py_2()
-                            .border_t_1()
-                            .border_color(theme::border())
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_family("Cascadia Code")
-                                    .text_color(theme::term_prompt())
-                                    .child(prompt_str),
-                            )
-                            .child(div().flex_1().child(Input::new(&self.terminal_input))),
-                    );
+                    .on_key_down(cx.listener(Self::on_terminal_key))
+                    .child(size_probe)
+                    .child(grid);
 
                 v_flex()
                     .flex_1()
