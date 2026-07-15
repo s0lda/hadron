@@ -2148,7 +2148,11 @@ impl Chamber {
             .min_h_0()
             .rounded(INNER_RADIUS)
             .overflow_hidden()
-            .bg(theme::bg_base())
+            // Glass: a faint top sheen + a hairline top highlight, so the dark
+            // layer reads as a lit panel rather than a flat black rectangle.
+            .bg(theme::glass_surface())
+            .border_t_1()
+            .border_color(theme::glass_highlight())
             .child(header)
             .children(self.permission_toast(cx))
             .child(body)
@@ -2560,8 +2564,8 @@ impl Chamber {
         let content = match selected {
             RightRailTab::Terminal => {
                 let risk_notice = v_flex()
-                    .p_3()
-                    .gap_2()
+                    .p_2()
+                    .gap_1()
                     .bg(theme::danger().opacity(0.1))
                     .border_1()
                     .border_color(theme::danger().opacity(0.5))
@@ -2570,7 +2574,7 @@ impl Chamber {
                         h_flex()
                             .gap_2()
                             .items_center()
-                            .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::danger()).child("⚠️ RISK: Arbitrary Process Execution"))
+                            .child(div().text_xs().font_weight(gpui::FontWeight::BOLD).text_color(theme::danger()).child("⚠️ RISK: Arbitrary Process Execution"))
                     )
                     .child(
                         div()
@@ -2589,7 +2593,7 @@ impl Chamber {
                         div()
                             .text_sm()
                             .font_family("Cascadia Code")
-                            .text_color(theme::accent())
+                            .text_color(theme::term_prompt())
                             .child(prompt),
                     );
                     if !out.is_empty() {
@@ -2597,7 +2601,7 @@ impl Chamber {
                             div()
                                 .text_xs()
                                 .font_family("Cascadia Code")
-                                .text_color(theme::text_muted())
+                                .text_color(theme::term_fg())
                                 .child(out.clone()),
                         );
                     }
@@ -2619,11 +2623,17 @@ impl Chamber {
                 let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "local".to_string());
                 let prompt_str = format!("{}@{}: {}$ ", user, host, display_cwd);
 
-                v_flex()
+                // The terminal "screen": one dark, monospace surface that holds the
+                // scrollback and the live prompt line, framed like Zed's terminal —
+                // the input reads as a continuation of the console, not a form field.
+                let screen = v_flex()
                     .flex_1()
-                    .p_3()
-                    .gap_4()
-                    .child(risk_notice)
+                    .min_h_0()
+                    .rounded_md()
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(theme::border())
+                    .bg(theme::term_bg())
                     .child(
                         div()
                             .id("terminal-scroll")
@@ -2636,6 +2646,7 @@ impl Chamber {
                                     .size_full()
                                     .overflow_y_scroll()
                                     .track_scroll(&self.terminal_scroll)
+                                    .p_3()
                                     .child(history),
                             )
                             .child(
@@ -2647,22 +2658,28 @@ impl Chamber {
                     )
                     .child(
                         h_flex()
-                            .p_2()
-                            .bg(theme::input_bg())
-                            .border_1()
+                            .px_3()
+                            .py_2()
+                            .border_t_1()
                             .border_color(theme::border())
-                            .rounded_md()
                             .gap_2()
                             .items_center()
                             .child(
                                 div()
                                     .text_sm()
                                     .font_family("Cascadia Code")
-                                    .text_color(theme::accent())
+                                    .text_color(theme::term_prompt())
                                     .child(prompt_str),
                             )
                             .child(div().flex_1().child(Input::new(&self.terminal_input))),
-                    )
+                    );
+
+                v_flex()
+                    .flex_1()
+                    .p_3()
+                    .gap_3()
+                    .child(risk_notice)
+                    .child(screen)
                     .into_any_element()
             }
             RightRailTab::FileTree => {
@@ -3178,7 +3195,10 @@ impl Chamber {
             .min_h_0()
             .rounded(INNER_RADIUS)
             .overflow_hidden()
-            .bg(theme::bg_base())
+            // Glass, matching the chat card: faint sheen + hairline top highlight.
+            .bg(theme::glass_surface())
+            .border_t_1()
+            .border_color(theme::glass_highlight())
             .child(header)
             .child(content);
 
