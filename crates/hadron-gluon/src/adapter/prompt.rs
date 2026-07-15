@@ -293,7 +293,16 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         "Be truthful about your actions: report only what you actually did and verified this \
          turn, and clearly separate what you PROPOSE from what you have DONE. Never state \
          completed work — commits, passing tests, file edits — that you did not perform. If you \
-         could not do something, say so.\n",
+         could not do something, say so.\n\n\
+         # CRITICAL: Response Format Requirement\n\
+         You MUST structure your final response exactly as follows. Do NOT skip the evidence (you must copy-paste actual command lines and output from tests/checks):\n\n\
+         **Done**: [Brief outcome summary, including commit hash]\n\n\
+         - **Done**:\n\
+           - [Detailed list of completed tasks / files created / files edited]\n\
+         - **Evidence**: [Copy-paste the exact command and terminal output of cargo test / cargo check or visual evidence showing it works]\n\
+         - **Risks**: [Rule 7 security risk note or 'no new attack surface' with explanation]\n\
+         - **What I did not verify / clean up**: [Explicitly specify what you did not check or clean up]\n\n\
+         Lead directly with the outcome. Avoid preambles like 'I have completed the task', 'Here is the report', or general pleasantries.\n",
     );
 
     p

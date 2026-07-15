@@ -36,8 +36,8 @@ pub fn bg_elevated() -> Rgba {
 pub fn glass_surface() -> Background {
     linear_gradient(
         180.0,
-        linear_color_stop(rgb(0x131316), 0.0),
-        linear_color_stop(bg_base(), 0.42),
+        linear_color_stop(rgba(0x09090b80), 0.0), // 50% opacity top sheen
+        linear_color_stop(rgba(0x09090bbf), 1.0), // 75% opacity base
     )
 }
 
