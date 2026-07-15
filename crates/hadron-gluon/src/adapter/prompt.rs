@@ -177,7 +177,8 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         }
         for e in &projection.field_window {
             if let Kind::Message { body } = &e.kind {
-                p.push_str(&render_event_line(&e.from, &e.to, body));
+                let pruned = prune_message_for_prompt(body);
+                p.push_str(&render_event_line(&e.from, &e.to, &pruned));
                 p.push('\n');
             }
         }
@@ -306,6 +307,33 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     );
 
     p
+}
+
+/// Truncate long messages in the prompt's transcript to prevent context bloat and E2BIG,
+/// while keeping the full text on disk and visible in the chamber GUI.
+fn prune_message_for_prompt(body: &str) -> String {
+    let lines: Vec<&str> = body.lines().collect();
+    if lines.len() <= crate::brevity::MAX_LINES && body.chars().count() <= crate::brevity::MAX_CHARS {
+        return body.to_string();
+    }
+
+    let mut kept = Vec::new();
+    let mut chars = 0usize;
+    for line in &lines {
+        if kept.len() >= crate::brevity::MAX_LINES || chars + line.chars().count() > crate::brevity::MAX_CHARS {
+            break;
+        }
+        chars += line.chars().count() + 1;
+        kept.push(*line);
+    }
+
+    let mut out = kept.join("\n");
+    if kept.iter().filter(|l| l.trim_start().starts_with("```")).count() % 2 == 1 {
+        out.push_str("\n```");
+    }
+
+    out.push_str("\n\n... [message trimmed for prompt context; full text is in the chat history]");
+    out
 }
 
 /// Whether this quark holds the orchestrator role. Only it gets the stay-available
@@ -676,5 +704,31 @@ mod tests {
         assert!(!p.contains("nucleus"));
         assert!(!p.contains("working diff"));
         assert!(p.contains("# Your task"));
+    }
+
+    #[test]
+    fn test_prune_message_for_prompt() {
+        // Under budget -> untouched
+        let short = "Hello world";
+        assert_eq!(prune_message_for_prompt(short), short);
+
+        // Over budget by lines
+        let many_lines = (1..=20).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let pruned_lines = prune_message_for_prompt(&many_lines);
+        assert!(pruned_lines.contains("trimmed for prompt context"));
+        assert!(pruned_lines.contains("line 1"));
+        assert!(pruned_lines.contains("line 14"));
+        assert!(!pruned_lines.contains("line 15"));
+
+        // Over budget by characters
+        let long_chars = "x".repeat(2000);
+        let pruned_chars = prune_message_for_prompt(&long_chars);
+        assert!(pruned_chars.contains("trimmed for prompt context"));
+        assert!(pruned_chars.len() < 2000);
+
+        // Open code block closed
+        let open_fence = "Here is code:\n```rust\nlet x = 1;\nlet y = 2;\n".to_string() + &"\n".repeat(20) + "```";
+        let pruned_fence = prune_message_for_prompt(&open_fence);
+        assert!(pruned_fence.contains("```\n\n... [message trimmed for prompt context"));
     }
 }
