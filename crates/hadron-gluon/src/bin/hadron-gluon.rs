@@ -267,7 +267,8 @@ async fn main() {
         eprintln!("hadron-gluon: team.json had no usable quarks; nothing to run.");
         std::process::exit(2);
     }
-    let mut engine = Engine::new(args.field_path.clone(), quarks, 12);
+    let max_exchanges = team.max_exchanges.unwrap_or(12);
+    let mut engine = Engine::new(args.field_path.clone(), quarks, max_exchanges);
     // A seat can boot switched OFF. It is still seated (still addressable, still owns
     // its instance) — it just does not take turns until the human enables it.
     for seat in &team.quarks {
@@ -331,6 +332,8 @@ async fn main() {
                         engine.seated_count()
                     ),
                     Ok(desired) => {
+                        let max_exchanges = desired.max_exchanges.unwrap_or(12);
+                        engine.set_max_exchanges(max_exchanges);
                         // Booted with no usable team.json ⇒ the roster is the DemoQuark
                         // pair. Those answer to no `Seat`, so no team-vs-team diff can
                         // see them: evict them by hand the first time a real team lands,

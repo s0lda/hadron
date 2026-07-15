@@ -149,6 +149,8 @@ impl Seat {
 pub struct Team {
     #[serde(default)]
     pub quarks: Vec<Seat>,
+    #[serde(default)]
+    pub max_exchanges: Option<usize>,
 }
 
 impl Team {
@@ -304,6 +306,7 @@ mod tests {
         let path = dir.path().join("team.json");
         let team = Team {
             quarks: vec![seat("opus", "claude", "opus", Flavor::Orchestrator)],
+            max_exchanges: None,
         };
         save_team(&path, &team).unwrap();
 
@@ -323,13 +326,14 @@ mod tests {
     fn save_team_overwrites_an_existing_file_in_one_step() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("team.json");
-        save_team(&path, &Team { quarks: vec![seat("a", "claude", "m", Flavor::Worker)] }).unwrap();
+        save_team(&path, &Team { quarks: vec![seat("a", "claude", "m", Flavor::Worker)], max_exchanges: None }).unwrap();
 
         let two = Team {
             quarks: vec![
                 seat("a", "claude", "m", Flavor::Worker),
                 seat("b", "agy", "g", Flavor::Worker),
             ],
+            max_exchanges: None,
         };
         save_team(&path, &two).unwrap();
         assert_eq!(load_team(&path), two);
@@ -386,6 +390,7 @@ mod tests {
                 seat("opus", "claude", "opus-4.8", Flavor::Orchestrator),
                 seat("agy", "agy", "gemini-3-pro", Flavor::Worker),
             ],
+            max_exchanges: None,
         };
         let json = serde_json::to_string(&team).unwrap();
         let back: Team = serde_json::from_str(&json).unwrap();
@@ -394,7 +399,7 @@ mod tests {
 
     #[test]
     fn lookup_finds_a_seat_by_id() {
-        let team = Team { quarks: vec![seat("agy", "agy", "gemini-3-pro", Flavor::Worker)] };
+        let team = Team { quarks: vec![seat("agy", "agy", "gemini-3-pro", Flavor::Worker)], max_exchanges: None };
         let s = team.get(&QuarkId::new("agy")).unwrap();
         assert_eq!(s.provider, "agy");
         assert_eq!(s.model, "gemini-3-pro");
