@@ -1137,21 +1137,9 @@ impl Chamber {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let InputEvent::Change = event {
-            let input = input.clone();
-            window.on_next_frame(move |window, cx| {
-                input.update(cx, |state, cx| {
-                    let pos = state.cursor_position();
-                    state.set_cursor_position(pos, window, cx);
-                });
-            });
-            return;
-        }
-
         let InputEvent::PressEnter { shift, .. } = event else {
             return;
         };
-        println!("App received PressEnter! shift={}", shift);
         if *shift {
             return;
         }
