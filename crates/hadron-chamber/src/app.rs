@@ -1548,7 +1548,10 @@ impl Render for Chamber {
             .relative()
             .size_full()
             .overflow_hidden()
-            .bg(theme::bg_elevated())
+            // A faint top-down glint: a hair lighter than `bg_elevated` at the very
+            // top, settling to the flat base by ~a third down. Subtle depth, not a
+            // visible gradient — the window still reads as one dark surface.
+            .bg(theme::window_glint())
             .rounded_tl(top_radius)
             .rounded_tr(top_radius)
             .rounded_bl(bottom_radius)
@@ -2078,6 +2081,10 @@ impl Chamber {
                             .px_1()
                             .rounded_lg()
                             .bg(theme::input_bg())
+                            // A hairline border lifts the field off the card behind it
+                            // — the modern outlined-input look, using the shared token.
+                            .border_1()
+                            .border_color(theme::border())
                             .child(Input::new(&self.input)),
                     )
                     .child(
