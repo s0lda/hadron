@@ -1162,6 +1162,12 @@ impl Chamber {
             return;
         }
         if *shift {
+            let selected_idx = self.chat_tab.index();
+            let scroll = self.chat_scrolls[selected_idx].clone();
+            cx.on_next_frame(window, move |_, _, cx: &mut Context<Self>| {
+                scroll.scroll_to_bottom();
+                cx.notify();
+            });
             return;
         }
         let text = input.read(cx).value().trim().to_string();
@@ -1362,6 +1368,14 @@ impl Chamber {
         cx: &mut Context<Self>,
     ) -> bool {
         match cmd {
+            "toggle-roster" => {
+                self.toggle_rail(Rail::Roster, _window, cx);
+                true
+            }
+            "toggle-inspector" => {
+                self.toggle_rail(Rail::Inspector, _window, cx);
+                true
+            }
             "team-brainstorm" => {
                 let body = format!("@team Let's brainstorm. {args}").trim().to_string();
                 let ev = Event::new(Actor::Human, None, Kind::Message { body });
@@ -5064,6 +5078,7 @@ mod tests {
         let body = "Hello @opus!";
         let roster = vec![RosterRow {
             id: "opus".to_string(),
+            display_name: None,
             state: QuarkState::Excited,
             mode: hadron_lattice::Mode::Ask,
             mode_is_override: false,
