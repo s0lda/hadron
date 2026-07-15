@@ -1,28 +1,28 @@
-//! The chamber's client-side window frame: a transparent window with a
-//! `client_inset` drop-shadow margin and rounded, bordered content — the
-//! approach Zed uses on Linux (and which works on WSLg, verified). Adapted from
-//! gpui-component's `window_border`, which pins the corner radius to `0`; here we
-//! round all four corners at [`FRAME_RADIUS`] and keep a themeable 1px border.
+//! The chamber's client-side window frame: an **opaque, flat, square** window with a
+//! 1px hairline border. It used to be a transparent window with a `client_inset`
+//! drop-shadow margin and rounded corners (Zed's Linux approach) — but a transparent
+//! window recomposites against the desktop on every repaint, and the blurred drop
+//! shadow is re-rasterized each frame, which under WSL software rendering (llvmpipe)
+//! was the bulk of the chamber's idle CPU. Flat and square is both cheaper and truer
+//! to the instrument-panel look.
 //!
-//! `window_frame` must wrap the window's outermost content: it sets the client
-//! inset and owns the resize-edge hit testing (`resize_edge` is copied verbatim
-//! from the reference so drag-to-resize behaves identically).
+//! `window_frame` must wrap the window's outermost content: it owns the resize-edge
+//! hit testing (`resize_edge` is copied verbatim from gpui-component's `window_border`
+//! so drag-to-resize behaves identically).
 
 use gpui::{
-    div, point, prelude::FluentBuilder as _, px, App, BoxShadow, Decorations, Edges, Hsla,
-    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Pixels, Point,
-    ResizeEdge, Size, Styled as _, Tiling, Window,
+    div, prelude::FluentBuilder as _, px, App, Decorations, Edges, InteractiveElement as _,
+    IntoElement, MouseButton, ParentElement as _, Pixels, Point, ResizeEdge, Size, Styled as _,
+    Tiling, Window,
 };
 use gpui_component::ActiveTheme as _;
 
-/// Transparent margin around the frame where the drop shadow is drawn.
-const SHADOW_SIZE: Pixels = px(12.0);
 const BORDER_SIZE: Pixels = px(1.0);
-/// The corner radius the upstream frame hardcodes to zero. Public so the
-/// titlebar can round its own top corners to match (else the close-button hover
-/// spills past the rounded frame edge).
-pub const FRAME_RADIUS: Pixels = px(20.0);
-/// Half-width of the resize hit band on each side of the visible frame edge.
+/// Corner radius — **zero**: the frame is square. Public so the titlebar rounds its top
+/// corners to match (i.e. also square, so the close-button hover can't spill past a
+/// rounded edge that no longer exists).
+pub const FRAME_RADIUS: Pixels = px(0.0);
+/// Half-width of the resize hit band on each side of the window edge.
 const RESIZE_HIT: Pixels = px(6.0);
 
 /// Per-side inset of the visible frame from the outer window bounds (no inset on
@@ -44,30 +44,35 @@ fn frame_insets(shadow: Pixels, tiling: &Tiling) -> Edges<Pixels> {
     insets
 }
 
-/// Wrap `content` in the transparent, shadowed, rounded window frame. Must be the
-/// window's outermost element.
+/// Wrap `content` in the opaque, flat, square window frame with a 1px hairline border.
+/// Must be the window's outermost element.
 pub fn window_frame(window: &mut Window, cx: &App, content: impl IntoElement) -> impl IntoElement {
     let decorations = window.window_decorations();
     let border_color = cx.theme().window_border;
-    let bg = cx.theme().background;
+    let bg = crate::theme::bg_base();
 
     match decorations {
         // Server-side decorations (a real title bar): no custom frame.
         Decorations::Server => div().size_full().bg(bg).child(content).into_any_element(),
         Decorations::Client { tiling } => {
-            window.set_client_inset(SHADOW_SIZE);
-            let fully_tiled = tiling.top && tiling.bottom && tiling.left && tiling.right;
-            let shadow = if fully_tiled { px(0.0) } else { SHADOW_SIZE };
+            // No client inset: there is no shadow margin to reserve, so the window is
+            // filled edge to edge and the resize band sits at the very edge.
+            window.set_client_inset(px(0.0));
 
             div()
                 .id("window-frame")
+                .flex()
+                .flex_col()
                 .size_full()
-                .bg(gpui::transparent_black())
-                // The transparent inset where the shadow is cast.
-                .when(!tiling.top, |d| d.pt(shadow))
-                .when(!tiling.bottom, |d| d.pb(shadow))
-                .when(!tiling.left, |d| d.pl(shadow))
-                .when(!tiling.right, |d| d.pr(shadow))
+                .min_h_0()
+                .min_w_0()
+                .overflow_hidden()
+                .bg(bg)
+                .border_color(border_color)
+                .when(!tiling.top, |d| d.border_t(BORDER_SIZE))
+                .when(!tiling.bottom, |d| d.border_b(BORDER_SIZE))
+                .when(!tiling.left, |d| d.border_l(BORDER_SIZE))
+                .when(!tiling.right, |d| d.border_r(BORDER_SIZE))
                 // Start a window resize when the press lands in an edge band.
                 .on_mouse_down(MouseButton::Left, move |_, window, _| {
                     let Decorations::Client { tiling } = window.window_decorations() else {
@@ -78,52 +83,12 @@ pub fn window_frame(window: &mut Window, cx: &App, content: impl IntoElement) ->
                     }
                     let size = window.window_bounds().get_bounds().size;
                     let pos = window.mouse_position();
-                    let insets = frame_insets(SHADOW_SIZE, &tiling);
+                    let insets = frame_insets(px(0.0), &tiling);
                     if let Some(edge) = resize_edge(pos, size, insets, &tiling, RESIZE_HIT) {
                         window.start_window_resize(edge);
                     }
                 })
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .size_full()
-                        .min_h_0()
-                        .min_w_0()
-                        .overflow_hidden()
-                        // Match the content's own rounded fill (crate::theme::bg_elevated):
-                        // where the content rounds a hair tighter than this border,
-                        // the exposed sliver is the same colour, so no seam shows.
-                        .bg(crate::theme::bg_elevated())
-                        .border_color(border_color)
-                        .when(!tiling.top, |d| d.border_t(BORDER_SIZE))
-                        .when(!tiling.bottom, |d| d.border_b(BORDER_SIZE))
-                        .when(!tiling.left, |d| d.border_l(BORDER_SIZE))
-                        .when(!tiling.right, |d| d.border_r(BORDER_SIZE))
-                        .when(!tiling.top && !tiling.left, |d| d.rounded_tl(FRAME_RADIUS))
-                        .when(!tiling.top && !tiling.right, |d| d.rounded_tr(FRAME_RADIUS))
-                        .when(!tiling.bottom && !tiling.left, |d| {
-                            d.rounded_bl(FRAME_RADIUS)
-                        })
-                        .when(!tiling.bottom && !tiling.right, |d| {
-                            d.rounded_br(FRAME_RADIUS)
-                        })
-                        .when(!fully_tiled, |d| {
-                            d.shadow(vec![BoxShadow {
-                                color: Hsla {
-                                    h: 0.0,
-                                    s: 0.0,
-                                    l: 0.0,
-                                    a: 0.35,
-                                },
-                                blur_radius: shadow / 2.0,
-                                spread_radius: px(0.0),
-                                offset: point(px(0.0), px(0.0)),
-                                inset: false,
-                            }])
-                        })
-                        .child(content),
-                )
+                .child(content)
                 .into_any_element()
         }
     }
