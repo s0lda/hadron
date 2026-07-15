@@ -199,18 +199,13 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
          routes — mentions inside prose are ignored).\n\n",
     );
 
-    // The length cap. Stated here so the quark can meet it deliberately — but the engine
-    // does NOT trust this paragraph: `brevity::enforce` cuts the reply at exactly these
-    // numbers on the way into the field, whatever the model decides. The numbers are
-    // interpolated from the constants the cutter uses, so the prompt cannot drift from
-    // the enforcement (one definition, one place).
+    // The length cap. Stated here so the quark can meet it deliberately.
     p.push_str(&format!(
-        "**Be short. This is enforced, not requested.** A reply is capped at **{lines} lines \
-         and {chars} characters**; the engine CUTS whatever is over — it keeps the head of \
-         your message and your `@mention` lines, and throws the rest away. So put the \
+        "**Be short.** We want Quarks to write shorter, meaningful messages without arbitrary limits. \
+         A reply should ideally fit within {lines} lines \
+         and {chars} characters. Put the \
          outcome in the first line, keep the evidence to the command and its result, and \
-         cut every restatement, preamble, and summary-of-your-summary. A long report is not \
-         a thorough one; it is a report that will be read as its first {lines} lines.\n\n",
+         cut every restatement, preamble, and summary-of-your-summary. TLDR is no good; be concise but complete.\n\n",
         lines = crate::brevity::MAX_LINES,
         chars = crate::brevity::MAX_CHARS,
     ));
