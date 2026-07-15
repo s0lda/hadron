@@ -502,6 +502,7 @@ mod tests {
                     enabled: true,
                 },
             ],
+            max_exchanges: None,
         };
 
         // Both legacy: no `usage` on the envelope, just the bare u32.
@@ -605,6 +606,7 @@ mod tests {
                 "gemini-3-pro",
                 Flavor::Worker,
             )],
+            max_exchanges: None,
         };
         let evs = vec![
             ev(Actor::Human, None, Kind::ModeSet { mode: Mode::Write }),

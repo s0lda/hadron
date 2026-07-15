@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use hadron_lattice::{
-    Actor, EnergyState, Event, Flavor, Kind, Projection, QuarkCard, QuarkId, QuarkState,
+    Actor, EnergyState, Event, Flavor, Kind, Mode, Projection, QuarkCard, QuarkId, QuarkState,
     TurnOutcome,
 };
 use tokio::sync::Mutex as AsyncMutex;
@@ -438,6 +438,11 @@ impl Engine {
     pub fn unseat(&mut self, id: &QuarkId) -> bool {
         self.roster.retain(|c| &c.id != id);
         self.quarks.remove(id).is_some()
+    }
+
+    /// Set the maximum number of exchanges allowed before triggering the backstop.
+    pub fn set_max_exchanges(&mut self, max: usize) {
+        self.max_exchanges = max;
     }
 
     /// Switch a seated quark's **participation** on or off.
@@ -1205,7 +1210,8 @@ impl Engine {
                         continue;
                     }
 
-                    if exchanges >= self.max_exchanges {
+                    let turn_mode = hadron_gatekeeper::resolve_mode(&events, &target);
+                    if turn_mode != Mode::Bypass && exchanges >= self.max_exchanges {
                         backstop = true;
                         break;
                     }
@@ -2381,6 +2387,71 @@ mod tests {
             .filter(|e| matches!(e.kind, Kind::Status { state: QuarkState::Ground }))
             .count();
         assert_eq!(ground_statuses, 4, "exactly max_exchanges turns ran");
+    }
+
+    #[tokio::test]
+    async fn bypass_mode_skips_backstop() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+        seed_human_message(&path, "orch", "start");
+        seed_mode(&path, None, Mode::Bypass);
+
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        struct CounterQuark {
+            id: QuarkId,
+            flavor: Flavor,
+            reply: String,
+            count: Arc<std::sync::atomic::AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl Quark for CounterQuark {
+            fn id(&self) -> QuarkId { self.id.clone() }
+            fn flavor(&self) -> Flavor { self.flavor.clone() }
+            fn energy(&self) -> EnergyState { EnergyState::Available }
+            async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+                let current = self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let message = if current < 6 {
+                    Some(self.reply.clone())
+                } else {
+                    None
+                };
+                Ok(TurnOutcome { message, permission: None, usage: Default::default() })
+            }
+        }
+
+        let orch = CounterQuark {
+            id: QuarkId::new("orch"),
+            flavor: Flavor::Orchestrator,
+            reply: "@worker go".to_string(),
+            count: count.clone(),
+        };
+        let worker = CounterQuark {
+            id: QuarkId::new("worker"),
+            flavor: Flavor::Worker,
+            reply: "@orch go".to_string(),
+            count: count.clone(),
+        };
+
+        let mut engine = Engine::new(
+            path.clone(),
+            vec![Box::new(orch), Box::new(worker)],
+            4, // max_exchanges is 4, but we should exceed it
+        );
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&path).unwrap();
+        let backstops = events
+            .iter()
+            .filter(|e| matches!(&e.kind, Kind::Message { body } if body.contains("backstop")))
+            .count();
+        assert_eq!(backstops, 0, "no backstop message should be appended in Bypass mode");
+
+        let ground_statuses = events
+            .iter()
+            .filter(|e| matches!(e.kind, Kind::Status { state: QuarkState::Ground }))
+            .count();
+        assert!(ground_statuses > 4, "should run more than 4 turns: {}", ground_statuses);
     }
 
     #[tokio::test]
