@@ -9,7 +9,6 @@ use hadron_lattice::{
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinSet;
 
-use crate::brevity;
 use crate::field::{append_event, read_events};
 use crate::quark::Quark;
 use crate::router::{human_mentions, next_pending, parse_addressee};
@@ -360,6 +359,13 @@ pub struct Engine {
     /// that never heard of disabling is on, which is the safe default for a *reduction*
     /// of authority.
     disabled: HashSet<QuarkId>,
+    /// Quarks whose transport is **resident** (an ACP session that persists across
+    /// turns), captured from [`Quark::resident`] at seat time — because the quark then
+    /// lives behind an async `Mutex` that a synchronous `projection_for` cannot lock.
+    /// The engine hands a resident quark the whole skill library once; a one-shot quark
+    /// gets only the selected skill each turn. Maintained beside `roster`/`quarks` at
+    /// every seating path (`new`, `seat`, `unseat`).
+    resident: HashSet<QuarkId>,
 }
 
 impl Engine {
@@ -381,6 +387,11 @@ impl Engine {
                 model: String::new(),
             })
             .collect();
+        let resident = quarks
+            .iter()
+            .filter(|q| q.resident())
+            .map(|q| q.id())
+            .collect();
         let quarks = quarks
             .into_iter()
             .map(|q| (q.id(), Arc::new(AsyncMutex::new(q)) as SharedQuark))
@@ -398,6 +409,7 @@ impl Engine {
             field_lock: Arc::new(AsyncMutex::new(())),
             turn_deadline: TURN_DEADLINE,
             disabled: HashSet::new(),
+            resident,
         }
     }
 
@@ -415,6 +427,7 @@ impl Engine {
     /// a running turn does not compile.
     pub fn seat(&mut self, quark: Box<dyn Quark>) {
         let id = quark.id();
+        let resident = quark.resident();
         let card = QuarkCard {
             id: id.clone(),
             display_name: None,
@@ -427,6 +440,12 @@ impl Engine {
         };
         self.roster.retain(|c| c.id != id);
         self.roster.push(card);
+        // Track residency beside the roster (a replacement may flip transport).
+        if resident {
+            self.resident.insert(id.clone());
+        } else {
+            self.resident.remove(&id);
+        }
         self.quarks.insert(id, Arc::new(AsyncMutex::new(quark)));
     }
 
@@ -437,6 +456,7 @@ impl Engine {
     /// turn holds a clone of that `Arc` at a quiescent point — see [`Engine::seat`].
     pub fn unseat(&mut self, id: &QuarkId) -> bool {
         self.roster.retain(|c| &c.id != id);
+        self.resident.remove(id);
         self.quarks.remove(id).is_some()
     }
 
@@ -554,36 +574,52 @@ impl Engine {
         addressees
     }
 
-    /// Route the human's latest UNADDRESSED (`to == None`) message. The chamber
-    /// writes human messages with the mentions left in the body (not stripped into
-    /// `to`), so one message can name several quarks. This now fans out *in
-    /// parallel*: it returns EVERY addressee that hasn't answered yet, each handed
-    /// the full message, and the dispatch loop excites them all at once. Addressed
-    /// messages and quark hand-offs are `next_pending`'s job. An empty result means
-    /// the message is fully served (or no one can field it).
+    /// Route the human's UNADDRESSED (`to == None`) messages. The chamber writes human
+    /// messages with the mentions left in the body (not stripped into `to`), so one
+    /// message can name several quarks, and it fans out *in parallel*: every addressee
+    /// that hasn't answered yet is returned, each handed its message, and the dispatch
+    /// loop excites them all at once. Addressed messages and quark hand-offs are
+    /// `next_pending`'s job. An empty result means every pending message is served.
     ///
-    /// "Answered" means the quark has authored *any* event since the message — which
-    /// includes the `Status{Excited}` the engine appends before a turn. That is what
-    /// keeps an in-flight quark from being re-dispatched on the next read.
+    /// **Every unserved message, not just the newest.** The old version looked only at
+    /// the single latest human message (`rposition`). So a human who fired "@Claude do X"
+    /// and then, before Claude was even dispatched, typed anything else — a "@Claude ?"
+    /// follow-up, or a "@orchestrator ..." aside — saw the "@Claude" request silently
+    /// abandoned: the newer message became "the latest" and the older one was never
+    /// looked at again. Claude answered nothing while the orchestrator churned. Now each
+    /// quark is dispatched for its MOST RECENT unserved mention.
+    ///
+    /// Walking newest-first with a per-quark `seen` set gives each quark exactly one
+    /// target (its latest mention) and lets `has_answered` suppress anything already
+    /// handled or in flight: "answered" means the quark authored *any* event since the
+    /// message — including the `Status{Excited}` appended before a turn, and the
+    /// `Status{Blocked}` a `reroute_blocked` leaves behind — so a dispatched, in-flight,
+    /// or un-dispatchable quark is not re-selected. The walk stops once every seat is
+    /// accounted for, because an older message can add no addressee a newer one hasn't.
     fn human_message_targets(&self, events: &[Event]) -> Vec<(QuarkId, String)> {
-        let Some(idx) = events
-            .iter()
-            .rposition(|e| e.from == Actor::Human && matches!(e.kind, Kind::Message { .. }))
-        else {
-            return Vec::new();
-        };
-        if events[idx].to.is_some() {
-            return Vec::new(); // addressed message → next_pending owns it
+        let mut out: Vec<(QuarkId, String)> = Vec::new();
+        let mut seen: HashSet<QuarkId> = HashSet::new();
+        for idx in (0..events.len()).rev() {
+            if seen.len() >= self.roster.len() {
+                break; // every seat already has its most-recent status; older msgs add none
+            }
+            let e = &events[idx];
+            let Kind::Message { body } = &e.kind else { continue };
+            if e.from != Actor::Human || e.to.is_some() {
+                continue; // not an unaddressed human message → next_pending's job
+            }
+            let msg_id = e.id;
+            for addressee in self.human_addressees(body) {
+                // A newer message already claimed this quark → this older mention is stale.
+                if !seen.insert(addressee.clone()) {
+                    continue;
+                }
+                if !Self::has_answered(&events[idx + 1..], &addressee, msg_id) {
+                    out.push((addressee, body.clone()));
+                }
+            }
         }
-        let Kind::Message { body } = &events[idx].kind else {
-            return Vec::new();
-        };
-        let msg_id = events[idx].id;
-        self.human_addressees(body)
-            .into_iter()
-            .filter(|addressee| !Self::has_answered(&events[idx + 1..], addressee, msg_id))
-            .map(|addressee| (addressee, body.clone()))
-            .collect()
+        out
     }
 
     /// Has `addressee` answered the human message `msg_id`?
@@ -747,6 +783,23 @@ impl Engine {
         // under pressure, and a model asked who is available guesses; a disabled seat
         // keeps its roster card (`disable-is-not-unseat`), so naming it as a reviewer
         // routes the work into a void. Here, "available" is checked at dispatch.
+        // The always-on skill index — the "you have these procedures, invoke the right
+        // one as the work crosses phases" discipline, injected every turn. This is
+        // hadron's analog of the Superpowers using-superpowers bootstrap, which rides a
+        // SessionStart hook that does not exist over ACP.
+        invariants_text.push_str(&skills::index());
+
+        // A resident (ACP) quark keeps its context across turns, so hand it the WHOLE
+        // library once, here in the cache-stable prefix: composition is then free (it
+        // already holds systematic-debugging when a bug turns up) and no skill's
+        // cross-reference dangles. A one-shot (CLI) quark remembers nothing between turns,
+        // so it gets only the selected skill's body (below) — the whole library every
+        // turn would be paid for in full every turn.
+        let resident = self.resident.contains(target);
+        if resident {
+            invariants_text.push_str(&skills::corpus());
+        }
+
         if let Some(m) = skills::select(&task_desc) {
             let peers = self
                 .roster
@@ -764,10 +817,13 @@ impl Engine {
                 .and_then(|path| fs::read_to_string(path).ok())
                 .and_then(|md| skills::plan_author(&md));
 
+            // Resident quark: the body is already in the corpus above, so name the
+            // starting skill and point at it. One-shot quark: hand it the full body.
             invariants_text.push_str(&skills::render(
                 &m,
                 target,
                 &skills::Handoff { peers, plan_author },
+                !resident,
             ));
         }
 
@@ -918,27 +974,15 @@ impl Engine {
         }
 
         if let Some(body) = outcome.message {
-            // THE CAP. Every quark is told to lead with the outcome and every quark still
-            // files a bible, because a rule in the prompt is a request the model can talk
-            // itself out of. Here it is arithmetic on the bytes instead.
-            //
-            // Applied to the reply BEFORE the addressee is parsed from it, so what routes
-            // is what the field will actually carry — parsing the original and shipping a
-            // trim that had lost its `@orchestrator` line would route an event that no
-            // reader could see was addressed. `brevity::enforce` keeps mention lines for
-            // exactly that reason; parsing the trimmed text is what *proves* it did.
-            let brief = brevity::enforce(&body);
-            let to = parse_addressee(&brief.body, &self.roster, Some(target));
-            let mut event = Event::new(Actor::Quark(target.clone()), to, Kind::Message {
-                body: brief.body,
-            })
-            .with_turn(turn)
-            .answering(assignment);
-            // Nothing is destroyed: the field keeps every word the quark wrote. What the
-            // cap changes is what the humans and the other quarks are made to read.
-            if let Some(full) = brief.full {
-                event = event.with_full(full);
-            }
+            // The reply enters the field whole — the engine does NOT trim it. Brevity is
+            // asked for in the prompt and explained, never enforced by cutting bytes: a
+            // truncated report can hide the one line the human needed (a reported-but-
+            // unread critical issue is worse than a long one). The addressee is parsed
+            // from the reply as written, so what routes is exactly what the field carries.
+            let to = parse_addressee(&body, &self.roster, Some(target));
+            let event = Event::new(Actor::Quark(target.clone()), to, Kind::Message { body })
+                .with_turn(turn)
+                .answering(assignment);
             self.append(event).await?;
         }
 
@@ -2950,6 +2994,46 @@ mod tests {
             self.running.store(false, Ordering::SeqCst);
             Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
         }
+    }
+
+    /// **The burst bug.** A human fires several unaddressed messages to different quarks
+    /// before any is dispatched. The old `human_message_targets` looked only at the
+    /// single latest message (`rposition`), so the earlier requests were silently
+    /// abandoned — the exact "I typed @Claude three times and got nothing" complaint.
+    /// Every unserved quark must now get its MOST RECENT mention.
+    #[tokio::test]
+    async fn every_unserved_human_message_is_serviced_not_just_the_latest() {
+        use crate::mock::MockQuark;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+        // Claude asked twice, agy once in between — nobody dispatched yet.
+        for body in ["@claude do X", "@agy do Y", "@claude actually do Z"] {
+            append_event(&path, &Event::new(Actor::Human, None, Kind::Message { body: body.into() }))
+                .unwrap();
+        }
+
+        let engine = Engine::new(
+            path.clone(),
+            vec![
+                Box::new(MockQuark::repeating(QuarkId::new("claude"), Flavor::Worker, "ok")),
+                Box::new(MockQuark::repeating(QuarkId::new("agy"), Flavor::Orchestrator, "ok")),
+            ],
+            10,
+        );
+
+        let events = read_events(&path).unwrap();
+        let targets = engine.human_message_targets(&events);
+        let ids: Vec<&str> = targets.iter().map(|(q, _)| q.as_str()).collect();
+
+        assert!(ids.contains(&"claude"), "claude's request was abandoned: {ids:?}");
+        assert!(ids.contains(&"agy"), "agy's request was abandoned: {ids:?}");
+        // Claude is serviced for its LATEST mention (Z), not the stale earlier one (X).
+        let claude_task = targets
+            .iter()
+            .find(|(q, _)| q.as_str() == "claude")
+            .map(|(_, t)| t.as_str())
+            .unwrap();
+        assert!(claude_task.contains("do Z"), "claude got a stale request: {claude_task:?}");
     }
 
     /// Two quarks named in ONE message must run at the same time, not one after the

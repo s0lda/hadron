@@ -356,10 +356,47 @@ Never fix bugs without a test.
 
 ## Testing Anti-Patterns
 
-When adding mocks or test utilities, read [testing-anti-patterns.md](testing-anti-patterns.md) to avoid common pitfalls:
-- Testing mock behavior instead of real behavior
-- Adding test-only methods to production classes
-- Mocking without understanding dependencies
+Tests must verify real behavior, not mock behavior. Mocks isolate; they are
+not the thing under test. **Test what the code does, not what the mocks do.**
+Following strict TDD prevents these — if you're testing mock behavior, you
+added mocks without first watching a test fail against real code.
+
+**1. Testing mock behavior.** Asserting a mocked element exists proves the
+mock works, not that the code works. Test the real component (don't mock it),
+or if you must mock for isolation, assert on the *component's* behavior with
+the dependency present — never on the mock itself. Gate: before asserting on
+anything mock-shaped, ask "am I testing real behavior or just mock
+existence?" If existence, delete the assertion or unmock.
+
+**2. Test-only methods in production.** A `destroy()`/`reset()` only ever
+called from tests pollutes the production class, is dangerous if called for
+real, and violates YAGNI. Put test cleanup in test utilities, not on the
+production type. Gate: before adding a method, ask "is this only used by
+tests?" (→ test utils) and "does this class own this resource's lifecycle?"
+(→ if no, wrong class).
+
+**3. Mocking without understanding.** Over-mocking "to be safe" mocks away a
+side effect the test depended on (e.g. mocking the layer that writes config,
+then testing duplicate-detection that needs that config). Mock at the lowest
+level — the actual slow/external operation — not the high-level method the
+test relies on. If unsure what the test needs, run it against the real
+implementation first, observe, then add minimal mocking at the right level.
+Red flags: "I'll mock this to be safe," "this might be slow, better mock it."
+
+**4. Incomplete mocks.** A partial mock includes only the fields you thought
+you needed; downstream code reading an omitted field fails silently, and the
+test passes while integration breaks. Mirror the COMPLETE real data structure
+as it exists in reality, not just your immediate slice. If uncertain, include
+all documented fields.
+
+**5. Tests as an afterthought.** "Implementation complete, ready for testing"
+is a violation — testing is part of implementation. You cannot claim complete
+without tests. TDD (test first) prevents this by construction.
+
+**When mocks get too complex** — setup longer than the test, mocking
+everything, test breaks when the mock changes — that's a signal. Integration
+tests with real components are often simpler than elaborate mocks. Ask why
+you're mocking at all.
 
 ## Final Rule
 

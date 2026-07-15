@@ -42,8 +42,11 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     let mut p = String::new();
 
     p.push_str(
-        "# CRITICAL DIRECTIVE: YOU MUST USE SUPERPOWERS AND FOLLOW THE STANDARD MODEL\n\
-         You are a quark in the hadron chamber. You MUST obey the Standard Model invariants and use the Superpowers skills (such as `superpowers:subagent-driven-development` or `superpowers:executing-plans`) to plan and execute tasks. Do NOT ignore the invariants under any circumstances.\n\n"
+        "# CRITICAL DIRECTIVE: FOLLOW THE STANDARD MODEL AND ITS SKILLS\n\
+         You are a quark in the hadron chamber. You MUST obey the Standard Model invariants \
+         below and follow the skills they hand you — the procedures for planning, executing, \
+         debugging, and reviewing work. These are built in to this prompt; do not rely on any \
+         tooling of your own. Do NOT ignore the invariants under any circumstances.\n\n"
     );
 
     // 0. Identity — which quark is being excited. A multi-addressee human
@@ -219,16 +222,16 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
          routes — mentions inside prose are ignored).\n\n",
     );
 
-    // The length cap. Stated here so the quark can meet it deliberately.
-    p.push_str(&format!(
-        "**Be short.** We want Quarks to write shorter, meaningful messages without arbitrary limits. \
-         A reply should ideally fit within {lines} lines \
-         and {chars} characters. Put the \
-         outcome in the first line, keep the evidence to the command and its result, and \
-         cut every restatement, preamble, and summary-of-your-summary. TLDR is no good; be concise but complete.\n\n",
-        lines = crate::brevity::MAX_LINES,
-        chars = crate::brevity::MAX_CHARS,
-    ));
+    // Brevity as discipline, not a hard cut. The engine does NOT trim replies — a
+    // truncated report can hide the one line the human needed — so shortness is asked
+    // for and explained, never enforced by cutting bytes.
+    p.push_str(
+        "**Be short.** Write shorter, meaningful messages. Put the outcome in the first \
+         line, keep the evidence to the command and its result, and cut every restatement, \
+         preamble, and summary-of-your-summary. No TL;DR of your own answer, and no wall of \
+         text for a trivial ask — answer at the length the question deserves. Be concise but \
+         complete: never drop a critical detail just to be brief.\n\n",
+    );
 
     // 6a. Who a finished turn goes back TO — and this depends on the role, because
     // an unaddressed reply excites nobody: it lands in the field for the human.
