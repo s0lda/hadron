@@ -77,6 +77,11 @@ pub struct RosterRow {
     pub flavor: Option<hadron_lattice::Flavor>,
     pub transport: hadron_lattice::Transport,
     pub enabled: bool,
+    /// Whether this quark is *adopted* by the current repo (seated by the daemon) or
+    /// only *available* in the global catalogue. A not-adopted row is shown greyed
+    /// ("there to use when you want, but off"), the same visual as a disabled seat,
+    /// and its lifecycle actions (enable/flavor/remove) are replaced by "Adopt".
+    pub adopted: bool,
     /// Fresh tokens (input + output, cache excluded) — the one unit every transport
     /// reports the same way, so the only one comparable across a mixed roster.
     pub tokens: u32,
@@ -286,14 +291,17 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
 /// (`provider`/`model` blank). Convenience for tests and callers without a team.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn project(events: &[Event]) -> ChamberView {
-    project_with_team(events, &Team::default())
+    project_with_team(events, &Team::default(), &Team::default())
 }
 
 /// Project the field into a renderable view. Roster order is first-seen; a
 /// quark's state is the latest `Kind::Status` it authored (default `Ground`);
 /// its mode is folded from `ModeSet` events (per-quark override over global);
 /// its `provider`/`model` come from `team` (blank when the seat is unknown).
-pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
+/// `team` is the **resolved** team (adopted quarks, full definitions); `global` is
+/// the whole catalogue, so quarks available but not adopted here still get a (greyed)
+/// roster row.
+pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> ChamberView {
     let mut messages = Vec::with_capacity(events.len());
     let mut order: Vec<String> = Vec::new();
     let mut tokens: HashMap<String, u32> = HashMap::new();
@@ -336,33 +344,55 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
         messages.push(render_row(e, &turn_usages));
     }
 
+    // Adopted quarks that have not spoken yet still belong on the roster (seeded from
+    // the resolved team), then catalogue quarks not adopted here — shown greyed,
+    // "available but off". Both are appended after event-seen ids so the order stays
+    // stable across restarts (active quarks first, then silent-adopted, then available).
+    for seat in &team.quarks {
+        note(&mut order, seat.id.as_str());
+    }
+    for seat in &global.quarks {
+        note(&mut order, seat.id.as_str());
+    }
+
     let roster = order
         .into_iter()
         .map(|id| {
             let state = states.get(&id).copied().unwrap_or(QuarkState::Ground);
             let qid = QuarkId::new(&id);
-            let (display_name, provider, model, flavor, transport, enabled) = team
-                .get(&qid)
-                .map(|s| {
-                    (
+            // Legibility comes from the resolved team if the quark is adopted, else
+            // from the catalogue (available-but-off), else it is an event-only id we
+            // know nothing about (a live participant with no seat).
+            let (display_name, provider, model, flavor, transport, enabled, adopted) =
+                match (team.get(&qid), global.get(&qid)) {
+                    (Some(s), _) => (
                         s.display_name.clone(),
                         s.provider.clone(),
                         s.model.clone(),
                         Some(s.flavor.clone()),
                         s.transport,
                         s.enabled,
-                    )
-                })
-                .unwrap_or_else(|| {
-                    (
+                        true,
+                    ),
+                    (None, Some(g)) => (
+                        g.display_name.clone(),
+                        g.provider.clone(),
+                        g.model.clone(),
+                        Some(g.flavor.clone()),
+                        g.transport,
+                        false, // not adopted here → inert, greyed like a disabled seat
+                        false,
+                    ),
+                    (None, None) => (
                         None,
                         String::new(),
                         String::new(),
                         None,
                         hadron_lattice::Transport::Cli,
                         true,
-                    )
-                });
+                        true, // event-only live participant, no seat
+                    ),
+                };
             let q_tokens = tokens.get(&id).copied().unwrap_or(0);
             let q_unknown = unknown_turns.get(&id).copied().unwrap_or(0);
             RosterRow {
@@ -375,6 +405,7 @@ pub fn project_with_team(events: &[Event], team: &Team) -> ChamberView {
                 flavor,
                 transport,
                 enabled,
+                adopted,
                 id,
                 tokens: q_tokens,
                 unknown_turns: q_unknown,
@@ -521,7 +552,7 @@ mod tests {
                 Kind::EnergyReport { used_tokens: 5_338 },
             ),
         ];
-        let view = project_with_team(&evs, &team);
+        let view = project_with_team(&evs, &team, &Team::default());
         let row = |id: &str| view.roster.iter().find(|r| r.id == id).unwrap().clone();
 
         let acp = row("acp-claude");
@@ -618,12 +649,48 @@ mod tests {
                 Kind::Message { body: "go".into() },
             ),
         ];
-        let view = project_with_team(&evs, &team);
+        let view = project_with_team(&evs, &team, &Team::default());
         let agy = view.roster.iter().find(|r| r.id == "agy").unwrap();
         assert_eq!(agy.mode, Mode::Write, "inherits the global default");
         assert!(!agy.mode_is_override);
         assert_eq!(agy.provider, "agy");
         assert_eq!(agy.model, "gemini-3-pro");
+    }
+
+    /// A catalogue quark that this repo has NOT adopted still gets a roster row —
+    /// greyed (not adopted, inert), its legibility drawn from the catalogue — so the
+    /// user sees "there to use when you want, but off".
+    #[test]
+    fn catalogue_quarks_not_adopted_here_show_as_available() {
+        use hadron_lattice::{Flavor, Seat};
+        // Resolved team: only "opus" is adopted here.
+        let team = Team {
+            quarks: vec![Seat::cli(
+                QuarkId::new("opus"),
+                "claude",
+                "opus",
+                Flavor::Orchestrator,
+            )],
+            roster: vec![],
+            max_exchanges: None,
+        };
+        // Catalogue: "opus" (adopted) plus "gemini" (available, not adopted here).
+        let global = Team {
+            quarks: vec![
+                Seat::cli(QuarkId::new("opus"), "claude", "opus", Flavor::Orchestrator),
+                Seat::cli(QuarkId::new("gemini"), "agy", "gemini-3-pro", Flavor::Worker),
+            ],
+            roster: vec![],
+            max_exchanges: None,
+        };
+        let view = project_with_team(&[], &team, &global);
+        let opus = view.roster.iter().find(|r| r.id == "opus").unwrap();
+        assert!(opus.adopted, "the seated quark is adopted");
+        assert!(opus.enabled);
+        let gemini = view.roster.iter().find(|r| r.id == "gemini").unwrap();
+        assert!(!gemini.adopted, "the catalogue-only quark is not adopted");
+        assert!(!gemini.enabled, "and shows inert (grey dot)");
+        assert_eq!(gemini.provider, "agy", "legibility comes from the catalogue");
     }
 
     #[test]
