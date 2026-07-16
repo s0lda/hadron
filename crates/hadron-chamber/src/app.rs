@@ -350,6 +350,11 @@ struct Chamber {
     settings_path: Entity<InputState>,
     settings_effort: Entity<InputState>,
     settings_mode_config: Entity<InputState>,
+    /// A path chosen from the native file picker (avatar image), parked here by the
+    /// async picker task and drained into `settings_path` at the next `render` — the
+    /// picker returns without a `Window`, but `set_value` needs one, so `render`
+    /// (which has the window) applies it.
+    pending_image_pick: Option<String>,
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
@@ -532,6 +537,7 @@ impl Chamber {
             settings_path,
             settings_effort,
             settings_mode_config,
+            pending_image_pick: None,
             _input_sub,
             _settings_subs,
             providers,
@@ -1386,6 +1392,15 @@ impl Chamber {
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Drain a path chosen from the native avatar picker. The picker task runs
+        // without a `Window`, so it parks the path here; `render` has the window and
+        // is the first place `set_value` can apply it. Committing persists it so the
+        // avatar sticks without a separate Done click.
+        if let Some(path) = self.pending_image_pick.take() {
+            self.settings_path
+                .update(cx, |s, cx| s.set_value(path, window, cx));
+            self.commit_settings_inputs(cx);
+        }
         // Track the window's geometry so it can be restored next launch. The write
         // is debounced, not immediate: a drag or resize re-renders every frame, and
         // saving inline here would put a `chamber.json` write on the render thread
@@ -3362,6 +3377,90 @@ impl Chamber {
         }
     }
 
+    /// A compact segmented picker for a free-string session field (Effort / Mode),
+    /// replacing the old free-text input. The seat field stays an `Option<String>`;
+    /// the "Default" chip clears it. A stored value that is not one of `options` is
+    /// preserved as its own selected chip, so editing an agent's uncommon value here
+    /// never silently blanks it (the daemon matches the string against what the agent
+    /// advertises, so an off-list value is simply not applied — never destructive).
+    fn session_select(
+        &self,
+        key: &'static str,
+        field: &Entity<InputState>,
+        options: &[&'static str],
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let current = field.read(cx).value().trim().to_string();
+        // (label, value-to-store, selected)
+        let mut chips: Vec<(String, String, bool)> =
+            vec![("Default".to_string(), String::new(), current.is_empty())];
+        for o in options {
+            chips.push((o.to_string(), o.to_string(), current.eq_ignore_ascii_case(o)));
+        }
+        if !current.is_empty() && !options.iter().any(|o| current.eq_ignore_ascii_case(o)) {
+            chips.push((current.clone(), current.clone(), true));
+        }
+        let mut row = h_flex().gap_1p5().flex_wrap();
+        for (label, store, selected) in chips {
+            let f = field.clone();
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("sel-{key}-{label}")))
+                    .px_2p5()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(selected, |d| {
+                        d.bg(theme::accent())
+                            .border_color(theme::accent())
+                            .text_color(theme::text())
+                    })
+                    .when(!selected, |d| {
+                        d.bg(theme::bg_surface())
+                            .border_color(theme::border())
+                            .text_color(theme::text_secondary())
+                            .hover(|s| s.bg(theme::bg_surface_raised()))
+                    })
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        f.update(cx, |s, cx| s.set_value(store.clone(), window, cx));
+                        this.commit_settings_inputs(cx);
+                        cx.notify();
+                    })),
+            );
+        }
+        row.into_any_element()
+    }
+
+    /// Open the native file picker to choose an avatar image; the choice is parked
+    /// in `pending_image_pick` for `render` to apply (see the field's doc — the
+    /// picker task has no `Window`, which `set_value` needs).
+    fn pick_avatar_image(&mut self, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose avatar image".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let picked = rx
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten()
+                .and_then(|v| v.into_iter().next());
+            if let Some(path) = picked {
+                let _ = this.update(cx, |this, cx| {
+                    this.pending_image_pick = Some(path.to_string_lossy().into_owned());
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
     /// Switch which identity the overlay edits (committing the current one).
     fn select_settings_target(
         &mut self,
@@ -3552,11 +3651,21 @@ impl Chamber {
                 .when(is_quark, |v| {
                     v.child(settings_field(
                         "Effort",
-                        Input::new(&self.settings_effort).into_any_element(),
+                        self.session_select(
+                            "effort",
+                            &self.settings_effort,
+                            &["low", "medium", "high"],
+                            cx,
+                        ),
                     ))
                     .child(settings_field(
                         "Mode",
-                        Input::new(&self.settings_mode_config).into_any_element(),
+                        self.session_select(
+                            "mode",
+                            &self.settings_mode_config,
+                            &["default", "plan", "acceptEdits", "bypassPermissions"],
+                            cx,
+                        ),
                     ))
                 })
                 .child(settings_field("Color", swatches.into_any_element()))
@@ -3566,6 +3675,9 @@ impl Chamber {
                         .gap_2()
                         .items_center()
                         .child(div().flex_1().child(Input::new(&self.settings_path)))
+                        .child(text_button("settings-browse-img", "Browse…").on_click(
+                            cx.listener(|this, _, _, cx| this.pick_avatar_image(cx)),
+                        ))
                         .child(text_button("settings-clear-img", "Clear").on_click(
                             cx.listener(|this, _, window, cx| {
                                 this.clear_settings_image(window, cx)
