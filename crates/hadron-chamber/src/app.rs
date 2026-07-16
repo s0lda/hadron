@@ -5217,7 +5217,7 @@ fn configured_providers(team: &Team) -> Vec<ConfiguredQuark> {
 /// it is safe to call on every launch. The resolved seats are byte-identical to the
 /// originals (the override carries the seat's own flavor + enabled over its own def), so
 /// a running daemon reconciles this to an empty re-seat rather than a disruptive rebuild.
-fn migrate_repo_to_catalogue(repo_path: &Path, global_path: &Path) {
+fn migrate_repo_to_catalogue(repo_path: &std::path::Path, global_path: &std::path::Path) {
     let mut repo = load_team(repo_path);
     if repo.quarks.is_empty() {
         return; // already split (or empty) — nothing to migrate
@@ -5422,6 +5422,7 @@ mod tests {
             flavor: Some(hadron_lattice::Flavor::Worker),
             transport: hadron_lattice::Transport::Cli,
             enabled: true,
+            adopted: true,
             tokens: 0,
             unknown_turns: 0,
         }];
@@ -5468,6 +5469,7 @@ mod tests {
             flavor: Some(hadron_lattice::Flavor::Worker),
             transport: hadron_lattice::Transport::Cli,
             enabled: true,
+            adopted: true,
             tokens: 0,
             unknown_turns: 0,
         }];
