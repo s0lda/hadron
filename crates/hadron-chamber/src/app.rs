@@ -973,7 +973,10 @@ impl Chamber {
                 format!("{} ({}/turn)", format_num(q_stats.fresh), format_num(avg)),
             ))
             .child(kv_row("Cached", format_num(q_stats.cached)));
-        if roster_row.unknown_turns > 0 {
+        // `unknown_turns` is a live-field aggregate, not windowed — only honest to show
+        // it alongside the live Session numbers, so it is hidden in the archived windows
+        // rather than displayed as if it were a Week/Month/All-time count.
+        if roster_row.unknown_turns > 0 && self.stats_window == StatsWindow::Session {
             stats_block = stats_block
                 .child(kv_row("Unmeasured", format!("+{} turns", roster_row.unknown_turns)));
         }
