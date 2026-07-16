@@ -19,7 +19,7 @@ use gpui::{
 };
 use gpui_component::avatar::Avatar;
 // badge removed
-use gpui_component::chart::{BarChart, LineChart};
+use gpui_component::chart::{AreaChart, BarChart};
 use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
@@ -39,7 +39,7 @@ use hadron_lattice::{
 };
 
 use crate::config::{self, ChamberPrefs, Identity};
-use crate::model::{self, ChamberView, MessageRow, RosterRow};
+use crate::model::{self, ChamberView, MessageRow, RosterRow, StatsWindow};
 use crate::theme;
 
 actions!(chamber, [CycleMode]);
@@ -170,12 +170,13 @@ enum ChatTab {
     Chat,
     /// Every event on the field, compact — the raw activity log.
     Log,
-    /// Per-quark session stats: turns, tokens, context, quota.
-    Session,
+    /// Team-wide stats over a selectable time window (Session/Week/Month/All time):
+    /// turns, tokens, context, quota.
+    Stats,
 }
 
 impl ChatTab {
-    const ALL: [ChatTab; 3] = [ChatTab::Chat, ChatTab::Log, ChatTab::Session];
+    const ALL: [ChatTab; 3] = [ChatTab::Chat, ChatTab::Log, ChatTab::Stats];
 
     /// Sizes every per-tab array. A tab added to `ALL` without growing those
     /// arrays is an index-out-of-bounds the moment the tab is opened, so they
@@ -186,7 +187,7 @@ impl ChatTab {
         match self {
             ChatTab::Chat => 0,
             ChatTab::Log => 1,
-            ChatTab::Session => 2,
+            ChatTab::Stats => 2,
         }
     }
 
@@ -198,7 +199,43 @@ impl ChatTab {
         match self {
             ChatTab::Chat => "Chat",
             ChatTab::Log => "Log",
-            ChatTab::Session => "Session",
+            ChatTab::Stats => "Stats",
+        }
+    }
+}
+
+/// The sections of the quark info panel, selected by a segmented tab bar so the panel
+/// stays short instead of one long scroll.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InfoTab {
+    /// Who this quark is: header, role, state, adoption, and the Restart action.
+    Identity,
+    /// How it is wired: provider, agent command, model, transport, effort, permission.
+    Config,
+    /// Its telemetry over the selected [`StatsWindow`].
+    Stats,
+}
+
+impl InfoTab {
+    const ALL: [InfoTab; 3] = [InfoTab::Identity, InfoTab::Config, InfoTab::Stats];
+
+    fn index(self) -> usize {
+        match self {
+            InfoTab::Identity => 0,
+            InfoTab::Config => 1,
+            InfoTab::Stats => 2,
+        }
+    }
+
+    fn from_index(ix: usize) -> Self {
+        Self::ALL.get(ix).copied().unwrap_or(InfoTab::Identity)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            InfoTab::Identity => "Identity",
+            InfoTab::Config => "Config",
+            InfoTab::Stats => "Stats",
         }
     }
 }
@@ -343,6 +380,15 @@ struct Chamber {
     focus_handle: FocusHandle,
     /// Which view the chat column's segmented tabs are showing.
     chat_tab: ChatTab,
+    /// Which section the quark info panel is showing.
+    info_tab: InfoTab,
+    /// The time window the Stats views (chat Stats tab + info Stats tab) aggregate over.
+    /// Shared: the info panel is a modal overlay, never on-screen with the chat Stats tab.
+    stats_window: StatsWindow,
+    /// Projected messages of every archived session (`sessions/*/field.jsonl`), the
+    /// history the wider [`StatsWindow`]s fold in. Loaded once at startup and rebuilt by
+    /// the `/clear` handler (the only thing that writes a new archive in this process).
+    archived_messages: Vec<MessageRow>,
     /// Which view the right rail's segmented tabs are showing. The right rail is
     /// independent of the chat column: changing the chat tab must not move it.
     right_rail_tab: RightRailTab,
@@ -544,6 +590,13 @@ impl Chamber {
         // migrated repo whose seats are now overrides still lists them.
         let providers = configured_providers(&resolve_team(&team, &global));
 
+        // Load the archived sessions once — the history the wider Stats windows fold in.
+        // Rebuilt only by `/clear` (the sole writer of a new archive in this process).
+        let archived_messages = path
+            .parent()
+            .map(|p| crate::model::load_archived_messages(&p.join("sessions")))
+            .unwrap_or_default();
+
         Chamber {
             view,
             prefs,
@@ -554,6 +607,9 @@ impl Chamber {
             completion: None,
             focus_handle,
             chat_tab: ChatTab::Chat,
+            info_tab: InfoTab::Identity,
+            stats_window: StatsWindow::Session,
+            archived_messages,
             right_rail_tab: RightRailTab::Terminal,
             working_diff: None,
             changes_open_ixs: std::collections::HashSet::new(),
@@ -698,7 +754,9 @@ impl Chamber {
         let q_color = theme::actor_hue(&qid);
         let resolved = self.resolve_identity(&qid);
 
-        let stats = self.view.session_stats();
+        let stats =
+            self.view
+                .stats_for(&self.archived_messages, self.stats_window, chrono::Utc::now());
         let q_stats = stats
             .per_quark
             .into_iter()
@@ -816,6 +874,44 @@ impl Chamber {
                 if roster_row.mode_is_override { "override" } else { "global default" },
             ));
 
+        // Force-restart action — only for a resident (ACP) seat, which is the only kind
+        // that holds a live subprocess to reap; a one-shot CLI seat has nothing between
+        // turns. Reaps the session (aborting any in-flight turn); it re-boots fresh on
+        // its next mention. This is the human's manual override for a wedged agent. Lives
+        // in the Identity tab (it acts on *this* quark, not on its wiring).
+        let restart_action: Option<gpui::AnyElement> =
+            matches!(roster_row.transport, hadron_lattice::Transport::Acp).then(|| {
+                let rid = qid.clone();
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .gap_4()
+                    .items_center()
+                    .text_sm()
+                    .child(div().flex_none().text_color(theme::text_muted()).child("Session"))
+                    .child(
+                        h_flex()
+                            .id("info-restart")
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_1p5()
+                            .px_2p5()
+                            .py_1()
+                            .rounded_md()
+                            .bg(theme::bg_surface())
+                            .border_1()
+                            .border_color(theme::border())
+                            .text_color(theme::text())
+                            .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
+                            .child("⟳")
+                            .child("Restart agent")
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.reboot_quark(&rid, cx)),
+                            ),
+                    )
+                    .into_any_element()
+            });
+
         let identity_section = v_flex()
             .gap_1p5()
             .child(panel_eyebrow("IDENTITY"))
@@ -827,7 +923,9 @@ impl Chamber {
             .child(kv_row(
                 "Adoption",
                 if roster_row.adopted { "adopted in this repo" } else { "available (catalogue)" },
-            ));
+            ))
+            // Restart lives here (Identity), acting on this quark; ACP-only, else None.
+            .children(restart_action);
 
         let mut config_section = v_flex()
             .gap_1p5()
@@ -856,43 +954,6 @@ impl Chamber {
                 .child(perm_chip),
         );
 
-        // Force-restart action — only for a resident (ACP) seat, which is the only kind
-        // that holds a live subprocess to reap; a one-shot CLI seat has nothing between
-        // turns. Reaps the session (aborting any in-flight turn); it re-boots fresh on
-        // its next mention. This is the human's manual override for a wedged agent.
-        if matches!(roster_row.transport, hadron_lattice::Transport::Acp) {
-            let rid = qid.clone();
-            config_section = config_section.child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .gap_4()
-                    .items_center()
-                    .text_sm()
-                    .child(div().flex_none().text_color(theme::text_muted()).child("Session"))
-                    .child(
-                        h_flex()
-                            .id("info-restart")
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_1p5()
-                            .px_2p5()
-                            .py_1()
-                            .rounded_md()
-                            .bg(theme::bg_surface())
-                            .border_1()
-                            .border_color(theme::border())
-                            .text_color(theme::text())
-                            .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
-                            .child("⟳")
-                            .child("Restart agent")
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.reboot_quark(&rid, cx)),
-                            ),
-                    ),
-            );
-        }
-
         // --- Session stats ---
         let avg = if q_stats.turns > 0 { q_stats.fresh / q_stats.turns } else { 0 };
         let first_seen_str = q_stats
@@ -906,7 +967,6 @@ impl Chamber {
 
         let mut stats_block = v_flex()
             .gap_1p5()
-            .child(panel_eyebrow("SESSION"))
             .child(kv_row("Turns", q_stats.turns.to_string()))
             .child(kv_row(
                 "Fresh spent",
@@ -956,14 +1016,25 @@ impl Chamber {
             );
         }
         if !q_stats.spend_history.is_empty() {
+            // Fresh-spend over turns as an area under the curve: the quark's hue stroke
+            // over a vertical gradient of the same hue fading to transparent, so the
+            // trend reads as a filled shape, not a thin line. `linear_gradient` angle 0
+            // points up, so the strong stop sits at position 1.0 (top, at the curve) and
+            // fades toward the baseline.
             stats_block = stats_block.child(
                 div().h(px(96.0)).w_full().mt_1().child(
-                    LineChart::new(q_stats.spend_history.clone())
+                    AreaChart::new(q_stats.spend_history.clone())
                         .id(format!("info-spend-chart-{qid}"))
                         .name("Fresh Spent")
                         .x(|d| format!("T{}", d.turn))
                         .y(|d| d.fresh as f64)
-                        .stroke(q_color),
+                        .stroke(q_color)
+                        .fill(linear_gradient(
+                            0.0,
+                            linear_color_stop(q_color.opacity(0.35), 1.0),
+                            linear_color_stop(q_color.opacity(0.02), 0.0),
+                        ))
+                        .natural(),
                 ),
             );
         }
@@ -973,6 +1044,38 @@ impl Chamber {
                 format!("{}: {:.0}% left", bucket.key, bucket.remaining_fraction * 100.0),
             ));
         }
+
+        // Section tabs keep the panel short: the header stays pinned (you always see
+        // whose panel this is), and one section shows at a time below it.
+        let info_selected = self.info_tab;
+        let info_tabs = TabBar::new("info-tabs")
+            .segmented()
+            .selected_index(info_selected.index())
+            .children(InfoTab::ALL.map(|t| {
+                if t.index() == info_selected.index() {
+                    Tab::new().child(
+                        div()
+                            .text_color(theme::accent())
+                            .child(t.label().to_string()),
+                    )
+                } else {
+                    Tab::new().label(t.label())
+                }
+            }))
+            .on_click(cx.listener(|this, ix: &usize, _window, cx| {
+                this.info_tab = InfoTab::from_index(*ix);
+                cx.notify();
+            }));
+
+        let body = match info_selected {
+            InfoTab::Identity => identity_section.into_any_element(),
+            InfoTab::Config => config_section.into_any_element(),
+            InfoTab::Stats => v_flex()
+                .gap_3()
+                .child(self.stats_window_tabs("info-stats-window-tabs", cx))
+                .child(stats_block)
+                .into_any_element(),
+        };
 
         div()
             .absolute()
@@ -994,7 +1097,7 @@ impl Chamber {
                 v_flex()
                     .id("quark-info-panel")
                     .occlude()
-                    .w(px(420.0))
+                    .w(px(560.0))
                     .max_h(px(660.0))
                     .overflow_y_scroll()
                     // Opaque: a focused info panel must not let the bright field bleed
@@ -1007,9 +1110,8 @@ impl Chamber {
                     .gap_4()
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // swallow inner clicks
                     .child(header)
-                    .child(identity_section)
-                    .child(config_section)
-                    .child(stats_block),
+                    .child(info_tabs)
+                    .child(body),
             )
     }
 
@@ -1374,6 +1476,11 @@ impl Chamber {
                         }
                         let events = io::read_events(&self.path).unwrap_or_default();
                         self.reproject(&events);
+                        // The just-archived field is now part of history: fold it into the
+                        // wider Stats windows. `/clear` is the only writer of a new archive
+                        // in this process, so this is the one place the cache must rebuild.
+                        self.archived_messages =
+                            crate::model::load_archived_messages(&hadron_dir.join("sessions"));
                         self.chat_message_ixs.clear();
                         self.chat_list_state.reset(0);
                         for scroll in &self.chat_scrolls {
@@ -1432,6 +1539,8 @@ impl Chamber {
         match action {
             ContextMenuAction::QuarkInfo(id) => {
                 self.info_panel = Some(id);
+                // Each open starts at the top section, not wherever the last panel left off.
+                self.info_tab = InfoTab::Identity;
             }
             ContextMenuAction::ToggleQuark(id) => {
                 self.toggle_quark_enabled(&id, cx);
@@ -2079,12 +2188,12 @@ impl Chamber {
                     .child(match selected {
                         ChatTab::Chat => self.chat_view(cx).into_any_element(),
                         ChatTab::Log => self.log_view(cx).into_any_element(),
-                        ChatTab::Session => div()
+                        ChatTab::Stats => div()
                             .id("session-scroll")
                             .size_full()
                             .overflow_y_scroll()
                             .track_scroll(&self.chat_scrolls[selected.index()])
-                            .child(self.session_view())
+                            .child(self.stats_view(cx))
                             .into_any_element(),
                     }),
             )
@@ -2419,10 +2528,46 @@ impl Chamber {
         col
     }
 
-    fn session_view(&self) -> impl IntoElement {
-        let stats = self.view.session_stats();
+    /// The Session / Week / Month / All-time selector shared by the chat Stats tab and
+    /// the info panel's Stats tab. `id` distinguishes the two (both can be in the tree at
+    /// once — the info panel overlays the chat pane), so their element ids never collide.
+    fn stats_window_tabs(&self, id: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = self.stats_window;
+        let sel_ix = StatsWindow::ALL
+            .iter()
+            .position(|w| *w == selected)
+            .unwrap_or(0);
+        TabBar::new(id)
+            .segmented()
+            .selected_index(sel_ix)
+            .children(StatsWindow::ALL.map(|w| {
+                if w == selected {
+                    Tab::new().child(
+                        div()
+                            .text_color(theme::accent())
+                            .child(w.label().to_string()),
+                    )
+                } else {
+                    Tab::new().label(w.label())
+                }
+            }))
+            .on_click(cx.listener(|this, ix: &usize, _window, cx| {
+                this.stats_window = StatsWindow::ALL
+                    .get(*ix)
+                    .copied()
+                    .unwrap_or(StatsWindow::Session);
+                cx.notify();
+            }))
+    }
+
+    /// The chat column's Stats tab: team-wide telemetry over the selected window.
+    fn stats_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let stats =
+            self.view
+                .stats_for(&self.archived_messages, self.stats_window, chrono::Utc::now());
 
         let mut col = v_flex().p_4().gap_4();
+        col = col.child(self.stats_window_tabs("chat-stats-window-tabs", cx));
         // Session totals as a row of KPI tiles.
         col = col.child(
             h_flex()
