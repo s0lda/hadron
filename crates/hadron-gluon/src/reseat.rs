@@ -120,7 +120,7 @@ mod tests {
     }
 
     fn team(seats: &[Seat]) -> Team {
-        Team { quarks: seats.to_vec(), max_exchanges: None }
+        Team { quarks: seats.to_vec(), roster: vec![], max_exchanges: None }
     }
 
     /// The load-bearing property: a seat that did not change generates **no work**.
@@ -225,7 +225,7 @@ mod enabled_tests {
         }
     }
     fn team(seats: &[Seat]) -> Team {
-        Team { quarks: seats.to_vec(), max_exchanges: None }
+        Team { quarks: seats.to_vec(), roster: vec![], max_exchanges: None }
     }
 
     /// **The trap this design exists to avoid.** Whole-struct equality would make a
