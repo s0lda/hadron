@@ -27,4 +27,11 @@ pub trait Quark: Send {
     }
     /// Run one turn against a projection and return the field message (if any).
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome>;
+
+    /// Reap any **resident** state (a live agent subprocess and its open session) so the
+    /// next turn boots fresh. This is the human's force-restart: an ACP quark drops its
+    /// session (killing the subprocess); a one-shot CLI quark holds nothing between turns,
+    /// so the default is a no-op. Idempotent — calling it on a quark with no live session
+    /// does nothing.
+    fn reset_session(&mut self) {}
 }
