@@ -27,7 +27,8 @@ use hadron_gluon::field::read_events;
 use hadron_gluon::quark::Quark;
 use hadron_gluon::reseat;
 use hadron_lattice::{
-    load_team, parse_team, team_config_path, EnergyState, Flavor, Projection, QuarkId, Team,
+    load_team, orphan_overrides, parse_team, resolve_team, team_config_path, EnergyState, Flavor,
+    Projection, QuarkId, Team,
     TurnOutcome,
 };
 
@@ -249,7 +250,15 @@ async fn main() {
         Some(p) => eprintln!("hadron-gluon: team from {}", p.display()),
         None => eprintln!("hadron-gluon: no team.json found (looked next to the field, then the config dir)"),
     }
-    let team = team_path.as_deref().map(load_team).unwrap_or_default();
+    // The global catalogue holds the quark *definitions* a repo's role/state overrides
+    // resolve against. Skip it when it IS the repo file (a bare ~/.hadron/team.json used
+    // directly as the team) — there is nothing to resolve against itself.
+    let global_path =
+        team_config_path().filter(|g| Some(g.as_path()) != team_path.as_deref());
+    if let Some(g) = &global_path {
+        eprintln!("hadron-gluon: catalogue from {}", g.display());
+    }
+    let team = load_resolved_team(team_path.as_deref(), global_path.as_deref());
 
     // Where quarks publish what they are doing mid-turn, for the chamber to render.
     // Derived from the field path, so both processes agree without a second setting.
@@ -291,7 +300,10 @@ async fn main() {
     // True when the roster is the DemoQuark pair rather than anything from a file.
     let mut mock_mode = team.is_empty();
     let mut running_team = team;
-    let mut last_seen: Option<String> = team_path
+    let mut last_seen_repo: Option<String> = team_path
+        .as_deref()
+        .and_then(|p| std::fs::read_to_string(p).ok());
+    let mut last_seen_global: Option<String> = global_path
         .as_deref()
         .and_then(|p| std::fs::read_to_string(p).ok());
 
@@ -315,23 +327,47 @@ async fn main() {
         // `Arc`. Re-seating anywhere else could tear an agent out from under a running
         // turn; that is why `Engine::seat`/`unseat` take `&mut self`, which the borrow
         // checker will not hand us while a turn is in flight.
-        if let Some(path) = team_path.as_deref() {
-            if let Some(text) = poll_team_file(path, &mut last_seen) {
-                match parse_team(&text) {
-                    // A `team.json` caught mid-write parses as garbage. Keep the swarm
-                    // exactly as it is and say so — the alternative (treating an
-                    // unparseable file as an empty team) would unseat everybody.
-                    Err(e) => eprintln!(
-                        "gluon: team.json changed but does not parse — keeping the running roster: {e}"
-                    ),
+        // Watch BOTH the repo team.json and the global catalogue: a definition edited
+        // in the catalogue (e.g. a model change for an already-adopted quark) must
+        // reconcile even when the repo file is untouched. Reconcile when EITHER file's
+        // bytes change. `poll_team_file` updates `last_seen` on every change, so an
+        // unchanged file's `last_seen` still holds its current content to parse against.
+        let repo_changed = team_path
+            .as_deref()
+            .and_then(|p| poll_team_file(p, &mut last_seen_repo));
+        let global_changed = global_path
+            .as_deref()
+            .and_then(|p| poll_team_file(p, &mut last_seen_global));
+        if repo_changed.is_some() || global_changed.is_some() {
+            let repo_parsed = last_seen_repo.as_deref().map(parse_team).transpose();
+            let global_parsed = last_seen_global.as_deref().map(parse_team).transpose();
+            match (repo_parsed, global_parsed) {
+                // A file caught mid-write parses as garbage on EITHER side. Keep the
+                // swarm exactly as it is — treating an unparseable file as empty would
+                // unseat everybody.
+                (Err(e), _) | (_, Err(e)) => eprintln!(
+                    "gluon: a team file changed but does not parse — keeping the running roster: {e}"
+                ),
+                (Ok(repo), Ok(global)) => {
+                    let repo = repo.unwrap_or_default();
+                    let global = global.unwrap_or_default();
+                    for id in orphan_overrides(&repo, &global) {
+                        eprintln!(
+                            "  ⚠ repo override {} names no catalogue seat — ignored",
+                            id.as_str()
+                        );
+                    }
+                    let desired = resolve_team(&repo, &global);
                     // A team with nobody in it is never applied. It is almost certainly a
-                    // mistake, and obeying it would leave a swarm the human cannot talk
-                    // to and cannot fix from the chamber.
-                    Ok(desired) if desired.is_empty() => eprintln!(
-                        "gluon: team.json now seats nobody — keeping the running roster ({} quark(s))",
-                        engine.seated_count()
-                    ),
-                    Ok(desired) => {
+                    // mistake, and obeying it would leave a swarm the human cannot talk to.
+                    // The guard is on the RESOLVED team, so an empty result from a bad
+                    // merge (e.g. all-orphan overrides) is caught too.
+                    if desired.is_empty() {
+                        eprintln!(
+                            "gluon: team now seats nobody — keeping the running roster ({} quark(s))",
+                            engine.seated_count()
+                        );
+                    } else {
                         let max_exchanges = desired.max_exchanges.unwrap_or(12);
                         engine.set_max_exchanges(max_exchanges);
                         // Booted with no usable team.json ⇒ the roster is the DemoQuark
@@ -348,13 +384,10 @@ async fn main() {
                         }
                         let plan = reseat::plan(&running_team, &desired);
                         if !plan.is_empty() {
-                            eprintln!("gluon: team.json changed — re-seating [{}]", plan.summary());
+                            eprintln!("gluon: team changed — re-seating [{}]", plan.summary());
                             running_team =
                                 apply_reseat(&mut engine, &running_team, &plan, &live_dir);
-                            eprintln!(
-                                "gluon: roster is now {} quark(s)",
-                                engine.seated_count()
-                            );
+                            eprintln!("gluon: roster is now {} quark(s)", engine.seated_count());
                         }
                     }
                 }
@@ -371,6 +404,22 @@ async fn main() {
 /// deliberate: if it tracked the last *valid* content instead, a file left malformed
 /// would be re-read, re-rejected and re-logged on every tick, forever. The human gets
 /// one warning per change, which is what a warning is worth.
+/// Load the repo team and the global catalogue and fold them with [`resolve_team`]
+/// into the concrete team to seat. Warns about any override that names no catalogue
+/// seat — it is dropped and never seated, which is what keeps a not-adopted quark out
+/// of the running swarm. A missing/malformed file degrades to empty, like [`load_team`].
+fn load_resolved_team(repo_path: Option<&Path>, global_path: Option<&Path>) -> Team {
+    let repo = repo_path.map(load_team).unwrap_or_default();
+    let global = global_path.map(load_team).unwrap_or_default();
+    for id in orphan_overrides(&repo, &global) {
+        eprintln!(
+            "  ⚠ repo override {} names no catalogue seat — ignored (not seated)",
+            id.as_str()
+        );
+    }
+    resolve_team(&repo, &global)
+}
+
 fn poll_team_file(path: &Path, last_seen: &mut Option<String>) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     if last_seen.as_deref() == Some(text.as_str()) {
