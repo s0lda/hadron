@@ -5214,33 +5214,33 @@ fn configured_providers(team: &Team) -> Vec<ConfiguredQuark> {
 
 /// Move any legacy full seats in the repo file into the global catalogue and rewrite
 /// the repo file as role/state overrides. A no-op when the repo has no legacy seats, so
-/// it is safe to call on every launch. The resolved seats are byte-identical to the
-/// originals (the override carries the seat's own flavor + enabled over its own def), so
-/// a running daemon reconciles this to an empty re-seat rather than a disruptive rebuild.
+/// it is safe to call on every launch. The transformation itself is the tested pure
+/// [`migrate_to_catalogue`] (in `lattice`, verified byte-identical under `resolve_team`),
+/// so a running daemon reconciles this to an empty re-seat rather than a disruptive
+/// rebuild; this wrapper only does the file I/O and a one-time safety backup.
 fn migrate_repo_to_catalogue(repo_path: &std::path::Path, global_path: &std::path::Path) {
     let mut repo = load_team(repo_path);
     if repo.quarks.is_empty() {
         return; // already split (or empty) — nothing to migrate
     }
-    let mut global = load_team(global_path);
-    for seat in repo.quarks.drain(..) {
-        let ov = SeatOverride {
-            id: seat.id.clone(),
-            flavor: Some(seat.flavor.clone()),
-            enabled: Some(seat.enabled),
-        };
-        // Definition → catalogue (upsert by id).
-        if let Some(existing) = global.quarks.iter_mut().find(|s| s.id == seat.id) {
-            *existing = seat;
-        } else {
-            global.quarks.push(seat);
-        }
-        // Role/state → repo override (dedup; a legacy seat and an override for the same
-        // id should never coexist after migration).
-        if !repo.roster.iter().any(|o| o.id == ov.id) {
-            repo.roster.push(ov);
+    // This rewrite is irreversible and touches a live file. Before touching either
+    // file, keep a one-time snapshot of the self-contained repo team, so the original
+    // seat *definitions* survive even if the global catalogue is later lost or reset
+    // (an overrides-only repo with a missing catalogue resolves to an empty swarm).
+    let backup = repo_path.with_extension("json.premigration");
+    if !backup.exists() {
+        if let Err(e) = std::fs::copy(repo_path, &backup) {
+            eprintln!("chamber: migration aborted — could not back up repo team: {e}");
+            return; // never rewrite the only copy of the defs without a backup
         }
     }
+    let mut global = load_team(global_path);
+    let moved = repo.quarks.len();
+    hadron_lattice::migrate_to_catalogue(&mut repo, &mut global);
+    // Catalogue is written FIRST: a daemon that polls mid-migration must never see the
+    // new overrides-only repo against the OLD (def-less) catalogue, which would resolve
+    // to orphans and drop the swarm. New-catalogue + old-repo only ever resolves to the
+    // unchanged roster.
     if let Err(e) = hadron_lattice::save_team(global_path, &global) {
         eprintln!("chamber: migration failed to write catalogue: {e}");
         return; // do NOT rewrite the repo file if the catalogue write failed
@@ -5249,8 +5249,9 @@ fn migrate_repo_to_catalogue(repo_path: &std::path::Path, global_path: &std::pat
         eprintln!("chamber: migration failed to write repo team: {e}");
     } else {
         eprintln!(
-            "chamber: migrated {} seat(s) into the global catalogue; repo now uses overrides",
-            repo.roster.len()
+            "chamber: migrated {moved} seat(s) into the global catalogue; repo now uses \
+             overrides (backup at {})",
+            backup.display()
         );
     }
 }

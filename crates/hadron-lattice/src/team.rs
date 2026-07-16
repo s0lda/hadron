@@ -258,6 +258,37 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
     }
 }
 
+/// Split a repo team's legacy full seats out into the global catalogue: each seat's
+/// definition is upserted into `global`, and `repo.quarks` is replaced by role/state
+/// [`SeatOverride`]s in `repo.roster`. Idempotent — a repo with no legacy seats is
+/// left untouched.
+///
+/// The invariant that makes this safe on a **live** setup: `resolve_team(repo, global)`
+/// afterwards is seat-for-seat identical (order included) to `resolve_team(repo, global)`
+/// before — the override carries each seat's own `flavor` + `enabled` over its own def —
+/// so a running daemon reconciles the split to a no-op re-seat rather than a rebuild.
+/// (Proven by `migrate_to_catalogue_is_identity_under_resolve`.)
+pub fn migrate_to_catalogue(repo: &mut Team, global: &mut Team) {
+    for seat in std::mem::take(&mut repo.quarks) {
+        let ov = SeatOverride {
+            id: seat.id.clone(),
+            flavor: Some(seat.flavor.clone()),
+            enabled: Some(seat.enabled),
+        };
+        // Definition → catalogue (upsert by id).
+        if let Some(existing) = global.quarks.iter_mut().find(|s| s.id == seat.id) {
+            *existing = seat;
+        } else {
+            global.quarks.push(seat);
+        }
+        // Role/state → repo override (dedup: a legacy seat and an override for the same
+        // id must never coexist after migration).
+        if !repo.roster.iter().any(|o| o.id == ov.id) {
+            repo.roster.push(ov);
+        }
+    }
+}
+
 /// The override ids in `repo.roster` that name no legacy seat and no catalogue seat,
 /// so [`resolve_team`] drops them. The daemon logs these — a repo pointing at a quark
 /// the catalogue no longer defines is a stale reference worth a warning, not a silent
@@ -702,6 +733,64 @@ mod resolve_tests {
         assert_eq!(resolved.quarks.len(), 1, "seated once, not twice");
         assert_eq!(resolved.quarks[0].model, "LEGACY", "legacy seat wins");
         assert_eq!(resolved.quarks[0].flavor, Flavor::Orchestrator);
+    }
+
+    /// The migration that runs once on Jake's LIVE setup. This is the single most
+    /// dangerous path in the split — it rewrites both his daemon-polled catalogue and
+    /// his repo file — so the property it rests on is asserted here, not just in prose:
+    /// **`resolve_team` is seat-for-seat identical (order included) before and after**,
+    /// which is exactly what lets the running daemon reconcile the split to a no-op
+    /// re-seat instead of tearing down live ACP sessions.
+    #[test]
+    fn migrate_to_catalogue_is_identity_under_resolve() {
+        // Jake's actual four seats, incl. the disabled orchestrator (`enabled:false`).
+        let mut repo = Team {
+            quarks: vec![
+                Seat { enabled: false, ..seat("opus", "claude", "opus", Flavor::Orchestrator) },
+                seat("agy", "agy", "gemini", Flavor::Worker),
+                seat("acp-claude", "acp-claude", "opus", Flavor::Worker),
+                seat("acp-agy", "acp-agy", "gemini", Flavor::Worker),
+            ],
+            roster: vec![],
+            max_exchanges: Some(12),
+        };
+        let mut global = Team::default();
+
+        let before = resolve_team(&repo, &global);
+        migrate_to_catalogue(&mut repo, &mut global);
+
+        // Defs moved to the catalogue; repo is now overrides-only.
+        assert_eq!(global.quarks.len(), 4, "every def landed in the catalogue");
+        assert!(repo.quarks.is_empty(), "no legacy seats left in the repo file");
+        assert_eq!(repo.roster.len(), 4, "each seat became one override");
+
+        // THE property the no-op-reseat claim depends on.
+        let after = resolve_team(&repo, &global);
+        assert_eq!(
+            before.quarks, after.quarks,
+            "resolved roster (order + every field, incl. the disabled opus) is unchanged",
+        );
+        assert_eq!(before.max_exchanges, after.max_exchanges, "repo policy survives");
+    }
+
+    /// Running the migration a second time changes nothing — the daemon may launch the
+    /// chamber more than once, and a repo with no legacy seats must be left untouched
+    /// (no duplicate overrides, no re-clobbered catalogue).
+    #[test]
+    fn migrate_to_catalogue_is_idempotent() {
+        let mut repo = Team {
+            quarks: vec![seat("opus", "claude", "opus", Flavor::Orchestrator)],
+            roster: vec![],
+            max_exchanges: None,
+        };
+        let mut global = Team::default();
+        migrate_to_catalogue(&mut repo, &mut global);
+
+        let repo_once = repo.clone();
+        let global_once = global.clone();
+        migrate_to_catalogue(&mut repo, &mut global); // second pass
+        assert_eq!(repo, repo_once, "second migration adds no override");
+        assert_eq!(global, global_once, "second migration re-clobbers no def");
     }
 }
 
