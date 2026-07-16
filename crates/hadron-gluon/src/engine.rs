@@ -378,7 +378,10 @@ impl Engine {
             .iter()
             .map(|q| QuarkCard {
                 id: q.id(),
-                display_name: None,
+                // The @mention name the router matches. Carried on the quark (resolved
+                // from the team config at build time), so a re-seat rebuilds the card
+                // with the right name instead of silently dropping to id-only.
+                display_name: q.display_name(),
                 flavor: q.flavor(),
                 energy: q.energy(),
                 // Populated from the team config in the daemon bin (Task 6);
@@ -430,7 +433,9 @@ impl Engine {
         let resident = quark.resident();
         let card = QuarkCard {
             id: id.clone(),
-            display_name: None,
+            // The @mention name, carried on the quark (see `Engine::new`) so a runtime
+            // re-seat keeps the seat routable by name, not only by id.
+            display_name: quark.display_name(),
             flavor: quark.flavor(),
             energy: quark.energy(),
             // Left empty exactly as `new` leaves it — the daemon owns legibility, and
@@ -490,6 +495,16 @@ impl Engine {
     /// from the disabled set is what "on" means.
     pub fn is_enabled(&self, id: &QuarkId) -> bool {
         !self.disabled.contains(id)
+    }
+
+    /// Update a seated quark's `@mention` name **without rebuilding it**. A rename is pure
+    /// metadata on the roster card the router reads; the quark instance — and, for an ACP
+    /// seat, its live session — is untouched. Only the label the router matches changes, so
+    /// `@NewName` starts resolving on the next tick. Unknown ids are a no-op.
+    pub fn rename(&mut self, id: &QuarkId, display_name: Option<String>) {
+        if let Some(card) = self.roster.iter_mut().find(|c| &c.id == id) {
+            card.display_name = display_name;
+        }
     }
 
     /// How many quarks are seated. The daemon refuses a re-seat that would take this
@@ -3803,5 +3818,46 @@ mod tests {
             !engine.roster.iter().any(|c| c.id == QuarkId::new("agy")),
             "unseated quark still on the roster — it would resolve to a turn we cannot run"
         );
+    }
+
+    /// The @Claude routing fix. A seat's display name must reach the router's roster card
+    /// so `@Claude` resolves to the seat whose id is `acp-claude` — instead of matching
+    /// nothing and falling through to the orchestrator. Exercises the real
+    /// Seat → registry → adapter → `Quark::display_name` → roster-card path, which is
+    /// exactly where the name used to be dropped (the card was hardcoded `display_name: None`).
+    #[test]
+    fn a_seats_display_name_reaches_the_router_so_at_mentions_resolve() {
+        use crate::adapter::registry;
+        use hadron_lattice::Seat;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+
+        let mut claude = Seat::cli(QuarkId::new("acp-claude"), "claude", "opus", Flavor::Worker);
+        claude.display_name = Some("Claude".into());
+        let agy = Seat::cli(QuarkId::new("agy"), "agy", "", Flavor::Orchestrator);
+
+        let engine = Engine::new(
+            path,
+            vec![registry::build_seat(&claude).unwrap(), registry::build_seat(&agy).unwrap()],
+            10,
+        );
+
+        // The card now carries the name — the field that used to be hardcoded to None.
+        assert_eq!(
+            engine
+                .roster
+                .iter()
+                .find(|c| c.id == QuarkId::new("acp-claude"))
+                .and_then(|c| c.display_name.as_deref()),
+            Some("Claude"),
+            "the display name never reached the roster the router reads"
+        );
+        // @Claude resolves to the worker by name, not the orchestrator fallback.
+        assert_eq!(
+            engine.human_addressees("@Claude please fix it"),
+            vec![QuarkId::new("acp-claude")]
+        );
+        // No regression: an unaddressed message still falls back to the orchestrator.
+        assert_eq!(engine.human_addressees("just a thought"), vec![QuarkId::new("agy")]);
     }
 }
