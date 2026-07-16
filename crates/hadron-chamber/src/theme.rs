@@ -86,6 +86,14 @@ pub fn glass_highlight() -> Rgba {
     rgba(0xffffff33) // ~0.20 white
 }
 
+/// The fill for a **focused modal** (Settings card, quark info panel) — opaque, NOT glass.
+/// A modal that the human is reading needs the bright field to stop behind it; a low-alpha
+/// glass surface let the aurora bleed through and made the text hard to read. One token so
+/// every modal reads the same and none can drift back to transparent.
+pub fn modal_surface() -> Rgba {
+    rgb(0x1a1830)
+}
+
 // --- terminal (a Zed-like screen) ---
 /// The terminal screen surface — a touch off pure black so text has contrast.
 pub fn term_bg() -> Rgba {
