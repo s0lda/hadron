@@ -687,11 +687,28 @@ impl Chamber {
             Some(hadron_lattice::Flavor::Worker) => "Worker",
             None => "—",
         };
-        let (agent_str, model_str) = match roster_row.transport {
-            hadron_lattice::Transport::Acp => (roster_row.provider.clone(), roster_row.model.clone()),
-            hadron_lattice::Transport::Cli => ("hadron-adapter".to_string(), roster_row.model.clone()),
+        // For ACP the "Agent" is the boot command the daemon runs (genuinely more info
+        // than repeating the provider); an absent command means "resolve the default from
+        // the provider". CLI seats are driven by the in-process adapter.
+        let agent_str = match roster_row.transport {
+            hadron_lattice::Transport::Acp => seat
+                .as_ref()
+                .and_then(|s| s.command.as_ref())
+                .map(|c| {
+                    if c.args.is_empty() {
+                        c.program.clone()
+                    } else {
+                        format!("{} {}", c.program, c.args.join(" "))
+                    }
+                })
+                .unwrap_or_else(|| format!("default ({})", roster_row.provider)),
+            hadron_lattice::Transport::Cli => "hadron-adapter".to_string(),
         };
-        let model_str = if model_str.is_empty() { "—".to_string() } else { model_str };
+        let model_str = if roster_row.model.is_empty() {
+            "—".to_string()
+        } else {
+            roster_row.model.clone()
+        };
         let transport_str = match roster_row.transport {
             hadron_lattice::Transport::Cli => "CLI (one-shot)",
             hadron_lattice::Transport::Acp => "ACP (resident)",
