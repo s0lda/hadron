@@ -330,6 +330,8 @@ struct Chamber {
     /// Virtual list state for the Chat tab.
     chat_list_state: gpui::ListState,
     log_list_state: gpui::ListState,
+    /// Log rows (by message index) the user has clicked to expand to their full body.
+    log_expanded: std::collections::HashSet<usize>,
     log_expanded_ixs: std::collections::HashSet<usize>,
     /// Maps a virtual list item index to the message's true index in `view.messages`.
     chat_message_ixs: Vec<usize>,
@@ -518,6 +520,7 @@ impl Chamber {
             changes_scroll: ScrollHandle::new(),
             chat_list_state,
             log_list_state,
+            log_expanded: std::collections::HashSet::new(),
             log_expanded_ixs: std::collections::HashSet::new(),
             chat_message_ixs,
             chat_scrolls,
@@ -2093,7 +2096,7 @@ impl Chamber {
             .child(
                 gpui::list(self.log_list_state.clone(), move |ix, _window, cx| {
                     if let Some(view) = weak_view.upgrade() {
-                        view.update(cx, |this, _cx| {
+                        view.update(cx, |this, cx| {
                             if let Some(m) = this.view.messages.get(ix) {
                                 let mut add_divider = false;
                                 if ix > 0 {
@@ -2129,7 +2132,21 @@ impl Chamber {
                                     );
                                 }
 
-                                return row.child(log_row(m)).into_any_element();
+                                let expanded = this.log_expanded.contains(&ix);
+                                return row
+                                    .child(
+                                        div()
+                                            .id(SharedString::from(format!("log-row-{ix}")))
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if !this.log_expanded.remove(&ix) {
+                                                    this.log_expanded.insert(ix);
+                                                }
+                                                cx.notify();
+                                            }))
+                                            .child(log_row(m, expanded)),
+                                    )
+                                    .into_any_element();
                             }
                             div().into_any_element()
                         })
@@ -2465,6 +2482,9 @@ impl Chamber {
 
                 v_flex()
                     .flex_1()
+                    // Without min-height:0 this flex child grows to the terminal grid's
+                    // content height and spills past the container's bottom edge.
+                    .min_h_0()
                     .p_3()
                     .child(screen)
                     .into_any_element()
@@ -3608,9 +3628,11 @@ impl Chamber {
             .max_h(px(640.0))
             .rounded_lg()
             .overflow_hidden()
-            .bg(theme::bg_elevated())
+            // Opaque: a focused settings modal shouldn't let the bright field bleed through
+            // (it read as too transparent). Solid, not glass.
+            .bg(rgb(0x1a1830))
             .border_1()
-            .border_color(theme::border())
+            .border_color(theme::glass_highlight())
             .child(sidebar)
             .child(panel);
 
@@ -4486,7 +4508,7 @@ fn empty_hint(text: &'static str) -> impl IntoElement {
 /// A single row in the compact activity Log: time · actor · kind · body, tabular and dense
 /// so the Log reads like a console rather than a second chat. Body truncates to one line —
 /// the Chat tab is where a message is read in full.
-fn log_row(m: &MessageRow) -> impl IntoElement {
+fn log_row(m: &MessageRow, expanded: bool) -> impl IntoElement {
     let time = m
         .ts
         .with_timezone(&chrono::Local)
@@ -4494,7 +4516,7 @@ fn log_row(m: &MessageRow) -> impl IntoElement {
         .to_string();
     h_flex()
         .w_full()
-        .items_center()
+        .items_start()
         .gap_3()
         .px_2()
         .py_1()
@@ -4522,7 +4544,7 @@ fn log_row(m: &MessageRow) -> impl IntoElement {
         .child(
             div()
                 .flex_none()
-                .w(px(62.0))
+                .w(px(80.0))
                 .text_xs()
                 .text_color(log_kind_color(m.kind_label))
                 .child(m.kind_label),
@@ -4533,7 +4555,8 @@ fn log_row(m: &MessageRow) -> impl IntoElement {
                 .min_w_0()
                 .text_xs()
                 .text_color(theme::text_secondary())
-                .truncate()
+                // Truncated to one line by default; an expanded row (click) wraps in full.
+                .when(!expanded, |d| d.truncate())
                 .child(m.body.clone()),
         )
 }
@@ -4960,7 +4983,9 @@ pub fn run(field_path: Option<String>) {
             // is computed once at theme construction and does NOT re-derive from the mutated
             // `colors.popover` above — so without this line they stay the stock-dark theme
             // colour (near-black) instead of our surface. Same gotcha as `tokens.title_bar`.
-            t.tokens.popover = gpui::Hsla::from(theme::bg_elevated()).into();
+            // A neutral gray with a touch of translucency — deliberately NOT the violet
+            // glass tone, so a menu opened over a glass panel reads as a distinct surface.
+            t.tokens.popover = gpui::Hsla::from(gpui::rgba(0x2c2c33e0)).into();
             // now a bright field, so a dark line stood out between the chat and the right
             // pane — make the idle border fully transparent so the handle vanishes at rest.
             // Dragging still paints `drag_border` (on-brand pink) for feedback. This also
