@@ -87,8 +87,18 @@ impl Terminal {
 /// showing), and a new untracked file is not in it at all (so it would never
 /// appear). `--cached --others --exclude-standard` unions tracked and untracked,
 /// and the `exists()` filter drops anything that is only in the index.
-pub fn list_workspace_files(repo_root: &Path) -> Vec<String> {
-    let Ok(output) = Command::new("git")
+/// Each returned entry is `(path, is_ignored)`. Non-ignored (tracked or untracked)
+/// files are listed individually; gitignored entries are unioned in with `--directory`
+/// so a **wholly-ignored directory collapses to one entry** (e.g. `target/`) instead of
+/// every file inside it. That collapse is not cosmetic: in this workspace the raw ignored
+/// listing is ~100k files (all of `target/`, the vendored `gpui-component/`, venvs), which
+/// would swamp both the tree and the `@`-mention index. A collapsed directory keeps its
+/// trailing `/` so the tree can render it as an (empty, muted) folder rather than a file.
+pub fn list_workspace_files(repo_root: &Path) -> Vec<(String, bool)> {
+    let mut files: Vec<(String, bool)> = Vec::new();
+
+    // Tracked ∪ untracked, minus ignored — the real, editable files.
+    if let Ok(output) = Command::new("git")
         .args([
             "ls-files",
             "--cached",
@@ -98,18 +108,43 @@ pub fn list_workspace_files(repo_root: &Path) -> Vec<String> {
         ])
         .current_dir(repo_root)
         .output()
-    else {
-        return vec![];
-    };
-    if !output.status.success() {
-        return vec![];
+    {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                if repo_root.join(line).exists() {
+                    files.push((line.to_string(), false));
+                }
+            }
+        }
     }
-    let mut files: Vec<String> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|p| repo_root.join(p).exists())
-        .map(String::from)
-        .collect();
-    files.sort();
+
+    // Ignored entries, with wholly-ignored directories collapsed to a single entry.
+    if let Ok(output) = Command::new("git")
+        .args([
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "--deduplicate",
+        ])
+        .current_dir(repo_root)
+        .output()
+    {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                // `--directory` never emits `.git/`, but guard anyway; `exists()` drops a
+                // stale entry. A collapsed dir keeps its trailing `/` (checked verbatim).
+                let bare = line.trim_end_matches('/');
+                if !bare.is_empty() && !line.starts_with(".git/") && repo_root.join(bare).exists() {
+                    files.push((line.to_string(), true));
+                }
+            }
+        }
+    }
+
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files.dedup_by(|a, b| a.0 == b.0);
     files
 }
 
@@ -159,7 +194,7 @@ mod tests {
             .unwrap();
 
         let files = list_workspace_files(root);
-        assert_eq!(files, vec!["test.txt"]);
+        assert_eq!(files, vec![("test.txt".to_string(), false)]);
 
         let content = read_workspace_file(root, "test.txt");
         assert_eq!(content, Some("hello world".to_string()));
@@ -168,6 +203,9 @@ mod tests {
     /// The file tree is a view of the **disk**, not of git's index. Jake deleted
     /// two screenshots and added five; the tree kept showing the deleted ones and
     /// never showed the new ones, because `git ls-files` reports the index.
+    ///
+    /// Gitignored files are now surfaced too (rendered muted), flagged `is_ignored = true`,
+    /// so this also asserts they appear with the right flag rather than being dropped.
     #[test]
     fn the_file_tree_shows_the_disk_not_the_index() {
         let dir = tempdir().unwrap();
@@ -191,22 +229,22 @@ mod tests {
         // Never added to git: it must be listed anyway.
         fs::write(root.join("brand-new.png"), "new").unwrap();
 
-        // Ignored: it must not be listed.
+        // Ignored: it is now surfaced (muted), flagged is_ignored = true.
         fs::write(root.join(".gitignore"), "ignored.tmp\n").unwrap();
         fs::write(root.join("ignored.tmp"), "noise").unwrap();
 
         let files = list_workspace_files(root);
         assert!(
-            files.contains(&"brand-new.png".to_string()),
-            "an untracked file on disk must appear in the tree, got {files:?}"
+            files.contains(&("brand-new.png".to_string(), false)),
+            "an untracked file on disk must appear in the tree (not ignored), got {files:?}"
         );
         assert!(
-            !files.contains(&"deleted.png".to_string()),
+            !files.iter().any(|(p, _)| p == "deleted.png"),
             "a file deleted from disk must not linger because it is still in the index, got {files:?}"
         );
         assert!(
-            !files.contains(&"ignored.tmp".to_string()),
-            "a gitignored file must stay out of the tree, got {files:?}"
+            files.contains(&("ignored.tmp".to_string(), true)),
+            "a gitignored file must now appear flagged as ignored, got {files:?}"
         );
     }
 }
