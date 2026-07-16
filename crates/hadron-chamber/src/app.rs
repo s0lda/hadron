@@ -942,7 +942,9 @@ impl Chamber {
                     .w(px(420.0))
                     .max_h(px(660.0))
                     .overflow_y_scroll()
-                    .bg(theme::glass_surface())
+                    // Opaque: a focused info panel must not let the bright field bleed
+                    // through (glass_surface read as too transparent). Solid, like Settings.
+                    .bg(theme::modal_surface())
                     .border_1()
                     .border_color(theme::glass_highlight())
                     .rounded(INNER_RADIUS)
@@ -4116,8 +4118,8 @@ impl Chamber {
             .rounded_lg()
             .overflow_hidden()
             // Opaque: a focused settings modal shouldn't let the bright field bleed through
-            // (it read as too transparent). Solid, not glass.
-            .bg(rgb(0x1a1830))
+            // (it read as too transparent). Solid, not glass — shared with the info panel.
+            .bg(theme::modal_surface())
             .border_1()
             .border_color(theme::glass_highlight())
             .child(sidebar)
