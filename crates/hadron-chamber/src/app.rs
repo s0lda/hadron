@@ -994,29 +994,10 @@ impl Chamber {
                     format_num(ctx.context_window_size)
                 ),
             ));
-            let ctx_data = vec![
-                ("Used".to_string(), ctx.used_percentage as f64),
-                (
-                    "Remaining".to_string(),
-                    100.0 - (ctx.used_percentage as f64).min(100.0),
-                ),
-            ];
-            stats_block = stats_block.child(
-                div().h(px(56.0)).w_full().child(
-                    BarChart::new(ctx_data)
-                        .id(format!("info-ctx-chart-{qid}"))
-                        .name("Context %")
-                        .band(|d| d.0.clone())
-                        .value(|d| d.1)
-                        .fill(move |d, _, _, _| -> gpui::Background {
-                            if d.0 == "Used" {
-                                q_color.into()
-                            } else {
-                                gpui::rgba(0x00000033).into()
-                            }
-                        }),
-                ),
-            );
+            // Context occupancy is a proportion, not a series — a progress bar reads it
+            // better than a two-bar chart. Fill in the quark's colour.
+            let frac = (ctx.used_percentage as f32 / 100.0).clamp(0.0, 1.0);
+            stats_block = stats_block.child(div().mt_1().child(progress_meter(frac, q_color)));
         }
         if !q_stats.spend_history.is_empty() {
             // Fresh-spend over turns as an area under the curve: the quark's hue stroke
@@ -2678,21 +2659,7 @@ impl Chamber {
                             format_num(ctx.context_window_size),
                         )),
                     )
-                    .child(
-                        // A slim div-based meter — no chart, no per-frame cost.
-                        div()
-                            .w_full()
-                            .h(px(6.0))
-                            .rounded_full()
-                            .bg(theme::bg_base())
-                            .child(
-                                div()
-                                    .h_full()
-                                    .w(gpui::relative(frac))
-                                    .rounded_full()
-                                    .bg(q_color),
-                            ),
-                    );
+                    .child(progress_meter(frac, q_color));
             }
             // An empty quota list means the provider has no quota concept — not that the
             // quota is spent. Say nothing rather than render a zero.
@@ -3663,7 +3630,10 @@ impl Chamber {
                     .p_5()
                     .gap_4()
                     .rounded(INNER_RADIUS)
-                    .bg(theme::glass_surface())
+                    // Opaque, like the info panel and Settings: a focused dialog must not
+                    // let the bright field bleed through (glass_surface read as too
+                    // transparent). One shared modal token so every dialog matches.
+                    .bg(theme::modal_surface())
                     .border_1()
                     .border_color(theme::glass_highlight())
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // swallow inner clicks
@@ -5589,6 +5559,24 @@ fn session_card() -> gpui::Div {
         .bg(theme::glass_surface())
         .border_1()
         .border_color(theme::glass_highlight())
+}
+
+/// A slim horizontal progress meter: a recessed track with a `fill`-coloured bar at
+/// `frac` (0..=1) of the width. Pure divs — no chart, no per-frame cost. Shared by the
+/// chat stats cards and the info panel's context gauge so they read identically.
+fn progress_meter(frac: f32, fill: gpui::Rgba) -> impl IntoElement {
+    div()
+        .w_full()
+        .h(px(6.0))
+        .rounded_full()
+        .bg(theme::bg_base())
+        .child(
+            div()
+                .h_full()
+                .w(gpui::relative(frac.clamp(0.0, 1.0)))
+                .rounded_full()
+                .bg(fill),
+        )
 }
 
 /// A KPI tile: a big value over a small label, for the session totals row.
