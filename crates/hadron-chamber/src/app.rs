@@ -3173,6 +3173,17 @@ impl Chamber {
         );
     }
 
+    /// Set a single quark's permission mode **explicitly** (the Settings picker) by
+    /// appending a per-quark `ModeSet`. Unlike [`Self::cycle_quark_mode`] this jumps
+    /// straight to `mode`; like it, it always records an explicit per-quark override.
+    fn set_quark_mode(&mut self, id: &str, mode: Mode, cx: &mut Context<Self>) {
+        let qid = QuarkId::new(id);
+        self.append_and_reload(
+            Event::new(Actor::Human, Some(qid), Kind::ModeSet { mode }),
+            cx,
+        );
+    }
+
     /// The repo `.hadron/team.json` path (the file the chamber edits), whether or not
     /// it exists yet.
     fn repo_team_path(&self) -> PathBuf {
@@ -3560,6 +3571,67 @@ impl Chamber {
         row.into_any_element()
     }
 
+    /// The per-quark permission ladder (Ask / Write / Auto / Bypass) as an explicit
+    /// segmented picker for Settings. Unlike the roster's cycle-on-click tag, each rung is
+    /// directly selectable, the current resolved mode is highlighted on its risk colour,
+    /// and a gloss explains what the choice delegates. Selecting a rung appends a per-quark
+    /// `ModeSet` override (see [`Self::set_quark_mode`]); the daemon honours it next tick.
+    fn mode_select(&self, id: &str, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let (current, is_override) = self
+            .view
+            .roster
+            .iter()
+            .find(|r| r.id == id)
+            .map(|r| (r.mode, r.mode_is_override))
+            .unwrap_or((self.view.global_mode, false));
+
+        let mut row = h_flex().gap_1p5().flex_wrap();
+        for m in [Mode::Ask, Mode::Write, Mode::Auto, Mode::Bypass] {
+            let selected = m == current;
+            let id_str = id.to_string();
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("mode-{id}-{}", mode_label(m))))
+                    .px_2p5()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(selected, |d| {
+                        d.bg(mode_color(m)).border_color(mode_color(m)).text_color(theme::text())
+                    })
+                    .when(!selected, |d| {
+                        d.bg(theme::bg_surface())
+                            .border_color(theme::border())
+                            .text_color(theme::text_secondary())
+                            .hover(|s| s.bg(theme::bg_surface_raised()))
+                    })
+                    .child(mode_label(m))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_quark_mode(&id_str, m, cx);
+                        cx.notify();
+                    })),
+            );
+        }
+
+        v_flex()
+            .gap_1p5()
+            .child(row)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(mode_hint(current).to_string()),
+            )
+            .child(div().text_xs().text_color(theme::text_muted()).child(if is_override {
+                "Set for this quark (overrides the global default).".to_string()
+            } else {
+                format!("Inheriting the global default ({}).", mode_label(current))
+            }))
+            .into_any_element()
+    }
+
     /// Open the native file picker to choose an avatar image; the choice is parked
     /// in `pending_image_pick` for `render` to apply (see the field's doc — the
     /// picker task has no `Window`, which `set_value` needs).
@@ -3800,6 +3872,10 @@ impl Chamber {
                             cx,
                         ),
                     ))
+                    // The permission ladder: how much authority the human delegates to
+                    // this quark (Ask → Bypass). Stored on the field as a per-quark
+                    // `ModeSet`, so it is live-honoured and independent of team.json.
+                    .child(settings_field("Permission", self.mode_select(target.key(), cx)))
                 })
                 .child(settings_field("Color", swatches.into_any_element()))
                 .child(settings_field(
@@ -4800,16 +4876,50 @@ fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
     if !is_override {
         return div().into_any_element();
     }
-    let (tag, label): (Tag, &'static str) = match mode {
-        Mode::Ask => (Tag::secondary(), "ASK"),
-        Mode::Write => (Tag::info(), "WRITE"),
-        Mode::Auto => (Tag::warning(), "AUTO"),
-        Mode::Bypass => (Tag::danger(), "BYPASS"),
+    let tag = match mode {
+        Mode::Ask => Tag::secondary(),
+        Mode::Write => Tag::info(),
+        Mode::Auto => Tag::warning(),
+        Mode::Bypass => Tag::danger(),
     };
     tag.small()
         .outline()
-        .child(div().child(label.to_string()))
+        .child(div().child(mode_label(mode).to_string()))
         .into_any_element()
+}
+
+/// The short badge label for a permission mode, e.g. `Mode::Bypass` → `"BYPASS"`.
+/// One source of truth for the ladder's labels, shared by the roster tag and the
+/// Settings picker.
+fn mode_label(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Ask => "ASK",
+        Mode::Write => "WRITE",
+        Mode::Auto => "AUTO",
+        Mode::Bypass => "BYPASS",
+    }
+}
+
+/// The selected-chip colour for a permission mode — a risk temperature from muted
+/// (Ask) through blue/amber to danger red (Bypass), matching the roster tag variants.
+fn mode_color(mode: Mode) -> gpui::Hsla {
+    match mode {
+        Mode::Ask => gpui::rgb(0x6b7280).into(),    // gray — pure conversation
+        Mode::Write => gpui::rgb(0x3b82f6).into(),   // blue — edits flow
+        Mode::Auto => gpui::rgb(0xf59e0b).into(),    // amber — commands remembered
+        Mode::Bypass => gpui::rgb(0xef4444).into(),  // red — nothing asks
+    }
+}
+
+/// A one-line, human-readable gloss of what a permission mode delegates — shown under
+/// the Settings picker so the choice is not just a label. Mirrors the [`Mode`] doc.
+fn mode_hint(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Ask => "Every edit and command asks you first.",
+        Mode::Write => "Edits auto-approve; every command asks you.",
+        Mode::Auto => "Edits auto-approve; a command asks once, then is remembered.",
+        Mode::Bypass => "The orchestrator owns it — nothing asks you (still audited).",
+    }
 }
 
 /// A muted placeholder line shown when a tab view has nothing to render.
