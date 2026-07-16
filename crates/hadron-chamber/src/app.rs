@@ -20,6 +20,7 @@ use gpui::{
 use gpui_component::avatar::Avatar;
 // badge removed
 use gpui_component::chart::{AreaChart, BarChart};
+use gpui_component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
 use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
@@ -91,7 +92,7 @@ struct ResolvedIdentity {
 
 /// The palette a user picks an identity color from (Settings). Kept small and
 /// legible on the dark surfaces.
-const IDENTITY_SWATCHES: [u32; 8] = [
+const IDENTITY_SWATCHES: [u32; 14] = [
     0xf5f5f6, // near-white (the human's default)
     0xec4899, // pink
     0xa855f7, // purple
@@ -100,6 +101,12 @@ const IDENTITY_SWATCHES: [u32; 8] = [
     0xfbbf24, // amber
     0xfb7185, // rose
     0x94a3b8, // slate
+    0x38bdf8, // sky
+    0x22d3ee, // cyan
+    0x4ade80, // emerald
+    0xfb923c, // orange
+    0x818cf8, // indigo
+    0xe879f9, // fuchsia
 ];
 
 /// Parse a `#rrggbb` string into a color.
@@ -109,6 +116,14 @@ fn parse_hex(s: &str) -> Option<Rgba> {
         return None;
     }
     u32::from_str_radix(s, 16).ok().map(rgb)
+}
+
+/// Pack an `Hsla` into a `0xRRGGBB` value — the inverse of [`parse_hex`]'s `rgb`, so a
+/// colour chosen in the picker round-trips through the stored `#rrggbb` string.
+fn hsla_to_hex(hsla: Hsla) -> u32 {
+    let c: Rgba = hsla.into();
+    let q = |f: f32| (f.clamp(0.0, 1.0) * 255.0).round() as u32;
+    (q(c.r) << 16) | (q(c.g) << 8) | q(c.b)
 }
 
 /// Up to two uppercase initials from a display name, for the fallback avatar.
@@ -424,6 +439,9 @@ struct Chamber {
     /// substring match on preset name + command, so the list is searchable instead of a
     /// long scroll.
     preset_filter: Entity<InputState>,
+    /// Arbitrary-colour picker for the current Settings identity, beside the preset
+    /// swatches. Its `Change` events write the identity's colour (see `new`).
+    color_picker: Entity<ColorPickerState>,
     /// A path chosen from the native file picker (avatar image), parked here by the
     /// async picker task and drained into `settings_path` at the next `render` — the
     /// picker returns without a `Window`, but `set_value` needs one, so `render`
@@ -432,7 +450,7 @@ struct Chamber {
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
-    _settings_subs: [Subscription; 3],
+    _settings_subs: [Subscription; 4],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
     file_tree_paths: Vec<String>,
@@ -505,6 +523,7 @@ impl Chamber {
         let settings_effort = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. low, standard, high"));
         let settings_mode_config = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. architect, code, ask"));
         let preset_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Search providers…"));
+        let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
         // Repaint the Settings overlay on every edit so its preview is live.
         let _settings_subs = [
             cx.subscribe_in(&settings_name, window, |_, _, _: &InputEvent, _, cx| {
@@ -518,6 +537,17 @@ impl Chamber {
             cx.subscribe_in(&preset_filter, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
             }),
+            // A colour chosen in the picker writes the current Settings identity's colour.
+            cx.subscribe_in(
+                &color_picker,
+                window,
+                |this, _, event: &ColorPickerEvent, _, cx| {
+                    let ColorPickerEvent::Change(Some(hsla)) = event else {
+                        return;
+                    };
+                    this.set_settings_color(hsla_to_hex(*hsla), cx);
+                },
+            ),
         ];
 
         // Live tail: re-read the field on an interval so quark turns appended by
@@ -630,6 +660,7 @@ impl Chamber {
             settings_effort,
             settings_mode_config,
             preset_filter,
+            color_picker,
             pending_image_pick: None,
             _input_sub,
             _settings_subs,
@@ -751,7 +782,7 @@ impl Chamber {
     fn info_panel_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let qid = self.info_panel.as_ref().unwrap().clone();
         let roster_row = self.view.roster.iter().find(|r| r.id == qid).unwrap();
-        let q_color = theme::actor_hue(&qid);
+        let q_color = self.color_for(&qid);
         let resolved = self.resolve_identity(&qid);
 
         let stats =
@@ -1166,14 +1197,14 @@ impl Chamber {
             }
             // The file tree is a live view of the disk, not a boot-time snapshot:
             // rescan while it is on screen, exactly as the Changes pane does.
-            if self.right_rail_tab == RightRailTab::FileTree {
-                let root = crate::vcs::repo_root_of(&self.path);
-                let files = crate::sys::list_workspace_files(root);
-                if files != self.file_tree_paths {
-                    *self.completion_files.borrow_mut() = files.clone();
-                    self.file_tree_paths = files;
-                    changed = true;
-                }
+            // Rescan files unconditionally so autocomplete mentions are always live,
+            // regardless of which right rail tab is active.
+            let root = crate::vcs::repo_root_of(&self.path);
+            let files = crate::sys::list_workspace_files(root);
+            if files != self.file_tree_paths {
+                *self.completion_files.borrow_mut() = files.clone();
+                self.file_tree_paths = files;
+                changed = true;
             }
             if changed {
                 cx.notify();
@@ -1569,6 +1600,7 @@ impl Chamber {
             ContextMenuAction::OpenFile(path) => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
                 if let Some(content) = crate::sys::read_workspace_file(&repo_root, &path) {
+                    self.parsed_markdown.borrow_mut().remove(&usize::MAX);
                     self.file_tree_open = Some((path, content));
                 }
             }
@@ -2438,7 +2470,7 @@ impl Chamber {
                                                 }
                                                 cx.notify();
                                             }))
-                                            .child(log_row(m, expanded)),
+                                            .child(log_row(m, expanded, this.color_for(&m.from))),
                                     )
                                     .into_any_element();
                             }
@@ -2614,7 +2646,7 @@ impl Chamber {
         }
 
         for (q, s) in &stats.per_quark {
-            let q_color = theme::actor_hue(q);
+            let q_color = self.color_for(q);
             let mut block = session_card().child(
                 h_flex()
                     .w_full()
@@ -2818,6 +2850,7 @@ impl Chamber {
                                 .child(div().text_color(theme::text()).child(path.clone()))
                                 .child(text_button("close-file", "Close").on_click(cx.listener(
                                     |this, _, window, cx| {
+                                        this.parsed_markdown.borrow_mut().remove(&usize::MAX);
                                         this.file_tree_open = None;
                                         cx.notify();
                                     },
@@ -2963,6 +2996,7 @@ impl Chamber {
                                         if let Some(content) =
                                             crate::sys::read_workspace_file(&repo, &file_name)
                                         {
+                                            this.parsed_markdown.borrow_mut().remove(&usize::MAX);
                                             this.file_tree_open =
                                                 Some((file_name.clone(), content));
                                             cx.notify();
@@ -3473,6 +3507,15 @@ impl Chamber {
             Event::new(Actor::Human, Some(qid), Kind::Reboot),
             cx,
         );
+    }
+
+    /// The colour to paint a quark's name / chart series with: its **custom** colour if
+    /// one is set in the stored identity (`ChamberPrefs`), else the stable auto hue. Thin
+    /// wrapper over [`Self::resolve_identity`] — the one colour-resolution path — so a
+    /// custom colour shows everywhere the quark appears (log author, charts, roster, info
+    /// panel), not just where an identity was already being resolved.
+    fn color_for(&self, name: &str) -> Hsla {
+        self.resolve_identity(name).color
     }
 
     /// The repo `.hadron/team.json` path (the file the chamber edits), whether or not
@@ -4186,6 +4229,11 @@ impl Chamber {
                     .on_click(cx.listener(move |this, _, _, cx| this.set_settings_color(hex, cx))),
             );
         }
+        // A full picker for any colour beyond the presets; its Change event writes the
+        // identity's colour (subscribed in `new`). Not value-synced to the target on
+        // switch — the swatch ring already shows the current selection, and syncing would
+        // re-emit Change and write the colour back on every target change.
+        swatches = swatches.child(ColorPicker::new(&self.color_picker).label("Custom"));
 
         // Left sidebar: a recessed, scrollable nav column of identities.
         let sidebar = v_flex()
@@ -5486,7 +5534,7 @@ fn empty_hint(text: &'static str) -> impl IntoElement {
 /// A single row in the compact activity Log: time · actor · kind · body, tabular and dense
 /// so the Log reads like a console rather than a second chat. Body truncates to one line —
 /// the Chat tab is where a message is read in full.
-fn log_row(m: &MessageRow, expanded: bool) -> impl IntoElement {
+fn log_row(m: &MessageRow, expanded: bool, author_color: Hsla) -> impl IntoElement {
     let time = m
         .ts
         .with_timezone(&chrono::Local)
@@ -5515,7 +5563,7 @@ fn log_row(m: &MessageRow, expanded: bool) -> impl IntoElement {
                 .w(px(92.0))
                 .text_xs()
                 .font_weight(gpui::FontWeight::BOLD)
-                .text_color(theme::actor_hue(&m.from))
+                .text_color(author_color)
                 .truncate()
                 .child(m.from.clone()),
         )
@@ -5564,7 +5612,7 @@ fn session_card() -> gpui::Div {
 /// A slim horizontal progress meter: a recessed track with a `fill`-coloured bar at
 /// `frac` (0..=1) of the width. Pure divs — no chart, no per-frame cost. Shared by the
 /// chat stats cards and the info panel's context gauge so they read identically.
-fn progress_meter(frac: f32, fill: gpui::Rgba) -> impl IntoElement {
+fn progress_meter(frac: f32, fill: impl Into<gpui::Fill>) -> impl IntoElement {
     div()
         .w_full()
         .h(px(6.0))
