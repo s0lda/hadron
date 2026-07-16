@@ -1,8 +1,18 @@
 # Spend area chart · per-quark color identity · progress bar · About opacity — Design
 
 **Date:** 2026-07-16
-**Status:** Approved (Jake, in-conversation — answered the design questions and picked
-cumulative + everywhere)
+**Status:** Implemented (P1 About+progress `e16c18c`, P2 colours `ead8111`, P3 spend
+chart `509768b`). Full gate green (393 tests).
+
+**Implementation note — colour storage (SSOT correction):** the design proposed a new
+`SeatOverride.color` in `team.json`. During P2 a pre-existing per-quark colour system was
+found — `ChamberPrefs.quarks[id].color` (`~/.hadron/chamber.json`), resolved by
+`resolve_identity`, set by `set_settings_color` + swatches. Adding a second colour store
+would have violated SSOT, so the lattice/model plumbing was reverted and the feature was
+built on the existing system: `color_for` delegates to `resolve_identity().color`, and
+the ColorPicker writes `ChamberPrefs` via `set_settings_color`. Colour is therefore
+per-machine (chamber.json), not per-repo — the correct home, since that is where
+`display_name`/avatar/colour already live together.
 
 ## Problem
 
