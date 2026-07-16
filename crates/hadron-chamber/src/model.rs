@@ -134,6 +134,55 @@ pub struct QuarkStats {
     pub spend_history: Vec<TurnSpend>,
 }
 
+/// A time window over the swarm's telemetry. `Session` is bounded by *source* — the
+/// live field only, i.e. the current post-`/clear` session — while the wider windows
+/// fold archived sessions in and bound by *time* ([`StatsWindow::cutoff`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatsWindow {
+    /// The live field: this session since the last `/clear`. No archives, no time bound.
+    Session,
+    /// Rolling `now − 7 days`, across the live field and archived sessions.
+    Week,
+    /// Rolling `now − 30 days`, across the live field and archived sessions.
+    Month,
+    /// Everything, live field and every archived session, no lower bound.
+    AllTime,
+}
+
+impl StatsWindow {
+    /// In tab order.
+    pub const ALL: [StatsWindow; 4] = [
+        StatsWindow::Session,
+        StatsWindow::Week,
+        StatsWindow::Month,
+        StatsWindow::AllTime,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            StatsWindow::Session => "Session",
+            StatsWindow::Week => "Week",
+            StatsWindow::Month => "Month",
+            StatsWindow::AllTime => "All time",
+        }
+    }
+
+    /// The inclusive lower bound for an event's `ts`. `None` = no lower bound. `Session`
+    /// is `None` too: it is bounded by its source (the live field), not by a timestamp.
+    pub fn cutoff(self, now: DateTime<chrono::Utc>) -> Option<DateTime<chrono::Utc>> {
+        match self {
+            StatsWindow::Session | StatsWindow::AllTime => None,
+            StatsWindow::Week => Some(now - chrono::Duration::days(7)),
+            StatsWindow::Month => Some(now - chrono::Duration::days(30)),
+        }
+    }
+
+    /// Whether this window folds in archived sessions or reads the live field alone.
+    pub fn includes_archives(self) -> bool {
+        !matches!(self, StatsWindow::Session)
+    }
+}
+
 /// Per-quark session statistics plus the totals that are meaningful to add.
 /// Deliberately no total context or quota — see [`QuarkStats`].
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -167,10 +216,48 @@ impl ChamberView {
     /// as its bare id, so testing `from` for an `@` sigil matches nothing and
     /// silently zeroes every statistic.
     pub fn session_stats(&self) -> SessionStats {
+        self.fold_stats(self.messages.iter())
+    }
+
+    /// Aggregate telemetry over a [`StatsWindow`]. `archived` is the projected
+    /// messages of the archived sessions (`load_archived_messages`); it is ignored for
+    /// [`StatsWindow::Session`] (live field only) and, for the wider windows, merged
+    /// with the live field and filtered to the window's `cutoff(now)` by `ts`.
+    ///
+    /// Attribution is always against the **live** roster: an archived turn from a quark
+    /// that no longer holds a seat is dropped, the same as a human/gluon message.
+    pub fn stats_for(
+        &self,
+        archived: &[MessageRow],
+        window: StatsWindow,
+        now: DateTime<chrono::Utc>,
+    ) -> SessionStats {
+        let cutoff = window.cutoff(now);
+        let in_window = |m: &&MessageRow| cutoff.map_or(true, |c| m.ts >= c);
+
+        // Merge archives (older) ahead of the live field, then sort by `ts` so the fold
+        // is chronological (first_seen / spend_history order depend on it). `Session`
+        // reads the live field alone — its source is the current session.
+        let mut msgs: Vec<&MessageRow> = if window.includes_archives() {
+            archived
+                .iter()
+                .chain(self.messages.iter())
+                .filter(in_window)
+                .collect()
+        } else {
+            self.messages.iter().filter(in_window).collect()
+        };
+        msgs.sort_by_key(|m| m.ts);
+        self.fold_stats(msgs.into_iter())
+    }
+
+    /// The shared fold behind [`Self::session_stats`] and [`Self::stats_for`]: sum the
+    /// given messages per quark (attributed via the live roster) and in total.
+    fn fold_stats<'a>(&self, messages: impl Iterator<Item = &'a MessageRow>) -> SessionStats {
         let mut stats: HashMap<&str, QuarkStats> = HashMap::new();
         let mut out = SessionStats::default();
 
-        for m in &self.messages {
+        for m in messages {
             let Some(row) = self.roster.iter().find(|r| r.id == m.from) else {
                 continue; // human, gluon, or an actor with no seat
             };
@@ -314,6 +401,35 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn project(events: &[Event]) -> ChamberView {
     project_with_team(events, &Team::default(), &Team::default())
+}
+
+/// Project every archived session under `sessions_dir` into one flat, chronological
+/// `Vec<MessageRow>` for the wider [`StatsWindow`]s (`/clear` writes each cleared field
+/// to `sessions/<timestamp>/field.jsonl`).
+///
+/// Each session is projected **independently** and its rows concatenated — turn numbers
+/// are scoped per field, so projecting sessions separately keeps one session's turn
+/// usage from colliding with another's. The session directories are timestamp-named, so
+/// sorting their paths yields chronological order. A missing `sessions_dir` (nothing
+/// cleared yet) or an unreadable session is not an error — it contributes no rows.
+pub fn load_archived_messages(sessions_dir: &std::path::Path) -> Vec<MessageRow> {
+    let mut dirs: Vec<std::path::PathBuf> = match std::fs::read_dir(sessions_dir) {
+        Ok(rd) => rd
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect(),
+        Err(_) => return Vec::new(),
+    };
+    dirs.sort();
+
+    let mut out = Vec::new();
+    for dir in dirs {
+        let field = dir.join("field.jsonl");
+        let events = hadron_lattice::io::read_events(&field).unwrap_or_default();
+        out.extend(project(&events).messages);
+    }
+    out
 }
 
 /// Project the field into a renderable view. Roster order is first-seen; a
@@ -480,6 +596,112 @@ mod tests {
             tokens: 0,
             unknown_turns: 0,
         }
+    }
+
+    use chrono::{TimeZone, Utc};
+
+    /// `StatsWindow::cutoff`: Session and All-time are unbounded; Week/Month are rolling
+    /// lower bounds relative to `now`.
+    #[test]
+    fn stats_window_cutoffs_bound_the_rolling_windows_only() {
+        let now = Utc.with_ymd_and_hms(2026, 7, 16, 12, 0, 0).unwrap();
+        assert_eq!(StatsWindow::Session.cutoff(now), None);
+        assert_eq!(StatsWindow::AllTime.cutoff(now), None);
+        assert_eq!(
+            StatsWindow::Week.cutoff(now),
+            Some(Utc.with_ymd_and_hms(2026, 7, 9, 12, 0, 0).unwrap())
+        );
+        assert_eq!(
+            StatsWindow::Month.cutoff(now),
+            Some(Utc.with_ymd_and_hms(2026, 6, 16, 12, 0, 0).unwrap())
+        );
+        assert!(!StatsWindow::Session.includes_archives());
+        assert!(StatsWindow::Week.includes_archives());
+    }
+
+    /// Build a quark reply carrying `fresh` tokens at time `ts`, so window folds have
+    /// something to sum and a timestamp to filter on.
+    fn spend_reply(quark: &str, fresh: u32, ts: DateTime<Utc>) -> Event {
+        let mut reply = Event::new(
+            Actor::Quark(QuarkId::new(quark)),
+            None,
+            Kind::Message { body: "done".into() },
+        );
+        reply.ts = ts;
+        reply.usage = Some(hadron_lattice::Usage {
+            model: None,
+            spend: hadron_lattice::TokenSpend {
+                input: Some(fresh),
+                output: Some(0),
+                cache_read: None,
+                cache_write: None,
+            },
+            context: None,
+            quota: vec![],
+        });
+        reply
+    }
+
+    /// `stats_for` filters by `ts`: a turn older than the window's cutoff is excluded;
+    /// one inside is counted. Archived rows fold into the wider windows, not Session.
+    #[test]
+    fn stats_for_filters_by_timestamp_and_folds_archives_only_when_wide() {
+        let now = Utc.with_ymd_and_hms(2026, 7, 16, 12, 0, 0).unwrap();
+        let recent = now - chrono::Duration::days(2); // inside Week
+        let old = now - chrono::Duration::days(10); // outside Week, inside Month
+
+        // Live field: one recent turn.
+        let live = vec![
+            ev(Actor::Human, Some("opus"), Kind::Message { body: "go".into() }),
+            spend_reply("opus", 100, recent),
+        ];
+        let view = project(&live);
+        // Attribution needs a live roster seat for "opus"; project gives it one (it
+        // authored a message), so per_quark carries it.
+
+        // Archived: an older turn (10 days back).
+        let archived = project(&[spend_reply("opus", 40, old)]).messages;
+
+        // Week: only the recent live turn — archived `old` is outside the 7-day cutoff.
+        let week = view.stats_for(&archived, StatsWindow::Week, now);
+        assert_eq!(week.total_fresh, 100, "week counts only the in-window turn");
+
+        // Month: both — `old` (10d) is inside 30 days, and archives fold into wide windows.
+        let month = view.stats_for(&archived, StatsWindow::Month, now);
+        assert_eq!(month.total_fresh, 140, "month folds the archived turn in too");
+
+        // Session: live field only, ignores the archived slice entirely.
+        let session = view.stats_for(&archived, StatsWindow::Session, now);
+        assert_eq!(session.total_fresh, 100, "session never folds archives");
+    }
+
+    /// `load_archived_messages` reads every `sessions/*/field.jsonl` and concatenates
+    /// their projected rows; a missing directory yields no rows and no error.
+    #[test]
+    fn load_archived_messages_merges_sessions_and_tolerates_a_missing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = dir.path().join("sessions");
+
+        // Missing dir → empty, no panic.
+        assert!(load_archived_messages(&sessions).is_empty());
+
+        // Two archived sessions, each with one quark message.
+        for (name, quark) in [("20260101_000000", "opus"), ("20260201_000000", "gemini")] {
+            let sdir = sessions.join(name);
+            std::fs::create_dir_all(&sdir).unwrap();
+            let field = sdir.join("field.jsonl");
+            hadron_lattice::io::append_event(
+                &field,
+                &Event::new(Actor::Quark(QuarkId::new(quark)), None, Kind::Message { body: "hi".into() }),
+            )
+            .unwrap();
+        }
+
+        let rows = load_archived_messages(&sessions);
+        assert_eq!(rows.len(), 2, "one row per archived session message");
+        // Sorted by session dir (timestamp) → opus (Jan) before gemini (Feb).
+        assert_eq!(rows[0].from, "opus");
+        assert_eq!(rows[1].from, "gemini");
     }
 
     /// `/clear` restarts every resident agent so the fresh field is a fresh session:
