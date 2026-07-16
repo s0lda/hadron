@@ -9,24 +9,36 @@ use hadron_lattice::{Actor, Event, Flavor, Kind, QuarkCard, QuarkId, QuarkState}
 pub fn next_pending(events: &[Event]) -> Option<QuarkId> {
     let idx = events.iter().rposition(|e| e.to.is_some())?;
     let target = events[idx].to.clone().unwrap();
-    let answered = events[idx + 1..].iter().any(|e| {
-        e.from == Actor::Quark(target.clone())
-            && (matches!(e.kind, Kind::Message { .. })
-                || matches!(
-                    e.kind,
-                    Kind::Status {
-                        state: QuarkState::Ground
-                            | QuarkState::Error
-                            | QuarkState::Blocked
-                            | QuarkState::Waiting
-                    }
-                ))
-    });
+    let answered = events[idx + 1..].iter().any(|e| is_turn_completion(e, &target));
     if answered {
         None
     } else {
         Some(target)
     }
+}
+
+/// Does event `e` represent `quark` **completing** a turn — a reply (a `Message`) or a
+/// terminal/pause status (`Ground`, `Error`, `Blocked`, `Waiting`)?
+///
+/// This is the single source of truth for "the quark did something that ends a turn",
+/// shared by [`next_pending`] and the engine's `has_answered` so the two can never drift
+/// into disagreeing about whether a quark is still pending. It deliberately EXCLUDES the
+/// non-terminal `Excited`/`Thinking` statuses: those mean "started"/"working", not "done".
+/// Counting an `Excited` as an answer is exactly what stranded a quark whose turn was
+/// interrupted (a restart) after it went Excited but before it replied — the field kept it
+/// marked answered and it was never re-dispatched.
+pub fn is_turn_completion(e: &Event, quark: &QuarkId) -> bool {
+    e.from == Actor::Quark(quark.clone())
+        && (matches!(e.kind, Kind::Message { .. })
+            || matches!(
+                e.kind,
+                Kind::Status {
+                    state: QuarkState::Ground
+                        | QuarkState::Error
+                        | QuarkState::Blocked
+                        | QuarkState::Waiting
+                }
+            ))
 }
 
 /// The role alias every quark can address without knowing who currently holds the
