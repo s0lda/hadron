@@ -1,7 +1,8 @@
-//! The chamber's color system — **dark glass floating on an ambient quark-state field**.
-//! The near-black detector housing is washed with the quark-state hues (blue = working,
-//! purple = thinking, green = available, amber = waiting) at low alpha; instrument panels
-//! are translucent dark glass over that field, edged with a faint white sheen.
+//! The chamber's color system — **white frosted glass floating on a black field**.
+//! The housing is near-black; instrument panels are white at low alpha (so they frost to a
+//! subtle dark glass rather than turning opaque-white), edged with a clean white sheen. The
+//! quark-state hues (blue = working, purple = thinking, green = available, amber = waiting)
+//! survive only as a whisper in the corners, so the field reads black but still has life.
 //!
 //! **What translucency is allowed — and what is NOT.** Under WSL the app software-renders
 //! (llvmpipe, no GPU), so a repaint is expensive; the discipline is to keep repaints RARE,
@@ -22,43 +23,43 @@ use gpui::{rgb, rgba, Rgba};
 
 use hadron_lattice::QuarkState;
 
-// --- the ambient field: a bright blue-violet glow (the "Built"/ChatGPT dark look) ---
-/// The deep-violet base — the opaque tone painted behind the rounded corners and the dark
+// --- the ambient field: a flat black housing (the frosted-glass-on-black look) ---
+/// The near-black base — the opaque tone painted behind the rounded corners and the dark
 /// end of the field wash. Must NOT be translucent (it is the window fill; translucency
-/// here would show the desktop, not the field).
+/// here would show the desktop, not the field). Just off pure black so the rounded corners
+/// and any panel seam still read against it.
 pub fn field_base() -> Rgba {
-    rgb(0x1a1740)
+    rgb(0x0a0a0b)
 }
-/// The bright periwinkle highlight — the light top/edge of the glow. The whole appeal of
-/// the smoked-glass panels is that they sit over a genuinely BRIGHT field, so this is
-/// vivid, not a tint.
+/// The top of the field wash — a barely-lifted near-black, so the housing is a whisper
+/// lighter at the top than behind the panels rather than a bright glow.
 pub fn field_bright() -> Rgba {
-    rgb(0x9a9ce6)
+    rgb(0x141417)
 }
-/// The deep violet the wash settles into at the bottom / behind the panels.
+/// The near-black the wash settles into at the bottom / behind the panels.
 pub fn field_deep() -> Rgba {
-    rgb(0x141232)
+    rgb(0x08080a)
 }
 
-/// The quark-state hues, brightened for the corner glows of the field — the same palette
-/// the presence dots use, so the backdrop literally glows in the colours of the swarm's
-/// states. Translucent so they blend over the bright base into a soft aurora; each is
-/// anchored to one corner (see `app.rs`) to stay vivid instead of muddying in the centre.
+/// The quark-state hues, kept as a faint corner whisper — the same palette the presence
+/// dots use, so the black field still carries the colours of the swarm's states, but at a
+/// low enough alpha that the backdrop reads black, not as an aurora. Each is anchored to
+/// one corner (see `app.rs`).
 pub fn glow_blue() -> Rgba {
-    rgba(0x4f83f0b6) // working / excited — top-left
+    rgba(0x4f83f01c) // working / excited — top-left
 }
 pub fn glow_pink() -> Rgba {
-    rgba(0xb85cf0ac) // thinking — top-right
+    rgba(0xb85cf018) // thinking — top-right
 }
 pub fn glow_green() -> Rgba {
-    rgba(0x2fcf8ab2) // available — bottom-left
+    rgba(0x2fcf8a1a) // available — bottom-left
 }
 
-// --- surfaces (darkest → raised) --- dark smoked glass over the bright field.
-/// Recessed inner surface (deepest wells). A dark smoked tone; the bright field tints
-/// through just enough to feel like glass.
+// --- surfaces (recessed → raised) --- white frosted glass over the black field.
+/// Recessed inner surface (deepest wells). The least white in the ladder, so the black
+/// field shows through most and it reads as the deepest well.
 pub fn bg_base() -> Rgba {
-    rgba(0x1a1834cc) // ~0.80 dark smoked
+    rgba(0xffffff08) // ~0.03 white over black
 }
 
 /// The window/content backdrop token — the opaque housing behind the whole scene. (Kept
@@ -69,20 +70,20 @@ pub fn window_glint() -> Rgba {
 /// A step-lighter smoked tone for lifted chrome: the titlebar/status bars, tab strips, and
 /// the small inner cards (message chips, the changed-files card).
 pub fn bg_elevated() -> Rgba {
-    rgba(0x272544cc) // ~0.80 lifted smoked glass
+    rgba(0xffffff1a) // ~0.10 white — lifted chrome, the brightest frost in the ladder
 }
 
-/// The fill for the raised panels (chat + right rail cards): **dark smoked glass** — a
-/// dark, mostly-opaque violet tone that seats text cleanly while the bright field tints
-/// through and catches the [`glass_highlight`] border, so it reads as a pane of glass.
+/// The fill for the raised panels (chat + right rail cards): **white frosted glass** — a
+/// low-alpha white that frosts the black field to a subtle dark glass (it does NOT go
+/// opaque-white), seating the light text cleanly while catching the [`glass_highlight`] rim.
 pub fn glass_surface() -> Rgba {
-    rgba(0x14122ac4) // tinted glass, midway between the earlier light + darker takes (~0.77)
+    rgba(0xffffff12) // ~0.07 white over black
 }
 
-/// The subtle light rim around a glass panel — a low-alpha periwinkle that reads as the
-/// lit edge of glass catching the field, not a hard seam.
+/// The clean white rim around a glass panel — a low-alpha white that reads as the lit edge
+/// of glass, not a hard seam.
 pub fn glass_highlight() -> Rgba {
-    rgba(0xccccf53d) // ~0.24 light periwinkle
+    rgba(0xffffff33) // ~0.20 white
 }
 
 // --- terminal (a Zed-like screen) ---
