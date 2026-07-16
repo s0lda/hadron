@@ -1,12 +1,18 @@
-//! The chamber's color system — a near-black **flat instrument-panel** theme with a
-//! pink→purple energy accent. Discipline: the accent is for active/interactive only;
-//! solid tiered surfaces carry the space.
+//! The chamber's color system — **dark glass floating on an ambient quark-state field**.
+//! The near-black detector housing is washed with the quark-state hues (blue = working,
+//! purple = thinking, green = available, amber = waiting) at low alpha; instrument panels
+//! are translucent dark glass over that field, edged with a faint white sheen.
 //!
-//! **Flat by design, for a reason.** Under WSL the app software-renders (llvmpipe, no
-//! GPU), so translucency and blur are the expensive kind of pixel — a transparent
-//! window recomposites against the desktop and every alpha layer is re-blended each
-//! frame. So depth here comes from *solid tone steps and hairline borders*, never from
-//! alpha or gradients. Every surface is opaque; the window is opaque; there is no blur.
+//! **What translucency is allowed — and what is NOT.** Under WSL the app software-renders
+//! (llvmpipe, no GPU), so a repaint is expensive; the discipline is to keep repaints RARE,
+//! not to ban translucency. Two things are the true CPU killers and are forbidden here:
+//!   1. **Continuous animation** (a live `.with_animation`/repeating loop) — GPUI re-renders
+//!      the whole window every frame it runs. There is none.
+//!   2. **Blur** (backdrop-blur, blurred drop-shadows) — a large-kernel per-frame resample.
+//!      There is none; "glass" here is alpha + a hairline sheen, never a blur of what's behind.
+//! With those gone, repaints only happen on real change (or a throttled ~10fps while the
+//! terminal streams), so alpha layers and static linear-gradient washes are affordable. GPUI
+//! has no radial gradient, so the field is built from *layered* linear washes, not orbs.
 //!
 //! The full palette is exposed even where not yet consumed, so callers reach for the
 //! named token, not a raw hex.
@@ -16,31 +22,67 @@ use gpui::{rgb, rgba, Rgba};
 
 use hadron_lattice::QuarkState;
 
-// --- surfaces (darkest → raised) --- a solid tiered ladder, no gradients.
+// --- the ambient field: a bright blue-violet glow (the "Built"/ChatGPT dark look) ---
+/// The deep-violet base — the opaque tone painted behind the rounded corners and the dark
+/// end of the field wash. Must NOT be translucent (it is the window fill; translucency
+/// here would show the desktop, not the field).
+pub fn field_base() -> Rgba {
+    rgb(0x1a1740)
+}
+/// The bright periwinkle highlight — the light top/edge of the glow. The whole appeal of
+/// the smoked-glass panels is that they sit over a genuinely BRIGHT field, so this is
+/// vivid, not a tint.
+pub fn field_bright() -> Rgba {
+    rgb(0x9a9ce6)
+}
+/// The deep violet the wash settles into at the bottom / behind the panels.
+pub fn field_deep() -> Rgba {
+    rgb(0x141232)
+}
+
+/// The quark-state hues, brightened for the corner glows of the field — the same palette
+/// the presence dots use, so the backdrop literally glows in the colours of the swarm's
+/// states. Translucent so they blend over the bright base into a soft aurora; each is
+/// anchored to one corner (see `app.rs`) to stay vivid instead of muddying in the centre.
+pub fn glow_blue() -> Rgba {
+    rgba(0x4f83f0b6) // working / excited — top-left
+}
+pub fn glow_pink() -> Rgba {
+    rgba(0xb85cf0ac) // thinking — top-right
+}
+pub fn glow_green() -> Rgba {
+    rgba(0x2fcf8ab2) // available — bottom-left
+}
+
+// --- surfaces (darkest → raised) --- dark smoked glass over the bright field.
+/// Recessed inner surface (deepest wells). A dark smoked tone; the bright field tints
+/// through just enough to feel like glass.
 pub fn bg_base() -> Rgba {
-    rgb(0x09090b) // zinc-950 - main workspace background
+    rgba(0x1a1834cc) // ~0.80 dark smoked
 }
 
-/// The window/content background — a flat solid, no glint gradient. (Kept as a named
-/// token so the one place that sets the window fill still reads from the palette.)
+/// The window/content backdrop token — the opaque housing behind the whole scene. (Kept
+/// under the old name so the one call site that sets the root fill still reads a token.)
 pub fn window_glint() -> Rgba {
-    bg_base()
+    field_base()
 }
+/// A step-lighter smoked tone for lifted chrome: the titlebar/status bars, tab strips, and
+/// the small inner cards (message chips, the changed-files card).
 pub fn bg_elevated() -> Rgba {
-    rgb(0x18181b) // zinc-900 - sidebars and tabs
+    rgba(0x272544cc) // ~0.80 lifted smoked glass
 }
 
-/// The fill for the raised panels (chat + right rail cards): a **solid** tone one step
-/// above the base, so a panel reads as lifted off the workspace by its colour step and
-/// its [`glass_highlight`] hairline edge — not by a translucent sheen. Flat and cheap.
+/// The fill for the raised panels (chat + right rail cards): **dark smoked glass** — a
+/// dark, mostly-opaque violet tone that seats text cleanly while the bright field tints
+/// through and catches the [`glass_highlight`] border, so it reads as a pane of glass.
 pub fn glass_surface() -> Rgba {
-    rgb(0x131318)
+    rgba(0x110f22e0) // darker, more frosted smoked glass (~0.88)
 }
 
-/// The crisp hairline edge on a raised panel — a solid line a step above the panel
-/// fill, the instrument-panel seam. (Was a translucent white sheen; now opaque.)
+/// The subtle light rim around a glass panel — a low-alpha periwinkle that reads as the
+/// lit edge of glass catching the field, not a hard seam.
 pub fn glass_highlight() -> Rgba {
-    rgb(0x26262c)
+    rgba(0xccccf53d) // ~0.24 light periwinkle
 }
 
 // --- terminal (a Zed-like screen) ---

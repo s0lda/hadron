@@ -11,7 +11,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
-    actions, div, prelude::*, px, rgb, rgba, AnimationExt, App, Context, Decorations, Entity,
+    actions, div, linear_color_stop, linear_gradient, prelude::*, px, rgb, rgba, App, Context,
+    Decorations, Entity,
     FocusHandle, Hsla, KeyBinding, MouseButton, Pixels, Render, Rgba, ScrollHandle, SharedString,
     Subscription, Window, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowDecorations, WindowOptions,
@@ -1431,7 +1432,7 @@ impl Render for Chamber {
         let (top_radius, bottom_radius) = frame_corner_radii(window);
         let titlebar = self.titlebar(window, cx);
         let body = self.body(cx);
-        let status = self.status_bar(cx);
+        let status = self.status_bar(cx, bottom_radius);
         let settings = self.settings_open.then(|| self.settings_overlay(cx));
         let info = self
             .info_panel
@@ -1446,15 +1447,37 @@ impl Render for Chamber {
             .relative()
             .size_full()
             .overflow_hidden()
-            // A faint top-down glint: a hair lighter than `bg_elevated` at the very
-            // top, settling to the flat base by ~a third down. Subtle depth, not a
-            // visible gradient — the window still reads as one dark surface.
+            // The opaque housing tone; the ambient quark-state field (below) washes over
+            // it, and the translucent panels let it glow through.
             .bg(theme::window_glint())
             .rounded_tl(top_radius)
             .rounded_tr(top_radius)
             .rounded_bl(bottom_radius)
             .rounded_br(bottom_radius)
             .text_color(theme::text())
+            // The ambient field: a bright blue-violet glow, painted first so every panel
+            // floats over it. A base wash (bright top -> deep bottom) plus soft bright glows
+            // down the two side edges give the "Built"-style lit surround with a darker
+            // centre behind the panels. Static gradients only (no blur / no animation), so
+            // it costs only per-repaint — tune the angles/tones freely.
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .overflow_hidden()
+                    .child(wash_layer(
+                        180.0,
+                        theme::field_bright(),
+                        theme::field_deep(),
+                        top_radius,
+                        bottom_radius,
+                    ))
+                    // Quark-state hues, one per corner (angle points at the OPPOSITE corner,
+                    // so the hue sits bright in the named corner and fades across).
+                    .child(glow_layer(135.0, theme::glow_blue(), top_radius, bottom_radius)) // working — top-left
+                    .child(glow_layer(225.0, theme::glow_pink(), top_radius, bottom_radius)) // thinking — top-right
+                    .child(glow_layer(45.0, theme::glow_green(), top_radius, bottom_radius)), // available — bottom-left
+            )
             .child(titlebar)
             .child(body)
             .child(status)
@@ -1519,7 +1542,7 @@ impl Chamber {
     /// The status bar along the foot of the window (same tone as the titlebar).
     /// Left: an overall swarm-status tag. Right: the quark count and the global
     /// permission-mode tag (click to cycle Ask → Write → Auto → Bypass).
-    fn status_bar(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn status_bar(&self, _cx: &mut Context<Self>, bottom_radius: Pixels) -> impl IntoElement {
         h_flex()
             .w_full()
             .h(px(24.0))
@@ -1527,10 +1550,14 @@ impl Chamber {
             .items_center()
             .justify_between()
             .px_3()
-            // Transparent: the content's rounded bottom corners (theme::sidebar)
-            // own the frame's arc — this 24px strip can't round tight enough to.
+            // A dark smoked backing so the text reads over the bright field — transparent
+            // text washed out against the green/amber corner glows. Bottom corners rounded
+            // to the housing radius so the bar follows the window's arc.
+            .bg(theme::bg_elevated())
+            .rounded_bl(bottom_radius)
+            .rounded_br(bottom_radius)
             .text_xs()
-            .text_color(theme::text_muted())
+            .text_color(theme::text_secondary())
             .child(swarm_status_tag(&self.view))
             .child(
                 div().text_xs().text_color(theme::text_muted()).child(
@@ -1643,15 +1670,21 @@ impl Chamber {
             Rail::Roster => ("roster-strip", IconName::PanelLeftOpen),
             Rail::Inspector => ("inspector-strip", IconName::PanelRightOpen),
         };
+        // A folded rail is a rounded smoked-glass pill, matching the expanded panels — a
+        // square bar here broke the window's rounded corners at the edge. It fills a p_2
+        // gutter (added at the return) so it floats with the same edge gap and the same
+        // height as an expanded panel, rather than sticking to the edge and running taller.
         let mut col = v_flex()
             .id(id)
             .h_full()
-            .w(px(RAIL_STRIP))
-            .flex_none()
+            .w_full()
             .py_2()
             .items_center()
             .gap_2()
-            .bg(theme::bg_elevated())
+            .rounded(INNER_RADIUS)
+            .bg(theme::glass_surface())
+            .border_1()
+            .border_color(theme::glass_highlight())
             .child(
                 div()
                     .id("expand")
@@ -1667,7 +1700,15 @@ impl Chamber {
                 .child(div().flex_1())
                 .child(self.settings_button(cx, true));
         }
-        col
+        // The p_2 gutter: same inset as the expanded panels, so collapsing a rail keeps the
+        // edge gap and the height instead of snapping flush and taller.
+        v_flex()
+            .flex_none()
+            .w(px(RAIL_STRIP))
+            .h_full()
+            .min_h_0()
+            .p_2()
+            .child(col)
     }
 
     /// The Settings entry pinned to the foot of the Quarks rail. Placeholder for
@@ -1810,12 +1851,19 @@ impl Chamber {
             );
         }
 
-        v_flex()
+        // The roster is a smoked-glass panel like the chat/terminal cards, so its quark
+        // names stay legible over the bright field (a bare rail washed out). It floats in
+        // a p_2 gutter that shows the field around it.
+        let card = v_flex()
             .w_full()
             .h_full()
+            .min_h_0()
             .p_2()
             .gap_2()
-            .bg(theme::bg_elevated())
+            .rounded(INNER_RADIUS)
+            .bg(theme::glass_surface())
+            .border_1()
+            .border_color(theme::glass_highlight())
             .child(header) // pinned top
             .child(
                 div()
@@ -1826,7 +1874,9 @@ impl Chamber {
                     .child(rows),
             )
             // Settings pinned to the bottom of the rail.
-            .child(self.settings_button(cx, false))
+            .child(self.settings_button(cx, false));
+
+        v_flex().w_full().h_full().min_h_0().p_2().child(card)
     }
 
     /// The center column: a segmented Chat / Log / Timeline tab bar over the
@@ -2001,7 +2051,7 @@ impl Chamber {
             // Glass: a faint top sheen + a hairline top highlight, so the dark
             // layer reads as a lit panel rather than a flat black rectangle.
             .bg(theme::glass_surface())
-            .border_t_1()
+            .border_1()
             .border_color(theme::glass_highlight())
             .child(header)
             .children(self.permission_toast(cx))
@@ -2013,7 +2063,9 @@ impl Chamber {
             .h_full()
             .min_h_0()
             .p_2()
-            .bg(theme::bg_elevated())
+            // No fill here: the ambient field is the backdrop, so the card reads as a
+            // single pane of glass floating on it. A second fill would stack with the
+            // card's translucent glass and hide the field; the p_2 gutter shows it.
             .child(card)
     }
 
@@ -3007,7 +3059,7 @@ impl Chamber {
             .overflow_hidden()
             // Glass, matching the chat card: faint sheen + hairline top highlight.
             .bg(theme::glass_surface())
-            .border_t_1()
+            .border_1()
             .border_color(theme::glass_highlight())
             .child(header)
             .child(content);
@@ -3017,7 +3069,9 @@ impl Chamber {
             .h_full()
             .min_h_0()
             .p_2()
-            .bg(theme::bg_elevated())
+            // No fill here: the ambient field is the backdrop, so the card reads as a
+            // single pane of glass floating on it. A second fill would stack with the
+            // card's translucent glass and hide the field; the p_2 gutter shows it.
             .child(card)
     }
 
@@ -4128,6 +4182,48 @@ impl Chamber {
 /// content tucks *inside* the 1px border (a hair rounder never pokes past the
 /// arc; the frame's matching sidebar fill hides the sub-pixel sliver). Zero on
 /// a tiled edge (maximized/snapped) so those corners stay square.
+/// One wash of the ambient quark-state field: a full-bleed linear gradient from `hue` at
+/// the origin edge, fading to transparent by ~70%. Several of these, layered at different
+/// angles, build the "bubble chamber" backdrop. Static (no animation) and gradient-only
+/// (no blur), so it costs only per-repaint — see `theme` for why that is affordable now.
+///
+/// The corners are rounded to the housing radius: GPUI's `overflow_hidden` masks to the
+/// rectangular bounds, not the rounded shape, so a full-bleed child would otherwise paint
+/// square corners that poke past the window's rounded edge.
+fn glow_layer(angle: f32, hue: Rgba, top_r: Pixels, bottom_r: Pixels) -> gpui::Div {
+    div()
+        .absolute()
+        .inset_0()
+        .rounded_tl(top_r)
+        .rounded_tr(top_r)
+        .rounded_bl(bottom_r)
+        .rounded_br(bottom_r)
+        .bg(linear_gradient(
+            angle,
+            linear_color_stop(hue, 0.0),
+            linear_color_stop(rgba(0x00000000), 0.55),
+        ))
+}
+
+/// The opaque base wash of the field: a full-bleed two-colour gradient from `from` at the
+/// origin edge to `to` at the far edge. Rounded to the housing radius for the same reason
+/// as [`glow_layer`] (GPUI's overflow mask is rectangular, so a square child would poke
+/// past the rounded corners).
+fn wash_layer(angle: f32, from: Rgba, to: Rgba, top_r: Pixels, bottom_r: Pixels) -> gpui::Div {
+    div()
+        .absolute()
+        .inset_0()
+        .rounded_tl(top_r)
+        .rounded_tr(top_r)
+        .rounded_bl(bottom_r)
+        .rounded_br(bottom_r)
+        .bg(linear_gradient(
+            angle,
+            linear_color_stop(from, 0.0),
+            linear_color_stop(to, 1.0),
+        ))
+}
+
 fn frame_corner_radii(window: &Window) -> (Pixels, Pixels) {
     let r = crate::window_frame::FRAME_RADIUS;
     match window.window_decorations() {
@@ -4289,13 +4385,17 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
             .into_any_element()
     };
 
-    let is_excited = r.enabled && r.state == hadron_lattice::QuarkState::Excited;
     let dot_color = if r.enabled {
         theme::presence(r.state)
     } else {
         theme::presence_disabled()
     };
 
+    // A single static presence dot: the colour alone carries the state (blue = working,
+    // green = available, amber = waiting, red = unavailable), so every quark's dot reads
+    // the same way. No per-state ring and no animation — the chamber software-renders
+    // (WSL/llvmpipe, no GPU), and any live animation forces a full-window repaint every
+    // frame, historically the app's worst CPU sink.
     let dot = div()
         .absolute()
         .bottom_0()
@@ -4305,18 +4405,6 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
         .bg(dot_color)
         .border_2()
         .border_color(theme::bg_elevated());
-
-    // Excited = actively working. Show it with a STATIC bright ring, never a running
-    // animation. The chamber software-renders under WSL (llvmpipe, no GPU), and GPUI
-    // re-renders the WHOLE window on every frame an animation is live — so a single
-    // pulsing dot pegged multiple cores at ~60fps whenever any quark worked. This was
-    // the dominant CPU sink (not transparency). A static ring reads as "working" and
-    // costs nothing once painted.
-    let dot = if is_excited {
-        dot.border_color(theme::text()).into_any_element()
-    } else {
-        dot.into_any_element()
-    };
 
     h_flex()
         .id(SharedString::from(format!("quark-{}", r.id)))
@@ -4827,12 +4915,12 @@ pub fn run(field_path: Option<String>) {
             t.secondary = rgb(0x191a1b).into();
             t.secondary_hover = rgb(0x252627).into();
             t.popover = theme::popover().into();
-            // Borderless: the resize handle paints `border` when idle, so match
-            // it to the sidebar and it disappears into the unified space; while
-            // dragging it paints `drag_border` — keep that on-brand pink so the
-            // drag still shows feedback. (This also softens gpui-component's own
-            // hairlines, which suits the borderless surfaces.)
-            t.border = rgb(0x191a1b).into();
+            // Borderless: the resize handle paints `border` when idle. The backdrop is
+            // now a bright field, so a dark line stood out between the chat and the right
+            // pane — make the idle border fully transparent so the handle vanishes at rest.
+            // Dragging still paints `drag_border` (on-brand pink) for feedback. This also
+            // drops gpui-component's own idle hairlines, which suits the glass surfaces.
+            t.border = gpui::rgba(0x00000000).into();
             t.drag_border = rgb(0xec4899).into();
             // Markdown inline code blocks use `accent` for background in gpui-component.
             // Override it to a very soft white overlay so it's slightly brighter than the background.
@@ -4889,11 +4977,12 @@ pub fn run(field_path: Option<String>) {
         let window_options = WindowOptions {
             titlebar: Some(TitleBar::title_bar_options()),
             window_decorations: Some(WindowDecorations::Client),
-            // Opaque. A transparent window recomposites against the desktop on every
-            // repaint, which under WSL software rendering (llvmpipe) is the bulk of the
-            // chamber's idle CPU. The frame is now flat and square (see window_frame),
-            // so there is no rounded corner or drop shadow that needs an alpha channel.
-            window_background: WindowBackgroundAppearance::Opaque,
+            // Transparent so the rounded corner cut-outs composite over the desktop
+            // (see window_frame). The old fear — "transparent recomposites every repaint
+            // and pegs the CPU" — was misdiagnosed: the CPU sink was *continuous repaints*
+            // (a pulsing animation + a 30fps terminal pump), now fixed. Repaints are rare,
+            // so the alpha channel costs almost nothing at rest.
+            window_background: WindowBackgroundAppearance::Transparent,
             window_bounds: Some(bounds),
             ..Default::default()
         };
