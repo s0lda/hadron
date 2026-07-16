@@ -274,13 +274,15 @@ enum RightRailTab {
     Terminal,
     FileTree,
     Changes,
+    Plan,
 }
 
 impl RightRailTab {
-    const ALL: [RightRailTab; 3] = [
+    const ALL: [RightRailTab; 4] = [
         RightRailTab::Terminal,
         RightRailTab::FileTree,
         RightRailTab::Changes,
+        RightRailTab::Plan,
     ];
 
     fn index(self) -> usize {
@@ -288,6 +290,7 @@ impl RightRailTab {
             RightRailTab::Terminal => 0,
             RightRailTab::FileTree => 1,
             RightRailTab::Changes => 2,
+            RightRailTab::Plan => 3,
         }
     }
 
@@ -300,6 +303,7 @@ impl RightRailTab {
             RightRailTab::Terminal => "Terminal",
             RightRailTab::FileTree => "File Tree",
             RightRailTab::Changes => "Changes",
+            RightRailTab::Plan => "Plan",
         }
     }
 }
@@ -411,6 +415,8 @@ struct Chamber {
     working_diff: Option<Vec<crate::vcs::FileDiff>>,
     changes_open_ixs: std::collections::HashSet<usize>,
     changes_scroll: ScrollHandle,
+    /// Scroll position of the Plan tracker pane.
+    plan_scroll: ScrollHandle,
     /// Virtual list state for the Chat tab.
     chat_list_state: gpui::ListState,
     log_list_state: gpui::ListState,
@@ -644,6 +650,7 @@ impl Chamber {
             working_diff: None,
             changes_open_ixs: std::collections::HashSet::new(),
             changes_scroll: ScrollHandle::new(),
+            plan_scroll: ScrollHandle::new(),
             chat_list_state,
             log_list_state,
             log_expanded: std::collections::HashSet::new(),
@@ -3396,6 +3403,116 @@ impl Chamber {
                     )
                     .into_any_element()
             }
+            RightRailTab::Plan => {
+                let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
+
+                // The active plan is the most-recently-mentioned plan file in the field:
+                // scan message bodies newest-first for a `plans/….md` reference. This
+                // covers the orchestrator's assignment ("execute docs/…/plan.md") and any
+                // later re-reference. The projection has no `task` field, so the field's
+                // messages are the source of truth.
+                let active_plan_path = self
+                    .view
+                    .messages
+                    .iter()
+                    .rev()
+                    .find_map(|m| hadron_gluon::skills::plan_ref(&m.body));
+
+                // Resolve the referenced plan to its on-disk content in one step; either
+                // the reference or the file may be absent (a plan can be named before it
+                // is written, or removed after).
+                let resolved = active_plan_path.and_then(|rel_path| {
+                    crate::sys::read_workspace_file(&repo, &rel_path)
+                        .map(|content| (rel_path, content))
+                });
+
+                let plan_element = match resolved {
+                    Some((rel_path, content)) => {
+                        let (total, completed, tasks) = parse_plan_progress(&content);
+                        let frac = if total > 0 {
+                            completed as f32 / total as f32
+                        } else {
+                            0.0
+                        };
+                        let pct = (frac * 100.0).round() as usize;
+
+                        let mut list = v_flex().gap_2().p_3().w_full();
+                        list = list.child(
+                            div()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_sm()
+                                .child(format!("Active Plan: {rel_path}")),
+                        );
+                        list = list.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child(format!("{completed}/{total} steps complete ({pct}%)")),
+                        );
+                        list = list.child(progress_meter(frac, gpui::rgb(0x34d399)));
+
+                        for (task_desc, done) in tasks {
+                            let marker = if done {
+                                Icon::new(IconName::CircleCheck)
+                                    .small()
+                                    .text_color(gpui::rgb(0x34d399))
+                                    .into_any_element()
+                            } else {
+                                // No hollow-circle glyph ships in the icon set, so draw one:
+                                // a small ringed dot reads as an empty checkbox.
+                                div()
+                                    .size(px(14.0))
+                                    .flex_shrink_0()
+                                    .mt(px(2.0))
+                                    .rounded_full()
+                                    .border_1()
+                                    .border_color(theme::text_muted())
+                                    .into_any_element()
+                            };
+                            list = list.child(
+                                h_flex().gap_2().items_start().child(marker).child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(if done {
+                                            theme::text_muted()
+                                        } else {
+                                            theme::text()
+                                        })
+                                        .child(task_desc),
+                                ),
+                            );
+                        }
+                        list.into_any_element()
+                    }
+                    None => div()
+                        .p_4()
+                        .text_color(theme::text_muted())
+                        .child("No active implementation plan referenced in the field yet.")
+                        .into_any_element(),
+                };
+
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .child(
+                        div()
+                            .id("plan-scroll")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.plan_scroll)
+                            .text_sm()
+                            .text_color(theme::text())
+                            .child(plan_element),
+                    )
+                    .child(
+                        div().absolute().top_0().bottom_0().right_0().child(
+                            Scrollbar::vertical(&self.plan_scroll)
+                                .scrollbar_show(ScrollbarShow::Hover),
+                        ),
+                    )
+                    .into_any_element()
+            }
         };
 
         let card = v_flex()
@@ -5729,6 +5846,47 @@ fn markdown_style() -> gpui_component::text::TextViewStyle {
 /// our fork of `gpui-component` (see the `[patch]` in the workspace `Cargo.toml`).
 /// Upstream's `TextMark` can express a highlight — a *background* — but no foreground
 /// colour, so before the fork a mention could only ever be a tinted block.
+/// Parse a plan's markdown checklist into `(total, completed, items)`. Any line whose
+/// trimmed form starts with `- [ ]` / `- [x]` (case-insensitive) is a checkbox; the
+/// nearest preceding `## Task` / `### Task` heading is prefixed so the tracker shows
+/// which task a step belongs to. Bold/backtick emphasis is stripped for a compact label.
+fn parse_plan_progress(content: &str) -> (usize, usize, Vec<(String, bool)>) {
+    let mut total = 0usize;
+    let mut completed = 0usize;
+    let mut items = Vec::new();
+    let mut current_task = String::new();
+
+    for line in content.lines() {
+        if line.starts_with("## Task") || line.starts_with("### Task") {
+            current_task = line.trim_start_matches('#').trim().to_string();
+            continue;
+        }
+        let trimmed = line.trim_start();
+        let done = if trimmed.starts_with("- [ ]") {
+            false
+        } else if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
+            true
+        } else {
+            continue;
+        };
+
+        total += 1;
+        if done {
+            completed += 1;
+        }
+        // `- [ ]` and `- [x]` are both 5 bytes, so a fixed skip is safe for either case.
+        let body = trimmed[5..].trim().trim_matches(|c| c == '*' || c == '`').trim();
+        let label = if current_task.is_empty() {
+            body.to_string()
+        } else {
+            format!("{current_task} — {body}")
+        };
+        items.push((label, done));
+    }
+
+    (total, completed, items)
+}
+
 const MENTION_QUARK_OPEN: &str = "<span style=\"color: pink-400\"><strong>";
 const MENTION_FILE_OPEN: &str = "<span style=\"color: purple-400\"><strong>";
 const MENTION_CLOSE: &str = "</strong></span>";
@@ -6277,6 +6435,29 @@ mod tests {
     use super::*;
     use crate::model::RosterRow;
     use hadron_lattice::QuarkState;
+
+    #[test]
+    fn test_parse_plan_progress() {
+        let content = "\
+# A Plan
+
+### Task 1: First
+- [x] **Step 1: Do the thing**
+- [ ] Step 2: Do the other thing
+
+### Task 2: Second
+  - [X] Nested done step
+  - [ ] Nested pending step
+";
+        let (total, completed, items) = parse_plan_progress(content);
+        assert_eq!(total, 4);
+        assert_eq!(completed, 2);
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0], ("Task 1: First — Step 1: Do the thing".to_string(), true));
+        assert_eq!(items[1], ("Task 1: First — Step 2: Do the other thing".to_string(), false));
+        assert!(items[2].1); // nested [X] counts as done
+        assert!(!items[3].1);
+    }
 
     #[test]
     fn test_color_commands() {
