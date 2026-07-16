@@ -354,6 +354,7 @@ struct Chamber {
     /// Settings editor fields (display name + image path for the current target).
     settings_name: Entity<InputState>,
     settings_path: Entity<InputState>,
+    settings_model: Entity<InputState>,
     settings_effort: Entity<InputState>,
     settings_mode_config: Entity<InputState>,
     /// A path chosen from the native file picker (avatar image), parked here by the
@@ -429,6 +430,7 @@ impl Chamber {
 
         let settings_name = cx.new(|cx| InputState::new(window, cx).placeholder("Display name"));
         let settings_path = cx.new(|cx| InputState::new(window, cx).placeholder("/path/to/image.png"));
+        let settings_model = cx.new(|cx| InputState::new(window, cx).placeholder("inherit catalogue default"));
         let settings_effort = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. low, standard, high"));
         let settings_mode_config = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. architect, code, ask"));
         // Repaint the Settings overlay on every edit so its preview is live.
@@ -537,6 +539,7 @@ impl Chamber {
             settings_target: SettingsTarget::Human,
             settings_name,
             settings_path,
+            settings_model,
             settings_effort,
             settings_mode_config,
             pending_image_pick: None,
@@ -1340,9 +1343,8 @@ impl Chamber {
                     ov.flavor = Some(flavor.clone());
                 } else {
                     trial.roster.push(SeatOverride {
-                        id: qid.clone(),
                         flavor: Some(flavor.clone()),
-                        enabled: None,
+                        ..SeatOverride::role(qid.clone())
                     });
                 }
                 let orchestrators = resolve_team(&trial, &self.global)
@@ -3210,7 +3212,9 @@ impl Chamber {
         } else if let Some(ov) = self.team.roster.iter_mut().find(|o| o.id == qid) {
             ov.enabled = Some(want);
         } else {
-            self.team.roster.push(SeatOverride { id: qid, flavor: None, enabled: Some(want) });
+            self.team
+                .roster
+                .push(SeatOverride { enabled: Some(want), ..SeatOverride::role(qid) });
         }
         self.save_repo_team(cx);
     }
@@ -3379,18 +3383,21 @@ impl Chamber {
 
     /// Load the current target's name + image path into the editor inputs.
     fn load_settings_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (name, path, effort, mode) = {
+        let (name, path, model, effort, mode) = {
             let key = self.settings_target.key();
+            let mut mdl = String::new();
             let mut eff = None;
             let mut mod_cfg = None;
             let id = if key == "human" {
                 Some(&self.prefs.human)
             } else {
-                // Read effort/mode from the RESOLVED seat, not just a legacy one — an
+                // Read model/effort/mode from the RESOLVED seat, not just a legacy one — an
                 // adopted quark's definition lives in the catalogue, so a legacy-only
                 // lookup would show blank and a later commit could wipe the real value.
+                // These show the *effective* value (catalogue default + any repo override).
                 let resolved = resolve_team(&self.team, &self.global);
                 if let Some(seat) = resolved.get(&QuarkId::new(key)) {
+                    mdl = seat.model.clone();
                     eff = seat.effort.clone();
                     mod_cfg = seat.mode_config.clone();
                 }
@@ -3399,6 +3406,7 @@ impl Chamber {
             (
                 id.and_then(|i| i.display_name.clone()).unwrap_or_default(),
                 id.and_then(|i| i.image_path.clone()).unwrap_or_default(),
+                mdl,
                 eff.unwrap_or_default(),
                 mod_cfg.unwrap_or_default(),
             )
@@ -3407,6 +3415,8 @@ impl Chamber {
             .update(cx, |s, cx| s.set_value(name, window, cx));
         self.settings_path
             .update(cx, |s, cx| s.set_value(path, window, cx));
+        self.settings_model
+            .update(cx, |s, cx| s.set_value(model, window, cx));
         self.settings_effort
             .update(cx, |s, cx| s.set_value(effort, window, cx));
         self.settings_mode_config
@@ -3417,41 +3427,75 @@ impl Chamber {
     fn commit_settings_inputs(&mut self, cx: &mut Context<Self>) {
         let name = self.settings_name.read(cx).value().trim().to_string();
         let path = self.settings_path.read(cx).value().trim().to_string();
+        let model_val = self.settings_model.read(cx).value().trim().to_string();
         let effort_val = self.settings_effort.read(cx).value().trim().to_string();
         let mode_val = self.settings_mode_config.read(cx).value().trim().to_string();
-        
+
         let key = self.settings_target.key();
         if key != "human" && key != "providers" {
             let qid = QuarkId::new(key);
-            // Definition fields (effort/mode/display name) stay **per-repo**: pin them
-            // on a legacy seat that supersedes any override/catalogue def for this id in
-            // this repo. Only materialize when a value actually changed, so merely
-            // opening Settings for an adopted quark does not un-adopt it.
+            // The definition knobs (model/effort/mode/display name) are **per-repo**. How
+            // they persist depends on how the quark is seated here:
+            //  - a self-contained legacy seat pins the values directly on the seat;
+            //  - a catalogue-adopted quark records only the *delta from the catalogue
+            //    default* as a per-repo override, so the shared default (and every other
+            //    repo) is untouched and a field left at the default inherits it.
+            // Only write when a value actually changed, so merely opening Settings for an
+            // adopted quark never un-adopts it or rewrites the file.
             let resolved = resolve_team(&self.team, &self.global);
+            let def = self.global.get(&qid).cloned();
             if let Some(base) = resolved.get(&qid).cloned() {
                 let new_effort = (!effort_val.is_empty()).then_some(effort_val);
                 let new_mode = (!mode_val.is_empty()).then_some(mode_val);
                 let new_name = (!name.is_empty()).then_some(name.clone());
-                let changed = base.effort != new_effort
+                // A blank Model means "inherit the catalogue default" (or, for a
+                // self-contained seat with no catalogue, keep what it already runs).
+                let new_model = if model_val.is_empty() {
+                    def.as_ref().map(|d| d.model.clone()).unwrap_or_else(|| base.model.clone())
+                } else {
+                    model_val.clone()
+                };
+                let changed = base.model != new_model
+                    || base.effort != new_effort
                     || base.mode_config != new_mode
                     || base.display_name != new_name;
                 if changed {
-                    let mut seat = base;
-                    seat.effort = new_effort;
-                    seat.mode_config = new_mode;
-                    seat.display_name = new_name;
-                    self.team.roster.retain(|o| o.id != qid);
                     if let Some(existing) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
-                        *existing = seat;
-                    } else {
-                        self.team.quarks.push(seat);
+                        // Self-contained legacy seat — pin the values on it directly.
+                        existing.model = new_model;
+                        existing.effort = new_effort;
+                        existing.mode_config = new_mode;
+                        existing.display_name = new_name;
+                        self.save_repo_team(cx);
+                    } else if let Some(def) = def {
+                        // Adopted via the catalogue — write a delta override (only what
+                        // differs from the shared default), preserving any existing
+                        // role/participation override. `seat_override_delta` is the tested
+                        // inverse of resolve_team's def-layering.
+                        let desired = hadron_lattice::Seat {
+                            model: new_model,
+                            effort: new_effort,
+                            mode_config: new_mode,
+                            display_name: new_name,
+                            ..def.clone()
+                        };
+                        let prev = self.team.roster.iter().find(|o| o.id == qid).cloned();
+                        let ov = hadron_lattice::seat_override_delta(
+                            qid.clone(),
+                            &def,
+                            &desired,
+                            prev.as_ref(),
+                        );
+                        self.team.roster.retain(|o| o.id != qid);
+                        self.team.roster.push(ov);
+                        self.save_repo_team(cx);
                     }
-                    let path = self.repo_team_path();
-                    let _ = hadron_lattice::save_team(&path, &self.team);
+                    // else: an event-only quark with no seatable definition — nothing to
+                    // persist a per-repo knob against.
                 }
             }
         }
-        
+
         if let Some(id) = self.settings_identity_mut() {
             id.display_name = (!name.is_empty()).then_some(name);
             id.image_path = (!path.is_empty()).then_some(path);
@@ -3727,11 +3771,18 @@ impl Chamber {
                     "Display name",
                     Input::new(&self.settings_name).into_any_element(),
                 ))
-                // Effort + Mode configure an agent's session, so they are quark-only. The
-                // human has no such controls — and the typed values were silently discarded
-                // on commit before, so rendering them for the human was a dead end.
+                // Model + Effort + Mode configure an agent's session, so they are
+                // quark-only. The human has no such controls — and the typed values were
+                // silently discarded on commit before, so rendering them for the human was
+                // a dead end. Model here is a **per-repo** override: blank inherits the
+                // catalogue default (e.g. acp-claude = Opus), a value pins this repo (=
+                // Sonnet) without touching the shared catalogue or any other repo.
                 .when(is_quark, |v| {
                     v.child(settings_field(
+                        "Model",
+                        Input::new(&self.settings_model).into_any_element(),
+                    ))
+                    .child(settings_field(
                         "Effort",
                         self.session_select(
                             "effort",
@@ -3940,22 +3991,32 @@ impl Chamber {
         let separate = global_path.as_deref().is_some_and(|g| g != repo_path);
         let id = seat.id.clone();
         if separate {
-            // Definition → global catalogue (upsert by id).
-            if let Some(existing) = self.global.quarks.iter_mut().find(|s| s.id == id) {
-                *existing = seat;
-            } else {
-                self.global.quarks.push(seat);
-            }
-            if let Some(gp) = global_path {
-                if let Err(e) = hadron_lattice::save_team(&gp, &self.global) {
-                    eprintln!("chamber: failed to save catalogue: {e}");
+            // The catalogue holds the shared **default** for an id. The first add of an
+            // id establishes that default; a later add of the SAME id in another repo
+            // must NOT clobber it — that is the cross-repo collision. So keep any existing
+            // def and record only how this repo's pick diverges (a preset chooses a model;
+            // effort/mode/name it never sets, so those inherit the catalogue).
+            let adopt = match self.global.quarks.iter().find(|s| s.id == id).cloned() {
+                None => {
+                    self.global.quarks.push(seat.clone());
+                    if let Some(gp) = global_path {
+                        if let Err(e) = hadron_lattice::save_team(&gp, &self.global) {
+                            eprintln!("chamber: failed to save catalogue: {e}");
+                        }
+                    }
+                    SeatOverride { enabled: Some(true), ..SeatOverride::role(id.clone()) }
                 }
-            }
-            // Auto-adopt here, enabled (unless already present some other way).
+                Some(def) => SeatOverride {
+                    enabled: Some(true),
+                    model: (seat.model != def.model).then(|| seat.model.clone()),
+                    ..SeatOverride::role(id.clone())
+                },
+            };
+            // Auto-adopt here (unless already present some other way).
             if !self.team.quarks.iter().any(|s| s.id == id)
                 && !self.team.roster.iter().any(|o| o.id == id)
             {
-                self.team.roster.push(SeatOverride { id, flavor: None, enabled: Some(true) });
+                self.team.roster.push(adopt);
             }
         } else {
             // No separate catalogue: keep it self-contained as a legacy seat.
@@ -3975,9 +4036,8 @@ impl Chamber {
             return; // already adopted here
         }
         self.team.roster.push(SeatOverride {
-            id: qid,
-            flavor: None, // inherit the catalogue's role
             enabled: Some(true),
+            ..SeatOverride::role(qid) // inherit the catalogue's role + definition
         });
         self.save_repo_team(cx);
     }
