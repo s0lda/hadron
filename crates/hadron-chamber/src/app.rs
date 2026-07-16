@@ -5722,6 +5722,32 @@ fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
             continue;
         }
 
+        // A `/command` at a word boundary (start of body, or after whitespace) is a
+        // slash command — colour it like a mention. A bare "/" or a slash mid-token
+        // (a path like `foo/bar`) is left untouched.
+        if c == '/'
+            && !in_code_block
+            && !in_inline_code
+            && (out.is_empty() || out.ends_with(' ') || out.ends_with('\n'))
+        {
+            let mut cmd = String::new();
+            while let Some(&nc) = chars.peek() {
+                if nc.is_alphanumeric() || nc == '-' || nc == '_' {
+                    cmd.push(chars.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+            if cmd.is_empty() {
+                out.push('/');
+            } else {
+                out.push_str(&format!(
+                    "<span style=\"color: fuchsia-400\"><strong>/{cmd}</strong></span>"
+                ));
+            }
+            continue;
+        }
+
         if c == '@' && !in_code_block && !in_inline_code {
             let mut name = String::new();
             while let Some(&nc) = chars.peek() {
@@ -6212,6 +6238,17 @@ mod tests {
     use super::*;
     use crate::model::RosterRow;
     use hadron_lattice::QuarkState;
+
+    #[test]
+    fn test_color_commands() {
+        let colored = color_mentions("Please run /plan and /grill-me today.", &[]);
+        assert!(colored.contains("<span style=\"color: fuchsia-400\"><strong>/plan</strong></span>"));
+        assert!(colored.contains("<span style=\"color: fuchsia-400\"><strong>/grill-me</strong></span>"));
+
+        // Should ignore slashes inside code blocks
+        let code = color_mentions("Code `/plan` inside.", &[]);
+        assert!(!code.contains("color: fuchsia-400"));
+    }
 
     #[test]
     fn test_mentions_parse_as_raw_html() {
