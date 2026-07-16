@@ -186,17 +186,35 @@ pub fn presence_label(state: QuarkState) -> &'static str {
     }
 }
 
+/// The auto-assignment palette: distinct, legible hues a quark cycles through by name
+/// when it has no custom colour. Exposed so a colour picker can offer them as presets.
+pub const AUTO_PALETTE: [u32; 12] = [
+    0x38bdf8, // sky
+    0x34d399, // emerald
+    0xa78bfa, // violet
+    0xfbbf24, // amber
+    0xfb7185, // rose
+    0x94a3b8, // slate
+    0x22d3ee, // cyan
+    0x4ade80, // green
+    0xfb923c, // orange
+    0x818cf8, // indigo
+    0xe879f9, // fuchsia
+    0xf472b6, // pink
+];
+
 /// A stable hue for a chat author's header, so who-said-what scans at a glance.
-/// Human/gluon are fixed; quarks cycle through the chart palette by name.
+/// Human/gluon are fixed; quarks cycle through [`AUTO_PALETTE`] by name. This is the
+/// **fallback** — a quark with a custom colour resolves to that instead (see
+/// `ChamberView`/`Chamber::color_for`).
 pub fn actor_hue(actor: &str) -> Rgba {
     match actor {
         "human" => rgb(0xf5f5f6), // bright — the human
         "gluon" => rgb(0x60a5fa), // info blue — the system
         other => {
-            const CHART: [u32; 6] = [0x38bdf8, 0x34d399, 0xa78bfa, 0xfbbf24, 0xfb7185, 0x94a3b8];
-            let idx =
-                (other.bytes().fold(0u32, |a, b| a.wrapping_add(b as u32)) as usize) % CHART.len();
-            rgb(CHART[idx])
+            let idx = (other.bytes().fold(0u32, |a, b| a.wrapping_add(b as u32)) as usize)
+                % AUTO_PALETTE.len();
+            rgb(AUTO_PALETTE[idx])
         }
     }
 }
