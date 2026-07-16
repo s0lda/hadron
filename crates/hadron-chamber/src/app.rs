@@ -374,6 +374,10 @@ struct Chamber {
     settings_model: Entity<InputState>,
     settings_effort: Entity<InputState>,
     settings_mode_config: Entity<InputState>,
+    /// Live filter for the add-quark preset catalogue (~37 entries): a case-insensitive
+    /// substring match on preset name + command, so the list is searchable instead of a
+    /// long scroll.
+    preset_filter: Entity<InputState>,
     /// A path chosen from the native file picker (avatar image), parked here by the
     /// async picker task and drained into `settings_path` at the next `render` — the
     /// picker returns without a `Window`, but `set_value` needs one, so `render`
@@ -382,7 +386,7 @@ struct Chamber {
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
-    _settings_subs: [Subscription; 2],
+    _settings_subs: [Subscription; 3],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
     file_tree_paths: Vec<String>,
@@ -414,6 +418,10 @@ pub enum ContextMenuAction {
     SetFlavor(String, hadron_lattice::Flavor),
     /// Adopt a catalogue quark into this repo (available → participating).
     AdoptQuark(String),
+    /// Force-restart a resident quark's session (reap the subprocess, keep it seated).
+    /// Offered only for `Transport::Acp` quarks — a one-shot CLI quark holds nothing
+    /// resident to kill.
+    RestartQuark(String),
 }
 
 impl Chamber {
@@ -450,12 +458,18 @@ impl Chamber {
         let settings_model = cx.new(|cx| InputState::new(window, cx).placeholder("inherit catalogue default"));
         let settings_effort = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. low, standard, high"));
         let settings_mode_config = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. architect, code, ask"));
+        let preset_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Search providers…"));
         // Repaint the Settings overlay on every edit so its preview is live.
         let _settings_subs = [
             cx.subscribe_in(&settings_name, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
             }),
             cx.subscribe_in(&settings_path, window, |_, _, _: &InputEvent, _, cx| {
+                cx.notify()
+            }),
+            // Re-render the add-quark wizard on every keystroke so the preset list
+            // re-filters live as the search box is typed into.
+            cx.subscribe_in(&preset_filter, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
             }),
         ];
@@ -559,6 +573,7 @@ impl Chamber {
             settings_model,
             settings_effort,
             settings_mode_config,
+            preset_filter,
             pending_image_pick: None,
             _input_sub,
             _settings_subs,
@@ -1347,6 +1362,16 @@ impl Chamber {
                     } else if let Err(e) = std::fs::write(&self.path, "") {
                         eprintln!("chamber: failed to clear field.jsonl: {e}");
                     } else {
+                        // The archived agents still hold their pre-clear resident ACP
+                        // sessions. Restart every resident quark so it re-boots into the
+                        // fresh (empty) field instead of carrying stale context (see
+                        // `post_clear_reboots` for the rule). The daemon's service_reboots
+                        // ignores any id not currently seated.
+                        for ev in crate::model::post_clear_reboots(&self.view.roster) {
+                            if let Err(e) = io::append_event(&self.path, &ev) {
+                                eprintln!("chamber: failed to append post-clear reboot: {e}");
+                            }
+                        }
                         let events = io::read_events(&self.path).unwrap_or_default();
                         self.reproject(&events);
                         self.chat_message_ixs.clear();
@@ -1413,6 +1438,9 @@ impl Chamber {
             }
             ContextMenuAction::AdoptQuark(id) => {
                 self.adopt_quark(&id, cx);
+            }
+            ContextMenuAction::RestartQuark(id) => {
+                self.reboot_quark(&id, cx);
             }
             ContextMenuAction::SetFlavor(id, flavor) => {
                 let qid = QuarkId::new(&id);
@@ -1832,32 +1860,15 @@ impl Chamber {
             // on a seat with no live session is a harmless no-op.
             let is_acp = matches!(r.transport, hadron_lattice::Transport::Acp);
 
-            // Trailing controls, right-aligned: effort tag (when set), mode tag (click to
-            // cycle a per-quark override), and — for a resident seat — the ⟳ restart
-            // glyph. Each is added only when it has content, so empty slots don't leave
-            // phantom gaps between the tags.
+            // Trailing controls, right-aligned: effort tag (when set) and mode tag (click
+            // to cycle a per-quark override). Each is added only when it has content, so
+            // empty slots don't leave phantom gaps. Restart lives in the right-click
+            // context menu now (below), not as an always-on row glyph.
             let mut controls = h_flex().flex_none().items_center().gap_1p5();
             if matches!(r.effort.as_deref(), Some(e) if !e.is_empty()) {
                 controls = controls.child(effort_tag(&r.effort));
             }
             controls = controls.child(mode_el);
-            if is_acp {
-                let rid = r.id.clone();
-                let tip: SharedString = "Restart — reap this agent's session".into();
-                controls = controls.child(
-                    div()
-                        .id(SharedString::from(format!("restart-{}", r.id)))
-                        .cursor_pointer()
-                        .flex_none()
-                        .px_1()
-                        .text_sm()
-                        .text_color(theme::text_muted())
-                        .hover(|s| s.text_color(theme::text()))
-                        .on_click(cx.listener(move |this, _, _, cx| this.reboot_quark(&rid, cx)))
-                        .child("⟳")
-                        .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx)),
-                );
-            }
             let controls = controls.into_any_element();
 
             // The row needs a stable id: `ContextMenuExt` derives the popup's
@@ -1870,6 +1881,7 @@ impl Chamber {
                     let enable_str = if r.enabled { "Disable" } else { "Enable" };
                     let r_flavor = r.flavor.clone();
                     let is_adopted = r.adopted;
+                    let menu_is_acp = is_acp;
                     let view = cx.entity().clone();
                     move |mut menu, _, _| {
                         let qid1 = qid_str.clone();
@@ -1883,6 +1895,25 @@ impl Chamber {
                             });
                             window.refresh();
                         }));
+                        // Restart is offered for any resident (ACP) seat — adopted or
+                        // catalogue-seated (the daemon seats residents straight from the
+                        // global catalogue, so a live quark can read adopted=false here).
+                        // A one-shot CLI quark holds nothing resident, so it is omitted.
+                        if menu_is_acp {
+                            let qid_r = qid_str.clone();
+                            let view_r = view.clone();
+                            menu = menu.item(PopupMenuItem::new("Restart").on_click(
+                                move |_, window, cx| {
+                                    view_r.update(cx, |this, cx| {
+                                        this.handle_context_menu_action(
+                                            ContextMenuAction::RestartQuark(qid_r.clone()),
+                                            cx,
+                                        );
+                                    });
+                                    window.refresh();
+                                },
+                            ));
+                        }
                         // A not-adopted (catalogue-only) quark offers just "Adopt";
                         // enable/disable and role changes only apply once it participates.
                         if !is_adopted {
@@ -4499,6 +4530,19 @@ impl Chamber {
                     })
                     .collect::<Vec<_>>();
 
+                // Case-insensitive substring match on name + command. Empty filter shows
+                // all; the "Custom command…" escape hatch below is always appended,
+                // unfiltered, so the list is never a dead end.
+                let filter = self.preset_filter.read(cx).value().trim().to_lowercase();
+                let presets: Vec<_> = presets
+                    .into_iter()
+                    .filter(|p| {
+                        filter.is_empty()
+                            || p.name.to_lowercase().contains(&filter)
+                            || p.command.to_lowercase().contains(&filter)
+                    })
+                    .collect();
+
                 let mut list = v_flex().gap_2();
                 for preset in presets {
                     let preset_clone = preset.clone();
@@ -4507,7 +4551,8 @@ impl Chamber {
                             .id(SharedString::from(format!("preset-{}", preset.id)))
                             .items_center()
                             .justify_between()
-                            .p_4()
+                            .px_3()
+                            .py_2()
                             .rounded_lg()
                             .bg(theme::bg_surface())
                             .border_1()
@@ -4549,7 +4594,8 @@ impl Chamber {
                         .id("preset-custom")
                         .items_center()
                         .justify_between()
-                        .p_4()
+                        .px_3()
+                        .py_2()
                         .rounded_lg()
                         .bg(theme::bg_surface())
                         .border_1()
@@ -4597,6 +4643,9 @@ impl Chamber {
                             .text_color(theme::text())
                             .child("Select a Preset"),
                     )
+                    // Search box: filters the catalogue as you type (name + command), so
+                    // the right provider is one query away instead of a scroll through ~37.
+                    .child(Input::new(&self.preset_filter))
                     // The catalogue is ~37 presets — taller than the card. Give the list
                     // its own bounded scroll region (like `settings-nav-scroll`) so every
                     // provider is reachable while Back/title stay pinned. Without this the
