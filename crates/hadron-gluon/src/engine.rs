@@ -638,9 +638,15 @@ impl Engine {
     /// treating those as "has not answered" would re-excite a quark for every historical
     /// message in the field the next time the daemon starts. Absent is unknown, and for
     /// unknown we keep the old, order-based answer. New events are precise.
+    ///
+    /// **What counts as answering is [`is_turn_completion`]** — a reply or a terminal
+    /// status, NOT the `Excited` "I started" the engine writes at dispatch. That status
+    /// carries no `answers` stamp, so before the shared predicate it hit the legacy arm
+    /// and stranded a quark whose turn was interrupted after it went Excited. `next_pending`
+    /// already used this reading; sharing it is what keeps the two from disagreeing.
     fn has_answered(after: &[Event], addressee: &QuarkId, msg_id: ulid::Ulid) -> bool {
         after.iter().any(|e| {
-            e.from == Actor::Quark(addressee.clone())
+            crate::router::is_turn_completion(e, addressee)
                 && match e.answers {
                     Some(a) => a == msg_id,
                     None => true, // legacy event: fall back to "it spoke after the message"
@@ -3034,6 +3040,91 @@ mod tests {
             .map(|(_, t)| t.as_str())
             .unwrap();
         assert!(claude_task.contains("do Z"), "claude got a stale request: {claude_task:?}");
+    }
+
+    /// **The stranding bug.** A quark is dispatched, emits its `Excited` status, and then
+    /// the turn is interrupted (daemon restart, crash) before any reply or terminal status
+    /// is written. The `Excited` status carries no `answers` stamp, so the old `has_answered`
+    /// hit its legacy `None => true` arm and counted "I started" as "I answered" — leaving the
+    /// quark marked answered and never re-dispatched. `next_pending` never made this mistake
+    /// (it filters to replies + terminal statuses), so the two disagreed. A merely-excited
+    /// quark must still be pending.
+    #[tokio::test]
+    async fn a_quark_that_only_went_excited_is_still_pending_not_stranded() {
+        use crate::mock::MockQuark;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+        append_event(&path, &Event::new(Actor::Human, None, Kind::Message { body: "@claude do X".into() }))
+            .unwrap();
+        // Dispatched and started, then interrupted: Excited only — no reply, no terminal status.
+        append_event(
+            &path,
+            &Event::new(
+                Actor::Quark(QuarkId::new("claude")),
+                None,
+                Kind::Status { state: hadron_lattice::QuarkState::Excited },
+            ),
+        )
+        .unwrap();
+
+        let engine = Engine::new(
+            path.clone(),
+            vec![
+                Box::new(MockQuark::repeating(QuarkId::new("claude"), Flavor::Worker, "ok")),
+                Box::new(MockQuark::repeating(QuarkId::new("agy"), Flavor::Orchestrator, "ok")),
+            ],
+            10,
+        );
+
+        let events = read_events(&path).unwrap();
+        let targets = engine.human_message_targets(&events);
+        let ids: Vec<&str> = targets.iter().map(|(q, _)| q.as_str()).collect();
+        assert!(
+            ids.contains(&"claude"),
+            "a quark that only went Excited must still be pending, not stranded: {ids:?}"
+        );
+    }
+
+    /// The other side of the same predicate: a real reply (or a terminal status) DOES count
+    /// as answered, so a quark that actually finished is not re-dispatched forever.
+    #[tokio::test]
+    async fn a_reply_or_terminal_status_counts_as_answered() {
+        use crate::mock::MockQuark;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+        let human = Event::new(Actor::Human, None, Kind::Message { body: "@claude do X".into() });
+        let msg_id = human.id;
+        append_event(&path, &human).unwrap();
+        // Started, then genuinely finished: a reply stamped as answering this message.
+        append_event(
+            &path,
+            &Event::new(
+                Actor::Quark(QuarkId::new("claude")),
+                None,
+                Kind::Status { state: hadron_lattice::QuarkState::Excited },
+            ),
+        )
+        .unwrap();
+        append_event(
+            &path,
+            &Event::new(Actor::Quark(QuarkId::new("claude")), None, Kind::Message { body: "done".into() })
+                .answering(Some(msg_id)),
+        )
+        .unwrap();
+
+        let engine = Engine::new(
+            path.clone(),
+            vec![
+                Box::new(MockQuark::repeating(QuarkId::new("claude"), Flavor::Worker, "ok")),
+                Box::new(MockQuark::repeating(QuarkId::new("agy"), Flavor::Orchestrator, "ok")),
+            ],
+            10,
+        );
+
+        let events = read_events(&path).unwrap();
+        let targets = engine.human_message_targets(&events);
+        let ids: Vec<&str> = targets.iter().map(|(q, _)| q.as_str()).collect();
+        assert!(!ids.contains(&"claude"), "a quark that replied must not be re-dispatched: {ids:?}");
     }
 
     /// Two quarks named in ONE message must run at the same time, not one after the
