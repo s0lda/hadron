@@ -3033,6 +3033,21 @@ impl Chamber {
                     let repo_root =
                         crate::vcs::repo_root_of(std::path::Path::new(&self.path)).to_path_buf();
 
+                    // Folders before files, alphabetical within each group — the
+                    // convention every file explorer uses. Applied at every level.
+                    fn sorted_children(node: &FileTreeNode) -> Vec<(&String, &FileTreeNode)> {
+                        let mut children: Vec<(&String, &FileTreeNode)> =
+                            node.children.iter().collect();
+                        children.sort_by(|(a_name, a), (b_name, b)| {
+                            match (a.is_file, b.is_file) {
+                                (false, true) => std::cmp::Ordering::Less,
+                                (true, false) => std::cmp::Ordering::Greater,
+                                _ => a_name.cmp(b_name),
+                            }
+                        });
+                        children
+                    }
+
                     fn render_node(
                         name: &str,
                         node: &FileTreeNode,
@@ -3045,7 +3060,7 @@ impl Chamber {
                         let mut list = v_flex().w_full();
                         // root node has empty name and we don't render it directly
                         if name.is_empty() {
-                            for (child_name, child_node) in &node.children {
+                            for (child_name, child_node) in sorted_children(node) {
                                 let child_path = child_name.clone();
                                 list = list.child(render_node(
                                     child_name,
@@ -3071,7 +3086,12 @@ impl Chamber {
                             .ml(gpui::px(depth as f32 * 12.0))
                             .hover(|s| s.bg(theme::bg_surface_raised()))
                             .cursor_pointer()
-                            .text_color(theme::text())
+                            // Gitignored entries read as present-but-inactive: muted text.
+                            .text_color(if node.is_ignored {
+                                theme::text_muted()
+                            } else {
+                                theme::text()
+                            })
                             .font_family("Cascadia Code")
                             .text_size(gpui::px(13.56))
                             .gap_2()
@@ -3262,7 +3282,7 @@ impl Chamber {
                             );
 
                             if is_expanded {
-                                for (child_name, child_node) in &node.children {
+                                for (child_name, child_node) in sorted_children(node) {
                                     let child_path = format!("{}/{}", current_path, child_name);
                                     list = list.child(render_node(
                                         child_name,
