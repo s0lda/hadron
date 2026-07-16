@@ -7,7 +7,8 @@ use hadron_lattice::{
     TurnOutcome,
 };
 use tokio::sync::Mutex as AsyncMutex;
-use tokio::task::JoinSet;
+use tokio::task::{AbortHandle, JoinSet};
+use ulid::Ulid;
 
 use crate::field::{append_event, read_events};
 use crate::quark::Quark;
@@ -366,6 +367,16 @@ pub struct Engine {
     /// gets only the selected skill each turn. Maintained beside `roster`/`quarks` at
     /// every seating path (`new`, `seat`, `unseat`).
     resident: HashSet<QuarkId>,
+    /// Watermark for [`Kind::Reboot`] servicing: the **identity** (ULID) of the last
+    /// field event this engine has already scanned for force-restarts. `None` until the
+    /// first field read baselines it, so every `Reboot` that predates the daemon's boot
+    /// — when there is no live session to kill — is stale-ignored. An identity, never an
+    /// ordering key (two ULIDs minted in the same millisecond are not reliably ordered)
+    /// and never a positional index (which would overrun the slice if `/clear` archiving
+    /// shrinks the field): each read locates this id by position and services what the
+    /// append-ordered field holds after it. Only reboots appended *after* the baseline,
+    /// while the daemon runs, are serviced — exactly once each.
+    reboot_watermark: Option<Ulid>,
 }
 
 impl Engine {
@@ -413,6 +424,7 @@ impl Engine {
             turn_deadline: TURN_DEADLINE,
             disabled: HashSet::new(),
             resident,
+            reboot_watermark: None,
         }
     }
 
@@ -1227,6 +1239,100 @@ impl Engine {
         }
     }
 
+    /// Service the human's **force-restart** ([`Kind::Reboot`]) for any reboot event
+    /// appended since the last field read.
+    ///
+    /// The first call baselines the watermark to the newest event and services
+    /// nothing — every reboot in the field's history predates this daemon, when there
+    /// was no live session to kill. Thereafter, each reboot past the watermark that
+    /// targets a seated quark is serviced exactly once:
+    ///
+    /// - **in-flight quark:** abort its running turn task. That drops the turn future,
+    ///   releasing the `Mutex` guard the turn held on the quark — so the `lock().await`
+    ///   below can then proceed — and appends a terminal `Ground` so the interrupted
+    ///   message reads as *answered* (a bare terminal status counts as turn
+    ///   completion), keeping the quark from being re-excited onto the abandoned turn.
+    ///   It re-boots on its next `@mention`.
+    /// - **both in-flight and idle:** lock the quark and [`Quark::reset_session`],
+    ///   which drops a resident ACP session and reaps its subprocess. Aborting the turn
+    ///   alone does NOT reap an ACP child — that child is owned by the session's pump
+    ///   thread, not by the turn future — so the session reset is what actually kills
+    ///   it. A no-op for a one-shot CLI quark or an already-idle ACP quark.
+    ///
+    /// The aborted task surfaces later in `join_next` as a *cancelled* `JoinError`; the
+    /// dispatch loop absorbs that (cleanup already happened here) rather than treating
+    /// it as a panic and grounding every sibling.
+    /// Returns the quarks whose in-flight turn was aborted-and-grounded this pass. The
+    /// caller must NOT re-dispatch them on the *same* field snapshot: that snapshot
+    /// predates the `Ground` appended here, so the just-answered message still reads as
+    /// pending and the quark would be re-excited onto the turn we just killed. On the
+    /// next read the `Ground` is present and normal answered-logic takes over.
+    async fn service_reboots(
+        &mut self,
+        events: &[Event],
+        in_flight: &mut HashSet<QuarkId>,
+        abort_handles: &mut HashMap<QuarkId, AbortHandle>,
+    ) -> anyhow::Result<Vec<QuarkId>> {
+        let mut grounded: Vec<QuarkId> = Vec::new();
+        // The watermark is the *identity* (ULID) of the last event this engine has
+        // already scanned, not a positional index and not an ordering key. Two ULIDs
+        // minted in the same millisecond are not reliably ordered (the low bits are
+        // random), so we never compare ids with `<`/`>`; the field's canonical order is
+        // its append order, which `read_events` preserves. We locate the marker by
+        // identity and service everything the file holds after it.
+        let newest = events.last().map(|e| e.id);
+        let Some(marker) = self.reboot_watermark else {
+            self.reboot_watermark = newest;
+            return Ok(grounded);
+        };
+        let start = match events.iter().rposition(|e| e.id == marker) {
+            Some(idx) => idx + 1,
+            // The marker is gone — the field was archived out from under us (`/clear`).
+            // Any reboot it once bounded went with it, so re-baseline to the current
+            // tail and service nothing: a pre-archive restart must not fire post-clear.
+            None => {
+                self.reboot_watermark = newest;
+                return Ok(grounded);
+            }
+        };
+
+        for ev in &events[start..] {
+            if !matches!(ev.kind, Kind::Reboot) {
+                continue;
+            }
+            // A reboot is per-quark (envelope `to`); a broadcast reboot is meaningless.
+            let Some(target) = ev.to.clone() else { continue };
+            let Some(quark) = self.quarks.get(&target).cloned() else {
+                eprintln!(
+                    "gluon: reboot for unseated quark {} — ignored",
+                    target.as_str()
+                );
+                continue;
+            };
+
+            if in_flight.remove(&target) {
+                if let Some(handle) = abort_handles.remove(&target) {
+                    handle.abort();
+                }
+                self.append(Event::new(
+                    Actor::Quark(target.clone()),
+                    None,
+                    Kind::Status { state: QuarkState::Ground },
+                ))
+                .await?;
+                grounded.push(target.clone());
+            }
+
+            // Reaps a resident session (idempotent). The `lock().await` waits for a
+            // just-aborted turn to drop its guard before we take it.
+            quark.lock().await.reset_session();
+            eprintln!("gluon: force-restarted quark {}", target.as_str());
+        }
+
+        self.reboot_watermark = newest;
+        Ok(grounded)
+    }
+
     /// Dispatch every pending quark turn CONCURRENTLY until the field has no pending
     /// work **and** no turn is still in flight (quiesce), or the exchange budget is
     /// exhausted (backstop).
@@ -1243,6 +1349,11 @@ impl Engine {
     pub async fn run_until_quiesce(&mut self) -> anyhow::Result<()> {
         let mut exchanges = 0usize;
         let mut in_flight: HashSet<QuarkId> = HashSet::new();
+        // The abort handle for each in-flight turn, so the human's force-restart
+        // ([`Kind::Reboot`]) can kill a wedged quark's turn *now* instead of waiting
+        // out the 30-minute deadline. Kept in lockstep with `in_flight`: inserted at
+        // spawn, removed the instant a turn joins or is rebooted.
+        let mut abort_handles: HashMap<QuarkId, AbortHandle> = HashMap::new();
         // The assignment rides along with the turn so that `finish_turn` can stamp
         // `answers` on what the turn emits. Without it, "has this quark answered the
         // human?" degenerates into "has it said anything since?", which silently eats
@@ -1267,11 +1378,24 @@ impl Engine {
             if first_err.is_none() && !backstop {
                 let events = read_events(&self.field_path)?;
 
+                // The human's force-restart, serviced on the same re-read the poll
+                // tick loops back to — so a *solo* wedged quark (nothing else pending,
+                // `join_next` blocked forever on its hung turn) is still rescued: the
+                // FIELD_POLL arm fires, we loop, re-read, and abort it here.
+                let rebooted = self
+                    .service_reboots(&events, &mut in_flight, &mut abort_handles)
+                    .await?;
+
                 for (target, fallback_task) in self.pending_targets(&events) {
                     // One turn per quark at a time. A quark that becomes pending again
                     // while it is running is picked up on a later pass (its reply, or
                     // the event that re-addressed it, is still in the field).
-                    if in_flight.contains(&target) {
+                    //
+                    // `rebooted` guards the just-force-restarted quarks: their `Ground`
+                    // was appended after this `events` snapshot, so on THIS snapshot the
+                    // answered message still reads as pending — dispatching now would
+                    // re-excite the very turn we just aborted. Next read sees the Ground.
+                    if in_flight.contains(&target) || rebooted.contains(&target) {
                         continue;
                     }
 
@@ -1411,7 +1535,7 @@ impl Engine {
                     let turn_tree = tree.clone();
                     let assignment = driver.as_ref().map(|d| d.assignment);
                     let deadline = self.turn_deadline;
-                    turns.spawn(async move {
+                    let abort = turns.spawn(async move {
                         let mut quark = quark.lock().await;
                         // THE WATCHDOG. A turn that never resolves — its CLI process
                         // died, or orphaned its stdout pipe to a grandchild so the
@@ -1443,6 +1567,7 @@ impl Engine {
                         };
                         (turn_id, turn_tree, assignment, outcome)
                     });
+                    abort_handles.insert(target.clone(), abort);
                     in_flight.insert(target);
                     exchanges += 1;
                     spawned_any = true;
@@ -1472,6 +1597,7 @@ impl Engine {
             match joined {
                 Ok((target, tree, assignment, Ok(outcome))) => {
                     in_flight.remove(&target);
+                    abort_handles.remove(&target);
                     if let Err(err) =
                         self.finish_turn(&target, outcome, tree.as_ref(), assignment).await
                     {
@@ -1484,6 +1610,7 @@ impl Engine {
                     // A failed turn must still leave a terminal status behind, or the
                     // quark reads as forever-working. Its siblings keep running.
                     in_flight.remove(&target);
+                    abort_handles.remove(&target);
                     let grounded = self
                         .append(Event::new(
                             Actor::Quark(target.clone()),
@@ -1498,10 +1625,20 @@ impl Engine {
                         }
                     }
                 }
+                Err(join_err) if join_err.is_cancelled() => {
+                    // A turn we aborted on purpose — the human's force-restart. Its
+                    // cleanup (out of `in_flight`, terminal `Ground`, session reset)
+                    // already happened in `service_reboots`; the corpse joining here is
+                    // expected, not a panic. Discard it and keep the siblings running.
+                    // (Distinguishing on `is_cancelled` is what keeps a targeted reboot
+                    // from tripping the ground-everyone path below.)
+                    continue;
+                }
                 Err(join_err) => {
                     // A panicking turn: we cannot tell which quark it was from the
                     // JoinError alone, so ground every quark still in flight rather than
                     // strand one Excited, and abort.
+                    abort_handles.clear();
                     for target in std::mem::take(&mut in_flight) {
                         let _ = self
                             .append(Event::new(
@@ -3859,5 +3996,174 @@ mod tests {
         );
         // No regression: an unaddressed message still falls back to the orchestrator.
         assert_eq!(engine.human_addressees("just a thought"), vec![QuarkId::new("agy")]);
+    }
+
+    // ---- force-restart (Kind::Reboot) ------------------------------------------
+    //
+    // The human's manual "Restart" reaps a wedged quark's resident session. Idle →
+    // just reset it; mid-turn → abort the turn, ground it, reset it, and leave every
+    // sibling running. A reboot that predates this daemon (no live session to kill) is
+    // stale-ignored by the ULID watermark.
+
+    /// A quark that records whether its session was reset — the observable of a reboot.
+    struct ResettableQuark {
+        id: QuarkId,
+        was_reset: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for ResettableQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, _t: Projection) -> anyhow::Result<TurnOutcome> {
+            Ok(TurnOutcome { message: Some("ok".into()), permission: None, usage: Default::default() })
+        }
+        fn reset_session(&mut self) {
+            self.was_reset.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// A slow quark that, the instant it is excited, appends the human's force-restart
+    /// to the field (mirroring a mid-turn Restart click) and then grinds. Its reply
+    /// must never land — the reboot aborts it first.
+    struct RebootingSlowQuark {
+        id: QuarkId,
+        field: PathBuf,
+        was_reset: Arc<std::sync::atomic::AtomicBool>,
+        hold: Duration,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for RebootingSlowQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, _t: Projection) -> anyhow::Result<TurnOutcome> {
+            append_event(
+                &self.field,
+                &Event::new(Actor::Human, Some(self.id.clone()), Kind::Reboot),
+            )
+            .unwrap();
+            tokio::time::sleep(self.hold).await;
+            // Only reached if the abort never happened — the assertion catches it.
+            Ok(TurnOutcome { message: Some("SLOW DONE".into()), permission: None, usage: Default::default() })
+        }
+        fn reset_session(&mut self) {
+            self.was_reset.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// The watermark and the idle path in one: a reboot appended *before* the first
+    /// read is history and never fires; one appended *after* resets the idle quark.
+    #[tokio::test]
+    async fn a_reboot_before_the_baseline_is_ignored_but_one_after_it_resets_the_idle_quark() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let was_reset = Arc::new(AtomicBool::new(false));
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(ResettableQuark { id: QuarkId::new("q"), was_reset: was_reset.clone() })],
+            10,
+        );
+        let mut in_flight: HashSet<QuarkId> = HashSet::new();
+        let mut handles: HashMap<QuarkId, AbortHandle> = HashMap::new();
+
+        // Pre-boot reboot: swallowed by the baseline.
+        append_event(&field, &Event::new(Actor::Human, Some(QuarkId::new("q")), Kind::Reboot)).unwrap();
+        let events = read_events(&field).unwrap();
+        engine.service_reboots(&events, &mut in_flight, &mut handles).await.unwrap();
+        assert!(
+            !was_reset.load(Ordering::SeqCst),
+            "a reboot that predates the daemon must be stale-ignored, not serviced"
+        );
+
+        // A reboot past the watermark resets the idle quark's session.
+        append_event(&field, &Event::new(Actor::Human, Some(QuarkId::new("q")), Kind::Reboot)).unwrap();
+        let events = read_events(&field).unwrap();
+        engine.service_reboots(&events, &mut in_flight, &mut handles).await.unwrap();
+        assert!(
+            was_reset.load(Ordering::SeqCst),
+            "a reboot past the watermark must reset the idle quark's session"
+        );
+    }
+
+    /// **The discriminating test.** A mid-turn reboot must abort *only* the target's
+    /// turn — killing its reply, grounding it, resetting its session — and leave a
+    /// sibling's turn to finish. The sibling assertion is what proves the aborted
+    /// task's cancelled `JoinError` did not trip the ground-everyone panic path.
+    #[tokio::test]
+    async fn a_mid_turn_reboot_aborts_only_that_quark_and_spares_the_sibling() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        // One unaddressed message naming both, so the concurrent dispatch path fans it
+        // out and excites both on the same pass (addressed `to=Some` messages go through
+        // next_pending, which yields a single target and would not overlap them).
+        append_event(
+            &field,
+            &Event::new(
+                Actor::Human,
+                None,
+                Kind::Message { body: "@slow grind on this and @fast do a quick task".into() },
+            ),
+        )
+        .unwrap();
+
+        let was_reset = Arc::new(AtomicBool::new(false));
+        let slow = RebootingSlowQuark {
+            id: QuarkId::new("slow"),
+            field: field.clone(),
+            was_reset: was_reset.clone(),
+            hold: Duration::from_secs(30),
+        };
+        let fast = MockQuark::scripted(QuarkId::new("fast"), Flavor::Worker, vec![Some("FAST DONE".into())]);
+
+        let mut engine =
+            Engine::new(field.clone(), vec![Box::new(slow), Box::new(fast)], 20);
+
+        tokio::time::timeout(Duration::from_secs(10), engine.run_until_quiesce())
+            .await
+            .expect("engine hung — the mid-turn reboot never aborted the slow turn")
+            .expect("run_until_quiesce returned an error");
+
+        let events = read_events(&field).unwrap();
+        // 1. The slow turn was killed — its reply never reached the field.
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("SLOW DONE"))),
+            "the slow turn completed — it was NOT aborted"
+        );
+        // 2. It was grounded and its session reset.
+        assert!(
+            events.iter().any(|e| e.from == Actor::Quark(QuarkId::new("slow"))
+                && matches!(e.kind, Kind::Status { state: QuarkState::Ground })),
+            "the rebooted quark never got a terminal Ground"
+        );
+        assert!(
+            was_reset.load(Ordering::SeqCst),
+            "reset_session was never called on the rebooted quark"
+        );
+        // 3. The sibling was spared — its turn completed normally.
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("FAST DONE"))),
+            "the sibling's turn was lost — the reboot tripped the ground-everyone panic path"
+        );
     }
 }
