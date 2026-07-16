@@ -1,10 +1,14 @@
-//! The chamber's client-side window frame: an **opaque, flat, square** window with a
-//! 1px hairline border. It used to be a transparent window with a `client_inset`
-//! drop-shadow margin and rounded corners (Zed's Linux approach) — but a transparent
-//! window recomposites against the desktop on every repaint, and the blurred drop
-//! shadow is re-rasterized each frame, which under WSL software rendering (llvmpipe)
-//! was the bulk of the chamber's idle CPU. Flat and square is both cheaper and truer
-//! to the instrument-panel look.
+//! The chamber's client-side window frame: a **transparent window with rounded, bordered
+//! corners** (Zed's Linux approach, which works on WSLg). The window is transparent so the
+//! rounded corner cut-outs composite over the desktop; the frame div paints the opaque
+//! housing ([`crate::theme::field_base`]) inside the arc, with a 1px hairline border.
+//!
+//! This was briefly flat-and-square to chase a CPU spike — but the spike was never the
+//! rounded/transparent frame; it was *continuous repaints* (a pulsing animation + a 30fps
+//! terminal pump) re-rastering the whole window in software. With those fixed, repaints are
+//! rare, so the transparent rounded frame is affordable again. The one thing NOT restored
+//! is the blurred drop-shadow: a blur is a large-kernel per-frame resample and stays banned
+//! under llvmpipe. Depth comes from the border + the theme's glass tones instead.
 //!
 //! `window_frame` must wrap the window's outermost content: it owns the resize-edge
 //! hit testing (`resize_edge` is copied verbatim from gpui-component's `window_border`
@@ -18,10 +22,9 @@ use gpui::{
 use gpui_component::ActiveTheme as _;
 
 const BORDER_SIZE: Pixels = px(1.0);
-/// Corner radius — **zero**: the frame is square. Public so the titlebar rounds its top
-/// corners to match (i.e. also square, so the close-button hover can't spill past a
-/// rounded edge that no longer exists).
-pub const FRAME_RADIUS: Pixels = px(0.0);
+/// Corner radius of the window housing. Public so the titlebar rounds its top corners to
+/// match (else the close-button hover spills past the rounded frame edge).
+pub const FRAME_RADIUS: Pixels = px(13.0);
 /// Half-width of the resize hit band on each side of the window edge.
 const RESIZE_HIT: Pixels = px(6.0);
 
@@ -49,14 +52,17 @@ fn frame_insets(shadow: Pixels, tiling: &Tiling) -> Edges<Pixels> {
 pub fn window_frame(window: &mut Window, cx: &App, content: impl IntoElement) -> impl IntoElement {
     let decorations = window.window_decorations();
     let border_color = cx.theme().window_border;
-    let bg = crate::theme::bg_base();
+    // The opaque housing painted inside the rounded arc. The window itself is transparent
+    // (see app.rs `window_background`), so the corner triangles outside the arc show the
+    // desktop — that is what makes the corners read as rounded.
+    let bg = crate::theme::field_base();
 
     match decorations {
         // Server-side decorations (a real title bar): no custom frame.
         Decorations::Server => div().size_full().bg(bg).child(content).into_any_element(),
         Decorations::Client { tiling } => {
-            // No client inset: there is no shadow margin to reserve, so the window is
-            // filled edge to edge and the resize band sits at the very edge.
+            // No client inset: no shadow margin to reserve, so the housing fills edge to
+            // edge and the resize band sits at the very edge.
             window.set_client_inset(px(0.0));
 
             div()
@@ -73,6 +79,11 @@ pub fn window_frame(window: &mut Window, cx: &App, content: impl IntoElement) ->
                 .when(!tiling.bottom, |d| d.border_b(BORDER_SIZE))
                 .when(!tiling.left, |d| d.border_l(BORDER_SIZE))
                 .when(!tiling.right, |d| d.border_r(BORDER_SIZE))
+                // Rounded housing corners (square on any tiled edge, e.g. snapped/maximized).
+                .when(!tiling.top && !tiling.left, |d| d.rounded_tl(FRAME_RADIUS))
+                .when(!tiling.top && !tiling.right, |d| d.rounded_tr(FRAME_RADIUS))
+                .when(!tiling.bottom && !tiling.left, |d| d.rounded_bl(FRAME_RADIUS))
+                .when(!tiling.bottom && !tiling.right, |d| d.rounded_br(FRAME_RADIUS))
                 // Start a window resize when the press lands in an edge band.
                 .on_mouse_down(MouseButton::Left, move |_, window, _| {
                     let Decorations::Client { tiling } = window.window_decorations() else {
