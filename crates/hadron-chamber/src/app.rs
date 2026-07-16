@@ -144,26 +144,19 @@ fn identity_avatar(id: &ResolvedIdentity, diameter: f32) -> gpui::AnyElement {
 
 
 
-/// The three views over the field, selected by the chat column's segmented tabs.
+/// The views over the field, selected by the chat column's segmented tabs.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ChatTab {
     /// The conversation — human/quark messages, styled like a chat.
     Chat,
     /// Every event on the field, compact — the raw activity log.
     Log,
-    /// A vertical stepper over the run's milestones (non-message activity).
-    Timeline,
     /// Per-quark session stats: turns, tokens, context, quota.
     Session,
 }
 
 impl ChatTab {
-    const ALL: [ChatTab; 4] = [
-        ChatTab::Chat,
-        ChatTab::Log,
-        ChatTab::Timeline,
-        ChatTab::Session,
-    ];
+    const ALL: [ChatTab; 3] = [ChatTab::Chat, ChatTab::Log, ChatTab::Session];
 
     /// Sizes every per-tab array. A tab added to `ALL` without growing those
     /// arrays is an index-out-of-bounds the moment the tab is opened, so they
@@ -174,8 +167,7 @@ impl ChatTab {
         match self {
             ChatTab::Chat => 0,
             ChatTab::Log => 1,
-            ChatTab::Timeline => 2,
-            ChatTab::Session => 3,
+            ChatTab::Session => 2,
         }
     }
 
@@ -187,7 +179,6 @@ impl ChatTab {
         match self {
             ChatTab::Chat => "Chat",
             ChatTab::Log => "Log",
-            ChatTab::Timeline => "Timeline",
             ChatTab::Session => "Session",
         }
     }
@@ -1432,7 +1423,6 @@ impl Render for Chamber {
         let (top_radius, bottom_radius) = frame_corner_radii(window);
         let titlebar = self.titlebar(window, cx);
         let body = self.body(cx);
-        let status = self.status_bar(cx, bottom_radius);
         let settings = self.settings_open.then(|| self.settings_overlay(cx));
         let info = self
             .info_panel
@@ -1480,7 +1470,6 @@ impl Render for Chamber {
             )
             .child(titlebar)
             .child(body)
-            .child(status)
             .children(settings)
             .children(info)
             .children(about);
@@ -1539,49 +1528,6 @@ impl Chamber {
             )
     }
 
-    /// The status bar along the foot of the window (same tone as the titlebar).
-    /// Left: an overall swarm-status tag. Right: the quark count and the global
-    /// permission-mode tag (click to cycle Ask → Write → Auto → Bypass).
-    fn status_bar(&self, _cx: &mut Context<Self>, bottom_radius: Pixels) -> impl IntoElement {
-        h_flex()
-            .w_full()
-            .h(px(24.0))
-            .flex_none()
-            .items_center()
-            .justify_between()
-            .px_3()
-            // A dark smoked backing so the text reads over the bright field — transparent
-            // text washed out against the green/amber corner glows. Bottom corners rounded
-            // to the housing radius so the bar follows the window's arc.
-            .bg(theme::bg_elevated())
-            .rounded_bl(bottom_radius)
-            .rounded_br(bottom_radius)
-            .text_xs()
-            .text_color(theme::text_secondary())
-            .child(swarm_status_tag(&self.view))
-            .child(
-                div().text_xs().text_color(theme::text_muted()).child(
-                    self.path
-                        .parent()
-                        .and_then(|p| {
-                            if p.file_name() == Some(std::ffi::OsStr::new(".hadron")) {
-                                p.parent()
-                            } else {
-                                Some(p)
-                            }
-                        })
-                        .unwrap_or(&self.path)
-                        .display()
-                        .to_string(),
-                ),
-            )
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(div().child(format!("{} quark(s)", self.view.roster.len()))),
-            )
-    }
 
     /// The body: the left roster ("friends list") at a locked width, then the
     /// resizable chat + terminal group. The roster sits *outside* the group so
@@ -1929,13 +1875,6 @@ impl Chamber {
                     .child(match selected {
                         ChatTab::Chat => self.chat_view(cx).into_any_element(),
                         ChatTab::Log => self.log_view(cx).into_any_element(),
-                        ChatTab::Timeline => div()
-                            .id("timeline-scroll")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.chat_scrolls[selected.index()])
-                            .child(self.timeline_view())
-                            .into_any_element(),
                         ChatTab::Session => div()
                             .id("session-scroll")
                             .size_full()
@@ -2150,11 +2089,11 @@ impl Chamber {
 
         v_flex()
             .size_full()
-            .p_4()
+            .p_3()
             .child(
                 gpui::list(self.log_list_state.clone(), move |ix, _window, cx| {
                     if let Some(view) = weak_view.upgrade() {
-                        view.update(cx, |this, cx| {
+                        view.update(cx, |this, _cx| {
                             if let Some(m) = this.view.messages.get(ix) {
                                 let mut add_divider = false;
                                 if ix > 0 {
@@ -2166,26 +2105,31 @@ impl Chamber {
                                 } else {
                                     add_divider = true;
                                 }
-                                
-                                let m_clone = m.clone();
-                                let roster_clone = this.view.roster.clone();
-                                
-                                let mut row = div().pb(px(16.0));
+
+                                let mut row = v_flex().w_full();
                                 if add_divider {
                                     let label = crate::model::date_divider_label(
                                         m.ts.date_naive(),
                                         chrono::Local::now().date_naive(),
                                     );
                                     row = row.child(
-                                        div().flex().items_center().justify_center().pt_2().pb_6().child(
-                                            div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::text_muted()).child(label)
-                                        )
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .pt_3()
+                                            .pb_2()
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_color(theme::text_muted())
+                                                    .child(label),
+                                            ),
                                     );
                                 }
-                                
-                                return row
-                                    .child(this.message_row(&m_clone, ix, &roster_clone, cx))
-                                    .into_any_element();
+
+                                return row.child(log_row(m)).into_any_element();
                             }
                             div().into_any_element()
                         })
@@ -2261,65 +2205,61 @@ impl Chamber {
         let stats = self.view.session_stats();
 
         let mut col = v_flex().p_4().gap_4();
+        // Session totals as a row of KPI tiles.
         col = col.child(
-            v_flex()
-                .gap_1()
-                .p_3()
-                .bg(theme::bg_surface_raised())
-                .rounded_md()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(theme::text())
-                        .child("Session Totals"),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme::text_muted())
-                        .child(format!("Turns: {}", stats.total_turns)),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme::text_muted())
-                        .child(format!(
-                            "Spent: {} fresh, {} cached{}",
-                            format_num(stats.total_fresh),
-                            format_num(stats.total_cached),
-                            if let Some(c) = stats.total_cost_usd { format!(" (${:.2})", c) } else { "".to_string() }
-                        )),
-                ),
+            h_flex()
+                .w_full()
+                .gap_3()
+                .child(stat_tile(
+                    "Turns",
+                    stats.total_turns.to_string(),
+                    theme::text(),
+                ))
+                .child(stat_tile(
+                    "Fresh",
+                    format_num(stats.total_fresh),
+                    theme::accent(),
+                ))
+                .child(stat_tile(
+                    "Cached",
+                    format_num(stats.total_cached),
+                    theme::accent_secondary(),
+                ))
+                .child(stat_tile(
+                    "Cost",
+                    stats
+                        .total_cost_usd
+                        .map(|c| format!("${:.2}", c))
+                        .unwrap_or_else(|| "—".to_string()),
+                    rgb(0x22c55e),
+                )),
         );
 
+        // One combined graph: total token spend per quark, each bar in the quark's own
+        // colour, so the whole swarm's usage reads on a single chart.
         if !stats.per_quark.is_empty() {
-            let mut fresh_data = Vec::new();
+            let mut data = Vec::new();
             for (q, s) in &stats.per_quark {
-                fresh_data.push((q.clone(), s.fresh as f64));
+                data.push((q.clone(), (s.fresh + s.cached) as f64));
             }
             col = col.child(
-                v_flex()
-                    .gap_1()
-                    .p_3()
-                    .bg(theme::bg_surface_raised())
-                    .rounded_md()
+                session_card()
                     .child(
                         div()
                             .text_sm()
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::text())
-                            .child("Fresh Spend per Quark"),
+                            .child("Token spend by quark"),
                     )
                     .child(
-                        div().h(px(150.0)).w_full().child(
-                            BarChart::new(fresh_data)
-                                .id("session-fresh-chart")
-                                .name("Fresh Tokens")
+                        div().h(px(160.0)).w_full().child(
+                            BarChart::new(data)
+                                .id("session-spend-chart")
+                                .name("Tokens")
                                 .band(|d| d.0.clone())
                                 .value(|d| d.1)
-                                .fill(move |_, _, _, _| -> gpui::Background {
-                                    theme::accent().into()
+                                .fill(move |d, _, _, _| -> gpui::Background {
+                                    theme::actor_hue(&d.0).into()
                                 }),
                         ),
                     ),
@@ -2328,87 +2268,72 @@ impl Chamber {
 
         for (q, s) in &stats.per_quark {
             let q_color = theme::actor_hue(q);
-            let mut block = v_flex()
-                .gap_1()
-                .p_3()
-                .bg(theme::bg_surface_raised())
-                .rounded_md()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(q_color)
-                        .child(q.clone()),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme::text_muted())
-                        .child(format!("Turns: {}", s.turns)),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme::text_muted())
-                        .child(format!(
-                            "Spent: {} fresh, {} cached",
-                            format_num(s.fresh),
-                            format_num(s.cached)
-                        )),
-                );
-
-            if !s.spend_history.is_empty() {
-                block = block.child(
-                    div().h(px(100.0)).w_full().mt_2().child(
-                        LineChart::new(s.spend_history.clone())
-                            .id(format!("spend-chart-{}", q))
-                            .name("Fresh Spent")
-                            .x(|d| format!("T{}", d.turn))
-                            .y(|d| d.fresh as f64)
-                            .stroke(q_color),
+            let mut block = session_card().child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(q_color)
+                            .child(q.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child(format!("{} turns", s.turns)),
                     ),
-                );
-            }
+            );
+            block = block.child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_secondary())
+                    .child(format!(
+                        "{} fresh · {} cached{}",
+                        format_num(s.fresh),
+                        format_num(s.cached),
+                        s.cost_usd
+                            .map(|c| format!(" · ${:.2}", c))
+                            .unwrap_or_default(),
+                    )),
+            );
 
             if let Some(ctx) = &s.context {
-                block = block.child(div().text_xs().text_color(theme::text_muted()).child(
-                    format!(
-                        "Context: {:.1}% ({} / {})",
-                        ctx.used_percentage,
-                        format_num(ctx.used_tokens),
-                        format_num(ctx.context_window_size)
-                    ),
-                ));
-                let ctx_data = vec![
-                    ("Used".to_string(), ctx.used_percentage as f64),
-                    (
-                        "Remaining".to_string(),
-                        100.0 - (ctx.used_percentage as f64).min(100.0),
-                    ),
-                ];
-                block = block.child(
-                    div().h(px(60.0)).w_full().child(
-                        BarChart::new(ctx_data)
-                            .id(format!("ctx-chart-{}", q))
-                            .name("Context %")
-                            .band(|d| d.0.clone())
-                            .value(|d| d.1)
-                            .fill(move |d, _, _, _| -> gpui::Background {
-                                if d.0 == "Used" {
-                                    q_color.into()
-                                } else {
-                                    gpui::rgba(0x00000033).into()
-                                }
-                            }),
-                    ),
-                );
+                let frac = (ctx.used_percentage as f32 / 100.0).clamp(0.0, 1.0);
+                block = block
+                    .child(
+                        div().text_xs().text_color(theme::text_muted()).child(format!(
+                            "Context {:.0}% · {} / {}",
+                            ctx.used_percentage,
+                            format_num(ctx.used_tokens),
+                            format_num(ctx.context_window_size),
+                        )),
+                    )
+                    .child(
+                        // A slim div-based meter — no chart, no per-frame cost.
+                        div()
+                            .w_full()
+                            .h(px(6.0))
+                            .rounded_full()
+                            .bg(theme::bg_base())
+                            .child(
+                                div()
+                                    .h_full()
+                                    .w(gpui::relative(frac))
+                                    .rounded_full()
+                                    .bg(q_color),
+                            ),
+                    );
             }
-            // An empty quota list means the provider has no quota concept — not that
-            // the quota is spent. Say nothing rather than render a zero.
+            // An empty quota list means the provider has no quota concept — not that the
+            // quota is spent. Say nothing rather than render a zero.
             for bucket in &s.quota {
                 block = block.child(div().text_xs().text_color(theme::text_muted()).child(
                     format!(
-                        "Quota [{}]: {:.1}% remaining",
+                        "Quota [{}]: {:.0}% left",
                         bucket.key,
                         bucket.remaining_fraction * 100.0
                     ),
@@ -4512,34 +4437,109 @@ fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// An overall swarm-status badge for the status bar. Priority: a blocked/error
-/// quark, then a pending permission, then any active quark, else "ready".
-fn swarm_status_tag(view: &ChamberView) -> impl IntoElement {
-    let (tag, label): (Tag, &'static str) = if view
-        .roster
-        .iter()
-        .any(|r| matches!(r.state, QuarkState::Error | QuarkState::Blocked))
-    {
-        (Tag::danger(), "error")
-    } else if view.pending_permission.is_some() {
-        (Tag::warning(), "waiting")
-    } else if view
-        .roster
-        .iter()
-        .any(|r| matches!(r.state, QuarkState::Excited | QuarkState::Thinking))
-    {
-        (Tag::info(), "working")
-    } else {
-        (Tag::success(), "ready")
-    };
-    tag.small()
-        .outline()
-        .child(div().font_family("Inter").child(label))
-}
-
 /// A muted placeholder line shown when a tab view has nothing to render.
 fn empty_hint(text: &'static str) -> impl IntoElement {
     div().text_sm().text_color(theme::text_muted()).child(text)
+}
+
+/// A single row in the compact activity Log: time · actor · kind · body, tabular and dense
+/// so the Log reads like a console rather than a second chat. Body truncates to one line —
+/// the Chat tab is where a message is read in full.
+fn log_row(m: &MessageRow) -> impl IntoElement {
+    let time = m
+        .ts
+        .with_timezone(&chrono::Local)
+        .format("%H:%M:%S")
+        .to_string();
+    h_flex()
+        .w_full()
+        .items_center()
+        .gap_3()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .hover(|s| s.bg(theme::glass_highlight()))
+        .child(
+            div()
+                .flex_none()
+                .w(px(58.0))
+                .text_xs()
+                .font_family("Cascadia Code")
+                .text_color(theme::text_muted())
+                .child(time),
+        )
+        .child(
+            div()
+                .flex_none()
+                .w(px(92.0))
+                .text_xs()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(theme::actor_hue(&m.from))
+                .truncate()
+                .child(m.from.clone()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .w(px(62.0))
+                .text_xs()
+                .text_color(log_kind_color(m.kind_label))
+                .child(m.kind_label),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_xs()
+                .text_color(theme::text_secondary())
+                .truncate()
+                .child(m.body.clone()),
+        )
+}
+
+/// A quiet accent per event kind, so the Log's kind column reads at a glance.
+fn log_kind_color(kind: &str) -> gpui::Rgba {
+    match kind {
+        "status" => theme::accent_secondary(),
+        "edit" => rgb(0x22c55e),
+        "command" => rgb(0xf59e0b),
+        "snapshot" => theme::accent(),
+        _ => theme::text_muted(),
+    }
+}
+
+/// A glass card for the Session panels, matching the chat/roster panels.
+fn session_card() -> gpui::Div {
+    v_flex()
+        .p_3()
+        .gap_2()
+        .rounded(px(12.0))
+        .bg(theme::glass_surface())
+        .border_1()
+        .border_color(theme::glass_highlight())
+}
+
+/// A KPI tile: a big value over a small label, for the session totals row.
+fn stat_tile(label: &str, value: String, accent: gpui::Rgba) -> impl IntoElement {
+    v_flex()
+        .flex_1()
+        .gap_1()
+        .p_3()
+        .rounded(px(10.0))
+        .bg(theme::bg_base())
+        .child(
+            div()
+                .text_lg()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(accent)
+                .child(value),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme::text_muted())
+                .child(label.to_string()),
+        )
 }
 
 /// Map an event kind to a timeline step icon.
@@ -4915,7 +4915,11 @@ pub fn run(field_path: Option<String>) {
             t.secondary = rgb(0x191a1b).into();
             t.secondary_hover = rgb(0x252627).into();
             t.popover = theme::popover().into();
-            // Borderless: the resize handle paints `border` when idle. The backdrop is
+            // Context menus, dropdown menus and tooltips paint from `tokens.popover`, which
+            // is computed once at theme construction and does NOT re-derive from the mutated
+            // `colors.popover` above — so without this line they stay the stock-dark theme
+            // colour (near-black) instead of our surface. Same gotcha as `tokens.title_bar`.
+            t.tokens.popover = gpui::Hsla::from(theme::bg_elevated()).into();
             // now a bright field, so a dark line stood out between the chat and the right
             // pane — make the idle border fully transparent so the handle vanishes at rest.
             // Dragging still paints `drag_border` (on-brand pink) for feedback. This also

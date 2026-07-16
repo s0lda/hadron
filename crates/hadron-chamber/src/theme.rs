@@ -76,7 +76,7 @@ pub fn bg_elevated() -> Rgba {
 /// dark, mostly-opaque violet tone that seats text cleanly while the bright field tints
 /// through and catches the [`glass_highlight`] border, so it reads as a pane of glass.
 pub fn glass_surface() -> Rgba {
-    rgba(0x110f22e0) // darker, more frosted smoked glass (~0.88)
+    rgba(0x14122ac4) // tinted glass, midway between the earlier light + darker takes (~0.77)
 }
 
 /// The subtle light rim around a glass panel — a low-alpha periwinkle that reads as the
