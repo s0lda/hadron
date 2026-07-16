@@ -821,9 +821,12 @@ impl Chamber {
             .child(kv_row("Agent", agent_str))
             .child(kv_row("Model", model_str))
             .child(kv_row("Transport", transport_str));
-        if let Some(e) = &effort {
-            config_section = config_section.child(kv_row("Effort", e.clone()));
-        }
+        // Always shown, even when the seat inherits (unset) — an empty row read as a
+        // missing feature ("I can't see the effort tag"); "inherited" says it explicitly.
+        config_section = config_section.child(kv_row(
+            "Effort",
+            effort.clone().unwrap_or_else(|| "inherited".to_string()),
+        ));
         // The Permission chip below is the single authority control (it replaced the
         // Claude-specific ACP `mode_config`), so `mode_config` is deliberately not shown
         // here — showing both would just relocate the duplication it was meant to remove.
@@ -837,6 +840,43 @@ impl Chamber {
                 .child(div().flex_none().text_color(theme::text_muted()).child("Permission"))
                 .child(perm_chip),
         );
+
+        // Force-restart action — only for a resident (ACP) seat, which is the only kind
+        // that holds a live subprocess to reap; a one-shot CLI seat has nothing between
+        // turns. Reaps the session (aborting any in-flight turn); it re-boots fresh on
+        // its next mention. This is the human's manual override for a wedged agent.
+        if matches!(roster_row.transport, hadron_lattice::Transport::Acp) {
+            let rid = qid.clone();
+            config_section = config_section.child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .gap_4()
+                    .items_center()
+                    .text_sm()
+                    .child(div().flex_none().text_color(theme::text_muted()).child("Session"))
+                    .child(
+                        h_flex()
+                            .id("info-restart")
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_1p5()
+                            .px_2p5()
+                            .py_1()
+                            .rounded_md()
+                            .bg(theme::bg_surface())
+                            .border_1()
+                            .border_color(theme::border())
+                            .text_color(theme::text())
+                            .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
+                            .child("⟳")
+                            .child("Restart agent")
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.reboot_quark(&rid, cx)),
+                            ),
+                    ),
+            );
+        }
 
         // --- Session stats ---
         let avg = if q_stats.turns > 0 { q_stats.fresh / q_stats.turns } else { 0 };
@@ -1785,38 +1825,40 @@ impl Chamber {
                 .child(mode_tag(r.mode, r.mode_is_override))
                 .into_any_element();
 
-            // Restart is only meaningful for a resident (ACP) seat that is actually
-            // adopted here — a one-shot CLI quark holds nothing between turns, and a
-            // catalogue-only quark has no live session to reap. For everyone else the
-            // control is a zero-size placeholder so every row keeps the same shape.
-            let restart_el = if matches!(r.transport, hadron_lattice::Transport::Acp) && r.adopted {
+            // Restart is meaningful for any resident (ACP) seat — a one-shot CLI quark
+            // holds nothing between turns. NOT gated on `adopted`: the daemon seats
+            // resident quarks straight from the global catalogue (adopted=false in this
+            // repo, but very much live), and `reset_session` is idempotent, so a click
+            // on a seat with no live session is a harmless no-op.
+            let is_acp = matches!(r.transport, hadron_lattice::Transport::Acp);
+
+            // Trailing controls, right-aligned: effort tag (when set), mode tag (click to
+            // cycle a per-quark override), and — for a resident seat — the ⟳ restart
+            // glyph. Each is added only when it has content, so empty slots don't leave
+            // phantom gaps between the tags.
+            let mut controls = h_flex().flex_none().items_center().gap_1p5();
+            if matches!(r.effort.as_deref(), Some(e) if !e.is_empty()) {
+                controls = controls.child(effort_tag(&r.effort));
+            }
+            controls = controls.child(mode_el);
+            if is_acp {
                 let rid = r.id.clone();
                 let tip: SharedString = "Restart — reap this agent's session".into();
-                div()
-                    .id(SharedString::from(format!("restart-{}", r.id)))
-                    .cursor_pointer()
-                    .flex_none()
-                    .px_1()
-                    .text_sm()
-                    .text_color(theme::text_muted())
-                    .hover(|s| s.text_color(theme::text()))
-                    .on_click(cx.listener(move |this, _, _, cx| this.reboot_quark(&rid, cx)))
-                    .child("⟳")
-                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-                    .into_any_element()
-            } else {
-                div().into_any_element()
-            };
-
-            // Trailing controls, right-aligned: effort tag, mode tag, restart glyph.
-            let controls = h_flex()
-                .flex_none()
-                .items_center()
-                .gap_1p5()
-                .child(effort_tag(&r.effort))
-                .child(mode_el)
-                .child(restart_el)
-                .into_any_element();
+                controls = controls.child(
+                    div()
+                        .id(SharedString::from(format!("restart-{}", r.id)))
+                        .cursor_pointer()
+                        .flex_none()
+                        .px_1()
+                        .text_sm()
+                        .text_color(theme::text_muted())
+                        .hover(|s| s.text_color(theme::text()))
+                        .on_click(cx.listener(move |this, _, _, cx| this.reboot_quark(&rid, cx)))
+                        .child("⟳")
+                        .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx)),
+                );
+            }
+            let controls = controls.into_any_element();
 
             // The row needs a stable id: `ContextMenuExt` derives the popup's
             // ElementId from its parent's, and with no parent id it falls back to
