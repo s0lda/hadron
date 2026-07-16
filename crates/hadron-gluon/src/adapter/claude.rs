@@ -39,13 +39,21 @@ pub struct ClaudeQuark<R: CliRunner> {
     flavor: Flavor,
     /// The model to run, e.g. "opus-4.8". Empty → let the CLI pick its default.
     model: String,
+    /// The `@mention` name (see [`Quark::display_name`]); `None` = id-only.
+    display_name: Option<String>,
     runner: R,
     session: Option<String>,
 }
 
 impl<R: CliRunner> ClaudeQuark<R> {
     pub fn new(id: QuarkId, flavor: Flavor, model: impl Into<String>, runner: R) -> Self {
-        ClaudeQuark { id, flavor, model: model.into(), runner, session: None }
+        ClaudeQuark { id, flavor, model: model.into(), display_name: None, runner, session: None }
+    }
+
+    /// Set the `@mention` display name (from the resolved team config).
+    pub fn with_display_name(mut self, name: Option<String>) -> Self {
+        self.display_name = name;
+        self
     }
 
     /// Build this turn's invocation. `claude -p --output-format json` (headless,
@@ -79,6 +87,9 @@ impl<R: CliRunner> Quark for ClaudeQuark<R> {
     }
     fn flavor(&self) -> Flavor {
         self.flavor.clone()
+    }
+    fn display_name(&self) -> Option<String> {
+        self.display_name.clone()
     }
     fn energy(&self) -> EnergyState {
         EnergyState::Available

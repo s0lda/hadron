@@ -44,6 +44,11 @@ pub struct ReseatPlan {
     /// remembered — a disabled ACP quark keeps its resident subprocess and its
     /// conversation, because the only thing this entry can do is flip a flag.
     pub toggled: Vec<(QuarkId, bool)>,
+    /// Seats whose **display name** changed — the same agent, renamed. Like `toggled`,
+    /// this carries only `(id, name)`, never a `Seat`, so applying a rename cannot rebuild
+    /// a quark: it only updates the roster card the router matches `@mentions` against, so
+    /// `@NewName` resolves without dropping a live ACP session just to change a label.
+    pub renamed: Vec<(QuarkId, Option<String>)>,
 }
 
 impl ReseatPlan {
@@ -54,6 +59,7 @@ impl ReseatPlan {
             && self.replaced.is_empty()
             && self.removed.is_empty()
             && self.toggled.is_empty()
+            && self.renamed.is_empty()
     }
 
     /// A one-line summary for the daemon's log, so a re-seat is something the human
@@ -71,6 +77,9 @@ impl ReseatPlan {
         }
         for (id, on) in &self.toggled {
             parts.push(format!("{}{}", if *on { "on:" } else { "off:" }, id.as_str()));
+        }
+        for (id, name) in &self.renamed {
+            parts.push(format!("name:{}={}", id.as_str(), name.as_deref().unwrap_or("<id>")));
         }
         parts.join(" ")
     }
@@ -92,14 +101,20 @@ pub fn plan(running: &Team, desired: &Team) -> ReseatPlan {
 
     for want in &desired.quarks {
         match running.get(&want.id) {
-            Some(have) if !have.same_agent(want) => out.replaced.push(want.clone()),
-            // Same agent, different switch: flip it. The instance survives.
-            Some(have) if have.enabled != want.enabled => {
-                out.toggled.push((want.id.clone(), want.enabled))
-            }
-            // Unchanged: says nothing, does nothing, keeps its session. The point.
-            Some(_) => {}
             None => out.added.push(want.clone()),
+            // A changed *definition* is a different agent — rebuilt, not kept.
+            Some(have) if !have.same_agent(want) => out.replaced.push(want.clone()),
+            // Same agent: only cheap metadata can differ, and each is applied WITHOUT a
+            // rebuild so a live ACP session survives. Both can change at once (the human
+            // renamed and toggled in one edit), so they are independent, not exclusive.
+            Some(have) => {
+                if have.enabled != want.enabled {
+                    out.toggled.push((want.id.clone(), want.enabled));
+                }
+                if have.display_name != want.display_name {
+                    out.renamed.push((want.id.clone(), want.display_name.clone()));
+                }
+            }
         }
     }
     for have in &running.quarks {
@@ -278,5 +293,39 @@ mod enabled_tests {
     fn an_unchanged_disabled_seat_is_still_no_work() {
         let t = team(&[acp("x", false)]);
         assert!(plan(&t, &t).is_empty(), "off and staying off is nothing to do");
+    }
+
+    /// A display-name change is metadata, not a new agent: it must be a `renamed`, never a
+    /// `replaced`. Rebuilding to change a label would kill a live ACP session — the same
+    /// class of mistake the toggle carve-out exists to prevent.
+    #[test]
+    fn renaming_a_quark_renames_it_and_never_replaces_it() {
+        let mut before = acp("acp-claude", true);
+        before.display_name = None;
+        let mut after = acp("acp-claude", true);
+        after.display_name = Some("Claude".into());
+
+        let p = plan(&team(&[before]), &team(&[after]));
+
+        assert_eq!(p.renamed, vec![(QuarkId::new("acp-claude"), Some("Claude".into()))]);
+        assert!(p.replaced.is_empty(), "a rename must NOT rebuild — the ACP session would die");
+        assert!(p.toggled.is_empty() && p.added.is_empty() && p.removed.is_empty());
+        assert_eq!(p.summary(), "name:acp-claude=Claude");
+    }
+
+    /// A real definition change alongside a rename is still a replace (the definition wins);
+    /// the rebuilt seat already carries the new name, so it is not ALSO a separate rename.
+    #[test]
+    fn a_model_change_with_a_rename_is_a_replace_not_a_rename() {
+        let mut before = acp("x", true);
+        before.display_name = None;
+        let mut after = acp("x", true);
+        after.display_name = Some("New".into());
+        after.model = "sonnet".into();
+
+        let p = plan(&team(&[before]), &team(&[after.clone()]));
+
+        assert_eq!(p.replaced, vec![after]);
+        assert!(p.renamed.is_empty(), "a replace already carries the new name");
     }
 }

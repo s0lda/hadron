@@ -193,6 +193,21 @@ fn apply_reseat(
         eprintln!("  {} {}", id.as_str(), if *on { "ENABLED" } else { "DISABLED (instance kept, session intact)" });
     }
 
+    // A rename is metadata: update the roster card the router matches, keep the instance
+    // (and any live ACP session). `out` was populated from the running seats above with
+    // their OLD names, so correct it here too, or the next tick would diff the same rename.
+    for (id, name) in &plan.renamed {
+        engine.rename(id, name.clone());
+        if let Some(seat) = out.quarks.iter_mut().find(|s| &s.id == id) {
+            seat.display_name = name.clone();
+        }
+        eprintln!(
+            "  {} renamed to '{}' (instance kept, session intact)",
+            id.as_str(),
+            name.as_deref().unwrap_or("<id>")
+        );
+    }
+
     for id in &plan.removed {
         if engine.unseat(id) {
             eprintln!("  unseated {}", id.as_str());

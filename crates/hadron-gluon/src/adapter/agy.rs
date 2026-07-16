@@ -137,6 +137,8 @@ fn without_field_window(mut projection: Projection) -> Projection {
 pub struct AgyQuark<R: CliRunner> {
     id: QuarkId,
     flavor: Flavor,
+    /// The `@mention` name (see [`Quark::display_name`]); `None` = id-only.
+    display_name: Option<String>,
     /// The model to run, a display name as `agy models` prints it, e.g.
     /// "Gemini 3.1 Pro (High)". Empty → the CLI's default.
     model: String,
@@ -151,7 +153,13 @@ pub struct AgyQuark<R: CliRunner> {
 
 impl<R: CliRunner> AgyQuark<R> {
     pub fn new(id: QuarkId, flavor: Flavor, model: impl Into<String>, runner: R) -> Self {
-        AgyQuark { id, flavor, model: model.into(), resident: false, runner }
+        AgyQuark { id, flavor, display_name: None, model: model.into(), resident: false, runner }
+    }
+
+    /// Set the `@mention` display name (from the resolved team config).
+    pub fn with_display_name(mut self, name: Option<String>) -> Self {
+        self.display_name = name;
+        self
     }
 
     /// `agy --print <prompt>` (one-shot headless — the prompt is the **argument**
@@ -193,6 +201,9 @@ impl<R: CliRunner> Quark for AgyQuark<R> {
     }
     fn flavor(&self) -> Flavor {
         self.flavor.clone()
+    }
+    fn display_name(&self) -> Option<String> {
+        self.display_name.clone()
     }
     fn energy(&self) -> EnergyState {
         EnergyState::Available
