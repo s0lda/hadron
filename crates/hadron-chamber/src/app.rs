@@ -1257,21 +1257,60 @@ impl Chamber {
             });
             return;
         }
-        let text = input.read(cx).value().trim().to_string();
+        let mut text = input.read(cx).value().trim().to_string();
         if text.is_empty() {
             return;
         }
 
-        if text.starts_with('/') && text.len() > 1 {
-            let (cmd_name, args) = match text[1..].split_once(char::is_whitespace) {
-                Some((n, a)) => (n, a.trim()),
-                None => (&text[1..], ""),
-            };
+        // A single line may chain several UI commands and end with a normal message,
+        // e.g. "/toggle-roster /clear ping the team". Zero-arg UI commands run in
+        // order as they appear; `/team-brainstorm` consumes the rest of the line as
+        // its argument; whatever text is left over falls through to be posted as one
+        // human message via the normal path below.
+        {
+            const ZERO_ARG_CMDS: [&str; 3] = ["toggle-roster", "toggle-inspector", "clear"];
+            let words: Vec<String> = text.split_whitespace().map(str::to_string).collect();
+            let mut remaining_words: Vec<String> = Vec::new();
+            let mut brainstorm_args: Option<Vec<String>> = None;
+            let mut ran_ui_cmd = false;
 
-            if self.handle_chat_command(cmd_name, args, window, cx) {
-                input.update(cx, |state, cx| state.set_value("", window, cx));
+            for word in words {
+                // Once the rest-of-line command (team-brainstorm) is open, everything
+                // trailing becomes its argument.
+                if let Some(args) = brainstorm_args.as_mut() {
+                    args.push(word);
+                    continue;
+                }
+                if let Some(cmd) = word.strip_prefix('/').filter(|c| !c.is_empty()) {
+                    if ZERO_ARG_CMDS.contains(&cmd) {
+                        self.handle_chat_command(cmd, "", window, cx);
+                        ran_ui_cmd = true;
+                        continue;
+                    }
+                    if cmd == "team-brainstorm" {
+                        brainstorm_args = Some(Vec::new());
+                        continue;
+                    }
+                }
+                remaining_words.push(word);
+            }
+
+            if let Some(args) = brainstorm_args {
+                self.handle_chat_command("team-brainstorm", &args.join(" "), window, cx);
+                ran_ui_cmd = true;
+            }
+
+            let remaining_text = remaining_words.join(" ");
+            if remaining_text.is_empty() {
+                // Pure command line (or lines with only recognised commands): clear the
+                // box if we actually ran something, and stop before posting an empty message.
+                if ran_ui_cmd {
+                    input.update(cx, |state, cx| state.set_value("", window, cx));
+                }
                 return;
             }
+            // Leftover, non-command text is posted as a human message below.
+            text = remaining_text;
         }
 
         // Write the raw text with `to: None`, leaving any `@mentions` in the body.
