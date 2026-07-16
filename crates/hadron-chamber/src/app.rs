@@ -3643,18 +3643,35 @@ impl Chamber {
             prompt: Some("Choose avatar image".into()),
         });
         cx.spawn(async move |this, cx| {
-            let picked = rx
+            // gpui's native picker first — the right choice on macOS/Windows and on a
+            // Linux desktop with an `xdg-desktop-portal`. Under WSL there usually is no
+            // portal on the bus, so this resolves to `Err`/`None` almost immediately
+            // (which the old code swallowed, so Browse looked dead).
+            let native = rx
                 .await
                 .ok()
                 .and_then(|r| r.ok())
                 .flatten()
-                .and_then(|v| v.into_iter().next());
-            if let Some(path) = picked {
-                let _ = this.update(cx, |this, cx| {
-                    this.pending_image_pick = Some(path.to_string_lossy().into_owned());
-                    cx.notify();
-                });
-            }
+                .and_then(|v| v.into_iter().next())
+                .map(|p| p.to_string_lossy().into_owned());
+            // Fall back to a subprocess dialog on a background thread when the native
+            // picker gave nothing (portal missing). Blocking, so keep it off the UI.
+            let picked = match native {
+                Some(p) => Some(p),
+                None => cx.background_spawn(async { fallback_pick_image() }).await,
+            };
+            let _ = this.update(cx, |this, cx| {
+                match picked {
+                    Some(path) => this.pending_image_pick = Some(path),
+                    // Never silently: if even the fallback found no picker, say so (the
+                    // text field still takes a pasted path).
+                    None => eprintln!(
+                        "chamber: could not open a file picker (no xdg-desktop-portal, and \
+                         no zenity/powershell fallback) — paste an image path into the field."
+                    ),
+                }
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -4857,6 +4874,61 @@ fn text_button(
         .text_color(theme::text_secondary())
         .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
         .child(label.into())
+}
+
+/// A best-effort file picker for environments where gpui's native (XDG desktop portal)
+/// dialog is unavailable — most notably WSL, which usually has no `xdg-desktop-portal`
+/// running, so `prompt_for_paths` resolves to nothing. Tries a GTK dialog (`zenity`,
+/// which works under WSLg), then, under WSL, a native Windows dialog driven through
+/// PowerShell and translated back to a Linux path with `wslpath`.
+///
+/// Returns the chosen path, or `None` if the user cancelled or no picker exists.
+/// **Blocking** (waits on the dialog) — must be called on a background thread.
+fn fallback_pick_image() -> Option<String> {
+    use std::process::Command;
+
+    // 1) zenity — a GTK file chooser. If it launches at all, its answer is authoritative
+    //    (a path, or `None` on cancel); only a *missing* binary (`Err`) falls through, so
+    //    a cancel never pops a second dialog.
+    match Command::new("zenity")
+        .args([
+            "--file-selection",
+            "--title=Choose avatar image",
+            "--file-filter=Images | *.png *.jpg *.jpeg *.gif *.webp *.bmp *.svg",
+            "--file-filter=All files | *",
+        ])
+        .output()
+    {
+        Ok(out) => {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            return (out.status.success() && !path.is_empty()).then_some(path);
+        }
+        Err(_) => { /* zenity not installed — try the Windows dialog below */ }
+    }
+
+    // 2) WSL: drive a native Windows OpenFileDialog through PowerShell, then translate the
+    //    returned `C:\…` path to `/mnt/c/…` with `wslpath`.
+    let script = "Add-Type -AssemblyName System.Windows.Forms; \
+         $d = New-Object System.Windows.Forms.OpenFileDialog; \
+         $d.Filter = 'Images|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp|All files|*.*'; \
+         if ($d.ShowDialog() -eq 'OK') { $d.FileName }";
+    let win = Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", script])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())?;
+    // C:\… → /mnt/c/… ; if the translation fails, hand back the raw path rather than lose it.
+    let translated = Command::new("wslpath")
+        .arg("-u")
+        .arg(&win)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+    translated.or(Some(win))
 }
 
 /// The next mode in the ladder, cycling Ask → Write → Auto → Bypass → Ask.
