@@ -19,7 +19,7 @@ use gpui::{
 };
 use gpui_component::avatar::Avatar;
 // badge removed
-use gpui_component::chart::{AreaChart, BarChart};
+use gpui_component::chart::AreaChart;
 use gpui_component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
 use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
 use gpui_component::button::{Button, ButtonVariants};
@@ -2614,13 +2614,36 @@ impl Chamber {
                 )),
         );
 
-        // One combined graph: total token spend per quark, each bar in the quark's own
-        // colour, so the whole swarm's usage reads on a single chart.
-        if !stats.per_quark.is_empty() {
-            let mut data = Vec::new();
-            for (q, s) in &stats.per_quark {
-                data.push((q.clone(), (s.fresh + s.cached) as f64));
+        // Combined spend chart: cumulative fresh spend over turns, one translucent area
+        // per quark (its colour) with the team total as a stroke-only line on top — being
+        // the running sum it sits above every quark band without hiding them.
+        let timeline =
+            self.view
+                .spend_timeline(&self.archived_messages, self.stats_window, chrono::Utc::now());
+        if !timeline.points.is_empty() {
+            let mut chart = AreaChart::new(timeline.points.clone())
+                .id("session-spend-area")
+                .x(|d| format!("T{}", d.step));
+            for (i, q) in timeline.quarks.iter().enumerate() {
+                let color = self.color_for(q);
+                chart = chart
+                    .y(move |d| d.per_quark[i])
+                    .stroke(color)
+                    .fill(linear_gradient(
+                        0.0,
+                        linear_color_stop(color.opacity(0.28), 1.0),
+                        linear_color_stop(color.opacity(0.02), 0.0),
+                    ))
+                    .name(q.clone())
+                    .natural();
             }
+            // The team total: a bright accent line, transparent fill (a line, not a band).
+            chart = chart
+                .y(|d| d.team)
+                .stroke(theme::accent())
+                .fill(gpui::rgba(0x00000000))
+                .name("Team")
+                .natural();
             col = col.child(
                 session_card()
                     .child(
@@ -2628,20 +2651,9 @@ impl Chamber {
                             .text_sm()
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::text())
-                            .child("Token spend by quark"),
+                            .child("Cumulative spend over turns"),
                     )
-                    .child(
-                        div().h(px(160.0)).w_full().child(
-                            BarChart::new(data)
-                                .id("session-spend-chart")
-                                .name("Tokens")
-                                .band(|d| d.0.clone())
-                                .value(|d| d.1)
-                                .fill(move |d, _, _, _| -> gpui::Background {
-                                    theme::actor_hue(&d.0).into()
-                                }),
-                        ),
-                    ),
+                    .child(div().h(px(180.0)).w_full().child(chart)),
             );
         }
 
