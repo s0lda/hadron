@@ -1785,6 +1785,39 @@ impl Chamber {
                 .child(mode_tag(r.mode, r.mode_is_override))
                 .into_any_element();
 
+            // Restart is only meaningful for a resident (ACP) seat that is actually
+            // adopted here — a one-shot CLI quark holds nothing between turns, and a
+            // catalogue-only quark has no live session to reap. For everyone else the
+            // control is a zero-size placeholder so every row keeps the same shape.
+            let restart_el = if matches!(r.transport, hadron_lattice::Transport::Acp) && r.adopted {
+                let rid = r.id.clone();
+                let tip: SharedString = "Restart — reap this agent's session".into();
+                div()
+                    .id(SharedString::from(format!("restart-{}", r.id)))
+                    .cursor_pointer()
+                    .flex_none()
+                    .px_1()
+                    .text_sm()
+                    .text_color(theme::text_muted())
+                    .hover(|s| s.text_color(theme::text()))
+                    .on_click(cx.listener(move |this, _, _, cx| this.reboot_quark(&rid, cx)))
+                    .child("⟳")
+                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                    .into_any_element()
+            } else {
+                div().into_any_element()
+            };
+
+            // Trailing controls, right-aligned: effort tag, mode tag, restart glyph.
+            let controls = h_flex()
+                .flex_none()
+                .items_center()
+                .gap_1p5()
+                .child(effort_tag(&r.effort))
+                .child(mode_el)
+                .child(restart_el)
+                .into_any_element();
+
             // The row needs a stable id: `ContextMenuExt` derives the popup's
             // ElementId from its parent's, and with no parent id it falls back to
             // a stack address — every row in the loop then shares one menu state.
@@ -1883,7 +1916,7 @@ impl Chamber {
                         menu
                     }
                 })
-                .child(roster_row(&self.resolve_identity(&r.id), r, mode_el));
+                .child(roster_row(&self.resolve_identity(&r.id), r, controls));
             rows = rows.child(row_el);
         }
         if self.view.roster.is_empty() {
@@ -3236,6 +3269,20 @@ impl Chamber {
         let qid = QuarkId::new(id);
         self.append_and_reload(
             Event::new(Actor::Human, Some(qid), Kind::ModeClear),
+            cx,
+        );
+    }
+
+    /// Force-restart a resident quark: append a per-quark [`Kind::Reboot`]. The daemon
+    /// honours it on its next tick — reaping the quark's live ACP subprocess (aborting
+    /// an in-flight turn) and re-booting it fresh on its next mention. The quark stays
+    /// seated throughout. A no-op for a one-shot CLI quark, which holds nothing
+    /// resident between turns. Mirrors [`Self::set_quark_mode`]: the command travels as
+    /// a field event, auditable in the Log tab.
+    fn reboot_quark(&mut self, id: &str, cx: &mut Context<Self>) {
+        let qid = QuarkId::new(id);
+        self.append_and_reload(
+            Event::new(Actor::Human, Some(qid), Kind::Reboot),
             cx,
         );
     }
@@ -4898,7 +4945,7 @@ fn drag_region(id: &'static str) -> impl IntoElement {
 /// One roster entry, styled as a presence list-item: the resolved avatar with a
 /// status [`Badge`] dot, a display name, and a one-word presence subtitle, with a
 /// tooltip on hover.
-fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -> impl IntoElement {
+fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::AnyElement) -> impl IntoElement {
     let name = id.name.clone();
     // Not adopted here → "available" (in the catalogue, off in this repo); adopted but
     // switched off → "disabled"; otherwise the live presence word.
@@ -5031,8 +5078,9 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
                         .child(detail_2),
                 ),
         )
-        // Effective permission mode (click to cycle a per-quark override).
-        .child(mode_el)
+        // Trailing controls: effort tag, effective permission mode (click to cycle a
+        // per-quark override), and — for a resident seat — the ⟳ restart glyph.
+        .child(controls)
         .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
 }
 
@@ -5171,6 +5219,20 @@ fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
         .outline()
         .child(div().child(mode_label(mode).to_string()))
         .into_any_element()
+}
+
+/// The reasoning-effort badge, e.g. `Some("high")` → an outlined `HIGH` tag. `None` or
+/// empty renders nothing (the seat inherits / has no explicit effort), mirroring how
+/// [`mode_tag`] shows nothing when the mode is not a per-quark override.
+fn effort_tag(effort: &Option<String>) -> gpui::AnyElement {
+    match effort.as_deref() {
+        Some(e) if !e.is_empty() => Tag::secondary()
+            .small()
+            .outline()
+            .child(div().child(e.to_uppercase()))
+            .into_any_element(),
+        _ => div().into_any_element(),
+    }
 }
 
 /// The short badge label for a permission mode, e.g. `Mode::Bypass` → `"BYPASS"`.
@@ -5877,6 +5939,7 @@ mod tests {
             model: "Claude Opus 4.6".to_string(),
             flavor: Some(hadron_lattice::Flavor::Worker),
             transport: hadron_lattice::Transport::Cli,
+            effort: None,
             enabled: true,
             adopted: true,
             tokens: 0,
@@ -5955,6 +6018,7 @@ mod tests {
             model: "Claude Opus 4.6".to_string(),
             flavor: Some(hadron_lattice::Flavor::Worker),
             transport: hadron_lattice::Transport::Cli,
+            effort: None,
             enabled: true,
             adopted: true,
             tokens: 0,

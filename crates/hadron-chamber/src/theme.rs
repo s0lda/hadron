@@ -87,11 +87,14 @@ pub fn glass_highlight() -> Rgba {
 }
 
 /// The fill for a **focused modal** (Settings card, quark info panel) — opaque, NOT glass.
-/// A modal that the human is reading needs the bright field to stop behind it; a low-alpha
-/// glass surface let the aurora bleed through and made the text hard to read. One token so
-/// every modal reads the same and none can drift back to transparent.
+/// A modal the human is reading needs the field to stop dead behind it; a low-alpha glass
+/// surface let the corner glows bleed through and washed out the text. Neutral near-black
+/// so it reads as a raised instrument panel in the same zinc family as the titlebar and
+/// cards — not the blue-violet holdover from the old bright-field palette that made
+/// Settings clash with everything around it. One token so every modal matches and none can
+/// drift back to transparent.
 pub fn modal_surface() -> Rgba {
-    rgb(0x1a1830)
+    rgb(0x161619) // a hair above the field base, neutral — a raised dark panel
 }
 
 // --- terminal (a Zed-like screen) ---
