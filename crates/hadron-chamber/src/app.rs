@@ -4495,7 +4495,19 @@ impl Chamber {
                             .text_color(theme::text())
                             .child("Select a Preset"),
                     )
-                    .child(list)
+                    // The catalogue is ~37 presets — taller than the card. Give the list
+                    // its own bounded scroll region (like `settings-nav-scroll`) so every
+                    // provider is reachable while Back/title stay pinned. Without this the
+                    // `size_full` wizard reports full height to the ancestor scroll, which
+                    // then can't scroll, and everything past the first few presets clips.
+                    .child(
+                        div()
+                            .id("preset-list-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(list),
+                    )
             }
 
             WizardState::Connecting(desc, state) => {
