@@ -3518,6 +3518,7 @@ impl Chamber {
         let fields = if target == SettingsTarget::Providers {
             self.providers_view(cx).into_any_element()
         } else {
+            let is_quark = matches!(target, SettingsTarget::Quark(_));
             v_flex()
                 .gap_4()
                 .child(settings_field("Preview", preview_row.into_any_element()))
@@ -3525,14 +3526,19 @@ impl Chamber {
                     "Display name",
                     Input::new(&self.settings_name).into_any_element(),
                 ))
-                .child(settings_field(
-                    "Effort",
-                    Input::new(&self.settings_effort).into_any_element(),
-                ))
-                .child(settings_field(
-                    "Mode",
-                    Input::new(&self.settings_mode_config).into_any_element(),
-                ))
+                // Effort + Mode configure an agent's session, so they are quark-only. The
+                // human has no such controls — and the typed values were silently discarded
+                // on commit before, so rendering them for the human was a dead end.
+                .when(is_quark, |v| {
+                    v.child(settings_field(
+                        "Effort",
+                        Input::new(&self.settings_effort).into_any_element(),
+                    ))
+                    .child(settings_field(
+                        "Mode",
+                        Input::new(&self.settings_mode_config).into_any_element(),
+                    ))
+                })
                 .child(settings_field("Color", swatches.into_any_element()))
                 .child(settings_field(
                     "Image",
@@ -3694,6 +3700,19 @@ impl Chamber {
         cx.notify();
     }
 
+    /// Remove a seated quark: drop it from the team + the providers list and persist to the
+    /// same team.json the add-flow writes. The running daemon reconciles the removal on its
+    /// next re-seat tick (its `ReseatPlan.removed` → `unseat`), so no daemon change is needed.
+    fn remove_quark(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.team.quarks.retain(|s| s.id.as_str() != id);
+        self.providers.retain(|p| p.id.as_str() != id);
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        let team_path = hadron_lattice::team_for_field(&self.path)
+            .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"));
+        let _ = hadron_lattice::save_team(&team_path, &self.team);
+        cx.notify();
+    }
+
     fn providers_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.wizard_state {
             WizardState::None => {
@@ -3740,14 +3759,36 @@ impl Chamber {
                             .child(
                                 h_flex()
                                     .items_center()
-                                    .gap_2()
-                                    .child(div().size(px(8.0)).rounded_full().bg(state_color))
+                                    .gap_3()
                                     .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(theme::text_secondary())
-                                            .child(state_text),
-                                    ),
+                                        h_flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .size(px(8.0))
+                                                    .rounded_full()
+                                                    .bg(state_color),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(theme::text_secondary())
+                                                    .child(state_text),
+                                            ),
+                                    )
+                                    .child({
+                                        let pid = provider.id.clone();
+                                        text_button(
+                                            format!("remove-{}", provider.id),
+                                            "Remove",
+                                        )
+                                        .on_click(cx.listener(
+                                            move |this, _, _window, cx| {
+                                                this.remove_quark(&pid, cx);
+                                            },
+                                        ))
+                                    }),
                             ),
                     );
                 }
