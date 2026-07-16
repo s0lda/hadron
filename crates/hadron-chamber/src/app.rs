@@ -459,7 +459,9 @@ struct Chamber {
     _settings_subs: [Subscription; 4],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
-    file_tree_paths: Vec<String>,
+    /// Every workspace entry with its ignored flag; drives the file tree. Gitignored
+    /// entries are flagged `true` (rendered muted) and wholly-ignored dirs are collapsed.
+    file_tree_paths: Vec<(String, bool)>,
     completion_files: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     file_tree_open: Option<(String, String)>,
     file_tree_expanded: std::collections::HashSet<String>,
@@ -506,7 +508,15 @@ impl Chamber {
     ) -> Self {
         let repo_root = crate::vcs::repo_root_of(&path);
         let files = crate::sys::list_workspace_files(&repo_root);
-        let completion_files = std::rc::Rc::new(std::cell::RefCell::new(files.clone()));
+        // `@`-mention autocomplete only offers real, editable files — never the muted
+        // gitignored entries (collapsed build dirs etc.), so filter them out here.
+        let completion_files = std::rc::Rc::new(std::cell::RefCell::new(
+            files
+                .iter()
+                .filter(|(_, ignored)| !ignored)
+                .map(|(p, _)| p.clone())
+                .collect::<Vec<String>>(),
+        ));
 
         // No `completion_provider`: the fork's LSP menu is drawn with `deferred()`
         // and paints off the bottom of the window (seven fixes could not move it —
@@ -1209,7 +1219,13 @@ impl Chamber {
             let root = crate::vcs::repo_root_of(&self.path);
             let files = crate::sys::list_workspace_files(root);
             if files != self.file_tree_paths {
-                *self.completion_files.borrow_mut() = files.clone();
+                // Autocomplete offers only real, editable files — never muted gitignored
+                // entries — mirroring the filter in `new`.
+                *self.completion_files.borrow_mut() = files
+                    .iter()
+                    .filter(|(_, ignored)| !ignored)
+                    .map(|(p, _)| p.clone())
+                    .collect();
                 self.file_tree_paths = files;
                 changed = true;
             }
@@ -2951,34 +2967,68 @@ impl Chamber {
                     struct FileTreeNode {
                         children: std::collections::BTreeMap<String, FileTreeNode>,
                         is_file: bool,
+                        is_ignored: bool,
                         full_path: String,
                     }
                     impl FileTreeNode {
-                        fn insert(&mut self, path: &str, full_path: &str) {
+                        /// `is_dir_leaf` marks a path that is itself a directory (a
+                        /// collapsed gitignored dir, kept with a trailing `/` by
+                        /// `list_workspace_files`) — its last component is a folder, not
+                        /// a file. Interior directories start un-ignored; `resolve_ignores`
+                        /// computes their flag from their children afterwards.
+                        fn insert(&mut self, path: &str, is_ignored: bool, is_dir_leaf: bool) {
+                            let parts: Vec<&str> =
+                                path.split('/').filter(|p| !p.is_empty()).collect();
+                            if parts.is_empty() {
+                                return;
+                            }
+                            let full = path.trim_end_matches('/');
                             let mut current = self;
-                            let parts: Vec<&str> = path.split('/').collect();
                             for (i, part) in parts.iter().enumerate() {
-                                let is_file = i == parts.len() - 1;
+                                let last = i == parts.len() - 1;
+                                let is_file = last && !is_dir_leaf;
                                 current =
                                     current.children.entry(part.to_string()).or_insert_with(|| {
                                         FileTreeNode {
                                             children: std::collections::BTreeMap::new(),
                                             is_file,
-                                            full_path: if is_file {
-                                                full_path.to_string()
-                                            } else {
-                                                String::new()
-                                            },
+                                            is_ignored: false,
+                                            full_path: String::new(),
                                         }
                                     });
+                                if last {
+                                    current.is_file = is_file;
+                                    current.is_ignored = is_ignored;
+                                    if current.full_path.is_empty() {
+                                        current.full_path = full.to_string();
+                                    }
+                                }
                             }
+                        }
+
+                        /// Bottom-up: a file/collapsed-dir keeps its own flag; a directory
+                        /// with children is ignored only when **every** child is. Returns
+                        /// this node's resolved ignored state so the parent can fold it in.
+                        fn resolve_ignores(&mut self) -> bool {
+                            if self.is_file || self.children.is_empty() {
+                                return self.is_ignored;
+                            }
+                            let mut all_ignored = true;
+                            for child in self.children.values_mut() {
+                                if !child.resolve_ignores() {
+                                    all_ignored = false;
+                                }
+                            }
+                            self.is_ignored = all_ignored;
+                            all_ignored
                         }
                     }
 
                     let mut root_node = FileTreeNode::default();
-                    for file in &self.file_tree_paths {
-                        root_node.insert(file, file);
+                    for (file, is_ignored) in &self.file_tree_paths {
+                        root_node.insert(file, *is_ignored, file.ends_with('/'));
                     }
+                    root_node.resolve_ignores();
 
                     let repo_root =
                         crate::vcs::repo_root_of(std::path::Path::new(&self.path)).to_path_buf();
