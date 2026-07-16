@@ -64,25 +64,38 @@ daemon decodes it as `Kind::Unknown` and ignores it).
 
 ### Engine (hadron-gluon) — the substantive change
 - Track `abort_handles: HashMap<QuarkId, AbortHandle>` alongside `in_flight`
-  (from `turns.spawn`, which returns an `AbortHandle`).
-- A persisted `reboot_watermark` = field length at loop entry, so pre-existing
-  `Reboot` events (from before this daemon booted, when there is no live session
-  to kill) are stale-ignored. Only reboots appended while the daemon runs are
-  serviced.
-- Inside `run_until_quiesce`'s existing `FIELD_POLL` service point, read `Reboot`
-  events past the watermark. For each target:
-  - **in-flight:** `abort_handles[q].abort()` (kills the child), then eagerly
-    remove from `in_flight`, drop the abort handle, append
-    `Status{Ground}` (a manual restart is not an error), `reset_session()`, and
-    record `q` in a `rebooting: HashSet<QuarkId>`.
+  (from `turns.spawn`, which returns an `AbortHandle`); kept in lockstep —
+  inserted at spawn, removed when a turn joins or is rebooted.
+- A persisted `reboot_watermark: Option<Ulid>` — the **identity** of the last
+  field event scanned, baselined on the first read so pre-boot reboots (no live
+  session to kill) are stale-ignored. It is *not* an ordering key (two ULIDs
+  minted in the same millisecond are not reliably ordered — the low bits are
+  random) and *not* a positional index (which would overrun the slice if
+  `/clear` archiving shrinks the field). Each read locates the marker by identity
+  (`rposition`) and services what the append-ordered field holds after it; if the
+  marker was archived out, re-baseline and service nothing.
+- Serviced right after `read_events` at the top of the loop — the same re-read
+  the `FIELD_POLL` tick loops back to — so a *solo* wedged quark (nothing else
+  pending, `join_next` blocked forever on its hung turn) is still rescued. For
+  each `Reboot` target:
+  - **in-flight:** `abort_handles[q].abort()` (drops the turn future, releasing
+    the quark lock), remove from `in_flight`, append `Status{Ground}` (a manual
+    restart is not an error; the `Ground` also marks the interrupted message
+    answered so it is not re-run), then lock + `reset_session()`. **Critical:**
+    aborting the turn does NOT reap an ACP subprocess — that child is owned by the
+    session's pump thread, not the turn future — so the `reset_session()` is what
+    actually kills it.
   - **idle:** lock the shared quark and `reset_session()`.
+  - `service_reboots` returns the quarks it grounded; the dispatch loop skips
+    re-dispatching them on this same (pre-`Ground`) snapshot, else the still-
+    pending message would immediately re-excite the turn we just aborted.
 - **The panic-arm guard:** an aborted `JoinSet` task surfaces later as
   `Err(JoinError::is_cancelled)` in `join_next`. The existing `Err` arm treats a
-  `JoinError` as a panic and grounds *every* in-flight quark + `abort_all()`
-  (engine.rs:1501-1518) — catastrophic for a targeted reboot. Guard it: if
-  `rebooting` is non-empty, a cancelled result is an intended reboot corpse —
-  pop one from `rebooting` and continue (cleanup already done). Only fall through
-  to the ground-everyone path when `rebooting` is empty (a real panic).
+  `JoinError` as a panic and grounds *every* in-flight quark + `abort_all()` —
+  catastrophic for a targeted reboot. Guard it with a dedicated
+  `Err(e) if e.is_cancelled() => continue` arm (cleanup already done in
+  `service_reboots`); only a genuine panic (`is_panic()`) falls through to the
+  ground-everyone path.
 
 ### Chamber
 - `reboot_quark(qid)` appends `Event::new(Human, Some(qid), Kind::Reboot)` (mirror
