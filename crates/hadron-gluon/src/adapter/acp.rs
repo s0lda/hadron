@@ -791,6 +791,14 @@ impl Quark for AcpQuark {
         }
         outcome
     }
+
+    /// Force-restart: drop the resident session. Dropping the [`AcpSession`] drops the
+    /// `turns` channel, which ends the pump thread, tears down the connection, and reaps
+    /// the agent subprocess (see the struct doc). The next turn re-boots from scratch.
+    /// A no-op if no session is open, so it is safe to call on an idle quark.
+    fn reset_session(&mut self) {
+        self.session = None;
+    }
 }
 
 impl AcpQuark {
@@ -1165,6 +1173,36 @@ mod tests {
                 "a failed boot must leave no session — the quark has to stay re-bootable"
             );
         }
+    }
+
+    /// Force-restart drops the resident session (which reaps the subprocess) and leaves
+    /// the quark re-bootable — the same post-condition as a failed boot, but on demand.
+    #[test]
+    fn reset_session_drops_the_session_and_stays_rebootable() {
+        use crate::quark::Quark as _;
+        let mut q = AcpQuark::new(
+            QuarkId::new("acp-claude"),
+            Flavor::Worker,
+            "",
+            None,
+            None,
+            AcpTarget::claude_adapter(),
+        );
+        // Stand in a live session (a dummy pump handle) without booting a real agent.
+        let (turns_tx, _turns_rx) = tokio::sync::mpsc::unbounded_channel();
+        q.session = Some(AcpSession {
+            turns: turns_tx,
+            mode: Arc::new(Mutex::new(Mode::Ask)),
+            model: Arc::new(Mutex::new(None)),
+        });
+        assert!(q.session.is_some(), "precondition: a session is open");
+
+        q.reset_session();
+        assert!(q.session.is_none(), "reset_session must drop the resident session");
+
+        // Idempotent: a second reset on an already-idle quark is a no-op, not a panic.
+        q.reset_session();
+        assert!(q.session.is_none());
     }
 
     fn projection() -> Projection {
