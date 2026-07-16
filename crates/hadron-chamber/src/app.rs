@@ -4384,7 +4384,18 @@ impl Chamber {
                                 },
                             ))),
                     )
-                    .child(list)
+                    // Scroll the roster so a long provider list stays reachable while the
+                    // "Configured Providers" header + Add Quark button stay pinned. Same
+                    // reason as the preset list: a `size_full` wizard can't be scrolled by
+                    // the ancestor, so extra rows would clip off the card.
+                    .child(
+                        div()
+                            .id("providers-list-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(list),
+                    )
             }
             WizardState::PickPreset => {
                 let presets = hadron_gluon::adapter::registry::QuarkKind::available_presets()
@@ -4719,7 +4730,17 @@ impl Chamber {
                             .text_color(theme::text())
                             .child(format!("Connecting to {}", desc.name)),
                     )
-                    .child(state_ui)
+                    // Scroll the connection form (config fields / auth / errors can run tall)
+                    // while Back + title stay pinned — the ancestor can't scroll a `size_full`
+                    // wizard, so a tall form would otherwise clip off the card's bottom.
+                    .child(
+                        div()
+                            .id("connecting-form-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(state_ui),
+                    )
             }
         }
     }
