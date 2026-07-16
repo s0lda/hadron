@@ -1,7 +1,8 @@
 # Tabbed info panel · time-windowed Stats · provider search — Design
 
 **Date:** 2026-07-16
-**Status:** Approved (Jake, in-conversation — answered the three design questions and said "continue")
+**Status:** Implemented (P1 b9e8023, stats core b9343fe, P2/P3 UI d19fc99; engine
+id-set reboot fix 4d39808). Full gate green (392 tests).
 
 ## Problem
 
