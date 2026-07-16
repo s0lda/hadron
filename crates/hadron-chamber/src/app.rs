@@ -34,7 +34,9 @@ use gpui_component::tooltip::Tooltip;
 use gpui_component::{
     h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar,
 };
-use hadron_lattice::{io, load_team, Actor, Event, Kind, Mode, QuarkId, QuarkState, Team};
+use hadron_lattice::{
+    io, load_team, resolve_team, Actor, Event, Kind, Mode, QuarkId, QuarkState, SeatOverride, Team,
+};
 
 use crate::config::{self, ChamberPrefs, Identity};
 use crate::model::{self, ChamberView, MessageRow, RosterRow};
@@ -306,9 +308,13 @@ struct CompletionCard {
 struct Chamber {
     view: ChamberView,
     prefs: ChamberPrefs,
-    /// The seated team (id → provider/model/flavor), read from `team.json`, used
-    /// to make roster rows legible. Read-only in the chamber.
+    /// The **repo** team file (`.hadron/team.json`): legacy full seats plus per-repo
+    /// role/state overrides. This is what the chamber edits and writes. The roster is
+    /// projected from `resolve_team(&self.team, &self.global)`, not this directly.
     team: Team,
+    /// The **global catalogue** (`~/.hadron/team.json`): every quark's definition. A
+    /// repo override names one of these; catalogue quarks not adopted here show greyed.
+    global: Team,
     /// The field file this chamber reads from and steers into.
     path: PathBuf,
     /// The human's message box at the foot of the chat column.
@@ -388,6 +394,8 @@ pub enum ContextMenuAction {
     QuarkInfo(String),
     ToggleQuark(String),
     SetFlavor(String, hadron_lattice::Flavor),
+    /// Adopt a catalogue quark into this repo (available → participating).
+    AdoptQuark(String),
 }
 
 impl Chamber {
@@ -395,6 +403,7 @@ impl Chamber {
         view: ChamberView,
         prefs: ChamberPrefs,
         team: Team,
+        global: Team,
         path: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -498,22 +507,15 @@ impl Chamber {
             ScrollHandle::new(),
         ];
         chat_scrolls[0].scroll_to_bottom(); // Chat tab
-        let providers: Vec<ConfiguredQuark> = team
-            .quarks
-            .iter()
-            .map(|seat| ConfiguredQuark {
-                id: seat.id.0.clone(),
-                transport: seat.provider.clone(),
-                state: ProviderState::Ready {
-                    model: seat.model.clone(),
-                },
-            })
-            .collect();
+        // The Configured Providers list is every ADOPTED quark (resolved), so a
+        // migrated repo whose seats are now overrides still lists them.
+        let providers = configured_providers(&resolve_team(&team, &global));
 
         Chamber {
             view,
             prefs,
             team,
+            global,
             path,
             input,
             completion: None,
@@ -556,7 +558,14 @@ impl Chamber {
         }
     }
 
-
+    /// Re-project the field into the roster/log/session view, resolving the repo team
+    /// against the global catalogue first so adopted quarks carry their full defs and
+    /// available-but-not-adopted catalogue quarks show greyed. The one place the view
+    /// is rebuilt, so every mutation path routes through the same resolve.
+    fn reproject(&mut self, events: &[Event]) {
+        let resolved = resolve_team(&self.team, &self.global);
+        self.view = model::project_with_team(events, &resolved, &self.global);
+    }
 
     /// Drive the live terminal each tick: spawn the PTY lazily when the Terminal
     /// tab is open, size it to the measured screen, and repaint only when the
@@ -916,7 +925,7 @@ impl Chamber {
                 // scrolled up to read history, leave their position alone.
                 let follow = self.chat_at_bottom();
                 let old_log_count = self.view.messages.len();
-                self.view = model::project_with_team(&events, &self.team);
+                self.reproject(&events);
 
                 let old_chat_count = self.chat_message_ixs.len();
                 self.chat_message_ixs = self
@@ -1059,7 +1068,7 @@ impl Chamber {
         input.update(cx, |state, cx| state.set_value("", window, cx));
         let events = io::read_events(&self.path).unwrap_or_default();
         let old_log_count = self.view.messages.len();
-        self.view = model::project_with_team(&events, &self.team);
+        self.reproject(&events);
 
         let old_chat_count = self.chat_message_ixs.len();
         self.chat_message_ixs = self
@@ -1252,7 +1261,7 @@ impl Chamber {
                         eprintln!("chamber: failed to clear field.jsonl: {e}");
                     } else {
                         let events = io::read_events(&self.path).unwrap_or_default();
-                        self.view = model::project_with_team(&events, &self.team);
+                        self.reproject(&events);
                         self.chat_message_ixs.clear();
                         self.chat_list_state.reset(0);
                         for scroll in &self.chat_scrolls {
@@ -1270,7 +1279,7 @@ impl Chamber {
                     eprintln!("chamber: failed to append team-brainstorm message: {e}");
                 } else {
                     let events = io::read_events(&self.path).unwrap_or_default();
-                    self.view = model::project_with_team(&events, &self.team);
+                    self.reproject(&events);
                     
                     let old_chat_count = self.chat_message_ixs.len();
                     self.chat_message_ixs = self
@@ -1315,33 +1324,39 @@ impl Chamber {
             ContextMenuAction::ToggleQuark(id) => {
                 self.toggle_quark_enabled(&id, cx);
             }
+            ContextMenuAction::AdoptQuark(id) => {
+                self.adopt_quark(&id, cx);
+            }
             ContextMenuAction::SetFlavor(id, flavor) => {
-                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                let team_path = hadron_lattice::team_for_field(&self.path)
-                    .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"));
-                let mut team = hadron_lattice::load_team(&team_path);
-
-                let mut new_team = team.clone();
-                if let Some(seat) = new_team.quarks.iter_mut().find(|s| s.id.0 == id) {
-                    seat.flavor = flavor;
-
-                    let orchestrators = new_team
-                        .quarks
-                        .iter()
-                        .filter(|s| s.flavor == hadron_lattice::Flavor::Orchestrator)
-                        .count();
-                    if orchestrators > 0 {
-                        let _ = hadron_lattice::save_team(&team_path, &new_team);
-                        let events = io::read_events(&self.path).unwrap_or_default();
-                        self.team = new_team;
-                        self.view = model::project_with_team(&events, &self.team);
-                        cx.notify();
-                    } else {
-                        eprintln!(
-                            "Refusing to change flavor of {}: cannot have zero orchestrators.",
-                            id
-                        );
-                    }
+                let qid = QuarkId::new(&id);
+                // Apply to a legacy seat if present, else record the role as a per-repo
+                // override (a catalogue quark keeps its definition; only its role here
+                // changes). Trial on a clone so the "≥1 orchestrator" guard is checked
+                // against the RESOLVED team before committing.
+                let mut trial = self.team.clone();
+                if let Some(seat) = trial.quarks.iter_mut().find(|s| s.id == qid) {
+                    seat.flavor = flavor.clone();
+                } else if let Some(ov) = trial.roster.iter_mut().find(|o| o.id == qid) {
+                    ov.flavor = Some(flavor.clone());
+                } else {
+                    trial.roster.push(SeatOverride {
+                        id: qid.clone(),
+                        flavor: Some(flavor.clone()),
+                        enabled: None,
+                    });
+                }
+                let orchestrators = resolve_team(&trial, &self.global)
+                    .quarks
+                    .iter()
+                    .filter(|s| s.flavor == hadron_lattice::Flavor::Orchestrator)
+                    .count();
+                if orchestrators > 0 {
+                    self.team = trial;
+                    self.save_repo_team(cx);
+                } else {
+                    eprintln!(
+                        "Refusing to change flavor of {id}: cannot have zero orchestrators."
+                    );
                 }
             }
             ContextMenuAction::OpenFile(path) => {
@@ -1733,6 +1748,7 @@ impl Chamber {
                     let qid_str = r.id.clone();
                     let enable_str = if r.enabled { "Disable" } else { "Enable" };
                     let r_flavor = r.flavor.clone();
+                    let is_adopted = r.adopted;
                     let view = cx.entity().clone();
                     move |mut menu, _, _| {
                         let qid1 = qid_str.clone();
@@ -1746,6 +1762,24 @@ impl Chamber {
                             });
                             window.refresh();
                         }));
+                        // A not-adopted (catalogue-only) quark offers just "Adopt";
+                        // enable/disable and role changes only apply once it participates.
+                        if !is_adopted {
+                            let qid_a = qid_str.clone();
+                            let view_a = view.clone();
+                            menu = menu.item(PopupMenuItem::new("Adopt into repo").on_click(
+                                move |_, window, cx| {
+                                    view_a.update(cx, |this, cx| {
+                                        this.handle_context_menu_action(
+                                            ContextMenuAction::AdoptQuark(qid_a.clone()),
+                                            cx,
+                                        );
+                                    });
+                                    window.refresh();
+                                },
+                            ));
+                            return menu;
+                        }
                         let qid2 = qid_str.clone();
                         let view2 = view.clone();
                         menu =
@@ -3048,7 +3082,7 @@ impl Chamber {
             return;
         }
         let events = io::read_events(&self.path).unwrap_or_default();
-        self.view = model::project_with_team(&events, &self.team);
+        self.reproject(&events);
         for scroll in &self.chat_scrolls {
             scroll.scroll_to_bottom();
         }
@@ -3137,22 +3171,48 @@ impl Chamber {
         );
     }
 
-    fn toggle_quark_enabled(&mut self, id: &str, cx: &mut Context<Self>) {
+    /// The repo `.hadron/team.json` path (the file the chamber edits), whether or not
+    /// it exists yet.
+    fn repo_team_path(&self) -> PathBuf {
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let team_path = hadron_lattice::team_for_field(&self.path)
-            .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"));
-        let mut team = hadron_lattice::load_team(&team_path);
-        let qid = QuarkId::new(id);
-        if let Some(seat) = team.quarks.iter_mut().find(|s| s.id == qid) {
-            seat.enabled = !seat.enabled;
-            if let Err(e) = hadron_lattice::save_team(&team_path, &team) {
-                eprintln!("chamber: failed to save team.json: {}", e);
-            } else {
-                let events = io::read_events(&self.path).unwrap_or_default();
-                self.view = crate::model::project_with_team(&events, &team);
-                cx.notify();
-            }
+        hadron_lattice::team_for_field(&self.path)
+            .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"))
+    }
+
+    /// Persist `self.team` to the repo file and re-project. The one write path for
+    /// every repo-team mutation, so save+reproject never drift.
+    fn save_repo_team(&mut self, cx: &mut Context<Self>) {
+        let path = self.repo_team_path();
+        if let Err(e) = hadron_lattice::save_team(&path, &self.team) {
+            eprintln!("chamber: failed to save team.json: {e}");
+            return;
         }
+        self.providers = configured_providers(&resolve_team(&self.team, &self.global));
+        let events = io::read_events(&self.path).unwrap_or_default();
+        self.reproject(&events);
+        cx.notify();
+    }
+
+    /// Toggle a quark's participation. A legacy full seat flips its own `enabled`; a
+    /// catalogue-adopted quark records the flip as a per-repo override (created if it
+    /// does not exist yet). Only meaningful for adopted rows — a not-adopted quark is
+    /// "Adopt"ed instead (see the context menu).
+    fn toggle_quark_enabled(&mut self, id: &str, cx: &mut Context<Self>) {
+        let qid = QuarkId::new(id);
+        // The current (resolved) state is what we flip away from.
+        let resolved = resolve_team(&self.team, &self.global);
+        let Some(current) = resolved.get(&qid).map(|s| s.enabled) else {
+            return; // not adopted → nothing to toggle
+        };
+        let want = !current;
+        if let Some(seat) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
+            seat.enabled = want;
+        } else if let Some(ov) = self.team.roster.iter_mut().find(|o| o.id == qid) {
+            ov.enabled = Some(want);
+        } else {
+            self.team.roster.push(SeatOverride { id: qid, flavor: None, enabled: Some(want) });
+        }
+        self.save_repo_team(cx);
     }
 
     /// Append an event to the field and re-project the view (the shared write
@@ -3163,7 +3223,7 @@ impl Chamber {
             return;
         }
         let events = io::read_events(&self.path).unwrap_or_default();
-        self.view = model::project_with_team(&events, &self.team);
+        self.reproject(&events);
         cx.notify();
     }
 
@@ -3326,7 +3386,11 @@ impl Chamber {
             let id = if key == "human" {
                 Some(&self.prefs.human)
             } else {
-                if let Some(seat) = self.team.quarks.iter().find(|s| s.id.as_str() == key) {
+                // Read effort/mode from the RESOLVED seat, not just a legacy one — an
+                // adopted quark's definition lives in the catalogue, so a legacy-only
+                // lookup would show blank and a later commit could wipe the real value.
+                let resolved = resolve_team(&self.team, &self.global);
+                if let Some(seat) = resolved.get(&QuarkId::new(key)) {
                     eff = seat.effort.clone();
                     mod_cfg = seat.mode_config.clone();
                 }
@@ -3359,14 +3423,32 @@ impl Chamber {
         let key = self.settings_target.key();
         if key != "human" && key != "providers" {
             let qid = QuarkId::new(key);
-            if let Some(seat) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
-                seat.effort = (!effort_val.is_empty()).then_some(effort_val);
-                seat.mode_config = (!mode_val.is_empty()).then_some(mode_val);
-                seat.display_name = (!name.is_empty()).then_some(name.clone());
-                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                let team_path = hadron_lattice::team_for_field(&self.path)
-                    .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"));
-                let _ = hadron_lattice::save_team(&team_path, &self.team);
+            // Definition fields (effort/mode/display name) stay **per-repo**: pin them
+            // on a legacy seat that supersedes any override/catalogue def for this id in
+            // this repo. Only materialize when a value actually changed, so merely
+            // opening Settings for an adopted quark does not un-adopt it.
+            let resolved = resolve_team(&self.team, &self.global);
+            if let Some(base) = resolved.get(&qid).cloned() {
+                let new_effort = (!effort_val.is_empty()).then_some(effort_val);
+                let new_mode = (!mode_val.is_empty()).then_some(mode_val);
+                let new_name = (!name.is_empty()).then_some(name.clone());
+                let changed = base.effort != new_effort
+                    || base.mode_config != new_mode
+                    || base.display_name != new_name;
+                if changed {
+                    let mut seat = base;
+                    seat.effort = new_effort;
+                    seat.mode_config = new_mode;
+                    seat.display_name = new_name;
+                    self.team.roster.retain(|o| o.id != qid);
+                    if let Some(existing) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
+                        *existing = seat;
+                    } else {
+                        self.team.quarks.push(seat);
+                    }
+                    let path = self.repo_team_path();
+                    let _ = hadron_lattice::save_team(&path, &self.team);
+                }
             }
         }
         
@@ -3834,17 +3916,70 @@ impl Chamber {
         cx.notify();
     }
 
-    /// Remove a seated quark: drop it from the team + the providers list and persist to the
-    /// same team.json the add-flow writes. The running daemon reconciles the removal on its
-    /// next re-seat tick (its `ReseatPlan.removed` → `unseat`), so no daemon change is needed.
+    /// **Un-adopt** a quark from this repo: drop its legacy seat and/or override plus
+    /// its providers-list row. The definition stays in the global catalogue, so the
+    /// quark reappears as an available (grey) row rather than vanishing — removal from
+    /// a repo is not deletion from the catalogue. The running daemon reconciles the
+    /// removal on its next re-seat tick (its `ReseatPlan.removed` → `unseat`).
     fn remove_quark(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.team.quarks.retain(|s| s.id.as_str() != id);
+        let qid = QuarkId::new(id);
+        self.team.quarks.retain(|s| s.id != qid);
+        self.team.roster.retain(|o| o.id != qid);
         self.providers.retain(|p| p.id.as_str() != id);
-        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let team_path = hadron_lattice::team_for_field(&self.path)
-            .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"));
-        let _ = hadron_lattice::save_team(&team_path, &self.team);
-        cx.notify();
+        self.save_repo_team(cx);
+    }
+
+    /// Save a newly-configured quark. Its **definition** goes to the global catalogue
+    /// (`~/.hadron/team.json`) so every repo can reach it; this repo **auto-adopts** it
+    /// (an enabled override), matching Jake's "added quark joins the current repo".
+    /// When there is no separate catalogue (the repo file *is* the global file), fall
+    /// back to a self-contained legacy seat — the pre-split behaviour.
+    fn add_configured_quark(&mut self, seat: hadron_lattice::Seat, cx: &mut Context<Self>) {
+        let repo_path = self.repo_team_path();
+        let global_path = hadron_lattice::team_config_path();
+        let separate = global_path.as_deref().is_some_and(|g| g != repo_path);
+        let id = seat.id.clone();
+        if separate {
+            // Definition → global catalogue (upsert by id).
+            if let Some(existing) = self.global.quarks.iter_mut().find(|s| s.id == id) {
+                *existing = seat;
+            } else {
+                self.global.quarks.push(seat);
+            }
+            if let Some(gp) = global_path {
+                if let Err(e) = hadron_lattice::save_team(&gp, &self.global) {
+                    eprintln!("chamber: failed to save catalogue: {e}");
+                }
+            }
+            // Auto-adopt here, enabled (unless already present some other way).
+            if !self.team.quarks.iter().any(|s| s.id == id)
+                && !self.team.roster.iter().any(|o| o.id == id)
+            {
+                self.team.roster.push(SeatOverride { id, flavor: None, enabled: Some(true) });
+            }
+        } else {
+            // No separate catalogue: keep it self-contained as a legacy seat.
+            self.team.quarks.push(seat);
+        }
+        self.save_repo_team(cx);
+    }
+
+    /// **Adopt** a catalogue quark into this repo: add an enabled override so the daemon
+    /// seats it. The definition stays in the global catalogue; the repo only records
+    /// that it participates here (as a worker by default; change the role afterwards).
+    fn adopt_quark(&mut self, id: &str, cx: &mut Context<Self>) {
+        let qid = QuarkId::new(id);
+        if self.team.quarks.iter().any(|s| s.id == qid)
+            || self.team.roster.iter().any(|o| o.id == qid)
+        {
+            return; // already adopted here
+        }
+        self.team.roster.push(SeatOverride {
+            id: qid,
+            flavor: None, // inherit the catalogue's role
+            enabled: Some(true),
+        });
+        self.save_repo_team(cx);
     }
 
     fn providers_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4222,8 +4357,10 @@ impl Chamber {
 
                                     // An ACP seat, and it carries the command the wizard
                                     // just proved boots — so the daemon reaches this agent
-                                    // over the same transport the human tested it on.
-                                    this.team.quarks.push(hadron_lattice::Seat {
+                                    // over the same transport the human tested it on. Its
+                                    // definition lands in the global catalogue; this repo
+                                    // auto-adopts it (see `add_configured_quark`).
+                                    let seat = hadron_lattice::Seat {
                                         id: hadron_lattice::QuarkId::new(&desc_inner.id),
                                         display_name: None,
                                         provider: desc_inner.id.clone(),
@@ -4238,11 +4375,8 @@ impl Chamber {
                                         enabled: true,
                                         effort: None,
                                         mode_config: None,
-                                    });
-                                    let repo_root = crate::vcs::repo_root_of(&this.path).to_path_buf();
-                                    let team_path = hadron_lattice::team_for_field(&this.path)
-                                        .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"));
-                                    let _ = hadron_lattice::save_team(&team_path, &this.team);
+                                    };
+                                    this.add_configured_quark(seat, cx);
 
                                     this.wizard_state = WizardState::None;
                                     cx.notify();
@@ -4429,7 +4563,11 @@ fn drag_region(id: &'static str) -> impl IntoElement {
 /// tooltip on hover.
 fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -> impl IntoElement {
     let name = id.name.clone();
-    let label = if r.enabled {
+    // Not adopted here → "available" (in the catalogue, off in this repo); adopted but
+    // switched off → "disabled"; otherwise the live presence word.
+    let label = if !r.adopted {
+        "available"
+    } else if r.enabled {
         theme::presence_label(r.state)
     } else {
         "disabled"
@@ -4485,7 +4623,9 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
             .into_any_element()
     };
 
-    let dot_color = if r.enabled {
+    // Grey dot for both a disabled seat and an available-but-not-adopted quark — the
+    // same "there to use, but off" signal the user asked for.
+    let dot_color = if r.adopted && r.enabled {
         theme::presence(r.state)
     } else {
         theme::presence_disabled()
@@ -5056,6 +5196,65 @@ impl Chamber {
     }
 }
 
+/// The Configured Providers rows for a (resolved) team: every adopted quark, id +
+/// backing provider + model. Not-adopted catalogue quarks are intentionally absent —
+/// they appear as greyed roster rows, not as configured providers.
+fn configured_providers(team: &Team) -> Vec<ConfiguredQuark> {
+    team.quarks
+        .iter()
+        .map(|seat| ConfiguredQuark {
+            id: seat.id.0.clone(),
+            transport: seat.provider.clone(),
+            state: ProviderState::Ready {
+                model: seat.model.clone(),
+            },
+        })
+        .collect()
+}
+
+/// Move any legacy full seats in the repo file into the global catalogue and rewrite
+/// the repo file as role/state overrides. A no-op when the repo has no legacy seats, so
+/// it is safe to call on every launch. The resolved seats are byte-identical to the
+/// originals (the override carries the seat's own flavor + enabled over its own def), so
+/// a running daemon reconciles this to an empty re-seat rather than a disruptive rebuild.
+fn migrate_repo_to_catalogue(repo_path: &Path, global_path: &Path) {
+    let mut repo = load_team(repo_path);
+    if repo.quarks.is_empty() {
+        return; // already split (or empty) — nothing to migrate
+    }
+    let mut global = load_team(global_path);
+    for seat in repo.quarks.drain(..) {
+        let ov = SeatOverride {
+            id: seat.id.clone(),
+            flavor: Some(seat.flavor.clone()),
+            enabled: Some(seat.enabled),
+        };
+        // Definition → catalogue (upsert by id).
+        if let Some(existing) = global.quarks.iter_mut().find(|s| s.id == seat.id) {
+            *existing = seat;
+        } else {
+            global.quarks.push(seat);
+        }
+        // Role/state → repo override (dedup; a legacy seat and an override for the same
+        // id should never coexist after migration).
+        if !repo.roster.iter().any(|o| o.id == ov.id) {
+            repo.roster.push(ov);
+        }
+    }
+    if let Err(e) = hadron_lattice::save_team(global_path, &global) {
+        eprintln!("chamber: migration failed to write catalogue: {e}");
+        return; // do NOT rewrite the repo file if the catalogue write failed
+    }
+    if let Err(e) = hadron_lattice::save_team(repo_path, &repo) {
+        eprintln!("chamber: migration failed to write repo team: {e}");
+    } else {
+        eprintln!(
+            "chamber: migrated {} seat(s) into the global catalogue; repo now uses overrides",
+            repo.roster.len()
+        );
+    }
+}
+
 /// Launch the chamber window against a field file path.
 pub fn run(field_path: Option<String>) {
     let Some(path) = field_path else {
@@ -5063,13 +5262,26 @@ pub fn run(field_path: Option<String>) {
         return;
     };
     let field_path = PathBuf::from(&path);
-    // Load the SAME team the daemon seated for this field: the project
-    // `.hadron/team.json` beside the field, else the global `~/.hadron/team.json`.
-    let team = hadron_lattice::team_for_field(&field_path)
-        .map(|p| load_team(&p))
-        .unwrap_or_default();
+    // The repo team file (`.hadron/team.json`) and the separate global catalogue
+    // (`~/.hadron/team.json`, skipped when it IS the repo file).
+    let repo_path = hadron_lattice::team_for_field(&field_path);
+    let global_path = hadron_lattice::team_config_path()
+        .filter(|g| Some(g.as_path()) != repo_path.as_deref());
+
+    // One-shot migration to the global-catalogue split: if the repo file still carries
+    // legacy full seats and there is a separate catalogue, move each definition into the
+    // catalogue and rewrite the repo file as role/state overrides. Idempotent (a repo
+    // with no legacy seats is a no-op), and the resolved seats are byte-identical to the
+    // originals, so the running daemon reconciles to a no-op re-seat.
+    if let (Some(rp), Some(gp)) = (repo_path.as_deref(), global_path.as_deref()) {
+        migrate_repo_to_catalogue(rp, gp);
+    }
+
+    // Load the SAME repo team the daemon seated for this field, plus the catalogue.
+    let team = repo_path.as_deref().map(load_team).unwrap_or_default();
+    let global = global_path.as_deref().map(load_team).unwrap_or_default();
     let events = io::read_events(&field_path).unwrap_or_default();
-    let view = model::project_with_team(&events, &team);
+    let view = model::project_with_team(&events, &resolve_team(&team, &global), &global);
     let prefs = config::load();
 
     let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
@@ -5176,6 +5388,7 @@ pub fn run(field_path: Option<String>) {
                         view.clone(),
                         prefs.clone(),
                         team.clone(),
+                        global.clone(),
                         field_path.clone(),
                         window,
                         cx,
