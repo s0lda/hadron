@@ -7,6 +7,14 @@ use hadron_lattice::{EnergyState, Flavor, Projection, QuarkId, TurnOutcome};
 pub trait Quark: Send {
     fn id(&self) -> QuarkId;
     fn flavor(&self) -> Flavor;
+    /// The human-facing name the router matches `@mentions` against (e.g. `@Claude` for
+    /// the seat whose id is `acp-claude`). `None` means "only the id is addressable".
+    /// Carried on the quark so the engine's roster card is always built with the right
+    /// name — including after a re-seat, where a name populated out-of-band would be lost.
+    /// The name is resolved from the (global) team config; the adapter merely holds it.
+    fn display_name(&self) -> Option<String> {
+        None
+    }
     fn energy(&self) -> EnergyState;
     /// Whether this quark keeps its context **across turns** (a resident ACP session) or
     /// is re-spawned fresh each turn (a one-shot CLI process). The engine uses it to

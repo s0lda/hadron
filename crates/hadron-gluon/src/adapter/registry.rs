@@ -431,6 +431,9 @@ pub struct QuarkSpec {
     pub model: String,
     pub effort: Option<String>,
     pub mode_config: Option<String>,
+    /// The `@mention` name the router matches (see [`Quark::display_name`]). Resolved
+    /// from the team config; `None` means the seat is addressable by id only.
+    pub display_name: Option<String>,
 }
 
 /// Enforce the naming contract: ids must be non-empty, whitespace-free tokens
@@ -459,14 +462,18 @@ pub fn validate_quark_id(id: &QuarkId) -> anyhow::Result<()> {
 /// the runner does not spawn anything — the process is spawned only on `excite`.
 pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
     validate_quark_id(&spec.id)?;
+    let name = spec.display_name.clone();
     let quark: Box<dyn Quark> = match spec.kind {
-        QuarkKind::Claude => {
-            Box::new(ClaudeQuark::new(spec.id, spec.flavor, spec.model, ProcessRunner))
+        QuarkKind::Claude => Box::new(
+            ClaudeQuark::new(spec.id, spec.flavor, spec.model, ProcessRunner).with_display_name(name),
+        ),
+        QuarkKind::Agy => {
+            Box::new(AgyQuark::new(spec.id, spec.flavor, spec.model, ProcessRunner).with_display_name(name))
         }
-        QuarkKind::Agy => Box::new(AgyQuark::new(spec.id, spec.flavor, spec.model, ProcessRunner)),
-        QuarkKind::Acp(target) => {
-            Box::new(AcpQuark::new(spec.id, spec.flavor, spec.model, spec.effort, spec.mode_config, target))
-        }
+        QuarkKind::Acp(target) => Box::new(
+            AcpQuark::new(spec.id, spec.flavor, spec.model, spec.effort, spec.mode_config, target)
+                .with_display_name(name),
+        ),
     };
     Ok(quark)
 }
@@ -481,6 +488,7 @@ pub fn build_seat(seat: &Seat) -> anyhow::Result<Box<dyn Quark>> {
         model: seat.model.clone(),
         effort: seat.effort.clone(),
         mode_config: seat.mode_config.clone(),
+        display_name: seat.display_name.clone(),
     })
 }
 
@@ -496,7 +504,8 @@ pub fn build_seat_watched(seat: &Seat, live_dir: &std::path::Path) -> anyhow::Re
     if let QuarkKind::Acp(target) = kind {
         return Ok(Box::new(
             AcpQuark::new(seat.id.clone(), seat.flavor.clone(), seat.model.clone(), seat.effort.clone(), seat.mode_config.clone(), target)
-                .watching(live_dir.to_path_buf()),
+                .watching(live_dir.to_path_buf())
+                .with_display_name(seat.display_name.clone()),
         ));
     }
     build_seat(seat)
@@ -532,6 +541,7 @@ mod tests {
             model: "opus-4.8".into(),
             effort: None,
             mode_config: None,
+            display_name: None,
         })
         .unwrap();
         assert_eq!(claude.id(), QuarkId::new("claude"));
@@ -544,6 +554,7 @@ mod tests {
             model: String::new(),
             effort: None,
             mode_config: None,
+            display_name: None,
         })
         .unwrap();
         assert_eq!(agy.id(), QuarkId::new("agy"));
@@ -559,6 +570,7 @@ mod tests {
             model: String::new(),
             effort: None,
             mode_config: None,
+            display_name: None,
         });
         assert!(err.is_err());
     }

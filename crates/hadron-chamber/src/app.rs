@@ -3243,6 +3243,25 @@ impl Chamber {
         cx.notify();
     }
 
+    /// Persist the **global catalogue** (`~/.hadron/team.json`). The catalogue holds the
+    /// shared defaults that are the same in every repo — a quark's model default and its
+    /// display name (a quark is the same quark everywhere, so its name is not a per-repo
+    /// thing). Mirrors [`Self::save_repo_team`] but writes the catalogue file.
+    fn save_global_team(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = hadron_lattice::team_config_path() else {
+            eprintln!("chamber: no global catalogue path — cannot save shared defaults");
+            return;
+        };
+        if let Err(e) = hadron_lattice::save_team(&path, &self.global) {
+            eprintln!("chamber: failed to save catalogue: {e}");
+            return;
+        }
+        self.providers = configured_providers(&resolve_team(&self.team, &self.global));
+        let events = io::read_events(&self.path).unwrap_or_default();
+        self.reproject(&events);
+        cx.notify();
+    }
+
     /// Toggle a quark's participation. A legacy full seat flips its own `enabled`; a
     /// catalogue-adopted quark records the flip as a per-repo override (created if it
     /// does not exist yet). Only meaningful for adopted rows — a not-adopted quark is
@@ -3527,28 +3546,48 @@ impl Chamber {
                 } else {
                     model_val.clone()
                 };
-                let changed = base.model != new_model
+                // The **display name is global** — a quark is the same quark in every repo,
+                // so its name lives in the catalogue, never as a per-repo override. That is
+                // also what the router matches `@mentions` against, so a name set once here
+                // resolves everywhere. (A purely-local legacy seat has no catalogue entry, so
+                // its name lives on the seat itself — the only place it can.)
+                if base.display_name != new_name {
+                    if let Some(g) = self.global.quarks.iter_mut().find(|s| s.id == qid) {
+                        g.display_name = new_name.clone();
+                        self.save_global_team(cx);
+                    } else if let Some(existing) =
+                        self.team.quarks.iter_mut().find(|s| s.id == qid)
+                    {
+                        existing.display_name = new_name.clone();
+                        self.save_repo_team(cx);
+                    }
+                }
+
+                // Model / effort / mode are **per-repo** knobs (unchanged behaviour). The
+                // name is deliberately NOT among them — it was handled globally above, and
+                // the delta below inherits `def`'s name so no per-repo name override is ever
+                // written.
+                let knobs_changed = base.model != new_model
                     || base.effort != new_effort
-                    || base.mode_config != new_mode
-                    || base.display_name != new_name;
-                if changed {
+                    || base.mode_config != new_mode;
+                if knobs_changed {
                     if let Some(existing) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
                         // Self-contained legacy seat — pin the values on it directly.
                         existing.model = new_model;
                         existing.effort = new_effort;
                         existing.mode_config = new_mode;
-                        existing.display_name = new_name;
                         self.save_repo_team(cx);
                     } else if let Some(def) = def {
                         // Adopted via the catalogue — write a delta override (only what
                         // differs from the shared default), preserving any existing
                         // role/participation override. `seat_override_delta` is the tested
-                        // inverse of resolve_team's def-layering.
+                        // inverse of resolve_team's def-layering. `display_name` inherits the
+                        // def, so the name never becomes a per-repo override.
                         let desired = hadron_lattice::Seat {
                             model: new_model,
                             effort: new_effort,
                             mode_config: new_mode,
-                            display_name: new_name,
+                            // display_name inherits `def` (via the spread) — names are global.
                             ..def.clone()
                         };
                         let prev = self.team.roster.iter().find(|o| o.id == qid).cloned();

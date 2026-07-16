@@ -383,6 +383,8 @@ impl LiveFeed {
 pub struct AcpQuark {
     id: QuarkId,
     flavor: Flavor,
+    /// The `@mention` name (see [`Quark::display_name`]); `None` = id-only.
+    display_name: Option<String>,
     /// The model this seat **asks** for. It is not necessarily the one that runs: the
     /// agent advertises what it can offer on `session/new` and we match against that
     /// (see [`model_selector`] and [`resolve_model`]). The model that actually ran is
@@ -407,6 +409,7 @@ impl AcpQuark {
         AcpQuark {
             id,
             flavor,
+            display_name: None,
             model: model.into(),
             effort,
             mode_config,
@@ -426,6 +429,12 @@ impl AcpQuark {
             quark: self.id.clone(),
             last: Arc::new(Mutex::new(None)),
         });
+        self
+    }
+
+    /// Set the `@mention` display name (from the resolved team config).
+    pub fn with_display_name(mut self, name: Option<String>) -> Self {
+        self.display_name = name;
         self
     }
 
@@ -757,6 +766,9 @@ impl Quark for AcpQuark {
     }
     fn flavor(&self) -> Flavor {
         self.flavor.clone()
+    }
+    fn display_name(&self) -> Option<String> {
+        self.display_name.clone()
     }
     fn energy(&self) -> EnergyState {
         EnergyState::Available
