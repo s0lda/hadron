@@ -94,6 +94,23 @@ pub struct RosterRow {
     pub unknown_turns: u32,
 }
 
+/// The reboots `/clear` must append after truncating the field: one per resident
+/// (ACP) quark, so every live agent re-boots into the fresh session instead of
+/// carrying pre-clear context. The field-is-session model means a cleared field
+/// needs new sessions.
+///
+/// Only `Transport::Acp` quarks are resident and hold something to reap — a one-shot
+/// CLI quark keeps nothing between turns, so it is skipped (a Reboot to it is a no-op
+/// the daemon would service pointlessly). SSOT for the "restart residents on clear"
+/// rule, kept here (pure, tested) so the GPUI command handler is a thin caller.
+pub fn post_clear_reboots(roster: &[RosterRow]) -> Vec<Event> {
+    roster
+        .iter()
+        .filter(|r| matches!(r.transport, hadron_lattice::Transport::Acp))
+        .map(|r| Event::new(Actor::Human, Some(QuarkId::new(&r.id)), Kind::Reboot))
+        .collect()
+}
+
 /// What one quark spent this session. `context` and `quota` are the *latest*
 /// the provider reported, not a sum: occupancy and remaining allowance are
 /// levels, and adding them up would mean nothing.
@@ -444,6 +461,49 @@ mod tests {
 
     fn ev(from: Actor, to: Option<&str>, kind: Kind) -> Event {
         Event::new(from, to.map(QuarkId::new), kind)
+    }
+
+    fn roster_entry(id: &str, transport: hadron_lattice::Transport) -> RosterRow {
+        RosterRow {
+            id: id.to_string(),
+            display_name: None,
+            state: QuarkState::Ground,
+            mode: Mode::Ask,
+            mode_is_override: false,
+            provider: String::new(),
+            model: String::new(),
+            flavor: None,
+            transport,
+            effort: None,
+            enabled: true,
+            adopted: true,
+            tokens: 0,
+            unknown_turns: 0,
+        }
+    }
+
+    /// `/clear` restarts every resident agent so the fresh field is a fresh session:
+    /// one `Kind::Reboot` per ACP quark, addressed to it; CLI quarks (nothing resident)
+    /// are skipped.
+    #[test]
+    fn post_clear_reboots_one_per_resident_quark_skipping_cli() {
+        use hadron_lattice::Transport;
+        let roster = vec![
+            roster_entry("opus", Transport::Acp),
+            roster_entry("agy", Transport::Cli),
+            roster_entry("gemini", Transport::Acp),
+        ];
+
+        let reboots = post_clear_reboots(&roster);
+
+        assert_eq!(reboots.len(), 2, "one reboot per ACP quark, none for the CLI quark");
+        assert!(reboots.iter().all(|e| matches!(e.kind, Kind::Reboot)));
+        assert!(reboots.iter().all(|e| e.from == Actor::Human));
+        let targets: Vec<String> = reboots
+            .iter()
+            .filter_map(|e| e.to.as_ref().map(|q| q.as_str().to_string()))
+            .collect();
+        assert_eq!(targets, vec!["opus".to_string(), "gemini".to_string()]);
     }
 
     /// The Session tab reported zeros for every quark: it decided who was a quark by
