@@ -144,14 +144,25 @@ impl Seat {
     }
 }
 
-/// A per-repo override of one catalogue seat: which *role* it plays here and
-/// whether it participates — **without** re-stating the seat's definition. The
-/// definition (provider/model/command/transport/effort) lives once in the global
-/// catalogue (`~/.hadron/team.json`); a repo names a quark by `id` and says only
-/// "here it is the orchestrator" or "here it is off". Both override fields are
-/// optional: an absent one inherits the catalogue's value.
+/// A per-repo override of one catalogue seat, layered over the global definition.
 ///
-/// This is what "different orchestrator per repo" costs: a two-field row, not a
+/// The definition — provider/model/command/transport plus the tunable knobs — lives
+/// once in the global catalogue (`~/.hadron/team.json`). A repo names a quark by `id`
+/// and records only what differs *here*: which role it plays, whether it participates,
+/// and any per-repo adjustment to the model or the session knobs. Everything left
+/// absent **inherits the catalogue's value**, so opening a fresh repo shows the shared
+/// default (e.g. `acp-claude` = Opus) while another repo can pin its own (= Sonnet)
+/// without touching the catalogue or the other repo.
+///
+/// **Two kinds of optionality, and they are not the same.** `flavor`/`enabled`/`model`
+/// are `Option<T>`: absent = inherit. But `effort`/`mode_config`/`display_name` are
+/// *already* `Option<String>` on [`Seat`], so a single `Option` could not tell "inherit
+/// the catalogue" apart from "override it back to none/cleared". They are therefore
+/// `Option<Option<String>>`: absent = inherit; `Some(None)` (serialized as JSON `null`)
+/// = explicitly cleared here; `Some(Some(x))` = set to `x` here. Without this a repo
+/// that clears an inherited `effort=high` would silently keep running `high`.
+///
+/// This is what "different orchestrator/model per repo" costs: a small delta row, not a
 /// duplicated seat. The full [`Seat`] is still supported in [`Team::quarks`] for
 /// backward compatibility (and for a self-contained team that wants no catalogue),
 /// so nothing that predates this type has to change.
@@ -162,6 +173,64 @@ pub struct SeatOverride {
     pub flavor: Option<Flavor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    /// Per-repo model, e.g. this repo runs `acp-claude` on Sonnet while the catalogue
+    /// default (and every other repo) stays on Opus. Absent = inherit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Per-repo effort. Absent = inherit; `null` = cleared here; a value = set here.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_option"
+    )]
+    pub effort: Option<Option<String>>,
+    /// Per-repo mode/config. Absent = inherit; `null` = cleared here; a value = set here.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_option"
+    )]
+    pub mode_config: Option<Option<String>>,
+    /// Per-repo display name. Absent = inherit; `null` = cleared here; a value = set here.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_option"
+    )]
+    pub display_name: Option<Option<String>>,
+}
+
+/// Deserialize an `Option<Option<T>>` field so the three states stay distinct: an
+/// **absent** JSON key falls to `#[serde(default)]` = `None` (inherit), while a key that
+/// **is present** — including an explicit `null` — is deserialized as the inner
+/// `Option<T>` and wrapped in `Some`, giving `Some(None)` for `null` (cleared here) and
+/// `Some(Some(x))` for a value (set here). Without this, serde reads a plain `null` as
+/// the *outer* `None`, collapsing "cleared" back into "inherit".
+fn present_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Deserialize::deserialize(deserializer).map(Some)
+}
+
+impl SeatOverride {
+    /// A role/state-only override with **no** definition delta — every def field inherits
+    /// the catalogue verbatim. This is what a fresh adoption, a toggle, and the one-shot
+    /// [`migrate_to_catalogue`] all write; callers that carry a per-repo adjustment start
+    /// here and set the one field they change (`..SeatOverride::role(id)`), so the all-
+    /// inherit baseline is defined in exactly one place.
+    pub fn role(id: QuarkId) -> SeatOverride {
+        SeatOverride {
+            id,
+            flavor: None,
+            enabled: None,
+            model: None,
+            effort: None,
+            mode_config: None,
+            display_name: None,
+        }
+    }
 }
 
 /// The full team: every seat the human has added.
@@ -248,6 +317,20 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
         if let Some(enabled) = ov.enabled {
             seat.enabled = enabled;
         }
+        // Per-repo definition deltas, layered over the catalogue default. Absent =
+        // inherit; for the already-optional knobs, `Some(None)` = cleared here.
+        if let Some(model) = ov.model.clone() {
+            seat.model = model;
+        }
+        if let Some(effort) = ov.effort.clone() {
+            seat.effort = effort;
+        }
+        if let Some(mode_config) = ov.mode_config.clone() {
+            seat.mode_config = mode_config;
+        }
+        if let Some(display_name) = ov.display_name.clone() {
+            seat.display_name = display_name;
+        }
         seen.insert(ov.id.clone());
         quarks.push(seat);
     }
@@ -271,9 +354,9 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
 pub fn migrate_to_catalogue(repo: &mut Team, global: &mut Team) {
     for seat in std::mem::take(&mut repo.quarks) {
         let ov = SeatOverride {
-            id: seat.id.clone(),
             flavor: Some(seat.flavor.clone()),
             enabled: Some(seat.enabled),
+            ..SeatOverride::role(seat.id.clone())
         };
         // Definition → catalogue (upsert by id).
         if let Some(existing) = global.quarks.iter_mut().find(|s| s.id == seat.id) {
@@ -286,6 +369,34 @@ pub fn migrate_to_catalogue(repo: &mut Team, global: &mut Team) {
         if !repo.roster.iter().any(|o| o.id == ov.id) {
             repo.roster.push(ov);
         }
+    }
+}
+
+/// Express a user's edit of a catalogue-adopted quark as a per-repo **delta** from the
+/// catalogue default. `def` is the shared default (from the global catalogue), `desired`
+/// is the seat the user wants *here*, and `prev` is any existing role/participation
+/// override for this id (preserved). Each definition knob is carried only when it differs
+/// from the default — so a knob left at the default inherits it (and stays in step if the
+/// default later changes), while the catalogue and every other repo are untouched.
+///
+/// This is the inverse of the definition-layering in [`resolve_team`]: for any `def`, a
+/// repo carrying `seat_override_delta(id, def, desired, prev)` resolves that id back to
+/// `desired`. Proven by `a_settings_edit_becomes_a_delta_that_resolves_back_to_the_edit`.
+pub fn seat_override_delta(
+    id: QuarkId,
+    def: &Seat,
+    desired: &Seat,
+    prev: Option<&SeatOverride>,
+) -> SeatOverride {
+    SeatOverride {
+        flavor: prev.and_then(|o| o.flavor.clone()),
+        enabled: prev.and_then(|o| o.enabled),
+        model: (desired.model != def.model).then(|| desired.model.clone()),
+        effort: (desired.effort != def.effort).then(|| desired.effort.clone()),
+        mode_config: (desired.mode_config != def.mode_config).then(|| desired.mode_config.clone()),
+        display_name: (desired.display_name != def.display_name)
+            .then(|| desired.display_name.clone()),
+        ..SeatOverride::role(id)
     }
 }
 
@@ -656,9 +767,9 @@ mod resolve_tests {
         let repo = Team {
             quarks: vec![],
             roster: vec![SeatOverride {
-                id: QuarkId::new("acp-claude"),
                 flavor: Some(Flavor::Orchestrator),
                 enabled: Some(false),
+                ..SeatOverride::role(QuarkId::new("acp-claude"))
             }],
             max_exchanges: None,
         };
@@ -684,7 +795,7 @@ mod resolve_tests {
         };
         let repo = Team {
             quarks: vec![],
-            roster: vec![SeatOverride { id: QuarkId::new("q"), flavor: None, enabled: None }],
+            roster: vec![SeatOverride::role(QuarkId::new("q"))],
             max_exchanges: None,
         };
         let s = &resolve_team(&repo, &global).quarks[0];
@@ -701,9 +812,8 @@ mod resolve_tests {
         let repo = Team {
             quarks: vec![],
             roster: vec![SeatOverride {
-                id: QuarkId::new("ghost"),
-                flavor: None,
                 enabled: Some(true),
+                ..SeatOverride::role(QuarkId::new("ghost"))
             }],
             max_exchanges: None,
         };
@@ -723,9 +833,9 @@ mod resolve_tests {
         let repo = Team {
             quarks: vec![seat("dup", "claude", "LEGACY", Flavor::Orchestrator)],
             roster: vec![SeatOverride {
-                id: QuarkId::new("dup"),
                 flavor: Some(Flavor::Worker),
                 enabled: Some(false),
+                ..SeatOverride::role(QuarkId::new("dup"))
             }],
             max_exchanges: None,
         };
@@ -733,6 +843,198 @@ mod resolve_tests {
         assert_eq!(resolved.quarks.len(), 1, "seated once, not twice");
         assert_eq!(resolved.quarks[0].model, "LEGACY", "legacy seat wins");
         assert_eq!(resolved.quarks[0].flavor, Flavor::Orchestrator);
+    }
+
+    /// **Jake's exact scenario.** One catalogue default (`acp-claude` = Opus). A fresh
+    /// repo that only adopts it (no model delta) resolves to Opus; a second repo that
+    /// pins `model: Some("sonnet")` resolves to Sonnet — and the **catalogue is untouched
+    /// by either**, so the two repos never clobber each other's model.
+    #[test]
+    fn a_model_override_diverges_per_repo_without_touching_the_catalogue() {
+        let global = Team {
+            quarks: vec![seat("acp-claude", "acp-claude", "opus", Flavor::Worker)],
+            roster: vec![],
+            max_exchanges: None,
+        };
+        // Repo A: adopt only — inherits the catalogue default.
+        let repo_a = Team {
+            roster: vec![SeatOverride {
+                enabled: Some(true),
+                ..SeatOverride::role(QuarkId::new("acp-claude"))
+            }],
+            ..Team::default()
+        };
+        assert_eq!(resolve_team(&repo_a, &global).quarks[0].model, "opus", "A inherits default");
+
+        // Repo B: same id, pinned to Sonnet here.
+        let repo_b = Team {
+            roster: vec![SeatOverride {
+                enabled: Some(true),
+                model: Some("sonnet".into()),
+                ..SeatOverride::role(QuarkId::new("acp-claude"))
+            }],
+            ..Team::default()
+        };
+        assert_eq!(resolve_team(&repo_b, &global).quarks[0].model, "sonnet", "B overrides");
+        assert_eq!(global.quarks[0].model, "opus", "the shared catalogue default is unchanged");
+    }
+
+    /// Each definition delta is applied **independently** — `resolve_team` runs four
+    /// separate `if let Some` arms, and forgetting one would be a silent inherit with no
+    /// compile error, so effort/mode/name each override while the others still inherit.
+    #[test]
+    fn each_definition_field_overrides_independently() {
+        let global = Team {
+            quarks: vec![Seat {
+                effort: Some("high".into()),
+                mode_config: Some("architect".into()),
+                display_name: Some("Cat Default".into()),
+                ..seat("q", "acp-claude", "opus", Flavor::Worker)
+            }],
+            roster: vec![],
+            max_exchanges: None,
+        };
+
+        // effort-only override; mode + name inherit.
+        let eff = Team {
+            roster: vec![SeatOverride {
+                effort: Some(Some("low".into())),
+                ..SeatOverride::role(QuarkId::new("q"))
+            }],
+            ..Team::default()
+        };
+        let s = &resolve_team(&eff, &global).quarks[0];
+        assert_eq!(s.effort.as_deref(), Some("low"), "effort overridden");
+        assert_eq!(s.mode_config.as_deref(), Some("architect"), "mode inherited");
+        assert_eq!(s.display_name.as_deref(), Some("Cat Default"), "name inherited");
+
+        // name-only override; effort + mode inherit.
+        let nm = Team {
+            roster: vec![SeatOverride {
+                display_name: Some(Some("NnN Cat".into())),
+                ..SeatOverride::role(QuarkId::new("q"))
+            }],
+            ..Team::default()
+        };
+        let s = &resolve_team(&nm, &global).quarks[0];
+        assert_eq!(s.display_name.as_deref(), Some("NnN Cat"), "name overridden");
+        assert_eq!(s.effort.as_deref(), Some("high"), "effort inherited");
+    }
+
+    /// The reason `effort`/`mode`/`name` are `Option<Option<String>>`: a repo must be
+    /// able to **clear** an inherited value, not just set it. `Some(None)` clears here;
+    /// a single `Option` could not tell this apart from "inherit" and would silently keep
+    /// running the catalogue's `high`.
+    #[test]
+    fn a_cleared_knob_overrides_an_inherited_default_to_none() {
+        let global = Team {
+            quarks: vec![Seat {
+                effort: Some("high".into()),
+                ..seat("q", "acp-claude", "opus", Flavor::Worker)
+            }],
+            roster: vec![],
+            max_exchanges: None,
+        };
+        // Absent effort → inherits "high".
+        let inherit = Team {
+            roster: vec![SeatOverride::role(QuarkId::new("q"))],
+            ..Team::default()
+        };
+        assert_eq!(resolve_team(&inherit, &global).quarks[0].effort.as_deref(), Some("high"));
+        // Some(None) → explicitly cleared here, distinct from inherit.
+        let cleared = Team {
+            roster: vec![SeatOverride {
+                effort: Some(None),
+                ..SeatOverride::role(QuarkId::new("q"))
+            }],
+            ..Team::default()
+        };
+        assert_eq!(
+            resolve_team(&cleared, &global).quarks[0].effort, None,
+            "cleared beats the inherited default",
+        );
+    }
+
+    /// The three-state knob must round-trip through JSON: absent = inherit, `null` =
+    /// cleared, value = set. A regression here (e.g. serde emitting `null` for an absent
+    /// field) would turn every inherit into a clear on the next load.
+    #[test]
+    fn override_knob_tristate_round_trips_through_json() {
+        let ov = SeatOverride {
+            model: Some("sonnet".into()),
+            effort: Some(None),                       // cleared
+            mode_config: Some(Some("ask".into())),    // set
+            // display_name left absent → inherit
+            ..SeatOverride::role(QuarkId::new("acp-claude"))
+        };
+        let json = serde_json::to_string(&ov).unwrap();
+        assert!(json.contains("\"effort\":null"), "cleared serializes as null: {json}");
+        assert!(!json.contains("display_name"), "an inherited field is omitted: {json}");
+        let back: SeatOverride = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ov, "tri-state survives the round trip");
+    }
+
+    /// The Settings-commit path, proven headlessly: editing an adopted quark
+    /// (model→Sonnet, clear an inherited effort, rename) produces a delta that carries
+    /// **only** what differs and preserves participation — and resolving that delta
+    /// reproduces the edit while the shared catalogue default stays Opus/high. This is
+    /// the correctness the chamber's `commit_settings_inputs` rests on.
+    #[test]
+    fn a_settings_edit_becomes_a_delta_that_resolves_back_to_the_edit() {
+        let def = Seat {
+            effort: Some("high".into()),
+            ..seat("acp-claude", "acp-claude", "opus", Flavor::Worker)
+        };
+        let global = Team {
+            quarks: vec![def.clone()],
+            roster: vec![],
+            max_exchanges: None,
+        };
+        // The quark is already adopted here (enabled), and the user edits three fields.
+        let prev = SeatOverride {
+            enabled: Some(true),
+            ..SeatOverride::role(QuarkId::new("acp-claude"))
+        };
+        let desired = Seat {
+            model: "sonnet".into(),
+            effort: None, // cleared
+            display_name: Some("NnN Cat".into()),
+            ..def.clone()
+        };
+        let ov = seat_override_delta(QuarkId::new("acp-claude"), &def, &desired, Some(&prev));
+
+        // Delta carries only the differences, and keeps the quark adopted.
+        assert_eq!(ov.model.as_deref(), Some("sonnet"));
+        assert_eq!(ov.effort, Some(None), "cleared here, distinct from inherit");
+        assert_eq!(ov.display_name, Some(Some("NnN Cat".into())));
+        assert_eq!(ov.mode_config, None, "unedited knob inherits");
+        assert_eq!(ov.enabled, Some(true), "participation preserved");
+
+        // Resolving the delta reproduces the edit; the catalogue default is untouched.
+        let repo = Team { roster: vec![ov], ..Team::default() };
+        let s = &resolve_team(&repo, &global).quarks[0];
+        assert_eq!(s.model, "sonnet");
+        assert_eq!(s.effort, None);
+        assert_eq!(s.display_name.as_deref(), Some("NnN Cat"));
+        assert!(s.enabled);
+        assert_eq!(global.quarks[0].model, "opus", "shared catalogue default unchanged");
+        assert_eq!(global.quarks[0].effort.as_deref(), Some("high"), "default effort unchanged");
+    }
+
+    /// An edit that changes nothing back to the catalogue default produces an all-inherit
+    /// delta — so "reset to default in this repo" genuinely drops the override rather than
+    /// pinning a copy of the default that would not track a later catalogue change.
+    #[test]
+    fn an_edit_matching_the_default_produces_an_all_inherit_delta() {
+        let def = Seat {
+            effort: Some("high".into()),
+            ..seat("q", "acp-claude", "opus", Flavor::Worker)
+        };
+        let ov = seat_override_delta(QuarkId::new("q"), &def, &def, None);
+        assert_eq!(ov.model, None);
+        assert_eq!(ov.effort, None);
+        assert_eq!(ov.mode_config, None);
+        assert_eq!(ov.display_name, None);
     }
 
     /// The migration that runs once on Jake's LIVE setup. This is the single most
