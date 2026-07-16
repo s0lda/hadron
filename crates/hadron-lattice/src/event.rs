@@ -104,6 +104,12 @@ pub enum Kind {
     /// the quark. This is how an append-only field expresses "un-set": the latest
     /// per-quark mode event wins, so a `ModeClear` after a `ModeSet` means inherit.
     ModeClear,
+    /// Force-restart a **resident** quark: reap its live agent subprocess now and let
+    /// it re-boot on its next turn. The envelope's `to` names the quark. A human-issued
+    /// recovery for a wedged ACP agent; the daemon services it immediately (aborting an
+    /// in-flight turn if one is running). A no-op for a quark that holds nothing resident
+    /// (the CLI transports spawn per turn).
+    Reboot,
     /// Any kind this version does not understand. `raw` holds the full set of
     /// non-envelope fields so the event can be re-serialized and displayed.
     Unknown { kind: String, raw: Value },
@@ -314,6 +320,9 @@ impl Serialize for Event {
             Kind::ModeClear => {
                 m.serialize_entry("kind", "mode_clear")?;
             }
+            Kind::Reboot => {
+                m.serialize_entry("kind", "reboot")?;
+            }
             Kind::Unknown { kind, raw } => {
                 m.serialize_entry("kind", kind)?;
                 if let Value::Object(obj) = raw {
@@ -420,6 +429,7 @@ impl<'de> Deserialize<'de> for Event {
                 mode: take_field(&mut map, "mode")?,
             },
             "mode_clear" => Kind::ModeClear,
+            "reboot" => Kind::Reboot,
             other => Kind::Unknown {
                 kind: other.to_string(),
                 raw: Value::Object(map.clone()),
@@ -581,6 +591,18 @@ mod event_tests {
         assert_eq!(back, ev);
         assert_eq!(back.kind, Kind::ModeClear);
         assert_eq!(back.to, Some(QuarkId::new("opus")));
+    }
+
+    #[test]
+    fn reboot_round_trips() {
+        // A human-issued force-restart, targeted at one quark.
+        let ev = Event::new(Actor::Human, Some(QuarkId::new("acp-claude")), Kind::Reboot);
+        let line = serde_json::to_string(&ev).unwrap();
+        assert!(line.contains(r#""kind":"reboot""#));
+        let back: Event = serde_json::from_str(&line).unwrap();
+        assert_eq!(back, ev);
+        assert_eq!(back.kind, Kind::Reboot);
+        assert_eq!(back.to, Some(QuarkId::new("acp-claude")));
     }
 
     #[test]
