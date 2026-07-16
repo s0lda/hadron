@@ -99,6 +99,11 @@ pub enum Kind {
     /// Set the permission mode. The envelope's `to` field is the target:
     /// `Some(quark)` = a per-quark override, `None` = the global default.
     ModeSet { mode: Mode },
+    /// Clear a **per-quark** permission override so the quark reverts to inheriting
+    /// the global default (the "Default" rung in the UI). The envelope's `to` names
+    /// the quark. This is how an append-only field expresses "un-set": the latest
+    /// per-quark mode event wins, so a `ModeClear` after a `ModeSet` means inherit.
+    ModeClear,
     /// Any kind this version does not understand. `raw` holds the full set of
     /// non-envelope fields so the event can be re-serialized and displayed.
     Unknown { kind: String, raw: Value },
@@ -306,6 +311,9 @@ impl Serialize for Event {
                 m.serialize_entry("kind", "mode_set")?;
                 m.serialize_entry("mode", mode)?;
             }
+            Kind::ModeClear => {
+                m.serialize_entry("kind", "mode_clear")?;
+            }
             Kind::Unknown { kind, raw } => {
                 m.serialize_entry("kind", kind)?;
                 if let Value::Object(obj) = raw {
@@ -411,6 +419,7 @@ impl<'de> Deserialize<'de> for Event {
             "mode_set" => Kind::ModeSet {
                 mode: take_field(&mut map, "mode")?,
             },
+            "mode_clear" => Kind::ModeClear,
             other => Kind::Unknown {
                 kind: other.to_string(),
                 raw: Value::Object(map.clone()),
@@ -560,6 +569,18 @@ mod event_tests {
         let back: Event = serde_json::from_str(&serde_json::to_string(&per).unwrap()).unwrap();
         assert_eq!(back, per);
         assert_eq!(back.to, Some(QuarkId::new("agy")));
+    }
+
+    #[test]
+    fn mode_clear_round_trips() {
+        // The "Default" rung: a per-quark clear that reverts to the global default.
+        let ev = Event::new(Actor::Human, Some(QuarkId::new("opus")), Kind::ModeClear);
+        let line = serde_json::to_string(&ev).unwrap();
+        assert!(line.contains(r#""kind":"mode_clear""#));
+        let back: Event = serde_json::from_str(&line).unwrap();
+        assert_eq!(back, ev);
+        assert_eq!(back.kind, Kind::ModeClear);
+        assert_eq!(back.to, Some(QuarkId::new("opus")));
     }
 
     #[test]

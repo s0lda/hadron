@@ -271,6 +271,7 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
             "permission_grant",
         ),
         Kind::ModeSet { mode } => (format!("mode → {mode:?}").to_lowercase(), "mode_set"),
+        Kind::ModeClear => ("mode → default (inherit global)".to_string(), "mode_clear"),
         Kind::Unknown { kind, .. } => (format!("unrecognized event: {kind}"), "unrecognized"),
     };
     MessageRow {

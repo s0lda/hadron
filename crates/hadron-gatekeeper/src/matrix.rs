@@ -38,18 +38,32 @@ pub fn global_mode(events: &[Event]) -> Mode {
 /// The effective mode for `quark`: its latest per-quark override (a `ModeSet`
 /// addressed to it) if any, otherwise the global default, otherwise `Mode::Ask`.
 pub fn resolve_mode(events: &[Event], quark: &QuarkId) -> Mode {
-    let override_mode = events.iter().rev().find_map(|e| match (&e.to, &e.kind) {
-        (Some(t), Kind::ModeSet { mode }) if t == quark => Some(*mode),
-        _ => None,
-    });
-    override_mode.unwrap_or_else(|| global_mode(events))
+    // The latest per-quark mode event wins. A `ModeSet` pins an override; a later
+    // `ModeClear` (the "Default" rung) reverts the quark to the global default. The
+    // global default itself only changes via a global `ModeSet` — so a per-quark
+    // override survives any number of later global changes, which is the point.
+    for e in events.iter().rev() {
+        match (&e.to, &e.kind) {
+            (Some(t), Kind::ModeSet { mode }) if t == quark => return *mode,
+            (Some(t), Kind::ModeClear) if t == quark => break,
+            _ => {}
+        }
+    }
+    global_mode(events)
 }
 
-/// Whether `quark` carries an explicit per-quark override (vs inheriting global).
+/// Whether `quark` carries an effective per-quark override (vs inheriting global):
+/// the latest per-quark mode event is a `ModeSet`. Order-aware, so a `ModeClear`
+/// after a `ModeSet` reads as "no override" — the quark is back on the global default.
 pub fn has_override(events: &[Event], quark: &QuarkId) -> bool {
-    events
-        .iter()
-        .any(|e| matches!((&e.to, &e.kind), (Some(t), Kind::ModeSet { .. }) if t == quark))
+    for e in events.iter().rev() {
+        match (&e.to, &e.kind) {
+            (Some(t), Kind::ModeSet { .. }) if t == quark => return true,
+            (Some(t), Kind::ModeClear) if t == quark => return false,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Fold remembered approvals into the allow-list. A `PermissionGrant` with
@@ -111,6 +125,9 @@ mod tests {
     }
     fn mode_set(to: Option<&str>, mode: Mode) -> Event {
         Event::new(Actor::Human, to.map(QuarkId::new), Kind::ModeSet { mode })
+    }
+    fn mode_clear(to: &str) -> Event {
+        Event::new(Actor::Human, Some(QuarkId::new(to)), Kind::ModeClear)
     }
     fn req(from: &str, desc: &str) -> Event {
         Event::new(
@@ -184,6 +201,50 @@ mod tests {
     fn latest_per_quark_override_wins() {
         let evs = vec![mode_set(Some("agy"), Mode::Auto), mode_set(Some("agy"), Mode::Write)];
         assert_eq!(resolve_mode(&evs, &q("agy")), Mode::Write);
+    }
+
+    /// Jake's exact requirement: "I allow Opus to Bypass because he is smart, but I keep
+    /// all on Ask or Write." Pinning one quark and THEN moving the global must not move the
+    /// pinned quark — only the ones that never got their own setting follow the global.
+    #[test]
+    fn a_per_quark_pin_survives_a_later_global_change() {
+        let evs = vec![
+            mode_set(None, Mode::Ask),            // global default: Ask
+            mode_set(Some("opus"), Mode::Bypass), // human trusts Opus
+            mode_set(None, Mode::Write),          // later: raise everyone else to Write
+        ];
+        // Opus keeps its pin despite the newer global.
+        assert_eq!(resolve_mode(&evs, &q("opus")), Mode::Bypass);
+        assert!(has_override(&evs, &q("opus")));
+        // An un-pinned quark follows the newest global default.
+        assert_eq!(resolve_mode(&evs, &q("kimi")), Mode::Write);
+        assert!(!has_override(&evs, &q("kimi")));
+    }
+
+    /// The "Default" rung: clearing a pin reverts the quark to inheriting the global, and
+    /// `has_override` goes false. Order matters — the clear is newer than the set.
+    #[test]
+    fn mode_clear_reverts_a_pin_to_the_global_default() {
+        let evs = vec![
+            mode_set(None, Mode::Write),          // global Write
+            mode_set(Some("opus"), Mode::Bypass), // pin Opus
+            mode_clear("opus"),                   // "Default" rung: un-pin
+        ];
+        assert_eq!(resolve_mode(&evs, &q("opus")), Mode::Write, "back on the global default");
+        assert!(!has_override(&evs, &q("opus")), "no effective override after a clear");
+    }
+
+    /// A clear is not permanent: pinning again after a clear re-establishes the override
+    /// (the latest per-quark mode event always wins).
+    #[test]
+    fn a_pin_after_a_clear_takes_effect_again() {
+        let evs = vec![
+            mode_set(Some("opus"), Mode::Bypass),
+            mode_clear("opus"),
+            mode_set(Some("opus"), Mode::Auto),
+        ];
+        assert_eq!(resolve_mode(&evs, &q("opus")), Mode::Auto);
+        assert!(has_override(&evs, &q("opus")));
     }
 
     #[test]

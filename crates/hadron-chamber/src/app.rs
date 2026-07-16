@@ -680,7 +680,6 @@ impl Chamber {
             .into_iter()
             .find(|s| s.id.as_str() == qid);
         let effort = seat.as_ref().and_then(|s| s.effort.clone());
-        let session_mode = seat.as_ref().and_then(|s| s.mode_config.clone());
 
         let flavor_str = match &roster_row.flavor {
             Some(hadron_lattice::Flavor::Orchestrator) => "Orchestrator",
@@ -808,9 +807,9 @@ impl Chamber {
         if let Some(e) = &effort {
             config_section = config_section.child(kv_row("Effort", e.clone()));
         }
-        if let Some(m) = &session_mode {
-            config_section = config_section.child(kv_row("Session mode", m.clone()));
-        }
+        // The Permission chip below is the single authority control (it replaced the
+        // Claude-specific ACP `mode_config`), so `mode_config` is deliberately not shown
+        // here — showing both would just relocate the duplication it was meant to remove.
         config_section = config_section.child(
             h_flex()
                 .w_full()
@@ -3210,6 +3209,18 @@ impl Chamber {
         );
     }
 
+    /// Clear a quark's per-quark override (the "Default" rung) by appending a
+    /// `ModeClear`. The quark reverts to inheriting the global default; because the
+    /// latest per-quark mode event wins, this cleanly un-sets an earlier `ModeSet`
+    /// in the append-only field.
+    fn clear_quark_mode(&mut self, id: &str, cx: &mut Context<Self>) {
+        let qid = QuarkId::new(id);
+        self.append_and_reload(
+            Event::new(Actor::Human, Some(qid), Kind::ModeClear),
+            cx,
+        );
+    }
+
     /// The repo `.hadron/team.json` path (the file the chamber edits), whether or not
     /// it exists yet.
     fn repo_team_path(&self) -> PathBuf {
@@ -3624,8 +3635,9 @@ impl Chamber {
     /// The per-quark permission ladder (Ask / Write / Auto / Bypass) as an explicit
     /// segmented picker for Settings. Unlike the roster's cycle-on-click tag, each rung is
     /// directly selectable, the current resolved mode is highlighted on its risk colour,
-    /// and a gloss explains what the choice delegates. Selecting a rung appends a per-quark
-    /// `ModeSet` override (see [`Self::set_quark_mode`]); the daemon honours it next tick.
+    /// and a gloss explains what the choice delegates. The leading **Default** rung clears
+    /// any override (`ModeClear`) so the quark follows the global default; the four posture
+    /// rungs each pin a per-quark `ModeSet` override. The daemon honours it next tick.
     fn mode_select(&self, id: &str, cx: &mut Context<Self>) -> gpui::AnyElement {
         let (current, is_override) = self
             .view
@@ -3635,9 +3647,43 @@ impl Chamber {
             .map(|r| (r.mode, r.mode_is_override))
             .unwrap_or((self.view.global_mode, false));
 
+        // The "Default" rung is inheriting the global default; a concrete rung pins a
+        // per-quark override. So Default is selected exactly when there is no override,
+        // and a posture rung highlights only when it is the *pinned* one — otherwise a
+        // quark inheriting a global "Write" would look identical to one pinned to Write.
         let mut row = h_flex().gap_1p5().flex_wrap();
+        {
+            let id_str = id.to_string();
+            let selected = !is_override;
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("mode-{id}-default")))
+                    .px_2p5()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(selected, |d| {
+                        d.bg(theme::bg_surface_raised())
+                            .border_color(theme::text_secondary())
+                            .text_color(theme::text())
+                    })
+                    .when(!selected, |d| {
+                        d.bg(theme::bg_surface())
+                            .border_color(theme::border())
+                            .text_color(theme::text_secondary())
+                            .hover(|s| s.bg(theme::bg_surface_raised()))
+                    })
+                    .child("Default")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.clear_quark_mode(&id_str, cx);
+                        cx.notify();
+                    })),
+            );
+        }
         for m in [Mode::Ask, Mode::Write, Mode::Auto, Mode::Bypass] {
-            let selected = m == current;
+            let selected = is_override && m == current;
             let id_str = id.to_string();
             row = row.child(
                 div()
@@ -3675,9 +3721,9 @@ impl Chamber {
                     .child(mode_hint(current).to_string()),
             )
             .child(div().text_xs().text_color(theme::text_muted()).child(if is_override {
-                "Set for this quark (overrides the global default).".to_string()
+                format!("Pinned for this quark ({}) — the global default no longer moves it.", mode_label(current))
             } else {
-                format!("Inheriting the global default ({}).", mode_label(current))
+                format!("Default — following the global setting ({}).", mode_label(current))
             }))
             .into_any_element()
     }
@@ -3910,12 +3956,17 @@ impl Chamber {
                     "Display name",
                     Input::new(&self.settings_name).into_any_element(),
                 ))
-                // Model + Effort + Mode configure an agent's session, so they are
-                // quark-only. The human has no such controls — and the typed values were
-                // silently discarded on commit before, so rendering them for the human was
-                // a dead end. Model here is a **per-repo** override: blank inherits the
-                // catalogue default (e.g. acp-claude = Opus), a value pins this repo (=
-                // Sonnet) without touching the shared catalogue or any other repo.
+                // Model + Effort configure an agent's session, so they are quark-only. The
+                // human has no such controls. Model here is a **per-repo** override: blank
+                // inherits the catalogue default (e.g. acp-claude = Opus), a value pins this
+                // repo (= Sonnet) without touching the shared catalogue or any other repo.
+                //
+                // Permission is the single authority control — it REPLACES the old ACP
+                // "Mode" field (default/plan/acceptEdits/bypassPermissions), which set the
+                // same posture axis by a cruder route. The ladder subsumes it: it is live,
+                // turn-granular, and applied over any boot-time `mode_config` per turn. The
+                // `mode_config` seat field is intentionally left in place (still round-trips
+                // through load/commit) but is no longer human-editable here.
                 .when(is_quark, |v| {
                     v.child(settings_field(
                         "Model",
@@ -3930,18 +3981,10 @@ impl Chamber {
                             cx,
                         ),
                     ))
-                    .child(settings_field(
-                        "Mode",
-                        self.session_select(
-                            "mode",
-                            &self.settings_mode_config,
-                            &["default", "plan", "acceptEdits", "bypassPermissions"],
-                            cx,
-                        ),
-                    ))
                     // The permission ladder: how much authority the human delegates to
                     // this quark (Ask → Bypass). Stored on the field as a per-quark
-                    // `ModeSet`, so it is live-honoured and independent of team.json.
+                    // `ModeSet`, so it is live-honoured and independent of team.json. A
+                    // per-quark choice persists even when the global default later changes.
                     .child(settings_field("Permission", self.mode_select(target.key(), cx)))
                 })
                 .child(settings_field("Color", swatches.into_any_element()))
