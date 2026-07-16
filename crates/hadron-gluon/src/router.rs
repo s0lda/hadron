@@ -1,16 +1,27 @@
-use hadron_lattice::{Actor, Event, Flavor, QuarkCard, QuarkId};
+use hadron_lattice::{Actor, Event, Flavor, Kind, QuarkCard, QuarkId, QuarkState};
 
 /// Which quark should be excited next.
 ///
 /// v1 rule (stateless, reconstructed from the field): find the most recent event
-/// that addresses a quark (`to = Some(q)`). If `q` has authored any event since,
+/// that addresses a quark (`to = Some(q)`). If `q` has authored any event since
+/// that represents a reply (a message) or a terminal/pause status (ground, error, blocked, waiting),
 /// that turn is already handled → quiesce (`None`). Otherwise `q` is pending.
 pub fn next_pending(events: &[Event]) -> Option<QuarkId> {
     let idx = events.iter().rposition(|e| e.to.is_some())?;
     let target = events[idx].to.clone().unwrap();
-    let answered = events[idx + 1..]
-        .iter()
-        .any(|e| e.from == Actor::Quark(target.clone()));
+    let answered = events[idx + 1..].iter().any(|e| {
+        e.from == Actor::Quark(target.clone())
+            && (matches!(e.kind, Kind::Message { .. })
+                || matches!(
+                    e.kind,
+                    Kind::Status {
+                        state: QuarkState::Ground
+                            | QuarkState::Error
+                            | QuarkState::Blocked
+                            | QuarkState::Waiting
+                    }
+                ))
+    });
     if answered {
         None
     } else {
@@ -271,6 +282,19 @@ mod tests {
     #[test]
     fn pending_is_unanswered_addressee() {
         let events = vec![msg(Actor::Human, Some("orch"), "go")];
+        assert_eq!(next_pending(&events), Some(QuarkId::new("orch")));
+    }
+
+    #[test]
+    fn excited_status_does_not_count_as_answered() {
+        let events = vec![
+            msg(Actor::Human, Some("orch"), "go"),
+            Event::new(
+                Actor::Quark(QuarkId::new("orch")),
+                None,
+                Kind::Status { state: QuarkState::Excited },
+            ),
+        ];
         assert_eq!(next_pending(&events), Some(QuarkId::new("orch")));
     }
 
