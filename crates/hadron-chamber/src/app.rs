@@ -121,12 +121,29 @@ fn initials(name: &str) -> String {
     }
 }
 
+/// The right [`gpui::ImageSource`] for an avatar path.
+///
+/// gpui's `From<String> for ImageSource` routes a non-URL string to a
+/// `Resource::Embedded` — a lookup in the app's **bundled** asset source, not the
+/// filesystem. A user's avatar file is never a bundled asset, so the load misses and
+/// the avatar falls back to a blank grey circle (its `secondary` background, no
+/// initials). A local file must go through `PathBuf`, which yields a `Resource::Path`
+/// read with `fs::read`. Genuine http(s) URLs stay strings so they take the
+/// `Resource::Uri` (HTTP) route unchanged.
+fn avatar_source(path: &str) -> gpui::ImageSource {
+    if path.starts_with("http://") || path.starts_with("https://") {
+        path.to_string().into()
+    } else {
+        std::path::PathBuf::from(path).into()
+    }
+}
+
 /// Render an identity's avatar: the chosen image if set, else a colored circle
 /// with the name's initials.
 fn identity_avatar(id: &ResolvedIdentity, diameter: f32) -> gpui::AnyElement {
     match &id.image {
         Some(path) => Avatar::new()
-            .src(path.clone())
+            .src(avatar_source(path))
             .with_size(Size::Size(px(diameter)))
             .into_any_element(),
         None => div()
@@ -5847,6 +5864,37 @@ mod tests {
         let html = markdown::to_html_with_options(&colored, &options).unwrap();
         // The HTML should literally contain the span, meaning it wasn't escaped
         assert!(html.contains("<span style=\"color: pink-400\"><strong>@opus</strong></span>"));
+    }
+
+    /// A local avatar path must reach gpui as a `Resource::Path` (read with `fs::read`),
+    /// not a `Resource::Embedded` (a bundled-asset lookup). Handing gpui a bare `String`
+    /// picks the Embedded route, whose lookup misses for a user's file and leaves a blank
+    /// grey avatar — the reported bug. http(s) URLs must stay on the Uri route.
+    #[test]
+    fn a_local_avatar_path_loads_from_the_filesystem_not_as_a_bundled_asset() {
+        use gpui::{ImageSource, Resource};
+        use std::path::PathBuf;
+
+        // The bug: the old `.src(path.clone())` (a String) treats a local file as a
+        // bundled asset (Resource::Embedded), whose lookup misses → blank grey avatar.
+        let buggy: ImageSource = String::from("/home/jake/me.png").into();
+        assert!(
+            matches!(buggy, ImageSource::Resource(Resource::Embedded(_))),
+            "a bare String path is looked up in the bundled asset source, which a user file misses"
+        );
+
+        // The fix: a filesystem path becomes a Resource::Path (fs::read).
+        match avatar_source("/home/jake/me.png") {
+            ImageSource::Resource(r) => {
+                assert_eq!(r, Resource::Path(PathBuf::from("/home/jake/me.png").into()))
+            }
+            _ => panic!("expected a Resource source"),
+        }
+        // A remote URL stays a Uri so http(s) avatars keep working.
+        match avatar_source("https://example.com/me.png") {
+            ImageSource::Resource(Resource::Uri(_)) => {}
+            _ => panic!("expected an http(s) URL to remain a Uri source"),
+        }
     }
 
     /// `@team` and `@orchestrator` route to the swarm rather than to a roster row, so
