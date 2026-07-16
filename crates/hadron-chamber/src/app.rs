@@ -451,12 +451,15 @@ impl Chamber {
         .detach();
 
         // Terminal pump: while the Terminal tab holds a live PTY, size it to the
-        // measured screen and repaint when new output arrives. ~30fps, but does
-        // nothing (and forces no frame) when the terminal is closed or idle — the
-        // software rasteriser only pays for real output.
+        // measured screen and repaint when new output arrives. Capped at ~10fps: a
+        // repaint here re-renders the WHOLE window in software (llvmpipe, no GPU), so a
+        // live TUI that emits every frame (an agent CLI's spinner/token counter) drove
+        // a full-window raster ~30x/sec. A text terminal reads fine at 10fps, and
+        // keystrokes still echo immediately (on_terminal_key notifies directly). Does
+        // nothing (forces no frame) when the terminal is closed or idle.
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
-                .timer(Duration::from_millis(33))
+                .timer(Duration::from_millis(100))
                 .await;
             if this
                 .update(cx, |chamber, cx| chamber.pump_terminal(cx))
@@ -4303,16 +4306,14 @@ fn roster_row(id: &ResolvedIdentity, r: &RosterRow, mode_el: gpui::AnyElement) -
         .border_2()
         .border_color(theme::bg_elevated());
 
+    // Excited = actively working. Show it with a STATIC bright ring, never a running
+    // animation. The chamber software-renders under WSL (llvmpipe, no GPU), and GPUI
+    // re-renders the WHOLE window on every frame an animation is live — so a single
+    // pulsing dot pegged multiple cores at ~60fps whenever any quark worked. This was
+    // the dominant CPU sink (not transparency). A static ring reads as "working" and
+    // costs nothing once painted.
     let dot = if is_excited {
-        dot.with_animation(
-            "pulse",
-            gpui::Animation::new(std::time::Duration::from_millis(1500)).repeat(),
-            move |div, delta| {
-                let v: f32 = 0.3 + (delta * std::f32::consts::PI * 2.0).sin() * 0.7;
-                div.opacity(v.max(0.3_f32))
-            },
-        )
-        .into_any_element()
+        dot.border_color(theme::text()).into_any_element()
     } else {
         dot.into_any_element()
     };
