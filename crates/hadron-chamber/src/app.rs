@@ -661,124 +661,188 @@ impl Chamber {
 
 
     fn info_panel_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let qid = self.info_panel.as_ref().unwrap();
-        let roster_row = self.view.roster.iter().find(|r| &r.id == qid).unwrap();
+        let qid = self.info_panel.as_ref().unwrap().clone();
+        let roster_row = self.view.roster.iter().find(|r| r.id == qid).unwrap();
+        let q_color = theme::actor_hue(&qid);
+        let resolved = self.resolve_identity(&qid);
 
         let stats = self.view.session_stats();
         let q_stats = stats
             .per_quark
             .into_iter()
-            .find(|(id, _)| id == qid)
+            .find(|(id, _)| id == &qid)
             .map(|(_, s)| s)
             .unwrap_or_default();
 
-        let (agent_str, model_str) = match roster_row.transport {
-            hadron_lattice::Transport::Acp => {
-                let agent = if roster_row.model.is_empty() {
-                    "unknown"
-                } else {
-                    &roster_row.model
-                };
-                (agent, "unknown")
-            }
-            hadron_lattice::Transport::Cli => (
-                "hadron-adapter",
-                if roster_row.model.is_empty() {
-                    "unknown"
-                } else {
-                    &roster_row.model
-                },
-            ),
-        };
+        // Effort + session mode live on the resolved seat, not the roster row.
+        let seat = resolve_team(&self.team, &self.global)
+            .quarks
+            .into_iter()
+            .find(|s| s.id.as_str() == qid);
+        let effort = seat.as_ref().and_then(|s| s.effort.clone());
+        let session_mode = seat.as_ref().and_then(|s| s.mode_config.clone());
 
         let flavor_str = match &roster_row.flavor {
             Some(hadron_lattice::Flavor::Orchestrator) => "Orchestrator",
             Some(hadron_lattice::Flavor::Worker) => "Worker",
-            None => "None",
+            None => "—",
         };
-
+        let (agent_str, model_str) = match roster_row.transport {
+            hadron_lattice::Transport::Acp => (roster_row.provider.clone(), roster_row.model.clone()),
+            hadron_lattice::Transport::Cli => ("hadron-adapter".to_string(), roster_row.model.clone()),
+        };
+        let model_str = if model_str.is_empty() { "—".to_string() } else { model_str };
         let transport_str = match roster_row.transport {
             hadron_lattice::Transport::Cli => "CLI (one-shot)",
             hadron_lattice::Transport::Acp => "ACP (resident)",
         };
 
-        let enabled_str = if roster_row.enabled {
-            "Enabled"
+        // Presence: a live (adopted + enabled) quark shows its state colour; otherwise
+        // it is greyed, distinguishing "available here but not adopted" from "disabled".
+        let live = roster_row.adopted && roster_row.enabled;
+        let (dot_color, presence_txt) = if live {
+            (
+                theme::presence(roster_row.state),
+                theme::presence_label(roster_row.state).to_string(),
+            )
+        } else if !roster_row.adopted {
+            (theme::presence_disabled(), "available — not adopted here".to_string())
         } else {
-            "Disabled"
-        };
-        let mode_str = if roster_row.mode_is_override {
-            format!("{:?} (override)", roster_row.mode)
-        } else {
-            format!("{:?} (global default)", roster_row.mode)
+            (theme::presence_disabled(), "disabled".to_string())
         };
 
+        // Header: avatar + display name + a live presence line.
+        let header = h_flex()
+            .gap_3()
+            .items_center()
+            .child(identity_avatar(&resolved, 46.0))
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(q_color)
+                            .child(resolved.name.clone()),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(div().size(px(8.0)).rounded_full().bg(dot_color))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(presence_txt),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(format!("· {qid}")),
+                            ),
+                    ),
+            );
+
+        // A coloured permission chip (always shown, unlike the roster's override-only tag).
+        let pm = roster_row.mode;
+        let perm_chip = h_flex()
+            .gap_2()
+            .items_center()
+            .child(
+                div()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .bg(mode_color(pm).opacity(0.18))
+                    .border_1()
+                    .border_color(mode_color(pm).opacity(0.5))
+                    .text_color(mode_color(pm))
+                    .child(mode_label(pm)),
+            )
+            .child(div().text_xs().text_color(theme::text_muted()).child(
+                if roster_row.mode_is_override { "override" } else { "global default" },
+            ));
+
+        let identity_section = v_flex()
+            .gap_1p5()
+            .child(panel_eyebrow("IDENTITY"))
+            .child(kv_row("Role", flavor_str))
+            .child(kv_row(
+                "State",
+                if roster_row.enabled { "enabled" } else { "disabled" },
+            ))
+            .child(kv_row(
+                "Adoption",
+                if roster_row.adopted { "adopted in this repo" } else { "available (catalogue)" },
+            ));
+
+        let mut config_section = v_flex()
+            .gap_1p5()
+            .child(panel_eyebrow("CONFIGURATION"))
+            .child(kv_row("Provider", roster_row.provider.clone()))
+            .child(kv_row("Agent", agent_str))
+            .child(kv_row("Model", model_str))
+            .child(kv_row("Transport", transport_str));
+        if let Some(e) = &effort {
+            config_section = config_section.child(kv_row("Effort", e.clone()));
+        }
+        if let Some(m) = &session_mode {
+            config_section = config_section.child(kv_row("Session mode", m.clone()));
+        }
+        config_section = config_section.child(
+            h_flex()
+                .w_full()
+                .justify_between()
+                .gap_4()
+                .items_center()
+                .text_sm()
+                .child(div().flex_none().text_color(theme::text_muted()).child("Permission"))
+                .child(perm_chip),
+        );
+
+        // --- Session stats ---
+        let avg = if q_stats.turns > 0 { q_stats.fresh / q_stats.turns } else { 0 };
         let first_seen_str = q_stats
             .first_seen
-            .map(|ts| ts.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-            .unwrap_or_else(|| "Never".to_string());
+            .map(|ts| ts.format("%Y-%m-%d %H:%M UTC").to_string())
+            .unwrap_or_else(|| "never".to_string());
         let last_active_str = q_stats
             .last_active
-            .map(|ts| ts.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-            .unwrap_or_else(|| "Never".to_string());
+            .map(|ts| ts.format("%Y-%m-%d %H:%M UTC").to_string())
+            .unwrap_or_else(|| "never".to_string());
 
         let mut stats_block = v_flex()
-            .gap_1()
-            .mt_4()
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(theme::text())
-                    .child("Session Stats"),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child(format!("Turns: {}", q_stats.turns)),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child(format!(
-                        "Spent: {} fresh, {} cached",
-                        format_num(q_stats.fresh),
-                        format_num(q_stats.cached)
-                    )),
-            );
-
+            .gap_1p5()
+            .child(panel_eyebrow("SESSION"))
+            .child(kv_row("Turns", q_stats.turns.to_string()))
+            .child(kv_row(
+                "Fresh spent",
+                format!("{} ({}/turn)", format_num(q_stats.fresh), format_num(avg)),
+            ))
+            .child(kv_row("Cached", format_num(q_stats.cached)));
         if roster_row.unknown_turns > 0 {
-            stats_block = stats_block.child(div().text_xs().text_color(theme::text_muted()).child(
-                format!("+{} turns of unknown spend", roster_row.unknown_turns),
-            ));
+            stats_block = stats_block
+                .child(kv_row("Unmeasured", format!("+{} turns", roster_row.unknown_turns)));
         }
-
         stats_block = stats_block
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child(format!("First Seen: {}", first_seen_str)),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child(format!("Last Active: {}", last_active_str)),
-            );
+            .child(kv_row("First seen", first_seen_str))
+            .child(kv_row("Last active", last_active_str));
 
         if let Some(ctx) = q_stats.context.as_ref() {
-            stats_block = stats_block.child(div().text_xs().text_color(theme::text_muted()).child(
+            stats_block = stats_block.child(kv_row(
+                "Context",
                 format!(
-                    "Context: {:.1}% ({} / {})",
+                    "{:.1}% ({} / {})",
                     ctx.used_percentage,
                     format_num(ctx.used_tokens),
                     format_num(ctx.context_window_size)
                 ),
             ));
-            let q_color = theme::actor_hue(&roster_row.id);
             let ctx_data = vec![
                 ("Used".to_string(), ctx.used_percentage as f64),
                 (
@@ -787,9 +851,9 @@ impl Chamber {
                 ),
             ];
             stats_block = stats_block.child(
-                div().h(px(60.0)).w_full().child(
+                div().h(px(56.0)).w_full().child(
                     BarChart::new(ctx_data)
-                        .id(format!("info-ctx-chart-{}", roster_row.id))
+                        .id(format!("info-ctx-chart-{qid}"))
                         .name("Context %")
                         .band(|d| d.0.clone())
                         .value(|d| d.1)
@@ -803,13 +867,11 @@ impl Chamber {
                 ),
             );
         }
-
         if !q_stats.spend_history.is_empty() {
-            let q_color = theme::actor_hue(&roster_row.id);
             stats_block = stats_block.child(
-                div().h(px(100.0)).w_full().mt_2().child(
+                div().h(px(96.0)).w_full().mt_1().child(
                     LineChart::new(q_stats.spend_history.clone())
-                        .id(format!("info-spend-chart-{}", roster_row.id))
+                        .id(format!("info-spend-chart-{qid}"))
                         .name("Fresh Spent")
                         .x(|d| format!("T{}", d.turn))
                         .y(|d| d.fresh as f64)
@@ -817,17 +879,11 @@ impl Chamber {
                 ),
             );
         }
-        if !q_stats.quota.is_empty() {
-            for bucket in q_stats.quota {
-                stats_block =
-                    stats_block.child(div().text_xs().text_color(theme::text_muted()).child(
-                        format!(
-                            "Quota [{}]: {:.1}% remaining",
-                            bucket.key,
-                            bucket.remaining_fraction * 100.0
-                        ),
-                    ));
-            }
+        for bucket in q_stats.quota {
+            stats_block = stats_block.child(kv_row(
+                "Quota",
+                format!("{}: {:.0}% left", bucket.key, bucket.remaining_fraction * 100.0),
+            ));
         }
 
         div()
@@ -838,7 +894,7 @@ impl Chamber {
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgba(0x00000066))
+            .bg(rgba(0x00000099))
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
@@ -848,68 +904,21 @@ impl Chamber {
             )
             .child(
                 v_flex()
+                    .id("quark-info-panel")
                     .occlude()
-                    .w(px(400.0))
-                    .bg(theme::bg_surface())
+                    .w(px(420.0))
+                    .max_h(px(660.0))
+                    .overflow_y_scroll()
+                    .bg(theme::glass_surface())
                     .border_1()
-                    .border_color(theme::border())
-                    .rounded_lg()
-                    .p_4()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // Prevent overlay dismiss on inner click
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(theme::actor_hue(qid))
-                            .child(qid.clone()),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .mt_2()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text())
-                                    .child(format!("Flavor: {}", flavor_str)),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text())
-                                    .child(format!("Provider: {}", roster_row.provider)),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text())
-                                    .child(format!("Agent: {}", agent_str)),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text())
-                                    .child(format!("Model: {}", model_str)),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text())
-                                    .child(format!("Transport: {}", transport_str)),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text())
-                                    .child(format!("Mode: {}", mode_str)),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text())
-                                    .child(format!("State: {}", enabled_str)),
-                            ),
-                    )
+                    .border_color(theme::glass_highlight())
+                    .rounded(INNER_RADIUS)
+                    .p_5()
+                    .gap_4()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // swallow inner clicks
+                    .child(header)
+                    .child(identity_section)
+                    .child(config_section)
                     .child(stats_block),
             )
     }
@@ -3284,15 +3293,20 @@ impl Chamber {
             cx.notify();
         });
 
-        let row = |label: &'static str, value: String| {
-            h_flex()
-                .w_full()
-                .justify_between()
-                .gap_4()
-                .text_sm()
-                .child(div().text_color(theme::text_muted()).child(label))
-                .child(div().text_color(theme::text()).child(value))
-        };
+        let adopted = self.view.roster.iter().filter(|r| r.adopted).count();
+        let available = self.view.roster.len().saturating_sub(adopted);
+        let workspace = crate::vcs::repo_root_of(&self.path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| crate::vcs::repo_root_of(&self.path).to_string_lossy().to_string());
+
+        // Signature brand motif: the four quark energies as a small constellation of dots,
+        // echoing the field's corner glows.
+        let quark_dots = h_flex().gap_1p5().items_center().children(
+            [0x38bdf8u32, 0xec4899, 0x34d399, 0xfbbf24]
+                .into_iter()
+                .map(|c| div().size(px(9.0)).rounded_full().bg(rgb(c)).into_any_element()),
+        );
 
         div()
             .absolute()
@@ -3300,37 +3314,56 @@ impl Chamber {
             .flex()
             .items_center()
             .justify_center()
-            .bg(gpui::black().opacity(0.5))
+            .bg(rgba(0x00000099))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.about_open = false;
+                    cx.notify();
+                }),
+            )
             .child(
                 v_flex()
+                    .occlude()
                     .w(px(420.0))
                     .p_5()
-                    .gap_3()
-                    .rounded_lg()
-                    .bg(theme::bg_surface())
+                    .gap_4()
+                    .rounded(INNER_RADIUS)
+                    .bg(theme::glass_surface())
                     .border_1()
-                    .border_color(theme::border())
+                    .border_color(theme::glass_highlight())
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // swallow inner clicks
                     .child(
-                        div()
-                            .text_lg()
-                            .text_color(theme::text())
-                            .child("Hadron"),
+                        h_flex()
+                            .items_center()
+                            .gap_3()
+                            .child(quark_dots)
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::text())
+                                    .child("Hadron"),
+                            ),
                     )
                     .child(
                         div()
                             .text_sm()
-                            .text_color(theme::text_muted())
+                            .text_color(theme::text_secondary())
                             .child("A multi-agent operating system. Quarks take turns in one shared workspace, on one shared field."),
                     )
-                    .child(row("Version", env!("CARGO_PKG_VERSION").to_string()))
-                    .child(row("Licence", "Apache-2.0".to_string()))
-                    .child(row(
-                        "Workspace",
-                        crate::vcs::repo_root_of(&self.path)
-                            .to_string_lossy()
-                            .to_string(),
-                    ))
-                    .child(row("Quarks seated", self.view.roster.len().to_string()))
+                    .child(
+                        v_flex()
+                            .gap_1p5()
+                            .child(panel_eyebrow("BUILD"))
+                            .child(kv_row("Version", env!("CARGO_PKG_VERSION")))
+                            .child(kv_row("Licence", "Apache-2.0"))
+                            .child(kv_row("Workspace", workspace))
+                            .child(kv_row(
+                                "Quarks",
+                                format!("{adopted} adopted · {available} available"),
+                            )),
+                    )
                     .child(
                         div()
                             .text_xs()
@@ -3340,15 +3373,15 @@ impl Chamber {
                     .child(
                         div()
                             .id("about-close")
-                            .mt_2()
                             .self_end()
                             .px_3()
                             .py_1()
                             .rounded_md()
                             .bg(theme::bg_surface_raised())
                             .cursor_pointer()
-                            .hover(|s| s.opacity(0.85))
+                            .hover(|s| s.bg(theme::glass_highlight()))
                             .text_sm()
+                            .text_color(theme::text())
                             .child("Close")
                             .on_click(close),
                     ),
@@ -4858,6 +4891,35 @@ fn settings_field(label: &'static str, content: gpui::AnyElement) -> impl IntoEl
         .gap_1p5()
         .child(div().text_xs().text_color(theme::text_muted()).child(label))
         .child(content)
+}
+
+/// A section eyebrow — the small, muted, all-caps label that heads a group of rows in
+/// the info/about panels, matching the Settings sidebar's "IDENTITIES"/"SETTINGS" style.
+fn panel_eyebrow(label: &'static str) -> impl IntoElement {
+    div()
+        .mt_1()
+        .text_xs()
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(theme::text_muted())
+        .child(label)
+}
+
+/// One label→value row: muted label on the left, value right-aligned. The shared row
+/// shape for the info and about panels, so both read as the same instrument panel.
+fn kv_row(label: &'static str, value: impl Into<String>) -> impl IntoElement {
+    h_flex()
+        .w_full()
+        .justify_between()
+        .gap_4()
+        .text_sm()
+        .child(div().flex_none().text_color(theme::text_muted()).child(label))
+        .child(
+            div()
+                .flex_1()
+                .text_right()
+                .text_color(theme::text())
+                .child(value.into()),
+        )
 }
 
 /// A small, subtle text button for secondary actions (caller attaches on_click).
