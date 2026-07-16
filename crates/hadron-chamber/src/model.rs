@@ -61,6 +61,21 @@ fn resolve_fresh(
     }
 }
 
+/// The fresh (input+output, cache-excluded) tokens one message represents, or `None` if
+/// it carries no spend. The seat's `transport` disambiguates a legacy bare `used_tokens`
+/// (a CLI seat's is fresh; an ACP seat's was a cache-inclusive total we cannot split).
+/// Shared by [`ChamberView::fold_stats`] and [`ChamberView::spend_timeline`] so both read
+/// spend identically.
+fn message_fresh(m: &MessageRow, transport: hadron_lattice::Transport) -> Option<u32> {
+    if let Some(u) = &m.usage {
+        u.spend.fresh()
+    } else if let Some(used) = m.legacy_used_tokens {
+        resolve_fresh(None, used, transport).ok()
+    } else {
+        None
+    }
+}
+
 /// One roster entry: a quark, its latest lifecycle state, its effective
 /// permission mode (and whether that's an explicit per-quark override vs the
 /// inherited global), and its legibility (`provider`/`model` from the team
@@ -196,6 +211,29 @@ pub struct SessionStats {
     pub spend_history: Vec<TurnSpend>,
 }
 
+/// One point on the [`SpendTimeline`]: the **cumulative** fresh spend, per quark and in
+/// total, as of one spend event. `per_quark` is aligned to [`SpendTimeline::quarks`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpendPoint {
+    /// 1-based chronological index of the spend event (the chart's x).
+    pub step: u32,
+    /// Running cumulative fresh spend per quark, aligned to [`SpendTimeline::quarks`].
+    pub per_quark: Vec<f64>,
+    /// Running cumulative fresh spend across the whole team (the sum).
+    pub team: f64,
+}
+
+/// Cumulative fresh spend over turns, per quark and team, for the combined spend area
+/// chart. Each quark is a series (`quarks[i]` ↔ `points[_].per_quark[i]`); the team total
+/// is `points[_].team` and, being the sum, sits above every quark curve. Empty when
+/// nothing spent in the window.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SpendTimeline {
+    /// Series order: the quark ids that spent in the window (all-zero columns dropped).
+    pub quarks: Vec<String>,
+    pub points: Vec<SpendPoint>,
+}
+
 /// Everything the chamber needs to render one frame.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChamberView {
@@ -232,12 +270,22 @@ impl ChamberView {
         window: StatsWindow,
         now: DateTime<chrono::Utc>,
     ) -> SessionStats {
+        // Merged (archives ahead of the live field), windowed, chronological — the fold
+        // needs `ts` order (first_seen / spend_history depend on it).
+        self.fold_stats(self.windowed_messages(archived, window, now).into_iter())
+    }
+
+    /// The window's messages (live field, plus archives for the wider windows), filtered
+    /// to the cutoff and sorted chronologically. Shared by [`Self::stats_for`] and
+    /// [`Self::spend_timeline`] so both read the exact same stream.
+    fn windowed_messages<'a>(
+        &'a self,
+        archived: &'a [MessageRow],
+        window: StatsWindow,
+        now: DateTime<chrono::Utc>,
+    ) -> Vec<&'a MessageRow> {
         let cutoff = window.cutoff(now);
         let in_window = |m: &&MessageRow| cutoff.map_or(true, |c| m.ts >= c);
-
-        // Merge archives (older) ahead of the live field, then sort by `ts` so the fold
-        // is chronological (first_seen / spend_history order depend on it). `Session`
-        // reads the live field alone — its source is the current session.
         let mut msgs: Vec<&MessageRow> = if window.includes_archives() {
             archived
                 .iter()
@@ -248,7 +296,58 @@ impl ChamberView {
             self.messages.iter().filter(in_window).collect()
         };
         msgs.sort_by_key(|m| m.ts);
-        self.fold_stats(msgs.into_iter())
+        msgs
+    }
+
+    /// Cumulative fresh spend over turns, per quark and team, for the combined spend area
+    /// chart (see [`SpendTimeline`]). Walks the same windowed, chronological, roster-
+    /// attributed stream as [`Self::stats_for`], emitting one point per spend event with a
+    /// snapshot of every quark's running total and the team sum. Quarks that never spend
+    /// in the window are dropped, so the series count matches what actually has data.
+    pub fn spend_timeline(
+        &self,
+        archived: &[MessageRow],
+        window: StatsWindow,
+        now: DateTime<chrono::Utc>,
+    ) -> SpendTimeline {
+        // Series order = roster order, so the chart, the cards, and the roster agree.
+        let order: Vec<&str> = self.roster.iter().map(|r| r.id.as_str()).collect();
+        let index: HashMap<&str, usize> =
+            order.iter().enumerate().map(|(i, s)| (*s, i)).collect();
+
+        let mut cum = vec![0f64; order.len()];
+        let mut team = 0f64;
+        let mut points: Vec<SpendPoint> = Vec::new();
+
+        for m in self.windowed_messages(archived, window, now) {
+            let Some(&qi) = index.get(m.from.as_str()) else {
+                continue; // human, gluon, or an actor with no seat
+            };
+            let Some(f) = message_fresh(m, self.roster[qi].transport).filter(|f| *f > 0) else {
+                continue;
+            };
+            cum[qi] += f as f64;
+            team += f as f64;
+            points.push(SpendPoint {
+                step: points.len() as u32 + 1,
+                per_quark: cum.clone(),
+                team,
+            });
+        }
+
+        // Drop columns for quarks that never spent, so the chart draws only live series.
+        let active: Vec<usize> = (0..order.len()).filter(|&i| cum[i] > 0.0).collect();
+        SpendTimeline {
+            quarks: active.iter().map(|&i| order[i].to_string()).collect(),
+            points: points
+                .into_iter()
+                .map(|p| SpendPoint {
+                    step: p.step,
+                    per_quark: active.iter().map(|&i| p.per_quark[i]).collect(),
+                    team: p.team,
+                })
+                .collect(),
+        }
     }
 
     /// The shared fold behind [`Self::session_stats`] and [`Self::stats_for`]: sum the
@@ -273,13 +372,7 @@ impl ChamberView {
                 out.total_turns += 1;
             }
 
-            let fresh = if let Some(u) = &m.usage {
-                u.spend.fresh()
-            } else if let Some(used) = m.legacy_used_tokens {
-                resolve_fresh(None, used, row.transport).ok()
-            } else {
-                None
-            };
+            let fresh = message_fresh(m, row.transport);
 
             if let Some(f) = fresh {
                 s.fresh += f;
@@ -673,6 +766,43 @@ mod tests {
         // Session: live field only, ignores the archived slice entirely.
         let session = view.stats_for(&archived, StatsWindow::Session, now);
         assert_eq!(session.total_fresh, 100, "session never folds archives");
+    }
+
+    /// `spend_timeline` accumulates fresh spend per quark and team over chronological
+    /// steps, and drops a quark that appears but never spends.
+    #[test]
+    fn spend_timeline_accumulates_per_quark_and_team_dropping_silent_quarks() {
+        let now = Utc.with_ymd_and_hms(2026, 7, 16, 12, 0, 0).unwrap();
+        let t = |secs| now - chrono::Duration::seconds(secs);
+        // Chronological by ts: opus(-30), gemini(-20), opus(-10). `agy` appears (so it
+        // holds a roster seat) but only via a no-spend status, so it must be dropped.
+        let live = vec![
+            spend_reply("opus", 100, t(30)),
+            ev(
+                Actor::Quark(QuarkId::new("agy")),
+                None,
+                Kind::Status { state: QuarkState::Ground },
+            ),
+            spend_reply("gemini", 40, t(20)),
+            spend_reply("opus", 50, t(10)),
+        ];
+        let view = project(&live);
+
+        let tl = view.spend_timeline(&[], StatsWindow::Session, now);
+
+        // Only the quarks that spent, in roster (first-seen) order: opus then gemini.
+        assert_eq!(tl.quarks, vec!["opus".to_string(), "gemini".to_string()]);
+        assert_eq!(tl.points.len(), 3, "one point per spend event");
+
+        // Team total is the running sum, monotonic: 100, 140, 190.
+        let team: Vec<f64> = tl.points.iter().map(|p| p.team).collect();
+        assert_eq!(team, vec![100.0, 140.0, 190.0]);
+
+        // Final snapshot: opus 100+50, gemini 40, aligned to `quarks`.
+        let last = tl.points.last().unwrap();
+        assert_eq!(last.step, 3);
+        assert_eq!(last.per_quark, vec![150.0, 40.0]);
+        assert_eq!(last.team, 190.0);
     }
 
     /// `load_archived_messages` reads every `sessions/*/field.jsonl` and concatenates
