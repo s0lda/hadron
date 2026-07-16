@@ -144,11 +144,46 @@ impl Seat {
     }
 }
 
+/// A per-repo override of one catalogue seat: which *role* it plays here and
+/// whether it participates — **without** re-stating the seat's definition. The
+/// definition (provider/model/command/transport/effort) lives once in the global
+/// catalogue (`~/.hadron/team.json`); a repo names a quark by `id` and says only
+/// "here it is the orchestrator" or "here it is off". Both override fields are
+/// optional: an absent one inherits the catalogue's value.
+///
+/// This is what "different orchestrator per repo" costs: a two-field row, not a
+/// duplicated seat. The full [`Seat`] is still supported in [`Team::quarks`] for
+/// backward compatibility (and for a self-contained team that wants no catalogue),
+/// so nothing that predates this type has to change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeatOverride {
+    pub id: QuarkId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flavor: Option<Flavor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
 /// The full team: every seat the human has added.
+///
+/// Two ways to name a seat, and they coexist:
+/// - [`Team::quarks`] — full self-contained [`Seat`] definitions. The original,
+///   and still authoritative: a team.json that only uses this array behaves
+///   byte-for-byte as it always did.
+/// - [`Team::roster`] — role/state-only [`SeatOverride`]s that point at the global
+///   catalogue for their definition. This is what a per-repo team.json carries
+///   once the quark *definitions* live globally.
+///
+/// [`resolve_team`] folds the two (plus the catalogue) into a plain `Vec<Seat>`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Team {
     #[serde(default)]
     pub quarks: Vec<Seat>,
+    /// Per-repo role/state overrides that resolve against the global catalogue.
+    /// Skipped when empty so a legacy team.json (and a catalogue file) never grow
+    /// an empty `"roster": []` key.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roster: Vec<SeatOverride>,
     #[serde(default)]
     pub max_exchanges: Option<usize>,
 }
@@ -163,6 +198,76 @@ impl Team {
     pub fn is_empty(&self) -> bool {
         self.quarks.is_empty()
     }
+}
+
+/// Fold a repo team together with the global catalogue into the concrete team the
+/// daemon seats and the chamber annotates: a plain `Team` whose `quarks` are fully
+/// resolved [`Seat`]s and whose `roster` is empty. The result has exactly the shape
+/// (`Vec<Seat>`) the reseat planner and adapters already handle, so **nothing
+/// downstream of this function changes**.
+///
+/// **Backward compatible by construction.** A repo team that uses only the legacy
+/// `quarks` array (full seats, empty `roster`) resolves to *itself* — every
+/// existing `team.json` behaves byte-for-byte as before, whatever the catalogue holds.
+///
+/// The rules:
+/// - Legacy full seats in `repo.quarks` are kept verbatim (self-contained, no
+///   catalogue lookup) and take precedence: if an id appears in both a legacy seat
+///   and an override, the legacy seat wins and the override is ignored.
+/// - Each `repo.roster` override names a catalogue seat by id, clones its full
+///   definition, and applies the role/state overrides where present.
+/// - An override naming an id the catalogue does **not** define is **dropped**: a
+///   role/state with no definition is not a seatable quark. Because a not-defined
+///   (or not-adopted) quark can never become a [`Seat`] here, it can never reach the
+///   daemon — that is the structural guarantee that a "gray-dot" available quark is
+///   never booted. See [`orphan_overrides`] to surface the dropped ids for a warning.
+/// - `max_exchanges` stays a **repo/team policy**, not a catalogue value: the repo's
+///   setting is authoritative (absent → `None` → the daemon's default), so a repo
+///   file's exchange cap is unchanged by the catalogue it now points at.
+pub fn resolve_team(repo: &Team, global: &Team) -> Team {
+    let mut quarks: Vec<Seat> = Vec::with_capacity(repo.quarks.len() + repo.roster.len());
+    let mut seen: std::collections::HashSet<QuarkId> = std::collections::HashSet::new();
+    // Legacy full seats first — self-contained, highest precedence.
+    for seat in &repo.quarks {
+        if seen.insert(seat.id.clone()) {
+            quarks.push(seat.clone());
+        }
+    }
+    // Overrides resolve their definition from the catalogue.
+    for ov in &repo.roster {
+        if seen.contains(&ov.id) {
+            continue; // a legacy seat with this id already won
+        }
+        let Some(base) = global.get(&ov.id) else {
+            continue; // orphan override: no definition to seat (see orphan_overrides)
+        };
+        let mut seat = base.clone();
+        if let Some(flavor) = ov.flavor.clone() {
+            seat.flavor = flavor;
+        }
+        if let Some(enabled) = ov.enabled {
+            seat.enabled = enabled;
+        }
+        seen.insert(ov.id.clone());
+        quarks.push(seat);
+    }
+    Team {
+        quarks,
+        roster: Vec::new(),
+        max_exchanges: repo.max_exchanges,
+    }
+}
+
+/// The override ids in `repo.roster` that name no legacy seat and no catalogue seat,
+/// so [`resolve_team`] drops them. The daemon logs these — a repo pointing at a quark
+/// the catalogue no longer defines is a stale reference worth a warning, not a silent
+/// disappearance.
+pub fn orphan_overrides(repo: &Team, global: &Team) -> Vec<QuarkId> {
+    repo.roster
+        .iter()
+        .filter(|ov| repo.get(&ov.id).is_none() && global.get(&ov.id).is_none())
+        .map(|ov| ov.id.clone())
+        .collect()
 }
 
 /// The user's home directory, cross-platform: `$HOME` on Unix, `%USERPROFILE%`
@@ -306,6 +411,7 @@ mod tests {
         let path = dir.path().join("team.json");
         let team = Team {
             quarks: vec![seat("opus", "claude", "opus", Flavor::Orchestrator)],
+            roster: vec![],
             max_exchanges: None,
         };
         save_team(&path, &team).unwrap();
@@ -326,13 +432,14 @@ mod tests {
     fn save_team_overwrites_an_existing_file_in_one_step() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("team.json");
-        save_team(&path, &Team { quarks: vec![seat("a", "claude", "m", Flavor::Worker)], max_exchanges: None }).unwrap();
+        save_team(&path, &Team { quarks: vec![seat("a", "claude", "m", Flavor::Worker)], roster: vec![], max_exchanges: None }).unwrap();
 
         let two = Team {
             quarks: vec![
                 seat("a", "claude", "m", Flavor::Worker),
                 seat("b", "agy", "g", Flavor::Worker),
             ],
+            roster: vec![],
             max_exchanges: None,
         };
         save_team(&path, &two).unwrap();
@@ -390,6 +497,7 @@ mod tests {
                 seat("opus", "claude", "opus-4.8", Flavor::Orchestrator),
                 seat("agy", "agy", "gemini-3-pro", Flavor::Worker),
             ],
+            roster: vec![],
             max_exchanges: None,
         };
         let json = serde_json::to_string(&team).unwrap();
@@ -399,7 +507,7 @@ mod tests {
 
     #[test]
     fn lookup_finds_a_seat_by_id() {
-        let team = Team { quarks: vec![seat("agy", "agy", "gemini-3-pro", Flavor::Worker)], max_exchanges: None };
+        let team = Team { quarks: vec![seat("agy", "agy", "gemini-3-pro", Flavor::Worker)], roster: vec![], max_exchanges: None };
         let s = team.get(&QuarkId::new("agy")).unwrap();
         assert_eq!(s.provider, "agy");
         assert_eq!(s.model, "gemini-3-pro");
@@ -469,6 +577,131 @@ mod tests {
         let team = load_team(&path);
         assert_eq!(team.quarks.len(), 1);
         assert_eq!(team.get(&QuarkId::new("opus")).unwrap().model, "opus-4.8");
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+
+    fn seat(id: &str, provider: &str, model: &str, flavor: Flavor) -> Seat {
+        Seat::cli(QuarkId::new(id), provider, model, flavor)
+    }
+
+    /// THE backward-compat guarantee: a repo team that uses only the legacy `quarks`
+    /// array (no overrides) resolves to itself, whatever the catalogue holds. Every
+    /// existing team.json keeps its exact behaviour.
+    #[test]
+    fn a_legacy_only_team_resolves_to_itself() {
+        let repo = Team {
+            quarks: vec![
+                seat("opus", "claude", "opus", Flavor::Orchestrator),
+                seat("agy", "agy", "gemini", Flavor::Worker),
+            ],
+            roster: vec![],
+            max_exchanges: Some(7),
+        };
+        // A catalogue with *different* defs for the same ids must not leak in.
+        let global = Team {
+            quarks: vec![seat("opus", "claude", "SONNET-NOT-THIS", Flavor::Worker)],
+            roster: vec![],
+            max_exchanges: Some(999),
+        };
+        let resolved = resolve_team(&repo, &global);
+        assert_eq!(resolved.quarks, repo.quarks, "legacy seats kept verbatim");
+        assert!(resolved.roster.is_empty());
+        assert_eq!(resolved.max_exchanges, Some(7), "repo policy is authoritative");
+    }
+
+    /// An override pulls its definition from the catalogue and applies the per-repo
+    /// role/state on top.
+    #[test]
+    fn an_override_resolves_its_definition_from_the_catalogue() {
+        let global = Team {
+            quarks: vec![seat("acp-claude", "acp-claude", "opus", Flavor::Worker)],
+            roster: vec![],
+            max_exchanges: None,
+        };
+        let repo = Team {
+            quarks: vec![],
+            roster: vec![SeatOverride {
+                id: QuarkId::new("acp-claude"),
+                flavor: Some(Flavor::Orchestrator),
+                enabled: Some(false),
+            }],
+            max_exchanges: None,
+        };
+        let resolved = resolve_team(&repo, &global);
+        assert_eq!(resolved.quarks.len(), 1);
+        let s = &resolved.quarks[0];
+        assert_eq!(s.provider, "acp-claude", "definition comes from the catalogue");
+        assert_eq!(s.model, "opus");
+        assert_eq!(s.flavor, Flavor::Orchestrator, "repo overrides the role");
+        assert!(!s.enabled, "repo overrides the state");
+    }
+
+    /// Absent override fields inherit the catalogue's values.
+    #[test]
+    fn an_override_inherits_catalogue_values_when_unset() {
+        let global = Team {
+            quarks: vec![Seat {
+                enabled: false,
+                ..seat("q", "claude", "opus", Flavor::Orchestrator)
+            }],
+            roster: vec![],
+            max_exchanges: None,
+        };
+        let repo = Team {
+            quarks: vec![],
+            roster: vec![SeatOverride { id: QuarkId::new("q"), flavor: None, enabled: None }],
+            max_exchanges: None,
+        };
+        let s = &resolve_team(&repo, &global).quarks[0];
+        assert_eq!(s.flavor, Flavor::Orchestrator, "inherits catalogue role");
+        assert!(!s.enabled, "inherits catalogue state");
+    }
+
+    /// An override naming an id the catalogue does not define is dropped — a
+    /// role/state with no definition is not a seatable quark, so it can never reach
+    /// the daemon. `orphan_overrides` surfaces it for a warning.
+    #[test]
+    fn an_orphan_override_is_dropped_and_reported() {
+        let global = Team::default();
+        let repo = Team {
+            quarks: vec![],
+            roster: vec![SeatOverride {
+                id: QuarkId::new("ghost"),
+                flavor: None,
+                enabled: Some(true),
+            }],
+            max_exchanges: None,
+        };
+        assert!(resolve_team(&repo, &global).quarks.is_empty(), "orphan is not seated");
+        assert_eq!(orphan_overrides(&repo, &global), vec![QuarkId::new("ghost")]);
+    }
+
+    /// A legacy full seat wins over an override with the same id (self-contained,
+    /// highest precedence), and the id is not seated twice.
+    #[test]
+    fn a_legacy_seat_wins_over_an_override_of_the_same_id() {
+        let global = Team {
+            quarks: vec![seat("dup", "acp-claude", "CATALOGUE", Flavor::Worker)],
+            roster: vec![],
+            max_exchanges: None,
+        };
+        let repo = Team {
+            quarks: vec![seat("dup", "claude", "LEGACY", Flavor::Orchestrator)],
+            roster: vec![SeatOverride {
+                id: QuarkId::new("dup"),
+                flavor: Some(Flavor::Worker),
+                enabled: Some(false),
+            }],
+            max_exchanges: None,
+        };
+        let resolved = resolve_team(&repo, &global);
+        assert_eq!(resolved.quarks.len(), 1, "seated once, not twice");
+        assert_eq!(resolved.quarks[0].model, "LEGACY", "legacy seat wins");
+        assert_eq!(resolved.quarks[0].flavor, Flavor::Orchestrator);
     }
 }
 

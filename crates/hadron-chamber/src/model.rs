@@ -502,6 +502,7 @@ mod tests {
                     enabled: true,
                 },
             ],
+            roster: vec![],
             max_exchanges: None,
         };
 
@@ -606,6 +607,7 @@ mod tests {
                 "gemini-3-pro",
                 Flavor::Worker,
             )],
+            roster: vec![],
             max_exchanges: None,
         };
         let evs = vec![
