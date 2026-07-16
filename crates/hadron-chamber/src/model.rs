@@ -76,6 +76,9 @@ pub struct RosterRow {
     pub model: String,
     pub flavor: Option<hadron_lattice::Flavor>,
     pub transport: hadron_lattice::Transport,
+    /// The reasoning effort the seat runs at (`low`/`medium`/`high`/…), resolved from
+    /// the team config. `None` = inherit / not set, so no tag is shown.
+    pub effort: Option<String>,
     pub enabled: bool,
     /// Whether this quark is *adopted* by the current repo (seated by the daemon) or
     /// only *available* in the global catalogue. A not-adopted row is shown greyed
@@ -365,7 +368,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
             // Legibility comes from the resolved team if the quark is adopted, else
             // from the catalogue (available-but-off), else it is an event-only id we
             // know nothing about (a live participant with no seat).
-            let (display_name, provider, model, flavor, transport, enabled, adopted) =
+            let (display_name, provider, model, flavor, transport, effort, enabled, adopted) =
                 match (team.get(&qid), global.get(&qid)) {
                     (Some(s), _) => (
                         s.display_name.clone(),
@@ -373,6 +376,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
                         s.model.clone(),
                         Some(s.flavor.clone()),
                         s.transport,
+                        s.effort.clone(),
                         s.enabled,
                         true,
                     ),
@@ -382,6 +386,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
                         g.model.clone(),
                         Some(g.flavor.clone()),
                         g.transport,
+                        g.effort.clone(),
                         false, // not adopted here → inert, greyed like a disabled seat
                         false,
                     ),
@@ -391,6 +396,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
                         String::new(),
                         None,
                         hadron_lattice::Transport::Cli,
+                        None,
                         true,
                         true, // event-only live participant, no seat
                     ),
@@ -406,6 +412,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
                 model,
                 flavor,
                 transport,
+                effort,
                 enabled,
                 adopted,
                 id,
