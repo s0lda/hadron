@@ -367,16 +367,21 @@ pub struct Engine {
     /// gets only the selected skill each turn. Maintained beside `roster`/`quarks` at
     /// every seating path (`new`, `seat`, `unseat`).
     resident: HashSet<QuarkId>,
-    /// Watermark for [`Kind::Reboot`] servicing: the **identity** (ULID) of the last
-    /// field event this engine has already scanned for force-restarts. `None` until the
-    /// first field read baselines it, so every `Reboot` that predates the daemon's boot
-    /// — when there is no live session to kill — is stale-ignored. An identity, never an
-    /// ordering key (two ULIDs minted in the same millisecond are not reliably ordered)
-    /// and never a positional index (which would overrun the slice if `/clear` archiving
-    /// shrinks the field): each read locates this id by position and services what the
-    /// append-ordered field holds after it. Only reboots appended *after* the baseline,
-    /// while the daemon runs, are serviced — exactly once each.
-    reboot_watermark: Option<Ulid>,
+    /// Bookkeeping for [`Kind::Reboot`] servicing: the set of reboot-event **identities**
+    /// (ULIDs) this engine has already acted on. `None` until the first field read
+    /// baselines it — that first read stamps *every* reboot then present as already-seen,
+    /// so reboots that predate the daemon's boot (no live session to kill) are
+    /// stale-ignored. Thereafter every read services each `Reboot` whose id is not yet in
+    /// the set — exactly once each — and adds it.
+    ///
+    /// A **set of identities**, deliberately not a positional watermark: `/clear` archives
+    /// then truncates the field, so a marker recorded pre-clear vanishes from the file and
+    /// a position-based scheme would re-baseline past the fresh post-clear reboots and
+    /// service none (the very reboots `/clear` appends to restart every quark). Unique ids
+    /// survive truncation: a post-clear reboot has an id not in the set, so it fires
+    /// regardless of what the field length did. Growth is one entry per reboot ever
+    /// serviced; reboots are human-initiated and rare, so the set stays tiny.
+    serviced_reboots: Option<HashSet<Ulid>>,
 }
 
 impl Engine {
@@ -424,7 +429,7 @@ impl Engine {
             turn_deadline: TURN_DEADLINE,
             disabled: HashSet::new(),
             resident,
-            reboot_watermark: None,
+            serviced_reboots: None,
         }
     }
 
@@ -1242,10 +1247,10 @@ impl Engine {
     /// Service the human's **force-restart** ([`Kind::Reboot`]) for any reboot event
     /// appended since the last field read.
     ///
-    /// The first call baselines the watermark to the newest event and services
-    /// nothing — every reboot in the field's history predates this daemon, when there
-    /// was no live session to kill. Thereafter, each reboot past the watermark that
-    /// targets a seated quark is serviced exactly once:
+    /// The first call baselines — it records every reboot then in the field as
+    /// already-seen and services nothing, because that history predates this daemon,
+    /// when there was no live session to kill. Thereafter, each reboot whose id is not
+    /// yet in the serviced set and that targets a seated quark is serviced exactly once:
     ///
     /// - **in-flight quark:** abort its running turn task. That drops the turn future,
     ///   releasing the `Mutex` guard the turn held on the quark — so the `lock().await`
@@ -1274,34 +1279,39 @@ impl Engine {
         abort_handles: &mut HashMap<QuarkId, AbortHandle>,
     ) -> anyhow::Result<Vec<QuarkId>> {
         let mut grounded: Vec<QuarkId> = Vec::new();
-        // The watermark is the *identity* (ULID) of the last event this engine has
-        // already scanned, not a positional index and not an ordering key. Two ULIDs
-        // minted in the same millisecond are not reliably ordered (the low bits are
-        // random), so we never compare ids with `<`/`>`; the field's canonical order is
-        // its append order, which `read_events` preserves. We locate the marker by
-        // identity and service everything the file holds after it.
-        let newest = events.last().map(|e| e.id);
-        let Some(marker) = self.reboot_watermark else {
-            self.reboot_watermark = newest;
+
+        // First read: baseline. Stamp every reboot currently in the field as already-seen
+        // (they predate the daemon's boot — no live session to kill) and service nothing.
+        let Some(seen) = &self.serviced_reboots else {
+            self.serviced_reboots = Some(
+                events
+                    .iter()
+                    .filter(|e| matches!(e.kind, Kind::Reboot))
+                    .map(|e| e.id)
+                    .collect(),
+            );
             return Ok(grounded);
         };
-        let start = match events.iter().rposition(|e| e.id == marker) {
-            Some(idx) => idx + 1,
-            // The marker is gone — the field was archived out from under us (`/clear`).
-            // Any reboot it once bounded went with it, so re-baseline to the current
-            // tail and service nothing: a pre-archive restart must not fire post-clear.
-            None => {
-                self.reboot_watermark = newest;
-                return Ok(grounded);
-            }
-        };
 
-        for ev in &events[start..] {
-            if !matches!(ev.kind, Kind::Reboot) {
-                continue;
+        // The reboots not yet serviced, in append order. A reboot is per-quark (envelope
+        // `to`); a broadcast reboot is meaningless and dropped here. We snapshot (id,
+        // target) now so the immutable borrow of `seen` is released before the mutations
+        // below (`append`, `reset_session`). Matching by id — not position — is what makes
+        // this survive `/clear`: a post-clear reboot's id is simply absent from the set, so
+        // it fires no matter how the field length changed under us.
+        let pending: Vec<(Ulid, QuarkId)> = events
+            .iter()
+            .filter(|e| matches!(e.kind, Kind::Reboot))
+            .filter(|e| !seen.contains(&e.id))
+            .filter_map(|e| e.to.clone().map(|target| (e.id, target)))
+            .collect();
+
+        for (id, target) in pending {
+            // Mark serviced before acting, so a reboot for an unseated/unknown quark is
+            // not re-evaluated every pass.
+            if let Some(seen) = &mut self.serviced_reboots {
+                seen.insert(id);
             }
-            // A reboot is per-quark (envelope `to`); a broadcast reboot is meaningless.
-            let Some(target) = ev.to.clone() else { continue };
             let Some(quark) = self.quarks.get(&target).cloned() else {
                 eprintln!(
                     "gluon: reboot for unseated quark {} — ignored",
@@ -1329,7 +1339,6 @@ impl Engine {
             eprintln!("gluon: force-restarted quark {}", target.as_str());
         }
 
-        self.reboot_watermark = newest;
         Ok(grounded)
     }
 
@@ -4003,7 +4012,8 @@ mod tests {
     // The human's manual "Restart" reaps a wedged quark's resident session. Idle →
     // just reset it; mid-turn → abort the turn, ground it, reset it, and leave every
     // sibling running. A reboot that predates this daemon (no live session to kill) is
-    // stale-ignored by the ULID watermark.
+    // stale-ignored by the baseline. Servicing keys on the reboot event's *id* (a set of
+    // serviced ids), not a position, so a `/clear` truncation cannot hide a fresh reboot.
 
     /// A quark that records whether its session was reset — the observable of a reboot.
     struct ResettableQuark {
@@ -4098,6 +4108,44 @@ mod tests {
         assert!(
             was_reset.load(Ordering::SeqCst),
             "a reboot past the watermark must reset the idle quark's session"
+        );
+    }
+
+    /// `/clear` truncates the field and appends a fresh reboot per quark. The reboot
+    /// that told this quark to restart must still fire even though every event the
+    /// baseline recorded was archived out from under the engine — the identity set, not a
+    /// file position, is what makes that hold. (A positional watermark, its marker gone
+    /// with the truncation, would re-baseline and service nothing.)
+    #[tokio::test]
+    async fn a_reboot_appended_after_a_clear_truncation_still_resets_the_quark() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let was_reset = Arc::new(AtomicBool::new(false));
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(ResettableQuark { id: QuarkId::new("q"), was_reset: was_reset.clone() })],
+            10,
+        );
+        let mut in_flight: HashSet<QuarkId> = HashSet::new();
+        let mut handles: HashMap<QuarkId, AbortHandle> = HashMap::new();
+
+        // Some pre-clear history, then baseline over it (services nothing).
+        append_event(&field, &Event::new(Actor::Human, Some(QuarkId::new("q")), Kind::Reboot)).unwrap();
+        append_event(&field, &Event::new(Actor::Human, None, Kind::Message { body: "hi".into() })).unwrap();
+        let events = read_events(&field).unwrap();
+        engine.service_reboots(&events, &mut in_flight, &mut handles).await.unwrap();
+        assert!(!was_reset.load(Ordering::SeqCst), "baseline must not service history");
+
+        // `/clear`: the live field is truncated to empty, then a fresh reboot lands (the
+        // one `/clear` appends to restart every seated quark).
+        std::fs::write(&field, "").unwrap();
+        append_event(&field, &Event::new(Actor::Human, Some(QuarkId::new("q")), Kind::Reboot)).unwrap();
+        let events = read_events(&field).unwrap();
+        engine.service_reboots(&events, &mut in_flight, &mut handles).await.unwrap();
+        assert!(
+            was_reset.load(Ordering::SeqCst),
+            "a post-/clear reboot must reset the quark even though the baseline events were truncated away"
         );
     }
 
