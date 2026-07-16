@@ -59,6 +59,17 @@ pub struct AcpAgentSpec {
 
 /// Every ACP agent with a built-in boot command. A seat may still override the
 /// command, and a seat on an unlisted provider must supply one.
+///
+/// The first four entries are the ones we have actually written down from a
+/// vendor's own docs (and `acp-claude` we have driven live). Everything after them
+/// is a **best-effort** preset generated from the upstream catalogue in
+/// `docs/research/acp-providers.md`: the provider string and a plausible boot
+/// command derived from the agent's package/CLI name, all `proven: false`. The
+/// upstream page lists each agent's *package*, not always its exact ACP-mode
+/// invocation — so these argv are a starting point, not a guarantee. If one does
+/// not boot as written, override it with a `command` in `team.json` (which is the
+/// escape hatch every uncatalogued provider already uses) and, once confirmed,
+/// promote the preset here.
 pub const ACP_AGENTS: &[AcpAgentSpec] = &[
     AcpAgentSpec {
         provider: "acp-claude",
@@ -93,6 +104,240 @@ pub const ACP_AGENTS: &[AcpAgentSpec] = &[
         name: "Antigravity (SDK)",
         program: "crates/hadron-gluon/scripts/venv/bin/python",
         args: &["crates/hadron-gluon/scripts/agy_acp.py"],
+        proven: false,
+    },
+    // ── Best-effort presets from docs/research/acp-providers.md (all unproven) ──
+    // Bare CLI name as program, no args: the upstream page rarely documents the
+    // exact ACP-mode flag, so we do not guess one. Override in team.json if needed.
+    AcpAgentSpec {
+        provider: "acp-agentpool",
+        name: "AgentPool (ACP)",
+        program: "agentpool",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-augment",
+        name: "Augment Code (ACP)",
+        program: "augmentcode",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-autodev",
+        name: "AutoDev (ACP)",
+        program: "auto-dev",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-blackbox",
+        name: "Blackbox AI (ACP)",
+        program: "blackbox-cli",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-bub",
+        name: "Bub (ACP)",
+        program: "bub-acp-server",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-cagent",
+        name: "Docker cagent (ACP)",
+        program: "cagent",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-cline",
+        name: "Cline (ACP)",
+        program: "cline",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-code-assistant",
+        name: "Code Assistant (ACP)",
+        program: "code-assistant",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-construct",
+        name: "Construct (ACP)",
+        program: "construct",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-copilot",
+        name: "GitHub Copilot (ACP)",
+        program: "copilot",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-crow",
+        name: "crow-cli (ACP)",
+        program: "crow-cli",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-cursor",
+        name: "Cursor (ACP)",
+        program: "cursor",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-factory",
+        name: "Factory Droid (ACP)",
+        program: "factory",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-fast-agent",
+        name: "fast-agent (ACP)",
+        program: "fast-agent",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-fount",
+        name: "fount (ACP)",
+        program: "fount",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-goose",
+        name: "Goose (ACP)",
+        program: "goose",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-hermes",
+        name: "Hermes Agent (ACP)",
+        program: "hermes-agent",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-junie",
+        name: "Junie (ACP)",
+        program: "junie",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-kimi",
+        name: "Kimi CLI (ACP)",
+        program: "kimi-cli",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-kiro",
+        name: "Kiro CLI (ACP)",
+        program: "kiro",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-minion",
+        name: "Minion Code (ACP)",
+        program: "minion-code",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-mistral",
+        name: "Mistral Vibe (ACP)",
+        program: "mistral-vibe",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-openclaw",
+        name: "OpenClaw (ACP)",
+        program: "openclaw",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-opencode",
+        name: "OpenCode (ACP)",
+        program: "opencode",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-openhands",
+        name: "OpenHands (ACP)",
+        program: "openhands",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-pi",
+        name: "Pi (ACP)",
+        program: "pi-acp",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-poolside",
+        name: "Poolside (ACP)",
+        program: "pool",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-qoder",
+        name: "Qoder CLI (ACP)",
+        program: "qoder",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-qwen",
+        name: "Qwen Code (ACP)",
+        program: "qwen-code",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-sigit",
+        name: "siGit Code (ACP)",
+        program: "sigit",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-stakpak",
+        name: "Stakpak (ACP)",
+        program: "agent",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-stdiobus",
+        name: "stdio Bus (ACP)",
+        program: "stdiobus",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        provider: "acp-vtcode",
+        name: "VT Code (ACP)",
+        program: "vtcode",
+        args: &[],
         proven: false,
     },
 ];
