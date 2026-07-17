@@ -496,7 +496,43 @@ mod tests {
         for inv in recorded.iter() {
             assert!(inv.args.is_empty(), "generic spec has no argv flags at all: {:?}", inv.args);
         }
-        // And no resume flag, even on the second turn — `resume: None` on the spec.
-        assert!(!recorded[1].stdin.contains("--continue"));
+        // And no resume flag, even on the second turn — `resume: None` on the spec, so
+        // `--continue` (an argv token on agy, never a stdin string) never appears at all.
+        assert!(!recorded[1].args.iter().any(|a| a == "--continue"));
+    }
+
+    /// **The inverse of `a_resumed_turn_...stops_resending_the_field`.** `resident`
+    /// alone must NOT trigger `without_field_window`: a generic CLI with
+    /// `resume: None` has no `--continue`-equivalent, so it has no way to recall
+    /// history it didn't just receive. Stripping the field window on turn two would
+    /// silently throw away context the CLI can never get back — pinning that
+    /// `excite`'s guard is `resident && spec.resume != None`, not `resident` alone.
+    #[tokio::test]
+    async fn generic_cli_does_not_strip_field_window_across_turns() {
+        let runner = FakeRunner::with_stdout(vec!["one", "two"]);
+        let spec = CliSpec::generic("cat".to_string(), vec![]);
+        let mut q = CliQuark::new(QuarkId::new("cat-quark"), Flavor::Worker, "", spec, runner);
+
+        let mut first = projection_mode("first task", Mode::Bypass);
+        first.field_window = vec![Event::new(
+            Actor::Human,
+            None,
+            Kind::Message { body: "MEMORABLE-TRANSCRIPT-LINE".into() },
+        )];
+        let mut second = first.clone();
+        second.task = "second task".into();
+
+        q.excite(first).await.unwrap();
+        q.excite(second).await.unwrap();
+
+        let recorded = q.runner.recorded.lock().unwrap();
+        // Stdin channel (generic spec), not argv — the prompt lands in `.stdin`.
+        assert!(recorded[0].stdin.contains("MEMORABLE-TRANSCRIPT-LINE"), "first turn carries the field");
+        let second_prompt = &recorded[1].stdin;
+        assert!(second_prompt.contains("second task"), "the new instruction rides");
+        assert!(
+            second_prompt.contains("MEMORABLE-TRANSCRIPT-LINE"),
+            "a no-resume CLI must keep re-sending context it has no way to recall"
+        );
     }
 }
