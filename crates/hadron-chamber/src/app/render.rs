@@ -177,7 +177,7 @@ impl Chamber {
                         format!("{} {}", c.program, c.args.join(" "))
                     }
                 })
-                .unwrap_or_else(|| format!("default ({})", roster_row.provider)),
+                .unwrap_or_else(|| format!("default ({})", roster_row.vendor)),
             hadron_lattice::Transport::Cli => "hadron-adapter".to_string(),
             hadron_lattice::Transport::Sdk => "reserved (not yet implemented)".to_string(),
         };
@@ -319,7 +319,7 @@ impl Chamber {
         let mut config_section = v_flex()
             .gap_1p5()
             .child(panel_eyebrow("CONFIGURATION"))
-            .child(kv_row("Provider", roster_row.provider.clone()))
+            .child(kv_row("Vendor", roster_row.vendor.clone()))
             .child(kv_row("Agent", agent_str))
             .child(kv_row("Model", model_str))
             .child(kv_row("Transport", transport_str));
