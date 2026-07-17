@@ -1250,6 +1250,17 @@ impl Chamber {
                                     // otherwise the next `parse_team` normalizes it and the chamber's
                                     // held team diverges from the reloaded one, forever "changed".
                                     seat.normalize_vendor();
+                                    // Advisory only, never blocking: the preset-driven wizard
+                                    // always derives `id` from the catalogue key today (already
+                                    // `<transport>-<vendor>`), but this future-proofs for a
+                                    // custom-CLI seat with a hand-typed id that might not match.
+                                    if !hadron_lattice::id_follows_convention(seat.id.as_str(), seat.transport) {
+                                        eprintln!(
+                                            "chamber: note — id '{}' does not match the '{}-' convention",
+                                            seat.id.as_str(),
+                                            seat.transport.code()
+                                        );
+                                    }
                                     this.add_configured_quark(seat, cx);
 
                                     this.wizard_state = WizardState::None;
