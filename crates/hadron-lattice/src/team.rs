@@ -41,6 +41,20 @@ pub enum Transport {
     Sdk,
 }
 
+impl Transport {
+    /// The short wire/id code: `"cli"` / `"acp"` / `"sdk"`. SSOT for every place that
+    /// needs the bare transport word — the `<transport>-<vendor>` id prefix
+    /// ([`id_follows_convention`]) and the chamber's roster/provider display both read
+    /// this instead of repeating the match.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Transport::Cli => "cli",
+            Transport::Acp => "acp",
+            Transport::Sdk => "sdk",
+        }
+    }
+}
+
 /// How to boot an ACP agent: the program and its args. Comes
 /// straight out of `team.json`, so reaching a *new* ACP agent is a config change
 /// rather than a code change — which is the entire point of standing on a
@@ -459,12 +473,7 @@ pub fn rename_legacy_ids(team: &mut Team) {
 /// Advisory only — used to default new-seat ids and to warn, never to reject (custom ids like
 /// `cli-agy-pro` stay legal).
 pub fn id_follows_convention(id: &str, transport: Transport) -> bool {
-    let prefix = match transport {
-        Transport::Cli => "cli-",
-        Transport::Acp => "acp-",
-        Transport::Sdk => "sdk-",
-    };
-    id.starts_with(prefix)
+    id.starts_with(&format!("{}-", transport.code()))
 }
 
 /// The user's home directory, cross-platform: `$HOME` on Unix, `%USERPROFILE%`
@@ -827,6 +836,13 @@ mod tests {
         assert_eq!(team.quarks[0].id.as_str(), "acp-claude", "not in the map, unchanged");
         assert!(id_follows_convention("acp-claude", Transport::Acp));
         assert!(!id_follows_convention("agy", Transport::Cli));
+    }
+
+    #[test]
+    fn transport_code_is_the_short_wire_word() {
+        assert_eq!(Transport::Cli.code(), "cli");
+        assert_eq!(Transport::Acp.code(), "acp");
+        assert_eq!(Transport::Sdk.code(), "sdk");
     }
 }
 
