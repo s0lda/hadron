@@ -290,7 +290,7 @@ fn build_invariants(workspace_root: &std::path::Path, requested: &[String]) -> (
 ///    useful.
 ///
 /// 48 KiB keeps a generous multi-turn transcript while leaving room under the
-/// adapter's own [safety net](crate::adapter::agy) for the diff, nucleus and task.
+/// adapter's own [safety net](crate::adapter::cli) for the diff, nucleus and task.
 /// A *byte* budget, not an event count: one long message can blow an event count.
 pub const FIELD_WINDOW_BUDGET_BYTES: usize = 48 * 1024;
 
@@ -3980,6 +3980,11 @@ mod tests {
 
         let mut claude = Seat::cli(QuarkId::new("acp-claude"), "claude", "opus", Flavor::Worker);
         claude.display_name = Some("Claude".into());
+        // `claude` has no built-in CLI preset any more (Claude is ACP-only, per
+        // spec's "ACP-only for Claude" decision) — this test is about display-name
+        // routing, not CLI dispatch, so give the seat an explicit generic spec
+        // rather than switching vendors and losing the `@Claude` intent.
+        claude.cli = Some(hadron_lattice::CliSpec::generic("claude".into(), vec![]));
         let agy = Seat::cli(QuarkId::new("agy"), "agy", "", Flavor::Orchestrator);
 
         let engine = Engine::new(
