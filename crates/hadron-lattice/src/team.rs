@@ -844,6 +844,33 @@ mod tests {
         assert_eq!(Transport::Acp.code(), "acp");
         assert_eq!(Transport::Sdk.code(), "sdk");
     }
+
+    #[test]
+    fn a_pre_migration_team_resolves_to_the_same_seats_as_its_migrated_form() {
+        // Legacy shape: smeared `provider`, legacy ids.
+        let legacy = r#"{"quarks":[
+            {"id":"agy","provider":"agy","model":"flash","flavor":"orchestrator","transport":"cli"},
+            {"id":"acp-claude","provider":"acp-claude","model":"opus","flavor":"worker","transport":"acp"}
+        ]}"#;
+        let mut before = parse_team(legacy).unwrap();
+
+        // Migrated shape: pure vendor + renamed cli- id, same behaviour.
+        let migrated = r#"{"quarks":[
+            {"id":"cli-agy","vendor":"agy","model":"flash","flavor":"orchestrator","transport":"cli"},
+            {"id":"acp-claude","vendor":"claude","model":"opus","flavor":"worker","transport":"acp"}
+        ]}"#;
+        let after = parse_team(migrated).unwrap();
+
+        // Vendor + transport + model + flavor must match seat-for-seat after the id-rename.
+        rename_legacy_ids(&mut before);
+        let empty = Team::default();
+        let rb = resolve_team(&before, &empty);
+        let ra = resolve_team(&after, &empty);
+        let key = |t: &Team| t.quarks.iter()
+            .map(|s| (s.id.0.clone(), s.vendor.clone(), s.transport, s.model.clone(), s.flavor.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(key(&rb), key(&ra), "legacy and migrated forms resolve identically");
+    }
 }
 
 #[cfg(test)]
