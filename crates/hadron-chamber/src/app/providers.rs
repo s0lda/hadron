@@ -149,7 +149,7 @@ pub(super) fn migrate_repo_to_catalogue(repo_path: &std::path::Path, global_path
 /// team, the global catalogue, and the chamber's per-quark identity — all off the single
 /// `legacy_id_renames` map. Idempotent; safe to call every launch.
 ///
-/// Writes the catalogue (global) first, then the repo, matching the read order
+/// Writes the catalogue (global) first, then the repo, matching the write order
 /// [`migrate_repo_to_catalogue`] uses — so the two migrations are consistent for the next
 /// maintainer to reason about. This does NOT make the pair atomic: on an overrides-only
 /// repo, a repo-file override references a catalogue seat *by id*, so renaming the two
