@@ -1478,7 +1478,7 @@ mod tests {
             .parent()
             .and_then(|p| p.parent())
             .expect("crates/hadron-gluon sits two levels under the workspace root");
-        let preset = AcpTarget::for_provider("acp-agy").expect("acp-agy is in the catalogue");
+        let preset = AcpTarget::for_vendor("agy").expect("agy is in the catalogue");
         let target = AcpTarget {
             program: root.join(&preset.program).display().to_string(),
             args: preset.args.iter().map(|a| root.join(a).display().to_string()).collect(),

@@ -47,8 +47,8 @@ pub struct AcpTarget {
 /// this agent, or merely written down its command line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AcpAgentSpec {
-    /// The `provider` string a seat carries, e.g. `"acp-claude"`.
-    pub provider: &'static str,
+    /// The pure vendor a seat carries, e.g. `"claude"`.
+    pub vendor: &'static str,
     /// What a human sees in the provider list.
     pub name: &'static str,
     pub program: &'static str,
@@ -61,7 +61,7 @@ pub struct AcpAgentSpec {
 /// command, and a seat on an unlisted provider must supply one.
 ///
 /// The first four entries are the ones we have actually written down from a
-/// vendor's own docs (and `acp-claude` we have driven live). Everything after them
+/// vendor's own docs (and `claude` we have driven live). Everything after them
 /// is a **best-effort** preset generated from the upstream catalogue in
 /// `docs/research/acp-providers.md`: the provider string and a plausible boot
 /// command derived from the agent's package/CLI name, all `proven: false`. The
@@ -72,7 +72,7 @@ pub struct AcpAgentSpec {
 /// promote the preset here.
 pub const ACP_AGENTS: &[AcpAgentSpec] = &[
     AcpAgentSpec {
-        provider: "acp-claude",
+        vendor: "claude",
         name: "Claude Code (ACP)",
         program: "npx",
         args: &["-y", "@agentclientprotocol/claude-agent-acp@latest"],
@@ -80,7 +80,7 @@ pub const ACP_AGENTS: &[AcpAgentSpec] = &[
         proven: true,
     },
     AcpAgentSpec {
-        provider: "acp-codex",
+        vendor: "codex",
         name: "Codex CLI (ACP)",
         program: "npx",
         args: &["-y", "@agentclientprotocol/codex-acp@latest"],
@@ -92,7 +92,7 @@ pub const ACP_AGENTS: &[AcpAgentSpec] = &[
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-gemini",
+        vendor: "gemini",
         name: "Gemini CLI (ACP)",
         program: "gemini",
         args: &["--experimental-acp"],
@@ -100,7 +100,7 @@ pub const ACP_AGENTS: &[AcpAgentSpec] = &[
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-agy",
+        vendor: "agy",
         name: "Antigravity (SDK)",
         program: "crates/hadron-gluon/scripts/venv/bin/python",
         args: &["crates/hadron-gluon/scripts/agy_acp.py"],
@@ -110,231 +110,231 @@ pub const ACP_AGENTS: &[AcpAgentSpec] = &[
     // Bare CLI name as program, no args: the upstream page rarely documents the
     // exact ACP-mode flag, so we do not guess one. Override in team.json if needed.
     AcpAgentSpec {
-        provider: "acp-agentpool",
+        vendor: "agentpool",
         name: "AgentPool (ACP)",
         program: "agentpool",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-augment",
+        vendor: "augment",
         name: "Augment Code (ACP)",
         program: "augmentcode",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-autodev",
+        vendor: "autodev",
         name: "AutoDev (ACP)",
         program: "auto-dev",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-blackbox",
+        vendor: "blackbox",
         name: "Blackbox AI (ACP)",
         program: "blackbox-cli",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-bub",
+        vendor: "bub",
         name: "Bub (ACP)",
         program: "bub-acp-server",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-cagent",
+        vendor: "cagent",
         name: "Docker cagent (ACP)",
         program: "cagent",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-cline",
+        vendor: "cline",
         name: "Cline (ACP)",
         program: "cline",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-code-assistant",
+        vendor: "code-assistant",
         name: "Code Assistant (ACP)",
         program: "code-assistant",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-construct",
+        vendor: "construct",
         name: "Construct (ACP)",
         program: "construct",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-copilot",
+        vendor: "copilot",
         name: "GitHub Copilot (ACP)",
         program: "copilot",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-crow",
+        vendor: "crow",
         name: "crow-cli (ACP)",
         program: "crow-cli",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-cursor",
+        vendor: "cursor",
         name: "Cursor (ACP)",
         program: "cursor",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-factory",
+        vendor: "factory",
         name: "Factory Droid (ACP)",
         program: "factory",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-fast-agent",
+        vendor: "fast-agent",
         name: "fast-agent (ACP)",
         program: "fast-agent",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-fount",
+        vendor: "fount",
         name: "fount (ACP)",
         program: "fount",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-goose",
+        vendor: "goose",
         name: "Goose (ACP)",
         program: "goose",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-hermes",
+        vendor: "hermes",
         name: "Hermes Agent (ACP)",
         program: "hermes-agent",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-junie",
+        vendor: "junie",
         name: "Junie (ACP)",
         program: "junie",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-kimi",
+        vendor: "kimi",
         name: "Kimi CLI (ACP)",
         program: "kimi-cli",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-kiro",
+        vendor: "kiro",
         name: "Kiro CLI (ACP)",
         program: "kiro",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-minion",
+        vendor: "minion",
         name: "Minion Code (ACP)",
         program: "minion-code",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-mistral",
+        vendor: "mistral",
         name: "Mistral Vibe (ACP)",
         program: "mistral-vibe",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-openclaw",
+        vendor: "openclaw",
         name: "OpenClaw (ACP)",
         program: "openclaw",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-opencode",
+        vendor: "opencode",
         name: "OpenCode (ACP)",
         program: "opencode",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-openhands",
+        vendor: "openhands",
         name: "OpenHands (ACP)",
         program: "openhands",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-pi",
+        vendor: "pi",
         name: "Pi (ACP)",
         program: "pi-acp",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-poolside",
+        vendor: "poolside",
         name: "Poolside (ACP)",
         program: "pool",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-qoder",
+        vendor: "qoder",
         name: "Qoder CLI (ACP)",
         program: "qoder",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-qwen",
+        vendor: "qwen",
         name: "Qwen Code (ACP)",
         program: "qwen-code",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-sigit",
+        vendor: "sigit",
         name: "siGit Code (ACP)",
         program: "sigit",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-stakpak",
+        vendor: "stakpak",
         name: "Stakpak (ACP)",
         program: "agent",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-stdiobus",
+        vendor: "stdiobus",
         name: "stdio Bus (ACP)",
         program: "stdiobus",
         args: &[],
         proven: false,
     },
     AcpAgentSpec {
-        provider: "acp-vtcode",
+        vendor: "vtcode",
         name: "VT Code (ACP)",
         program: "vtcode",
         args: &[],
@@ -344,23 +344,23 @@ pub const ACP_AGENTS: &[AcpAgentSpec] = &[
 
 impl AcpTarget {
     /// The Claude ACP adapter — a Node process wrapping the Claude Agent SDK and
-    /// speaking ACP. This is the default boot command for the `"acp-claude"`
-    /// provider, and it is what the live round-trip test drives.
+    /// speaking ACP. This is the default boot command for the `"claude"`
+    /// vendor, and it is what the live round-trip test drives.
     pub fn claude_adapter() -> AcpTarget {
-        AcpTarget::for_provider("acp-claude").expect("acp-claude is in the catalogue")
+        AcpTarget::for_vendor("claude").expect("claude is in the catalogue")
     }
 
-    /// The built-in boot command for a catalogued provider, or `None` for a
-    /// provider Hadron has never heard of (which must name its own command).
-    pub fn for_provider(provider: &str) -> Option<AcpTarget> {
-        ACP_AGENTS.iter().find(|a| a.provider == provider).map(|a| AcpTarget {
+    /// The built-in boot command for a catalogued vendor, or `None` for a
+    /// vendor Hadron has never heard of (which must name its own command).
+    pub fn for_vendor(vendor: &str) -> Option<AcpTarget> {
+        ACP_AGENTS.iter().find(|a| a.vendor == vendor).map(|a| AcpTarget {
             program: a.program.to_string(),
             args: a.args.iter().map(|s| s.to_string()).collect(),
         })
     }
 
-    /// The boot target for a seat: its explicit `command`, else the provider's
-    /// built-in default. `None` for a non-ACP seat, or an ACP seat on a provider
+    /// The boot target for a seat: its explicit `command`, else the vendor's
+    /// built-in default. `None` for a non-ACP seat, or an ACP seat on a vendor
     /// with no catalogue command and no command of its own. The same resolution
     /// [`QuarkKind::from_seat`] uses, factored out so the chamber can build a probe
     /// target from a seat without going through the whole `QuarkKind` mapping.
@@ -370,7 +370,7 @@ impl AcpTarget {
         }
         match &seat.command {
             Some(cmd) => Some(AcpTarget { program: cmd.program.clone(), args: cmd.args.clone() }),
-            None => AcpTarget::for_provider(&seat.vendor),
+            None => AcpTarget::for_vendor(&seat.vendor),
         }
     }
 
@@ -384,7 +384,7 @@ impl AcpTarget {
 }
 
 impl QuarkKind {
-    /// The provider list the chamber renders: `(provider, display name, program, args)`.
+    /// The provider list the chamber renders: `(vendor, display name, program, args)`.
     ///
     /// A *view* of [`ACP_AGENTS`], not a list of its own — so the wizard can only
     /// offer an agent the daemon can actually boot. The previous version of this
@@ -392,35 +392,33 @@ impl QuarkKind {
     /// ACP at all: a provider list that drifts from the registry is a list of
     /// promises nothing keeps.
     pub fn available_presets() -> Vec<(&'static str, &'static str, &'static str, Vec<&'static str>)> {
-        ACP_AGENTS.iter().map(|a| (a.provider, a.name, a.program, a.args.to_vec())).collect()
+        ACP_AGENTS.iter().map(|a| (a.vendor, a.name, a.program, a.args.to_vec())).collect()
     }
 
-    /// Map a `Seat.provider` string to a **CLI** transport. ACP providers are not
-    /// resolvable from the provider string alone — they need the seat's boot
+    /// Map a `Seat.vendor` string to a **CLI** transport. ACP vendors are not
+    /// resolvable from the vendor string alone — they need the seat's boot
     /// `command` — so they resolve in [`QuarkKind::from_seat`].
-    pub fn from_provider(provider: &str) -> anyhow::Result<QuarkKind> {
-        match provider {
+    pub fn from_vendor(vendor: &str) -> anyhow::Result<QuarkKind> {
+        match vendor {
             "claude" => Ok(QuarkKind::Claude),
             "agy" => Ok(QuarkKind::Agy),
-            other => anyhow::bail!(
-                "unknown provider {other:?} (expected \"claude\", \"agy\", \"acp-claude\" or \"acp\")"
-            ),
+            other => anyhow::bail!("unknown vendor {other:?} (expected \"claude\" or \"agy\")"),
         }
     }
 
     /// Resolve a seat's transport. `Transport::Cli` keeps resolving exactly as
-    /// before, off the provider string alone. `Transport::Acp` reads the seat's
-    /// boot `command`, falling back to the provider's built-in default when the
-    /// seat names none — so `acp-claude` needs no command, and an agent we have
+    /// before, off the vendor string alone. `Transport::Acp` reads the seat's
+    /// boot `command`, falling back to the vendor's built-in default when the
+    /// seat names none — so `claude` needs no command, and an agent we have
     /// never heard of needs one.
     pub fn from_seat(seat: &Seat) -> anyhow::Result<QuarkKind> {
         match seat.transport {
-            Transport::Cli => QuarkKind::from_provider(&seat.vendor),
+            Transport::Cli => QuarkKind::from_vendor(&seat.vendor),
             Transport::Acp => {
                 let target = AcpTarget::for_seat(seat).ok_or_else(|| {
-                    let provider = seat.vendor.as_str();
+                    let vendor = seat.vendor.as_str();
                     anyhow::anyhow!(
-                        "seat '{}' is an ACP seat on provider {provider:?}, which has no \
+                        "seat '{}' is an ACP seat on vendor {vendor:?}, which has no \
                          built-in boot command — give it one, e.g. \
                          \"command\": {{\"program\": \"npx\", \"args\": [\"-y\", \"…\"]}}",
                         seat.id.as_str()
@@ -493,8 +491,8 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
     Ok(quark)
 }
 
-/// Build a live quark from a team-config `Seat`. The seat's `provider` picks the
-/// transport: CLI (`claude`/`agy`) or ACP (`acp-claude`/`acp`).
+/// Build a live quark from a team-config `Seat`. The seat's `transport` picks CLI vs
+/// ACP; the seat's `vendor` (`claude`/`agy`/…) picks which one within that transport.
 pub fn build_seat(seat: &Seat) -> anyhow::Result<Box<dyn Quark>> {
     build(QuarkSpec {
         id: seat.id.clone(),
@@ -625,21 +623,36 @@ mod tests {
         assert!(seat("a", "claude").command.is_none());
     }
 
-    /// `acp-claude` needs no `program`: it defaults to the Claude ACP adapter, so
+    /// `claude` needs no `program`: it defaults to the Claude ACP adapter, so
     /// seating one is a one-line config change.
+    ///
+    /// This also PROVES the latent gap this task closes: `acp_seat` builds a seat
+    /// with `vendor: "claude"` (the pure form Task 1's `normalize_vendor` produces
+    /// from a legacy `"acp-claude"`, and what a fresh wizard-written seat carries
+    /// today) and no `command`. Before the catalogue was re-keyed on pure vendor,
+    /// `for_vendor("claude")` would find nothing — the catalogue was still keyed
+    /// `"acp-claude"` — and this seat would fail to resolve its boot command.
     #[test]
     fn acp_claude_defaults_to_the_claude_adapter() {
-        let kind = QuarkKind::from_seat(&acp_seat("acp", "acp-claude")).unwrap();
+        let seat = acp_seat("acp", "claude");
+        assert!(seat.command.is_none(), "the gap this closes only exists when the seat names no command");
+        let kind = QuarkKind::from_seat(&seat).unwrap();
         assert_eq!(kind, QuarkKind::Acp(AcpTarget::claude_adapter()));
+        let QuarkKind::Acp(target) = kind else { unreachable!() };
+        assert_eq!(
+            target.command_line(),
+            "npx -y @agentclientprotocol/claude-agent-acp@latest",
+            "a command-less claude ACP seat must resolve via for_vendor(\"claude\") to the real boot command"
+        );
     }
 
     /// The GPT seat. Nothing structural ever stopped one — the ACP transport takes
     /// any agent that speaks the protocol — so seating Codex is a catalogue entry and
-    /// a `provider` string, not an adapter. This pins the boot command so a typo in it
+    /// a `vendor` string, not an adapter. This pins the boot command so a typo in it
     /// is a red test rather than a seat that silently boots nothing.
     #[test]
     fn a_codex_seat_boots_the_openai_acp_adapter() {
-        let QuarkKind::Acp(t) = QuarkKind::from_seat(&acp_seat("gpt", "acp-codex")).unwrap() else {
+        let QuarkKind::Acp(t) = QuarkKind::from_seat(&acp_seat("gpt", "codex")).unwrap() else {
             panic!("expected an ACP transport");
         };
         assert_eq!(t.command_line(), "npx -y @agentclientprotocol/codex-acp@latest");
@@ -649,7 +662,7 @@ mod tests {
     /// checkout gets used.
     #[test]
     fn a_seat_can_override_the_acp_boot_command() {
-        let mut s = acp_seat("acp", "acp-claude");
+        let mut s = acp_seat("acp", "claude");
         s.command = Some(AcpCommand { program: "node".into(), args: vec!["./my-adapter.js".into()] });
         let QuarkKind::Acp(t) = QuarkKind::from_seat(&s).unwrap() else {
             panic!("expected an ACP transport");
@@ -657,18 +670,21 @@ mod tests {
         assert_eq!(t.command_line(), "node ./my-adapter.js");
     }
 
-    /// An uncatalogued ACP provider reaches an agent we have never heard of — and it
+    /// An uncatalogued ACP vendor reaches an agent we have never heard of — and it
     /// must SAY so when the seat forgot to name a command, rather than booting nothing.
+    /// (Uses a vendor absent from `ACP_AGENTS` — `goose` used to serve this role, but
+    /// `goose` is itself a catalogued best-effort preset, so it no longer proves the
+    /// "uncatalogued" case now that the catalogue keys on pure vendor.)
     #[test]
     fn an_uncatalogued_acp_seat_requires_a_command_and_says_so() {
-        let mut s = acp_seat("goose", "goose");
+        let mut s = acp_seat("unlisted", "no-such-agent");
         s.command = Some(AcpCommand { program: "goose".into(), args: vec!["acp".into()] });
         let QuarkKind::Acp(t) = QuarkKind::from_seat(&s).unwrap() else {
             panic!("expected an ACP transport");
         };
         assert_eq!(t.command_line(), "goose acp");
 
-        let err = QuarkKind::from_seat(&acp_seat("nope", "goose")).unwrap_err().to_string();
+        let err = QuarkKind::from_seat(&acp_seat("nope", "no-such-agent")).unwrap_err().to_string();
         assert!(err.contains("no built-in boot command"), "must name the fix: {err}");
     }
 
@@ -685,26 +701,26 @@ mod tests {
 
     /// `AcpTarget::for_seat` is what the chamber probes with, so it must resolve a
     /// seat's boot command the same way `from_seat` does: a CLI seat has none, an ACP
-    /// seat defaults to its provider's catalogue command, and an explicit `command`
+    /// seat defaults to its vendor's catalogue command, and an explicit `command`
     /// overrides. (An uncatalogued ACP seat with no command has no target — `None`.)
     #[test]
     fn for_seat_resolves_the_probe_target() {
         // CLI seat → no ACP target.
         assert_eq!(AcpTarget::for_seat(&seat("opus", "claude")), None);
 
-        // ACP seat, default provider command.
+        // ACP seat, default vendor command.
         assert_eq!(
-            AcpTarget::for_seat(&acp_seat("gpt", "acp-codex")),
-            AcpTarget::for_provider("acp-codex"),
+            AcpTarget::for_seat(&acp_seat("gpt", "codex")),
+            AcpTarget::for_vendor("codex"),
         );
 
         // ACP seat with an explicit command override wins over the catalogue default.
-        let mut s = acp_seat("acp", "acp-claude");
+        let mut s = acp_seat("acp", "claude");
         s.command = Some(AcpCommand { program: "node".into(), args: vec!["./x.js".into()] });
         assert_eq!(AcpTarget::for_seat(&s).unwrap().command_line(), "node ./x.js");
 
-        // Uncatalogued ACP provider, no command → nothing to boot.
-        assert_eq!(AcpTarget::for_seat(&acp_seat("nope", "goose")), None);
+        // Uncatalogued ACP vendor, no command → nothing to boot.
+        assert_eq!(AcpTarget::for_seat(&acp_seat("nope", "no-such-agent")), None);
     }
 
     /// The catalogue is the SSOT for the provider list: every entry must resolve to
@@ -713,16 +729,16 @@ mod tests {
     fn every_catalogued_acp_agent_resolves_to_its_boot_command() {
         assert!(!ACP_AGENTS.is_empty());
         for a in ACP_AGENTS {
-            let target = AcpTarget::for_provider(a.provider)
-                .unwrap_or_else(|| panic!("{} is in the catalogue but will not resolve", a.provider));
+            let target = AcpTarget::for_vendor(a.vendor)
+                .unwrap_or_else(|| panic!("{} is in the catalogue but will not resolve", a.vendor));
             assert_eq!(target.program, a.program);
             assert_eq!(
-                QuarkKind::from_seat(&acp_seat("q", a.provider)).unwrap(),
+                QuarkKind::from_seat(&acp_seat("q", a.vendor)).unwrap(),
                 QuarkKind::Acp(target),
                 "a catalogued ACP seat needs no command of its own"
             );
         }
-        assert!(AcpTarget::for_provider("no-such-agent").is_none());
+        assert!(AcpTarget::for_vendor("no-such-agent").is_none());
     }
 
     /// An ACP seat builds a real quark, and building it spawns NOTHING — the agent
@@ -731,9 +747,17 @@ mod tests {
     /// daemon start.)
     #[test]
     fn building_an_acp_seat_spawns_no_process() {
-        let s = acp_seat("acp", "acp-claude");
+        let s = acp_seat("acp", "claude");
         let q = build_seat(&s).unwrap();
         assert_eq!(q.id(), QuarkId::new("acp"));
         assert_eq!(q.flavor(), Flavor::Worker);
+    }
+
+    #[test]
+    fn catalogue_is_keyed_on_pure_vendor() {
+        // The ACP catalogue is *the ACP catalogue*, so transport is implied: it keys on the
+        // pure vendor "claude", not the old smeared "acp-claude".
+        assert!(AcpTarget::for_vendor("claude").is_some(), "claude resolves by pure vendor");
+        assert!(AcpTarget::for_vendor("acp-claude").is_none(), "the old smeared key is gone");
     }
 }
