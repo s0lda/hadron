@@ -7,7 +7,9 @@ use hadron_lattice::{Actor, Event, Flavor, Kind, QuarkCard, QuarkId, QuarkState}
 /// that represents a reply (a message) or a terminal/pause status (ground, error, blocked, waiting),
 /// that turn is already handled → quiesce (`None`). Otherwise `q` is pending.
 pub fn next_pending(events: &[Event]) -> Option<QuarkId> {
-    let idx = events.iter().rposition(|e| e.to.is_some())?;
+    let idx = events
+        .iter()
+        .rposition(|e| e.to.is_some() && is_turn_request(e))?;
     let target = events[idx].to.clone().unwrap();
     let answered = events[idx + 1..].iter().any(|e| is_turn_completion(e, &target));
     if answered {
@@ -15,6 +17,24 @@ pub fn next_pending(events: &[Event]) -> Option<QuarkId> {
     } else {
         Some(target)
     }
+}
+
+/// Does event `e` **request or resume** a turn from the quark it addresses (`to =
+/// Some(q)`)? A `Message` or `Assign` starts a new turn; a `PermissionGrant` resumes a
+/// paused one (the engine re-dispatches on `to == quark`).
+///
+/// The SSOT for "an addressed event that wants a turn", the counterpart to
+/// [`is_turn_completion`]. Control/config events that ALSO carry a `to` — `Reboot`
+/// (force-restart), `ModeSet`/`ModeClear` (per-quark posture) — are deliberately
+/// excluded: they address a quark to reconfigure it, not to make it work. Counting one
+/// as pending gave the quark a spurious empty turn — most visibly on every `/clear`,
+/// which appends one `Reboot` per resident quark, so the last-addressed reboot read as
+/// an unanswered turn request and excited that quark.
+pub fn is_turn_request(e: &Event) -> bool {
+    matches!(
+        e.kind,
+        Kind::Message { .. } | Kind::Assign { .. } | Kind::PermissionGrant { .. }
+    )
 }
 
 /// Does event `e` represent `quark` **completing** a turn — a reply (a `Message`) or a
@@ -188,7 +208,7 @@ pub fn human_mentions(body: &str, roster: &[QuarkCard]) -> Vec<QuarkId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hadron_lattice::{EnergyState, Flavor, Kind};
+    use hadron_lattice::{EnergyState, Flavor, Kind, Mode};
 
     fn msg(from: Actor, to: Option<&str>, body: &str) -> Event {
         Event::new(from, to.map(QuarkId::new), Kind::Message { body: body.into() })
@@ -343,6 +363,44 @@ mod tests {
             msg(Actor::Quark(QuarkId::new("orch")), Some("worker"), "@worker do the UI"),
         ];
         assert_eq!(next_pending(&events), Some(QuarkId::new("worker")));
+    }
+
+    /// A `Kind::Reboot` addresses a quark only to force-restart it — it is NOT a turn
+    /// request. `/clear` appends one reboot per resident quark, so a reboot that counted
+    /// as pending would hand the last-addressed quark a spurious empty turn (the
+    /// "`/clear` triggers codex" bug).
+    #[test]
+    fn a_reboot_is_not_a_pending_turn() {
+        // Post-`/clear`: the field holds only reboots, one per resident quark.
+        let post_clear = vec![
+            Event::new(Actor::Human, Some(QuarkId::new("orch")), Kind::Reboot),
+            Event::new(Actor::Human, Some(QuarkId::new("worker")), Kind::Reboot),
+        ];
+        assert_eq!(next_pending(&post_clear), None);
+
+        // A reboot after an already-answered message must not re-excite the quark.
+        let answered_then_rebooted = vec![
+            msg(Actor::Human, Some("orch"), "go"),
+            msg(Actor::Quark(QuarkId::new("orch")), None, "done"),
+            Event::new(Actor::Human, Some(QuarkId::new("orch")), Kind::Reboot),
+        ];
+        assert_eq!(next_pending(&answered_then_rebooted), None);
+    }
+
+    /// A per-quark `ModeSet` also carries a `to`, but changing a quark's permission
+    /// posture must never start a turn.
+    #[test]
+    fn a_per_quark_mode_change_is_not_a_pending_turn() {
+        let events = vec![
+            msg(Actor::Human, Some("orch"), "go"),
+            msg(Actor::Quark(QuarkId::new("orch")), None, "done"),
+            Event::new(
+                Actor::Human,
+                Some(QuarkId::new("orch")),
+                Kind::ModeSet { mode: Mode::Bypass },
+            ),
+        ];
+        assert_eq!(next_pending(&events), None);
     }
 
     #[test]

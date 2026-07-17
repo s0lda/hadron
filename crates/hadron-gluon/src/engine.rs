@@ -4149,6 +4149,42 @@ mod tests {
         );
     }
 
+    /// End-to-end guard for the "`/clear` triggers codex" bug. After `/clear` the field
+    /// holds only reboots — one per resident quark — and NONE may read as a pending turn.
+    /// `pending_targets` is what the dispatch loop spawns from, so an empty result here is
+    /// the proof that a reboot excites nobody (it is a restart, serviced separately). The
+    /// last-addressed reboot used to come back as pending, handing that quark an empty turn.
+    #[test]
+    fn post_clear_reboots_are_not_pending_turns() {
+        use std::sync::atomic::AtomicBool;
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let engine = Engine::new(
+            field,
+            vec![
+                Box::new(ResettableQuark {
+                    id: QuarkId::new("a"),
+                    was_reset: Arc::new(AtomicBool::new(false)),
+                }),
+                Box::new(ResettableQuark {
+                    id: QuarkId::new("codex"),
+                    was_reset: Arc::new(AtomicBool::new(false)),
+                }),
+            ],
+            10,
+        );
+        // Exactly what `/clear` leaves in the (truncated) field: a reboot per quark.
+        let events = vec![
+            Event::new(Actor::Human, Some(QuarkId::new("a")), Kind::Reboot),
+            Event::new(Actor::Human, Some(QuarkId::new("codex")), Kind::Reboot),
+        ];
+        assert!(
+            engine.pending_targets(&events).is_empty(),
+            "post-/clear reboots must excite nobody, got: {:?}",
+            engine.pending_targets(&events),
+        );
+    }
+
     /// **The discriminating test.** A mid-turn reboot must abort *only* the target's
     /// turn — killing its reply, grounding it, resetting its session — and leave a
     /// sibling's turn to finish. The sibling assertion is what proves the aborted
