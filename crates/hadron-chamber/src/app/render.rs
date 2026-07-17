@@ -2686,6 +2686,20 @@ impl Chamber {
             )
     }
 
+    /// Render a message body as Markdown under an element id unique to `(view, ix)`.
+    ///
+    /// The id is load-bearing, not decoration. `gpui_component::text::markdown()`
+    /// derives its `ElementId` from `Location::caller()`, so every row rendered from
+    /// one call site would share a single id — and the `TextView`'s parsed state is
+    /// keyed on that id. All messages would then share one state, whose `set_text`
+    /// would see different text on every message and re-parse (and re-highlight) the
+    /// Markdown for every row, every frame. Distinct ids give each row its own state,
+    /// so `set_text` early-returns and the parse happens once per body.
+    ///
+    /// Keying on the positional `ix` is sound only because the field is append-only and
+    /// rendered oldest-first, so a given message keeps its index for the window's life.
+    /// If rows ever get reordered or filtered, key on a stable message id instead — the
+    /// cache would silently stop helping, and no test would catch the regression.
     pub(super) fn markdown_body(
         &self,
         view: &'static str,
