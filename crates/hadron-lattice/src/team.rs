@@ -430,6 +430,43 @@ pub fn orphan_overrides(repo: &Team, global: &Team) -> Vec<QuarkId> {
         .collect()
 }
 
+/// The one-shot legacy id renames, in one place so every consumer (the team.json pass
+/// below and the chamber's ChamberPrefs key move) reads the SAME map. Only the two
+/// built-ins that predate the `<transport>-<vendor>` convention; every other id is left
+/// alone, so a user's custom id is never surprise-renamed.
+pub fn legacy_id_renames() -> &'static [(&'static str, &'static str)] {
+    &[("agy", "cli-agy"), ("opus", "cli-claude")]
+}
+
+/// Apply [`legacy_id_renames`] to a team in place: both full-seat ids and roster override
+/// ids (a roster entry references a catalogue id, so it must move in lockstep). Idempotent
+/// — an already-renamed id is not in the map's left column, so a second run changes nothing.
+pub fn rename_legacy_ids(team: &mut Team) {
+    let rename = |id: &mut QuarkId| {
+        if let Some((_, new)) = legacy_id_renames().iter().find(|(old, _)| *old == id.as_str()) {
+            *id = QuarkId::new(*new);
+        }
+    };
+    for seat in &mut team.quarks {
+        rename(&mut seat.id);
+    }
+    for ov in &mut team.roster {
+        rename(&mut ov.id);
+    }
+}
+
+/// Soft convention check: does `id` start with its transport prefix (`cli-`, `acp-`, `sdk-`)?
+/// Advisory only — used to default new-seat ids and to warn, never to reject (custom ids like
+/// `cli-agy-pro` stay legal).
+pub fn id_follows_convention(id: &str, transport: Transport) -> bool {
+    let prefix = match transport {
+        Transport::Cli => "cli-",
+        Transport::Acp => "acp-",
+        Transport::Sdk => "sdk-",
+    };
+    id.starts_with(prefix)
+}
+
 /// The user's home directory, cross-platform: `$HOME` on Unix, `%USERPROFILE%`
 /// on Windows. `None` if neither is set.
 fn home_dir() -> Option<PathBuf> {
@@ -754,6 +791,42 @@ mod tests {
         let team = parse_team(json).expect("legacy team parses");
         assert_eq!(team.quarks[0].vendor, "claude", "acp- prefix stripped to pure vendor");
         assert_eq!(team.quarks[1].vendor, "agy", "bare vendor left as-is");
+    }
+
+    #[test]
+    fn rename_legacy_ids_applies_the_map_to_quarks_and_roster_and_is_idempotent() {
+        let mut team = Team {
+            quarks: vec![
+                Seat::cli(QuarkId::new("agy"), "agy", "flash", Flavor::Orchestrator),
+                Seat::cli(QuarkId::new("opus"), "claude", "opus", Flavor::Worker),
+            ],
+            roster: vec![SeatOverride::role(QuarkId::new("agy"))],
+            max_exchanges: None,
+        };
+        rename_legacy_ids(&mut team);
+        assert_eq!(team.quarks[0].id.as_str(), "cli-agy");
+        assert_eq!(team.quarks[1].id.as_str(), "cli-claude");
+        assert_eq!(team.roster[0].id.as_str(), "cli-agy", "roster ids move too");
+
+        let snapshot = team.clone();
+        rename_legacy_ids(&mut team); // second run is a no-op
+        assert_eq!(team, snapshot, "idempotent: nothing already-renamed changes");
+    }
+
+    #[test]
+    fn acp_ids_already_follow_convention_and_are_untouched() {
+        let mut team = Team {
+            quarks: vec![Seat {
+                transport: Transport::Acp,
+                ..Seat::cli(QuarkId::new("acp-claude"), "claude", "opus", Flavor::Worker)
+            }],
+            roster: vec![],
+            max_exchanges: None,
+        };
+        rename_legacy_ids(&mut team);
+        assert_eq!(team.quarks[0].id.as_str(), "acp-claude", "not in the map, unchanged");
+        assert!(id_follows_convention("acp-claude", Transport::Acp));
+        assert!(!id_follows_convention("agy", Transport::Cli));
     }
 }
 
