@@ -141,7 +141,7 @@ fn seat_quarks(team: &Team, live_dir: &Path) -> (Vec<Box<dyn Quark>>, &'static s
                 eprintln!(
                     "  seated {} — {} · {} ({:?})",
                     seat.id.as_str(),
-                    seat.provider,
+                    seat.vendor,
                     seat.model,
                     seat.flavor
                 );
@@ -226,7 +226,7 @@ fn apply_reseat(
                 eprintln!(
                     "  seated {} — {} · {} ({:?})",
                     seat.id.as_str(),
-                    seat.provider,
+                    seat.vendor,
                     seat.model,
                     seat.flavor
                 );
