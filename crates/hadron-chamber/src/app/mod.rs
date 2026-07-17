@@ -56,8 +56,8 @@ use tabs::{ChatTab, InfoTab, Rail, RightRailTab};
 
 mod providers;
 use providers::{
-    configured_providers, migrate_repo_to_catalogue, AgentDescriptor, ConfiguredQuark,
-    ProviderState, SettingsTarget, WizardState,
+    configured_providers, migrate_repo_to_catalogue, AcpModelProbe, AcpModelState,
+    AgentDescriptor, ConfiguredQuark, ProviderState, SettingsTarget, WizardState,
 };
 
 mod widgets;
@@ -213,6 +213,9 @@ struct Chamber {
     _settings_subs: [Subscription; 4],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
+    /// Offered-model probe for the ACP quark whose Settings are open — drives the model
+    /// dropdown. `None` for a non-ACP target or before the first probe. See `providers`.
+    acp_model_probe: Option<AcpModelProbe>,
     /// Every workspace entry with its ignored flag; drives the file tree. Gitignored
     /// entries are flagged `true` (rendered muted) and wholly-ignored dirs are collapsed.
     file_tree_paths: Vec<(String, bool)>,
@@ -439,6 +442,7 @@ impl Chamber {
             _settings_subs,
             providers,
             wizard_state: WizardState::None,
+            acp_model_probe: None,
             file_tree_paths: files,
             completion_files,
             file_tree_open: None,

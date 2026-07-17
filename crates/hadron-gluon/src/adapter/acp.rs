@@ -297,18 +297,42 @@ pub fn resolve_model(selector: &ModelSelector, wanted: &str) -> Option<String> {
 ///
 /// Returns the agent's own name (ACP's `agent_info`), or the reason it failed.
 pub fn probe(target: &AcpTarget) -> anyhow::Result<String> {
+    let (name, opts) = probe_session(target)?;
+    // The handshake result the human is shown: the agent's own current model when it
+    // offers a picker, else the agent's name — proof that *something* answered.
+    Ok(match model_selector(&opts) {
+        Some(selector) => selector.current,
+        None => name.unwrap_or_else(|| "unnamed agent".into()),
+    })
+}
+
+/// The agent's advertised **model selector** — the offered models plus its current
+/// (default) pick — or `None` when the agent offers no model picker. Same boot as
+/// [`probe`]; the chamber re-probes with this each time an ACP quark's Settings open,
+/// so the model dropdown reflects the agent's live lineup rather than a cached guess.
+pub fn probe_selector(target: &AcpTarget) -> anyhow::Result<Option<ModelSelector>> {
+    let (_name, opts) = probe_session(target)?;
+    Ok(model_selector(&opts))
+}
+
+/// Boot an ACP agent, complete `initialize` + `session/new`, read back the agent's
+/// name and its advertised `config_options`, and shut it down. The shared core of
+/// [`probe`] and [`probe_selector`] — one boot path, so a change to the handshake
+/// (or the 120s guard) can never drift between the two callers. **Blocking.**
+fn probe_session(target: &AcpTarget) -> anyhow::Result<(Option<String>, Vec<SessionConfigOption>)> {
     let command = target.command_line();
-    let (tx, rx) = std::sync::mpsc::channel::<anyhow::Result<String>>();
+    type Probed = (Option<String>, Vec<SessionConfigOption>);
+    let (tx, rx) = std::sync::mpsc::channel::<anyhow::Result<Probed>>();
 
     // Same shape as `boot`: the SDK's connection API is scoped to its closure and
     // wants its own executor, so it gets its own thread.
     std::thread::Builder::new()
         .name("hadron-acp-probe".to_string())
         .spawn(move || {
-            let outcome: anyhow::Result<String> = futures::executor::block_on(async move {
+            let outcome: anyhow::Result<Probed> = futures::executor::block_on(async move {
                 let agent = AcpAgent::from_str(&command)
                     .map_err(|e| anyhow::anyhow!("bad ACP command {command:?}: {e}"))?;
-                let name = agent_client_protocol::Client
+                let probed = agent_client_protocol::Client
                     .builder()
                     .name("hadron")
                     .connect_with(agent, move |cx: ConnectionTo<Agent>| async move {
@@ -321,16 +345,11 @@ pub fn probe(target: &AcpTarget) -> anyhow::Result<String> {
                             .block_task()
                             .await?;
                         let opts = sess.config_options.unwrap_or_default();
-                        
-                        if let Some(selector) = model_selector(&opts) {
-                            Ok(selector.current)
-                        } else {
-                            Ok(init.agent_info.map(|i| i.name).unwrap_or_else(|| "unnamed agent".into()))
-                        }
+                        Ok((init.agent_info.map(|i| i.name), opts))
                     })
                     .await
                     .map_err(|e| anyhow::anyhow!("ACP handshake failed: {e}"))?;
-                Ok(name)
+                Ok(probed)
             });
             let _ = tx.send(outcome);
         })?;
