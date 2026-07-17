@@ -1,26 +1,26 @@
-use hadron_lattice::{Flavor, QuarkId, Seat, Transport};
+use hadron_lattice::{CliSpec, Flavor, QuarkId, Seat, Transport};
 
 use crate::adapter::acp::AcpQuark;
-use crate::adapter::agy::AgyQuark;
-use crate::adapter::claude::ClaudeQuark;
+use crate::adapter::cli::CliQuark;
 use crate::adapter::runner::ProcessRunner;
 use crate::quark::Quark;
 
 /// Which **transport** backs a configured quark — the one-shot CLI, or a resident
 /// ACP agent.
 ///
-/// This is the transport seam. `Claude` and `Agy` are the existing one-shot CLI
-/// path and are unchanged: same argv, same stdin, same `ProcessRunner`. `Acp` is a
-/// resident JSON-RPC-over-stdio session. A `team.json` that names no transport gets
-/// the CLI, so the default is "exactly what happened before".
+/// This is the transport seam. `Cli` is the one-shot CLI path, config-driven by a
+/// [`CliSpec`] (see `docs/superpowers/specs/2026-07-17-custom-cli-transport-design.md`):
+/// same argv, same stdin, same `ProcessRunner`, but which flags/channel to use is
+/// data, not a bespoke adapter per vendor. `Acp` is a resident JSON-RPC-over-stdio
+/// session. A `team.json` that names no transport gets the CLI, so the default is
+/// "exactly what happened before".
 ///
-/// No longer `Copy`: `Acp` carries its boot command.
+/// No longer `Copy`: both variants carry data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QuarkKind {
-    /// One-shot CLI: `claude -p --output-format json`, prompt on stdin.
-    Claude,
-    /// One-shot CLI: `agy --print <prompt>`, prompt on argv under a byte cap.
-    Agy,
+    /// One-shot CLI, driven by a [`CliSpec`]: program, args, prompt channel,
+    /// model flag, resume mode, timeout, posture, argv guard.
+    Cli(CliSpec),
     /// A resident ACP agent subprocess.
     Acp(AcpTarget),
 }
@@ -395,25 +395,32 @@ impl QuarkKind {
         ACP_AGENTS.iter().map(|a| (a.vendor, a.name, a.program, a.args.to_vec())).collect()
     }
 
-    /// Map a `Seat.vendor` string to a **CLI** transport. ACP vendors are not
-    /// resolvable from the vendor string alone — they need the seat's boot
-    /// `command` — so they resolve in [`QuarkKind::from_seat`].
-    pub fn from_vendor(vendor: &str) -> anyhow::Result<QuarkKind> {
-        match vendor {
-            "claude" => Ok(QuarkKind::Claude),
-            "agy" => Ok(QuarkKind::Agy),
-            other => anyhow::bail!("unknown vendor {other:?} (expected \"claude\" or \"agy\")"),
-        }
-    }
-
-    /// Resolve a seat's transport. `Transport::Cli` keeps resolving exactly as
-    /// before, off the vendor string alone. `Transport::Acp` reads the seat's
-    /// boot `command`, falling back to the vendor's built-in default when the
-    /// seat names none — so `claude` needs no command, and an agent we have
-    /// never heard of needs one.
+    /// Resolve a seat's transport. `Transport::Cli` resolves a [`CliSpec`] per
+    /// §4.3 of the design doc: the seat's explicit `cli` spec wins; else the
+    /// vendor's built-in preset (so `cli-agy` needs no config); else a bare
+    /// `command` (program + args) builds a generic spec; else the seat has
+    /// nothing to build from and errors, naming the fix. `Transport::Acp` reads
+    /// the seat's boot `command`, falling back to the vendor's built-in default
+    /// when the seat names none — so `claude` needs no command, and an agent we
+    /// have never heard of needs one.
     pub fn from_seat(seat: &Seat) -> anyhow::Result<QuarkKind> {
         match seat.transport {
-            Transport::Cli => QuarkKind::from_vendor(&seat.vendor),
+            Transport::Cli => {
+                if let Some(spec) = seat.cli.clone() {
+                    Ok(QuarkKind::Cli(spec))
+                } else if let Some(spec) = CliSpec::preset(&seat.vendor) {
+                    Ok(QuarkKind::Cli(spec))
+                } else if let Some(cmd) = &seat.command {
+                    Ok(QuarkKind::Cli(CliSpec::generic(cmd.program.clone(), cmd.args.clone())))
+                } else {
+                    anyhow::bail!(
+                        "cli seat '{}' on vendor {:?} has no built-in preset — give it a \
+                         `cli` spec or a `command`",
+                        seat.id.as_str(),
+                        seat.vendor
+                    )
+                }
+            }
             Transport::Acp => {
                 let target = AcpTarget::for_seat(seat).ok_or_else(|| {
                     let vendor = seat.vendor.as_str();
@@ -477,12 +484,9 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
     validate_quark_id(&spec.id)?;
     let name = spec.display_name.clone();
     let quark: Box<dyn Quark> = match spec.kind {
-        QuarkKind::Claude => Box::new(
-            ClaudeQuark::new(spec.id, spec.flavor, spec.model, ProcessRunner).with_display_name(name),
+        QuarkKind::Cli(cli_spec) => Box::new(
+            CliQuark::new(spec.id, spec.flavor, spec.model, cli_spec, ProcessRunner).with_display_name(name),
         ),
-        QuarkKind::Agy => {
-            Box::new(AgyQuark::new(spec.id, spec.flavor, spec.model, ProcessRunner).with_display_name(name))
-        }
         QuarkKind::Acp(target) => Box::new(
             AcpQuark::new(spec.id, spec.flavor, spec.model, spec.effort, spec.mode_config, target)
                 .with_display_name(name),
@@ -527,7 +531,54 @@ pub fn build_seat_watched(seat: &Seat, live_dir: &std::path::Path) -> anyhow::Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hadron_lattice::AcpCommand;
+    use hadron_lattice::{AcpCommand, CliSpec};
+
+    /// A CLI seat, vendor `"agy"`, no explicit `cli` spec and no `command` — the
+    /// exact shape a live `cli-agy` seat has today. Must resolve to the built-in
+    /// agy preset, so the existing seat needs no config change.
+    #[test]
+    fn cli_agy_seat_resolves_to_the_agy_preset() {
+        let s = seat("a", "agy");
+        assert!(s.cli.is_none() && s.command.is_none(), "precondition: no explicit config");
+        assert_eq!(QuarkKind::from_seat(&s).unwrap(), QuarkKind::Cli(CliSpec::agy()));
+    }
+
+    /// An explicit `cli` spec wins over the vendor preset, even when the vendor
+    /// itself has one — the human's explicit config always beats a guess.
+    #[test]
+    fn cli_seat_with_explicit_cli_spec_wins() {
+        let mut s = seat("a", "agy");
+        let custom = CliSpec::generic("mycli".to_string(), vec!["--flag".to_string()]);
+        s.cli = Some(custom.clone());
+        assert_eq!(QuarkKind::from_seat(&s).unwrap(), QuarkKind::Cli(custom));
+    }
+
+    /// A CLI seat on a vendor with no built-in preset and no `cli`/`command` of its
+    /// own has nothing to build — and must say so, naming the fix, rather than
+    /// silently failing later.
+    #[test]
+    fn cli_seat_unknown_vendor_no_spec_errors() {
+        let s = seat("a", "mystery");
+        let err = QuarkKind::from_seat(&s).unwrap_err().to_string();
+        assert!(err.contains("mystery"), "must name the vendor: {err}");
+        assert!(
+            err.contains("cli") && err.contains("command"),
+            "must name the fix (a `cli` spec or a `command`): {err}"
+        );
+    }
+
+    /// A bare `command` (program + args), with no preset and no explicit `cli`
+    /// spec, builds the generic "pipe prompt in, read reply out" spec — the
+    /// escape hatch for a CLI Hadron was never specifically taught.
+    #[test]
+    fn cli_seat_bare_command_builds_generic() {
+        let mut s = seat("a", "mystery");
+        s.command = Some(AcpCommand { program: "mycli".into(), args: vec!["--foo".into()] });
+        assert_eq!(
+            QuarkKind::from_seat(&s).unwrap(),
+            QuarkKind::Cli(CliSpec::generic("mycli".to_string(), vec!["--foo".to_string()]))
+        );
+    }
 
     #[test]
     fn rejects_reserved_and_malformed_ids() {
@@ -547,31 +598,31 @@ mod tests {
 
     #[test]
     fn build_wires_the_right_adapter() {
-        let claude = build(QuarkSpec {
-            id: QuarkId::new("claude"),
+        let agy = build(QuarkSpec {
+            id: QuarkId::new("agy"),
             flavor: Flavor::Orchestrator,
-            kind: QuarkKind::Claude,
+            kind: QuarkKind::Cli(CliSpec::agy()),
             model: "opus-4.8".into(),
             effort: None,
             mode_config: None,
             display_name: None,
         })
         .unwrap();
-        assert_eq!(claude.id(), QuarkId::new("claude"));
-        assert_eq!(claude.flavor(), Flavor::Orchestrator);
+        assert_eq!(agy.id(), QuarkId::new("agy"));
+        assert_eq!(agy.flavor(), Flavor::Orchestrator);
 
-        let agy = build(QuarkSpec {
-            id: QuarkId::new("agy"),
+        let generic = build(QuarkSpec {
+            id: QuarkId::new("custom"),
             flavor: Flavor::Worker,
-            kind: QuarkKind::Agy,
+            kind: QuarkKind::Cli(CliSpec::generic("mycli".into(), vec![])),
             model: String::new(),
             effort: None,
             mode_config: None,
             display_name: None,
         })
         .unwrap();
-        assert_eq!(agy.id(), QuarkId::new("agy"));
-        assert_eq!(agy.flavor(), Flavor::Worker);
+        assert_eq!(generic.id(), QuarkId::new("custom"));
+        assert_eq!(generic.flavor(), Flavor::Worker);
     }
 
     #[test]
@@ -579,7 +630,7 @@ mod tests {
         let err = build(QuarkSpec {
             id: QuarkId::new("gluon"),
             flavor: Flavor::Worker,
-            kind: QuarkKind::Agy,
+            kind: QuarkKind::Cli(CliSpec::agy()),
             model: String::new(),
             effort: None,
             mode_config: None,
@@ -601,26 +652,30 @@ mod tests {
     #[test]
     fn build_seat_maps_provider_and_rejects_unknown() {
         use hadron_lattice::Seat;
-        let seat = Seat::cli(QuarkId::new("opus"), "claude", "opus-4.8", Flavor::Orchestrator);
+        let seat = Seat::cli(QuarkId::new("opus"), "agy", "opus-4.8", Flavor::Orchestrator);
         let q = build_seat(&seat).unwrap();
         assert_eq!(q.id(), QuarkId::new("opus"));
 
-        // Not wired yet — and on the CLI transport there is no free-form escape
-        // hatch, so an unknown provider must still be an error.
+        // A CLI seat on an uncatalogued vendor with no `cli` spec and no bare
+        // `command` has nothing to build from — still an error.
         let bad = Seat::cli(QuarkId::new("x"), "chatgpt", "gpt-5", Flavor::Worker);
         assert!(build_seat(&bad).is_err());
     }
 
-    /// **The transport seam.** The existing providers must still resolve to the
-    /// one-shot CLI — a `team.json` written before ACP existed picks up no new
-    /// behaviour at all. This is the "byte-for-byte" guarantee, at the fork itself.
+    /// **The transport seam.** The existing `agy` provider must still resolve to
+    /// the one-shot CLI, via its built-in preset — a `team.json` written before
+    /// ACP existed picks up no new behaviour at all. This is the "byte-for-byte"
+    /// guarantee, at the fork itself.
+    ///
+    /// `claude`'s CLI preset is gone with `claude.rs` (Claude is ACP-only now, per
+    /// spec §5/§8) — the live `cli-claude` seat stays `enabled: false`, so this is
+    /// a deliberate, documented gap, not a regression.
     #[test]
-    fn the_existing_providers_still_resolve_to_the_cli_transport() {
-        assert_eq!(QuarkKind::from_seat(&seat("a", "claude")).unwrap(), QuarkKind::Claude);
-        assert_eq!(QuarkKind::from_seat(&seat("b", "agy")).unwrap(), QuarkKind::Agy);
+    fn the_existing_agy_provider_still_resolves_to_the_cli_transport() {
+        assert_eq!(QuarkKind::from_seat(&seat("b", "agy")).unwrap(), QuarkKind::Cli(CliSpec::agy()));
         // and a seat that carries no transport hint is still a CLI seat
-        assert_eq!(seat("a", "claude").transport, Transport::Cli);
-        assert!(seat("a", "claude").command.is_none());
+        assert_eq!(seat("b", "agy").transport, Transport::Cli);
+        assert!(seat("b", "agy").command.is_none());
     }
 
     /// `claude` needs no `program`: it defaults to the Claude ACP adapter, so

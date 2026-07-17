@@ -19,7 +19,7 @@ pub struct CliInvocation {
 }
 
 /// The result of one invocation. Kept CLI-agnostic: session ids and other
-/// per-CLI structure are parsed by the adapter (e.g. `ClaudeQuark`) from
+/// per-CLI structure are parsed by the adapter (e.g. `CliQuark`) from
 /// `stdout`, not here — a generic runner cannot know a CLI's output shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliResult {
