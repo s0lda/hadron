@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Flavor, QuarkId};
+use crate::{Flavor, Mode, QuarkId};
 
 /// How the gluon *talks to* a seat's agent. Two transports, one seam:
 ///
@@ -80,6 +80,177 @@ pub struct AcpCommand {
     pub args: Vec<String>,
 }
 
+/// Where the prompt text goes when a [`Transport::Cli`] adapter invokes its
+/// subprocess. Two channels, covering the two CLIs Hadron has driven so far:
+/// `claude` takes its prompt on stdin (no size limit); `agy` ignores stdin in
+/// print mode and needs the prompt as the value of an argv flag.
+///
+/// Deliberately `#[default]` on [`PromptChannel::Stdin`], mirroring
+/// [`Transport`]'s pattern — but note [`CliSpec::prompt`] itself is **not**
+/// `#[serde(default)]`: a custom vendor must say which channel it means, since
+/// silently defaulting to `Stdin` would misdrive an agy-shaped CLI that ignores it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PromptChannel {
+    /// Prompt piped to the subprocess's stdin.
+    #[default]
+    Stdin,
+    /// Prompt is the value of an argv flag (e.g. `--print`); `flag: None` means the
+    /// prompt rides as a bare positional argument instead.
+    Arg {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        flag: Option<String>,
+    },
+}
+
+/// Whether — and how — a [`Transport::Cli`] adapter resumes a prior turn's
+/// conversation instead of starting a fresh one each time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ResumeMode {
+    /// No resume support: every turn is a fresh, stateless invocation.
+    #[default]
+    None,
+    /// Resume the most recent conversation with the given flag, e.g. agy's
+    /// `--continue` (resumes the most recent conversation in the working directory).
+    Continue { flag: String },
+}
+
+/// A CLI's own per-turn timeout flag, e.g. agy's `--print-timeout 29m`. Raised past
+/// the engine's own turn deadline so the CLI gives up *because Hadron said so*, not
+/// on a short default nobody chose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimeoutArg {
+    pub flag: String,
+    pub value: String,
+}
+
+/// The permission-gating flags to pass per [`Mode`], e.g. agy's `--mode plan` for
+/// [`Mode::Ask`]. Defaults to all-empty — a CLI with no gating flags of its own
+/// (the generic/raw case) simply gets no extra args for any posture.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PostureMap {
+    #[serde(default)]
+    pub ask: Vec<String>,
+    #[serde(default)]
+    pub write: Vec<String>,
+    #[serde(default)]
+    pub auto: Vec<String>,
+    #[serde(default)]
+    pub bypass: Vec<String>,
+}
+
+impl PostureMap {
+    /// The flags for a given turn's resolved [`Mode`]. `Write` and `Auto` share the
+    /// same posture on every CLI seen so far (edits auto, no raw shell-bypass), but
+    /// they are stored as two fields — not merged — so a future CLI that *does*
+    /// distinguish them needs no shape change here.
+    pub fn for_mode(&self, mode: Mode) -> &[String] {
+        match mode {
+            Mode::Ask => &self.ask,
+            Mode::Write => &self.write,
+            Mode::Auto => &self.auto,
+            Mode::Bypass => &self.bypass,
+        }
+    }
+}
+
+/// The CLI invocation shape for a [`Transport::Cli`] seat: how to build the
+/// subprocess argv/stdin for one turn. Config-driven so reaching a new CLI vendor
+/// is a `team.json` change, not a new adapter — the generic CLI transport this
+/// type exists for.
+///
+/// All fields but `program` and `prompt` are `#[serde(default)]`, so a minimal
+/// custom-CLI seat needs only those two; see [`CliSpec::generic`] for what the rest
+/// default to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CliSpec {
+    /// The executable to spawn, e.g. `"agy"` or an absolute path to a CLI binary.
+    pub program: String,
+    /// Static leading args, applied before the prompt/model/resume/posture args.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Where the prompt text goes. Not defaulted — see [`PromptChannel`].
+    pub prompt: PromptChannel,
+    /// The flag that carries the model name, e.g. `"--model"`; `None` = never pass
+    /// a model argument.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_flag: Option<String>,
+    /// How (if at all) this CLI resumes a prior conversation.
+    #[serde(default)]
+    pub resume: ResumeMode,
+    /// This CLI's own per-turn timeout flag, if it has one worth overriding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<TimeoutArg>,
+    /// Permission-gating flags per [`Mode`]. Defaults to all-empty.
+    #[serde(default)]
+    pub posture: PostureMap,
+    /// Whether to apply the E2BIG `fit_prompt` argv-size guard (agy needs it: no
+    /// stdin, so the whole prompt rides as one argv element, which Linux caps).
+    #[serde(default)]
+    pub argv_guard: bool,
+}
+
+impl CliSpec {
+    /// The built-in `agy` preset. Mirrors `crates/hadron-gluon/src/adapter/agy.rs`
+    /// exactly, so an existing `cli-agy` seat (no explicit `cli` spec, `vendor:
+    /// "agy"`) behaves byte-for-byte once seats resolve through this type.
+    ///
+    /// SSOT note: this is the one place `agy`'s CLI flags are encoded as a
+    /// [`CliSpec`]. `agy.rs` itself is untouched by this task and keeps its own
+    /// copy until a later task rewires it onto this spec — see
+    /// `agy_preset_matches_todays_agy_flags` for the pin that stops the two
+    /// drifting apart in the meantime.
+    pub fn agy() -> CliSpec {
+        CliSpec {
+            program: "agy".to_string(),
+            args: Vec::new(),
+            prompt: PromptChannel::Arg { flag: Some("--print".to_string()) },
+            model_flag: Some("--model".to_string()),
+            resume: ResumeMode::Continue { flag: "--continue".to_string() },
+            timeout: Some(TimeoutArg {
+                flag: "--print-timeout".to_string(),
+                value: "29m".to_string(),
+            }),
+            posture: PostureMap {
+                ask: vec!["--mode".to_string(), "plan".to_string()],
+                write: vec!["--mode".to_string(), "accept-edits".to_string()],
+                auto: vec!["--mode".to_string(), "accept-edits".to_string()],
+                bypass: vec!["--dangerously-skip-permissions".to_string()],
+            },
+            argv_guard: true,
+        }
+    }
+
+    /// Resolve a built-in preset by vendor name, e.g. `"agy"` → [`CliSpec::agy`].
+    /// `None` for any vendor with no built-in preset — the seat then needs an
+    /// explicit `cli` spec or a bare `command` (see the design doc's resolution
+    /// order in §4.3).
+    pub fn preset(vendor: &str) -> Option<CliSpec> {
+        match vendor {
+            "agy" => Some(CliSpec::agy()),
+            _ => None,
+        }
+    }
+
+    /// A generic spec for a bare `program` + `args`: prompt on stdin, raw stdout,
+    /// no model flag, no resume, no timeout override, no posture gating, no argv
+    /// guard. The "pipe prompt in, read reply out" default that works for most
+    /// CLIs that were never specifically taught to Hadron.
+    pub fn generic(program: String, args: Vec<String>) -> CliSpec {
+        CliSpec {
+            program,
+            args,
+            prompt: PromptChannel::Stdin,
+            model_flag: None,
+            resume: ResumeMode::None,
+            timeout: None,
+            posture: PostureMap::default(),
+            argv_guard: false,
+        }
+    }
+}
+
 /// One seat: an identity bound to a provider (CLI/vendor) and a model. Same
 /// provider with a different model is a different seat (independent trust).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +280,12 @@ pub struct Seat {
     /// absent there means "resolve the command from `provider`".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<AcpCommand>,
+    /// The CLI invocation shape to use. Ignored unless `transport` is
+    /// [`Transport::Cli`]; absent there means "resolve from `vendor`" —
+    /// [`CliSpec::preset`] first, then a bare `command` (see §4.3 of the design
+    /// doc). Mirrors the ACP `command` field's resolution pattern.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli: Option<CliSpec>,
     /// Whether this seat **participates**. A disabled quark keeps its seat, its
     /// identity, and — crucially — its live instance: it is simply never excited.
     ///
@@ -145,13 +322,14 @@ impl Seat {
     /// a field to `Seat` without deciding which side of this line it falls on will not
     /// compile.
     pub fn same_agent(&self, other: &Seat) -> bool {
-        let Seat { id, display_name: _, vendor, model, flavor, transport, command, enabled: _, effort, mode_config } = self;
+        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config } = self;
         id == &other.id
             && vendor == &other.vendor
             && model == &other.model
             && flavor == &other.flavor
             && transport == &other.transport
             && command == &other.command
+            && cli == &other.cli
             && effort == &other.effort
             && mode_config == &other.mode_config
     }
@@ -167,6 +345,7 @@ impl Seat {
             flavor,
             transport: Transport::Cli,
             command: None,
+            cli: None,
             enabled: true,
             effort: None,
             mode_config: None,
@@ -1311,6 +1490,102 @@ mod resolve_tests {
 }
 
 #[cfg(test)]
+mod cli_spec_tests {
+    use super::*;
+
+    #[test]
+    fn cli_spec_serde_round_trips() {
+        let spec = CliSpec {
+            program: "mycli".into(),
+            args: vec!["--flag".into()],
+            prompt: PromptChannel::Arg { flag: Some("--print".into()) },
+            model_flag: Some("--model".into()),
+            resume: ResumeMode::Continue { flag: "--continue".into() },
+            timeout: Some(TimeoutArg { flag: "--timeout".into(), value: "10m".into() }),
+            posture: PostureMap {
+                ask: vec!["--ask".into()],
+                write: vec!["--write".into()],
+                auto: vec!["--auto".into()],
+                bypass: vec!["--bypass".into()],
+            },
+            argv_guard: true,
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        let back: CliSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(spec, back, "a full CliSpec must round-trip through JSON byte-for-byte");
+    }
+
+    /// `CliSpec::agy()` must mirror `crates/hadron-gluon/src/adapter/agy.rs` exactly —
+    /// this is the SSOT check that stops the two from drifting apart.
+    #[test]
+    fn agy_preset_matches_todays_agy_flags() {
+        let spec = CliSpec::agy();
+        assert_eq!(spec.program, "agy");
+        assert_eq!(spec.prompt, PromptChannel::Arg { flag: Some("--print".into()) });
+        assert_eq!(spec.model_flag, Some("--model".into()));
+        assert_eq!(spec.resume, ResumeMode::Continue { flag: "--continue".into() });
+        assert_eq!(
+            spec.timeout,
+            Some(TimeoutArg { flag: "--print-timeout".into(), value: "29m".into() })
+        );
+        assert!(spec.argv_guard, "agy needs the E2BIG argv guard");
+        assert_eq!(spec.posture.ask, vec!["--mode".to_string(), "plan".to_string()]);
+        assert_eq!(spec.posture.write, vec!["--mode".to_string(), "accept-edits".to_string()]);
+        assert_eq!(spec.posture.auto, vec!["--mode".to_string(), "accept-edits".to_string()]);
+        assert_eq!(spec.posture.bypass, vec!["--dangerously-skip-permissions".to_string()]);
+    }
+
+    #[test]
+    fn preset_resolves_agy_and_none_for_unknown() {
+        assert_eq!(CliSpec::preset("agy"), Some(CliSpec::agy()));
+        assert_eq!(CliSpec::preset("nonexistent-vendor"), None);
+    }
+
+    #[test]
+    fn generic_spec_is_stdin_raw() {
+        let spec = CliSpec::generic("mycli".into(), vec!["--flag".into()]);
+        assert_eq!(spec.program, "mycli");
+        assert_eq!(spec.args, vec!["--flag".to_string()]);
+        assert_eq!(spec.prompt, PromptChannel::Stdin);
+        assert_eq!(spec.model_flag, None);
+        assert_eq!(spec.resume, ResumeMode::None);
+        assert_eq!(spec.timeout, None);
+        assert_eq!(spec.posture, PostureMap::default());
+        assert!(!spec.argv_guard);
+    }
+
+    #[test]
+    fn posture_map_for_mode_selects_the_right_arm() {
+        let posture = PostureMap {
+            ask: vec!["ask".into()],
+            write: vec!["write".into()],
+            auto: vec!["auto".into()],
+            bypass: vec!["bypass".into()],
+        };
+        assert_eq!(posture.for_mode(Mode::Ask), &["ask".to_string()]);
+        assert_eq!(posture.for_mode(Mode::Write), &["write".to_string()]);
+        assert_eq!(posture.for_mode(Mode::Auto), &["auto".to_string()]);
+        assert_eq!(posture.for_mode(Mode::Bypass), &["bypass".to_string()]);
+    }
+
+    /// A minimal custom-CLI spec needs only `program` + `prompt`; everything else
+    /// must default so a bare `{"program":"mycli","prompt":"stdin"}` parses.
+    #[test]
+    fn minimal_json_needs_only_program_and_prompt() {
+        let json = r#"{"program":"mycli","prompt":"stdin"}"#;
+        let spec: CliSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(spec.program, "mycli");
+        assert_eq!(spec.prompt, PromptChannel::Stdin);
+        assert!(spec.args.is_empty());
+        assert_eq!(spec.model_flag, None);
+        assert_eq!(spec.resume, ResumeMode::None);
+        assert_eq!(spec.timeout, None);
+        assert_eq!(spec.posture, PostureMap::default());
+        assert!(!spec.argv_guard);
+    }
+}
+
+#[cfg(test)]
 mod enabled_tests {
     use super::*;
 
@@ -1359,6 +1634,7 @@ mod enabled_tests {
             |s: &mut Seat| s.flavor = Flavor::Orchestrator,
             |s: &mut Seat| s.transport = Transport::Acp,
             |s: &mut Seat| s.command = Some(AcpCommand { program: "other".into(), args: vec![] }),
+            |s: &mut Seat| s.cli = Some(CliSpec::agy()),
         ] {
             let mut changed = base.clone();
             mutate(&mut changed);

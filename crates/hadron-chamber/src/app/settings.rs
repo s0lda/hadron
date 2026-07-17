@@ -1248,6 +1248,7 @@ impl Chamber {
                                             program: desc_inner.command.clone(),
                                             args: desc_inner.args.clone(),
                                         }),
+                                        cli: None,
                                         // A seat the human just proved and saved is on.
                                         enabled: true,
                                         effort: None,

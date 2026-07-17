@@ -159,6 +159,7 @@ mod tests {
             flavor: Flavor::Worker,
             transport: Transport::Acp,
             command: None,
+            cli: None,
             enabled: true,
             effort: None,
             mode_config: None,
@@ -211,6 +212,7 @@ mod tests {
                 program: "npx".into(),
                 args: args.iter().map(|s| s.to_string()).collect(),
             }),
+            cli: None,
             effort: None,
             mode_config: None,
         };
@@ -234,6 +236,7 @@ mod enabled_tests {
             flavor: Flavor::Worker,
             transport: Transport::Acp,
             command: Some(AcpCommand { program: "npx".into(), args: vec![] }),
+            cli: None,
             enabled,
             effort: None,
             mode_config: None,
