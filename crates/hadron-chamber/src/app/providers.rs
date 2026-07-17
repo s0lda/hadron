@@ -42,6 +42,83 @@ pub(super) enum WizardState {
     None,
     PickPreset,
     Connecting(AgentDescriptor, ProviderState),
+    /// The "Custom CLI" form: a generic `Transport::Cli` seat built from a hand-typed
+    /// vendor/program/args/model + prompt-channel choice, rather than a probed ACP
+    /// preset. Unlike `Connecting`, there is nothing to boot-and-probe here — the
+    /// wizard's own `custom_cli_*` input fields on `Chamber` hold the live form state
+    /// (see `mod.rs`), so this variant carries no payload of its own.
+    CustomCli,
+}
+
+/// Which channel the custom-CLI wizard's prompt-delivery toggle currently selects. Drives
+/// whether `cli_seat_from` is called with `PromptChannel::Stdin` or
+/// `PromptChannel::Arg { flag }` (the flag text comes from `custom_cli_flag`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(super) enum CliChannelChoice {
+    #[default]
+    Stdin,
+    Arg,
+}
+
+/// Build a `Transport::Cli` [`Seat`] from the custom-CLI wizard's fields. Pure and
+/// gpui-free — extracted out of the `on_click` closure specifically so it is
+/// unit-testable, per the same reasoning the ACP save path already documents inline
+/// (`conventional_id` for the id, `Flavor::Worker` default, `enabled: true`). Mirrors
+/// that path's shape but for `Transport::Cli` + a generic [`hadron_lattice::CliSpec`]
+/// instead of an `AcpCommand`.
+///
+/// Unlike the ACP path's `vendor` (a pre-vetted preset key, so its `normalize_vendor()`
+/// call is a documented no-op), `vendor` here is raw human-typed text — so any stray
+/// `cli-`/`acp-`/`sdk-` prefix is stripped **before** the id is derived, not after. Doing
+/// it after (as a `Seat::normalize_vendor()` call on the built seat) would desync `id`
+/// from `vendor`: e.g. vendor `"cli-ollama"` would derive `id = "cli-cli-ollama"`, then
+/// normalize the *vendor* alone to `"ollama"`, leaving the id still doubled-up.
+pub(super) fn cli_seat_from(
+    vendor: &str,
+    program: &str,
+    args: Vec<String>,
+    channel: hadron_lattice::PromptChannel,
+    model: &str,
+) -> hadron_lattice::Seat {
+    let mut cli = hadron_lattice::CliSpec::generic(program.to_string(), args);
+    cli.prompt = channel;
+
+    let mut seat = hadron_lattice::Seat {
+        // Placeholder — replaced below once `vendor` is normalized. `Seat::normalize_vendor`
+        // only touches `self.vendor`, so it has to run before the id can be derived from it.
+        id: hadron_lattice::QuarkId::new(""),
+        display_name: None,
+        vendor: vendor.to_string(),
+        model: model.to_string(),
+        flavor: hadron_lattice::Flavor::Worker, // default flavor, same as the ACP path
+        transport: hadron_lattice::Transport::Cli,
+        command: None,
+        cli: Some(cli),
+        enabled: true,
+        effort: None,
+        mode_config: None,
+    };
+    seat.normalize_vendor();
+    // SSOT: the same `<transport>-<vendor>` builder the ACP save path uses, just off
+    // `Transport::Cli` instead of `Transport::Acp` — and now off the normalized vendor,
+    // so `id` and `vendor` always agree.
+    seat.id = hadron_lattice::QuarkId::new(&hadron_lattice::Transport::Cli.conventional_id(&seat.vendor));
+    seat
+}
+
+/// The custom-CLI wizard's channel-toggle → [`PromptChannel`] mapping. The one bit of
+/// this form that isn't a straight field copy: `Arg` with a blank flag field means "the
+/// prompt rides as a bare positional argument" (`flag: None`), not "flag unset by
+/// mistake". Extracted out of the `on_click` closure (alongside `cli_seat_from`) so this
+/// conversion is unit-testable too, not just eyeballed in the wizard.
+pub(super) fn prompt_channel_from(choice: CliChannelChoice, flag: &str) -> hadron_lattice::PromptChannel {
+    match choice {
+        CliChannelChoice::Stdin => hadron_lattice::PromptChannel::Stdin,
+        CliChannelChoice::Arg => {
+            let flag = flag.trim();
+            hadron_lattice::PromptChannel::Arg { flag: (!flag.is_empty()).then(|| flag.to_string()) }
+        }
+    }
 }
 
 /// Backs the ACP model **dropdown** in a quark's Settings. The chamber re-probes the
@@ -262,5 +339,105 @@ mod tests {
         migrate_legacy_ids(&repo_path, &global_path, &mut prefs);
         assert!(prefs.quarks.contains_key("cli-agy"));
         assert!(load_team(&repo_path).get(&QuarkId::new("cli-agy")).is_some());
+    }
+
+    /// The value-level derivation the custom-CLI wizard's "Save" button calls: a
+    /// stdin-prompt seat, the common case (Ollama, a local script, etc.).
+    #[test]
+    fn cli_seat_from_builds_a_stdin_cli_transport_seat() {
+        let seat = cli_seat_from(
+            "ollama",
+            "ollama",
+            vec!["run".to_string(), "llama3".to_string()],
+            hadron_lattice::PromptChannel::Stdin,
+            "llama3",
+        );
+
+        assert_eq!(seat.transport, hadron_lattice::Transport::Cli);
+        assert_eq!(seat.id.as_str(), "cli-ollama", "SSOT id via Transport::conventional_id");
+        assert!(seat.command.is_none(), "command is the ACP field — a CLI seat leaves it None");
+        assert_eq!(seat.vendor, "ollama");
+        assert_eq!(seat.model, "llama3");
+        assert_eq!(seat.flavor, hadron_lattice::Flavor::Worker);
+        assert!(seat.enabled);
+        assert!(seat.effort.is_none());
+        assert!(seat.mode_config.is_none());
+
+        let cli = seat.cli.expect("cli spec must be Some for a custom-CLI seat");
+        assert_eq!(cli.program, "ollama");
+        assert_eq!(cli.args, vec!["run".to_string(), "llama3".to_string()]);
+        assert_eq!(cli.prompt, hadron_lattice::PromptChannel::Stdin);
+
+        // Advisory check the ACP path also runs before saving — must hold for a
+        // freshly-derived id.
+        assert!(hadron_lattice::id_follows_convention(seat.id.as_str(), seat.transport));
+    }
+
+    /// The other prompt channel: the flag-argument choice, and a bare program with no
+    /// static args — proves the flag (not just Stdin) round-trips into the `cli` spec.
+    #[test]
+    fn cli_seat_from_arg_channel_carries_the_flag() {
+        let seat = cli_seat_from(
+            "myclitool",
+            "/usr/local/bin/myclitool",
+            vec![],
+            hadron_lattice::PromptChannel::Arg { flag: Some("--prompt".to_string()) },
+            "",
+        );
+
+        assert_eq!(seat.id.as_str(), "cli-myclitool");
+        let cli = seat.cli.expect("cli spec must be Some");
+        assert_eq!(cli.program, "/usr/local/bin/myclitool");
+        assert!(cli.args.is_empty());
+        assert_eq!(
+            cli.prompt,
+            hadron_lattice::PromptChannel::Arg { flag: Some("--prompt".to_string()) }
+        );
+    }
+
+    /// The bug the doc comment on `cli_seat_from` calls out: a hand-typed vendor that
+    /// already carries a transport prefix must not desync `id` from `vendor` — the
+    /// normalize has to happen before the id is derived, not after.
+    #[test]
+    fn cli_seat_from_normalizes_a_stray_transport_prefix_before_deriving_the_id() {
+        let seat = cli_seat_from(
+            "cli-ollama",
+            "ollama",
+            vec![],
+            hadron_lattice::PromptChannel::Stdin,
+            "",
+        );
+
+        assert_eq!(seat.vendor, "ollama", "normalize_vendor must strip the stray prefix");
+        assert_eq!(seat.id.as_str(), "cli-ollama", "id derived from the NORMALIZED vendor");
+        assert!(hadron_lattice::id_follows_convention(seat.id.as_str(), seat.transport));
+    }
+
+    /// `prompt_channel_from`: the Stdin choice ignores whatever the flag field holds —
+    /// it isn't read in that branch at all.
+    #[test]
+    fn prompt_channel_from_stdin_choice_ignores_the_flag_field() {
+        assert_eq!(
+            prompt_channel_from(CliChannelChoice::Stdin, "--ignored"),
+            hadron_lattice::PromptChannel::Stdin
+        );
+    }
+
+    /// The blank-flag case: a human who picks "Argv flag" but leaves the flag box empty
+    /// gets a positional argument, not a broken `--` flag.
+    #[test]
+    fn prompt_channel_from_arg_choice_blank_flag_is_positional() {
+        assert_eq!(
+            prompt_channel_from(CliChannelChoice::Arg, "   "),
+            hadron_lattice::PromptChannel::Arg { flag: None }
+        );
+    }
+
+    #[test]
+    fn prompt_channel_from_arg_choice_carries_a_nonblank_flag() {
+        assert_eq!(
+            prompt_channel_from(CliChannelChoice::Arg, "--prompt"),
+            hadron_lattice::PromptChannel::Arg { flag: Some("--prompt".to_string()) }
+        );
     }
 }

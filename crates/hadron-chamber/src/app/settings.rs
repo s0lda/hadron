@@ -1031,6 +1031,60 @@ impl Chamber {
                         })),
                 );
 
+                // Custom CLI: a generic `Transport::Cli` seat for a vendor with no ACP
+                // agent (or none the human wants to probe right now) — a raw
+                // program+args+prompt-channel, not a boot-and-probe like the presets
+                // above. See `WizardState::CustomCli` / `cli_seat_from`.
+                list = list.child(
+                    h_flex()
+                        .id("preset-custom-cli")
+                        .items_center()
+                        .justify_between()
+                        .px_3()
+                        .py_2()
+                        .rounded_lg()
+                        .bg(theme::bg_surface())
+                        .border_1()
+                        .border_color(theme::border())
+                        .hover(|s| s.bg(theme::bg_surface_raised()))
+                        .cursor_pointer()
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_base()
+                                        .text_color(theme::text())
+                                        .child("Custom CLI…"),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child("A one-shot CLI Hadron has no built-in preset for"),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text_muted())
+                                .child("Configure →"),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            // Fresh form every time the wizard is (re-)entered — a stale
+                            // vendor/program from a prior custom-CLI attempt must not leak
+                            // into this one.
+                            this.custom_cli_vendor.update(cx, |s, cx| s.set_value("", window, cx));
+                            this.custom_cli_program.update(cx, |s, cx| s.set_value("", window, cx));
+                            this.custom_cli_args.update(cx, |s, cx| s.set_value("", window, cx));
+                            this.custom_cli_model.update(cx, |s, cx| s.set_value("", window, cx));
+                            this.custom_cli_flag.update(cx, |s, cx| s.set_value("", window, cx));
+                            this.custom_cli_channel = CliChannelChoice::Stdin;
+                            this.wizard_state = WizardState::CustomCli;
+                            cx.notify();
+                        })),
+                );
+
                 v_flex()
                     .size_full()
                     .gap_4()
@@ -1309,6 +1363,167 @@ impl Chamber {
                             .overflow_y_scroll()
                             .child(state_ui),
                     )
+            }
+
+            WizardState::CustomCli => {
+                // No boot-and-probe here (unlike `Connecting`) — a custom CLI is saved
+                // straight from its fields via `cli_seat_from`, the same way the ACP
+                // path saves straight from a `ProviderState::Ready` probe result.
+                let stdin_selected = self.custom_cli_channel == CliChannelChoice::Stdin;
+                let channel_toggle = h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("cli-channel-stdin")
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .when(stdin_selected, |d| {
+                                d.bg(theme::accent()).text_color(theme::text())
+                            })
+                            .when(!stdin_selected, |d| {
+                                d.text_color(theme::text_secondary())
+                                    .hover(|s| s.bg(theme::bg_surface_raised()))
+                            })
+                            .child("Stdin")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.custom_cli_channel = CliChannelChoice::Stdin;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("cli-channel-arg")
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .when(!stdin_selected, |d| {
+                                d.bg(theme::accent()).text_color(theme::text())
+                            })
+                            .when(stdin_selected, |d| {
+                                d.text_color(theme::text_secondary())
+                                    .hover(|s| s.bg(theme::bg_surface_raised()))
+                            })
+                            .child("Argv flag")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.custom_cli_channel = CliChannelChoice::Arg;
+                                cx.notify();
+                            })),
+                    );
+
+                // Required fields, checked live so "Save" is only wired up once the
+                // form can actually produce a valid seat (`cli_seat_from` needs both to
+                // build `id`/`cli.program`).
+                let vendor_present = !self.custom_cli_vendor.read(cx).value().trim().is_empty();
+                let program_present = !self.custom_cli_program.read(cx).value().trim().is_empty();
+                let can_save = vendor_present && program_present;
+
+                let mut form = v_flex()
+                    .size_full()
+                    .gap_4()
+                    .child(text_button("back-custom-cli", "← Back").on_click(cx.listener(
+                        |this, _, window, cx| {
+                            this.wizard_state = WizardState::PickPreset;
+                            cx.notify();
+                        },
+                    )))
+                    .child(
+                        div()
+                            .text_lg()
+                            .text_color(theme::text())
+                            .child("Custom CLI"),
+                    )
+                    .child(settings_field(
+                        "Vendor (short label, e.g. \"ollama\")",
+                        Input::new(&self.custom_cli_vendor).into_any_element(),
+                    ))
+                    .child(settings_field(
+                        "Program (the binary to spawn)",
+                        Input::new(&self.custom_cli_program).into_any_element(),
+                    ))
+                    .child(settings_field(
+                        "Args (space-separated, optional)",
+                        Input::new(&self.custom_cli_args).into_any_element(),
+                    ))
+                    .child(settings_field(
+                        "Model (optional)",
+                        Input::new(&self.custom_cli_model).into_any_element(),
+                    ))
+                    .child(settings_field("Prompt channel", channel_toggle.into_any_element()));
+
+                if !stdin_selected {
+                    form = form.child(settings_field(
+                        "Flag (blank = positional argument, e.g. \"--prompt\")",
+                        Input::new(&self.custom_cli_flag).into_any_element(),
+                    ));
+                }
+
+                if !can_save {
+                    form = form.child(
+                        div()
+                            .text_sm()
+                            .text_color(theme::text_muted())
+                            .child("Vendor and program are required."),
+                    );
+                }
+
+                form.child(
+                    text_button("save-custom-cli", "Save Custom CLI").when(can_save, |b| {
+                        b.on_click(cx.listener(|this, _, window, cx| {
+                            let vendor =
+                                this.custom_cli_vendor.read(cx).value().trim().to_string();
+                            let program =
+                                this.custom_cli_program.read(cx).value().trim().to_string();
+                            if vendor.is_empty() || program.is_empty() {
+                                return; // re-checked: `can_save` already gates this button
+                            }
+                            let args: Vec<String> = this
+                                .custom_cli_args
+                                .read(cx)
+                                .value()
+                                .split_whitespace()
+                                .map(str::to_string)
+                                .collect();
+                            let model =
+                                this.custom_cli_model.read(cx).value().trim().to_string();
+                            let flag = this.custom_cli_flag.read(cx).value().trim().to_string();
+                            let channel = prompt_channel_from(this.custom_cli_channel, &flag);
+
+                            // Pure derivation (unit-tested directly) — the same shape as the
+                            // ACP path's inline `Seat { .. }` literal, just for a Cli
+                            // transport + a generic `CliSpec` instead of an `AcpCommand`.
+                            // `cli_seat_from` already normalizes a stray transport prefix off
+                            // `vendor` BEFORE deriving `id` (see its doc comment), so — unlike
+                            // the ACP path — there is no separate `seat.normalize_vendor()`
+                            // call needed here; doing it after would desync id from vendor.
+                            let seat = cli_seat_from(&vendor, &program, args, channel, &model);
+                            // Advisory only, never blocking — same as the ACP path.
+                            if !hadron_lattice::id_follows_convention(
+                                seat.id.as_str(),
+                                seat.transport,
+                            ) {
+                                eprintln!(
+                                    "chamber: note — id '{}' does not match the '{}-' convention",
+                                    seat.id.as_str(),
+                                    seat.transport.code()
+                                );
+                            }
+
+                            this.providers.push(ConfiguredQuark {
+                                id: seat.id.0.clone(),
+                                transport: seat.transport.code().to_string(),
+                                state: ProviderState::Ready { model: seat.model.clone() },
+                            });
+
+                            this.add_configured_quark(seat, cx);
+
+                            this.wizard_state = WizardState::None;
+                            cx.notify();
+                        }))
+                    }),
+                )
             }
         }
     }
