@@ -1,7 +1,7 @@
 # Design Spec: Unified Permissions Gating & Extensibility System
 
 ## 1. Goals
-This document specifies the unified design for redesigning permissions gating under a global "No Human Mode" (Active Orchestrator Escalation) and enabling custom skills and agent persona extensions with tool and role-routing boundaries.
+This document specifies the unified design for permissions gating under a global "No Human Mode" (Active Orchestrator Adjudication) and custom skills and agent persona extensions with tool and role-routing boundaries.
 
 ---
 
@@ -18,33 +18,40 @@ We introduce a two-tier checking logic using two lists:
 2.  **Per-Quark Deny-list:** Specific command prefixes explicitly prohibited for a particular quark.
 
 #### Resolution Flow:
-1.  **Check Global Allow-list:** If the command does *not* match any entry in the allow-list, return `Decision::AskOrchestrator`.
-2.  **Check Per-Quark Deny-list:** If the command matches any entry in the quark's deny-list, return `Decision::AskOrchestrator`.
-3.  **Otherwise:** Return `Decision::AutoApprove`.
+The gatekeeper's `decide()` function must accept the global resolved mode (`global_mode: Mode`) to determine the target escalation actor:
+1.  **Check Resolved Worker Mode:** If the worker's resolved mode is `Bypass`, return `Decision::AutoApprove` immediately.
+2.  **Check Global Allow-list:** If the command does *not* match any entry in the allow-list, determine escalation target:
+    *   If `global_mode` is `Bypass` (No-Human mode), return `Decision::AskOrchestrator`.
+    *   Otherwise (human mode), return `Decision::AskHuman`.
+3.  **Check Per-Quark Deny-list:** If the command matches any entry in the quark's deny-list, return the matching escalation target (`Decision::AskOrchestrator` or `Decision::AskHuman`).
+4.  **Otherwise:** Return `Decision::AutoApprove`.
 
 #### Invariant: Deny Wins
-If a command matches both an allowed condition and a per-quark deny condition, it is denied/escalated (`AskOrchestrator`).
+If a command matches both an allowed condition and a per-quark deny condition, it is denied and escalated.
 
 ```
 Command Requested
       │
       ▼
-Matches Global Allow-list? ── No ──► [AskOrchestrator]
-      │ Yes
+Matches Global Allow-list? ── No ──► Global Bypass? ── Yes ──► [AskOrchestrator]
+      │ Yes                                          └── No ───► [AskHuman]
       ▼
-Matches Per-Quark Deny-list? ── Yes ──► [AskOrchestrator]
-      │ No
+Matches Per-Quark Deny-list? ── Yes ──► Global Bypass? ── Yes ──► [AskOrchestrator]
+      │ No                                           └── No ───► [AskHuman]
       ▼
 [AutoApprove]
 ```
 
 ### Escalation Loop via Orchestrator Adjudication
 *   We add a new variant `Decision::AskOrchestrator` to the `Decision` enum in the `hadron-gatekeeper` crate.
-*   When `decide()` returns `AskOrchestrator`, the `hadron-gluon` engine suspends the worker's active turn.
-*   Instead of waiting for a UI human action, the engine generates an active LLM turn for the Orchestrator quark (`@cli-agy`).
-*   The Orchestrator receives details of the suspended turn, the command, and its arguments.
-*   The Orchestrator reviews the context and appends a `PermissionGrant` event to the event stream, either granting or denying the request.
-*   Once the event is appended, the engine resumes the worker turn.
+*   We introduce a new actor type `Actor::Orchestrator` or `Actor::Quark(QuarkId)` for grants.
+*   **Suspension Loop (bin/hadron-gluon.rs):**
+    1.  When `decide()` returns `AskOrchestrator`, the worker turn is suspended, and the engine appends a `PermissionRequest` event.
+    2.  The seat's state is set to `Paused(WaitingForOrchestrator)`.
+    3.  During the engine's main daemon loop (`bin/hadron-gluon.rs`), when the swarm quiesces, the engine checks for any worker seats paused waiting for the orchestrator.
+    4.  If present, it schedules a turn for the orchestrator quark (`@cli-agy`), injecting the pending `PermissionRequest` event details into its prompt.
+    5.  The orchestrator reviews the context and appends a `PermissionGrant` or `PermissionDenial` event.
+    6.  At the next engine step, the worker seat resumes.
 
 ---
 
@@ -59,7 +66,7 @@ We support loading custom `.md` skills at runtime from global and local project 
 *   **Merger & Priority:** The engine loads all files and merges them. A skill file in the local repo directory overrides a global or compile-time built-in skill of the same name.
 
 ### Engine-Level Tool Gating
-Rather than relying on model compliance, the engine dynamically registers and filters tools based on the active skill's front-matter configuration.
+Rather than relying on model compliance, the engine enforces tool boundaries.
 *   A skill `.md` YAML front-matter can declare allowed tools:
     ```yaml
     ---
@@ -67,8 +74,8 @@ Rather than relying on model compliance, the engine dynamically registers and fi
     tools: [read_file, grep_search]
     ---
     ```
-*   **Enforcement:** During the execution of a turn under a given skill, the engine only registers/exposes the tools listed under `tools`. If `run_command` is not listed, the model has no way to call it.
-*   If `tools` is omitted, the quark defaults to the seat's normal tool access profile.
+*   **Enforcement for SDK Quarks (Registry Filtering):** The engine only registers/exposes the tools listed under `tools` in the tool definition/prompt context.
+*   **Enforcement for ACP/CLI Quarks (Approval Gating):** Because Hadron does not control the external agent's internal tool registry, tool constraints are enforced at permission request time (in `on_receive_request` on `RequestPermissionRequest` in `acp.rs`). If the requested tool (identified by `req.tool_call.fields.kind` or `raw_input`) is not permitted under the active skill, the engine automatically responds with `PermissionOptionKind::RejectOnce` or escalates to `AskOrchestrator` / `AskHuman`.
 
 ### Custom Script Tools
 Skills can declare custom script helpers (`.py` or `.rs` files) as first-class tools:
@@ -83,7 +90,7 @@ tools:
 ---
 ```
 *   **Synthesis:** The engine parses the custom tool mapping and registers `run_linter` and `run_checker` as first-class tools for the turn.
-*   **Execution Sandbox:** When the model invokes a custom tool, the engine executes the underlying script in the sandbox using the matching environment (e.g., `python3` for `.py`, compiling and executing for `.rs` via `rustc`/`cargo`) and returns its output. General arbitrary command execution remains disabled.
+*   **Execution Sandbox:** When the model invokes a custom tool, the engine executes the underlying script. Because "quarks-share-the-tree", execution sandbox behaves as a run-gated script execution path rather than containerized isolation (compiling and executing via `rustc`/`cargo` or `python3` within the current workspace directory).
 
 ---
 
@@ -104,7 +111,7 @@ We support loading custom agent personas and matching tasks to specialized quark
     ```
 
 ### Quark Roles in `team.json`
-Roster seats inside `team.json` can declare roles and exclusivity parameters:
+Roster seats inside `team.json` can declare roles and exclusivity parameters (separate from the `Flavor` authority axis):
 ```json
 {
   "id": "acp-claude-security",
@@ -116,8 +123,8 @@ Roster seats inside `team.json` can declare roles and exclusivity parameters:
 *   `exclusive`: A boolean indicating if this quark is restricted *only* to tasks matching its roles.
 
 ### Routing Phases
-*   **Phase 1 (Soft Preference Routing):** When a task prefers a role (e.g., `security`), the engine routes to an enabled quark carrying that role. If none are enabled, the engine falls back to general worker quarks.
-*   **Phase 2 (Strict Exclusivity Routing):** If a quark is marked `exclusive: true` for a role (e.g., `video-editor`), the engine filters it out entirely for any task that does not match that role. If a task requires a role but no matching exclusive quark is available, the engine reports the routing failure back to the Orchestrator or human rather than stalling silently.
+*   **Phase 1 (Soft Preference Routing via Mentions):** In `router.rs`, mentions like `@architect` or `@security-reviewer` are mapped to seats in `team.json` carrying the matching role. If a seat matches, the router prefers it. If none are enabled, the engine falls back to general worker quarks.
+*   **Phase 2 (Strict Exclusivity Routing):** If a quark is marked `exclusive: true` for a role, the engine filters it out entirely for any task that does not match that role. If a task requires a role but no matching exclusive quark is available, the engine reports the routing failure back to the Orchestrator or human rather than stalling.
 
 ---
 
@@ -129,11 +136,12 @@ Roster seats inside `team.json` can declare roles and exclusivity parameters:
 *   `crates/hadron-gluon/src/skills.rs`:
     *   Implement runtime filesystem traversal for local and global skill paths.
     *   Implement YAML parsing of front-matter `tools` config.
-    *   Implement dynamic tool-filtering registration in the turn loop.
-*   `crates/hadron-gluon/src/engine.rs`:
-    *   Implement the `Decision::AskOrchestrator` suspension loop.
-    *   Implement the Orchestrator adjudication active turn insertion.
+*   `crates/hadron-gluon/src/adapter/acp.rs`:
+    *   Implement tool approval gating on `session/request_permission` matching skill constraints.
+*   `bin/hadron-gluon.rs`:
+    *   Implement the `Decision::AskOrchestrator` suspension loop and orchestrator active turn insertion inside the main daemon loop.
 *   `crates/hadron-lattice/src/team.rs`:
     *   Add `roles` and `exclusive` fields to roster serialization/deserialization.
 *   `crates/hadron-gluon/src/router.rs`:
-    *   Implement the soft-preference role matching and exclusive seat filtering.
+    *   Implement soft-preference role matching and exclusive seat filtering based on role-mentions.
+
