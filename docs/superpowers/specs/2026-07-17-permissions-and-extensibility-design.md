@@ -128,7 +128,21 @@ Roster seats inside `team.json` can declare roles and exclusivity parameters (se
 
 ---
 
-## 5. Proposed Implementation Files
+## 5. Prompt Bloat Optimization (Trimming the Skill Library)
+
+### The Problem
+Currently, for resident (ACP) quarks, the engine appends the entire skill corpus (`skills::corpus()`, all 15 skills verbatim) to the prompt context on every excitation. While intended to cache the skill list, re-sending all 15 markdown procedures verbatim on every excitation results in ~70-80k tokens of bloat per turn. This wastes prompt context, slows down model responses, and speeds up compaction/truncation cycles.
+
+### The Solution
+*   **Decommission `skills::corpus()`:** The engine will no longer inject the full library of skill text into resident (ACP) quark prompts.
+*   **Targeted Injection:** For both CLI (one-shot) and ACP (resident) quarks, the engine will only append:
+    1.  `skills::index()` (the brief bulleted index/list of available skills and their summaries).
+    2.  The full body of the **active starting skill** (rendered via `skills::render(..., include_body = true)`).
+*   **Result:** Wastes only ~4-5k tokens of skill overhead per turn, cutting down excitation bloat by ~90% and preserving the context window for actual field history and uncommitted diffs.
+
+---
+
+## 6. Proposed Implementation Files
 
 *   `crates/hadron-gatekeeper/src/matrix.rs`:
     *   Add `Decision::AskOrchestrator` enum variant.
@@ -144,4 +158,7 @@ Roster seats inside `team.json` can declare roles and exclusivity parameters (se
     *   Add `roles` and `exclusive` fields to roster serialization/deserialization.
 *   `crates/hadron-gluon/src/router.rs`:
     *   Implement soft-preference role matching and exclusive seat filtering based on role-mentions.
+*   `crates/hadron-gluon/src/engine.rs`:
+    *   Remove `skills::corpus()` injection from `invariants_text` and enforce `include_body = true` in `skills::render` for all turn types.
+
 
