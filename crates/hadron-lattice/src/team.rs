@@ -725,6 +725,7 @@ mod tests {
 #[cfg(test)]
 mod resolve_tests {
     use super::*;
+    use tempfile::tempdir;
 
     fn seat(id: &str, provider: &str, model: &str, flavor: Flavor) -> Seat {
         Seat::cli(QuarkId::new(id), provider, model, flavor)
@@ -972,6 +973,45 @@ mod resolve_tests {
         assert!(!json.contains("display_name"), "an inherited field is omitted: {json}");
         let back: SeatOverride = serde_json::from_str(&json).unwrap();
         assert_eq!(back, ov, "tri-state survives the round trip");
+    }
+
+    /// A `save_team` → `load_team` cycle must reproduce a byte-for-byte-equal `Team`
+    /// across the shapes the chamber actually holds: a legacy ACP seat (command +
+    /// effort + explicit enabled) *and* roster overrides carrying the tri-state knobs.
+    /// The chamber polls these files every tick and reprojects only on `loaded != held`
+    /// — a non-idempotent round trip would make that always true and repaint forever.
+    #[test]
+    fn save_load_round_trips_seats_and_overrides() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("team.json");
+        let team = Team {
+            quarks: vec![
+                seat("opus", "claude", "opus", Flavor::Orchestrator),
+                Seat {
+                    effort: Some("high".into()),
+                    mode_config: Some("ask".into()),
+                    enabled: false,
+                    command: Some(AcpCommand {
+                        program: "npx".into(),
+                        args: vec!["-y".into(), "codex-acp".into()],
+                    }),
+                    transport: Transport::Acp,
+                    ..seat("acp-codex", "acp-codex", "gpt-5.6-terra", Flavor::Worker)
+                },
+            ],
+            roster: vec![
+                SeatOverride {
+                    enabled: Some(true),
+                    model: Some("sonnet".into()),
+                    effort: Some(None), // cleared
+                    ..SeatOverride::role(QuarkId::new("acp-claude"))
+                },
+                SeatOverride::role(QuarkId::new("agy")),
+            ],
+            max_exchanges: Some(12),
+        };
+        save_team(&path, &team).unwrap();
+        assert_eq!(load_team(&path), team, "the full team must round-trip idempotently");
     }
 
     /// The Settings-commit path, proven headlessly: editing an adopted quark

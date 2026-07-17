@@ -558,6 +558,27 @@ impl Chamber {
         // blank the current view (which would flash to empty, then repopulate).
         if let Ok(events) = io::read_events(&self.path) {
             let mut changed = false;
+
+            // The team files are edited out-of-band, not only through this window: the
+            // daemon re-seats from team.json, and a quark is adopted/removed by writing
+            // team.json (or the shared catalogue) directly. Poll them the same dumb way
+            // the field is polled, so an externally added/removed quark shows in the
+            // roster + Settings at once — instead of only after it first authors an
+            // event (event-seeding), which is why a new quark used to "appear after
+            // mention". A no-op after this window's own save: the reload matches what
+            // was just written, so `!=` is false and nothing reprojects.
+            let repo_team = load_team(&self.repo_team_path());
+            let global_team = hadron_lattice::team_config_path()
+                .map(|p| load_team(&p))
+                .unwrap_or_default();
+            let team_changed = repo_team != self.team || global_team != self.global;
+            if team_changed {
+                self.team = repo_team;
+                self.global = global_team;
+                self.providers = configured_providers(&resolve_team(&self.team, &self.global));
+                changed = true;
+            }
+
             if events.len() != self.view.messages.len() {
                 // Decide *before* the content grows: if the user is parked at the
                 // bottom, keep them there as the new message lands; if they've
@@ -606,6 +627,11 @@ impl Chamber {
                         .scroll_to_reveal_item(new_log_count.saturating_sub(1));
                 }
                 changed = true;
+            } else if team_changed {
+                // The message list is unchanged (same events) but the resolved team is
+                // not — refresh the view so the new roster/Settings render. No
+                // message-count change, so the virtualized chat/log lists need no splice.
+                self.reproject(&events);
             }
             if self.right_rail_tab == RightRailTab::Changes {
                 let root = crate::vcs::repo_root_of(&self.path);
