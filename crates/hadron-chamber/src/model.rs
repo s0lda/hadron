@@ -939,6 +939,7 @@ mod tests {
                         program: "npx".into(),
                         args: vec![],
                     }),
+                    cli: None,
                     enabled: true,
                 },
                 Seat {
@@ -951,6 +952,7 @@ mod tests {
                     flavor: Flavor::Orchestrator,
                     transport: Transport::Cli,
                     command: None,
+                    cli: None,
                     enabled: true,
                 },
             ],
