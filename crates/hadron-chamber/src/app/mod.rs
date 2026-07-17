@@ -68,6 +68,8 @@ use widgets::{
     roster_row, session_card, settings_field, stat_tile, text_button, wash_layer,
 };
 
+mod actions;
+
 actions!(
     chamber,
     [
@@ -1261,108 +1263,6 @@ impl Chamber {
         list
     }
 
-    fn handle_chat_command(
-        &mut self,
-        cmd: &str,
-        args: &str,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        match cmd {
-            "toggle-roster" => {
-                self.toggle_rail(Rail::Roster, _window, cx);
-                true
-            }
-            "toggle-inspector" => {
-                self.toggle_rail(Rail::Inspector, _window, cx);
-                true
-            }
-            "clear" => {
-                let session_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-                let hadron_dir = match self.path.parent() {
-                    Some(p) => p.to_path_buf(),
-                    None => std::path::PathBuf::from(".hadron"),
-                };
-                let session_dir = hadron_dir.join("sessions").join(&session_id);
-                if let Err(e) = std::fs::create_dir_all(&session_dir) {
-                    eprintln!("chamber: failed to create session archive directory: {e}");
-                } else {
-                    let archive_path = session_dir.join("field.jsonl");
-                    if let Err(e) = std::fs::copy(&self.path, &archive_path) {
-                        eprintln!("chamber: failed to archive field.jsonl: {e}");
-                    } else if let Err(e) = std::fs::write(&self.path, "") {
-                        eprintln!("chamber: failed to clear field.jsonl: {e}");
-                    } else {
-                        // The archived agents still hold their pre-clear resident ACP
-                        // sessions. Restart every resident quark so it re-boots into the
-                        // fresh (empty) field instead of carrying stale context (see
-                        // `post_clear_reboots` for the rule). The daemon's service_reboots
-                        // ignores any id not currently seated.
-                        for ev in crate::model::post_clear_reboots(&self.view.roster) {
-                            if let Err(e) = io::append_event(&self.path, &ev) {
-                                eprintln!("chamber: failed to append post-clear reboot: {e}");
-                            }
-                        }
-                        let events = io::read_events(&self.path).unwrap_or_default();
-                        self.reproject(&events);
-                        // The just-archived field is now part of history: fold it into the
-                        // wider Stats windows. `/clear` is the only writer of a new archive
-                        // in this process, so this is the one place the cache must rebuild.
-                        self.archived_messages =
-                            crate::model::load_archived_messages(&hadron_dir.join("sessions"));
-                        self.chat_message_ixs.clear();
-                        self.chat_list_state.reset(0);
-                        for scroll in &self.chat_scrolls {
-                            scroll.scroll_to_bottom();
-                        }
-                        cx.notify();
-                    }
-                }
-                true
-            }
-            "team-brainstorm" => {
-                let body = format!("@team Let's brainstorm. {args}").trim().to_string();
-                let ev = Event::new(Actor::Human, None, Kind::Message { body });
-                if let Err(e) = io::append_event(&self.path, &ev) {
-                    eprintln!("chamber: failed to append team-brainstorm message: {e}");
-                } else {
-                    let events = io::read_events(&self.path).unwrap_or_default();
-                    self.reproject(&events);
-                    
-                    let old_chat_count = self.chat_message_ixs.len();
-                    self.chat_message_ixs = self
-                        .view
-                        .messages
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
-                        .collect();
-                    let new_chat_count = self.chat_message_ixs.len();
-                    if new_chat_count > old_chat_count {
-                        self.chat_list_state.splice(
-                            old_chat_count..old_chat_count,
-                            new_chat_count - old_chat_count,
-                        );
-                    }
-                    for scroll in &self.chat_scrolls {
-                        scroll.scroll_to_bottom();
-                    }
-                    self.chat_list_state.scroll_to_reveal_item(new_chat_count.saturating_sub(1));
-                    cx.notify();
-                }
-                true
-            }
-            _ => {
-                // If it contains a slash, it's probably a path. 
-                // Return false to let it pass through as a normal message.
-                if cmd.contains('/') {
-                    return false;
-                }
-                // Later we could show a local error message for unknown commands.
-                false
-            }
-        }
-    }
 
     // ── Keyboard navigation ──────────────────────────────────────────────
     // These are driven by actions bound at the Chamber key context. Only keys the
@@ -1371,156 +1271,11 @@ impl Chamber {
     // input's editing chords — that is what lets tab navigation work *while* the
     // chat box has focus, instead of being silently swallowed by it.
 
-    /// Cycle the chat column's tab (Chat/Log/Stats) by `delta`, wrapping.
-    fn cycle_chat_tab(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let n = ChatTab::ALL.len() as isize;
-        let cur = self.chat_tab.index() as isize;
-        self.chat_tab = ChatTab::from_index((cur + delta).rem_euclid(n) as usize);
-        cx.notify();
-    }
 
-    /// Cycle the right rail's tab (Terminal/Files/Changes/Plan) by `delta`, wrapping.
-    fn cycle_inspector_tab(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let n = RightRailTab::ALL.len() as isize;
-        let cur = self.right_rail_tab.index() as isize;
-        self.right_rail_tab = RightRailTab::from_index((cur + delta).rem_euclid(n) as usize);
-        cx.notify();
-    }
 
-    /// Cycle the Stats time window by `delta`. Only meaningful on the Stats chat tab,
-    /// so it is a deliberate no-op elsewhere (the key is never surprising).
-    fn cycle_stats_window(&mut self, delta: isize, cx: &mut Context<Self>) {
-        if self.chat_tab != ChatTab::Stats {
-            return;
-        }
-        let n = StatsWindow::ALL.len() as isize;
-        let cur = StatsWindow::ALL
-            .iter()
-            .position(|w| *w == self.stats_window)
-            .unwrap_or(0) as isize;
-        self.stats_window = StatsWindow::ALL[(cur + delta).rem_euclid(n) as usize];
-        cx.notify();
-    }
 
-    /// Move the roster keyboard cursor by `delta`, wrapping. A first press with no
-    /// current selection lands on the top row (down) or bottom row (up).
-    fn move_quark_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let len = self.view.roster.len();
-        if len == 0 {
-            self.selected_quark_ix = None;
-            return;
-        }
-        let next = match self.selected_quark_ix {
-            None if delta >= 0 => 0,
-            None => len - 1,
-            Some(cur) => (cur as isize + delta).rem_euclid(len as isize) as usize,
-        };
-        self.selected_quark_ix = Some(next);
-        cx.notify();
-    }
 
-    /// Open the info panel for the keyboard-selected quark — the keyboard equivalent
-    /// of clicking a roster row.
-    fn open_selected_quark(&mut self, cx: &mut Context<Self>) {
-        if let Some(r) = self.selected_quark_ix.and_then(|ix| self.view.roster.get(ix)) {
-            self.info_panel = Some(r.id.clone());
-            self.info_tab = InfoTab::Identity;
-            cx.notify();
-        }
-    }
 
-    fn handle_context_menu_action(&mut self, action: ContextMenuAction, cx: &mut Context<Self>) {
-        match action {
-            ContextMenuAction::QuarkInfo(id) => {
-                self.info_panel = Some(id);
-                // Each open starts at the top section, not wherever the last panel left off.
-                self.info_tab = InfoTab::Identity;
-            }
-            ContextMenuAction::ToggleQuark(id) => {
-                self.toggle_quark_enabled(&id, cx);
-            }
-            ContextMenuAction::AdoptQuark(id) => {
-                self.adopt_quark(&id, cx);
-            }
-            ContextMenuAction::RestartQuark(id) => {
-                self.reboot_quark(&id, cx);
-            }
-            ContextMenuAction::SetFlavor(id, flavor) => {
-                let qid = QuarkId::new(&id);
-                // Apply to a legacy seat if present, else record the role as a per-repo
-                // override (a catalogue quark keeps its definition; only its role here
-                // changes). Trial on a clone so the "≥1 orchestrator" guard is checked
-                // against the RESOLVED team before committing.
-                let mut trial = self.team.clone();
-                if let Some(seat) = trial.quarks.iter_mut().find(|s| s.id == qid) {
-                    seat.flavor = flavor.clone();
-                } else if let Some(ov) = trial.roster.iter_mut().find(|o| o.id == qid) {
-                    ov.flavor = Some(flavor.clone());
-                } else {
-                    trial.roster.push(SeatOverride {
-                        flavor: Some(flavor.clone()),
-                        ..SeatOverride::role(qid.clone())
-                    });
-                }
-                let orchestrators = resolve_team(&trial, &self.global)
-                    .quarks
-                    .iter()
-                    .filter(|s| s.flavor == hadron_lattice::Flavor::Orchestrator)
-                    .count();
-                if orchestrators > 0 {
-                    self.team = trial;
-                    self.save_repo_team(cx);
-                } else {
-                    eprintln!(
-                        "Refusing to change flavor of {id}: cannot have zero orchestrators."
-                    );
-                }
-            }
-            ContextMenuAction::OpenFile(path) => {
-                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                if let Some(content) = crate::sys::read_workspace_file(&repo_root, &path) {
-                    self.parsed_markdown.borrow_mut().remove(&usize::MAX);
-                    self.file_tree_open = Some((path, content));
-                }
-            }
-            ContextMenuAction::CopyPath(path) => {
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(path));
-            }
-            ContextMenuAction::OpenInEditor(path) => {
-                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                let full_path = repo_root.join(path);
-
-                #[cfg(target_os = "macos")]
-                let default_cmd = "open";
-                #[cfg(target_os = "windows")]
-                let default_cmd = "explorer";
-                #[cfg(target_os = "linux")]
-                let default_cmd = "xdg-open";
-
-                let editor = std::env::var("EDITOR").unwrap_or_else(|_| default_cmd.to_string());
-                let _ = std::process::Command::new(&editor).arg(&full_path).spawn();
-            }
-            ContextMenuAction::OpenInFolder(path) => {
-                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                let full_path = repo_root.join(path);
-                let target = if full_path.is_file() {
-                    full_path.parent().unwrap_or(&full_path).to_path_buf()
-                } else {
-                    full_path
-                };
-
-                #[cfg(target_os = "macos")]
-                let cmd = "open";
-                #[cfg(target_os = "windows")]
-                let cmd = "explorer";
-                #[cfg(target_os = "linux")]
-                let cmd = "xdg-open";
-
-                let _ = std::process::Command::new(cmd).arg(&target).spawn();
-            }
-        }
-        cx.notify();
-    }
 }
 
 impl Render for Chamber {
@@ -3456,25 +3211,6 @@ impl Chamber {
             .child(card)
     }
 
-    /// Answer an outstanding permission request by appending a human
-    /// `PermissionGrant` (addressed back to the asking quark, so the daemon
-    /// resumes it) — the same bus the quarks use. Mirrors [`Self::on_input_submit`].
-    fn answer_permission(&mut self, approved: bool, cx: &mut Context<Self>) {
-        let Some(pending) = self.view.pending_permission.clone() else {
-            return;
-        };
-        let ev = hadron_gatekeeper::grant(&pending, approved);
-        if let Err(e) = io::append_event(&self.path, &ev) {
-            eprintln!("chamber: failed to append permission grant: {e}");
-            return;
-        }
-        let events = io::read_events(&self.path).unwrap_or_default();
-        self.reproject(&events);
-        for scroll in &self.chat_scrolls {
-            scroll.scroll_to_bottom();
-        }
-        cx.notify();
-    }
 
     /// The non-blocking permission toast: when a quark is waiting on the human,
     /// a banner drops in with Approve / Deny. `None` when nothing is pending.
@@ -3521,165 +3257,17 @@ impl Chamber {
         )
     }
 
-    /// "Always allow" the pending op: append a *remembering* grant so the
-    /// gatekeeper's allow-list auto-approves the same `(quark, op)` next time.
-    fn answer_permission_remember(&mut self, cx: &mut Context<Self>) {
-        let Some(pending) = self.view.pending_permission.clone() else {
-            return;
-        };
-        self.append_and_reload(hadron_gatekeeper::grant_remembering(&pending), cx);
-    }
 
-    /// Cycle the global default permission mode (Ask → Write → Auto → Bypass →
-    /// Ask) by appending a global `ModeSet`. The daemon honours it next tick.
-    fn cycle_global_mode(&mut self, cx: &mut Context<Self>) {
-        let next = next_mode(self.view.global_mode);
-        self.append_and_reload(
-            Event::new(Actor::Human, None, Kind::ModeSet { mode: next }),
-            cx,
-        );
-    }
 
-    /// Cycle a single quark's permission mode by appending a per-quark `ModeSet`
-    /// (addressed to it). This always creates/updates an explicit override.
-    fn cycle_quark_mode(&mut self, id: &str, cx: &mut Context<Self>) {
-        let qid = QuarkId::new(id);
-        let current = self
-            .view
-            .roster
-            .iter()
-            .find(|r| r.id == id)
-            .map(|r| r.mode)
-            .unwrap_or_default();
-        let next = next_mode(current);
-        self.append_and_reload(
-            Event::new(Actor::Human, Some(qid), Kind::ModeSet { mode: next }),
-            cx,
-        );
-    }
 
-    /// Set a single quark's permission mode **explicitly** (the Settings picker) by
-    /// appending a per-quark `ModeSet`. Unlike [`Self::cycle_quark_mode`] this jumps
-    /// straight to `mode`; like it, it always records an explicit per-quark override.
-    fn set_quark_mode(&mut self, id: &str, mode: Mode, cx: &mut Context<Self>) {
-        let qid = QuarkId::new(id);
-        self.append_and_reload(
-            Event::new(Actor::Human, Some(qid), Kind::ModeSet { mode }),
-            cx,
-        );
-    }
 
-    /// Clear a quark's per-quark override (the "Default" rung) by appending a
-    /// `ModeClear`. The quark reverts to inheriting the global default; because the
-    /// latest per-quark mode event wins, this cleanly un-sets an earlier `ModeSet`
-    /// in the append-only field.
-    fn clear_quark_mode(&mut self, id: &str, cx: &mut Context<Self>) {
-        let qid = QuarkId::new(id);
-        self.append_and_reload(
-            Event::new(Actor::Human, Some(qid), Kind::ModeClear),
-            cx,
-        );
-    }
 
-    /// Force-restart a resident quark: append a per-quark [`Kind::Reboot`]. The daemon
-    /// honours it on its next tick — reaping the quark's live ACP subprocess (aborting
-    /// an in-flight turn) and re-booting it fresh on its next mention. The quark stays
-    /// seated throughout. A no-op for a one-shot CLI quark, which holds nothing
-    /// resident between turns. Mirrors [`Self::set_quark_mode`]: the command travels as
-    /// a field event, auditable in the Log tab.
-    fn reboot_quark(&mut self, id: &str, cx: &mut Context<Self>) {
-        let qid = QuarkId::new(id);
-        self.append_and_reload(
-            Event::new(Actor::Human, Some(qid), Kind::Reboot),
-            cx,
-        );
-    }
 
-    /// The colour to paint a quark's name / chart series with: its **custom** colour if
-    /// one is set in the stored identity (`ChamberPrefs`), else the stable auto hue. Thin
-    /// wrapper over [`Self::resolve_identity`] — the one colour-resolution path — so a
-    /// custom colour shows everywhere the quark appears (log author, charts, roster, info
-    /// panel), not just where an identity was already being resolved.
-    fn color_for(&self, name: &str) -> Hsla {
-        self.resolve_identity(name).color
-    }
 
-    /// The repo `.hadron/team.json` path (the file the chamber edits), whether or not
-    /// it exists yet.
-    fn repo_team_path(&self) -> PathBuf {
-        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        hadron_lattice::team_for_field(&self.path)
-            .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"))
-    }
 
-    /// Persist `self.team` to the repo file and re-project. The one write path for
-    /// every repo-team mutation, so save+reproject never drift.
-    fn save_repo_team(&mut self, cx: &mut Context<Self>) {
-        let path = self.repo_team_path();
-        if let Err(e) = hadron_lattice::save_team(&path, &self.team) {
-            eprintln!("chamber: failed to save team.json: {e}");
-            return;
-        }
-        self.providers = configured_providers(&resolve_team(&self.team, &self.global));
-        let events = io::read_events(&self.path).unwrap_or_default();
-        self.reproject(&events);
-        cx.notify();
-    }
 
-    /// Persist the **global catalogue** (`~/.hadron/team.json`). The catalogue holds the
-    /// shared defaults that are the same in every repo — a quark's model default and its
-    /// display name (a quark is the same quark everywhere, so its name is not a per-repo
-    /// thing). Mirrors [`Self::save_repo_team`] but writes the catalogue file.
-    fn save_global_team(&mut self, cx: &mut Context<Self>) {
-        let Some(path) = hadron_lattice::team_config_path() else {
-            eprintln!("chamber: no global catalogue path — cannot save shared defaults");
-            return;
-        };
-        if let Err(e) = hadron_lattice::save_team(&path, &self.global) {
-            eprintln!("chamber: failed to save catalogue: {e}");
-            return;
-        }
-        self.providers = configured_providers(&resolve_team(&self.team, &self.global));
-        let events = io::read_events(&self.path).unwrap_or_default();
-        self.reproject(&events);
-        cx.notify();
-    }
 
-    /// Toggle a quark's participation. A legacy full seat flips its own `enabled`; a
-    /// catalogue-adopted quark records the flip as a per-repo override (created if it
-    /// does not exist yet). Only meaningful for adopted rows — a not-adopted quark is
-    /// "Adopt"ed instead (see the context menu).
-    fn toggle_quark_enabled(&mut self, id: &str, cx: &mut Context<Self>) {
-        let qid = QuarkId::new(id);
-        // The current (resolved) state is what we flip away from.
-        let resolved = resolve_team(&self.team, &self.global);
-        let Some(current) = resolved.get(&qid).map(|s| s.enabled) else {
-            return; // not adopted → nothing to toggle
-        };
-        let want = !current;
-        if let Some(seat) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
-            seat.enabled = want;
-        } else if let Some(ov) = self.team.roster.iter_mut().find(|o| o.id == qid) {
-            ov.enabled = Some(want);
-        } else {
-            self.team
-                .roster
-                .push(SeatOverride { enabled: Some(want), ..SeatOverride::role(qid) });
-        }
-        self.save_repo_team(cx);
-    }
 
-    /// Append an event to the field and re-project the view (the shared write
-    /// path for permission grants and mode changes — the same bus the quarks use).
-    fn append_and_reload(&mut self, ev: Event, cx: &mut Context<Self>) {
-        if let Err(e) = io::append_event(&self.path, &ev) {
-            eprintln!("chamber: failed to append event: {e}");
-            return;
-        }
-        let events = io::read_events(&self.path).unwrap_or_default();
-        self.reproject(&events);
-        cx.notify();
-    }
 
     /// Resolve an actor's display identity: prefs overrides over code defaults.
     /// `actor` is `"human"` or a quark id (as it appears in [`MessageRow::from`]
@@ -4658,92 +4246,9 @@ impl Chamber {
             }))
     }
 
-    /// Collapse or expand a rail. Just flips the persisted flag — the layout
-    /// follows (an expanded rail is a resizable panel; a collapsed one is a fixed
-    /// strip), so there's no sizing state to drive by hand.
-    fn toggle_rail(&mut self, rail: Rail, _window: &mut Window, cx: &mut Context<Self>) {
-        match rail {
-            Rail::Roster => self.prefs.roster_collapsed = !self.prefs.roster_collapsed,
-            Rail::Inspector => self.prefs.inspector_collapsed = !self.prefs.inspector_collapsed,
-        }
-        let _ = config::save(&self.prefs);
-        cx.notify();
-    }
 
-    /// **Un-adopt** a quark from this repo: drop its legacy seat and/or override plus
-    /// its providers-list row. The definition stays in the global catalogue, so the
-    /// quark reappears as an available (grey) row rather than vanishing — removal from
-    /// a repo is not deletion from the catalogue. The running daemon reconciles the
-    /// removal on its next re-seat tick (its `ReseatPlan.removed` → `unseat`).
-    fn remove_quark(&mut self, id: &str, cx: &mut Context<Self>) {
-        let qid = QuarkId::new(id);
-        self.team.quarks.retain(|s| s.id != qid);
-        self.team.roster.retain(|o| o.id != qid);
-        self.providers.retain(|p| p.id.as_str() != id);
-        self.save_repo_team(cx);
-    }
 
-    /// Save a newly-configured quark. Its **definition** goes to the global catalogue
-    /// (`~/.hadron/team.json`) so every repo can reach it; this repo **auto-adopts** it
-    /// (an enabled override), matching Jake's "added quark joins the current repo".
-    /// When there is no separate catalogue (the repo file *is* the global file), fall
-    /// back to a self-contained legacy seat — the pre-split behaviour.
-    fn add_configured_quark(&mut self, seat: hadron_lattice::Seat, cx: &mut Context<Self>) {
-        let repo_path = self.repo_team_path();
-        let global_path = hadron_lattice::team_config_path();
-        let separate = global_path.as_deref().is_some_and(|g| g != repo_path);
-        let id = seat.id.clone();
-        if separate {
-            // The catalogue holds the shared **default** for an id. The first add of an
-            // id establishes that default; a later add of the SAME id in another repo
-            // must NOT clobber it — that is the cross-repo collision. So keep any existing
-            // def and record only how this repo's pick diverges (a preset chooses a model;
-            // effort/mode/name it never sets, so those inherit the catalogue).
-            let adopt = match self.global.quarks.iter().find(|s| s.id == id).cloned() {
-                None => {
-                    self.global.quarks.push(seat.clone());
-                    if let Some(gp) = global_path {
-                        if let Err(e) = hadron_lattice::save_team(&gp, &self.global) {
-                            eprintln!("chamber: failed to save catalogue: {e}");
-                        }
-                    }
-                    SeatOverride { enabled: Some(true), ..SeatOverride::role(id.clone()) }
-                }
-                Some(def) => SeatOverride {
-                    enabled: Some(true),
-                    model: (seat.model != def.model).then(|| seat.model.clone()),
-                    ..SeatOverride::role(id.clone())
-                },
-            };
-            // Auto-adopt here (unless already present some other way).
-            if !self.team.quarks.iter().any(|s| s.id == id)
-                && !self.team.roster.iter().any(|o| o.id == id)
-            {
-                self.team.roster.push(adopt);
-            }
-        } else {
-            // No separate catalogue: keep it self-contained as a legacy seat.
-            self.team.quarks.push(seat);
-        }
-        self.save_repo_team(cx);
-    }
 
-    /// **Adopt** a catalogue quark into this repo: add an enabled override so the daemon
-    /// seats it. The definition stays in the global catalogue; the repo only records
-    /// that it participates here (as a worker by default; change the role afterwards).
-    fn adopt_quark(&mut self, id: &str, cx: &mut Context<Self>) {
-        let qid = QuarkId::new(id);
-        if self.team.quarks.iter().any(|s| s.id == qid)
-            || self.team.roster.iter().any(|o| o.id == qid)
-        {
-            return; // already adopted here
-        }
-        self.team.roster.push(SeatOverride {
-            enabled: Some(true),
-            ..SeatOverride::role(qid) // inherit the catalogue's role + definition
-        });
-        self.save_repo_team(cx);
-    }
 
     fn providers_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.wizard_state {
