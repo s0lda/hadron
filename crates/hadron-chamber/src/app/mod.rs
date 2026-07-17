@@ -51,6 +51,9 @@ use identity::{
     hsla_to_hex, identity_avatar, pack_rgb, parse_hex, ResolvedIdentity, IDENTITY_SWATCHES,
 };
 
+mod tabs;
+use tabs::{ChatTab, InfoTab, Rail, RightRailTab};
+
 actions!(
     chamber,
     [
@@ -92,90 +95,6 @@ const TERM_FONT: f32 = 13.0;
 const TERM_CELL_W: f32 = 7.8;
 const TERM_CELL_H: f32 = 17.0;
 
-/// The two collapsible side rails.
-#[derive(Clone, Copy)]
-enum Rail {
-    Roster,
-    Inspector,
-}
-
-/// The views over the field, selected by the chat column's segmented tabs.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ChatTab {
-    /// The conversation — human/quark messages, styled like a chat.
-    Chat,
-    /// Every event on the field, compact — the raw activity log.
-    Log,
-    /// Team-wide stats over a selectable time window (Session/Week/Month/All time):
-    /// turns, tokens, context, quota.
-    Stats,
-}
-
-impl ChatTab {
-    const ALL: [ChatTab; 3] = [ChatTab::Chat, ChatTab::Log, ChatTab::Stats];
-
-    /// Sizes every per-tab array. A tab added to `ALL` without growing those
-    /// arrays is an index-out-of-bounds the moment the tab is opened, so they
-    /// take their length from here rather than restating it.
-    const COUNT: usize = Self::ALL.len();
-
-    fn index(self) -> usize {
-        match self {
-            ChatTab::Chat => 0,
-            ChatTab::Log => 1,
-            ChatTab::Stats => 2,
-        }
-    }
-
-    fn from_index(ix: usize) -> Self {
-        Self::ALL.get(ix).copied().unwrap_or(ChatTab::Chat)
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            ChatTab::Chat => "Chat",
-            ChatTab::Log => "Log",
-            ChatTab::Stats => "Stats",
-        }
-    }
-}
-
-/// The sections of the quark info panel, selected by a segmented tab bar so the panel
-/// stays short instead of one long scroll.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum InfoTab {
-    /// Who this quark is: header, role, state, adoption, and the Restart action.
-    Identity,
-    /// How it is wired: provider, agent command, model, transport, effort, permission.
-    Config,
-    /// Its telemetry over the selected [`StatsWindow`].
-    Stats,
-}
-
-impl InfoTab {
-    const ALL: [InfoTab; 3] = [InfoTab::Identity, InfoTab::Config, InfoTab::Stats];
-
-    fn index(self) -> usize {
-        match self {
-            InfoTab::Identity => 0,
-            InfoTab::Config => 1,
-            InfoTab::Stats => 2,
-        }
-    }
-
-    fn from_index(ix: usize) -> Self {
-        Self::ALL.get(ix).copied().unwrap_or(InfoTab::Identity)
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            InfoTab::Identity => "Identity",
-            InfoTab::Config => "Config",
-            InfoTab::Stats => "Stats",
-        }
-    }
-}
-
 fn format_num(n: u32) -> String {
     if n >= 10_000 {
         format!("{:.1}k", n as f64 / 1000.0)
@@ -186,45 +105,6 @@ fn format_num(n: u32) -> String {
             format!("{},{}", head, tail)
         } else {
             s
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RightRailTab {
-    Terminal,
-    FileTree,
-    Changes,
-    Plan,
-}
-
-impl RightRailTab {
-    const ALL: [RightRailTab; 4] = [
-        RightRailTab::Terminal,
-        RightRailTab::FileTree,
-        RightRailTab::Changes,
-        RightRailTab::Plan,
-    ];
-
-    fn index(self) -> usize {
-        match self {
-            RightRailTab::Terminal => 0,
-            RightRailTab::FileTree => 1,
-            RightRailTab::Changes => 2,
-            RightRailTab::Plan => 3,
-        }
-    }
-
-    fn from_index(ix: usize) -> Self {
-        Self::ALL.get(ix).copied().unwrap_or(RightRailTab::Terminal)
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            RightRailTab::Terminal => "Terminal",
-            RightRailTab::FileTree => "File Tree",
-            RightRailTab::Changes => "Changes",
-            RightRailTab::Plan => "Plan",
         }
     }
 }
