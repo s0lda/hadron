@@ -53,6 +53,15 @@ impl Transport {
             Transport::Sdk => "sdk",
         }
     }
+
+    /// Build the conventional `<transport>-<vendor>` id for a pure vendor string, e.g.
+    /// `Transport::Acp.conventional_id("claude")` → `"acp-claude"`. The SSOT counterpart
+    /// to [`id_follows_convention`]: that function *checks* an id against the convention,
+    /// this one *constructs* one, off the same `code()` — so a caller that just resolved a
+    /// pure vendor (e.g. from a re-keyed preset list) never has to hand-format the prefix.
+    pub fn conventional_id(&self, vendor: &str) -> String {
+        format!("{}-{vendor}", self.code())
+    }
 }
 
 /// How to boot an ACP agent: the program and its args. Comes
@@ -843,6 +852,15 @@ mod tests {
         assert_eq!(Transport::Cli.code(), "cli");
         assert_eq!(Transport::Acp.code(), "acp");
         assert_eq!(Transport::Sdk.code(), "sdk");
+    }
+
+    #[test]
+    fn conventional_id_prefixes_a_pure_vendor_with_the_transport_code() {
+        assert_eq!(Transport::Acp.conventional_id("claude"), "acp-claude");
+        assert_eq!(Transport::Cli.conventional_id("agy"), "cli-agy");
+        assert_eq!(Transport::Sdk.conventional_id("agy"), "sdk-agy");
+        // And the id it builds always satisfies the convention it's checked against.
+        assert!(id_follows_convention(&Transport::Acp.conventional_id("claude"), Transport::Acp));
     }
 
     #[test]
