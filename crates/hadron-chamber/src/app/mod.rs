@@ -56,8 +56,9 @@ use tabs::{ChatTab, InfoTab, Rail, RightRailTab};
 
 mod providers;
 use providers::{
-    configured_providers, migrate_legacy_ids, migrate_repo_to_catalogue, AcpModelProbe,
-    AcpModelState, AgentDescriptor, ConfiguredQuark, ProviderState, SettingsTarget, WizardState,
+    cli_seat_from, configured_providers, migrate_legacy_ids, migrate_repo_to_catalogue,
+    prompt_channel_from, AcpModelProbe, AcpModelState, AgentDescriptor, CliChannelChoice,
+    ConfiguredQuark, ProviderState, SettingsTarget, WizardState,
 };
 
 mod widgets;
@@ -199,6 +200,19 @@ struct Chamber {
     /// substring match on preset name + command, so the list is searchable instead of a
     /// long scroll.
     preset_filter: Entity<InputState>,
+    /// The "Custom CLI" wizard form fields (`WizardState::CustomCli`): a generic
+    /// `Transport::Cli` seat built by hand rather than probed from an ACP preset. Live
+    /// here (not in the `WizardState` variant itself) so the enum stays a plain, cheaply
+    /// `Clone + PartialEq`-able value — matching `settings_name`/`settings_model` etc.
+    custom_cli_vendor: Entity<InputState>,
+    custom_cli_program: Entity<InputState>,
+    custom_cli_args: Entity<InputState>,
+    custom_cli_model: Entity<InputState>,
+    /// The argv flag when `custom_cli_channel` is `Arg` (e.g. `--prompt`); blank means a
+    /// bare positional argument (`PromptChannel::Arg { flag: None }`).
+    custom_cli_flag: Entity<InputState>,
+    /// Which of the two prompt-delivery channels the toggle currently selects.
+    custom_cli_channel: CliChannelChoice,
     /// Arbitrary-colour picker for the current Settings identity, beside the preset
     /// swatches. Its `Change` events write the identity's colour (see `new`).
     color_picker: Entity<ColorPickerState>,
@@ -210,7 +224,7 @@ struct Chamber {
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
-    _settings_subs: [Subscription; 4],
+    _settings_subs: [Subscription; 6],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
     /// Offered-model probe for the ACP quark whose Settings are open — drives the model
@@ -296,6 +310,11 @@ impl Chamber {
         let settings_effort = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. low, standard, high"));
         let settings_mode_config = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. architect, code, ask"));
         let preset_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Search providers…"));
+        let custom_cli_vendor = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. ollama"));
+        let custom_cli_program = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. ollama or /usr/local/bin/mytool"));
+        let custom_cli_args = cx.new(|cx| InputState::new(window, cx).placeholder("space-separated, e.g. run llama3"));
+        let custom_cli_model = cx.new(|cx| InputState::new(window, cx).placeholder("model name (optional)"));
+        let custom_cli_flag = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. --prompt (blank = positional)"));
         let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
         // Repaint the Settings overlay on every edit so its preview is live.
         let _settings_subs = [
@@ -308,6 +327,15 @@ impl Chamber {
             // Re-render the add-quark wizard on every keystroke so the preset list
             // re-filters live as the search box is typed into.
             cx.subscribe_in(&preset_filter, window, |_, _, _: &InputEvent, _, cx| {
+                cx.notify()
+            }),
+            // Same reason: the custom-CLI form's "Save" button is only wired up once
+            // vendor + program are non-empty (`can_save` in `providers_view`), so typing
+            // into either must repaint the wizard for the button to light up live.
+            cx.subscribe_in(&custom_cli_vendor, window, |_, _, _: &InputEvent, _, cx| {
+                cx.notify()
+            }),
+            cx.subscribe_in(&custom_cli_program, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
             }),
             // A colour chosen in the picker writes the current Settings identity's colour.
@@ -436,6 +464,12 @@ impl Chamber {
             settings_effort,
             settings_mode_config,
             preset_filter,
+            custom_cli_vendor,
+            custom_cli_program,
+            custom_cli_args,
+            custom_cli_model,
+            custom_cli_flag,
+            custom_cli_channel: CliChannelChoice::default(),
             color_picker,
             pending_image_pick: None,
             _input_sub,
