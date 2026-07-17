@@ -74,8 +74,11 @@ fn match_longest_mention<'a>(text: &str, roster: &'a [QuarkCard]) -> Option<(usi
     let mut best_match: Option<(usize, ResolvedMention<'a>)> = None;
 
     let mut try_match = |target_name: &str, resolution: ResolvedMention<'a>| {
-        if text.len() >= target_name.len() {
-            let prefix = &text[..target_name.len()];
+        // `get(..n)` is `None` when `n` is past the end OR not a char boundary. The
+        // boundary case is the one a raw `&text[..n]` slice panicked on: a multi-byte
+        // char (e.g. a smart quote) straddling the candidate's byte length. Skipping
+        // is correct — a prefix cut mid-char could never equal an ASCII target name.
+        if let Some(prefix) = text.get(..target_name.len()) {
             if prefix.eq_ignore_ascii_case(target_name) {
                 let next_char = text[target_name.len()..].chars().next();
                 let boundary_ok = match next_char {
@@ -196,6 +199,20 @@ mod tests {
             QuarkCard { id: QuarkId::new("orch"), display_name: None, flavor: Flavor::Orchestrator, energy: EnergyState::Available, provider: String::new(), model: String::new() },
             QuarkCard { id: QuarkId::new("worker"), display_name: None, flavor: Flavor::Worker, energy: EnergyState::Available, provider: String::new(), model: String::new() },
         ]
+    }
+
+    /// A message whose bytes place a multi-byte char (e.g. the smart apostrophe
+    /// '’', 3 bytes) across a candidate mention's byte length must not panic. The
+    /// 12-byte `@orchestrator` alias is the real-world trigger: any human line
+    /// `@…’…` with '’' straddling byte 12 hit `&text[..12]` at a non-char-boundary
+    /// and brought the whole daemon down (router.rs:78).
+    #[test]
+    fn multibyte_char_straddling_a_candidate_length_does_not_panic() {
+        // rest after '@' = "abcdefghij’klmn": '’' occupies bytes 10..13, so byte 12
+        // (the "orchestrator" alias length) lands INSIDE it.
+        let body = "@abcdefghij’klmn and that’s all";
+        assert_eq!(human_mentions(body, &roster()), Vec::<QuarkId>::new());
+        assert_eq!(parse_addressee(body, &roster(), None), None);
     }
 
     /// The escalation path: a worker addresses the ROLE, and it lands on whoever
