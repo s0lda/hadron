@@ -36,6 +36,9 @@ pub enum Transport {
     Cli,
     /// A resident ACP agent spoken to over JSON-RPC on stdio.
     Acp,
+    /// Reserved: a resident per-provider SDK adapter. Nameable (`sdk-agy`) so the axis is
+    /// first-class, but not yet implemented — `from_seat` rejects it. Landed by sub-project #3.
+    Sdk,
 }
 
 /// How to boot an ACP agent: the program and its args. Comes

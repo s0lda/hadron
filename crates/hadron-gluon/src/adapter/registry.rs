@@ -428,6 +428,11 @@ impl QuarkKind {
                 })?;
                 Ok(QuarkKind::Acp(target))
             }
+            Transport::Sdk => anyhow::bail!(
+                "seat '{}' uses the sdk transport, which is reserved but not yet implemented \
+                 (see sub-project #3); use transport \"cli\" or \"acp\" for now",
+                seat.id.as_str()
+            ),
         }
     }
 }
@@ -665,6 +670,17 @@ mod tests {
 
         let err = QuarkKind::from_seat(&acp_seat("nope", "goose")).unwrap_err().to_string();
         assert!(err.contains("no built-in boot command"), "must name the fix: {err}");
+    }
+
+    #[test]
+    fn sdk_transport_is_reserved_and_not_seatable() {
+        let mut seat = acp_seat("sdk-agy", "agy");
+        seat.transport = Transport::Sdk;
+        let err = QuarkKind::from_seat(&seat).expect_err("sdk must not resolve yet");
+        assert!(
+            err.to_string().contains("sdk") && err.to_string().contains("not yet implemented"),
+            "error must name the reserved transport, got: {err}"
+        );
     }
 
     /// `AcpTarget::for_seat` is what the chamber probes with, so it must resolve a
