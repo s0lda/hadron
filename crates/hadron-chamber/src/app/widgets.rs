@@ -184,7 +184,7 @@ pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::A
     };
     let tip: SharedString = format!("{name} — {label}").into();
 
-    // Legibility line: "provider · model" when the seat is in team.json, else
+    // Legibility line: "transport · vendor · model" when the seat is in team.json, else
     // the presence label alone.
     let cap = |s: &str| {
         let mut c = s.chars();
@@ -192,6 +192,11 @@ pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::A
             None => String::new(),
             Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
         }
+    };
+    let transport_label = match r.transport {
+        hadron_lattice::Transport::Cli => "cli",
+        hadron_lattice::Transport::Acp => "acp",
+        hadron_lattice::Transport::Sdk => "sdk",
     };
 
     let tokens = r.tokens;
@@ -209,12 +214,12 @@ pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::A
         None => "",
     };
 
-    let detail_1: SharedString = if r.provider.is_empty() && r.model.is_empty() {
+    let detail_1: SharedString = if r.vendor.is_empty() && r.model.is_empty() {
         label.into()
     } else if r.model.is_empty() {
-        cap(&r.provider).into()
+        format!("{} · {}", transport_label, cap(&r.vendor)).into()
     } else {
-        format!("{} · {}", cap(&r.provider), cap(&r.model)).into()
+        format!("{} · {} · {}", transport_label, cap(&r.vendor), cap(&r.model)).into()
     };
 
     let unknown_str = if r.unknown_turns > 0 {

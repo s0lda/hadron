@@ -78,7 +78,7 @@ fn message_fresh(m: &MessageRow, transport: hadron_lattice::Transport) -> Option
 
 /// One roster entry: a quark, its latest lifecycle state, its effective
 /// permission mode (and whether that's an explicit per-quark override vs the
-/// inherited global), and its legibility (`provider`/`model` from the team
+/// inherited global), and its legibility (`vendor`/`model` from the team
 /// config — empty strings when the seat isn't in `team.json`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RosterRow {
@@ -87,7 +87,7 @@ pub struct RosterRow {
     pub state: QuarkState,
     pub mode: Mode,
     pub mode_is_override: bool,
-    pub provider: String,
+    pub vendor: String,
     pub model: String,
     pub flavor: Option<hadron_lattice::Flavor>,
     pub transport: hadron_lattice::Transport,
@@ -594,7 +594,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
             // Legibility comes from the resolved team if the quark is adopted, else
             // from the catalogue (available-but-off), else it is an event-only id we
             // know nothing about (a live participant with no seat).
-            let (display_name, provider, model, flavor, transport, effort, enabled, adopted) =
+            let (display_name, vendor, model, flavor, transport, effort, enabled, adopted) =
                 match (team.get(&qid), global.get(&qid)) {
                     (Some(s), _) => (
                         s.display_name.clone(),
@@ -634,7 +634,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
                 mode: resolve_mode(events, &qid),
                 mode_is_override: has_override(events, &qid),
                 display_name,
-                provider,
+                vendor,
                 model,
                 flavor,
                 transport,
@@ -679,7 +679,7 @@ mod tests {
             state: QuarkState::Ground,
             mode: Mode::Ask,
             mode_is_override: false,
-            provider: String::new(),
+            vendor: String::new(),
             model: String::new(),
             flavor: None,
             transport,
@@ -1074,7 +1074,7 @@ mod tests {
         let agy = view.roster.iter().find(|r| r.id == "agy").unwrap();
         assert_eq!(agy.mode, Mode::Write, "inherits the global default");
         assert!(!agy.mode_is_override);
-        assert_eq!(agy.provider, "agy");
+        assert_eq!(agy.vendor, "agy");
         assert_eq!(agy.model, "gemini-3-pro");
     }
 
@@ -1111,7 +1111,7 @@ mod tests {
         let gemini = view.roster.iter().find(|r| r.id == "gemini").unwrap();
         assert!(!gemini.adopted, "the catalogue-only quark is not adopted");
         assert!(!gemini.enabled, "and shows inert (grey dot)");
-        assert_eq!(gemini.provider, "agy", "legibility comes from the catalogue");
+        assert_eq!(gemini.vendor, "agy", "legibility comes from the catalogue");
     }
 
     #[test]
