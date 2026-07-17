@@ -44,6 +44,28 @@ pub(super) enum WizardState {
     Connecting(AgentDescriptor, ProviderState),
 }
 
+/// Backs the ACP model **dropdown** in a quark's Settings. The chamber re-probes the
+/// agent each time an ACP quark is opened (see `start_acp_model_probe`) and parks the
+/// result here, keyed by quark `id` so a probe that lands after the human has moved on
+/// can't populate another quark's list.
+pub(super) struct AcpModelProbe {
+    pub id: String,
+    pub state: AcpModelState,
+}
+
+pub(super) enum AcpModelState {
+    /// Booting the agent to read back the models it advertises on `session/new`.
+    Probing,
+    /// The agent's offered models (wire value + label) and its current/default pick.
+    Ready {
+        models: Vec<hadron_gluon::adapter::acp::AcpModel>,
+        current: String,
+    },
+    /// The agent could not be probed, or advertises no model picker at all. The string
+    /// is a short human note; the dropdown still offers "Default" (the agent's choice).
+    Unavailable(String),
+}
+
 /// Which identity the Settings overlay is currently editing.
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum SettingsTarget {
