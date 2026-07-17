@@ -56,8 +56,8 @@ use tabs::{ChatTab, InfoTab, Rail, RightRailTab};
 
 mod providers;
 use providers::{
-    configured_providers, migrate_repo_to_catalogue, AcpModelProbe, AcpModelState,
-    AgentDescriptor, ConfiguredQuark, ProviderState, SettingsTarget, WizardState,
+    configured_providers, migrate_legacy_ids, migrate_repo_to_catalogue, AcpModelProbe,
+    AcpModelState, AgentDescriptor, ConfiguredQuark, ProviderState, SettingsTarget, WizardState,
 };
 
 mod widgets;
@@ -955,6 +955,10 @@ pub fn run(field_path: Option<String>) {
     let global_path = hadron_lattice::team_config_path()
         .filter(|g| Some(g.as_path()) != repo_path.as_deref());
 
+    // Load prefs before either migration below, so the id-rename can move ChamberPrefs'
+    // per-quark identity (colour/name/avatar) onto the renamed keys and persist it.
+    let mut prefs = config::load();
+
     // One-shot migration to the global-catalogue split: if the repo file still carries
     // legacy full seats and there is a separate catalogue, move each definition into the
     // catalogue and rewrite the repo file as role/state overrides. Idempotent (a repo
@@ -962,6 +966,12 @@ pub fn run(field_path: Option<String>) {
     // originals, so the running daemon reconciles to a no-op re-seat.
     if let (Some(rp), Some(gp)) = (repo_path.as_deref(), global_path.as_deref()) {
         migrate_repo_to_catalogue(rp, gp);
+        // One-shot: rename legacy ids (`agy` → `cli-agy`, `opus` → `cli-claude`) to the
+        // `<transport>-<vendor>` convention in both team files, and move the chamber's own
+        // per-quark identity onto the new keys so a rename doesn't reset a quark's
+        // appearance. Idempotent — safe on every launch.
+        migrate_legacy_ids(rp, gp, &mut prefs);
+        let _ = config::save(&prefs);
     }
 
     // Load the SAME repo team the daemon seated for this field, plus the catalogue.
@@ -969,7 +979,6 @@ pub fn run(field_path: Option<String>) {
     let global = global_path.as_deref().map(load_team).unwrap_or_default();
     let events = io::read_events(&field_path).unwrap_or_default();
     let view = model::project_with_team(&events, &resolve_team(&team, &global), &global);
-    let prefs = config::load();
 
     let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
     app.run(move |cx: &mut App| {

@@ -93,7 +93,12 @@ pub(super) fn configured_providers(team: &Team) -> Vec<ConfiguredQuark> {
         .iter()
         .map(|seat| ConfiguredQuark {
             id: seat.id.0.clone(),
-            transport: seat.vendor.clone(),
+            transport: match seat.transport {
+                hadron_lattice::Transport::Cli => "cli",
+                hadron_lattice::Transport::Acp => "acp",
+                hadron_lattice::Transport::Sdk => "sdk",
+            }
+            .to_string(),
             state: ProviderState::Ready {
                 model: seat.model.clone(),
             },
@@ -142,5 +147,74 @@ pub(super) fn migrate_repo_to_catalogue(repo_path: &std::path::Path, global_path
              overrides (backup at {})",
             backup.display()
         );
+    }
+}
+
+/// One-shot: rename legacy ids to the `<transport>-<vendor>` convention across the repo
+/// team, the global catalogue, and the chamber's per-quark identity — all off the single
+/// `legacy_id_renames` map. Idempotent; safe to call every launch.
+pub(super) fn migrate_legacy_ids(
+    repo_path: &std::path::Path,
+    global_path: &std::path::Path,
+    prefs: &mut ChamberPrefs,
+) {
+    for path in [repo_path, global_path] {
+        let mut team = load_team(path);
+        let before = team.clone();
+        hadron_lattice::rename_legacy_ids(&mut team);
+        if team != before {
+            if let Err(e) = hadron_lattice::save_team(path, &team) {
+                eprintln!("chamber: legacy id-rename failed to write {}: {e}", path.display());
+            }
+        }
+    }
+    prefs.rename_quark_ids(hadron_lattice::legacy_id_renames());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hadron_lattice::{Flavor, QuarkId, Seat};
+    use tempfile::tempdir;
+
+    /// The composition `migrate_legacy_ids` exists for: a legacy id in BOTH team files
+    /// moves in lockstep with the ChamberPrefs identity keyed on it, so a rename never
+    /// resets a quark's colour/name/avatar in one file while leaving it stranded in
+    /// another. `rename_legacy_ids` and `ChamberPrefs::rename_quark_ids` are unit-tested
+    /// individually (lattice, config.rs); this proves the launch-time glue that runs
+    /// them together against real files.
+    #[test]
+    fn migrate_legacy_ids_moves_team_files_and_prefs_together() {
+        let dir = tempdir().unwrap();
+        let repo_path = dir.path().join("repo_team.json");
+        let global_path = dir.path().join("global_team.json");
+
+        let mut repo = Team::default();
+        repo.quarks.push(Seat::cli(QuarkId::new("agy"), "agy", "gemini-3-pro", Flavor::Worker));
+        hadron_lattice::save_team(&repo_path, &repo).unwrap();
+
+        let mut global = Team::default();
+        global.quarks.push(Seat::cli(QuarkId::new("opus"), "claude", "opus", Flavor::Orchestrator));
+        hadron_lattice::save_team(&global_path, &global).unwrap();
+
+        let mut prefs = ChamberPrefs::default();
+        prefs.quarks.insert("agy".to_string(), Identity::default());
+
+        migrate_legacy_ids(&repo_path, &global_path, &mut prefs);
+
+        let repo_after = load_team(&repo_path);
+        assert!(repo_after.get(&QuarkId::new("cli-agy")).is_some(), "repo seat renamed");
+        assert!(repo_after.get(&QuarkId::new("agy")).is_none(), "old repo id gone");
+
+        let global_after = load_team(&global_path);
+        assert!(global_after.get(&QuarkId::new("cli-claude")).is_some(), "catalogue seat renamed");
+
+        assert!(prefs.quarks.contains_key("cli-agy"), "identity followed the rename");
+        assert!(!prefs.quarks.contains_key("agy"));
+
+        // Idempotent: a second pass over the already-renamed files/prefs is a no-op.
+        migrate_legacy_ids(&repo_path, &global_path, &mut prefs);
+        assert!(prefs.quarks.contains_key("cli-agy"));
+        assert!(load_team(&repo_path).get(&QuarkId::new("cli-agy")).is_some());
     }
 }

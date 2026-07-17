@@ -63,6 +63,19 @@ fn default_inspector_width() -> f32 {
     300.0
 }
 
+impl ChamberPrefs {
+    /// Move per-quark identity (colour/name/avatar) to a renamed id, so the taxonomy
+    /// migration does not reset a quark's appearance. Reads the SAME map as the team.json
+    /// rename (`hadron_lattice::legacy_id_renames`) — passed in so the SSOT stays in lattice.
+    pub fn rename_quark_ids(&mut self, renames: &[(&str, &str)]) {
+        for (old, new) in renames {
+            if let Some(identity) = self.quarks.remove(*old) {
+                self.quarks.entry(new.to_string()).or_insert(identity);
+            }
+        }
+    }
+}
+
 impl Default for ChamberPrefs {
     fn default() -> Self {
         ChamberPrefs {
@@ -220,5 +233,17 @@ mod tests {
         let path = dir.path().join("chamber.json");
         std::fs::write(&path, "{ not json").unwrap();
         assert_eq!(load_from(&path), ChamberPrefs::default());
+    }
+
+    #[test]
+    fn rename_quark_ids_moves_identity_to_the_new_key() {
+        let mut prefs = ChamberPrefs::default();
+        prefs.quarks.insert("agy".to_string(), Identity::default());
+        prefs.rename_quark_ids(hadron_lattice::legacy_id_renames());
+        assert!(prefs.quarks.contains_key("cli-agy"), "identity moved to the new id");
+        assert!(!prefs.quarks.contains_key("agy"), "old key gone");
+        // Idempotent: a second run finds nothing to move.
+        prefs.rename_quark_ids(hadron_lattice::legacy_id_renames());
+        assert!(prefs.quarks.contains_key("cli-agy"));
     }
 }
