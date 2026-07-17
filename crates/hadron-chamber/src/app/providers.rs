@@ -93,12 +93,7 @@ pub(super) fn configured_providers(team: &Team) -> Vec<ConfiguredQuark> {
         .iter()
         .map(|seat| ConfiguredQuark {
             id: seat.id.0.clone(),
-            transport: match seat.transport {
-                hadron_lattice::Transport::Cli => "cli",
-                hadron_lattice::Transport::Acp => "acp",
-                hadron_lattice::Transport::Sdk => "sdk",
-            }
-            .to_string(),
+            transport: seat.transport.code().to_string(),
             state: ProviderState::Ready {
                 model: seat.model.clone(),
             },
@@ -153,12 +148,23 @@ pub(super) fn migrate_repo_to_catalogue(repo_path: &std::path::Path, global_path
 /// One-shot: rename legacy ids to the `<transport>-<vendor>` convention across the repo
 /// team, the global catalogue, and the chamber's per-quark identity — all off the single
 /// `legacy_id_renames` map. Idempotent; safe to call every launch.
+///
+/// Writes the catalogue (global) first, then the repo, matching the read order
+/// [`migrate_repo_to_catalogue`] uses — so the two migrations are consistent for the next
+/// maintainer to reason about. This does NOT make the pair atomic: on an overrides-only
+/// repo, a repo-file override references a catalogue seat *by id*, so renaming the two
+/// files in either order leaves a one-poll-tick window where the id in one file doesn't
+/// match the id in the other yet, and `resolve_team` drops the override as an orphan
+/// (logged, not fatal) until the second write lands. That window is inherent to a
+/// cross-file id-rename of an overrides-only repo, not something a write-order choice can
+/// close; it self-heals on the very next resolve, and this only runs at launch, before any
+/// daemon is polling the files — so in practice nothing observes the gap.
 pub(super) fn migrate_legacy_ids(
     repo_path: &std::path::Path,
     global_path: &std::path::Path,
     prefs: &mut ChamberPrefs,
 ) {
-    for path in [repo_path, global_path] {
+    for path in [global_path, repo_path] {
         let mut team = load_team(path);
         let before = team.clone();
         hadron_lattice::rename_legacy_ids(&mut team);
@@ -176,6 +182,46 @@ mod tests {
     use super::*;
     use hadron_lattice::{Flavor, QuarkId, Seat};
     use tempfile::tempdir;
+
+    /// The bug this task fixes: `configured_providers` used to feed `ConfiguredQuark`'s
+    /// `transport` field the seat's *vendor* (a Task 1 stopgap), so the Settings "Transport:"
+    /// label showed "claude"/"agy" instead of "acp"/"cli". Pins the real transport code per
+    /// seat, distinct from — and not equal to — its vendor, across all three transports.
+    #[test]
+    fn configured_providers_reports_the_real_transport_not_the_vendor() {
+        let team = Team {
+            quarks: vec![
+                Seat::cli(QuarkId::new("cli-agy"), "agy", "gemini-3-pro", Flavor::Worker),
+                Seat {
+                    transport: hadron_lattice::Transport::Acp,
+                    ..Seat::cli(QuarkId::new("acp-claude"), "claude", "opus-4.8", Flavor::Orchestrator)
+                },
+                Seat {
+                    transport: hadron_lattice::Transport::Sdk,
+                    ..Seat::cli(QuarkId::new("sdk-codex"), "codex", "gpt-5", Flavor::Worker)
+                },
+            ],
+            roster: vec![],
+            max_exchanges: None,
+        };
+
+        let providers = configured_providers(&team);
+        assert_eq!(providers.len(), 3);
+
+        let cli = providers.iter().find(|p| p.id == "cli-agy").unwrap();
+        assert_eq!(cli.transport, "cli", "the transport code, not the vendor \"agy\"");
+        let acp = providers.iter().find(|p| p.id == "acp-claude").unwrap();
+        assert_eq!(acp.transport, "acp", "the transport code, not the vendor \"claude\"");
+        let sdk = providers.iter().find(|p| p.id == "sdk-codex").unwrap();
+        assert_eq!(sdk.transport, "sdk", "the transport code, not the vendor \"codex\"");
+
+        for (p, model) in [(cli, "gemini-3-pro"), (acp, "opus-4.8"), (sdk, "gpt-5")] {
+            match &p.state {
+                ProviderState::Ready { model: m } => assert_eq!(m, model),
+                _ => panic!("expected ProviderState::Ready"),
+            }
+        }
+    }
 
     /// The composition `migrate_legacy_ids` exists for: a legacy id in BOTH team files
     /// moves in lockstep with the ChamberPrefs identity keyed on it, so a rename never
