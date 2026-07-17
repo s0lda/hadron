@@ -193,11 +193,7 @@ pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::A
             Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
         }
     };
-    let transport_label = match r.transport {
-        hadron_lattice::Transport::Cli => "cli",
-        hadron_lattice::Transport::Acp => "acp",
-        hadron_lattice::Transport::Sdk => "sdk",
-    };
+    let transport_label = r.transport.code();
 
     let tokens = r.tokens;
     let tokens_str = if tokens >= 1_000_000 {
