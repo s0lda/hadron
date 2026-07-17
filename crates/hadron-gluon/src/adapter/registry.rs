@@ -678,11 +678,11 @@ mod tests {
     #[test]
     fn an_uncatalogued_acp_seat_requires_a_command_and_says_so() {
         let mut s = acp_seat("unlisted", "no-such-agent");
-        s.command = Some(AcpCommand { program: "goose".into(), args: vec!["acp".into()] });
+        s.command = Some(AcpCommand { program: "no-such-agent".into(), args: vec!["acp".into()] });
         let QuarkKind::Acp(t) = QuarkKind::from_seat(&s).unwrap() else {
             panic!("expected an ACP transport");
         };
-        assert_eq!(t.command_line(), "goose acp");
+        assert_eq!(t.command_line(), "no-such-agent acp");
 
         let err = QuarkKind::from_seat(&acp_seat("nope", "no-such-agent")).unwrap_err().to_string();
         assert!(err.contains("no built-in boot command"), "must name the fix: {err}");

@@ -1217,8 +1217,17 @@ impl Chamber {
                             )
                             .child(text_button("save-provider", "Save Provider").on_click(
                                 cx.listener(move |this, _, window, cx| {
+                                    // `desc_inner.id` is the PURE vendor now (Task 3 re-keyed
+                                    // `available_presets()`/`AgentDescriptor` off `AcpAgentSpec.vendor`,
+                                    // e.g. "claude" — it no longer carries the old smeared "acp-claude"
+                                    // preset key). The seat's id is the `<transport>-<vendor>` form,
+                                    // derived once via `conventional_id` and reused for BOTH records
+                                    // below so they never diverge — `remove_quark` keys the roster off
+                                    // `ConfiguredQuark.id`, so it must match `Seat.id` exactly.
+                                    let seat_id = hadron_lattice::Transport::Acp.conventional_id(&desc_inner.id);
+
                                     this.providers.push(ConfiguredQuark {
-                                        id: desc_inner.id.clone(),
+                                        id: seat_id.clone(),
                                         transport: "acp".to_string(),
                                         state: state_inner.clone(),
                                     });
@@ -1229,7 +1238,7 @@ impl Chamber {
                                     // definition lands in the global catalogue; this repo
                                     // auto-adopts it (see `add_configured_quark`).
                                     let mut seat = hadron_lattice::Seat {
-                                        id: hadron_lattice::QuarkId::new(&desc_inner.id),
+                                        id: hadron_lattice::QuarkId::new(&seat_id),
                                         display_name: None,
                                         vendor: desc_inner.id.clone(),
                                         model: model_inner.clone(),
@@ -1244,16 +1253,14 @@ impl Chamber {
                                         effort: None,
                                         mode_config: None,
                                     };
-                                    // `desc_inner.id` is the catalogue's smeared preset key (e.g.
-                                    // "acp-claude"); strip it to the pure vendor here so what
-                                    // lands in team.json is already what a reload would produce —
-                                    // otherwise the next `parse_team` normalizes it and the chamber's
-                                    // held team diverges from the reloaded one, forever "changed".
+                                    // `vendor` is already pure (Task 3's re-keyed preset list), so this
+                                    // is a no-op today — left in as a defensive strip in case a vendor
+                                    // string ever carries a transport prefix again.
                                     seat.normalize_vendor();
-                                    // Advisory only, never blocking: the preset-driven wizard
-                                    // always derives `id` from the catalogue key today (already
-                                    // `<transport>-<vendor>`), but this future-proofs for a
-                                    // custom-CLI seat with a hand-typed id that might not match.
+                                    // Advisory only, never blocking: `seat_id` is already built from
+                                    // `conventional_id`, so this is dormant on this common path — it
+                                    // stays as future-proofing for a later custom-CLI id path where a
+                                    // hand-typed id might not match its transport prefix.
                                     if !hadron_lattice::id_follows_convention(seat.id.as_str(), seat.transport) {
                                         eprintln!(
                                             "chamber: note — id '{}' does not match the '{}-' convention",
