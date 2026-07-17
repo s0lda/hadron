@@ -550,9 +550,6 @@ impl Chamber {
         cx.notify();
     }
 
-
-
-
     /// Re-read the field; if it grew, re-project and repaint. Comparing event
     /// count to the current row count is a cheap change check (projection emits
     /// exactly one row per event), so an unchanged field costs only a read.
@@ -855,51 +852,6 @@ impl Chamber {
         cx.notify();
     }
 
-
-
-    // ── Keyboard navigation ──────────────────────────────────────────────
-    // These are driven by actions bound at the Chamber key context. Only keys the
-    // focused text input does NOT claim (see `crate::input::CONTEXT`) bubble up to
-    // the Chamber context, so the bound chords are deliberately chosen to avoid the
-    // input's editing chords — that is what lets tab navigation work *while* the
-    // chat box has focus, instead of being silently swallowed by it.
-
-
-
-
-
-
-}
-
-
-impl Chamber {
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     /// Resolve an actor's display identity: prefs overrides over code defaults.
     /// `actor` is `"human"` or a quark id (as it appears in [`MessageRow::from`]
     /// / [`RosterRow::id`]).
@@ -932,46 +884,6 @@ impl Chamber {
             .filter(|p| !p.trim().is_empty());
         ResolvedIdentity { name, color, image }
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-}
-
-/// Render a message body as Markdown under an element id unique to `(view, ix)`.
-///
-/// The id is load-bearing, not decoration. `gpui_component::text::markdown()`
-/// derives its `ElementId` from `Location::caller()`, so every row rendered from
-/// one call site would share a single id — and the `TextView`'s parsed state is
-/// keyed on that id. All messages would then share one state, whose `set_text`
-/// would see different text on every message and re-parse (and re-highlight) the
-/// Markdown for every row, every frame. Distinct ids give each row its own state,
-/// so `set_text` early-returns and the parse happens once per body.
-///
-/// Keying on the positional `ix` is sound only because the field is append-only and
-/// rendered oldest-first, so a given message keeps its index for the window's life.
-/// If rows ever get reordered or filtered, key on a stable message id instead — the
-/// cache would silently stop helping, and no test would catch the regression.
-impl Chamber {
-
 
 }
 
