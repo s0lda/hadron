@@ -683,61 +683,28 @@ impl Chamber {
             });
             return;
         }
-        let mut text = input.read(cx).value().trim().to_string();
-        if text.is_empty() {
+        let full = input.read(cx).value().trim().to_string();
+        if full.is_empty() {
             return;
         }
 
-        // A single line may chain several UI commands and end with a normal message,
-        // e.g. "/toggle-roster /clear ping the team". Zero-arg UI commands run in
-        // order as they appear; `/team-brainstorm` consumes the rest of the line as
-        // its argument; whatever text is left over falls through to be posted as one
-        // human message via the normal path below.
-        {
-            const ZERO_ARG_CMDS: [&str; 3] = ["toggle-roster", "toggle-inspector", "clear"];
-            let words: Vec<String> = text.split_whitespace().map(str::to_string).collect();
-            let mut remaining_words: Vec<String> = Vec::new();
-            let mut brainstorm_args: Option<Vec<String>> = None;
-            let mut ran_ui_cmd = false;
-
-            for word in words {
-                // Once the rest-of-line command (team-brainstorm) is open, everything
-                // trailing becomes its argument.
-                if let Some(args) = brainstorm_args.as_mut() {
-                    args.push(word);
-                    continue;
-                }
-                if let Some(cmd) = word.strip_prefix('/').filter(|c| !c.is_empty()) {
-                    if ZERO_ARG_CMDS.contains(&cmd) {
-                        self.handle_chat_command(cmd, "", window, cx);
-                        ran_ui_cmd = true;
-                        continue;
-                    }
-                    if cmd == "team-brainstorm" {
-                        brainstorm_args = Some(Vec::new());
-                        continue;
-                    }
-                }
-                remaining_words.push(word);
-            }
-
-            if let Some(args) = brainstorm_args {
-                self.handle_chat_command("team-brainstorm", &args.join(" "), window, cx);
-                ran_ui_cmd = true;
-            }
-
-            let remaining_text = remaining_words.join(" ");
-            if remaining_text.is_empty() {
-                // Pure command line (or lines with only recognised commands): clear the
-                // box if we actually ran something, and stop before posting an empty message.
-                if ran_ui_cmd {
-                    input.update(cx, |state, cx| state.set_value("", window, cx));
-                }
+        // A line may begin with chained UI commands, then a normal message, e.g.
+        // "/toggle-roster /clear ping the team". `split_leading_commands` peels the
+        // leading `/command` tokens; the returned body is the untouched remainder, so a
+        // multi-line message (Shift+Enter, a markdown list) keeps its newlines.
+        let (cmds, body) = split_leading_commands(&full);
+        for (cmd, args) in &cmds {
+            self.handle_chat_command(cmd, args, window, cx);
+        }
+        let text = match body {
+            Some(body) => body,
+            None => {
+                // Only recognised commands were present (`body` is `None` only when at
+                // least one command ran): clear the box and stop before posting nothing.
+                input.update(cx, |state, cx| state.set_value("", window, cx));
                 return;
             }
-            // Leftover, non-command text is posted as a human message below.
-            text = remaining_text;
-        }
+        };
 
         // Write the raw text with `to: None`, leaving any `@mentions` in the body.
         // The daemon resolves addressees from the body, so ONE message can address
@@ -885,6 +852,46 @@ impl Chamber {
         ResolvedIdentity { name, color, image }
     }
 
+}
+
+/// Launch the chamber window against a field file path.
+/// Peel the leading `/command` tokens off a submitted chat line. Returns the commands
+/// to run in order — each as `(name, args)` — and the leftover message body.
+///
+/// Only *leading* commands are recognised: the first token that is not a known command
+/// ends parsing, and everything from there is the message (so a body can contain a
+/// literal "/foo"). Zero-arg commands (`toggle-roster` / `toggle-inspector` / `clear`)
+/// chain; `/team-brainstorm` takes the rest of the line as its argument. The body is a
+/// slice of the ORIGINAL input, so internal newlines survive — it is never rebuilt from
+/// whitespace-split tokens. `body` is `None` only when at least one command ran and no
+/// message text remains, which is how the caller knows to clear the box and post nothing.
+fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Option<String>) {
+    const ZERO_ARG_CMDS: [&str; 3] = ["toggle-roster", "toggle-inspector", "clear"];
+    let mut cmds = Vec::new();
+    let mut rest = full;
+
+    loop {
+        let head = rest.trim_start();
+        let tok_end = head.find(char::is_whitespace).unwrap_or(head.len());
+        let token = &head[..tok_end];
+        match token.strip_prefix('/').filter(|c| !c.is_empty()) {
+            Some(cmd) if ZERO_ARG_CMDS.contains(&cmd) => {
+                cmds.push((cmd.to_string(), String::new()));
+                rest = &head[tok_end..];
+            }
+            Some("team-brainstorm") => {
+                cmds.push(("team-brainstorm".to_string(), head[tok_end..].trim().to_string()));
+                // team-brainstorm consumes the rest of the line, so nothing is left to post.
+                return (cmds, None);
+            }
+            // First non-command token: the untouched remainder is the message body.
+            _ => break,
+        }
+    }
+
+    let remaining = rest.trim();
+    let body = (!remaining.is_empty()).then(|| remaining.to_string());
+    (cmds, body)
 }
 
 /// Launch the chamber window against a field file path.
@@ -1056,3 +1063,48 @@ pub fn run(field_path: Option<String>) {
     });
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leading_commands_peel_and_preserve_message_newlines() {
+        // No command: the whole body is returned verbatim, newlines intact.
+        let (cmds, body) = split_leading_commands("line one\nline two");
+        assert!(cmds.is_empty());
+        assert_eq!(body.as_deref(), Some("line one\nline two"));
+
+        // A leading command runs; the multi-line remainder keeps its newline (this is the
+        // regression guard — the old tokenizer flattened it to "line one line two").
+        let (cmds, body) = split_leading_commands("/clear line one\nline two");
+        assert_eq!(cmds, vec![("clear".to_string(), String::new())]);
+        assert_eq!(body.as_deref(), Some("line one\nline two"));
+
+        // Chained zero-arg commands, no message left → body None (caller clears the box).
+        let (cmds, body) = split_leading_commands("/toggle-roster /clear");
+        assert_eq!(
+            cmds,
+            vec![
+                ("toggle-roster".to_string(), String::new()),
+                ("clear".to_string(), String::new()),
+            ]
+        );
+        assert_eq!(body, None);
+
+        // team-brainstorm swallows the rest of the line as its argument.
+        let (cmds, body) = split_leading_commands("/team-brainstorm ship the release");
+        assert_eq!(cmds, vec![("team-brainstorm".to_string(), "ship the release".to_string())]);
+        assert_eq!(body, None);
+
+        // A "/command" that is NOT leading stays literal text in the message body.
+        let (cmds, body) = split_leading_commands("please run /clear later");
+        assert!(cmds.is_empty());
+        assert_eq!(body.as_deref(), Some("please run /clear later"));
+
+        // A bare slash is not a command.
+        let (cmds, body) = split_leading_commands("/ and /clear");
+        assert!(cmds.is_empty());
+        assert_eq!(body.as_deref(), Some("/ and /clear"));
+    }
+}
