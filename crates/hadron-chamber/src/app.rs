@@ -43,7 +43,22 @@ use crate::config::{self, ChamberPrefs, Identity};
 use crate::model::{self, ChamberView, MessageRow, RosterRow, StatsWindow};
 use crate::theme;
 
-actions!(chamber, [CycleMode]);
+actions!(
+    chamber,
+    [
+        CycleMode,
+        NextChatTab,
+        PrevChatTab,
+        NextInspectorTab,
+        PrevInspectorTab,
+        NextStatsSubTab,
+        PrevStatsSubTab,
+        NextQuark,
+        PrevQuark,
+        ToggleSelectedQuark,
+        OpenMenu,
+    ]
+);
 
 /// Key-dispatch context for the chamber's window-level actions.
 const KEY_CONTEXT: &str = "Chamber";
@@ -411,6 +426,12 @@ struct Chamber {
     /// Which view the right rail's segmented tabs are showing. The right rail is
     /// independent of the chat column: changing the chat tab must not move it.
     right_rail_tab: RightRailTab,
+    /// Keyboard cursor over the roster (index into `view.roster`), moved by the
+    /// quark-nav keys and drawn as a highlighted row. `None` = nothing selected.
+    selected_quark_ix: Option<usize>,
+    /// Whether the keyboard-triggered app menu overlay is open (mirrors the click
+    /// dropdown behind the hamburger button, but reachable without the mouse).
+    app_menu_open: bool,
     /// Cached diff string for the Changes rail
     working_diff: Option<Vec<crate::vcs::FileDiff>>,
     changes_open_ixs: std::collections::HashSet<usize>,
@@ -657,6 +678,8 @@ impl Chamber {
             stats_window: StatsWindow::Session,
             archived_messages,
             right_rail_tab: RightRailTab::Terminal,
+            selected_quark_ix: None,
+            app_menu_open: false,
             working_diff: None,
             changes_open_ixs: std::collections::HashSet::new(),
             changes_scroll: ScrollHandle::new(),
@@ -1612,6 +1635,71 @@ impl Chamber {
         }
     }
 
+    // ── Keyboard navigation ──────────────────────────────────────────────
+    // These are driven by actions bound at the Chamber key context. Only keys the
+    // focused text input does NOT claim (see `crate::input::CONTEXT`) bubble up to
+    // the Chamber context, so the bound chords are deliberately chosen to avoid the
+    // input's editing chords — that is what lets tab navigation work *while* the
+    // chat box has focus, instead of being silently swallowed by it.
+
+    /// Cycle the chat column's tab (Chat/Log/Stats) by `delta`, wrapping.
+    fn cycle_chat_tab(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let n = ChatTab::ALL.len() as isize;
+        let cur = self.chat_tab.index() as isize;
+        self.chat_tab = ChatTab::from_index((cur + delta).rem_euclid(n) as usize);
+        cx.notify();
+    }
+
+    /// Cycle the right rail's tab (Terminal/Files/Changes/Plan) by `delta`, wrapping.
+    fn cycle_inspector_tab(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let n = RightRailTab::ALL.len() as isize;
+        let cur = self.right_rail_tab.index() as isize;
+        self.right_rail_tab = RightRailTab::from_index((cur + delta).rem_euclid(n) as usize);
+        cx.notify();
+    }
+
+    /// Cycle the Stats time window by `delta`. Only meaningful on the Stats chat tab,
+    /// so it is a deliberate no-op elsewhere (the key is never surprising).
+    fn cycle_stats_window(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if self.chat_tab != ChatTab::Stats {
+            return;
+        }
+        let n = StatsWindow::ALL.len() as isize;
+        let cur = StatsWindow::ALL
+            .iter()
+            .position(|w| *w == self.stats_window)
+            .unwrap_or(0) as isize;
+        self.stats_window = StatsWindow::ALL[(cur + delta).rem_euclid(n) as usize];
+        cx.notify();
+    }
+
+    /// Move the roster keyboard cursor by `delta`, wrapping. A first press with no
+    /// current selection lands on the top row (down) or bottom row (up).
+    fn move_quark_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let len = self.view.roster.len();
+        if len == 0 {
+            self.selected_quark_ix = None;
+            return;
+        }
+        let next = match self.selected_quark_ix {
+            None if delta >= 0 => 0,
+            None => len - 1,
+            Some(cur) => (cur as isize + delta).rem_euclid(len as isize) as usize,
+        };
+        self.selected_quark_ix = Some(next);
+        cx.notify();
+    }
+
+    /// Open the info panel for the keyboard-selected quark — the keyboard equivalent
+    /// of clicking a roster row.
+    fn open_selected_quark(&mut self, cx: &mut Context<Self>) {
+        if let Some(r) = self.selected_quark_ix.and_then(|ix| self.view.roster.get(ix)) {
+            self.info_panel = Some(r.id.clone());
+            self.info_tab = InfoTab::Identity;
+            cx.notify();
+        }
+    }
+
     fn handle_context_menu_action(&mut self, action: ContextMenuAction, cx: &mut Context<Self>) {
         match action {
             ContextMenuAction::QuarkInfo(id) => {
@@ -1763,11 +1851,31 @@ impl Render for Chamber {
             .is_some()
             .then(|| self.info_panel_overlay(cx));
         let about = self.about_open.then(|| self.about_overlay(cx));
+        let app_menu = self.app_menu_open.then(|| self.app_menu_overlay(cx));
 
         let content = v_flex()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &CycleMode, _, cx| this.cycle_global_mode(cx)))
+            .on_action(cx.listener(|this, _: &NextChatTab, _, cx| this.cycle_chat_tab(1, cx)))
+            .on_action(cx.listener(|this, _: &PrevChatTab, _, cx| this.cycle_chat_tab(-1, cx)))
+            .on_action(
+                cx.listener(|this, _: &NextInspectorTab, _, cx| this.cycle_inspector_tab(1, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &PrevInspectorTab, _, cx| this.cycle_inspector_tab(-1, cx)),
+            )
+            .on_action(cx.listener(|this, _: &NextStatsSubTab, _, cx| this.cycle_stats_window(1, cx)))
+            .on_action(
+                cx.listener(|this, _: &PrevStatsSubTab, _, cx| this.cycle_stats_window(-1, cx)),
+            )
+            .on_action(cx.listener(|this, _: &NextQuark, _, cx| this.move_quark_selection(1, cx)))
+            .on_action(cx.listener(|this, _: &PrevQuark, _, cx| this.move_quark_selection(-1, cx)))
+            .on_action(cx.listener(|this, _: &ToggleSelectedQuark, _, cx| this.open_selected_quark(cx)))
+            .on_action(cx.listener(|this, _: &OpenMenu, _, cx| {
+                this.app_menu_open = !this.app_menu_open;
+                cx.notify();
+            }))
             .relative()
             .size_full()
             .overflow_hidden()
@@ -1806,7 +1914,8 @@ impl Render for Chamber {
             .child(body)
             .children(settings)
             .children(info)
-            .children(about);
+            .children(about)
+            .children(app_menu);
 
         let wrapped_content = crate::window_frame::window_frame(window, cx, content);
 
@@ -2029,7 +2138,8 @@ impl Chamber {
         // The roster rows, stacked to natural height so they scroll within the
         // rail rather than pushing the pinned Settings button off the bottom.
         let mut rows = v_flex().w_full().gap_2();
-        for r in &self.view.roster {
+        for (ix, r) in self.view.roster.iter().enumerate() {
+            let is_selected = self.selected_quark_ix == Some(ix);
             // The per-quark mode tag is clickable → cycle this quark's override.
             let qid = r.id.clone();
             let mode_el = div()
@@ -2063,6 +2173,15 @@ impl Chamber {
             // a stack address — every row in the loop then shares one menu state.
             let row_el = div()
                 .id(SharedString::from(format!("roster-row-{}", r.id)))
+                .rounded(px(8.0))
+                .border_1()
+                // Keyboard-cursor cue: a fuchsia ring, matching the slash-command accent.
+                // Transparent when unselected so rows don't shift by a border width.
+                .border_color(if is_selected {
+                    gpui::rgb(0xe879f9).into()
+                } else {
+                    gpui::transparent_black()
+                })
                 .context_menu({
                     let qid_str = r.id.clone();
                     let enable_str = if r.enabled { "Disable" } else { "Enable" };
@@ -4400,6 +4519,93 @@ impl Chamber {
     /// The Settings overlay: a dim backdrop (click to dismiss) behind a card
     /// that edits one identity — an avatar switcher, a live preview, a display
     /// name, a color swatch row, and an image path (image wins over color).
+    /// The keyboard-triggered app menu (F10): the same actions as the hamburger
+    /// dropdown, but reachable without the mouse. A full-bleed backdrop dismisses on
+    /// any outside click (and swallows it); the panel sits under the top-left button.
+    fn app_menu_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        fn item(
+            id: &'static str,
+            label: &'static str,
+            on_click: impl Fn(&mut Chamber, &mut Window, &mut Context<Chamber>) + 'static,
+            cx: &mut Context<Chamber>,
+        ) -> gpui::AnyElement {
+            div()
+                .id(id)
+                .w_full()
+                .px_2()
+                .py_1p5()
+                .rounded(px(6.0))
+                .cursor_pointer()
+                .text_sm()
+                .text_color(theme::text())
+                .hover(|s| s.bg(theme::bg_surface_raised()))
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.app_menu_open = false;
+                    on_click(this, window, cx);
+                    cx.notify();
+                }))
+                .child(label)
+                .into_any_element()
+        }
+
+        let sep = || div().h(px(1.0)).w_full().bg(theme::border());
+
+        div()
+            .absolute()
+            .inset_0()
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.app_menu_open = false;
+                    cx.notify();
+                }),
+            )
+            .child(
+                v_flex()
+                    .occlude()
+                    .absolute()
+                    .top(px(44.0))
+                    .left(px(12.0))
+                    .w(px(280.0))
+                    .p_2()
+                    .gap_0p5()
+                    .rounded(INNER_RADIUS)
+                    .bg(theme::modal_surface())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    // Swallow clicks inside the panel so they don't hit the dismiss backdrop.
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {})
+                    .child(item(
+                        "menu-settings",
+                        "Settings…",
+                        |this, window, cx| this.open_settings(window, cx),
+                        cx,
+                    ))
+                    .child(sep())
+                    .child(item(
+                        "menu-reveal",
+                        "Reveal Workspace in File Manager",
+                        |this, _w, cx| {
+                            this.handle_context_menu_action(
+                                ContextMenuAction::OpenInFolder(String::from(".")),
+                                cx,
+                            );
+                        },
+                        cx,
+                    ))
+                    .child(sep())
+                    .child(item(
+                        "menu-about",
+                        "About Hadron",
+                        |this, _w, _cx| this.about_open = true,
+                        cx,
+                    ))
+                    .child(sep())
+                    .child(item("menu-quit", "Quit Hadron", |_t, _w, cx| cx.quit(), cx)),
+            )
+    }
+
     fn settings_overlay(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let target = self.settings_target.clone();
 
@@ -6435,8 +6641,30 @@ pub fn run(field_path: Option<String>) {
             t.font_family =
                 "Inter, Segoe UI, sans-serif, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
         }
+        // Keyboard navigation. Every chord here is one the text input's own key
+        // context (`crate::input::CONTEXT`) does NOT claim — verified against its
+        // KeyBinding set (which takes ctrl/cmd arrows, ctrl-shift arrows, tab,
+        // shift-tab, escape, brackets, …). A key the input doesn't bind falls
+        // through to this Chamber context even while the chat box has focus, so
+        // navigation works mid-typing instead of being swallowed. ctrl-based
+        // (not alt/super) to dodge the WM's own workspace chords on Linux/WSL.
         cx.bind_keys([
             KeyBinding::new("shift-tab", CycleMode, Some(KEY_CONTEXT)),
+            // Chat column tabs (Chat / Log / Stats) — the universal tab chord.
+            KeyBinding::new("ctrl-tab", NextChatTab, Some(KEY_CONTEXT)),
+            KeyBinding::new("ctrl-shift-tab", PrevChatTab, Some(KEY_CONTEXT)),
+            // Right rail tabs (Terminal / Files / Changes / Plan) — browser-style.
+            KeyBinding::new("ctrl-pagedown", NextInspectorTab, Some(KEY_CONTEXT)),
+            KeyBinding::new("ctrl-pageup", PrevInspectorTab, Some(KEY_CONTEXT)),
+            // Stats time window, only while the Stats tab is up.
+            KeyBinding::new("ctrl-alt-pagedown", NextStatsSubTab, Some(KEY_CONTEXT)),
+            KeyBinding::new("ctrl-alt-pageup", PrevStatsSubTab, Some(KEY_CONTEXT)),
+            // Roster cursor (vim-style j/k) and open-selected.
+            KeyBinding::new("ctrl-j", NextQuark, Some(KEY_CONTEXT)),
+            KeyBinding::new("ctrl-k", PrevQuark, Some(KEY_CONTEXT)),
+            KeyBinding::new("ctrl-alt-enter", ToggleSelectedQuark, Some(KEY_CONTEXT)),
+            // App menu overlay — F10, the conventional "focus the menu" key.
+            KeyBinding::new("f10", OpenMenu, Some(KEY_CONTEXT)),
         ]);
 
         // Build window options here (needs `&App`, not the async cx below).
