@@ -154,7 +154,7 @@ mod tests {
         let new_seat = Seat {
             id: QuarkId::new("new-guy"),
             display_name: None,
-            provider: "claude".into(),
+            vendor: "claude".into(),
             model: "claude".into(),
             flavor: Flavor::Worker,
             transport: Transport::Acp,
@@ -202,7 +202,7 @@ mod tests {
         let seat = |args: &[&str]| Seat {
             id: QuarkId::new("agent"),
             display_name: None,
-            provider: "agent".into(),
+            vendor: "agent".into(),
             model: "claude".into(),
             flavor: Flavor::Worker,
             transport: Transport::Acp,
@@ -229,7 +229,7 @@ mod enabled_tests {
         Seat {
             id: QuarkId::new(id),
             display_name: None,
-            provider: "claude".into(),
+            vendor: "claude".into(),
             model: "claude".into(),
             flavor: Flavor::Worker,
             transport: Transport::Acp,

@@ -1228,10 +1228,10 @@ impl Chamber {
                                     // over the same transport the human tested it on. Its
                                     // definition lands in the global catalogue; this repo
                                     // auto-adopts it (see `add_configured_quark`).
-                                    let seat = hadron_lattice::Seat {
+                                    let mut seat = hadron_lattice::Seat {
                                         id: hadron_lattice::QuarkId::new(&desc_inner.id),
                                         display_name: None,
-                                        provider: desc_inner.id.clone(),
+                                        vendor: desc_inner.id.clone(),
                                         model: model_inner.clone(),
                                         flavor: hadron_lattice::Flavor::Worker, // default flavor
                                         transport: hadron_lattice::Transport::Acp,
@@ -1244,6 +1244,12 @@ impl Chamber {
                                         effort: None,
                                         mode_config: None,
                                     };
+                                    // `desc_inner.id` is the catalogue's smeared preset key (e.g.
+                                    // "acp-claude"); strip it to the pure vendor here so what
+                                    // lands in team.json is already what a reload would produce —
+                                    // otherwise the next `parse_team` normalizes it and the chamber's
+                                    // held team diverges from the reloaded one, forever "changed".
+                                    seat.normalize_vendor();
                                     this.add_configured_quark(seat, cx);
 
                                     this.wizard_state = WizardState::None;

@@ -62,8 +62,12 @@ pub struct Seat {
     /// The human-readable name of the quark, e.g. "Google Girl".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-    /// The backing CLI/vendor, e.g. "claude", "agy".
-    pub provider: String,
+    /// The pure vendor, e.g. "claude", "agy", "codex". WAS `provider`, which smeared
+    /// vendor and transport ("acp-claude"); `transport` is now the authoritative axis.
+    /// `#[serde(alias)]` keeps an un-migrated team.json (with `provider`) parsing; the
+    /// prefix it may carry is stripped by `normalize_vendor` in `parse_team`.
+    #[serde(alias = "provider")]
+    pub vendor: String,
     /// The model this seat runs, e.g. "opus-4.8", "gemini-3-pro".
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -115,9 +119,9 @@ impl Seat {
     /// a field to `Seat` without deciding which side of this line it falls on will not
     /// compile.
     pub fn same_agent(&self, other: &Seat) -> bool {
-        let Seat { id, display_name: _, provider, model, flavor, transport, command, enabled: _, effort, mode_config } = self;
+        let Seat { id, display_name: _, vendor, model, flavor, transport, command, enabled: _, effort, mode_config } = self;
         id == &other.id
-            && provider == &other.provider
+            && vendor == &other.vendor
             && model == &other.model
             && flavor == &other.flavor
             && transport == &other.transport
@@ -128,11 +132,11 @@ impl Seat {
 
     /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
     /// (and tests) from having to spell out two ACP fields they do not care about.
-    pub fn cli(id: QuarkId, provider: impl Into<String>, model: impl Into<String>, flavor: Flavor) -> Seat {
+    pub fn cli(id: QuarkId, vendor: impl Into<String>, model: impl Into<String>, flavor: Flavor) -> Seat {
         Seat {
             id,
             display_name: None,
-            provider: provider.into(),
+            vendor: vendor.into(),
             model: model.into(),
             flavor,
             transport: Transport::Cli,
@@ -140,6 +144,17 @@ impl Seat {
             enabled: true,
             effort: None,
             mode_config: None,
+        }
+    }
+
+    /// Strip a leading transport prefix a legacy `provider` value may carry, leaving the
+    /// pure vendor: "acp-claude" → "claude", "cli-agy" → "agy", "agy" → "agy". Idempotent.
+    pub fn normalize_vendor(&mut self) {
+        for prefix in ["cli-", "acp-", "sdk-"] {
+            if let Some(rest) = self.vendor.strip_prefix(prefix) {
+                self.vendor = rest.to_string();
+                return;
+            }
         }
     }
 }
@@ -476,7 +491,11 @@ pub fn team_for_field(field_path: &Path) -> Option<PathBuf> {
 /// the file's bytes, and must parse *those* bytes. Re-reading the path to parse it
 /// would be a second read of a file that may have changed in between.
 pub fn parse_team(text: &str) -> std::io::Result<Team> {
-    serde_json::from_str(text).map_err(std::io::Error::other)
+    let mut team: Team = serde_json::from_str(text).map_err(std::io::Error::other)?;
+    for seat in &mut team.quarks {
+        seat.normalize_vendor();
+    }
+    Ok(team)
 }
 
 /// Load a team from an explicit path. Missing or malformed → an empty team, so
@@ -651,7 +670,7 @@ mod tests {
     fn lookup_finds_a_seat_by_id() {
         let team = Team { quarks: vec![seat("agy", "agy", "gemini-3-pro", Flavor::Worker)], roster: vec![], max_exchanges: None };
         let s = team.get(&QuarkId::new("agy")).unwrap();
-        assert_eq!(s.provider, "agy");
+        assert_eq!(s.vendor, "agy");
         assert_eq!(s.model, "gemini-3-pro");
         assert!(team.get(&QuarkId::new("nope")).is_none());
     }
@@ -720,6 +739,19 @@ mod tests {
         assert_eq!(team.quarks.len(), 1);
         assert_eq!(team.get(&QuarkId::new("opus")).unwrap().model, "opus-4.8");
     }
+
+    #[test]
+    fn legacy_provider_key_parses_into_vendor_stripped_of_transport_prefix() {
+        // A team.json written before this change: ACP seat carries the smeared "acp-claude",
+        // CLI seat carries the bare vendor "agy".
+        let json = r#"{"quarks":[
+            {"id":"acp-claude","provider":"acp-claude","model":"opus","flavor":"worker","transport":"acp"},
+            {"id":"agy","provider":"agy","model":"flash","flavor":"orchestrator","transport":"cli"}
+        ]}"#;
+        let team = parse_team(json).expect("legacy team parses");
+        assert_eq!(team.quarks[0].vendor, "claude", "acp- prefix stripped to pure vendor");
+        assert_eq!(team.quarks[1].vendor, "agy", "bare vendor left as-is");
+    }
 }
 
 #[cfg(test)]
@@ -777,7 +809,7 @@ mod resolve_tests {
         let resolved = resolve_team(&repo, &global);
         assert_eq!(resolved.quarks.len(), 1);
         let s = &resolved.quarks[0];
-        assert_eq!(s.provider, "acp-claude", "definition comes from the catalogue");
+        assert_eq!(s.vendor, "acp-claude", "definition comes from the catalogue");
         assert_eq!(s.model, "opus");
         assert_eq!(s.flavor, Flavor::Orchestrator, "repo overrides the role");
         assert!(!s.enabled, "repo overrides the state");
@@ -996,7 +1028,12 @@ mod resolve_tests {
                         args: vec!["-y".into(), "codex-acp".into()],
                     }),
                     transport: Transport::Acp,
-                    ..seat("acp-codex", "acp-codex", "gpt-5.6-terra", Flavor::Worker)
+                    // Pure vendor, not the smeared "acp-codex": every real construction site
+                    // now writes a normalized vendor (see `Seat::normalize_vendor` and its
+                    // call in the chamber's ACP wizard), so a *held* seat and one freshly
+                    // *loaded* from the same bytes must already agree without parse-time
+                    // stripping doing any work here.
+                    ..seat("acp-codex", "codex", "gpt-5.6-terra", Flavor::Worker)
                 },
             ],
             roster: vec![
@@ -1181,7 +1218,7 @@ mod enabled_tests {
 
         for mutate in [
             (|s: &mut Seat| s.model = "sonnet".into()) as fn(&mut Seat),
-            |s: &mut Seat| s.provider = "agy".into(),
+            |s: &mut Seat| s.vendor = "agy".into(),
             |s: &mut Seat| s.flavor = Flavor::Orchestrator,
             |s: &mut Seat| s.transport = Transport::Acp,
             |s: &mut Seat| s.command = Some(AcpCommand { program: "other".into(), args: vec![] }),

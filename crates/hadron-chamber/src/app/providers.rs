@@ -93,7 +93,7 @@ pub(super) fn configured_providers(team: &Team) -> Vec<ConfiguredQuark> {
         .iter()
         .map(|seat| ConfiguredQuark {
             id: seat.id.0.clone(),
-            transport: seat.provider.clone(),
+            transport: seat.vendor.clone(),
             state: ProviderState::Ready {
                 model: seat.model.clone(),
             },

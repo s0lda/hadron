@@ -598,7 +598,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
                 match (team.get(&qid), global.get(&qid)) {
                     (Some(s), _) => (
                         s.display_name.clone(),
-                        s.provider.clone(),
+                        s.vendor.clone(),
                         s.model.clone(),
                         Some(s.flavor.clone()),
                         s.transport,
@@ -608,7 +608,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
                     ),
                     (None, Some(g)) => (
                         g.display_name.clone(),
-                        g.provider.clone(),
+                        g.vendor.clone(),
                         g.model.clone(),
                         Some(g.flavor.clone()),
                         g.transport,
@@ -929,7 +929,7 @@ mod tests {
                 Seat {
                     id: QuarkId::new("acp-claude"),
                     display_name: None,
-                    provider: "acp-claude".into(),
+                    vendor: "acp-claude".into(),
                     model: "x".into(),
                     effort: None,
                     mode_config: None,
@@ -944,7 +944,7 @@ mod tests {
                 Seat {
                     id: QuarkId::new("opus"),
                     display_name: None,
-                    provider: "claude".into(),
+                    vendor: "claude".into(),
                     model: "opus".into(),
                     effort: None,
                     mode_config: None,

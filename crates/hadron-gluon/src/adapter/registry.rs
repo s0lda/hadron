@@ -370,7 +370,7 @@ impl AcpTarget {
         }
         match &seat.command {
             Some(cmd) => Some(AcpTarget { program: cmd.program.clone(), args: cmd.args.clone() }),
-            None => AcpTarget::for_provider(&seat.provider),
+            None => AcpTarget::for_provider(&seat.vendor),
         }
     }
 
@@ -415,10 +415,10 @@ impl QuarkKind {
     /// never heard of needs one.
     pub fn from_seat(seat: &Seat) -> anyhow::Result<QuarkKind> {
         match seat.transport {
-            Transport::Cli => QuarkKind::from_provider(&seat.provider),
+            Transport::Cli => QuarkKind::from_provider(&seat.vendor),
             Transport::Acp => {
                 let target = AcpTarget::for_seat(seat).ok_or_else(|| {
-                    let provider = seat.provider.as_str();
+                    let provider = seat.vendor.as_str();
                     anyhow::anyhow!(
                         "seat '{}' is an ACP seat on provider {provider:?}, which has no \
                          built-in boot command — give it one, e.g. \
