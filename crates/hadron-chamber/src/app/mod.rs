@@ -571,16 +571,34 @@ impl Chamber {
             // event (event-seeding), which is why a new quark used to "appear after
             // mention". A no-op after this window's own save: the reload matches what
             // was just written, so `!=` is false and nothing reprojects.
-            let repo_team = load_team(&self.repo_team_path());
-            let global_team = hadron_lattice::team_config_path()
-                .map(|p| load_team(&p))
-                .unwrap_or_default();
-            let team_changed = repo_team != self.team || global_team != self.global;
-            if team_changed {
-                self.team = repo_team;
-                self.global = global_team;
-                self.providers = configured_providers(&resolve_team(&self.team, &self.global));
-                changed = true;
+            //
+            // STRICT read on purpose: `load_team` degrades a missing/half-written file to
+            // an EMPTY team. Assigning that would blank the roster for a frame and — if a
+            // settings save landed in the next ~400ms tick — persist an empty team.json,
+            // which the polling daemon would read as "unseat the whole swarm". So parse
+            // with the error kept and, on ANY read/parse failure, leave the in-memory team
+            // untouched (mirrors the events guard above; `save_team`'s atomic rename is
+            // what protects concurrent *writers*, this protects concurrent *readers*).
+            let read_strict = |path: &std::path::Path| -> Option<Team> {
+                std::fs::read_to_string(path)
+                    .ok()
+                    .and_then(|t| hadron_lattice::parse_team(&t).ok())
+            };
+            let repo_team = read_strict(&self.repo_team_path());
+            let global_team = match hadron_lattice::team_config_path() {
+                Some(p) => read_strict(&p),
+                None => Some(Team::default()), // no catalogue configured → genuinely empty
+            };
+            let mut team_changed = false;
+            if let (Some(repo_team), Some(global_team)) = (repo_team, global_team) {
+                if repo_team != self.team || global_team != self.global {
+                    self.team = repo_team;
+                    self.global = global_team;
+                    self.providers =
+                        configured_providers(&resolve_team(&self.team, &self.global));
+                    team_changed = true;
+                    changed = true;
+                }
             }
 
             if events.len() != self.view.messages.len() {
