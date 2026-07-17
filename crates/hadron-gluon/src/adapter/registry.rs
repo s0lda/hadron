@@ -359,6 +359,21 @@ impl AcpTarget {
         })
     }
 
+    /// The boot target for a seat: its explicit `command`, else the provider's
+    /// built-in default. `None` for a non-ACP seat, or an ACP seat on a provider
+    /// with no catalogue command and no command of its own. The same resolution
+    /// [`QuarkKind::from_seat`] uses, factored out so the chamber can build a probe
+    /// target from a seat without going through the whole `QuarkKind` mapping.
+    pub fn for_seat(seat: &Seat) -> Option<AcpTarget> {
+        if seat.transport != Transport::Acp {
+            return None;
+        }
+        match &seat.command {
+            Some(cmd) => Some(AcpTarget { program: cmd.program.clone(), args: cmd.args.clone() }),
+            None => AcpTarget::for_provider(&seat.provider),
+        }
+    }
+
     /// The shell-ish command line, for `AcpAgent::from_str` and for diagnostics.
     pub fn command_line(&self) -> String {
         std::iter::once(self.program.clone())
@@ -402,20 +417,15 @@ impl QuarkKind {
         match seat.transport {
             Transport::Cli => QuarkKind::from_provider(&seat.provider),
             Transport::Acp => {
-                let target = match (&seat.command, seat.provider.as_str()) {
-                    (Some(cmd), _) => AcpTarget {
-                        program: cmd.program.clone(),
-                        args: cmd.args.clone(),
-                    },
-                    (None, provider) => AcpTarget::for_provider(provider).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "seat '{}' is an ACP seat on provider {provider:?}, which has no \
-                             built-in boot command — give it one, e.g. \
-                             \"command\": {{\"program\": \"npx\", \"args\": [\"-y\", \"…\"]}}",
-                            seat.id.as_str()
-                        )
-                    })?,
-                };
+                let target = AcpTarget::for_seat(seat).ok_or_else(|| {
+                    let provider = seat.provider.as_str();
+                    anyhow::anyhow!(
+                        "seat '{}' is an ACP seat on provider {provider:?}, which has no \
+                         built-in boot command — give it one, e.g. \
+                         \"command\": {{\"program\": \"npx\", \"args\": [\"-y\", \"…\"]}}",
+                        seat.id.as_str()
+                    )
+                })?;
                 Ok(QuarkKind::Acp(target))
             }
         }
@@ -655,6 +665,30 @@ mod tests {
 
         let err = QuarkKind::from_seat(&acp_seat("nope", "goose")).unwrap_err().to_string();
         assert!(err.contains("no built-in boot command"), "must name the fix: {err}");
+    }
+
+    /// `AcpTarget::for_seat` is what the chamber probes with, so it must resolve a
+    /// seat's boot command the same way `from_seat` does: a CLI seat has none, an ACP
+    /// seat defaults to its provider's catalogue command, and an explicit `command`
+    /// overrides. (An uncatalogued ACP seat with no command has no target — `None`.)
+    #[test]
+    fn for_seat_resolves_the_probe_target() {
+        // CLI seat → no ACP target.
+        assert_eq!(AcpTarget::for_seat(&seat("opus", "claude")), None);
+
+        // ACP seat, default provider command.
+        assert_eq!(
+            AcpTarget::for_seat(&acp_seat("gpt", "acp-codex")),
+            AcpTarget::for_provider("acp-codex"),
+        );
+
+        // ACP seat with an explicit command override wins over the catalogue default.
+        let mut s = acp_seat("acp", "acp-claude");
+        s.command = Some(AcpCommand { program: "node".into(), args: vec!["./x.js".into()] });
+        assert_eq!(AcpTarget::for_seat(&s).unwrap().command_line(), "node ./x.js");
+
+        // Uncatalogued ACP provider, no command → nothing to boot.
+        assert_eq!(AcpTarget::for_seat(&acp_seat("nope", "goose")), None);
     }
 
     /// The catalogue is the SSOT for the provider list: every entry must resolve to
