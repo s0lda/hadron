@@ -292,7 +292,11 @@ async fn main() {
         std::process::exit(2);
     }
     let max_exchanges = team.max_exchanges.unwrap_or(12);
-    let mut engine = Engine::new(args.field_path.clone(), quarks, max_exchanges);
+    let mut engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
+        // `Engine::new` defaults this to `None` (hermetic — see the field doc), so the
+        // real daemon must opt in explicitly or custom global skills under
+        // `~/.hadron/skills` would silently never load in production.
+        .with_global_skills_dir(hadron_lattice::user_hadron_dir().map(|d| d.join("skills")));
     // A seat can boot switched OFF. It is still seated (still addressable, still owns
     // its instance) — it just does not take turns until the human enables it.
     for seat in &team.quarks {

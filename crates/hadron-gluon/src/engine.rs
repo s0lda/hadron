@@ -392,6 +392,14 @@ pub struct Engine {
     /// `HADRON_NO_HUMAN_MODE=1`/`true`, or [`Engine::with_no_human`]) does the
     /// suspend → adjudicate-by-orchestrator → resume loop become reachable.
     no_human: bool,
+    /// The **global** custom-skills directory (`~/.hadron/skills` in production),
+    /// injected rather than resolved inline — the same seam as [`merge`](Self::merge):
+    /// `None` is the hermetic default so `Engine::new` (what every unit test calls)
+    /// never touches the real `$HOME`, and only the daemon bin wires the real path via
+    /// [`Engine::with_global_skills_dir`]. The **repo** skills dir is not stored here:
+    /// it is derived from `workspace_root` fresh in `projection_for`, which is already
+    /// tempdir-controlled by every test that sets up a field under a `tempdir()`.
+    global_skills_dir: Option<PathBuf>,
 }
 
 /// Parse the DO-NOT-ACTIVATE toggle from `HADRON_NO_HUMAN_MODE`. Read ONCE, at
@@ -459,6 +467,10 @@ impl Engine {
             resident,
             serviced_reboots: None,
             no_human: env_no_human_mode(),
+            // Hermetic default: `Engine::new` never reads the real `~/.hadron` — only
+            // `with_global_skills_dir` (called by the daemon bin) opts a running
+            // instance into it. See the field doc for why this mirrors `merge`.
+            global_skills_dir: None,
         }
     }
 
@@ -619,6 +631,18 @@ impl Engine {
     /// to gate.
     pub fn with_merge_gate(mut self, runner: Arc<dyn crate::merge::MergeRunner>) -> Self {
         self.merge = Some(runner);
+        self
+    }
+
+    /// Opt in to loading custom skills from a **global** directory (production:
+    /// `~/.hadron/skills`, via [`hadron_lattice::user_hadron_dir`]). `None` — the
+    /// default from [`Engine::new`] — means no global directory is consulted, so a
+    /// test-constructed engine can never read the real `$HOME`. Only the daemon bin
+    /// calls this, with the real path; every engine test either leaves it unset or
+    /// passes a tempdir, exactly like [`Engine::with_merge_gate`] and
+    /// [`Engine::with_no_human`] above.
+    pub fn with_global_skills_dir(mut self, dir: Option<PathBuf>) -> Self {
+        self.global_skills_dir = dir;
         self
     }
 
@@ -929,9 +953,16 @@ impl Engine {
         // how `team.json` is already re-read every turn (see the roster live-reload),
         // keeps a skill edit picked up on the very next turn with no reload/restart
         // path to wire, and the cost is a handful of small file reads — not a hot loop.
-        let global_skills_dir = hadron_lattice::user_hadron_dir().map(|d| d.join("skills"));
+        //
+        // The global directory is `self.global_skills_dir` — injected (see
+        // `with_global_skills_dir`), NOT resolved inline via `user_hadron_dir()` here.
+        // Resolving it inline would make every engine test read the real `$HOME`,
+        // whatever custom skills happen to be sitting in the machine's actual
+        // `~/.hadron/skills` — `Engine::new` defaults this to `None` for exactly that
+        // reason. The repo directory stays derived from `workspace_root`, which every
+        // test already controls via its own tempdir field.
         let repo_skills_dir = workspace_root.join(".hadron").join("skills");
-        let skill_corpus = skills::load_skills(global_skills_dir.as_deref(), Some(&repo_skills_dir));
+        let skill_corpus = skills::load_skills(self.global_skills_dir.as_deref(), Some(&repo_skills_dir));
         invariants_text.push_str(&skills::index(&skill_corpus));
 
         if let Some(m) = skills::select(&task_desc, &skill_corpus) {
@@ -3569,15 +3600,10 @@ mod tests {
     /// A turn that is not plan work must be byte-for-byte what it was before skills
     /// existed. A router that fires on everything is a tax on every turn.
     ///
-    /// Test-isolation note: since the engine now also loads `~/.hadron/skills`
-    /// (global), this negative assertion (no skill selected) is, in principle,
-    /// hostage to whatever real custom skills happen to exist on the machine
-    /// running the test — a global skill whose trigger matched a substring of
-    /// "fix the clipped completion popup" would make this fail outside the repo's
-    /// control. Not sealed off deliberately: pinning `HOME` to a tempdir for the
-    /// duration of one test would touch process-global state under a parallel test
-    /// runner, which is worse than this residual risk. If this test ever flakes on
-    /// a real workstation, that is the first thing to check.
+    /// `Engine::new` (used below) defaults `global_skills_dir` to `None`, so this
+    /// negative assertion cannot be defeated by whatever custom skills happen to sit
+    /// under the real `~/.hadron/skills` on the machine running the test — the engine
+    /// simply never looks there unless `with_global_skills_dir` says to.
     #[tokio::test]
     async fn an_ordinary_task_gets_no_skill_and_no_extra_prompt() {
         use std::fs;
@@ -3631,10 +3657,10 @@ mod tests {
     /// `.hadron/skills/` is loaded by the ENGINE and its body shows up in the
     /// projection, same as a built-in's would.
     ///
-    /// Deliberately does NOT assert anything about the real `~/.hadron/skills`
-    /// (global dir) one way or the other — this machine's actual home directory may
-    /// or may not have custom skills installed, and this test must pass either way.
-    /// Only the repo (tempdir-controlled) skill is asserted on.
+    /// `Engine::new` leaves `global_skills_dir` at its `None` default, so this test
+    /// never touches the real `~/.hadron/skills` either — only the repo (tempdir)
+    /// skill is in play. See `engine_uses_injected_global_skills_dir` for the global
+    /// half, via `with_global_skills_dir`.
     #[tokio::test]
     async fn engine_loads_repo_skills() {
         use std::fs;
@@ -3687,6 +3713,69 @@ mod tests {
         }
 
         let mut engine = Engine::new(path.clone(), vec![Box::new(Probe)], 10);
+        engine.run_until_quiesce().await.unwrap();
+    }
+
+    /// The global half of skill loading, proven the same way the repo half was
+    /// above: a skill placed under an INJECTED directory (never the real
+    /// `~/.hadron/skills` — see `with_global_skills_dir`) must reach the projection.
+    /// Positive assertion only, tempdir-controlled throughout — this is the seam the
+    /// daemon bin wires with the real path; here it's wired with a fake one, which is
+    /// exactly the point of making it injectable.
+    #[tokio::test]
+    async fn engine_uses_injected_global_skills_dir() {
+        use std::fs;
+        let fdir = tempdir().unwrap();
+        let global_dir = tempdir().unwrap();
+        let global_skills_dir = global_dir.path().join("skills");
+        fs::create_dir_all(&global_skills_dir).unwrap();
+        fs::write(
+            global_skills_dir.join("global-custom.md"),
+            "---\nname: global-thing\ndescription: a global custom skill\ntriggers: [zorbnicate]\n---\n\nTHE DISTINCTIVE GLOBAL-SKILL BODY LINE.\n",
+        )
+        .unwrap();
+
+        let path = fdir.path().join("field.jsonl");
+        append_event(
+            &path,
+            &Event::new(
+                Actor::Human,
+                Some(QuarkId::new("worker")),
+                Kind::Message { body: "@worker please zorbnicate the widget".into() },
+            ),
+        )
+        .unwrap();
+
+        use hadron_lattice::{Projection, TurnOutcome};
+        struct Probe;
+        #[async_trait::async_trait]
+        impl crate::quark::Quark for Probe {
+            fn id(&self) -> QuarkId {
+                QuarkId::new("worker")
+            }
+            fn flavor(&self) -> Flavor {
+                Flavor::Worker
+            }
+            fn energy(&self) -> EnergyState {
+                EnergyState::Available
+            }
+            async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+                assert!(
+                    turn.invariants.contains("THE DISTINCTIVE GLOBAL-SKILL BODY LINE."),
+                    "the injected global skill's body must be injected:\n{}",
+                    turn.invariants
+                );
+                assert!(
+                    turn.invariants.contains("global-thing"),
+                    "the global skill must also be named in the index/header:\n{}",
+                    turn.invariants
+                );
+                Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
+            }
+        }
+
+        let mut engine = Engine::new(path.clone(), vec![Box::new(Probe)], 10)
+            .with_global_skills_dir(Some(global_skills_dir));
         engine.run_until_quiesce().await.unwrap();
     }
 
