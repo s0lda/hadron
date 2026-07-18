@@ -852,8 +852,13 @@ impl Chamber {
         let state = self.input.read(cx);
         let text = state.value().to_string();
         let cursor = state.cursor();
-        let quarks: Vec<(String, Option<String>)> = self
-            .team
+        // Source the completion roster from the RESOLVED team, not `self.team`
+        // (the raw repo file). Since the catalogue migration, a migrated repo's
+        // `team.json` holds only role/state overrides — the full seat definitions
+        // live in `self.global` — so reading `self.team.quarks` directly yielded an
+        // empty list and only `@team`/`@orchestrator` ever autocompleted. Every
+        // other roster consumer already goes through `resolve_team`.
+        let quarks: Vec<(String, Option<String>)> = resolve_team(&self.team, &self.global)
             .quarks
             .iter()
             .map(|q| (q.id.0.clone(), q.display_name.clone()))

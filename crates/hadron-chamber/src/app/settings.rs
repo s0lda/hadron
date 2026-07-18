@@ -985,8 +985,9 @@ impl Chamber {
                     .collect::<Vec<_>>();
 
                 // Case-insensitive substring match on name + command. Empty filter shows
-                // all; the "Custom command…" escape hatch below is always appended,
-                // unfiltered, so the list is never a dead end.
+                // all. (A custom provider is added via the "Custom CLI…" option, which
+                // has its own working wizard — the old empty-command "Custom command…"
+                // escape hatch was a dead end and has been removed.)
                 let filter = self.preset_filter.read(cx).value().trim().to_lowercase();
                 let presets: Vec<_> = presets
                     .into_iter()
@@ -1042,45 +1043,6 @@ impl Chamber {
                     );
                 }
 
-                // Add custom option
-                list = list.child(
-                    h_flex()
-                        .id("preset-custom")
-                        .items_center()
-                        .justify_between()
-                        .px_3()
-                        .py_2()
-                        .rounded_lg()
-                        .bg(theme::bg_surface())
-                        .border_1()
-                        .border_color(theme::border())
-                        .hover(|s| s.bg(theme::bg_surface_raised()))
-                        .cursor_pointer()
-                        .child(
-                            div()
-                                .text_base()
-                                .text_color(theme::text())
-                                .child("Custom command…"),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme::text_muted())
-                                .child("Configure →"),
-                        )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.wizard_state = WizardState::Connecting(
-                                AgentDescriptor {
-                                    id: "custom".into(),
-                                    name: "Custom".into(),
-                                    command: "".into(),
-                                    args: vec![],
-                                },
-                                ProviderState::NotConnected,
-                            );
-                            cx.notify();
-                        })),
-                );
 
                 // Custom CLI: a generic `Transport::Cli` seat for a vendor with no ACP
                 // agent (or none the human wants to probe right now) — a raw
