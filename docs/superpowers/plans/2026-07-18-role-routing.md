@@ -46,7 +46,21 @@
 
 ---
 
-### Task 3: Phase 2 — exclusivity filter + routing-gap report (engine.rs)
+### Task 3: Plumb `roles`/`exclusive` onto the Quark → card (the make-or-break wiring)
+
+**Discovered during Task 1 review:** `Engine::new`/`seat` (engine.rs:395-467) build each `QuarkCard` from the live `Box<dyn Quark>` — reading `id`/`display_name`/`flavor`/`energy` off the **Quark trait**. `display_name` is carried on the quark, plumbed from the Seat at build time (`with_display_name`). `provider`/`model`/`roles` are left EMPTY (a daemon-side population step that does not exist). Routing needs card roles populated, so plumb them the SAME proven way `display_name` flows — not via the missing daemon step.
+
+**Files:** `crates/hadron-gluon/src/quark.rs` (Quark trait), `crates/hadron-gluon/src/adapter/cli.rs` + `acp.rs` (carry + setter), `crates/hadron-gluon/src/adapter/registry.rs` (`build`/`build_seat` plumb seat roles), `crates/hadron-gluon/src/engine.rs` (read into the two card-build sites), tests inline.
+
+- [ ] **Step 1: Failing test.** In engine.rs tests: build an engine from a quark carrying roles `["security"]` + `exclusive: true` and assert `engine.roster`'s card for that id has `roles == ["security"]` and `exclusive == true` (today it's empty). Use a test Quark (there's likely a fake in engine tests) — add role support to it. Name it `roster_card_carries_the_quarks_roles`.
+- [ ] **Step 2: Run — expect FAIL** (card roles empty).
+- [ ] **Step 3: Implement.** Add to the `Quark` trait: `fn roles(&self) -> Vec<String> { Vec::new() }` and `fn exclusive(&self) -> bool { false }` (default impls so nothing else breaks). In `CliQuark`/`AcpQuark`, add `roles: Vec<String>` + `exclusive: bool` fields + a `with_roles(roles, exclusive)` builder, and return them from the trait methods. In `registry::build` (the `QuarkSpec`→quark path) pass `spec.roles`/`spec.exclusive`; add `roles`/`exclusive` to `QuarkSpec` and set them in `build_seat` from `seat.roles`/`seat.exclusive`. In `Engine::new` and `Engine::seat`, replace `roles: Vec::new(), exclusive: false` with `q.roles()`/`q.exclusive()` (and `quark.roles()`/`.exclusive()`). Update the now-stale comments.
+- [ ] **Step 4: Run** test + full gate. Expect PASS.
+- [ ] **Step 5: Commit** — `git commit -m "feat(gluon): carry seat roles/exclusive onto the quark and its roster card"`
+
+---
+
+### Task 4: Phase 2 — exclusivity filter + routing-gap report (engine.rs)
 
 **Files:** `crates/hadron-gluon/src/engine.rs` (the dispatch/roster-eligibility filter), tests inline. **Consumes:** `QuarkCard.{roles,exclusive}` (Task 1), role resolution (Task 2).
 
