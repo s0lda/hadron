@@ -1307,6 +1307,8 @@ impl Chamber {
                                         enabled: true,
                                         effort: None,
                                         mode_config: None,
+                                        roles: vec![],
+                                        exclusive: false,
                                     };
                                     // `vendor` is already pure (Task 3's re-keyed preset list), so this
                                     // is a no-op today — left in as a defensive strip in case a vendor

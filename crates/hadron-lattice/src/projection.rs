@@ -135,6 +135,8 @@ mod tests {
                 energy: EnergyState::Available,
                 provider: String::new(),
                 model: String::new(),
+                roles: vec![],
+                exclusive: false,
             }],
             field_window: vec![Event::new(
                 Actor::Human,

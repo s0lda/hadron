@@ -163,6 +163,8 @@ mod tests {
             enabled: true,
             effort: None,
             mode_config: None,
+            roles: vec![],
+            exclusive: false,
         };
         let mut desired = running.clone();
         desired.quarks.push(new_seat.clone());
@@ -215,6 +217,8 @@ mod tests {
             cli: None,
             effort: None,
             mode_config: None,
+            roles: vec![],
+            exclusive: false,
         };
         let running = team(&[seat(&["-y", "old-agent"])]);
         let desired = team(&[seat(&["-y", "new-agent"])]);
@@ -240,6 +244,8 @@ mod enabled_tests {
             enabled,
             effort: None,
             mode_config: None,
+            roles: vec![],
+            exclusive: false,
         }
     }
     fn team(seats: &[Seat]) -> Team {
