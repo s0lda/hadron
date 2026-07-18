@@ -148,6 +148,86 @@ pub fn list_workspace_files(repo_root: &Path) -> Vec<(String, bool)> {
     files
 }
 
+/// One node of the File Tree the right-rail renders. Built by folding the flat
+/// `(path, is_ignored)` list from [`list_workspace_files`] into a nested tree via
+/// [`FileTreeNode::insert`]. Pure data (no gpui) so the tree-building logic is unit
+/// testable; the chamber's `render_node` walks it to paint rows.
+#[derive(Default, Debug)]
+pub struct FileTreeNode {
+    pub children: std::collections::BTreeMap<String, FileTreeNode>,
+    pub is_file: bool,
+    pub is_ignored: bool,
+    /// The node's path from the tree root (e.g. `"src/app/render.rs"`). Set on
+    /// EVERY node, interior folders included — an empty `full_path` on a folder
+    /// made every folder row share the gpui id `tree-row-`, colliding so the
+    /// expand click mis-routed (folders "wouldn't open") and folder context menus
+    /// pointed at an empty path.
+    pub full_path: String,
+}
+
+impl FileTreeNode {
+    /// `is_dir_leaf` marks a path that is itself a directory (a collapsed
+    /// gitignored dir, kept with a trailing `/` by [`list_workspace_files`]) — its
+    /// last component is a folder, not a file. Interior directories start
+    /// un-ignored; [`FileTreeNode::resolve_ignores`] computes their flag from their
+    /// children afterwards.
+    pub fn insert(&mut self, path: &str, is_ignored: bool, is_dir_leaf: bool) {
+        let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+        if parts.is_empty() {
+            return;
+        }
+        let mut current = self;
+        let mut running = String::new();
+        for (i, part) in parts.iter().enumerate() {
+            let last = i == parts.len() - 1;
+            let is_file = last && !is_dir_leaf;
+            if running.is_empty() {
+                running = part.to_string();
+            } else {
+                running = format!("{running}/{part}");
+            }
+            current = current.children.entry(part.to_string()).or_default();
+            // EVERY node gets its running path — not just the leaf (see `full_path`).
+            if current.full_path.is_empty() {
+                current.full_path = running.clone();
+            }
+            if last {
+                current.is_file = is_file;
+                current.is_ignored = is_ignored;
+            }
+        }
+    }
+
+    /// Bottom-up: a file/collapsed-dir keeps its own flag; a directory with
+    /// children is ignored only when **every** child is. Returns this node's
+    /// resolved ignored state so the parent can fold it in.
+    pub fn resolve_ignores(&mut self) -> bool {
+        if self.is_file || self.children.is_empty() {
+            return self.is_ignored;
+        }
+        let mut all_ignored = true;
+        for child in self.children.values_mut() {
+            if !child.resolve_ignores() {
+                all_ignored = false;
+            }
+        }
+        self.is_ignored = all_ignored;
+        all_ignored
+    }
+}
+
+/// Children of a node, folders first then files, each group name-sorted — the
+/// order the File Tree paints rows in.
+pub fn sorted_children(node: &FileTreeNode) -> Vec<(&String, &FileTreeNode)> {
+    let mut children: Vec<(&String, &FileTreeNode)> = node.children.iter().collect();
+    children.sort_by(|(a_name, a), (b_name, b)| match (a.is_file, b.is_file) {
+        (false, true) => std::cmp::Ordering::Less,
+        (true, false) => std::cmp::Ordering::Greater,
+        _ => a_name.cmp(b_name),
+    });
+    children
+}
+
 /// Reads the contents of a workspace file.
 pub fn read_workspace_file(repo_root: &Path, file_path: &str) -> Option<String> {
     let full_path = repo_root.join(file_path);
@@ -246,5 +326,93 @@ mod tests {
             files.contains(&("ignored.tmp".to_string(), true)),
             "a gitignored file must now appear flagged as ignored, got {files:?}"
         );
+    }
+
+    #[test]
+    fn insert_builds_folder_nodes_with_children_and_full_paths() {
+        // The user's case: an untracked file arrives as its full path (git lists
+        // untracked files individually, not collapsed). The folder node MUST exist
+        // and MUST carry the child — otherwise expanding it shows nothing.
+        let mut root = FileTreeNode::default();
+        root.insert("newdir/newfile.txt", false, false);
+
+        let dir = root
+            .children
+            .get("newdir")
+            .expect("intermediate folder node must be created");
+        assert!(!dir.is_file, "a folder node is not a file");
+        assert_eq!(dir.full_path, "newdir", "folder full_path is its running path");
+
+        let file = dir
+            .children
+            .get("newfile.txt")
+            .expect("the folder must carry its child — this is what expand renders");
+        assert!(file.is_file);
+        assert_eq!(file.full_path, "newdir/newfile.txt");
+    }
+
+    #[test]
+    fn every_folder_node_gets_a_distinct_nonempty_full_path() {
+        // Regression guard for the id-collision bug: a leaf-only full_path left
+        // every folder row sharing the gpui id `tree-row-`.
+        let mut root = FileTreeNode::default();
+        root.insert("src/app/render.rs", false, false);
+        root.insert("crates/lib.rs", false, false);
+
+        let src = &root.children["src"];
+        let app = &src.children["app"];
+        let crates = &root.children["crates"];
+        assert_eq!(src.full_path, "src");
+        assert_eq!(app.full_path, "src/app");
+        assert_eq!(crates.full_path, "crates");
+        // Distinct, non-empty ids for every folder — the collision is impossible now.
+        for p in [&src.full_path, &app.full_path, &crates.full_path] {
+            assert!(!p.is_empty());
+        }
+        assert_ne!(src.full_path, crates.full_path);
+    }
+
+    #[test]
+    fn collapsed_ignored_dir_is_a_childless_leaf() {
+        // A wholly-ignored dir arrives collapsed with a trailing slash (is_dir_leaf).
+        // It is a folder with no children — correctly nothing to expand.
+        let mut root = FileTreeNode::default();
+        root.insert("target/", true, true);
+        let node = &root.children["target"];
+        assert!(!node.is_file);
+        assert!(node.is_ignored);
+        assert!(node.children.is_empty(), "collapsed dir has no children");
+        assert_eq!(node.full_path, "target");
+    }
+
+    #[test]
+    fn resolve_ignores_marks_a_folder_ignored_only_when_all_children_are() {
+        let mut root = FileTreeNode::default();
+        root.insert("mixed/tracked.rs", false, false);
+        root.insert("mixed/ignored.tmp", true, false);
+        root.insert("allignored/a.tmp", true, false);
+        root.resolve_ignores();
+
+        assert!(
+            !root.children["mixed"].is_ignored,
+            "a folder with one tracked child is not ignored"
+        );
+        assert!(
+            root.children["allignored"].is_ignored,
+            "a folder whose every child is ignored folds to ignored"
+        );
+    }
+
+    #[test]
+    fn sorted_children_puts_folders_before_files_then_sorts_by_name() {
+        let mut root = FileTreeNode::default();
+        root.insert("zeta.rs", false, false); // file
+        root.insert("alpha/a.rs", false, false); // folder
+        root.insert("beta.rs", false, false); // file
+        let order: Vec<&str> = sorted_children(&root)
+            .into_iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(order, vec!["alpha", "beta.rs", "zeta.rs"]);
     }
 }

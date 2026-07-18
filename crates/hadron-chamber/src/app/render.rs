@@ -1758,76 +1758,7 @@ impl Chamber {
 
                     v_flex().flex_1().child(list).into_any_element()
                 } else {
-                    #[derive(Default)]
-                    struct FileTreeNode {
-                        children: std::collections::BTreeMap<String, FileTreeNode>,
-                        is_file: bool,
-                        is_ignored: bool,
-                        full_path: String,
-                    }
-                    impl FileTreeNode {
-                        /// `is_dir_leaf` marks a path that is itself a directory (a
-                        /// collapsed gitignored dir, kept with a trailing `/` by
-                        /// `list_workspace_files`) — its last component is a folder, not
-                        /// a file. Interior directories start un-ignored; `resolve_ignores`
-                        /// computes their flag from their children afterwards.
-                        fn insert(&mut self, path: &str, is_ignored: bool, is_dir_leaf: bool) {
-                            let parts: Vec<&str> =
-                                path.split('/').filter(|p| !p.is_empty()).collect();
-                            if parts.is_empty() {
-                                return;
-                            }
-                            let mut current = self;
-                            let mut running = String::new();
-                            for (i, part) in parts.iter().enumerate() {
-                                let last = i == parts.len() - 1;
-                                let is_file = last && !is_dir_leaf;
-                                if running.is_empty() {
-                                    running = part.to_string();
-                                } else {
-                                    running = format!("{running}/{part}");
-                                }
-                                current =
-                                    current.children.entry(part.to_string()).or_insert_with(|| {
-                                        FileTreeNode {
-                                            children: std::collections::BTreeMap::new(),
-                                            is_file: false,
-                                            is_ignored: false,
-                                            full_path: String::new(),
-                                        }
-                                    });
-                                // EVERY node gets its running path — not just the leaf. An
-                                // intermediate folder node left with an empty `full_path`
-                                // makes every folder row share the gpui id `tree-row-`, which
-                                // collides and mis-routes the expand click (folders "won't
-                                // open") and points folder context menus at an empty path.
-                                if current.full_path.is_empty() {
-                                    current.full_path = running.clone();
-                                }
-                                if last {
-                                    current.is_file = is_file;
-                                    current.is_ignored = is_ignored;
-                                }
-                            }
-                        }
-
-                        /// Bottom-up: a file/collapsed-dir keeps its own flag; a directory
-                        /// with children is ignored only when **every** child is. Returns
-                        /// this node's resolved ignored state so the parent can fold it in.
-                        fn resolve_ignores(&mut self) -> bool {
-                            if self.is_file || self.children.is_empty() {
-                                return self.is_ignored;
-                            }
-                            let mut all_ignored = true;
-                            for child in self.children.values_mut() {
-                                if !child.resolve_ignores() {
-                                    all_ignored = false;
-                                }
-                            }
-                            self.is_ignored = all_ignored;
-                            all_ignored
-                        }
-                    }
+                    use crate::sys::{sorted_children, FileTreeNode};
 
                     let mut root_node = FileTreeNode::default();
                     for (file, is_ignored) in &self.file_tree_paths {
@@ -1837,21 +1768,6 @@ impl Chamber {
 
                     let repo_root =
                         crate::vcs::repo_root_of(std::path::Path::new(&self.path)).to_path_buf();
-
-                    // Folders before files, alphabetical within each group — the
-                    // convention every file explorer uses. Applied at every level.
-                    fn sorted_children(node: &FileTreeNode) -> Vec<(&String, &FileTreeNode)> {
-                        let mut children: Vec<(&String, &FileTreeNode)> =
-                            node.children.iter().collect();
-                        children.sort_by(|(a_name, a), (b_name, b)| {
-                            match (a.is_file, b.is_file) {
-                                (false, true) => std::cmp::Ordering::Less,
-                                (true, false) => std::cmp::Ordering::Greater,
-                                _ => a_name.cmp(b_name),
-                            }
-                        });
-                        children
-                    }
 
                     fn render_node(
                         name: &str,
