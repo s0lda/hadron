@@ -250,9 +250,15 @@ pub fn human_mentions(body: &str, roster: &[QuarkCard]) -> Vec<QuarkId> {
     out
 }
 
-/// Whether `task` specifically names `card` — by its own `@id` (case-insensitive) or
-/// by a `@role` it carries — using the same char-boundary-safe mention scan
-/// [`human_mentions`] uses ([`boundary_match`], inherited, not re-implemented).
+/// Whether `task` specifically names `card` — by its own `@id`, its `display_name`
+/// (case-insensitive), or a `@role` it carries — using the same char-boundary-safe
+/// mention scan [`human_mentions`] uses ([`boundary_match`], inherited, not
+/// re-implemented). `display_name` is checked because `match_longest_mention` (the
+/// router's OWN resolver) treats it as a full alternate handle for the card — e.g.
+/// `@Claude` routes to seat `acp-claude` via `with_display_name` — so an exclusive
+/// card the router happily dispatches by its display name must not then be rejected
+/// here for "not being addressed by role or @id"; a display name names exactly one
+/// card, so admitting it introduces no broadcast-style leak the way `@team` would.
 ///
 /// This is the eligibility test an `exclusive` card must pass (WS4 §4 Phase 2), and
 /// it is deliberately narrower than `human_mentions`: a `@team` broadcast expands to
@@ -277,6 +283,7 @@ pub fn task_names_card_specifically(task: &str, card: &QuarkCard) -> bool {
         if valid_start {
             let rest = &task[actual_at + 1..];
             if boundary_match(rest, card.id.as_str())
+                || card.display_name.as_deref().is_some_and(|dn| boundary_match(rest, dn))
                 || card.roles.iter().any(|role| !role.is_empty() && boundary_match(rest, role))
             {
                 return true;
@@ -704,5 +711,27 @@ mod tests {
         let sec = card("sec", &["security"]);
         let task = "@abcdefghij’klmn and that’s all";
         assert!(!task_names_card_specifically(task, &sec));
+    }
+
+    /// **Whole-branch review follow-up.** `match_longest_mention` resolves
+    /// `@DisplayName` to a card independent of `id`/`roles` — this function must
+    /// agree, or a card the router happily dispatches by display name gets rejected
+    /// here as "not addressed by role or @id".
+    #[test]
+    fn display_name_names_the_card() {
+        let mut claude = card("acp-claude", &["security"]);
+        claude.display_name = Some("Claude".to_string());
+        assert!(task_names_card_specifically("@Claude handle this", &claude));
+        // Case-insensitive, same as id/role matching.
+        assert!(task_names_card_specifically("@claude handle this", &claude));
+    }
+
+    /// A display name is still just a specific-card handle, not a broadcast: `@team`
+    /// must not name the card even when it carries a display name.
+    #[test]
+    fn team_broadcast_does_not_name_a_card_via_its_display_name() {
+        let mut claude = card("acp-claude", &["security"]);
+        claude.display_name = Some("Claude".to_string());
+        assert!(!task_names_card_specifically("@team status check", &claude));
     }
 }
