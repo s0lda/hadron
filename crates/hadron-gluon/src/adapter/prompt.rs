@@ -55,7 +55,7 @@ fn render_event_line(
 /// Build the full Markdown prompt handed to a quark's CLI for one turn.
 /// Deterministic and side-effect-free so it can be unit-tested exactly.
 /// `self_id` is the quark's own handle — a human message can address several
-/// quarks at once ("@opus X and @agy Y"), each of whom receives the whole
+/// quarks at once ("@alpha X and @beta Y"), each of whom receives the whole
 /// message, so each must know which mentions are its part.
 pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     let mut p = String::new();
@@ -238,12 +238,12 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     // 6. Handoff reminder — how to keep the loop coordinating / quiescing.
     p.push_str("# How to respond\n");
     p.push_str(
-        "Reply in Markdown. If a message addresses several quarks (e.g. `@opus do X and @agy \
+        "Reply in Markdown. If a message addresses several quarks (e.g. `@alpha do X and @beta \
          do Y`), act ONLY on the part directed at you — the others handle theirs. To delegate, \
          start a line with `@<name>` and the request — use a peer's name exactly as it appears \
-         in Live Activity and the transcript above (its display name when it has one, e.g. \
-         `@GoogleGirl`, otherwise its id). Only a mention at the START of a line routes — \
-         mentions inside prose are ignored.\n\n",
+         in Live Activity and the transcript above (its display name when it has one, otherwise \
+         its id). Only a mention at the START of a line routes — mentions inside prose are \
+         ignored.\n\n",
     );
 
     // Brevity as discipline, not a hard cut. The engine does NOT trim replies — a
