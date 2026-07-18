@@ -391,8 +391,26 @@ impl QuarkKind {
     /// function kept its own literals and offered `agy acp`, which does not speak
     /// ACP at all: a provider list that drifts from the registry is a list of
     /// promises nothing keeps.
-    pub fn available_presets() -> Vec<(&'static str, &'static str, &'static str, Vec<&'static str>)> {
-        ACP_AGENTS.iter().map(|a| (a.vendor, a.name, a.program, a.args.to_vec())).collect()
+    /// The add-quark preset catalogue as `(vendor, name, description, program, args)`.
+    /// `description` is a short human blurb for the first-class agents so the wizard
+    /// row reads consistently (Antigravity otherwise shows a raw local python path
+    /// next to the others' clean `npx` package specs); best-effort presets have `""`,
+    /// and the UI falls back to showing their command line.
+    pub fn available_presets(
+    ) -> Vec<(&'static str, &'static str, &'static str, &'static str, Vec<&'static str>)> {
+        ACP_AGENTS
+            .iter()
+            .map(|a| {
+                let description = match a.vendor {
+                    "claude" => "Anthropic Claude Code, over ACP",
+                    "codex" => "OpenAI Codex CLI, over ACP",
+                    "gemini" => "Google Gemini CLI, over ACP",
+                    "agy" => "Google Antigravity (Gemini), via the bundled ACP bridge",
+                    _ => "",
+                };
+                (a.vendor, a.name, description, a.program, a.args.to_vec())
+            })
+            .collect()
     }
 
     /// Resolve a seat's transport. `Transport::Cli` resolves a [`CliSpec`] per

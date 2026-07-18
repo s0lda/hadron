@@ -976,9 +976,10 @@ impl Chamber {
             WizardState::PickPreset => {
                 let presets = hadron_gluon::adapter::registry::QuarkKind::available_presets()
                     .into_iter()
-                    .map(|(id, name, cmd, args)| AgentDescriptor {
+                    .map(|(id, name, description, cmd, args)| AgentDescriptor {
                         id: id.into(),
                         name: name.into(),
+                        description: description.into(),
                         command: cmd.into(),
                         args: args.into_iter().map(String::from).collect(),
                     })
@@ -1024,7 +1025,14 @@ impl Chamber {
                                             .child(preset.name.clone()),
                                     )
                                     .child(div().text_xs().text_color(theme::text_muted()).child(
-                                        format!("{} {}", preset.command, preset.args.join(" ")),
+                                        // A human blurb for first-class agents; the raw
+                                        // command line for best-effort presets (which have
+                                        // no description) so they're still identifiable.
+                                        if preset.description.is_empty() {
+                                            format!("{} {}", preset.command, preset.args.join(" "))
+                                        } else {
+                                            preset.description.clone()
+                                        },
                                     )),
                             )
                             .child(
