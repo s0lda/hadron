@@ -17,10 +17,10 @@ pub trait Quark: Send {
     }
     fn energy(&self) -> EnergyState;
     /// Whether this quark keeps its context **across turns** (a resident ACP session) or
-    /// is re-spawned fresh each turn (a one-shot CLI process). The engine uses it to
-    /// decide how to hand over skills: a resident quark gets the whole skill library once
-    /// in its cache-stable prefix (so composition is free and it persists); a one-shot
-    /// quark, which remembers nothing, gets only the selected skill's body each turn.
+    /// is re-spawned fresh each turn (a one-shot CLI process). The engine tracks this at
+    /// seat time (`Engine::resident`) for whatever needs a seat's transport shape; skill
+    /// injection no longer branches on it — resident and one-shot quarks alike now get
+    /// the always-on index plus the active skill's full body, nothing more (WS4 §5).
     /// Defaults to `false` — most transports are one-shot; only residency is special.
     fn resident(&self) -> bool {
         false
