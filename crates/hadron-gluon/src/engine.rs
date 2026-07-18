@@ -1246,12 +1246,28 @@ impl Engine {
             // `decide`'s deny-absolute branch is exercised at the matrix level
             // (`deny_listed_op_never_reaches_orchestrator`).
             let mut deny = hadron_gatekeeper::DenyRules::new();
-            if let Some(cmds) = self.commands_for(target) {
-                for p in &cmds.allowed {
-                    rules.insert((target.clone(), p.clone()));
-                }
-                for p in &cmds.not_allowed {
-                    deny.insert((target.clone(), p.clone()));
+            // Config command rules bite ONLY under No-Human-Mode (the batch
+            // invariant). The WHOLE fold is gated on `no_human`: `decide`'s
+            // toggle-OFF table still consults `allow` for field-taught remembered
+            // grants, so folding config `allowed` in unconditionally would
+            // auto-approve a config-allowed op with the toggle OFF — and
+            // asymmetrically, since `deny` is inert off. Gating both halves keeps
+            // config rules genuinely inert until §2 is activated. (Review C1.)
+            //
+            // SECURITY (review I2/M1): these rules are roster-sourced — a quark
+            // unseated mid-adjudication yields `commands_for → None`, so its deny
+            // is not folded (field-taught rules have no such dependency). And the
+            // patterns match the quark's self-declared `op` string, so a
+            // mis-declared op silently never fires its deny. Both are inherent to
+            // a config allow/deny list layered on a self-declared-op gate.
+            if self.no_human {
+                if let Some(cmds) = self.commands_for(target) {
+                    for p in &cmds.allowed {
+                        rules.insert((target.clone(), p.clone()));
+                    }
+                    for p in &cmds.not_allowed {
+                        deny.insert((target.clone(), p.clone()));
+                    }
                 }
             }
             match hadron_gatekeeper::decide(mode, global, self.no_human, risk, &op, target, &rules, &deny) {
@@ -1416,12 +1432,17 @@ impl Engine {
         let global = hadron_gatekeeper::global_mode(events);
         let mut rules = hadron_gatekeeper::allow_rules(events);
         let mut deny = hadron_gatekeeper::DenyRules::new(); // see the permission-ask gate's comment
-        if let Some(cmds) = self.commands_for(quark) {
-            for p in &cmds.allowed {
-                rules.insert((quark.clone(), p.clone()));
-            }
-            for p in &cmds.not_allowed {
-                deny.insert((quark.clone(), p.clone()));
+        // Config rules gated on No-Human-Mode — same invariant as the permission-ask
+        // gate (review C1). This path only runs under No-Human-Mode anyway, so the
+        // guard is belt-and-suspenders, but it keeps the fold identical across sites.
+        if self.no_human {
+            if let Some(cmds) = self.commands_for(quark) {
+                for p in &cmds.allowed {
+                    rules.insert((quark.clone(), p.clone()));
+                }
+                for p in &cmds.not_allowed {
+                    deny.insert((quark.clone(), p.clone()));
+                }
             }
         }
         let decision =
@@ -1483,19 +1504,14 @@ impl Engine {
         let mode =
             hadron_gatekeeper::effective_mode(&events, target, self.no_human, self.is_orchestrator(target));
         let global = hadron_gatekeeper::global_mode(&events);
-        let mut rules = hadron_gatekeeper::allow_rules(&events);
-        // Same placeholder as the permission-ask gate above: no deny source
-        // exists in the field yet, so this starts empty and is folded with the
-        // seat's own `commands` config below.
-        let mut deny = hadron_gatekeeper::DenyRules::new();
-        if let Some(cmds) = self.commands_for(target) {
-            for p in &cmds.allowed {
-                rules.insert((target.clone(), p.clone()));
-            }
-            for p in &cmds.not_allowed {
-                deny.insert((target.clone(), p.clone()));
-            }
-        }
+        let rules = hadron_gatekeeper::allow_rules(&events);
+        // Per-seat `commands` allow/deny is deliberately NOT folded here (review I1).
+        // The merge-gate `op` is a synthetic merge sentence carrying the assignment
+        // ULID (see the comment above), never a shell command — so a command-shaped
+        // `not_allowed` is dead against a merge, and a broad command `allowed`
+        // (e.g. `*`) must not silently auto-land one. Command authority governs
+        // BashExec, not merges; the merge stays on the base ladder + field grants.
+        let deny = hadron_gatekeeper::DenyRules::new();
         // Under No-Human-Mode a non-delegated merge falls to `MergeVerdict::Block
         // (NotApproved)` below, which parks the SAME PermissionReq/Waiting the
         // permission-ask gate does — so a merge that escalates to AskOrchestrator
@@ -3055,17 +3071,33 @@ mod tests {
         let deny_events =
             run_with(hadron_lattice::SeatCommands { not_allowed: vec!["danger *".into()], ..Default::default() })
                 .await;
+        // C1 regression guard: an EXACT config `allowed` matching the op must ALSO be
+        // inert toggle-off. `decide`'s toggle-off `Auto+BashExec` arm consults the same
+        // `allow` set via `allow.contains((quark, op))`, so before the fold was gated on
+        // `no_human` this exact allow flipped the ask into an auto-approve with the
+        // toggle OFF — an asymmetric footgun (allow live / deny dead). The op here is
+        // "danger now", so `allowed: ["danger now"]` is an exact hit.
+        let allow_events =
+            run_with(hadron_lattice::SeatCommands { allowed: vec!["danger now".into()], ..Default::default() })
+                .await;
         let control_events = run_with(hadron_lattice::SeatCommands::default()).await;
 
         assert!(!gluon_auto_granted(&deny_events), "Auto+BashExec+no field-allow asks, deny or not");
+        assert!(
+            !gluon_auto_granted(&allow_events),
+            "C1: a config `allowed` is inert with the No-Human-Mode toggle OFF — must NOT auto-approve"
+        );
         assert!(!gluon_auto_granted(&control_events), "control: same result with no commands configured");
+        assert!(has_kind(&allow_events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })));
         assert!(has_kind(&deny_events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })));
         assert!(has_kind(&control_events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })));
-        assert_eq!(
-            deny_events.iter().filter(|e| matches!(e.kind, Kind::PermissionReq { .. })).count(),
-            control_events.iter().filter(|e| matches!(e.kind, Kind::PermissionReq { .. })).count(),
-            "identical shape with and without the config deny — it had zero effect while the toggle is off"
-        );
+        for (label, evs) in [("allow", &allow_events), ("deny", &deny_events)] {
+            assert_eq!(
+                evs.iter().filter(|e| matches!(e.kind, Kind::PermissionReq { .. })).count(),
+                control_events.iter().filter(|e| matches!(e.kind, Kind::PermissionReq { .. })).count(),
+                "identical shape with and without the config {label} — zero effect while the toggle is off"
+            );
+        }
     }
 
     fn seed_human_message(path: &std::path::Path, to: &str, body: &str) {
