@@ -1,4 +1,4 @@
-use hadron_lattice::{Actor, Event, Flavor, Kind, QuarkCard, QuarkId, QuarkState};
+use hadron_lattice::{Actor, EnergyState, Event, Flavor, Kind, QuarkCard, QuarkId, QuarkState};
 
 /// Which quark should be excited next.
 ///
@@ -91,9 +91,17 @@ enum ResolvedMention<'a> {
 /// intra-word mention character (alphanumeric, '-', '_'). Note that spaces ARE
 /// allowed inside display names, but a matched name's boundary still applies.
 fn match_longest_mention<'a>(text: &str, roster: &'a [QuarkCard]) -> Option<(usize, ResolvedMention<'a>)> {
-    let mut best_match: Option<(usize, ResolvedMention<'a>)> = None;
-
-    let mut try_match = |target_name: &str, resolution: ResolvedMention<'a>| {
+    // A free function rather than a capturing closure: `best_match` is passed in
+    // explicitly so the borrow ends when each call returns, letting the id/alias
+    // pass and the role pass below run as two separate, sequential loops over
+    // `best_match` instead of one closure holding it mutably borrowed for the
+    // whole function (which would make `best_match.is_none()` unborrowable).
+    fn try_match<'a>(
+        text: &str,
+        target_name: &str,
+        resolution: ResolvedMention<'a>,
+        best_match: &mut Option<(usize, ResolvedMention<'a>)>,
+    ) {
         // `get(..n)` is `None` when `n` is past the end OR not a char boundary. The
         // boundary case is the one a raw `&text[..n]` slice panicked on: a multi-byte
         // char (e.g. a smart quote) straddling the candidate's byte length. Skipping
@@ -105,27 +113,55 @@ fn match_longest_mention<'a>(text: &str, roster: &'a [QuarkCard]) -> Option<(usi
                     Some(c) if c.is_alphanumeric() || c == '-' || c == '_' => false,
                     _ => true,
                 };
-                
+
                 if boundary_ok {
                     let len = target_name.len();
                     if best_match.as_ref().map_or(true, |(best_len, _)| len > *best_len) {
-                        best_match = Some((len, resolution.clone()));
+                        *best_match = Some((len, resolution));
                     }
                 }
             }
         }
-    };
+    }
 
-    try_match(TEAM_ALIAS, ResolvedMention::Team);
-    
+    let mut best_match: Option<(usize, ResolvedMention<'a>)> = None;
+
+    try_match(text, TEAM_ALIAS, ResolvedMention::Team, &mut best_match);
+
     if let Some(orch) = roster.iter().find(|c| c.flavor == Flavor::Orchestrator) {
-        try_match(ORCHESTRATOR_ALIAS, ResolvedMention::Quark(orch));
+        try_match(text, ORCHESTRATOR_ALIAS, ResolvedMention::Quark(orch), &mut best_match);
     }
 
     for card in roster {
-        try_match(card.id.as_str(), ResolvedMention::Quark(card));
+        try_match(text, card.id.as_str(), ResolvedMention::Quark(card), &mut best_match);
         if let Some(dn) = &card.display_name {
-            try_match(dn.as_str(), ResolvedMention::Quark(card));
+            try_match(text, dn.as_str(), ResolvedMention::Quark(card), &mut best_match);
+        }
+    }
+
+    // Role resolution (Phase 1, soft): only attempted when NO id/alias/display-name
+    // matched at all — a separate pass, not folded into the loop above, so id/alias
+    // precedence cannot be lost to roster ordering. If it were one loop, a roster
+    // with the role-carrying card before the id-carrying card would register the
+    // role first and let it win the longest-match tie, silently inverting the
+    // "id beats role" rule the spec requires.
+    //
+    // Filtered to non-depleted cards: this is a *selection* among candidates (like
+    // the peer list at `engine.rs`'s `EnergyState::Depleted` filter), unlike an
+    // explicit `@id`/alias mention, which resolves even a depleted/disabled seat on
+    // purpose (`Engine::set_enabled`'s doc comment) so the engine can report "that
+    // quark is disabled" instead of silently answering as someone else.
+    if best_match.is_none() {
+        for card in roster {
+            if card.energy == EnergyState::Depleted {
+                continue;
+            }
+            for role in &card.roles {
+                if role.is_empty() {
+                    continue;
+                }
+                try_match(text, role.as_str(), ResolvedMention::Quark(card), &mut best_match);
+            }
         }
     }
 
@@ -219,6 +255,20 @@ mod tests {
             QuarkCard { id: QuarkId::new("orch"), display_name: None, flavor: Flavor::Orchestrator, energy: EnergyState::Available, provider: String::new(), model: String::new(), roles: vec![], exclusive: false },
             QuarkCard { id: QuarkId::new("worker"), display_name: None, flavor: Flavor::Worker, energy: EnergyState::Available, provider: String::new(), model: String::new(), roles: vec![], exclusive: false },
         ]
+    }
+
+    /// A worker seat carrying `roles`, for the `@role` routing tests below.
+    fn card(id: &str, roles: &[&str]) -> QuarkCard {
+        QuarkCard {
+            id: QuarkId::new(id),
+            display_name: None,
+            flavor: Flavor::Worker,
+            energy: EnergyState::Available,
+            provider: String::new(),
+            model: String::new(),
+            roles: roles.iter().map(|r| r.to_string()).collect(),
+            exclusive: false,
+        }
     }
 
     /// A message whose bytes place a multi-byte char (e.g. the smart apostrophe
@@ -466,5 +516,81 @@ mod tests {
         assert_eq!(human_mentions("@ghost @nobody nothing here", &roster()), Vec::<QuarkId>::new());
         // An '@' not starting a word (an email) is not a mention.
         assert_eq!(human_mentions("mail me at jake@orch.dev", &roster()), Vec::<QuarkId>::new());
+    }
+
+    /// Phase 1 soft `@role` routing: a token that is neither a quark id nor a
+    /// reserved alias resolves to the (enabled) card whose `roles` carries it.
+    #[test]
+    fn role_mention_resolves_to_the_role_holder() {
+        let r = vec![card("qa1", &["architect"]), card("worker", &[])];
+        assert_eq!(human_mentions("@architect do X", &r), vec![QuarkId::new("qa1")]);
+    }
+
+    /// A role that matches no seat falls through to the existing no-match
+    /// behaviour (empty result) — never a panic or hard error.
+    #[test]
+    fn role_falls_back_softly_when_no_seat_has_it() {
+        let r = vec![card("qa1", &["architect"])];
+        assert_eq!(human_mentions("@nobody do X", &r), Vec::<QuarkId>::new());
+        assert_eq!(parse_addressee("@nobody do X", &r, None), None);
+    }
+
+    /// A card whose ID equals the token wins over a different card whose ROLE
+    /// equals the same token — id precedence over role. The role-carrying card
+    /// is placed FIRST in roster order so the test actually exercises the
+    /// precedence logic rather than passing by roster-order coincidence (a
+    /// naive "match roles inline with ids" implementation would register the
+    /// role first and let it win the length tie).
+    #[test]
+    fn id_precedence_over_role() {
+        let r = vec![card("has_role", &["architect"]), card("architect", &[])];
+        assert_eq!(human_mentions("@architect go", &r), vec![QuarkId::new("architect")]);
+    }
+
+    /// `@team`/`@orchestrator` are reserved aliases and must resolve before a
+    /// same-named role is even considered.
+    #[test]
+    fn team_and_orchestrator_alias_beat_a_same_named_role() {
+        let mut r = roster(); // has "orch" as Flavor::Orchestrator
+        r.push(card("team_role_holder", &["team"]));
+        r.push(card("orch_role_holder", &["orchestrator"]));
+        assert_eq!(human_mentions("@team status", &r), vec![
+            QuarkId::new("orch"),
+            QuarkId::new("worker"),
+            QuarkId::new("team_role_holder"),
+            QuarkId::new("orch_role_holder"),
+        ]);
+        assert_eq!(
+            parse_addressee("@orchestrator your call", &r, Some(&QuarkId::new("worker"))),
+            Some(QuarkId::new("orch"))
+        );
+    }
+
+    /// Role matching is case-insensitive, same as id/alias matching.
+    #[test]
+    fn role_match_is_case_insensitive() {
+        let r = vec![card("qa1", &["architect"])];
+        assert_eq!(human_mentions("@Architect do X", &r), vec![QuarkId::new("qa1")]);
+    }
+
+    /// Two cards share a role; the first in roster order wins (deterministic
+    /// tie-break — a tuning point for later, not least-busy yet).
+    #[test]
+    fn role_tiebreak_is_roster_order() {
+        let r = vec![card("second", &["architect"]), card("first", &["architect"])];
+        assert_eq!(human_mentions("@architect go", &r), vec![QuarkId::new("second")]);
+    }
+
+    /// A depleted seat is skipped in the role SELECTION pass — this is picking
+    /// among candidates (like the peer list `engine.rs` builds for skill
+    /// delegation), not resolving an explicit id, so it follows that filter's
+    /// convention rather than the id/alias path's "resolve even a disabled
+    /// seat" convention.
+    #[test]
+    fn depleted_seat_is_skipped_by_role_selection() {
+        let mut depleted = card("tired", &["architect"]);
+        depleted.energy = EnergyState::Depleted;
+        let r = vec![depleted, card("fresh", &["architect"])];
+        assert_eq!(human_mentions("@architect go", &r), vec![QuarkId::new("fresh")]);
     }
 }
