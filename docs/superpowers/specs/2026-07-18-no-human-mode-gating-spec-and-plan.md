@@ -60,3 +60,14 @@ This **weakens the default human gate** the moment the toggle is on: under globa
 2. **LLM-approves-LLM trust:** is the orchestrator adjudicating worker commands acceptable for your threat model, given the orchestrator is itself an LLM that the worker's request text can influence? What command classes (if any) must ALWAYS reach a human even under global Bypass (e.g. `rm -rf`, network exfil, credential access, `git push`)?
 3. **Global allow-list source & syntax:** where do allow/deny prefixes live — `team.json`, a new `.hadron/permissions.json`, field `ModeSet`-style events? Exact-match (today's `AllowRules`) or prefix/glob?
 4. **Worker clamping to `Auto` under global Bypass** — agreed, or should some workers be individually promotable to Bypass?
+
+---
+## CONFIRMED by user (2026-07-18) — build to these
+- **Policy = CLAMP + CONSULT ORCHESTRATOR** (chosen over bypass-for-all). Under global `Bypass`:
+  - the **orchestrator** stays `Bypass` = "dangerously allow" (Q1);
+  - **workers clamp to `Auto` (max)** and escalate any non-allow-listed command to the orchestrator, who checks the allow/deny lists and grants/denies (Q2);
+  - a **human deny-list entry is absolute** — the orchestrator cannot override it;
+  - a specific worker MAY still be given an explicit per-quark `Bypass` override (the clamp is only the default).
+- **Ladder (Q2):** a quark needing permission — in Ask/Write/Auto → orchestrator checks the allow-list and allows/not; in Bypass → the orchestrator decides. Risk-averse: keep workers in `Auto` (which honors all lists).
+- **Allow/deny matching (Q4):** support BOTH exact-match AND prefix/glob.
+- **Isolation (Q3):** each quark already works on its own worktree; a user-facing **"sandboxed or not" toggle** is wanted for the script-tools path (that path stays a firm no-build for now — see the script-tools spec). Also add `max_exchanges` to the Settings UI (separate small task, in progress).
