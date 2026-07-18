@@ -715,8 +715,8 @@ impl Engine {
     }
 
     /// Whether the task about to drive `target`'s turn actually names it — by one of
-    /// its `roles` (a `@role` mention resolving to it) or its own `@id` — the
-    /// eligibility test an `exclusive` card must pass before it is ever admitted.
+    /// its `roles` (a `@role` mention naming it) or its own `@id` — the eligibility
+    /// test an `exclusive` card must pass before it is ever admitted.
     ///
     /// Deliberately reads the task's TEXT rather than trusting `to == target`: the
     /// event that produced `target` may have addressed it directly (a hand-off, or a
@@ -724,16 +724,24 @@ impl Engine {
     /// the task body at all. `fallback_task` covers the unaddressed-human-message
     /// case (the body IS the task, already in hand); anything else re-resolves the
     /// driving event the same way dispatch itself will a moment later.
+    ///
+    /// Uses [`crate::router::task_names_card_specifically`], NOT `human_mentions`:
+    /// `human_mentions` expands `@team` to the whole roster, which let a plain
+    /// `@team status` broadcast admit an exclusive card that was never named by role
+    /// or id — the review-flagged gap this now closes.
     fn exclusive_task_names_target(
         &self,
         events: &[Event],
         target: &QuarkId,
         fallback_task: Option<&str>,
     ) -> bool {
+        let Some(card) = self.roster.iter().find(|c| &c.id == target) else {
+            return false;
+        };
         let task_text = fallback_task
             .map(|s| s.to_string())
             .or_else(|| self.driver_for(events, target, None).map(|d| d.task));
-        task_text.as_deref().is_some_and(|t| human_mentions(t, &self.roster).contains(target))
+        task_text.as_deref().is_some_and(|t| crate::router::task_names_card_specifically(t, card))
     }
 
     /// The event that drives this turn — the *assignment*. Its `Ulid` names the
@@ -1457,9 +1465,11 @@ impl Engine {
                     // id in `to` with task text that never mentions it at all, which is
                     // exactly the "picked as a general fallback worker" case the spec
                     // warns against. So the check re-derives eligibility from the task
-                    // TEXT, with the same matcher (`human_mentions`) the router itself
-                    // uses to resolve `@role`/`@id` mentions — "eligible" here means
-                    // exactly what "addressed" means everywhere else in the field.
+                    // TEXT, via `task_names_card_specifically` — the router's own
+                    // char-boundary-safe mention scan, narrowed to "does this task name
+                    // THIS card's own role/id" rather than `human_mentions`' broadcast
+                    // semantics (a `@team` mention there expands to the whole roster,
+                    // which would silently admit an exclusive card into any broadcast).
                     //
                     // A card that never opted into `exclusive` skips this entirely and
                     // stays in general dispatch, same as before this filter existed.
@@ -4057,6 +4067,68 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
             "a role-matching task must still reach the exclusive seat"
+        );
+    }
+
+    /// **The `@team` gap (review follow-up).** `human_mentions` expands `@team` to
+    /// EVERY roster card, so a plain broadcast — naming nobody in particular by role
+    /// or id — must not be read as "addressed to this exclusive card specifically".
+    /// Reproduces the review's exact finding: `@team status check` admitting an
+    /// exclusive `security` card with no role/id in sight.
+    #[tokio::test]
+    async fn exclusive_seat_excluded_from_a_team_broadcast() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(roled_quark("sec", &["security"], true, "I ANSWERED"))],
+            12,
+        );
+        // Unaddressed human message, `@team` only — no role, no id.
+        append_event(
+            &field,
+            &Event::new(Actor::Human, None, Kind::Message { body: "@team status check".into() }),
+        )
+        .unwrap();
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(
+            !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
+            "a `@team` broadcast admitted an exclusive seat it never named by role or id"
+        );
+        assert!(
+            events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("exclusive"))),
+            "the field must SAY why the exclusive seat was skipped, not silently swallow the broadcast"
+        );
+    }
+
+    /// A `@team` broadcast that ALSO names the exclusive card's role still admits it —
+    /// exclusivity reads the whole task text, not just whether `@team` appears in it.
+    #[tokio::test]
+    async fn exclusive_seat_admitted_when_team_broadcast_also_names_its_role() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(roled_quark("sec", &["security"], true, "I ANSWERED"))],
+            12,
+        );
+        append_event(
+            &field,
+            &Event::new(
+                Actor::Human,
+                None,
+                Kind::Message { body: "@team we have a @security incident".into() },
+            ),
+        )
+        .unwrap();
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(
+            events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
+            "a broadcast that also names the exclusive seat's role must still reach it"
         );
     }
 
