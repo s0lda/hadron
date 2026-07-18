@@ -7,6 +7,8 @@ pub mod personas;
 pub mod quark;
 pub mod reseat;
 pub mod router;
+pub mod secrets;
+pub use secrets::KeyringStore;
 pub mod skills;
 pub mod snapshot;
 pub mod ledger;
