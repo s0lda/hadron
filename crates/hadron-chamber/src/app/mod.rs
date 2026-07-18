@@ -57,9 +57,9 @@ use tabs::{ChatTab, InfoTab, Rail, RightRailTab};
 mod providers;
 use providers::{
     cli_seat_from, configured_providers, custom_cli_vendor_is_valid, migrate_legacy_ids,
-    migrate_repo_to_catalogue, prompt_channel_from, AcpModelProbe, AcpModelState,
-    AgentDescriptor, CliChannelChoice, ConfiguredQuark, ProviderState, SettingsTarget,
-    WizardState,
+    migrate_repo_to_catalogue, parse_max_exchanges, prompt_channel_from, AcpModelProbe,
+    AcpModelState, AgentDescriptor, CliChannelChoice, ConfiguredQuark, ProviderState,
+    SettingsTarget, WizardState,
 };
 
 mod widgets;
@@ -198,6 +198,11 @@ struct Chamber {
     settings_model: Entity<InputState>,
     settings_effort: Entity<InputState>,
     settings_mode_config: Entity<InputState>,
+    /// The team-wide "Max exchanges" field on the Providers panel (not per-identity, so
+    /// it's loaded/committed unconditionally in `load_settings_inputs`/
+    /// `commit_settings_inputs` rather than keyed off `settings_target`). Blank = clear
+    /// the repo override; see `parse_max_exchanges`.
+    settings_max_exchanges: Entity<InputState>,
     /// Live filter for the add-quark preset catalogue (~37 entries): a case-insensitive
     /// substring match on preset name + command, so the list is searchable instead of a
     /// long scroll.
@@ -311,6 +316,7 @@ impl Chamber {
         let settings_model = cx.new(|cx| InputState::new(window, cx).placeholder("inherit catalogue default"));
         let settings_effort = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. low, standard, high"));
         let settings_mode_config = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. architect, code, ask"));
+        let settings_max_exchanges = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. 50 (blank = daemon default)"));
         let preset_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Search providers…"));
         let custom_cli_vendor = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. ollama"));
         let custom_cli_program = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. ollama or /usr/local/bin/mytool"));
@@ -465,6 +471,7 @@ impl Chamber {
             settings_model,
             settings_effort,
             settings_mode_config,
+            settings_max_exchanges,
             preset_filter,
             custom_cli_vendor,
             custom_cli_program,

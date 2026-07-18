@@ -126,6 +126,38 @@ pub(super) fn custom_cli_vendor_is_valid(vendor: &str) -> bool {
     !seat.vendor.is_empty() && hadron_gluon::adapter::registry::validate_quark_id(&seat.id).is_ok()
 }
 
+/// Parse the Settings "Max exchanges" field into the value it commits onto
+/// `Team::max_exchanges` — a **team/repo-wide** policy (not per-quark), the cap on
+/// quark↔quark exchanges before the daemon's backstop stops the swarm (`Engine`'s
+/// `exchanges >= max_exchanges` check in `hadron-gluon`).
+///
+/// - Blank (or whitespace-only) → `None`, which clears any repo override and falls back
+///   to the daemon's own built-in default (`hadron-gluon.rs`'s `team.max_exchanges.unwrap_or(..)`).
+///   This is **not** "unlimited" — every exchange loop is still bounded by that default —
+///   so the UI hint must say "daemon default", never "unlimited". This function
+///   deliberately does not hardcode that default's numeral: it lives in exactly one
+///   place (the daemon bin), and duplicating it here would be a second source of truth
+///   that silently drifts if that default ever changes (SSOT, CLAUDE.md rule 3).
+/// - `"0"` → `None` too, not `Some(0)`. `Some(0)` would trip the backstop's
+///   `exchanges >= max_exchanges` check before a single exchange runs, silently
+///   freezing the swarm — a footgun no one clearing the field down to zero would
+///   intend. A human who wants a hard stop should type a small positive number
+///   instead, not zero.
+/// - Any other unparsable text (non-numeric, negative, overflow) is ignored → `None`,
+///   same as blank: a garbled edit never wins over the safe default.
+/// - A positive integer parses straight through as `Some(n)`.
+pub(super) fn parse_max_exchanges(raw: &str) -> Option<usize> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.parse::<usize>() {
+        Ok(0) => None,
+        Ok(n) => Some(n),
+        Err(_) => None,
+    }
+}
+
 /// The custom-CLI wizard's channel-toggle → [`PromptChannel`] mapping. The one bit of
 /// this form that isn't a straight field copy: `Arg` with a blank flag field means "the
 /// prompt rides as a bare positional argument" (`flag: None`), not "flag unset by
@@ -499,5 +531,38 @@ mod tests {
             prompt_channel_from(CliChannelChoice::Arg, "--prompt"),
             hadron_lattice::PromptChannel::Arg { flag: Some("--prompt".to_string()) }
         );
+    }
+
+    // -- parse_max_exchanges: the Settings "Max exchanges" field's value-level parse --
+
+    #[test]
+    fn parse_max_exchanges_blank_is_none() {
+        assert_eq!(parse_max_exchanges(""), None);
+        assert_eq!(parse_max_exchanges("   "), None);
+    }
+
+    #[test]
+    fn parse_max_exchanges_zero_is_none_not_some_zero() {
+        // Some(0) would trip the engine's `exchanges >= max_exchanges` backstop before a
+        // single exchange runs — a footgun. Zero clears the override instead, same as blank.
+        assert_eq!(parse_max_exchanges("0"), None);
+    }
+
+    #[test]
+    fn parse_max_exchanges_positive_integer_round_trips() {
+        assert_eq!(parse_max_exchanges("50"), Some(50));
+        assert_eq!(parse_max_exchanges("1"), Some(1));
+    }
+
+    #[test]
+    fn parse_max_exchanges_trims_surrounding_whitespace() {
+        assert_eq!(parse_max_exchanges("  12  "), Some(12));
+    }
+
+    #[test]
+    fn parse_max_exchanges_invalid_text_is_none() {
+        assert_eq!(parse_max_exchanges("abc"), None);
+        assert_eq!(parse_max_exchanges("-5"), None, "negative — usize can't parse it");
+        assert_eq!(parse_max_exchanges("3.5"), None);
     }
 }

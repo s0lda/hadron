@@ -82,6 +82,12 @@ impl Chamber {
             .update(cx, |s, cx| s.set_value(effort, window, cx));
         self.settings_mode_config
             .update(cx, |s, cx| s.set_value(mode, window, cx));
+        // Team-wide, not per-identity — loaded unconditionally (not keyed off `key`) so
+        // it stays in sync with `self.team.max_exchanges` regardless of which target the
+        // overlay happens to be showing when this runs.
+        let max_exchanges = self.team.max_exchanges.map(|n| n.to_string()).unwrap_or_default();
+        self.settings_max_exchanges
+            .update(cx, |s, cx| s.set_value(max_exchanges, window, cx));
     }
 
     /// Write the editor inputs back into the current target identity and persist.
@@ -91,6 +97,19 @@ impl Chamber {
         let model_val = self.settings_model.read(cx).value().trim().to_string();
         let effort_val = self.settings_effort.read(cx).value().trim().to_string();
         let mode_val = self.settings_mode_config.read(cx).value().trim().to_string();
+
+        // Team-wide "Max exchanges" (Providers panel) — unconditional, like the load
+        // above: `load_settings_inputs` always re-syncs this field from `self.team`, so
+        // when the overlay isn't showing Providers the parsed value already equals
+        // `self.team.max_exchanges` and this is a no-op. Persists via the same
+        // `save_repo_team` path every other team.json edit (roster, model/effort/mode)
+        // uses, so the daemon's live-reload picks it up the same way.
+        let max_exchanges_val = self.settings_max_exchanges.read(cx).value().trim().to_string();
+        let new_max_exchanges = parse_max_exchanges(&max_exchanges_val);
+        if new_max_exchanges != self.team.max_exchanges {
+            self.team.max_exchanges = new_max_exchanges;
+            self.save_repo_team(cx);
+        }
 
         let key = self.settings_target.key();
         if key != "human" && key != "providers" {
@@ -909,6 +928,26 @@ impl Chamber {
                                 },
                             ))),
                     )
+                    // Team-wide (not per-quark) policy, so it lives here rather than on any
+                    // one identity's panel — the cap on quark↔quark exchanges before the
+                    // daemon's backstop stops the swarm. Committed the same way the Model/
+                    // Effort text fields are: on nav-away or Done, via `commit_settings_inputs`.
+                    .child(settings_field(
+                        "Max exchanges",
+                        v_flex()
+                            .gap_1()
+                            .child(Input::new(&self.settings_max_exchanges))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(
+                                        "Caps quark\u{2194}quark exchanges before the swarm \
+                                         stops. Blank or 0 = daemon default.",
+                                    ),
+                            )
+                            .into_any_element(),
+                    ))
                     // Scroll the roster so a long provider list stays reachable while the
                     // "Configured Providers" header + Add Quark button stay pinned. Same
                     // reason as the preset list: a `size_full` wizard can't be scrolled by
