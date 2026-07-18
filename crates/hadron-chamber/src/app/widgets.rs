@@ -467,19 +467,22 @@ pub(super) fn mode_tag(mode: Mode, is_default: bool) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// The reasoning-effort badge, e.g. `Some("high")` → an outlined `HIGH` tag. `None` or
-/// empty renders nothing (the seat inherits / has no explicit effort). Unlike [`mode_tag`]
-/// — which now renders for every quark (solid override / outlined inherited) — effort has
-/// no ambient default to show, so an absent effort still renders nothing.
+/// The reasoning-effort badge, mirroring [`mode_tag`]'s default behaviour: a set
+/// per-quark effort (`Some("high")`) renders as an outlined `HIGH` chip; an absent
+/// effort renders a neutral grey outlined `Default` chip (the seat is on the
+/// model/provider default). Effort has no risk-colour ladder like mode, so both
+/// states are outlined `secondary` — only the label differs. Kept `xsmall` so it
+/// doesn't crowd the roster row.
 pub(super) fn effort_tag(effort: &Option<String>) -> gpui::AnyElement {
-    match effort.as_deref() {
-        Some(e) if !e.is_empty() => Tag::secondary()
-            .xsmall()
-            .outline()
-            .child(div().text_xs().child(e.to_uppercase()))
-            .into_any_element(),
-        _ => div().into_any_element(),
-    }
+    let label = match effort.as_deref() {
+        Some(e) if !e.is_empty() => e.to_uppercase(),
+        _ => "Default".to_string(),
+    };
+    Tag::secondary()
+        .xsmall()
+        .outline()
+        .child(div().text_xs().child(label))
+        .into_any_element()
 }
 
 /// The short badge label for a permission mode, e.g. `Mode::Bypass` → `"BYPASS"`.
