@@ -454,6 +454,11 @@ pub struct QuarkSpec {
     /// The `@mention` name the router matches (see [`Quark::display_name`]). Resolved
     /// from the team config; `None` means the seat is addressable by id only.
     pub display_name: Option<String>,
+    /// This seat's `@role` roles (see [`Quark::roles`]). Resolved from the team
+    /// config; empty means the seat plays no particular role.
+    pub roles: Vec<String>,
+    /// Whether this seat is scoped only to its roles (see [`Quark::exclusive`]).
+    pub exclusive: bool,
 }
 
 /// Enforce the naming contract: ids must be non-empty, whitespace-free, path- and
@@ -522,13 +527,18 @@ pub fn validate_quark_id(id: &QuarkId) -> anyhow::Result<()> {
 pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
     validate_quark_id(&spec.id)?;
     let name = spec.display_name.clone();
+    let roles = spec.roles.clone();
+    let exclusive = spec.exclusive;
     let quark: Box<dyn Quark> = match spec.kind {
         QuarkKind::Cli(cli_spec) => Box::new(
-            CliQuark::new(spec.id, spec.flavor, spec.model, cli_spec, ProcessRunner).with_display_name(name),
+            CliQuark::new(spec.id, spec.flavor, spec.model, cli_spec, ProcessRunner)
+                .with_display_name(name)
+                .with_roles(roles, exclusive),
         ),
         QuarkKind::Acp(target) => Box::new(
             AcpQuark::new(spec.id, spec.flavor, spec.model, spec.effort, spec.mode_config, target)
-                .with_display_name(name),
+                .with_display_name(name)
+                .with_roles(roles, exclusive),
         ),
     };
     Ok(quark)
@@ -545,6 +555,8 @@ pub fn build_seat(seat: &Seat) -> anyhow::Result<Box<dyn Quark>> {
         effort: seat.effort.clone(),
         mode_config: seat.mode_config.clone(),
         display_name: seat.display_name.clone(),
+        roles: seat.roles.clone(),
+        exclusive: seat.exclusive,
     })
 }
 
@@ -561,7 +573,8 @@ pub fn build_seat_watched(seat: &Seat, live_dir: &std::path::Path) -> anyhow::Re
         return Ok(Box::new(
             AcpQuark::new(seat.id.clone(), seat.flavor.clone(), seat.model.clone(), seat.effort.clone(), seat.mode_config.clone(), target)
                 .watching(live_dir.to_path_buf())
-                .with_display_name(seat.display_name.clone()),
+                .with_display_name(seat.display_name.clone())
+                .with_roles(seat.roles.clone(), seat.exclusive),
         ));
     }
     build_seat(seat)
@@ -686,6 +699,8 @@ mod tests {
             effort: None,
             mode_config: None,
             display_name: None,
+            roles: Vec::new(),
+            exclusive: false,
         })
         .unwrap();
         assert_eq!(agy.id(), QuarkId::new("agy"));
@@ -699,6 +714,8 @@ mod tests {
             effort: None,
             mode_config: None,
             display_name: None,
+            roles: Vec::new(),
+            exclusive: false,
         })
         .unwrap();
         assert_eq!(generic.id(), QuarkId::new("custom"));
@@ -715,6 +732,8 @@ mod tests {
             effort: None,
             mode_config: None,
             display_name: None,
+            roles: Vec::new(),
+            exclusive: false,
         });
         assert!(err.is_err());
     }
@@ -894,5 +913,19 @@ mod tests {
         // pure vendor "claude", not the old smeared "acp-claude".
         assert!(AcpTarget::for_vendor("claude").is_some(), "claude resolves by pure vendor");
         assert!(AcpTarget::for_vendor("acp-claude").is_none(), "the old smeared key is gone");
+    }
+
+    /// Role routing's build-time seam: a seat's `roles`/`exclusive` must reach the
+    /// quark `build_seat` constructs, the same way `display_name` already does — not
+    /// via a daemon-side population step that does not exist.
+    #[test]
+    fn build_seat_carries_the_seats_roles_onto_the_quark() {
+        let mut s = seat("security-quark", "agy");
+        s.roles = vec!["security".to_string()];
+        s.exclusive = true;
+
+        let q = build_seat(&s).unwrap();
+        assert_eq!(q.roles(), vec!["security".to_string()], "roles never reached the built quark");
+        assert!(q.exclusive(), "exclusive never reached the built quark");
     }
 }

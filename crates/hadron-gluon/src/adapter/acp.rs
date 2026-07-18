@@ -404,6 +404,10 @@ pub struct AcpQuark {
     flavor: Flavor,
     /// The `@mention` name (see [`Quark::display_name`]); `None` = id-only.
     display_name: Option<String>,
+    /// This quark's `@role` roles (see [`Quark::roles`]); empty = no roles.
+    roles: Vec<String>,
+    /// Whether this quark is scoped only to its roles (see [`Quark::exclusive`]).
+    exclusive: bool,
     /// The model this seat **asks** for. It is not necessarily the one that runs: the
     /// agent advertises what it can offer on `session/new` and we match against that
     /// (see [`model_selector`] and [`resolve_model`]). The model that actually ran is
@@ -429,6 +433,8 @@ impl AcpQuark {
             id,
             flavor,
             display_name: None,
+            roles: Vec::new(),
+            exclusive: false,
             model: model.into(),
             effort,
             mode_config,
@@ -454,6 +460,13 @@ impl AcpQuark {
     /// Set the `@mention` display name (from the resolved team config).
     pub fn with_display_name(mut self, name: Option<String>) -> Self {
         self.display_name = name;
+        self
+    }
+
+    /// Set the `@role` roles and exclusivity (from the resolved seat).
+    pub fn with_roles(mut self, roles: Vec<String>, exclusive: bool) -> Self {
+        self.roles = roles;
+        self.exclusive = exclusive;
         self
     }
 
@@ -788,6 +801,12 @@ impl Quark for AcpQuark {
     }
     fn display_name(&self) -> Option<String> {
         self.display_name.clone()
+    }
+    fn roles(&self) -> Vec<String> {
+        self.roles.clone()
+    }
+    fn exclusive(&self) -> bool {
+        self.exclusive
     }
     fn energy(&self) -> EnergyState {
         EnergyState::Available
