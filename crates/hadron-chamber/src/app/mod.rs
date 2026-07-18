@@ -36,7 +36,7 @@ use gpui_component::{
     h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar,
 };
 use hadron_lattice::{
-    io, load_team, resolve_team, Actor, Event, Kind, Mode, QuarkId, SeatOverride, Team,
+    io, load_team, resolve_team, Actor, Event, Kind, Mode, QuarkId, Seat, SeatOverride, Team,
 };
 
 use crate::config::{self, ChamberPrefs, Identity};
@@ -59,7 +59,7 @@ use providers::{
     cli_seat_from, configured_providers, custom_cli_vendor_is_valid, migrate_legacy_ids,
     migrate_repo_to_catalogue, parse_max_exchanges, prompt_channel_from, AcpModelProbe,
     AcpModelState, AgentDescriptor, CliChannelChoice, ConfiguredQuark, ProviderState,
-    SettingsTarget, WizardState,
+    SettingsTarget, WizardState, DEFAULT_SECRET_VAR,
 };
 
 mod widgets;
@@ -141,6 +141,11 @@ struct Chamber {
     global: Team,
     /// The field file this chamber reads from and steers into.
     path: PathBuf,
+    /// Where per-seat secret env-var VALUES are written/read (the Settings API-key
+    /// field). Real backend: `hadron_gluon::KeyringStore` over the OS credential
+    /// store, constructed once in [`Chamber::new`]. Boxed as the trait so a test
+    /// can inject a `MemoryStore` instead — the chamber itself never sees which.
+    secret_store: Box<dyn hadron_lattice::secrets::SecretStore>,
     /// The human's message box at the foot of the chat column.
     input: Entity<InputState>,
     /// The completion card floating above the message box, or `None` when no
@@ -203,6 +208,18 @@ struct Chamber {
     /// `commit_settings_inputs` rather than keyed off `settings_target`). Blank = clear
     /// the repo override; see `parse_max_exchanges`.
     settings_max_exchanges: Entity<InputState>,
+    /// The per-quark secret env-var **name** to declare/set/clear (e.g.
+    /// `"GEMINI_API_KEY"`), defaulted from the seat's existing `secret_env` (or
+    /// [`providers::DEFAULT_SECRET_VAR`] when none is declared yet).
+    settings_secret_var: Entity<InputState>,
+    /// The masked secret **value** input — write-only: never populated from the
+    /// store, always blank on load and cleared again after Set/Clear so the
+    /// stored value is never rendered back into the UI.
+    settings_secret_value: Entity<InputState>,
+    /// Cached "key set" / "not set" status for `settings_secret_var`, refreshed on
+    /// load/Set/Clear (not read every render — a keychain lookup per frame would
+    /// hammer the OS credential store, e.g. a D-Bus round trip to Secret Service).
+    settings_secret_status: bool,
     /// Live filter for the add-quark preset catalogue (~37 entries): a case-insensitive
     /// substring match on preset name + command, so the list is searchable instead of a
     /// long scroll.
@@ -317,6 +334,11 @@ impl Chamber {
         let settings_effort = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. low, standard, high"));
         let settings_mode_config = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. architect, code, ask"));
         let settings_max_exchanges = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. 50 (blank = daemon default)"));
+        let settings_secret_var = cx.new(|cx| InputState::new(window, cx).placeholder(DEFAULT_SECRET_VAR));
+        // `.masked(true)`: a password field — the stored value is never rendered back
+        // into this input, on load or after Set/Clear (see `load_settings_inputs`).
+        let settings_secret_value =
+            cx.new(|cx| InputState::new(window, cx).masked(true).placeholder("value (write-only)"));
         let preset_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Search providers…"));
         let custom_cli_vendor = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. ollama"));
         let custom_cli_program = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. ollama or /usr/local/bin/mytool"));
@@ -429,6 +451,13 @@ impl Chamber {
         // migrated repo whose seats are now overrides still lists them.
         let providers = configured_providers(&resolve_team(&team, &global));
 
+        // The real secret backend: the OS credential store, via the same
+        // `KeyringStore` the daemon uses (`hadron_gluon::secrets`) — same service
+        // name and account format, so a value set here in the chamber and a value
+        // the daemon resolves at spawn are the SAME keychain entry.
+        let secret_store: Box<dyn hadron_lattice::secrets::SecretStore> =
+            Box::new(hadron_gluon::KeyringStore::new());
+
         // Load the archived sessions once — the history the wider Stats windows fold in.
         // Rebuilt only by `/clear` (the sole writer of a new archive in this process).
         let archived_messages = path
@@ -442,6 +471,7 @@ impl Chamber {
             team,
             global,
             path,
+            secret_store,
             input,
             completion: None,
             focus_handle,
@@ -472,6 +502,9 @@ impl Chamber {
             settings_effort,
             settings_mode_config,
             settings_max_exchanges,
+            settings_secret_var,
+            settings_secret_value,
+            settings_secret_status: false,
             preset_filter,
             custom_cli_vendor,
             custom_cli_program,
