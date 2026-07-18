@@ -406,11 +406,11 @@ impl Engine {
                 // empty here keeps the pure engine independent of seating.
                 provider: String::new(),
                 model: String::new(),
-                // Populated from the team config in the daemon bin (role-routing
-                // dispatch wiring is a later task); empty here keeps the pure engine
-                // independent of seating, same as `provider`/`model` above.
-                roles: Vec::new(),
-                exclusive: false,
+                // The `@role` roles, carried on the quark exactly like `display_name`
+                // above (resolved from the seat at build time), so a re-seat rebuilds
+                // the card with the right roles instead of silently dropping them.
+                roles: q.roles(),
+                exclusive: q.exclusive(),
             })
             .collect();
         let resident = quarks
@@ -466,8 +466,9 @@ impl Engine {
             // a seat added at runtime must not acquire fields a booted one lacks.
             provider: String::new(),
             model: String::new(),
-            roles: Vec::new(),
-            exclusive: false,
+            // Carried on the quark exactly as `Engine::new` reads it (see above).
+            roles: quark.roles(),
+            exclusive: quark.exclusive(),
         };
         self.roster.retain(|c| c.id != id);
         self.roster.push(card);
@@ -4081,6 +4082,34 @@ mod tests {
         );
         // No regression: an unaddressed message still falls back to the orchestrator.
         assert_eq!(engine.human_addressees("just a thought"), vec![QuarkId::new("agy")]);
+    }
+
+    /// Role routing's make-or-break wiring. A seat's `roles`/`exclusive` must reach the
+    /// roster card the same way `display_name` does — carried on the live quark, not
+    /// populated by a daemon-side step that does not exist (see
+    /// `docs/superpowers/specs/2026-07-18-role-routing-design.md` §2.1). Exercises the
+    /// real Seat → registry → adapter → `Quark::roles`/`Quark::exclusive` →
+    /// roster-card path.
+    #[test]
+    fn roster_card_carries_the_quarks_roles() {
+        use crate::adapter::registry;
+        use hadron_lattice::Seat;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+
+        let mut security = Seat::cli(QuarkId::new("security-quark"), "agy", "", Flavor::Worker);
+        security.roles = vec!["security".to_string()];
+        security.exclusive = true;
+
+        let engine = Engine::new(path, vec![registry::build_seat(&security).unwrap()], 10);
+
+        let card = engine
+            .roster
+            .iter()
+            .find(|c| c.id == QuarkId::new("security-quark"))
+            .expect("the seat is on the roster");
+        assert_eq!(card.roles, vec!["security".to_string()], "roles never reached the roster card");
+        assert!(card.exclusive, "exclusive never reached the roster card");
     }
 
     // ---- force-restart (Kind::Reboot) ------------------------------------------
