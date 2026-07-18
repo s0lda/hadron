@@ -1331,6 +1331,7 @@ impl Chamber {
                                         roles: vec![],
                                         exclusive: false,
                                         commands: hadron_lattice::SeatCommands::default(),
+                                        secret_env: Vec::new(),
                                     };
                                     // `vendor` is already pure (Task 3's re-keyed preset list), so this
                                     // is a no-op today — left in as a defensive strip in case a vendor
