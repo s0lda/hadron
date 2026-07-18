@@ -941,6 +941,8 @@ mod tests {
                     }),
                     cli: None,
                     enabled: true,
+                    roles: vec![],
+                    exclusive: false,
                 },
                 Seat {
                     id: QuarkId::new("opus"),
@@ -954,6 +956,8 @@ mod tests {
                     command: None,
                     cli: None,
                     enabled: true,
+                    roles: vec![],
+                    exclusive: false,
                 },
             ],
             roster: vec![],

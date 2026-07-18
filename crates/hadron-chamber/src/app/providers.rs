@@ -97,6 +97,8 @@ pub(super) fn cli_seat_from(
         enabled: true,
         effort: None,
         mode_config: None,
+        roles: vec![],
+        exclusive: false,
     };
     seat.normalize_vendor();
     // SSOT: the same `<transport>-<vendor>` builder the ACP save path uses, just off

@@ -406,6 +406,11 @@ impl Engine {
                 // empty here keeps the pure engine independent of seating.
                 provider: String::new(),
                 model: String::new(),
+                // Populated from the team config in the daemon bin (role-routing
+                // dispatch wiring is a later task); empty here keeps the pure engine
+                // independent of seating, same as `provider`/`model` above.
+                roles: Vec::new(),
+                exclusive: false,
             })
             .collect();
         let resident = quarks
@@ -461,6 +466,8 @@ impl Engine {
             // a seat added at runtime must not acquire fields a booted one lacks.
             provider: String::new(),
             model: String::new(),
+            roles: Vec::new(),
+            exclusive: false,
         };
         self.roster.retain(|c| c.id != id);
         self.roster.push(card);
