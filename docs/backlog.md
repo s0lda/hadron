@@ -40,6 +40,8 @@ Update this file in the same commit as the work. Whoever lands it moves the line
 | 19 | Zed-style terminal (VTE grid) | ⬜ | adopt `alacritty_terminal`, do not hand-roll |
 | 20 | **Live preview of what a quark is doing** (stream) | ✅ | `89a08d9` |
 | 21 | Completion-popup width | ⬜ | **blocked**: hard-coded const in the fork; needs a fork push and this checkout has no remote |
+| 44 | Terminal copy/paste keyboard shortcuts | ✅ | `e9bb264` |
+| 45 | Plan tab text wrapping on long tasks | ✅ | `e9bb264` |
 
 ## Engine / protocol
 

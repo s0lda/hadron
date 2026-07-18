@@ -2264,8 +2264,10 @@ impl Chamber {
                                     .into_any_element()
                             };
                             list = list.child(
-                                h_flex().gap_2().items_start().child(marker).child(
+                                h_flex().w_full().gap_2().items_start().child(marker).child(
                                     div()
+                                        .flex_1()
+                                        .min_w_0()
                                         .text_sm()
                                         .text_color(if done {
                                             theme::text_muted()
