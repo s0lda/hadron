@@ -98,6 +98,42 @@ impl Chamber {
                 }
                 true
             }
+            "reboot" => {
+                let target = args.trim().trim_start_matches('@');
+                if target.is_empty() {
+                    eprintln!("chamber: `/reboot` requires a target (e.g. `/reboot @acp-claude` or `/reboot all`)_");
+                    return true;
+                }
+                
+                let reboots = if target == "all" {
+                    crate::model::post_clear_reboots(&self.view.roster)
+                } else {
+                    let matches_target = self.view.roster.iter().any(|r| {
+                        (r.id == target || r.display_name.as_deref() == Some(target))
+                            && matches!(r.transport, hadron_lattice::Transport::Acp)
+                    });
+                    if matches_target {
+                        let real_id = self.view.roster.iter()
+                            .find(|r| r.id == target || r.display_name.as_deref() == Some(target))
+                            .map(|r| &r.id)
+                            .unwrap();
+                        vec![Event::new(Actor::Human, Some(QuarkId::new(real_id)), Kind::Reboot)]
+                    } else {
+                        eprintln!("chamber: `/reboot` target not found or not a resident quark: {target}");
+                        vec![]
+                    }
+                };
+
+                for ev in reboots {
+                    if let Err(e) = io::append_event(&self.path, &ev) {
+                        eprintln!("chamber: failed to append reboot: {e}");
+                    }
+                }
+                let events = io::read_events(&self.path).unwrap_or_default();
+                self.reproject(&events);
+                cx.notify();
+                true
+            }
             _ => {
                 // If it contains a slash, it's probably a path. 
                 // Return false to let it pass through as a normal message.
