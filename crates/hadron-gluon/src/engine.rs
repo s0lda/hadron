@@ -3982,6 +3982,7 @@ mod tests {
     /// the way a real (e.g. ACP) seat built from `team.json` would.
     struct RoledQuark {
         id: QuarkId,
+        display_name: Option<String>,
         roles: Vec<String>,
         exclusive: bool,
         reply: String,
@@ -3994,6 +3995,9 @@ mod tests {
         }
         fn flavor(&self) -> Flavor {
             Flavor::Worker
+        }
+        fn display_name(&self) -> Option<String> {
+            self.display_name.clone()
         }
         fn roles(&self) -> Vec<String> {
             self.roles.clone()
@@ -4012,6 +4016,21 @@ mod tests {
     fn roled_quark(id: &str, roles: &[&str], exclusive: bool, reply: &str) -> RoledQuark {
         RoledQuark {
             id: QuarkId::new(id),
+            display_name: None,
+            roles: roles.iter().map(|r| r.to_string()).collect(),
+            exclusive,
+            reply: reply.into(),
+        }
+    }
+
+    /// Same as [`roled_quark`], but carrying a `display_name` — the router resolves
+    /// `@DisplayName` mentions to the card via this (`match_longest_mention`'s
+    /// display-name pass), independent of `id`/`roles`, which is exactly what
+    /// `exclusive_seat_admitted_by_its_display_name` exercises.
+    fn roled_quark_named(id: &str, display_name: &str, roles: &[&str], exclusive: bool, reply: &str) -> RoledQuark {
+        RoledQuark {
+            id: QuarkId::new(id),
+            display_name: Some(display_name.to_string()),
             roles: roles.iter().map(|r| r.to_string()).collect(),
             exclusive,
             reply: reply.into(),
@@ -4129,6 +4148,55 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
             "a broadcast that also names the exclusive seat's role must still reach it"
+        );
+    }
+
+    /// **Whole-branch review follow-up.** `match_longest_mention` resolves
+    /// `@DisplayName` to a card (the `display_name` pass, independent of `id`/
+    /// `roles`), so an exclusive card WITH a display name must be admitted by its
+    /// own primary handle — not rejected as "did not address it by role or @id"
+    /// just because the exclusivity check forgot to look at `display_name`.
+    #[tokio::test]
+    async fn exclusive_seat_admitted_by_its_display_name() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(roled_quark_named("acp-claude", "Claude", &["security"], true, "I ANSWERED"))],
+            12,
+        );
+        seed_human_message(&field, "acp-claude", "@Claude handle this");
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(
+            events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
+            "an exclusive seat named by its own display name must be admitted"
+        );
+    }
+
+    /// A display name must not widen the `@team` exclusion: broadcasting to
+    /// everyone still does not name this card specifically, display name or not.
+    #[tokio::test]
+    async fn exclusive_seat_with_display_name_still_excluded_from_a_team_broadcast() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(roled_quark_named("acp-claude", "Claude", &["security"], true, "I ANSWERED"))],
+            12,
+        );
+        append_event(
+            &field,
+            &Event::new(Actor::Human, None, Kind::Message { body: "@team status check".into() }),
+        )
+        .unwrap();
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(
+            !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
+            "a `@team` broadcast must still exclude an exclusive seat even when it has a display name"
         );
     }
 
