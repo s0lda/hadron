@@ -10,6 +10,9 @@ use super::*;
 pub(super) struct AgentDescriptor {
     pub id: String,
     pub name: String,
+    /// Short human blurb from the catalogue; empty for best-effort presets (the
+    /// wizard falls back to showing the command line).
+    pub description: String,
     pub command: String,
     pub args: Vec<String>,
 }
