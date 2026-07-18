@@ -87,6 +87,7 @@ impl Render for Chamber {
                 this.app_menu_open = !this.app_menu_open;
                 cx.notify();
             }))
+            .on_action(cx.listener(|this, _: &ToggleFocus, window, cx| this.toggle_focus(window, cx)))
             .relative()
             .size_full()
             .overflow_hidden()
