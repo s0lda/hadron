@@ -93,6 +93,29 @@ pub fn has_override(events: &[Event], quark: &QuarkId) -> bool {
     false
 }
 
+/// The worker-clamped mode (spec §2 C, user-confirmed clamp policy): under
+/// No-Human-Mode, once the global default is `Bypass`, a non-orchestrator
+/// worker with no explicit per-quark override is clamped down to `Auto`
+/// rather than inheriting the orchestrator's standing `Bypass` authority. An
+/// explicit per-quark override (via `has_override`) survives the clamp — a
+/// human who deliberately pinned a worker to `Bypass` keeps that pin. The
+/// orchestrator seat (`is_orchestrator = true`) is never clamped.
+///
+/// Outside that one case — `no_human == false`, or the global default is not
+/// `Bypass` — this is exactly `resolve_mode`. Reuses `resolve_mode`,
+/// `global_mode`, and `has_override`; does not duplicate their event-scanning
+/// logic.
+pub fn effective_mode(events: &[Event], quark: &QuarkId, no_human: bool, is_orchestrator: bool) -> Mode {
+    if no_human
+        && !is_orchestrator
+        && global_mode(events) == Mode::Bypass
+        && !has_override(events, quark)
+    {
+        return Mode::Auto;
+    }
+    resolve_mode(events, quark)
+}
+
 /// Fold remembered approvals into the allow-list. A `PermissionGrant` with
 /// `remember == true && approved == true`, addressed to a quark, teaches a rule;
 /// the op is recovered by pairing the grant with the most recent preceding
@@ -587,5 +610,76 @@ mod tests {
     fn op_matches_non_match() {
         assert!(!op_matches("cargo test", "cargo test --release"));
         assert!(!op_matches("cargo test*", "cargo publish"));
+    }
+
+    /// `no_human = false` must reproduce `resolve_mode` byte-for-byte, across a
+    /// representative set of histories (empty, global-only, per-quark override,
+    /// override surviving a later global change, and a `ModeClear` reverting a
+    /// pin) — the clamp is entirely dormant when the toggle is off.
+    #[test]
+    fn clamp_off_is_resolve_mode() {
+        let histories: Vec<Vec<Event>> = vec![
+            vec![],
+            vec![mode_set(None, Mode::Bypass)],
+            vec![mode_set(None, Mode::Ask), mode_set(Some("agy"), Mode::Bypass)],
+            vec![
+                mode_set(None, Mode::Ask),
+                mode_set(Some("agy"), Mode::Bypass),
+                mode_set(None, Mode::Write),
+            ],
+            vec![
+                mode_set(None, Mode::Bypass),
+                mode_set(Some("agy"), Mode::Bypass),
+                mode_clear("agy"),
+            ],
+        ];
+        for evs in &histories {
+            for is_orchestrator in [false, true] {
+                assert_eq!(
+                    effective_mode(evs, &q("agy"), false, is_orchestrator),
+                    resolve_mode(evs, &q("agy")),
+                    "history={evs:?} is_orchestrator={is_orchestrator}"
+                );
+            }
+        }
+    }
+
+    /// The core clamp: No-Human-Mode + global Bypass + an un-pinned worker →
+    /// clamped down to `Auto`, not the inherited `Bypass`.
+    #[test]
+    fn worker_clamps_to_auto_under_global_bypass() {
+        let evs = vec![mode_set(None, Mode::Bypass)];
+        assert_eq!(resolve_mode(&evs, &q("agy")), Mode::Bypass, "sanity: would inherit Bypass");
+        assert_eq!(effective_mode(&evs, &q("agy"), true, false), Mode::Auto);
+    }
+
+    /// A worker with an explicit per-quark `Bypass` override is NOT clamped —
+    /// the human's specific pin survives the global-Bypass worker clamp.
+    #[test]
+    fn explicit_override_survives_clamp() {
+        let evs = vec![mode_set(None, Mode::Bypass), mode_set(Some("agy"), Mode::Bypass)];
+        assert!(has_override(&evs, &q("agy")));
+        assert_eq!(effective_mode(&evs, &q("agy"), true, false), Mode::Bypass);
+    }
+
+    /// The orchestrator seat is exempt from the clamp — it keeps its standing
+    /// `Bypass` authority even under No-Human-Mode.
+    #[test]
+    fn orchestrator_not_clamped() {
+        let evs = vec![mode_set(None, Mode::Bypass)];
+        assert_eq!(effective_mode(&evs, &q("agy"), true, true), Mode::Bypass);
+    }
+
+    /// The clamp only fires when the *inherited* default is `Bypass` — under
+    /// any other global mode, `effective_mode` is exactly `resolve_mode`, not
+    /// forced down to `Auto`.
+    #[test]
+    fn clamp_only_under_global_bypass() {
+        let evs = vec![mode_set(None, Mode::Auto)];
+        assert_eq!(resolve_mode(&evs, &q("agy")), Mode::Auto);
+        assert_eq!(effective_mode(&evs, &q("agy"), true, false), Mode::Auto);
+
+        let evs_write = vec![mode_set(None, Mode::Write)];
+        assert_eq!(effective_mode(&evs_write, &q("agy"), true, false), Mode::Write);
     }
 }
