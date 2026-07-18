@@ -429,21 +429,41 @@ pub(super) fn next_mode(mode: Mode) -> Mode {
     }
 }
 
-/// A permission-mode badge. Variant carries the risk temperature (Ask muted →
-/// Bypass danger). A per-quark override renders solid; an inherited/global mode
-/// renders outlined.
-pub(super) fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
-    if !is_override {
-        return div().into_any_element();
+/// Whether a mode badge renders filled or hollow: an explicit per-quark override
+/// is [`ModeTagStyle::Solid`] (it's a deliberate choice); an inherited/global mode
+/// is [`ModeTagStyle::Outline`] (it's just the ambient default). Split out as a
+/// pure `fn(bool) -> ModeTagStyle` so the render decision — "every quark gets a
+/// tag, styled by override-ness" — is unit-testable without a GPUI window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ModeTagStyle {
+    Solid,
+    Outline,
+}
+
+pub(super) fn mode_tag_style(is_override: bool) -> ModeTagStyle {
+    if is_override {
+        ModeTagStyle::Solid
+    } else {
+        ModeTagStyle::Outline
     }
+}
+
+/// A permission-mode badge, rendered for every quark (not only ones with an
+/// explicit per-quark override) so the resolved mode is always visible. Variant
+/// carries the risk temperature (Ask muted → Bypass danger). A per-quark override
+/// renders solid; an inherited/global mode renders outlined — see [`mode_tag_style`].
+pub(super) fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
     let tag = match mode {
         Mode::Ask => Tag::secondary(),
         Mode::Write => Tag::info(),
         Mode::Auto => Tag::warning(),
         Mode::Bypass => Tag::danger(),
     };
+    let tag = match mode_tag_style(is_override) {
+        ModeTagStyle::Solid => tag,
+        ModeTagStyle::Outline => tag.outline(),
+    };
     tag.small()
-        .outline()
         .child(div().child(mode_label(mode).to_string()))
         .into_any_element()
 }
@@ -640,4 +660,23 @@ pub(super) fn markdown_style() -> gpui_component::text::TextViewStyle {
         s
     };
     style
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `mode_tag` used to early-return an empty element for any quark running the
+    /// global-default mode (`is_override == false`), so "a mode tag next to each
+    /// Quark" wasn't actually true — only overridden quarks showed one. The render
+    /// decision isn't directly introspectable on an `AnyElement`, so this asserts
+    /// the pure style selector behind it: BOTH branches must select a real style
+    /// (neither is "nothing"), and override vs. inherited must land on opposite
+    /// styles per the function's own doc comment (override = solid, inherited =
+    /// outline).
+    #[test]
+    fn mode_tag_renders_for_inherited_mode_not_only_overrides() {
+        assert_eq!(mode_tag_style(true), ModeTagStyle::Solid, "an explicit per-quark override renders solid");
+        assert_eq!(mode_tag_style(false), ModeTagStyle::Outline, "an inherited/global mode renders outlined, not nothing");
+    }
 }

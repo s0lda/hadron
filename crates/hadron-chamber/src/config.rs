@@ -57,7 +57,7 @@ fn default_false() -> bool {
     false
 }
 fn default_roster_width() -> f32 {
-    245.0
+    310.0
 }
 fn default_inspector_width() -> f32 {
     300.0
