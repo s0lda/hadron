@@ -55,11 +55,17 @@ pub struct QuarkCard {
     /// can see it without re-reading `team.json`.
     #[serde(default, skip_serializing_if = "crate::team::is_false")]
     pub exclusive: bool,
+    /// Per-seat command allow/deny lists — the router's read of `Seat.commands`,
+    /// carried here so the engine's `decide()` call sites can fold them without
+    /// re-reading `team.json`. Empty for a card built before this field existed.
+    #[serde(default, skip_serializing_if = "crate::team::SeatCommands::is_empty")]
+    pub commands: crate::team::SeatCommands,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::team::SeatCommands;
 
     #[test]
     fn quark_card_round_trips() {
@@ -72,6 +78,7 @@ mod tests {
             model: "opus-4.8".into(),
             roles: vec![],
             exclusive: false,
+            commands: SeatCommands::default(),
         };
         let json = serde_json::to_string(&card).unwrap();
         assert_eq!(json, r#"{"id":"claude","display_name":"Claude","flavor":"orchestrator","energy":"available","provider":"claude","model":"opus-4.8"}"#);
@@ -99,6 +106,7 @@ mod tests {
             model: "opus".into(),
             roles: vec![],
             exclusive: false,
+            commands: SeatCommands::default(),
         };
         // Default (empty roles, not exclusive) must not appear in the JSON — back-compat
         // with a card built before role-routing existed.
