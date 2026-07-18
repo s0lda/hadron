@@ -1,4 +1,17 @@
-use hadron_lattice::{Actor, Flavor, Kind, Mode, Projection, QuarkId};
+use hadron_lattice::{Actor, Flavor, Kind, Mode, Projection, QuarkCard, QuarkId};
+
+/// How a peer is NAMED to a quark: its display name when it has one, else its raw
+/// id. Quarks addressed each other by raw id (`@acp-claude`) because the prompt only
+/// ever showed ids; naming peers by display name here makes them write `@GoogleGirl`
+/// instead. Safe because the router resolves a display-name mention back to the seat
+/// (`match_longest_mention` tries id AND display_name), so nothing stops resolving.
+fn display_for(roster: &[QuarkCard], id: &QuarkId) -> String {
+    roster
+        .iter()
+        .find(|c| &c.id == id)
+        .and_then(|c| c.display_name.clone())
+        .unwrap_or_else(|| id.as_str().to_string())
+}
 
 /// What the quark can actually do this turn, given its resolved permission mode.
 /// The mode sets the CLI posture, but the *model* only narrates honestly if it is
@@ -21,14 +34,20 @@ fn mode_guidance(mode: Mode) -> &'static str {
 }
 
 /// Render one field event as a Markdown transcript line: `**from → to:** body`.
-fn render_event_line(from: &Actor, to: &Option<QuarkId>, body: &str) -> String {
+/// Quark endpoints are named by display name (via `roster`) when they have one.
+fn render_event_line(
+    from: &Actor,
+    to: &Option<QuarkId>,
+    body: &str,
+    roster: &[QuarkCard],
+) -> String {
     let from_s = match from {
         Actor::Human => "human".to_string(),
         Actor::Gluon => "gluon".to_string(),
-        Actor::Quark(q) => q.as_str().to_string(),
+        Actor::Quark(q) => display_for(roster, q),
     };
     match to {
-        Some(t) => format!("**{from_s} → {}:** {body}", t.as_str()),
+        Some(t) => format!("**{from_s} → {}:** {body}", display_for(roster, t)),
         None => format!("**{from_s}:** {body}"),
     }
 }
@@ -52,7 +71,10 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     // 0. Identity — which quark is being excited. A multi-addressee human
     // message hands the SAME text to each named quark, so the model must know
     // its own handle to act on only its part.
-    p.push_str(&format!("# Who you are\nYou are `@{}` in this swarm.\n\n", self_id.as_str()));
+    p.push_str(&format!(
+        "# Who you are\nYou are `@{}` in this swarm.\n\n",
+        display_for(&projection.roster, self_id)
+    ));
 
     // 1. Invariants — the enforced working protocol.
     if !projection.invariants.trim().is_empty() {
@@ -163,7 +185,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         for act in &projection.live_activities {
             p.push_str(&format!(
                 "- **@{id}** is {doing}: {detail}\n",
-                id = act.quark.as_str(),
+                id = display_for(&projection.roster, &act.quark),
                 doing = act.doing.label(),
                 detail = act.detail
             ));
@@ -185,7 +207,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         }
         for e in &projection.field_window {
             if let Kind::Message { body } = &e.kind {
-                p.push_str(&render_event_line(&e.from, &e.to, body));
+                p.push_str(&render_event_line(&e.from, &e.to, body, &projection.roster));
                 p.push('\n');
             }
         }
@@ -218,8 +240,10 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     p.push_str(
         "Reply in Markdown. If a message addresses several quarks (e.g. `@opus do X and @agy \
          do Y`), act ONLY on the part directed at you — the others handle theirs. To delegate, \
-         start a line with `@<quark-id>` and the request (only a mention at the START of a line \
-         routes — mentions inside prose are ignored).\n\n",
+         start a line with `@<name>` and the request — use a peer's name exactly as it appears \
+         in Live Activity and the transcript above (its display name when it has one, e.g. \
+         `@GoogleGirl`, otherwise its id). Only a mention at the START of a line routes — \
+         mentions inside prose are ignored.\n\n",
     );
 
     // Brevity as discipline, not a hard cut. The engine does NOT trim replies — a
@@ -388,6 +412,44 @@ mod tests {
         assert!(p.contains("do NOT"), "and told not to touch the parent checkout");
     }
 
+    /// Peers are named to a quark by their DISPLAY NAME when they have one, not the
+    /// raw seat id — so quarks address each other `@GoogleGirl`, not `@acp-claude`.
+    /// (The router resolves either back to the seat, so routing is unaffected.)
+    #[test]
+    fn peers_are_named_by_display_name_not_raw_id() {
+        let mut proj = projection("coordinate");
+        // The self (agy) gets a display name too — "Who you are" must use it.
+        proj.roster[0].display_name = Some("Aggy".into());
+        // A peer with a display name, and a transcript line it authored.
+        proj.roster.push(QuarkCard {
+            id: QuarkId::new("acp-claude"),
+            display_name: Some("GoogleGirl".into()),
+            flavor: Flavor::Worker,
+            energy: EnergyState::Available,
+            provider: String::new(),
+            model: String::new(),
+            roles: vec![],
+            exclusive: false,
+            commands: Default::default(),
+        });
+        proj.field_window.push(Event::new(
+            Actor::Quark(QuarkId::new("acp-claude")),
+            Some(QuarkId::new("agy")),
+            Kind::Message { body: "ping".into() },
+        ));
+        let p = build(&proj, &QuarkId::new("agy"));
+
+        assert!(p.contains("You are `@Aggy`"), "self named by display name:\n{p}");
+        assert!(
+            p.contains("**GoogleGirl → Aggy:** ping"),
+            "peer + recipient named by display name in the transcript:\n{p}"
+        );
+        assert!(
+            !p.contains("acp-claude"),
+            "the raw id must not leak anywhere once a display name exists:\n{p}"
+        );
+    }
+
     /// The bug this pair of tests exists to stop recurring: for the whole of the
     /// live swarm's life the prompt asserted isolation unconditionally, while the
     /// engine actually placed every quark in the *shared* workspace root. A worker
@@ -434,7 +496,7 @@ mod tests {
         assert!(p.contains("Build login"));
         assert!(p.contains("# Recent field"));
         assert!(p.contains("**human → claude:** start the auth work"));
-        assert!(p.contains("@<quark-id>"));
+        assert!(p.contains("@<name>"), "the addressing instruction is present");
     }
 
     #[test]
