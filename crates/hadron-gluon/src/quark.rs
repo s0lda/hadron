@@ -15,6 +15,21 @@ pub trait Quark: Send {
     fn display_name(&self) -> Option<String> {
         None
     }
+    /// The roles this quark plays for `@role` routing (e.g. `"security"`,
+    /// `"architect"`). Carried on the quark for the same reason `display_name` is:
+    /// the engine's roster card is always built with the right roles — including
+    /// after a re-seat — rather than relying on a daemon-side population step that
+    /// does not exist. Resolved from the seat; the adapter merely holds it.
+    /// Defaults to empty — most quarks play no particular role.
+    fn roles(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// Whether this quark is scoped ONLY to tasks that name one of its `roles`.
+    /// Carried the same way `roles` is. Defaults to `false` — most quarks stay in
+    /// general dispatch.
+    fn exclusive(&self) -> bool {
+        false
+    }
     fn energy(&self) -> EnergyState;
     /// Whether this quark keeps its context **across turns** (a resident ACP session) or
     /// is re-spawned fresh each turn (a one-shot CLI process). The engine tracks this at

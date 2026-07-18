@@ -118,6 +118,10 @@ pub struct CliQuark<R: CliRunner> {
     /// Empty → the CLI's default (never passed).
     model: String,
     spec: CliSpec,
+    /// This quark's `@role` roles (see [`Quark::roles`]); empty = no roles.
+    roles: Vec<String>,
+    /// Whether this quark is scoped only to its roles (see [`Quark::exclusive`]).
+    exclusive: bool,
     /// Whether this quark already has a conversation for `spec.resume` to resume.
     ///
     /// In-memory on purpose: a daemon restart resets it, and the next turn re-sends
@@ -129,12 +133,29 @@ pub struct CliQuark<R: CliRunner> {
 
 impl<R: CliRunner> CliQuark<R> {
     pub fn new(id: QuarkId, flavor: Flavor, model: impl Into<String>, spec: CliSpec, runner: R) -> Self {
-        CliQuark { id, flavor, display_name: None, model: model.into(), spec, resident: false, runner }
+        CliQuark {
+            id,
+            flavor,
+            display_name: None,
+            model: model.into(),
+            spec,
+            resident: false,
+            runner,
+            roles: Vec::new(),
+            exclusive: false,
+        }
     }
 
     /// Set the `@mention` display name (from the resolved team config).
     pub fn with_display_name(mut self, name: Option<String>) -> Self {
         self.display_name = name;
+        self
+    }
+
+    /// Set the `@role` roles and exclusivity (from the resolved seat).
+    pub fn with_roles(mut self, roles: Vec<String>, exclusive: bool) -> Self {
+        self.roles = roles;
+        self.exclusive = exclusive;
         self
     }
 
@@ -186,6 +207,12 @@ impl<R: CliRunner> Quark for CliQuark<R> {
     }
     fn display_name(&self) -> Option<String> {
         self.display_name.clone()
+    }
+    fn roles(&self) -> Vec<String> {
+        self.roles.clone()
+    }
+    fn exclusive(&self) -> bool {
+        self.exclusive
     }
     fn energy(&self) -> EnergyState {
         EnergyState::Available
