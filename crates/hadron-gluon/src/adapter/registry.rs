@@ -456,14 +456,28 @@ pub struct QuarkSpec {
     pub display_name: Option<String>,
 }
 
-/// Enforce the naming contract: ids must be non-empty, whitespace-free tokens
-/// (so `@mention` routing works), and must not collide with the reserved actor
-/// names `human` / `gluon` or the `orchestrator` role alias (which routing
-/// resolves to whoever holds the role, so an id of that name would shadow it).
+/// Enforce the naming contract: ids must be non-empty, whitespace-free, path- and
+/// git-ref-safe tokens (so `@mention` routing works AND the id can be used verbatim as
+/// a worktree directory name — `worktree.rs` joins it onto `trees_dir` — a git branch
+/// ref segment — `quark/<id>/...` — and a live-file name — `hadron_lattice::live`),
+/// and must not collide with the reserved actor names `human` / `gluon` or the
+/// `orchestrator` role alias (which routing resolves to whoever holds the role, so an
+/// id of that name would shadow it).
 pub fn validate_quark_id(id: &QuarkId) -> anyhow::Result<()> {
     let s = id.as_str();
     if s.is_empty() || s.chars().any(|c| c.is_whitespace()) {
         anyhow::bail!("quark id must be a non-empty, whitespace-free token (got {s:?})");
+    }
+    // Path- and git-ref-safe character set. Rejects `/` and `\` (would nest or break a
+    // worktree path / branch ref segment), `:` (invalid in a git ref, and a path
+    // separator on Windows), and anything else outside plain ASCII — deliberately an
+    // allowlist, not a blocklist of the characters found so far, so a not-yet-imagined
+    // unsafe character (e.g. a shell metacharacter) is rejected by default too.
+    if let Some(c) = s.chars().find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))) {
+        anyhow::bail!(
+            "quark id {s:?} contains {c:?}, which is not path/git-ref-safe — ids may only use \
+             ASCII letters, digits, '.', '_', and '-'"
+        );
     }
     // Case-insensitively, because mentions now resolve that way: an id like
     // `Team` would otherwise validate fine and then be permanently unreachable,
@@ -594,6 +608,36 @@ mod tests {
         assert!(validate_quark_id(&QuarkId::new("claude")).is_ok());
         assert!(validate_quark_id(&QuarkId::new("agy")).is_ok());
         assert!(validate_quark_id(&QuarkId::new("worker-2")).is_ok());
+    }
+
+    /// An id becomes a worktree DIRECTORY name (`worktree.rs` joins it onto
+    /// `trees_dir`), a git BRANCH ref (`quark/<id>/...`), and a live-file name
+    /// (`hadron_lattice::live`) — so it must be path- and git-ref-safe, not merely
+    /// whitespace-free. `/` and `\\` would nest or break a path; `:` breaks a git ref
+    /// on some platforms and is a Windows path separator besides. This is the SSOT
+    /// character-set check every seat-creation path (including a freely-typed wizard
+    /// vendor) rides on.
+    #[test]
+    fn rejects_path_and_ref_unsafe_characters() {
+        assert!(validate_quark_id(&QuarkId::new("cli-foo/bar")).is_err());
+        assert!(validate_quark_id(&QuarkId::new("a\\b")).is_err());
+        assert!(validate_quark_id(&QuarkId::new("a:b")).is_err());
+    }
+
+    /// The live ids in today's `team.json` — none of these may ever start failing.
+    #[test]
+    fn accepts_the_live_seat_ids() {
+        for id in ["cli-agy", "cli-claude", "acp-claude", "acp-codex", "acp-agy"] {
+            assert!(validate_quark_id(&QuarkId::new(id)).is_ok(), "{id} must stay valid");
+        }
+    }
+
+    /// The safe set is `[A-Za-z0-9._-]` — dot and underscore are allowed (a custom-CLI
+    /// vendor like "cli_tool.v2" is a reasonable thing to type), everything outside
+    /// ASCII alphanumerics/`.`/`_`/`-` is not.
+    #[test]
+    fn accepts_dot_and_underscore_in_ids() {
+        assert!(validate_quark_id(&QuarkId::new("cli_tool.v2")).is_ok());
     }
 
     #[test]
