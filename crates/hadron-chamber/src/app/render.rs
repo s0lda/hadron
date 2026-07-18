@@ -709,8 +709,51 @@ impl Chamber {
                     ),
             );
         if let Rail::Roster = rail {
+            // Folded state still needs to answer "who's here and what are they
+            // doing" — a per-quark avatar + status dot, reusing the exact
+            // composition `roster_row` uses (`identity_avatar` + the presence
+            // dot), just smaller. Scrolls within the strip (mirrors the expanded
+            // roster's own `overflow_y_scroll` rows) so a long roster doesn't
+            // push the pinned Settings button off the bottom.
+            let mut avatars = v_flex().w_full().gap_2().items_center();
+            for r in &self.view.roster {
+                let id = self.resolve_identity(&r.id);
+                let dot_color = if r.adopted && r.enabled {
+                    theme::presence(r.state)
+                } else {
+                    theme::presence_disabled()
+                };
+                let dot = div()
+                    .absolute()
+                    .bottom_0()
+                    .right_0()
+                    .size(px(8.0))
+                    .rounded_full()
+                    .bg(dot_color)
+                    .border_2()
+                    .border_color(theme::bg_elevated());
+                avatars = avatars.child(
+                    div()
+                        .id(SharedString::from(format!("rail-avatar-{}", r.id)))
+                        .relative()
+                        .child(
+                            div()
+                                .child(identity_avatar(&id, 24.0))
+                                .map(|el| if r.enabled { el } else { el.opacity(0.6) }),
+                        )
+                        .child(dot),
+                );
+            }
             col = col
-                .child(div().flex_1())
+                .child(
+                    div()
+                        .id("rail-roster-scroll")
+                        .w_full()
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .child(avatars),
+                )
                 .child(self.settings_button(cx, true));
         }
         // The p_2 gutter: same inset as the expanded panels, so collapsing a rail keeps the
@@ -1103,7 +1146,13 @@ impl Chamber {
                                                 )
                                                 .build(window, cx)
                                             })
-                                            .child(mode_tag(self.view.global_mode, true)),
+                                            // Not an override — this chip is the global
+                                            // default itself. `true` used to be a hack to
+                                            // defeat `mode_tag`'s old `!is_override` early
+                                            // return; now that every mode renders, `false`
+                                            // both reads correctly and preserves this
+                                            // chip's prior (outlined) look.
+                                            .child(mode_tag(self.view.global_mode, false)),
                                     ),
                             )
                             .child(
