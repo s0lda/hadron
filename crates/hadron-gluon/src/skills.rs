@@ -345,9 +345,10 @@ fn parse_skill_file(text: &str) -> Option<ResolvedSkill> {
 /// Split a `.md` file's leading `---`-fenced front-matter from its body. Returns
 /// `(front_matter_lines, body)`; `front_matter_lines` is `None` when the text does
 /// not open with a front-matter block, and `body` is then the whole input
-/// unchanged. This is the one place the `---` fence is parsed — [`description`]
-/// and [`plan_author`] both go through it rather than re-splitting themselves.
-fn split_front_matter(markdown: &str) -> (Option<&str>, &str) {
+/// unchanged. This is the one place the `---` fence is parsed — [`description`],
+/// [`plan_author`], and [`crate::personas::load_personas`] all go through it
+/// rather than re-splitting themselves.
+pub(crate) fn split_front_matter(markdown: &str) -> (Option<&str>, &str) {
     match markdown.strip_prefix("---").and_then(|rest| rest.split_once("\n---")) {
         Some((front, body)) => (Some(front), body.trim_start_matches('\n')),
         None => (None, markdown),
@@ -357,7 +358,7 @@ fn split_front_matter(markdown: &str) -> (Option<&str>, &str) {
 /// The value of a `key:` line within a front-matter block, or `None` if the key is
 /// absent or its value is empty. Shared by every single-line front-matter field
 /// (`name:`, `description:`, `author:`, `triggers:`, `tools:`).
-fn front_matter_value<'a>(front: &'a str, key: &str) -> Option<&'a str> {
+pub(crate) fn front_matter_value<'a>(front: &'a str, key: &str) -> Option<&'a str> {
     let prefix = format!("{key}:");
     front.lines().find_map(|line| {
         let value = line.trim().strip_prefix(prefix.as_str())?.trim();
