@@ -114,9 +114,14 @@ pub(super) fn cli_seat_from(
 /// name (see `validate_quark_id`'s doc comment). Reuses `cli_seat_from` itself (rather
 /// than re-deriving the normalize+conventional_id steps here) so this check can never
 /// drift from what Save actually produces.
+///
+/// Also requires the NORMALIZED vendor to be non-empty. A bare transport prefix (e.g.
+/// `"cli-"`) or an all-prefix vendor normalizes to `""` via `Seat::normalize_vendor`,
+/// which then derives `id = "cli-"` — non-empty and all safe characters, so
+/// `validate_quark_id` alone would accept it even though the vendor itself is nothing.
 pub(super) fn custom_cli_vendor_is_valid(vendor: &str) -> bool {
     let seat = cli_seat_from(vendor, "placeholder", Vec::new(), hadron_lattice::PromptChannel::Stdin, "");
-    hadron_gluon::adapter::registry::validate_quark_id(&seat.id).is_ok()
+    !seat.vendor.is_empty() && hadron_gluon::adapter::registry::validate_quark_id(&seat.id).is_ok()
 }
 
 /// The custom-CLI wizard's channel-toggle → [`PromptChannel`] mapping. The one bit of
@@ -453,6 +458,17 @@ mod tests {
     fn custom_cli_vendor_is_valid_accepts_a_normal_vendor() {
         assert!(custom_cli_vendor_is_valid("ollama"));
         assert!(custom_cli_vendor_is_valid("cli_tool.v2"));
+    }
+
+    /// A human who types a bare transport prefix (or nothing at all) as the vendor gets
+    /// `Seat::normalize_vendor` stripping it down to `""` — `cli_seat_from` would then
+    /// derive `id = "cli-"` (non-empty, all-safe-characters, so `validate_quark_id` alone
+    /// waves it through) with an EMPTY vendor. Must still be rejected: an empty vendor is
+    /// not a usable label, however "safe" the resulting id string looks.
+    #[test]
+    fn custom_cli_vendor_is_valid_rejects_a_bare_transport_prefix() {
+        assert!(!custom_cli_vendor_is_valid("cli-"), "normalizes to an empty vendor");
+        assert!(!custom_cli_vendor_is_valid(""), "empty vendor outright");
     }
 
     /// `prompt_channel_from`: the Stdin choice ignores whatever the flag field holds —

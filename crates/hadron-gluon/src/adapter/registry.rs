@@ -479,6 +479,31 @@ pub fn validate_quark_id(id: &QuarkId) -> anyhow::Result<()> {
              ASCII letters, digits, '.', '_', and '-'"
         );
     }
+    // The charset allowlist above permits `.`, but git's ref-format rules are stricter
+    // than "any allowed character in any position": a ref component may never contain a
+    // `..` run (git reads it as a revision range, not a literal path segment — confirmed
+    // via `git check-ref-format`). An id that broke this rule would pass every other
+    // check, persist to team.json, and only fail when the daemon actually ran
+    // `git checkout -b quark/<id>/<ulid>` — long after the human could still easily undo
+    // it, and with a much less legible error.
+    if s.contains("..") {
+        anyhow::bail!("quark id {s:?} may not contain '..' — not a valid git ref component");
+    }
+    // Every id here follows (or is meant to follow) the `<transport>-<vendor>`
+    // convention, so treat each `-`-delimited segment as its own path-like component and
+    // require it not to start or end with `.` — a segment like `.x` or `x.` reads as a
+    // hidden/dotfile-shaped or truncated name and has no legitimate use as a vendor
+    // label. This is intentionally MORE conservative than strict git-ref legality (git
+    // itself accepts a mid-path segment starting/ending with `.` as long as it isn't the
+    // *whole* ref's leading/trailing component); the extra caution costs nothing here,
+    // since no real vendor name needs it. A single interior dot (`cli_tool.v2`) stays
+    // legal — only a dot at a segment's own start/end is rejected.
+    if s.split('-').any(|seg| seg.starts_with('.') || seg.ends_with('.')) {
+        anyhow::bail!(
+            "quark id {s:?} has a '-'-delimited segment starting or ending with '.' — not a \
+             valid vendor/transport label"
+        );
+    }
     // Case-insensitively, because mentions now resolve that way: an id like
     // `Team` would otherwise validate fine and then be permanently unreachable,
     // since `@Team` resolves to the alias before it ever reaches the roster.
@@ -622,6 +647,17 @@ mod tests {
         assert!(validate_quark_id(&QuarkId::new("cli-foo/bar")).is_err());
         assert!(validate_quark_id(&QuarkId::new("a\\b")).is_err());
         assert!(validate_quark_id(&QuarkId::new("a:b")).is_err());
+        // The charset allowlist alone permits `.` — including runs of it and leading/
+        // trailing placement — but a git ref component may not contain `..` (git treats
+        // it as a revision range) and may not start or end with `.`. Caught the daemon
+        // failing `git checkout -b quark/cli-a..b/<ulid>` AFTER the id had already
+        // persisted; must be rejected here instead, before it ever gets that far.
+        assert!(validate_quark_id(&QuarkId::new("cli-a..b")).is_err());
+        assert!(validate_quark_id(&QuarkId::new("cli-.x")).is_err());
+        assert!(validate_quark_id(&QuarkId::new("cli-x.")).is_err());
+        // A single interior dot stays legal — only `..` and leading/trailing dots are
+        // rejected.
+        assert!(validate_quark_id(&QuarkId::new("cli_tool.v2")).is_ok());
     }
 
     /// The live ids in today's `team.json` — none of these may ever start failing.
