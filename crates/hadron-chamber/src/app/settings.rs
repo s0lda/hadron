@@ -98,17 +98,29 @@ impl Chamber {
         let effort_val = self.settings_effort.read(cx).value().trim().to_string();
         let mode_val = self.settings_mode_config.read(cx).value().trim().to_string();
 
-        // Team-wide "Max exchanges" (Providers panel) — unconditional, like the load
-        // above: `load_settings_inputs` always re-syncs this field from `self.team`, so
-        // when the overlay isn't showing Providers the parsed value already equals
-        // `self.team.max_exchanges` and this is a no-op. Persists via the same
-        // `save_repo_team` path every other team.json edit (roster, model/effort/mode)
-        // uses, so the daemon's live-reload picks it up the same way.
-        let max_exchanges_val = self.settings_max_exchanges.read(cx).value().trim().to_string();
-        let new_max_exchanges = parse_max_exchanges(&max_exchanges_val);
-        if new_max_exchanges != self.team.max_exchanges {
-            self.team.max_exchanges = new_max_exchanges;
-            self.save_repo_team(cx);
+        // Team-wide "Max exchanges" (Providers panel) — gated on the Providers target,
+        // like the per-quark model/effort/mode fields below are gated on `key`. This
+        // must NOT be unconditional: `reload_if_changed` (mod.rs) assigns a freshly
+        // polled `self.team` on an external team.json edit WITHOUT touching
+        // `settings_max_exchanges`, so if that happened while Settings was open on any
+        // OTHER panel, an unconditional read-diff-write here would compare the now-stale
+        // input against the just-updated `self.team.max_exchanges` and silently write the
+        // stale value back — reverting someone else's (or the daemon's own) edit the next
+        // time any control on an unrelated panel commits (closing Settings, an
+        // effort/mode/color click, …). Scoping the write to "the human is actually on the
+        // Providers panel" makes that impossible: `select_settings_target` commits BEFORE
+        // switching away, so an edit made while on Providers is still captured on
+        // navigation, and a commit from any other panel never touches this field.
+        // `load_settings_inputs` still re-syncs the input from `self.team` unconditionally
+        // (every target, including the external-reload path via `reload_if_changed` ->
+        // ... -> next `load_settings_inputs` call) — only the *write* is gated.
+        if self.settings_target == SettingsTarget::Providers {
+            let max_exchanges_val = self.settings_max_exchanges.read(cx).value().trim().to_string();
+            let new_max_exchanges = parse_max_exchanges(&max_exchanges_val);
+            if new_max_exchanges != self.team.max_exchanges {
+                self.team.max_exchanges = new_max_exchanges;
+                self.save_repo_team(cx);
+            }
         }
 
         let key = self.settings_target.key();
