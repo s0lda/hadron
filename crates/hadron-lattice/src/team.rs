@@ -276,8 +276,15 @@ pub struct Seat {
     /// every `team.json` written before ACP existed keeps its exact behaviour.
     #[serde(default)]
     pub transport: Transport,
-    /// The ACP agent to boot. Ignored unless `transport` is [`Transport::Acp`];
-    /// absent there means "resolve the command from `provider`".
+    /// The program to boot. Primarily the ACP agent command: read whenever `transport`
+    /// is [`Transport::Acp`], where absent means "resolve the command from `vendor`".
+    /// Since the generic CLI transport landed, a [`Transport::Cli`] seat ALSO falls
+    /// back to reading this field — as a bare `program`/`args` pair, wrapped into a
+    /// generic [`CliSpec`] — when it has no explicit `cli` spec and its `vendor` has no
+    /// built-in [`CliSpec::preset`] (see `QuarkKind::from_seat` in `hadron-gluon`'s
+    /// adapter registry, and §4.3 of the custom-CLI-transport design doc). So this
+    /// field is no longer ACP-exclusive; it is the shared "boot command" fallback for
+    /// both transports, just consumed differently by each.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<AcpCommand>,
     /// The CLI invocation shape to use. Ignored unless `transport` is
