@@ -27,7 +27,9 @@ pub enum Decision {
     AskHuman,
     /// No-Human-Mode only (global `Bypass`): pause and surface the request to
     /// the orchestrator quark for adjudication instead of a human. Never
-    /// returned unless `decide` is called with `no_human = true`.
+    /// returned unless `decide` is called with `no_human = true`. **Never**
+    /// returned for a deny-listed op, even then — a human deny is an absolute
+    /// floor the orchestrator cannot override (see `decide`'s deny branch).
     AskOrchestrator,
 }
 
@@ -163,13 +165,17 @@ pub fn allow_rules(events: &[Event]) -> AllowRules {
 /// 1. `mode == Bypass` → `AutoApprove` (an explicit per-quark standing grant).
 /// 2. `risk == WorkspaceEdit`: `mode == Ask` → escalate; else (Write/Auto/Bypass,
 ///    Bypass already handled above) → `AutoApprove`.
-/// 3. `risk == BashExec`: a `deny` match (exact or trailing-`*` glob) → escalate
-///    — **deny wins even over an allow match**; `mode == Ask` or `mode == Write`
-///    → escalate; `mode == Auto` → an `allow` match ? `AutoApprove` : escalate.
+/// 3. `risk == BashExec`: a `deny` match (exact or trailing-`*` glob) → **`AskHuman`,
+///    unconditionally** — deny wins even over an allow match, and deny is an
+///    absolute floor the orchestrator can never override (see the SECURITY note
+///    on the deny branch below); `mode == Ask` or `mode == Write` → escalate;
+///    `mode == Auto` → an `allow` match ? `AutoApprove` : escalate.
 ///
 /// Where `escalate = AskOrchestrator` if `global == Bypass`, else `AskHuman`
 /// (No-Human-Mode itself is only meaningful once the global default is
 /// `Bypass`; short of that it degrades to the ordinary human-ask path).
+/// `escalate` is used for every NON-deny path; the deny match always resolves
+/// to `AskHuman` directly, bypassing `escalate` entirely.
 #[allow(clippy::too_many_arguments)]
 pub fn decide(
     mode: Mode,
@@ -213,8 +219,14 @@ pub fn decide(
 
     // Risk::BashExec: deny wins outright, then the base ladder per mode, with
     // Auto's allow-list softening the ask exactly as the today-table does.
+    //
+    // SECURITY: deny is an ABSOLUTE floor, not just "wins over allow" — a
+    // deny-listed op is `AskHuman` even under global `Bypass`, NEVER
+    // `AskOrchestrator`. The orchestrator is structurally unable to grant
+    // what a human explicitly denied; only the general (non-deny) escalation
+    // a few lines below consults `global` and may become `AskOrchestrator`.
     if rules_match(deny, quark, op) {
-        return escalate; // deny wins, even if also allow-listed
+        return Decision::AskHuman;
     }
     match mode {
         Mode::Ask | Mode::Write => escalate,
@@ -464,14 +476,37 @@ mod tests {
         deny.insert((k.clone(), op.to_string()));
 
         // Worker mode is Auto (not Bypass), so the lists are consulted. Even
-        // though `op` is allow-listed, the deny match wins → escalate.
+        // though `op` is allow-listed, the deny match wins → AskHuman.
         assert_eq!(
             decide(Mode::Auto, Mode::Auto, true, Risk::BashExec, op, &k, &allow, &deny),
             Decision::AskHuman
         );
+        // SECURITY (deny is absolute): even under global Bypass — where a
+        // NON-deny escalation would become AskOrchestrator — a deny match
+        // stays AskHuman. The orchestrator must never be able to grant a
+        // human-denied op.
         assert_eq!(
             decide(Mode::Auto, Mode::Bypass, true, Risk::BashExec, op, &k, &allow, &deny),
-            Decision::AskOrchestrator
+            Decision::AskHuman
+        );
+    }
+
+    /// Dedicated regression for the security decision: a deny-listed op never
+    /// reaches the orchestrator, under the exact conditions that would
+    /// otherwise produce `AskOrchestrator` (no_human on, global Bypass, worker
+    /// mode not Bypass) — deny still forces `AskHuman`.
+    #[test]
+    fn deny_listed_op_never_reaches_orchestrator() {
+        let k = q("agy");
+        let op = "rm -rf /";
+        let allow = AllowRules::new(); // not even allow-listed — irrelevant, deny wins regardless
+        let mut deny = DenyRules::new();
+        deny.insert((k.clone(), op.to_string()));
+
+        assert_eq!(
+            decide(Mode::Auto, Mode::Bypass, true, Risk::BashExec, op, &k, &allow, &deny),
+            Decision::AskHuman,
+            "a deny-listed op must escalate to a human, never the orchestrator"
         );
     }
 
