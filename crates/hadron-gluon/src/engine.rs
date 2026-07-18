@@ -384,6 +384,27 @@ pub struct Engine {
     /// regardless of what the field length did. Growth is one entry per reboot ever
     /// serviced; reboots are human-initiated and rare, so the set stays tiny.
     serviced_reboots: Option<HashSet<Ulid>>,
+    /// The **DO-NOT-ACTIVATE** No-Human-Mode toggle (spec §2 D). OFF by default
+    /// (see [`env_no_human_mode`]) — when off, every gate call site below passes
+    /// `no_human = false`, which `hadron_gatekeeper::decide`/`effective_mode`
+    /// guarantee is byte-for-byte today's behavior: `AskOrchestrator` can never
+    /// be returned and no worker is ever clamped. Only when this is `true` (env
+    /// `HADRON_NO_HUMAN_MODE=1`/`true`, or [`Engine::with_no_human`]) does the
+    /// suspend → adjudicate-by-orchestrator → resume loop become reachable.
+    no_human: bool,
+}
+
+/// Parse the DO-NOT-ACTIVATE toggle from `HADRON_NO_HUMAN_MODE`. Read ONCE, at
+/// [`Engine::new`] — nothing re-reads the environment after boot, so the toggle
+/// cannot flip mid-run out from under an in-flight decision. Default OFF: unset,
+/// empty, or anything other than `"1"`/`"true"` (case-insensitive) is OFF. A
+/// pure function so it is testable without mutating the process environment
+/// (tests that need the toggle ON use [`Engine::with_no_human`] instead, which
+/// avoids the cross-test env-var race a `set_var` would create).
+fn env_no_human_mode() -> bool {
+    std::env::var("HADRON_NO_HUMAN_MODE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 impl Engine {
@@ -437,7 +458,39 @@ impl Engine {
             disabled: HashSet::new(),
             resident,
             serviced_reboots: None,
+            no_human: env_no_human_mode(),
         }
+    }
+
+    /// Explicitly set the No-Human-Mode toggle, overriding whatever
+    /// [`env_no_human_mode`] read at construction. The daemon bin can wire this
+    /// to a `team.json`/config field later; tests use it to exercise the ON path
+    /// deterministically, without the cross-test race a shared-process
+    /// `std::env::set_var` would introduce.
+    pub fn with_no_human(mut self, on: bool) -> Self {
+        self.no_human = on;
+        self
+    }
+
+    /// Whether the No-Human-Mode toggle is on. The daemon bin uses this purely
+    /// to print a loud startup warning — a SECURITY-SENSITIVE mode being on
+    /// should never be silent.
+    pub fn no_human(&self) -> bool {
+        self.no_human
+    }
+
+    /// Whether `id` holds the orchestrator seat — the SSOT this module uses
+    /// everywhere a permission-gate call site needs to know (worker clamping,
+    /// deny-absolute is unaffected by this, and the No-Human-Mode auto-scheduler
+    /// below all key off the same lookup rather than re-deriving it).
+    fn is_orchestrator(&self, id: &QuarkId) -> bool {
+        self.roster.iter().any(|c| &c.id == id && c.flavor == Flavor::Orchestrator)
+    }
+
+    /// The seat holding the orchestrator role, if any — reuses the exact
+    /// `Flavor::Orchestrator` lookup `human_addressees` already relies on.
+    fn orchestrator_id(&self) -> Option<QuarkId> {
+        self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator).map(|c| c.id.clone())
     }
 
     /// Seat a quark on the **live** roster, replacing any quark already holding its id.
@@ -897,7 +950,10 @@ impl Engine {
         // Resolve the quark's effective mode from the field before the turn:
         // real adapters translate it into the CLI's permission posture, so the
         // mode must ride along on the projection (not just gate a post-turn ask).
-        let turn_mode = hadron_gatekeeper::resolve_mode(events, target);
+        // `effective_mode` degrades to `resolve_mode` byte-for-byte when
+        // `no_human` is off (the default) — see `env_no_human_mode`.
+        let turn_mode =
+            hadron_gatekeeper::effective_mode(events, target, self.no_human, self.is_orchestrator(target));
 
         // Truncation must be *observable*, not just performed: a quark that cannot
         // see an earlier instruction, and is not told so, acts on a partial field
@@ -1068,15 +1124,18 @@ impl Engine {
                 Kind::PermissionReq { risk, description: ask.description },
             ))
             .await?;
-            let mode = hadron_gatekeeper::resolve_mode(&events, target);
+            let mode =
+                hadron_gatekeeper::effective_mode(&events, target, self.no_human, self.is_orchestrator(target));
             let global = hadron_gatekeeper::global_mode(&events);
             let rules = hadron_gatekeeper::allow_rules(&events);
-            // No-Human-Mode is not wired yet (Task 3): `no_human = false` and an
-            // empty deny-list make this call byte-for-byte today's `decide`, so
-            // `AskOrchestrator` can never actually be returned here — the arm
-            // below is inert scaffolding until the toggle lands.
+            // No deny-rule SOURCE exists in the field yet — no event teaches a
+            // deny the way a remembered `PermissionGrant` teaches an allow — so
+            // this is always empty (same placeholder Task 1/2 shipped with).
+            // `decide`'s deny-absolute branch is exercised at the matrix level
+            // (`deny_listed_op_never_reaches_orchestrator`); wiring a real deny
+            // source into the field is a follow-up, not this task's scope.
             let deny = hadron_gatekeeper::DenyRules::new();
-            match hadron_gatekeeper::decide(mode, global, false, risk, &op, target, &rules, &deny) {
+            match hadron_gatekeeper::decide(mode, global, self.no_human, risk, &op, target, &rules, &deny) {
                 hadron_gatekeeper::Decision::AutoApprove => {
                     // Pre-authorized by the mode: the gluon grants on the
                     // orchestrator's / human's standing authority.
@@ -1110,10 +1169,16 @@ impl Engine {
                     return Ok(());
                 }
                 hadron_gatekeeper::Decision::AskOrchestrator => {
-                    // INERT for now (Task 1): No-Human-Mode's suspend →
-                    // adjudicate-by-orchestrator → resume loop lands in Task 3.
-                    // Until then this can't be reached (see the comment above),
-                    // and it degrades to exactly the AskHuman pause.
+                    // No-Human-Mode (toggle on, global Bypass): the SAME park as
+                    // AskHuman — reused verbatim, on purpose. What differs is who
+                    // gets asked: `run_until_quiesce`'s auto-scheduler recomputes
+                    // `decide` for the pending `PermissionReq` once the swarm
+                    // quiesces, and when it still resolves to `AskOrchestrator`
+                    // it dispatches an adjudication turn to the orchestrator seat
+                    // instead of leaving the ask for a human. The RESUME path is
+                    // identical either way: any `PermissionGrant` addressed to
+                    // this quark (human- or orchestrator-authored) re-excites it
+                    // via `next_pending`.
                     self.append(
                         Event::new(
                             Actor::Quark(target.clone()),
@@ -1177,6 +1242,79 @@ impl Engine {
         Ok(())
     }
 
+    /// The marker prefix on the auto-scheduler's injected orchestrator turn.
+    /// Load-bearing for idempotency (see [`Engine::orchestrator_adjudication_message`]):
+    /// its presence after a request is what stops the request from being
+    /// re-asked every quiesce pass.
+    const NO_HUMAN_ADJUDICATION_MARKER: &'static str = "[no-human-mode]";
+
+    /// No-Human-Mode's auto-scheduler (spec §2 D step 2). If the field's latest
+    /// `PermissionReq` is still unanswered AND still resolves to
+    /// `Decision::AskOrchestrator` under the field as it stands **right now**
+    /// (mode/global/allow may have moved since the worker asked — re-decided,
+    /// not cached), build the `Message` that puts it in front of the
+    /// orchestrator, injecting the request's own description into the task.
+    /// `None` when there is nothing pending, the pending request resolves to
+    /// something other than `AskOrchestrator` (e.g. it now needs a human, or
+    /// the toggle state changed), there is no orchestrator seat, the asker IS
+    /// the orchestrator (nothing to escalate to), or the orchestrator has
+    /// already been asked about this exact request.
+    ///
+    /// Pure — reads `events`, returns an `Event` to append; does not append it
+    /// itself. `run_until_quiesce` is the one caller and the one that appends.
+    fn orchestrator_adjudication_message(&self, events: &[Event]) -> Option<Event> {
+        let req_idx = events.iter().rposition(|e| matches!(e.kind, Kind::PermissionReq { .. }))?;
+        // Already answered (by anyone, any way) → nothing to schedule.
+        if events[req_idx + 1..].iter().any(|e| matches!(e.kind, Kind::PermissionGrant { .. })) {
+            return None;
+        }
+        let Kind::PermissionReq { risk, description } = &events[req_idx].kind else {
+            unreachable!("rposition matched PermissionReq")
+        };
+        // Mirrors `hadron_gatekeeper::pending_permission`'s addressee recovery:
+        // a request not authored by a quark has no one to resume, so no one to
+        // escalate on behalf of either.
+        let Actor::Quark(quark) = &events[req_idx].from else { return None };
+        let orch = self.orchestrator_id()?;
+        if *quark == orch {
+            return None; // the orchestrator cannot adjudicate its own request
+        }
+        // Idempotent: at most one adjudication ask per still-pending request.
+        // Without this, a real orchestrator with no grant tool yet (or a fake
+        // quark that just replies) would be re-asked every quiesce pass forever.
+        let already_asked = events[req_idx + 1..].iter().any(|e| {
+            e.to.as_ref() == Some(&orch)
+                && matches!(&e.kind, Kind::Message { body } if body.starts_with(Self::NO_HUMAN_ADJUDICATION_MARKER))
+        });
+        if already_asked {
+            return None;
+        }
+
+        let mode = hadron_gatekeeper::effective_mode(events, quark, self.no_human, false);
+        let global = hadron_gatekeeper::global_mode(events);
+        let rules = hadron_gatekeeper::allow_rules(events);
+        let deny = hadron_gatekeeper::DenyRules::new(); // see the permission-ask gate's comment
+        let decision =
+            hadron_gatekeeper::decide(mode, global, self.no_human, *risk, description, quark, &rules, &deny);
+        if decision != hadron_gatekeeper::Decision::AskOrchestrator {
+            return None; // needs a human (or was resolved another way) — not ours to schedule
+        }
+
+        Some(Event::new(
+            Actor::Gluon,
+            Some(orch),
+            Kind::Message {
+                body: format!(
+                    "{marker} @{quark} is asking for permission to run: {description} (risk: {risk:?}). \
+                     No-Human-Mode is on — a human is not being asked. Review it against the allow/deny \
+                     lists and reply with your decision, addressed to @{quark}.",
+                    marker = Self::NO_HUMAN_ADJUDICATION_MARKER,
+                    quark = quark.as_str(),
+                ),
+            },
+        ))
+    }
+
     /// The merge gate, fired when an assignment completes. Returns `true` if it parked
     /// the quark (Waiting on a human, or Blocked on red tests), in which case the
     /// caller must NOT append `Ground`.
@@ -1212,17 +1350,22 @@ impl Engine {
         // Bypass ⇒ auto-merge for free, and Ask/Write/Auto ⇒ ask. (Auto never remembers
         // a merge: the op string contains the assignment ULID, so it is never the same
         // op twice — which is the right answer. You should not blanket-trust merges.)
-        let mode = hadron_gatekeeper::resolve_mode(&events, target);
+        let mode =
+            hadron_gatekeeper::effective_mode(&events, target, self.no_human, self.is_orchestrator(target));
         let global = hadron_gatekeeper::global_mode(&events);
         let rules = hadron_gatekeeper::allow_rules(&events);
-        // No-Human-Mode not wired yet (Task 3): no_human = false, so this is
-        // byte-for-byte today's decide — AskOrchestrator can't occur here.
+        // Same placeholder as the permission-ask gate above: no deny source
+        // exists in the field yet, so this is always empty.
         let deny = hadron_gatekeeper::DenyRules::new();
+        // Under No-Human-Mode a non-delegated merge falls to `MergeVerdict::Block
+        // (NotApproved)` below, which parks the SAME PermissionReq/Waiting the
+        // permission-ask gate does — so a merge that escalates to AskOrchestrator
+        // is picked up by the very same auto-scheduler, with no separate wiring.
         let delegated = matches!(
             hadron_gatekeeper::decide(
                 mode,
                 global,
-                false,
+                self.no_human,
                 hadron_gatekeeper::Risk::BashExec,
                 &op,
                 target,
@@ -1473,7 +1616,11 @@ impl Engine {
                         continue;
                     }
 
-                    let turn_mode = hadron_gatekeeper::resolve_mode(&events, &target);
+                    // `effective_mode`, not `resolve_mode`: a worker clamped to
+                    // `Auto` under No-Human-Mode must not get the Bypass seat's
+                    // free pass on the exchange backstop either.
+                    let turn_mode =
+                        hadron_gatekeeper::effective_mode(&events, &target, self.no_human, self.is_orchestrator(&target));
                     if turn_mode != Mode::Bypass && exchanges >= self.max_exchanges {
                         backstop = true;
                         break;
@@ -1675,6 +1822,26 @@ impl Engine {
                     exchanges += 1;
                     spawned_any = true;
                 }
+
+                // No-Human-Mode auto-scheduler (spec §2 D). Nothing else is pending
+                // and nothing is in flight — the swarm is *about* to quiesce (the
+                // exact condition the break below checks). Before conceding that,
+                // check whether it is only quiesced because a worker is parked
+                // waiting on the ORCHESTRATOR (not a human) to adjudicate: if so,
+                // put the pending request in front of the orchestrator instead of
+                // stopping. `orchestrator_adjudication_message` is idempotent (at
+                // most one ask per still-pending request), so a real orchestrator
+                // that has no grant tool wired up yet — or a fake/mock quark whose
+                // reply is just a message — fails CLOSED: the ask goes out once,
+                // nothing resumes the worker, and the *next* pass around this same
+                // check sees the ask already made and lets the loop quiesce for a
+                // human, exactly as if the toggle were off. It never spins.
+                if turns.is_empty() && !spawned_any && self.no_human {
+                    if let Some(msg) = self.orchestrator_adjudication_message(&events) {
+                        self.append(msg).await?;
+                        spawned_any = true; // re-loop; the next pass dispatches it
+                    }
+                }
             }
 
             // Quiesce is the conjunction: nothing new to start AND nothing running.
@@ -1855,11 +2022,26 @@ mod tests {
             if self.calls == 1 {
                 Ok(TurnOutcome { message: None, permission: Some(self.ask.clone()), usage: Default::default() })
             } else {
-                Ok(TurnOutcome {
-                    message: Some(self.reply.clone()),
-                    permission: None,
-                    usage: Default::default(),
-                })
+                // Resumed: a denial is the SAME resume as a grant (the engine never
+                // inspects `approved` — see `finish_turn`'s permission block) — it is
+                // the resumed quark's own job to read its context and decline. This
+                // mirrors the "existing AskHuman-denied semantics" the No-Human-Mode
+                // plan reuses: check the most recent grant addressed to us in the
+                // field window handed back on resume, and refuse the op if it was a
+                // denial. Additive: every existing caller only ever grants
+                // `approved: true`, so this branch is unreachable for them and their
+                // assertions are unaffected.
+                let denied = turn
+                    .field_window
+                    .iter()
+                    .rev()
+                    .find_map(|e| match (&e.to, &e.kind) {
+                        (Some(to), Kind::PermissionGrant { approved, .. }) if to == &self.id => Some(!approved),
+                        _ => None,
+                    })
+                    .unwrap_or(false);
+                let message = if denied { format!("{} refused", self.reply) } else { self.reply.clone() };
+                Ok(TurnOutcome { message: Some(message), permission: None, usage: Default::default() })
             }
         }
     }
@@ -1880,6 +2062,28 @@ mod tests {
         PermissionQuark {
             id: QuarkId::new(id),
             flavor: Flavor::Orchestrator,
+            ask: PermissionAsk { risk, description: desc.into() },
+            reply: reply.into(),
+            calls: 0,
+            tasks,
+        }
+    }
+
+    /// Same double as `perm_quark_risk`, flavored `Worker` instead of the
+    /// historical (and here load-bearing-to-avoid) `Orchestrator` default:
+    /// `effective_mode`'s No-Human-Mode clamp only fires for a non-orchestrator
+    /// seat, so a wrongly-flavored asker would silently defeat the very clamp
+    /// the No-Human-Mode tests exist to prove.
+    fn perm_worker_risk(
+        id: &str,
+        tasks: Arc<Mutex<Vec<String>>>,
+        risk: hadron_gatekeeper::Risk,
+        desc: &str,
+        reply: &str,
+    ) -> PermissionQuark {
+        PermissionQuark {
+            id: QuarkId::new(id),
+            flavor: Flavor::Worker,
             ask: PermissionAsk { risk, description: desc.into() },
             reply: reply.into(),
             calls: 0,
@@ -2368,6 +2572,246 @@ mod tests {
         engine.run_until_quiesce().await.unwrap();
         let events = read_events(&field).unwrap();
         assert!(gluon_auto_granted(&events), "per-quark Bypass override auto-grants despite global Ask");
+    }
+
+    // ---- No-Human-Mode (spec §2 D): toggle, suspend, resume, denial ----
+    //
+    // A fake orchestrator standing in for a real one's future "grant tool":
+    // when excited it appends a `PermissionGrant` DIRECTLY to the field —
+    // exactly how the chamber appends a human's grant when they click
+    // Approve/Deny — rather than replying with a message the engine would have
+    // to parse. This is deliberate (see the advisor consult in the task
+    // report): the engine's job stops at putting the request in front of the
+    // orchestrator (`Engine::orchestrator_adjudication_message` +
+    // `run_until_quiesce`'s auto-scheduler); how a real orchestrator turns its
+    // judgement into a `PermissionGrant` event is a capability of THAT actor
+    // (a tool call), not a translation the engine performs — so this double
+    // proves the scheduler → resume path end-to-end without inventing one.
+    struct GrantingOrchestrator {
+        id: QuarkId,
+        field_path: std::path::PathBuf,
+        grant_to: QuarkId,
+        approved: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for GrantingOrchestrator {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Orchestrator
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+            append_event(
+                &self.field_path,
+                &Event::new(
+                    Actor::Quark(self.id.clone()),
+                    Some(self.grant_to.clone()),
+                    Kind::PermissionGrant { approved: self.approved, remember: false },
+                ),
+            )?;
+            Ok(TurnOutcome { message: Some("adjudicated".into()), permission: None, usage: Default::default() })
+        }
+    }
+
+    /// Toggle OFF (the default — no `with_no_human` call): a worker's
+    /// non-allow-listed bash under global Bypass auto-approves exactly as
+    /// today. Not parked, not orchestrator-adjudicated — `no_human = false`
+    /// makes `decide` byte-for-byte the pre-Task-3 table.
+    #[tokio::test]
+    async fn toggle_off_never_asks_orchestrator() {
+        use hadron_gatekeeper::{Mode, Risk};
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        seed_mode(&field, None, Mode::Bypass); // global Bypass
+        let tasks = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(perm_worker_risk("agy", tasks.clone(), Risk::BashExec, "rm -rf /tmp/x", "done"))],
+            8,
+        );
+        // No `.with_no_human(true)` — toggle stays off.
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(gluon_auto_granted(&events), "global Bypass auto-grants exactly as today");
+        assert!(!has_kind(&events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })), "never parked");
+        assert!(
+            !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("no-human-mode"))),
+            "the orchestrator is never consulted"
+        );
+    }
+
+    /// Toggle ON, global Bypass: a worker (no per-quark override) clamps to
+    /// `Auto`, its op is not allow-listed, and `decide` returns
+    /// `AskOrchestrator` — which parks the SAME way `AskHuman` does (Waiting +
+    /// PermissionReq), and the auto-scheduler puts the request in front of the
+    /// orchestrator (a `[no-human-mode]`-marked `Message`).
+    #[tokio::test]
+    async fn worker_suspends_on_askorchestrator() {
+        use hadron_gatekeeper::{Mode, Risk};
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        seed_mode(&field, None, Mode::Bypass); // global Bypass
+        let tasks = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![
+                Box::new(perm_worker_risk("agy", tasks.clone(), Risk::BashExec, "cargo publish", "done")),
+                // No orchestrator seated: the scheduler must still park the
+                // worker (its job is independent of whether it can find
+                // someone to escalate to) and simply find nothing to schedule.
+            ],
+            8,
+        )
+        .with_no_human(true);
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(has_kind(&events, |k| matches!(k, Kind::PermissionReq { .. })), "req recorded");
+        assert!(!has_kind(&events, |k| matches!(k, Kind::PermissionGrant { .. })), "not yet granted");
+        assert!(has_kind(&events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })), "worker parks");
+    }
+
+    /// The full loop: worker suspends on `AskOrchestrator`, the auto-scheduler
+    /// (on quiesce) puts the request in front of the seated orchestrator, whose
+    /// turn appends a `PermissionGrant{approved:true}` — and the worker resumes
+    /// and proceeds, via the EXISTING grant→resume mechanism (`next_pending`
+    /// treats any `PermissionGrant` addressed to a quark as a turn request,
+    /// regardless of which actor authored it — no new resume code was needed).
+    #[tokio::test]
+    async fn orchestrator_grant_resumes_worker() {
+        use hadron_gatekeeper::{Mode, Risk};
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        seed_mode(&field, None, Mode::Bypass);
+        let tasks = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![
+                Box::new(perm_worker_risk("agy", tasks.clone(), Risk::BashExec, "cargo publish", "published")),
+                Box::new(GrantingOrchestrator {
+                    id: QuarkId::new("orch"),
+                    field_path: field.clone(),
+                    grant_to: QuarkId::new("agy"),
+                    approved: true,
+                }),
+            ],
+            8,
+        )
+        .with_no_human(true);
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| e.to.as_ref() == Some(&QuarkId::new("orch"))
+                    && matches!(&e.kind, Kind::Message { body } if body.starts_with("[no-human-mode]"))),
+            "the orchestrator was auto-scheduled with the injected request"
+        );
+        assert!(
+            has_kind(&events, |k| matches!(k, Kind::PermissionGrant { approved: true, .. })),
+            "the orchestrator's grant landed"
+        );
+        assert!(
+            has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "published")),
+            "the worker resumed and performed the op"
+        );
+        assert_eq!(tasks.lock().unwrap().len(), 2, "asked once, resumed once");
+    }
+
+    /// The same loop, but the orchestrator DENIES: the worker still resumes
+    /// (the engine never inspects `approved` — see `finish_turn`'s permission
+    /// block) but, seeing the denial in its own context on resume, refuses the
+    /// op rather than performing it — "the existing AskHuman-denied semantics"
+    /// the plan calls for reusing.
+    #[tokio::test]
+    async fn orchestrator_denial_refuses_op() {
+        use hadron_gatekeeper::{Mode, Risk};
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        seed_mode(&field, None, Mode::Bypass);
+        let tasks = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![
+                Box::new(perm_worker_risk("agy", tasks.clone(), Risk::BashExec, "cargo publish", "published")),
+                Box::new(GrantingOrchestrator {
+                    id: QuarkId::new("orch"),
+                    field_path: field.clone(),
+                    grant_to: QuarkId::new("agy"),
+                    approved: false,
+                }),
+            ],
+            8,
+        )
+        .with_no_human(true);
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(
+            has_kind(&events, |k| matches!(k, Kind::PermissionGrant { approved: false, .. })),
+            "the denial landed"
+        );
+        assert!(
+            !has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "published")),
+            "the op was NOT performed"
+        );
+        assert!(
+            has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "published refused")),
+            "the worker reported the refusal instead"
+        );
+        assert!(has_kind(&events, |k| matches!(k, Kind::Status { state: QuarkState::Ground })), "turn still grounds");
+    }
+
+    /// The auto-scheduler asks the orchestrator AT MOST ONCE per still-pending
+    /// request: a re-run of `run_until_quiesce` with no answer forthcoming must
+    /// not inject a second adjudication message. Idempotency is what makes the
+    /// "fails closed" story true — an orchestrator with no grant tool (or a
+    /// mock quark that just replies) does not get spun on forever; the ask
+    /// goes out once and the request stays parked for a human.
+    #[tokio::test]
+    async fn orchestrator_is_asked_at_most_once_per_request() {
+        use crate::mock::MockQuark;
+        use hadron_gatekeeper::{Mode, Risk};
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        seed_mode(&field, None, Mode::Bypass);
+        let tasks = Arc::new(Mutex::new(vec![]));
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![
+                Box::new(perm_worker_risk("agy", tasks.clone(), Risk::BashExec, "cargo publish", "published")),
+                // A silent orchestrator: replies but never grants — the honest
+                // "no grant tool wired up yet" production state.
+                Box::new(MockQuark::repeating(QuarkId::new("orch"), Flavor::Orchestrator, "reviewing")),
+            ],
+            8,
+        )
+        .with_no_human(true);
+        engine.run_until_quiesce().await.unwrap();
+        engine.run_until_quiesce().await.unwrap(); // a second pass: must not re-ask
+
+        let events = read_events(&field).unwrap();
+        let asks = events
+            .iter()
+            .filter(|e| {
+                e.to.as_ref() == Some(&QuarkId::new("orch"))
+                    && matches!(&e.kind, Kind::Message { body } if body.starts_with("[no-human-mode]"))
+            })
+            .count();
+        assert_eq!(asks, 1, "the orchestrator is asked exactly once, not re-spun");
+        assert!(!has_kind(&events, |k| matches!(k, Kind::PermissionGrant { .. })), "still no grant — worker stays parked");
     }
 
     fn seed_human_message(path: &std::path::Path, to: &str, body: &str) {
