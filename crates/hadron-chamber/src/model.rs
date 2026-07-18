@@ -944,6 +944,7 @@ mod tests {
                     roles: vec![],
                     exclusive: false,
                     commands: hadron_lattice::SeatCommands::default(),
+                    secret_env: Vec::new(),
                 },
                 Seat {
                     id: QuarkId::new("opus"),
@@ -960,6 +961,7 @@ mod tests {
                     roles: vec![],
                     exclusive: false,
                     commands: hadron_lattice::SeatCommands::default(),
+                    secret_env: Vec::new(),
                 },
             ],
             roster: vec![],

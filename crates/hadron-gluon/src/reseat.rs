@@ -166,6 +166,7 @@ mod tests {
             roles: vec![],
             exclusive: false,
             commands: hadron_lattice::SeatCommands::default(),
+            secret_env: Vec::new(),
         };
         let mut desired = running.clone();
         desired.quarks.push(new_seat.clone());
@@ -221,6 +222,7 @@ mod tests {
             roles: vec![],
             exclusive: false,
             commands: hadron_lattice::SeatCommands::default(),
+            secret_env: Vec::new(),
         };
         let running = team(&[seat(&["-y", "old-agent"])]);
         let desired = team(&[seat(&["-y", "new-agent"])]);
@@ -249,6 +251,7 @@ mod enabled_tests {
             roles: vec![],
             exclusive: false,
             commands: hadron_lattice::SeatCommands::default(),
+            secret_env: Vec::new(),
         }
     }
     fn team(seats: &[Seat]) -> Team {
