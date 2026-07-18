@@ -133,12 +133,16 @@ pub fn allow_rules(events: &[Event]) -> AllowRules {
 /// | Bypass      | AutoApprove   | AutoApprove                      |
 ///
 /// **`no_human == true` (No-Human-Mode, worker `mode` already clamped by the
-/// caller — see spec §2):**
+/// caller — see spec §2). The double-table only refines the `BashExec`
+/// escalation; `WorkspaceEdit` rides the base risk/mode ladder — worktree
+/// isolation is why edits are low-risk, and Write/Auto/Bypass all auto-approve
+/// them today, allow-list or not:**
 /// 1. `mode == Bypass` → `AutoApprove` (an explicit per-quark standing grant).
-/// 2. a `deny` match (exact or trailing-`*` glob) → escalate — **deny wins even
-///    over an allow match**.
-/// 3. an `allow` match → `AutoApprove`.
-/// 4. else → escalate.
+/// 2. `risk == WorkspaceEdit`: `mode == Ask` → escalate; else (Write/Auto/Bypass,
+///    Bypass already handled above) → `AutoApprove`.
+/// 3. `risk == BashExec`: a `deny` match (exact or trailing-`*` glob) → escalate
+///    — **deny wins even over an allow match**; `mode == Ask` or `mode == Write`
+///    → escalate; `mode == Auto` → an `allow` match ? `AutoApprove` : escalate.
 ///
 /// Where `escalate = AskOrchestrator` if `global == Bypass`, else `AskHuman`
 /// (No-Human-Mode itself is only meaningful once the global default is
@@ -177,13 +181,29 @@ pub fn decide(
         return Decision::AutoApprove;
     }
     let escalate = if global == Mode::Bypass { Decision::AskOrchestrator } else { Decision::AskHuman };
+
+    if risk == Risk::WorkspaceEdit {
+        // The double-table only refines BashExec; edits ride the base ladder
+        // free (Write/Auto/Bypass all auto-approve — Bypass is handled above).
+        return if mode == Mode::Ask { escalate } else { Decision::AutoApprove };
+    }
+
+    // Risk::BashExec: deny wins outright, then the base ladder per mode, with
+    // Auto's allow-list softening the ask exactly as the today-table does.
     if rules_match(deny, quark, op) {
         return escalate; // deny wins, even if also allow-listed
     }
-    if rules_match(allow, quark, op) {
-        return Decision::AutoApprove;
+    match mode {
+        Mode::Ask | Mode::Write => escalate,
+        Mode::Auto => {
+            if rules_match(allow, quark, op) {
+                Decision::AutoApprove
+            } else {
+                escalate
+            }
+        }
+        Mode::Bypass => unreachable!("handled by the early Bypass return above"),
     }
-    escalate
 }
 
 #[cfg(test)]
@@ -477,6 +497,76 @@ mod tests {
         assert_eq!(
             decide(Mode::Bypass, Mode::Auto, true, Risk::BashExec, "rm -rf /tmp/x", &k, &allow, &deny),
             Decision::AutoApprove
+        );
+    }
+
+    /// Review follow-up: the double-table only refines the BashExec escalation
+    /// (spec §2). WorkspaceEdit rides the base ladder free under Write/Auto/Bypass
+    /// — worktree isolation is why edits are low-risk, and workers are clamped to
+    /// Auto, so this is the common case once No-Human-Mode is on. No allow-list
+    /// entry is needed or consulted.
+    #[test]
+    fn no_human_workspace_edit_auto_approves_under_write_auto_bypass() {
+        let k = q("agy");
+        let allow = AllowRules::new();
+        let deny = DenyRules::new();
+        for mode in [Mode::Write, Mode::Auto, Mode::Bypass] {
+            for global in [Mode::Ask, Mode::Write, Mode::Auto, Mode::Bypass] {
+                assert_eq!(
+                    decide(mode, global, true, Risk::WorkspaceEdit, "", &k, &allow, &deny),
+                    Decision::AutoApprove,
+                    "mode={mode:?} global={global:?}"
+                );
+            }
+        }
+    }
+
+    /// The one place WorkspaceEdit still escalates under no_human: the worker's
+    /// resolved mode is Ask (mirrors today's `(Mode::Ask, _) => AskHuman`).
+    #[test]
+    fn no_human_workspace_edit_under_ask_escalates() {
+        let k = q("agy");
+        let allow = AllowRules::new();
+        let deny = DenyRules::new();
+        assert_eq!(
+            decide(Mode::Ask, Mode::Bypass, true, Risk::WorkspaceEdit, "", &k, &allow, &deny),
+            Decision::AskOrchestrator
+        );
+        assert_eq!(
+            decide(Mode::Ask, Mode::Auto, true, Risk::WorkspaceEdit, "", &k, &allow, &deny),
+            Decision::AskHuman
+        );
+    }
+
+    /// Re-affirms the existing bash double-table (deny-wins / allow / escalate)
+    /// still holds after carving WorkspaceEdit out onto the base ladder.
+    #[test]
+    fn no_human_bash_still_double_tables() {
+        let k = q("agy");
+        let op = "cargo publish";
+        let mut allow = AllowRules::new();
+        allow.insert((k.clone(), op.to_string()));
+        let deny = DenyRules::new();
+        // Auto + allow-listed → auto.
+        assert_eq!(
+            decide(Mode::Auto, Mode::Bypass, true, Risk::BashExec, op, &k, &allow, &deny),
+            Decision::AutoApprove
+        );
+        // Auto + not allow-listed → escalate.
+        assert_eq!(
+            decide(Mode::Auto, Mode::Bypass, true, Risk::BashExec, "cargo test", &k, &allow, &deny),
+            Decision::AskOrchestrator
+        );
+        // Write bash always escalates, even if allow-listed (today's Write→AskHuman
+        // for bash carries over — the allow-list only ever softened Auto).
+        assert_eq!(
+            decide(Mode::Write, Mode::Bypass, true, Risk::BashExec, op, &k, &allow, &deny),
+            Decision::AskOrchestrator
+        );
+        // Ask bash always escalates.
+        assert_eq!(
+            decide(Mode::Ask, Mode::Bypass, true, Risk::BashExec, op, &k, &allow, &deny),
+            Decision::AskOrchestrator
         );
     }
 
