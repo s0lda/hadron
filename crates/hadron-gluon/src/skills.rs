@@ -281,34 +281,21 @@ pub fn index() -> String {
     out
 }
 
-/// The whole skill library, every body concatenated. Injected once into a **resident**
-/// (ACP) quark's cache-stable prefix so the entire set sits in its context all session:
-/// composition is then free (it already has systematic-debugging when a bug appears) and
-/// no skill's cross-reference to another dangles. A one-shot (CLI) quark cannot hold this
-/// across turns, so it gets only the selected skill's body instead (see [`render`]).
-pub fn corpus() -> String {
-    let mut out = String::from("\n# Your skill library (full procedures)\n");
-    for s in SKILLS {
-        out.push_str(&format!("\n## {}\n\n{}\n", s.id, s.body.trim()));
-    }
-    out
-}
-
-/// Render the selected skill into the working-protocol block: the procedure (or, when the
-/// full library is already in context, a pointer to it), who is actually available to take
-/// the next step, and — when the engine can prove it — the refusal to let a quark verify
-/// its own plan.
+/// Render the selected skill into the working-protocol block: the procedure, who is
+/// actually available to take the next step, and — when the engine can prove it — the
+/// refusal to let a quark verify its own plan.
 ///
-/// `include_body` is `true` for a one-shot (CLI) quark, which has nothing but this prompt,
-/// and `false` for a resident (ACP) quark, whose [`corpus`] already carries every body —
-/// so it is only told which skill to *start* in, not handed the text twice.
+/// `include_body` is `true` for every quark that actually has a matched skill this turn
+/// (both resident/ACP and one-shot/CLI get the full body now, in full, right here —
+/// see [`index`] for the always-on menu the rest of the library is known by). `false`
+/// names the skill without inlining its body, for a caller that only wants the pointer.
 pub fn render(m: &Match, self_id: &QuarkId, handoff: &Handoff, include_body: bool) -> String {
     let mut out = String::new();
 
     let procedure = if include_body {
         format!("\n\n{}\n", m.skill.body.trim())
     } else {
-        "\nThe full procedure is in your skill library above — follow it.\n".to_string()
+        "\nSee the skill index above for what this procedure covers.\n".to_string()
     };
     out.push_str(&format!(
         "\n# Skill for this turn: {id}\n\n\
@@ -421,21 +408,12 @@ mod tests {
         );
     }
 
-    /// The corpus carries every skill body in full — that is what a resident quark holds
-    /// in context so composition is free.
-    #[test]
-    fn the_corpus_carries_every_skill_body() {
-        let c = corpus();
-        for s in SKILLS {
-            let probe = s.body.trim().lines().next().unwrap_or("").trim();
-            assert!(!probe.is_empty() && c.contains(probe), "corpus is missing `{}`", s.id);
-        }
-    }
-
     /// **The self-contained invariant.** No skill body may point at a companion file the
-    /// quark cannot open — the whole reason the corpus was folded flat. "in this
-    /// directory" and "references/" are the Superpowers dangling-reference shapes; if one
-    /// creeps back with the next skill sync, this fails instead of shipping a dead end.
+    /// quark cannot open — every quark now gets only the index (a one-line summary) plus
+    /// the single active skill's body, so a body that leans on a sibling file or another
+    /// skill's prose has nothing to resolve against. "in this directory" and
+    /// "references/" are the Superpowers dangling-reference shapes; if one creeps back
+    /// with the next skill sync, this fails instead of shipping a dead end.
     #[test]
     fn no_skill_body_dangles_a_reference_the_quark_cannot_follow() {
         for s in SKILLS {
@@ -445,23 +423,24 @@ mod tests {
         }
     }
 
-    /// A resident quark is told which skill to START in but NOT handed the body again —
-    /// its [`corpus`] already carries it. A one-shot quark gets the full body inline.
+    /// `render`'s `include_body` toggle: `true` inlines the procedure (what every quark
+    /// gets now, resident or one-shot alike); `false` only names the skill and points back
+    /// at the always-on index, without repeating the body.
     #[test]
-    fn render_points_a_resident_and_inlines_for_a_one_shot() {
+    fn render_include_body_toggles_the_procedure_text() {
         let m = select("write a plan for X").unwrap();
         let me = QuarkId::new("opus");
 
         let full = render(&m, &me, &Handoff::default(), true);
-        assert!(full.contains("author: <your quark id>"), "a one-shot quark must get the body");
+        assert!(full.contains("author: <your quark id>"), "include_body=true must carry the body");
 
         let pointer = render(&m, &me, &Handoff::default(), false);
-        assert!(pointer.contains("writing-plans"), "the resident is still told which skill");
+        assert!(pointer.contains("writing-plans"), "the skill is still named");
         assert!(
             !pointer.contains("author: <your quark id>"),
-            "the resident must NOT be handed the body — the corpus already has it"
+            "include_body=false must NOT repeat the body"
         );
-        assert!(pointer.contains("skill library above"), "and must be pointed at the corpus");
+        assert!(pointer.contains("skill index above"), "and must point back at the index, not a corpus");
     }
 
     #[test]
