@@ -2,10 +2,12 @@
 
 Autonomous run while you're out. I build the **safe + verifiable + reversible** parts and **stop at anything that's a security/product *policy* call** — those are below. Nothing here is blocking the code that's shipping; these gate the parts I deliberately won't guess.
 
-## Current progress (this autonomous stretch)
-- ✅ **UI fixes → merged to `main`** (`c901c09`): mode tag shows grey **"Default"** only for a per-quark inherited mode; the global mode chip + overrides show the real ASK/WRITE/AUTO/BYPASS; tags back in-row and **xsmall** (the squish fix). Relaunch the chamber to see it.
-- ⏳ **Personas** (`feat/personas`, will merge to `main` when whole-branch-reviewed): `~/.hadron/agents/` + repo `.hadron/agents/` load; `@persona-name` routes via its `preferred_role` (reuses role routing). Persona *instructions* injection (a persona's body → the seat's prompt) is deferred — routing is the core.
-- ⏭ **Next:** tool-gating's pure decision logic (is tool X allowed under the active skill's `tools:`?) — I'll build the tested pure fn + SDK-registry filtering, not the ACP live enforcement (that's notional until the SDK adapter, same as §2).
+## Current progress (this autonomous stretch) — ALL MERGED TO `main`, gate green (534)
+- ✅ **UI fixes** (`c901c09`): mode tag shows grey **"Default"** only for a per-quark inherited mode; the global mode chip + overrides show the real ASK/WRITE/AUTO/BYPASS; tags back in-row and **xsmall** (the squish fix). Relaunch the chamber to see it.
+- ✅ **Personas** (merged): `~/.hadron/agents/` + repo `.hadron/agents/` load; `@persona-name` routes via its `preferred_role` (reuses role routing), hermetic + whole-branch-reviewed. Persona *instructions* injection (a persona's body → the seat's prompt) is deferred — routing is the core; when you pick it up, `adapter/prompt.rs` should also start telling quarks `@persona-name` is a valid address.
+- ✅ **Tool-gating (pure core)** (`0d6d25d`): `skills::is_tool_allowed(tool, skill)` — a skill with no `tools:` allows everything (default, unchanged); a skill with a `tools:` list permits only those (case-insensitive). ENFORCEMENT is deliberately NOT wired (SDK registry filtering needs the SDK adapter; ACP approval-time rejection is notional until real per-tool asks exist — same as §2). This is the tested decision enforcement will call.
+
+**That is the end of the safe + verifiable + reversible work I can do unattended.** What remains genuinely needs your decisions (below) or is a firm no-build.
 
 ## Effort tag ("still not visible") — plain answer, not a bug
 There is **no `effort` set on any quark** in either `team.json`, so the effort tag has nothing to render. It shows correctly **when you set a per-quark reasoning effort** in **Settings → Effort** (low/medium/high). Effort has no global-default concept the way mode does, so I did **not** fabricate a "Default" effort. If you'd rather the tag always show something (e.g. an inherited/model default), tell me what that default should be and I'll wire it.
