@@ -2465,7 +2465,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.2"
-source = "git+file:///tmp/gpui-component?branch=text-mark-color#f1e4d2142885eb3debceeb1bd5edd162fef67517"
+source = "git+file:///home/Jake/dev/hadron/crates/gpui-component?branch=text-mark-color#49409310168acdec1a3043a37d983f884cd909ef"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2548,7 +2548,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-assets"
 version = "0.5.1"
-source = "git+file:///tmp/gpui-component?branch=text-mark-color#f1e4d2142885eb3debceeb1bd5edd162fef67517"
+source = "git+file:///home/Jake/dev/hadron/crates/gpui-component?branch=text-mark-color#49409310168acdec1a3043a37d983f884cd909ef"
 dependencies = [
  "anyhow",
  "gpui",
@@ -2562,7 +2562,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.5.1"
-source = "git+file:///tmp/gpui-component?branch=text-mark-color#f1e4d2142885eb3debceeb1bd5edd162fef67517"
+source = "git+file:///home/Jake/dev/hadron/crates/gpui-component?branch=text-mark-color#49409310168acdec1a3043a37d983f884cd909ef"
 dependencies = [
  "proc-macro2",
  "quote",
