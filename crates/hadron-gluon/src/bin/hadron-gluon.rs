@@ -307,6 +307,16 @@ async fn main() {
         args.field_path.display()
     );
     eprintln!("  address quarks from the chamber: '@<id> …'. Ctrl-C to stop.");
+    // DO-NOT-ACTIVATE toggle (spec §2 D): read once from HADRON_NO_HUMAN_MODE inside
+    // `Engine::new`. Loud on purpose — a mode where the orchestrator, not a human,
+    // adjudicates permission asks under global Bypass must never be silently on.
+    if engine.no_human() {
+        eprintln!(
+            "  ⚠️  HADRON_NO_HUMAN_MODE is ON — under global Bypass, permission asks that would \
+             stop for a human are instead adjudicated by the orchestrator. A human deny-list \
+             entry remains absolute (never orchestrator-overridable)."
+        );
+    }
 
     // The team the engine is actually running, and the exact bytes we last read from
     // `team.json`. Change is detected on the *bytes*, not on the mtime: a coarse
