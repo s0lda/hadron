@@ -41,7 +41,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use hadron_lattice::{
     live, Activity, ContextUsage, Doing, EnergyState, Flavor, Mode, Projection, QuarkId,
-    TokenSpend, TurnOutcome, Usage,
+    SeatCommands, TokenSpend, TurnOutcome, Usage,
 };
 
 use agent_client_protocol::schema::v1::{
@@ -408,6 +408,8 @@ pub struct AcpQuark {
     roles: Vec<String>,
     /// Whether this quark is scoped only to its roles (see [`Quark::exclusive`]).
     exclusive: bool,
+    /// This quark's per-seat command allow/deny lists (see [`Quark::commands`]).
+    commands: SeatCommands,
     /// The model this seat **asks** for. It is not necessarily the one that runs: the
     /// agent advertises what it can offer on `session/new` and we match against that
     /// (see [`model_selector`] and [`resolve_model`]). The model that actually ran is
@@ -435,6 +437,7 @@ impl AcpQuark {
             display_name: None,
             roles: Vec::new(),
             exclusive: false,
+            commands: SeatCommands::default(),
             model: model.into(),
             effort,
             mode_config,
@@ -467,6 +470,12 @@ impl AcpQuark {
     pub fn with_roles(mut self, roles: Vec<String>, exclusive: bool) -> Self {
         self.roles = roles;
         self.exclusive = exclusive;
+        self
+    }
+
+    /// Set the per-seat command allow/deny lists (from the resolved seat).
+    pub fn with_commands(mut self, commands: SeatCommands) -> Self {
+        self.commands = commands;
         self
     }
 
@@ -807,6 +816,9 @@ impl Quark for AcpQuark {
     }
     fn exclusive(&self) -> bool {
         self.exclusive
+    }
+    fn commands(&self) -> &SeatCommands {
+        &self.commands
     }
     fn energy(&self) -> EnergyState {
         EnergyState::Available

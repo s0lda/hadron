@@ -137,6 +137,7 @@ mod tests {
                 model: String::new(),
                 roles: vec![],
                 exclusive: false,
+                commands: crate::team::SeatCommands::default(),
             }],
             field_window: vec![Event::new(
                 Actor::Human,

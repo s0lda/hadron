@@ -30,6 +30,15 @@ pub trait Quark: Send {
     fn exclusive(&self) -> bool {
         false
     }
+    /// This quark's per-seat command allow/deny lists (see
+    /// `hadron_lattice::SeatCommands`), folded into the gatekeeper's
+    /// `AllowRules`/`DenyRules` under No-Human-Mode. Carried the same way
+    /// `roles`/`exclusive` are. Defaults to empty — no config allow/deny.
+    fn commands(&self) -> &hadron_lattice::SeatCommands {
+        static EMPTY: hadron_lattice::SeatCommands =
+            hadron_lattice::SeatCommands { allowed: Vec::new(), not_allowed: Vec::new() };
+        &EMPTY
+    }
     fn energy(&self) -> EnergyState;
     /// Whether this quark keeps its context **across turns** (a resident ACP session) or
     /// is re-spawned fresh each turn (a one-shot CLI process). The engine tracks this at
