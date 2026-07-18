@@ -1694,6 +1694,7 @@ impl Chamber {
                     .track_focus(&self.terminal_focus)
                     .flex_1()
                     .min_h_0()
+                    .min_w_0()
                     .relative()
                     .rounded_md()
                     .overflow_hidden()
