@@ -824,10 +824,10 @@ impl Chamber {
             // on a seat with no live session is a harmless no-op.
             let is_acp = matches!(r.transport, hadron_lattice::Transport::Acp);
 
-            // Trailing controls, right-aligned: effort tag (when set) and mode tag (click
-            // to cycle a per-quark override). Each is added only when it has content, so
-            // empty slots don't leave phantom gaps. Restart lives in the right-click
-            // context menu now (below), not as an always-on row glyph.
+            // Trailing controls, right-aligned: effort tag (only when the seat carries an
+            // explicit effort) and the mode tag (always shown now — solid for a per-quark
+            // override, outlined for the inherited/global mode; click to cycle an override).
+            // Restart lives in the right-click context menu now (below), not as a row glyph.
             let mut controls = h_flex().flex_none().items_center().gap_1p5();
             if matches!(r.effort.as_deref(), Some(e) if !e.is_empty()) {
                 controls = controls.child(effort_tag(&r.effort));
