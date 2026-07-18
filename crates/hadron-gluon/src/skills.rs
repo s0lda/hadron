@@ -313,7 +313,16 @@ fn parse_skill_file(text: &str) -> Option<ResolvedSkill> {
 
     let id = front_matter_value(front, "name")?.to_string();
     let description = front_matter_value(front, "description").map(str::to_string);
-    let triggers = front_matter_value(front, "triggers").map(parse_list_value).unwrap_or_default();
+    // Lowercased here, once, at parse time: `select` lowercases the task text before
+    // matching, and built-in triggers are already all-lowercase in source — a custom
+    // skill authored with `triggers: [Foo]` must not silently never match because its
+    // author capitalised it.
+    let triggers = front_matter_value(front, "triggers")
+        .map(parse_list_value)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|t| t.to_lowercase())
+        .collect();
     let tools = front_matter_value(front, "tools").map(parse_list_value).unwrap_or_default();
 
     Some(ResolvedSkill {
@@ -973,6 +982,24 @@ mod tests {
         let m = select("please do foo now", &loaded).expect("custom trigger must match");
         assert_eq!(m.id, "foo-doer");
         assert!(m.body.contains("FOO PROCEDURE."));
+    }
+
+    /// A custom skill authored with an uppercase trigger (`triggers: [Foo]`) must
+    /// still be found by a lowercase task: `select` lowercases the task text before
+    /// matching, so an un-lowercased trigger would silently never match.
+    #[test]
+    fn custom_trigger_matches_case_insensitively() {
+        let repo = tempfile::tempdir().unwrap();
+        write_skill(
+            repo.path(),
+            "shouty.md",
+            "---\nname: shouty\ndescription: shouts\ntriggers: [Frobnicate]\n---\n\nSHOUT PROCEDURE.\n",
+        );
+
+        let loaded = load_skills(None, Some(repo.path()));
+        let m = select("please frobnicate the widget", &loaded).expect("uppercase trigger must still match");
+        assert_eq!(m.id, "shouty");
+        assert!(m.body.contains("SHOUT PROCEDURE."));
     }
 
     #[test]

@@ -918,11 +918,20 @@ impl Engine {
         // one as the work crosses phases" discipline, injected every turn. This is
         // hadron's analog of the Superpowers using-superpowers bootstrap, which rides a
         // SessionStart hook that does not exist over ACP.
-        // For THIS task the merged corpus is just the compiled-in set — the real
-        // ~/.hadron / repo .hadron/skills loading is a follow-up (spec Part A task
-        // 2). Passing `&skills::builtins()` here keeps behaviour byte-for-byte
-        // identical to the pre-`ResolvedSkill` static-`SKILLS` version.
-        let skill_corpus = skills::builtins();
+        //
+        // The corpus is built-ins merged with whatever custom `.md` skills a human has
+        // dropped in `~/.hadron/skills` (global) and `<workspace>/.hadron/skills`
+        // (repo) — `load_skills` degrades to exactly `builtins()` when neither
+        // directory exists, so a machine with no custom skills installed sees
+        // byte-for-byte the same corpus as before this wiring landed.
+        //
+        // Loaded fresh per projection rather than cached on the engine: this mirrors
+        // how `team.json` is already re-read every turn (see the roster live-reload),
+        // keeps a skill edit picked up on the very next turn with no reload/restart
+        // path to wire, and the cost is a handful of small file reads — not a hot loop.
+        let global_skills_dir = hadron_lattice::user_hadron_dir().map(|d| d.join("skills"));
+        let repo_skills_dir = workspace_root.join(".hadron").join("skills");
+        let skill_corpus = skills::load_skills(global_skills_dir.as_deref(), Some(&repo_skills_dir));
         invariants_text.push_str(&skills::index(&skill_corpus));
 
         if let Some(m) = skills::select(&task_desc, &skill_corpus) {
@@ -3559,6 +3568,16 @@ mod tests {
 
     /// A turn that is not plan work must be byte-for-byte what it was before skills
     /// existed. A router that fires on everything is a tax on every turn.
+    ///
+    /// Test-isolation note: since the engine now also loads `~/.hadron/skills`
+    /// (global), this negative assertion (no skill selected) is, in principle,
+    /// hostage to whatever real custom skills happen to exist on the machine
+    /// running the test — a global skill whose trigger matched a substring of
+    /// "fix the clipped completion popup" would make this fail outside the repo's
+    /// control. Not sealed off deliberately: pinning `HOME` to a tempdir for the
+    /// duration of one test would touch process-global state under a parallel test
+    /// runner, which is worse than this residual risk. If this test ever flakes on
+    /// a real workstation, that is the first thing to check.
     #[tokio::test]
     async fn an_ordinary_task_gets_no_skill_and_no_extra_prompt() {
         use std::fs;
@@ -3599,6 +3618,71 @@ mod tests {
                     permission: None,
                     usage: Default::default(),
                 })
+            }
+        }
+
+        let mut engine = Engine::new(path.clone(), vec![Box::new(Probe)], 10);
+        engine.run_until_quiesce().await.unwrap();
+    }
+
+    /// A repo `.hadron/skills/*.md` file must actually reach a quark's turn — not
+    /// just parse (`skills.rs` Task 1 proved that in isolation). This is the
+    /// end-to-end proof: a custom skill dropped in the workspace's own
+    /// `.hadron/skills/` is loaded by the ENGINE and its body shows up in the
+    /// projection, same as a built-in's would.
+    ///
+    /// Deliberately does NOT assert anything about the real `~/.hadron/skills`
+    /// (global dir) one way or the other — this machine's actual home directory may
+    /// or may not have custom skills installed, and this test must pass either way.
+    /// Only the repo (tempdir-controlled) skill is asserted on.
+    #[tokio::test]
+    async fn engine_loads_repo_skills() {
+        use std::fs;
+        let fdir = tempdir().unwrap();
+        let skills_dir = fdir.path().join(".hadron").join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+        fs::write(
+            skills_dir.join("custom.md"),
+            "---\nname: custom-thing\ndescription: does a custom thing\ntriggers: [frobnicate]\n---\n\nTHE DISTINCTIVE CUSTOM-SKILL BODY LINE.\n",
+        )
+        .unwrap();
+
+        let path = fdir.path().join("field.jsonl");
+        append_event(
+            &path,
+            &Event::new(
+                Actor::Human,
+                Some(QuarkId::new("worker")),
+                Kind::Message { body: "@worker please frobnicate the widget".into() },
+            ),
+        )
+        .unwrap();
+
+        use hadron_lattice::{Projection, TurnOutcome};
+        struct Probe;
+        #[async_trait::async_trait]
+        impl crate::quark::Quark for Probe {
+            fn id(&self) -> QuarkId {
+                QuarkId::new("worker")
+            }
+            fn flavor(&self) -> Flavor {
+                Flavor::Worker
+            }
+            fn energy(&self) -> EnergyState {
+                EnergyState::Available
+            }
+            async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+                assert!(
+                    turn.invariants.contains("THE DISTINCTIVE CUSTOM-SKILL BODY LINE."),
+                    "the repo custom skill's body must be injected:\n{}",
+                    turn.invariants
+                );
+                assert!(
+                    turn.invariants.contains("custom-thing"),
+                    "the custom skill must also be named in the index/header:\n{}",
+                    turn.invariants
+                );
+                Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
             }
         }
 
