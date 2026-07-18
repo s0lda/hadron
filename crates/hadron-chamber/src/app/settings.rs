@@ -1416,9 +1416,16 @@ impl Chamber {
                 // Required fields, checked live so "Save" is only wired up once the
                 // form can actually produce a valid seat (`cli_seat_from` needs both to
                 // build `id`/`cli.program`).
-                let vendor_present = !self.custom_cli_vendor.read(cx).value().trim().is_empty();
+                let vendor_text = self.custom_cli_vendor.read(cx).value().trim().to_string();
+                let vendor_present = !vendor_text.is_empty();
                 let program_present = !self.custom_cli_program.read(cx).value().trim().is_empty();
-                let can_save = vendor_present && program_present;
+                // This wizard is the FIRST UI that feeds freely-typed text into a
+                // `QuarkId` — which becomes a worktree DIRECTORY name, a git BRANCH ref
+                // segment, and a live-file name. A vendor like "foo/bar" would derive
+                // an id `validate_quark_id` (the SSOT for what's safe there) rejects, so
+                // check it here too and never even wire up Save for a bad one.
+                let vendor_id_valid = vendor_present && custom_cli_vendor_is_valid(&vendor_text);
+                let can_save = vendor_id_valid && program_present;
 
                 let mut form = v_flex()
                     .size_full()
@@ -1461,12 +1468,13 @@ impl Chamber {
                 }
 
                 if !can_save {
-                    form = form.child(
-                        div()
-                            .text_sm()
-                            .text_color(theme::text_muted())
-                            .child("Vendor and program are required."),
-                    );
+                    let msg = if vendor_present && !vendor_id_valid {
+                        "Vendor may only use letters, digits, '.', '_', and '-' — it becomes \
+                         part of a worktree path and a git branch name."
+                    } else {
+                        "Vendor and program are required."
+                    };
+                    form = form.child(div().text_sm().text_color(theme::text_muted()).child(msg));
                 }
 
                 form.child(
@@ -1476,7 +1484,7 @@ impl Chamber {
                                 this.custom_cli_vendor.read(cx).value().trim().to_string();
                             let program =
                                 this.custom_cli_program.read(cx).value().trim().to_string();
-                            if vendor.is_empty() || program.is_empty() {
+                            if vendor.is_empty() || program.is_empty() || !custom_cli_vendor_is_valid(&vendor) {
                                 return; // re-checked: `can_save` already gates this button
                             }
                             let args: Vec<String> = this
