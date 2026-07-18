@@ -226,11 +226,11 @@ pub fn decide(
     // denied. Only the general (non-deny) escalation below consults `global` and
     // may become `AskOrchestrator`.
     //
-    // OPEN POLICY DECISION (user, non-blocking, inert until activation): a human's
-    // explicit per-quark `Bypass` pin is handled ABOVE this deny check (line ~209),
-    // so a Bypass-pinned worker auto-approves even a deny-listed op — a more-specific
+    // POLICY (user-decided 2026-07-18: "Bypass pin wins"): a human's explicit
+    // per-quark `Bypass` pin is handled ABOVE this deny check (line ~209), so a
+    // Bypass-pinned worker auto-approves even a deny-listed op — a more-specific
     // human trust signal ("run everything on THIS worker") supersedes the general
-    // deny-list here. If instead deny must beat even a Bypass pin ("never `rm -rf`,
+    // deny-list. This is intentional. If you ever want deny to beat even a Bypass pin,
     // not even by my most-trusted worker"), move this `rules_match(deny,..)` block
     // ABOVE the `mode == Bypass` return and update `worker_bypass_override_auto_approves`.
     if rules_match(deny, quark, op) {
