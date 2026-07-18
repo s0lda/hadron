@@ -71,3 +71,18 @@ This **weakens the default human gate** the moment the toggle is on: under globa
 - **Ladder (Q2):** a quark needing permission — in Ask/Write/Auto → orchestrator checks the allow-list and allows/not; in Bypass → the orchestrator decides. Risk-averse: keep workers in `Auto` (which honors all lists).
 - **Allow/deny matching (Q4):** support BOTH exact-match AND prefix/glob.
 - **Isolation (Q3):** each quark already works on its own worktree; a user-facing **"sandboxed or not" toggle** is wanted for the script-tools path (that path stays a firm no-build for now — see the script-tools spec). Also add `max_exchanges` to the Settings UI (separate small task, in progress).
+
+---
+## IMPLEMENTED (inert) + ACTIVATION PRECONDITIONS (opus adversarial review, 2026-07-18)
+The gatekeeper mechanism is BUILT and reviewed: `Decision::AskOrchestrator` + `no_human`-gated double-table `decide` (deny-wins, glob, WorkspaceEdit carve-out), `effective_mode` worker-clamp (proven one-directional Bypass→Auto), and the suspend→adjudicate→resume loop behind the `HADRON_NO_HUMAN_MODE` toggle (default OFF).
+
+**SAFE to keep inert on the branch: YES** — the additive invariant is exhaustively proven (toggle OFF ⇒ byte-for-byte today; `AskOrchestrator` unreachable; scheduler dormant). Gate green (499).
+
+**DO NOT ACTIVATE (flip the toggle) until ALL of these land — the review's blockers:**
+1. **Grant authorship validation.** Every resume/approval site matches `PermissionGrant` WITHOUT checking `from`. Safe today only because no quark *turn* can author a grant. Before any orchestrator "grant tool" ships, add a positive `author == orchestrator seat` check at the append/resume sites (`router::is_turn_request`, `merge::merge_approved`, the scheduler) — else a worker emits `PermissionGrant{approved:true}` addressed to itself and self-approves (incl. self-approving a merge).
+2. **Deny source + mandatory-human classes (spec Q2).** `DenyRules` has no runtime authoring source yet, so the "absolute human floor" protects nothing when ON. Wire a deny source, AND define command classes that must ALWAYS reach a human even under global Bypass (rm -rf, git push, credential access, network exfil).
+3. **Deny-vs-Bypass-override policy (open, user's call).** A per-quark `Bypass` pin currently supersedes the deny-list (auto-approves a deny-listed op). Decide: keep (a specific human trust signal wins) OR make deny absolute even over Bypass (move the deny check above the `mode==Bypass` return). See the comment in `matrix.rs`.
+4. **Field-level denial is advisory, not enforced.** On resume the engine doesn't inspect `approved`; a denied worker is trusted to self-decline. Test-double-only in production today (ACP returns `permission: None`; the merge path DOES enforce). Make it a hard-block before the SDK per-tool adapter starts producing real field asks.
+
+**Architectural reality (reframes what activation buys):** the `Bypass→Auto` clamp is a NO-OP for ACP in-turn permission (`acp.rs` maps both Auto and Bypass → `AllowOnce`). So activating No-Human-Mode does NOT route real ACP worker tool-calls to the orchestrator today — the adjudication engages only for self-declared field asks (no production producer yet) and merges. The trust-transfer-to-orchestrator is largely notional for ACP quarks until the SDK per-tool `canUseTool` adapter (sub-project #3) lands. This machinery is built AHEAD of that adapter, deliberately.
+- Optional polish: chamber displays `resolve_mode` (raw), not `effective_mode` (clamped) — under No-Human-Mode the UI would show `Bypass` for a worker actually clamped to `Auto`. Cosmetic; not a gate change.

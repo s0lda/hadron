@@ -217,14 +217,22 @@ pub fn decide(
         return if mode == Mode::Ask { escalate } else { Decision::AutoApprove };
     }
 
-    // Risk::BashExec: deny wins outright, then the base ladder per mode, with
+    // Risk::BashExec: deny wins over allow, then the base ladder per mode, with
     // Auto's allow-list softening the ask exactly as the today-table does.
     //
-    // SECURITY: deny is an ABSOLUTE floor, not just "wins over allow" — a
-    // deny-listed op is `AskHuman` even under global `Bypass`, NEVER
-    // `AskOrchestrator`. The orchestrator is structurally unable to grant
-    // what a human explicitly denied; only the general (non-deny) escalation
-    // a few lines below consults `global` and may become `AskOrchestrator`.
+    // SECURITY: deny is absolute AGAINST THE ORCHESTRATOR — a deny-listed op is
+    // `AskHuman` even under global `Bypass`, NEVER `AskOrchestrator`, so the
+    // orchestrator LLM is structurally unable to grant what a human explicitly
+    // denied. Only the general (non-deny) escalation below consults `global` and
+    // may become `AskOrchestrator`.
+    //
+    // OPEN POLICY DECISION (user, non-blocking, inert until activation): a human's
+    // explicit per-quark `Bypass` pin is handled ABOVE this deny check (line ~209),
+    // so a Bypass-pinned worker auto-approves even a deny-listed op — a more-specific
+    // human trust signal ("run everything on THIS worker") supersedes the general
+    // deny-list here. If instead deny must beat even a Bypass pin ("never `rm -rf`,
+    // not even by my most-trusted worker"), move this `rules_match(deny,..)` block
+    // ABOVE the `mode == Bypass` return and update `worker_bypass_override_auto_approves`.
     if rules_match(deny, quark, op) {
         return Decision::AskHuman;
     }
