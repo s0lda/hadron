@@ -11,6 +11,7 @@ use tokio::task::{AbortHandle, JoinSet};
 use ulid::Ulid;
 
 use crate::field::{append_event, read_events};
+use crate::personas::{self, Persona};
 use crate::quark::Quark;
 use crate::router::{human_mentions, next_pending, parse_addressee};
 use crate::skills;
@@ -400,6 +401,15 @@ pub struct Engine {
     /// it is derived from `workspace_root` fresh in `projection_for`, which is already
     /// tempdir-controlled by every test that sets up a field under a `tempdir()`.
     global_skills_dir: Option<PathBuf>,
+    /// The **global** personas directory (`~/.hadron/agents` in production),
+    /// injected via the identical seam as [`Engine::global_skills_dir`] just
+    /// above, for the identical reason: `None` is the hermetic default, so
+    /// `Engine::new` never reads the real `$HOME`, and only the daemon bin opts
+    /// a running instance in via [`Engine::with_global_agents_dir`]. The
+    /// **repo** personas dir is likewise not stored here — it is derived from
+    /// `workspace_root` fresh at each call site that needs it
+    /// ([`Engine::loaded_personas`]), same as the repo skills dir.
+    global_agents_dir: Option<PathBuf>,
 }
 
 /// Parse the DO-NOT-ACTIVATE toggle from `HADRON_NO_HUMAN_MODE`. Read ONCE, at
@@ -471,6 +481,8 @@ impl Engine {
             // `with_global_skills_dir` (called by the daemon bin) opts a running
             // instance into it. See the field doc for why this mirrors `merge`.
             global_skills_dir: None,
+            // Same hermetic default, same reason — see `global_agents_dir`'s field doc.
+            global_agents_dir: None,
         }
     }
 
@@ -646,6 +658,17 @@ impl Engine {
         self
     }
 
+    /// Opt in to loading custom personas from a **global** directory (production:
+    /// `~/.hadron/agents`, via [`hadron_lattice::user_hadron_dir`]). The identical
+    /// seam as [`Engine::with_global_skills_dir`] just above, for the identical
+    /// reason: `None` — the default from [`Engine::new`] — means no global
+    /// directory is consulted, so a test-constructed engine can never read the
+    /// real `$HOME`. Only the daemon bin calls this, with the real path.
+    pub fn with_global_agents_dir(mut self, dir: Option<PathBuf>) -> Self {
+        self.global_agents_dir = dir;
+        self
+    }
+
     /// The one way the engine writes to the field: serialized behind `field_lock`,
     /// so concurrent turns can never interleave their event sequences.
     async fn append(&self, event: Event) -> anyhow::Result<()> {
@@ -678,13 +701,36 @@ impl Engine {
         self
     }
 
+    /// The personas corpus for THIS call — global (injected, see
+    /// [`Engine::global_agents_dir`]) merged with `<workspace>/.hadron/agents`
+    /// (repo), loaded fresh rather than cached.
+    ///
+    /// Unlike the skill corpus (loaded once inside `projection_for`, because
+    /// that is the one place it's used), personas are consumed at several
+    /// distinct router call sites — [`Engine::human_addressees`],
+    /// [`Engine::exclusive_task_names_target`], and `finish_turn`'s quark→quark
+    /// hand-off resolution — none of which sit inside a projection. So this is
+    /// called once per *site*, not once per projection; the cost is the same
+    /// handful of small file reads as skills, well short of a hot loop. `Engine::new`
+    /// defaults `global_agents_dir` to `None`, so a test-constructed engine can
+    /// never read the real `~/.hadron/agents`; the repo half is derived from
+    /// `workspace_root`, which every test already controls via its own tempdir
+    /// field — a missing `.hadron/agents` directory degrades to `[]`, same as skills.
+    fn loaded_personas(&self) -> Vec<Persona> {
+        let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let workspace_root = workspace_root_of(&self.field_path, &base);
+        let repo_agents_dir = workspace_root.join(".hadron").join("agents");
+        personas::load_personas(self.global_agents_dir.as_deref(), Some(&repo_agents_dir))
+    }
+
     /// Who a human message addresses: every quark it `@mentions` (anywhere, in
     /// order — the multi-dispatch case, "@opus X and @agy Y"), or, if it mentions
     /// no one, the orchestrator (default-routing, so the human can "just type").
     /// An empty result means no one can field it (e.g. no orchestrator on the
     /// roster and no valid mention).
     fn human_addressees(&self, body: &str) -> Vec<QuarkId> {
-        let mut addressees = human_mentions(body, &self.roster);
+        let personas = self.loaded_personas();
+        let mut addressees = human_mentions(body, &self.roster, &personas);
         if addressees.is_empty() {
             if let Some(orch) = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator) {
                 addressees.push(orch.id.clone());
@@ -818,7 +864,8 @@ impl Engine {
         let task_text = fallback_task
             .map(|s| s.to_string())
             .or_else(|| self.driver_for(events, target, None).map(|d| d.task));
-        task_text.as_deref().is_some_and(|t| crate::router::task_names_card_specifically(t, card))
+        let personas = self.loaded_personas();
+        task_text.as_deref().is_some_and(|t| crate::router::task_names_card_specifically(t, card, &personas))
     }
 
     /// The event that drives this turn — the *assignment*. Its `Ulid` names the
@@ -1087,6 +1134,10 @@ impl Engine {
         // wrong the first time two quarks answer at once. Stamped here, at the single
         // place a turn's events are written, so they cannot disagree.
         let turn = ulid::Ulid::new();
+        // Loaded once for the whole turn-completion, not once per `parse_addressee`
+        // call below — both calls resolve mentions in the SAME reply/turn, so one
+        // fresh read of the personas corpus covers both.
+        let personas = self.loaded_personas();
         // Kept before the reply is moved into the field: the commit message names the
         // quark, its first line, and the assignment — greppable back to the event.
         let headline = outcome
@@ -1101,7 +1152,7 @@ impl Engine {
         let handed_back = outcome
             .message
             .as_deref()
-            .map(|body| parse_addressee(body, &self.roster, Some(target)).is_none())
+            .map(|body| parse_addressee(body, &self.roster, Some(target), &personas).is_none())
             .unwrap_or(true);
 
         // THE ONE TOTALLER. No adapter computes this; they report components and
@@ -1147,7 +1198,7 @@ impl Engine {
             // truncated report can hide the one line the human needed (a reported-but-
             // unread critical issue is worse than a long one). The addressee is parsed
             // from the reply as written, so what routes is exactly what the field carries.
-            let to = parse_addressee(&body, &self.roster, Some(target));
+            let to = parse_addressee(&body, &self.roster, Some(target), &personas);
             let event = Event::new(Actor::Quark(target.clone()), to, Kind::Message { body })
                 .with_turn(turn)
                 .answering(assignment);
@@ -3777,6 +3828,71 @@ mod tests {
         let mut engine = Engine::new(path.clone(), vec![Box::new(Probe)], 10)
             .with_global_skills_dir(Some(global_skills_dir));
         engine.run_until_quiesce().await.unwrap();
+    }
+
+    /// Task 2 (persona routing): a REPO `.hadron/agents/*.md` persona must reach
+    /// actual dispatch, not just parse (`personas.rs` Task 1 proved parsing in
+    /// isolation). `@security-reviewer` is neither a card id, a reserved alias,
+    /// nor a role — it's a persona whose `preferred_role` is `security`; the
+    /// engine must resolve it to the seat carrying that role and excite it, the
+    /// same unaddressed-human-message path an `@role` mention already takes.
+    ///
+    /// `Engine::new` leaves `global_agents_dir` at its `None` default, so this
+    /// test never touches the real `~/.hadron/agents` — only the repo (tempdir)
+    /// persona is in play, mirroring `engine_loads_repo_skills`.
+    #[tokio::test]
+    async fn engine_routes_a_repo_persona() {
+        use std::fs;
+        let fdir = tempdir().unwrap();
+        let agents_dir = fdir.path().join(".hadron").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(
+            agents_dir.join("security-reviewer.md"),
+            "---\nname: security-reviewer\npreferred_role: security\n---\n\nYou review for security issues.\n",
+        )
+        .unwrap();
+
+        let path = fdir.path().join("field.jsonl");
+        append_event(
+            &path,
+            &Event::new(Actor::Human, None, Kind::Message { body: "@security-reviewer please review this diff".into() }),
+        )
+        .unwrap();
+
+        use hadron_lattice::{Projection, TurnOutcome};
+        struct Probe;
+        #[async_trait::async_trait]
+        impl crate::quark::Quark for Probe {
+            fn id(&self) -> QuarkId {
+                QuarkId::new("sec")
+            }
+            fn flavor(&self) -> Flavor {
+                Flavor::Worker
+            }
+            fn energy(&self) -> EnergyState {
+                EnergyState::Available
+            }
+            fn roles(&self) -> Vec<String> {
+                vec!["security".to_string()]
+            }
+            async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+                assert!(
+                    turn.task.contains("please review this diff"),
+                    "the persona-addressed message must reach the role holder's turn:\n{}",
+                    turn.task
+                );
+                Ok(TurnOutcome { message: Some("reviewed".into()), permission: None, usage: Default::default() })
+            }
+        }
+
+        let mut engine = Engine::new(path.clone(), vec![Box::new(Probe)], 10);
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&path).unwrap();
+        assert!(
+            events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body == "reviewed")),
+            "the security seat (resolved via the repo persona's preferred_role) must have actually run and replied:\n{events:#?}"
+        );
     }
 
     #[tokio::test]
