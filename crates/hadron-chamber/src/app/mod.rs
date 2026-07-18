@@ -1017,6 +1017,11 @@ fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Option<String>)
                 // team-brainstorm consumes the rest of the line, so nothing is left to post.
                 return (cmds, None);
             }
+            Some("reboot") => {
+                cmds.push(("reboot".to_string(), head[tok_end..].trim().to_string()));
+                // reboot consumes the rest of the line, so nothing is left to post.
+                return (cmds, None);
+            }
             // First non-command token: the untouched remainder is the message body.
             _ => break,
         }
@@ -1246,6 +1251,11 @@ mod tests {
         // team-brainstorm swallows the rest of the line as its argument.
         let (cmds, body) = split_leading_commands("/team-brainstorm ship the release");
         assert_eq!(cmds, vec![("team-brainstorm".to_string(), "ship the release".to_string())]);
+        assert_eq!(body, None);
+
+        // reboot swallows the rest of the line as its argument.
+        let (cmds, body) = split_leading_commands("/reboot @acp-claude");
+        assert_eq!(cmds, vec![("reboot".to_string(), "@acp-claude".to_string())]);
         assert_eq!(body, None);
 
         // A "/command" that is NOT leading stays literal text in the message body.
