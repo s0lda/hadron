@@ -585,7 +585,7 @@ impl Chamber {
     fn on_terminal_key(
         &mut self,
         event: &gpui::KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(term) = &mut self.terminal else {
@@ -607,21 +607,36 @@ impl Chamber {
             return;
         }
 
-        let is_copy = (m.control && m.shift && (ks.key == "c" || ks.key == "C"))
+        // Support Ctrl+C/Cmd+C/Ctrl+Shift+C copying selected text first
+        let is_copy = (m.control && ks.key == "c")
+            || (m.control && m.shift && (ks.key == "c" || ks.key == "C"))
             || (m.platform && ks.key == "c");
         if is_copy {
-            let snap = term.snapshot();
-            let mut text = String::new();
-            for line in &snap.lines {
-                let mut line_text = String::new();
-                for run in &line.runs {
-                    line_text.push_str(&run.text);
-                }
-                text.push_str(line_text.trim_end());
-                text.push('\n');
+            use gpui_component::WindowExt as _;
+            let selected = window.selected_text(cx).trim().to_string();
+            if !selected.is_empty() {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
+                return;
             }
-            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-            return;
+            // If no text is selected, fallback to copying the entire screen
+            // ONLY if they used the explicit full-copy shortcut Ctrl+Shift+C / Cmd+C.
+            // If they just pressed bare Ctrl+C, let it fall through so they can send SIGINT!
+            if (m.control && m.shift && (ks.key == "c" || ks.key == "C"))
+                || (m.platform && ks.key == "c")
+            {
+                let snap = term.snapshot();
+                let mut text = String::new();
+                for line in &snap.lines {
+                    let mut line_text = String::new();
+                    for run in &line.runs {
+                        line_text.push_str(&run.text);
+                    }
+                    text.push_str(line_text.trim_end());
+                    text.push('\n');
+                }
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                return;
+            }
         }
 
         let bytes: Vec<u8> = match ks.key.as_str() {
