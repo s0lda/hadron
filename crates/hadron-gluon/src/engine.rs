@@ -1069,8 +1069,14 @@ impl Engine {
             ))
             .await?;
             let mode = hadron_gatekeeper::resolve_mode(&events, target);
+            let global = hadron_gatekeeper::global_mode(&events);
             let rules = hadron_gatekeeper::allow_rules(&events);
-            match hadron_gatekeeper::decide(mode, risk, &op, target, &rules) {
+            // No-Human-Mode is not wired yet (Task 3): `no_human = false` and an
+            // empty deny-list make this call byte-for-byte today's `decide`, so
+            // `AskOrchestrator` can never actually be returned here — the arm
+            // below is inert scaffolding until the toggle lands.
+            let deny = hadron_gatekeeper::DenyRules::new();
+            match hadron_gatekeeper::decide(mode, global, false, risk, &op, target, &rules, &deny) {
                 hadron_gatekeeper::Decision::AutoApprove => {
                     // Pre-authorized by the mode: the gluon grants on the
                     // orchestrator's / human's standing authority.
@@ -1091,6 +1097,23 @@ impl Engine {
                     // for permission is not done — its uncommitted work must still be
                     // sitting in its worktree when the grant resumes it. That is exactly
                     // why `worktree::ensure` is idempotent for the same assignment.
+                    self.append(
+                        Event::new(
+                            Actor::Quark(target.clone()),
+                            None,
+                            Kind::Status { state: QuarkState::Waiting },
+                        )
+                        .with_turn(turn)
+                        .answering(assignment),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                hadron_gatekeeper::Decision::AskOrchestrator => {
+                    // INERT for now (Task 1): No-Human-Mode's suspend →
+                    // adjudicate-by-orchestrator → resume loop lands in Task 3.
+                    // Until then this can't be reached (see the comment above),
+                    // and it degrades to exactly the AskHuman pause.
                     self.append(
                         Event::new(
                             Actor::Quark(target.clone()),
@@ -1190,9 +1213,22 @@ impl Engine {
         // a merge: the op string contains the assignment ULID, so it is never the same
         // op twice — which is the right answer. You should not blanket-trust merges.)
         let mode = hadron_gatekeeper::resolve_mode(&events, target);
+        let global = hadron_gatekeeper::global_mode(&events);
         let rules = hadron_gatekeeper::allow_rules(&events);
+        // No-Human-Mode not wired yet (Task 3): no_human = false, so this is
+        // byte-for-byte today's decide — AskOrchestrator can't occur here.
+        let deny = hadron_gatekeeper::DenyRules::new();
         let delegated = matches!(
-            hadron_gatekeeper::decide(mode, hadron_gatekeeper::Risk::BashExec, &op, target, &rules),
+            hadron_gatekeeper::decide(
+                mode,
+                global,
+                false,
+                hadron_gatekeeper::Risk::BashExec,
+                &op,
+                target,
+                &rules,
+                &deny
+            ),
             hadron_gatekeeper::Decision::AutoApprove
         );
         let approved = delegated || hadron_gatekeeper::merge_approved(&events, target, &op);
