@@ -918,9 +918,14 @@ impl Engine {
         // one as the work crosses phases" discipline, injected every turn. This is
         // hadron's analog of the Superpowers using-superpowers bootstrap, which rides a
         // SessionStart hook that does not exist over ACP.
-        invariants_text.push_str(&skills::index());
+        // For THIS task the merged corpus is just the compiled-in set — the real
+        // ~/.hadron / repo .hadron/skills loading is a follow-up (spec Part A task
+        // 2). Passing `&skills::builtins()` here keeps behaviour byte-for-byte
+        // identical to the pre-`ResolvedSkill` static-`SKILLS` version.
+        let skill_corpus = skills::builtins();
+        invariants_text.push_str(&skills::index(&skill_corpus));
 
-        if let Some(m) = skills::select(&task_desc) {
+        if let Some(m) = skills::select(&task_desc, &skill_corpus) {
             let peers = self
                 .roster
                 .iter()
