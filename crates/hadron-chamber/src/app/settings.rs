@@ -45,15 +45,19 @@ impl Chamber {
 
     /// Load the current target's name + image path into the editor inputs.
     pub(super) fn load_settings_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (name, path, model, effort, mode, secret_var, secret_is_set) = {
+        let (name, path, model, effort, mode, secret_var, secret_is_set, secret_applies) = {
             let key = self.settings_target.key();
             let mut mdl = String::new();
             let mut eff = None;
             let mut mod_cfg = None;
             // Defaults for a non-quark target (Human/Providers), which never shows the
             // API-key field — overwritten below when `key` resolves to a seat.
-            let mut var = DEFAULT_SECRET_VAR.to_string();
+            let mut var = String::new();
             let mut is_set = SecretStatus::NotSet;
+            // Whether THIS quark's provider needs a secret key at all — the API-key
+            // field is shown only then, not under every quark (its var is not a
+            // universal default).
+            let mut needs_secret = false;
             let id = if key == "human" {
                 Some(&self.prefs.human)
             } else {
@@ -66,14 +70,21 @@ impl Chamber {
                     mdl = seat.model.clone();
                     eff = seat.effort.clone();
                     mod_cfg = seat.mode_config.clone();
-                    // Show the first declared var name, or the default if none is declared
-                    // yet — never the value, only ever the NAME (see `secret_status`).
+                    // The provider's required secret vars (catalogue SSOT) plus any the
+                    // seat already declares decide whether to show the field and what to
+                    // name it — never the value, only ever the NAME (see `secret_status`).
+                    let catalogue_vars =
+                        hadron_gluon::adapter::registry::QuarkKind::secret_env_for(&seat.vendor);
+                    needs_secret = !catalogue_vars.is_empty() || !seat.secret_env.is_empty();
                     var = seat
                         .secret_env
                         .first()
                         .cloned()
-                        .unwrap_or_else(|| DEFAULT_SECRET_VAR.to_string());
-                    is_set = secret_status(self.secret_store.as_ref(), &seat.id, &var);
+                        .or_else(|| catalogue_vars.first().map(|s| s.to_string()))
+                        .unwrap_or_default();
+                    if needs_secret {
+                        is_set = secret_status(self.secret_store.as_ref(), &seat.id, &var);
+                    }
                 }
                 self.prefs.quarks.get(key)
             };
@@ -85,6 +96,7 @@ impl Chamber {
                 mod_cfg.unwrap_or_default(),
                 var,
                 is_set,
+                needs_secret,
             )
         };
         self.settings_name
@@ -103,6 +115,7 @@ impl Chamber {
         self.settings_secret_value
             .update(cx, |s, cx| s.set_value(String::new(), window, cx));
         self.settings_secret_status = secret_is_set;
+        self.settings_secret_applies = secret_applies;
         // Team-wide, not per-identity — loaded unconditionally (not keyed off `key`) so
         // it stays in sync with `self.team.max_exchanges` regardless of which target the
         // overlay happens to be showing when this runs.
@@ -841,8 +854,11 @@ impl Chamber {
                     .child(settings_field("Permission", self.mode_select(target.key(), cx)))
                     // The secret env-var value (e.g. `GEMINI_API_KEY`) goes to the OS
                     // keychain via `SecretStore`, never into team.json or this panel's
-                    // rendered state — see `secret_field`.
-                    .child(settings_field("API key", self.secret_field(cx)))
+                    // rendered state — see `secret_field`. Shown ONLY for a quark whose
+                    // provider actually needs a key (per the catalogue), not universally.
+                    .when(self.settings_secret_applies, |v| {
+                        v.child(settings_field("API key", self.secret_field(cx)))
+                    })
                 })
                 .child(settings_field("Color", swatches.into_any_element()))
                 .child(settings_field(
