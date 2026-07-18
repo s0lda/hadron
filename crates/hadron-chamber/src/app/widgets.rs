@@ -259,10 +259,6 @@ pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::A
 
     h_flex()
         .id(SharedString::from(format!("quark-{}", r.id)))
-        // `relative` so the trailing tags can be pinned to the row's top-right corner
-        // (absolute, below) instead of riding in the flex flow — where, as `flex_none`
-        // siblings, they stole width from the name/model column and truncated the model.
-        .relative()
         .items_start()
         .gap_2p5()
         .px_2()
@@ -290,11 +286,6 @@ pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::A
                         .text_sm()
                         .text_color(if r.enabled { theme::text() } else { theme::text_muted() })
                         .truncate()
-                        // Reserve room for the absolutely-pinned tags on this (name) line,
-                        // so a long name truncates before the tags rather than under them.
-                        // The model/detail lines below carry no such reserve — they get the
-                        // full width back.
-                        .pr(px(88.))
                         .child(name),
                 )
                 .child(
@@ -312,18 +303,11 @@ pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::A
                         .opacity(if r.enabled { 0.7 } else { 0.4 })
                         .truncate()
                         .child(detail_2),
-                ),
-        )
-        // Trailing controls (effort + permission-mode tags), pinned absolutely to the
-        // row's top-right so they don't compete with the name/model column for width
-        // (which was truncating the model). They sit on the name line only, so the
-        // model/detail lines below get the full row width back.
-        .child(
-            div()
-                .absolute()
-                .top(px(6.))
-                .right(px(8.))
-                .child(controls),
+                )
+                // Effort + permission-mode tags on their OWN line beneath the details, so
+                // they never compete with the name/model column for horizontal width
+                // (which was truncating the model). Full row width, left-aligned.
+                .child(h_flex().mt_0p5().child(controls)),
         )
         .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
 }
