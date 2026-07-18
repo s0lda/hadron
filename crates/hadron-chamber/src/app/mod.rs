@@ -56,9 +56,10 @@ use tabs::{ChatTab, InfoTab, Rail, RightRailTab};
 
 mod providers;
 use providers::{
-    cli_seat_from, configured_providers, migrate_legacy_ids, migrate_repo_to_catalogue,
-    prompt_channel_from, AcpModelProbe, AcpModelState, AgentDescriptor, CliChannelChoice,
-    ConfiguredQuark, ProviderState, SettingsTarget, WizardState,
+    cli_seat_from, configured_providers, custom_cli_vendor_is_valid, migrate_legacy_ids,
+    migrate_repo_to_catalogue, prompt_channel_from, AcpModelProbe, AcpModelState,
+    AgentDescriptor, CliChannelChoice, ConfiguredQuark, ProviderState, SettingsTarget,
+    WizardState,
 };
 
 mod widgets;

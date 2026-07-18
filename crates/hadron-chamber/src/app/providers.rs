@@ -106,6 +106,19 @@ pub(super) fn cli_seat_from(
     seat
 }
 
+/// Whether a hand-typed custom-CLI `vendor` derives an id `hadron_gluon`'s
+/// `validate_quark_id` accepts. That function is the SSOT for "safe" (it also gates
+/// every other seat-creation path — `build`/`build_seat`/`build_seat_watched`), and
+/// this wizard is the FIRST UI surface that feeds freely-typed text into a `QuarkId` —
+/// which becomes a worktree DIRECTORY name, a git BRANCH ref segment, and a live-file
+/// name (see `validate_quark_id`'s doc comment). Reuses `cli_seat_from` itself (rather
+/// than re-deriving the normalize+conventional_id steps here) so this check can never
+/// drift from what Save actually produces.
+pub(super) fn custom_cli_vendor_is_valid(vendor: &str) -> bool {
+    let seat = cli_seat_from(vendor, "placeholder", Vec::new(), hadron_lattice::PromptChannel::Stdin, "");
+    hadron_gluon::adapter::registry::validate_quark_id(&seat.id).is_ok()
+}
+
 /// The custom-CLI wizard's channel-toggle → [`PromptChannel`] mapping. The one bit of
 /// this form that isn't a straight field copy: `Arg` with a blank flag field means "the
 /// prompt rides as a bare positional argument" (`flag: None`), not "flag unset by
@@ -411,6 +424,35 @@ mod tests {
         assert_eq!(seat.vendor, "ollama", "normalize_vendor must strip the stray prefix");
         assert_eq!(seat.id.as_str(), "cli-ollama", "id derived from the NORMALIZED vendor");
         assert!(hadron_lattice::id_follows_convention(seat.id.as_str(), seat.transport));
+    }
+
+    /// The bug this whole review round closes: a vendor with a slash would derive an id
+    /// like `"cli-foo/bar"`, which becomes a nested (broken) worktree directory and a
+    /// malformed git branch ref segment. Must be rejected before Save is ever wired up.
+    #[test]
+    fn custom_cli_vendor_is_valid_rejects_a_slash() {
+        assert!(!custom_cli_vendor_is_valid("foo/bar"));
+    }
+
+    /// A space would derive a whitespace-containing id — already rejected by
+    /// `validate_quark_id`'s original check, but proven here too since this helper is
+    /// what the wizard actually calls.
+    #[test]
+    fn custom_cli_vendor_is_valid_rejects_a_space() {
+        assert!(!custom_cli_vendor_is_valid("my tool"));
+    }
+
+    /// A colon: invalid in a git ref, and a path separator on Windows.
+    #[test]
+    fn custom_cli_vendor_is_valid_rejects_a_colon() {
+        assert!(!custom_cli_vendor_is_valid("my:tool"));
+    }
+
+    /// The common, unremarkable case must still work — this is a gate, not a trap.
+    #[test]
+    fn custom_cli_vendor_is_valid_accepts_a_normal_vendor() {
+        assert!(custom_cli_vendor_is_valid("ollama"));
+        assert!(custom_cli_vendor_is_valid("cli_tool.v2"));
     }
 
     /// `prompt_channel_from`: the Stdin choice ignores whatever the flag field holds —
