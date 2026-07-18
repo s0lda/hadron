@@ -413,6 +413,20 @@ impl QuarkKind {
             .collect()
     }
 
+    /// The secret env-var NAMES a vendor needs supplied (via the OS keychain — see
+    /// `hadron_lattice::secrets`). A FACT about the provider, kept here in the
+    /// catalogue SSOT: the Antigravity SDK (`agy`) authenticates with a Gemini API
+    /// key; the ACP agents that authenticate by OAuth/login (claude, codex, the
+    /// gemini CLI) need none, so the chamber shows no API-key field for them.
+    /// Empty for any vendor not listed. Extend as providers are confirmed to need a
+    /// key — do not guess (a wrong entry shows a pointless field).
+    pub fn secret_env_for(vendor: &str) -> &'static [&'static str] {
+        match vendor {
+            "agy" => &["GEMINI_API_KEY"],
+            _ => &[],
+        }
+    }
+
     /// Resolve a seat's transport. `Transport::Cli` resolves a [`CliSpec`] per
     /// §4.3 of the design doc: the seat's explicit `cli` spec wins; else the
     /// vendor's built-in preset (so `cli-agy` needs no config); else a bare
@@ -631,6 +645,19 @@ mod tests {
     use super::*;
     use hadron_lattice::secrets::MemoryStore;
     use hadron_lattice::{AcpCommand, CliSpec};
+
+    /// The Antigravity SDK needs a Gemini API key; OAuth/login agents need none.
+    /// The chamber shows the API-key field ONLY for a vendor with a declared var,
+    /// so an over-broad entry here would put the field under a quark that never
+    /// uses it (exactly the bug this guards).
+    #[test]
+    fn secret_env_for_declares_agy_only() {
+        assert_eq!(QuarkKind::secret_env_for("agy"), &["GEMINI_API_KEY"]);
+        assert!(QuarkKind::secret_env_for("claude").is_empty());
+        assert!(QuarkKind::secret_env_for("codex").is_empty());
+        assert!(QuarkKind::secret_env_for("gemini").is_empty());
+        assert!(QuarkKind::secret_env_for("some-unknown-vendor").is_empty());
+    }
 
     /// A fresh, empty `SecretStore` for tests that are not exercising secret
     /// resolution itself (that is `cli.rs`'s `cli_invocation_carries_resolved_secret_env`)

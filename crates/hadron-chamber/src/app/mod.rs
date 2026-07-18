@@ -220,6 +220,9 @@ struct Chamber {
     /// refreshed on load/Set/Clear (not read every render — a keychain lookup per frame
     /// would hammer the OS credential store, e.g. a D-Bus round trip to Secret Service).
     settings_secret_status: settings::SecretStatus,
+    /// Whether the current Settings quark's provider needs a secret key at all —
+    /// gates the API-key field so it isn't shown under every quark. Set on load.
+    settings_secret_applies: bool,
     /// Live filter for the add-quark preset catalogue (~37 entries): a case-insensitive
     /// substring match on preset name + command, so the list is searchable instead of a
     /// long scroll.
@@ -505,6 +508,7 @@ impl Chamber {
             settings_secret_var,
             settings_secret_value,
             settings_secret_status: settings::SecretStatus::NotSet,
+            settings_secret_applies: false,
             preset_filter,
             custom_cli_vendor,
             custom_cli_program,
