@@ -22,6 +22,6 @@ opt-level = 1
 # `TextMark::color`, parsed from `<span style="color: …">`. It is a small, upstreamable
 # patch, not a divergence — drop this section the moment longbridge takes it.
 [patch."https://github.com/longbridge/gpui-component"]
-gpui-component = { git = "file:///home/Jake/dev/hadron/crates/gpui-component", branch = "text-mark-color" }
-gpui-component-macros = { git = "file:///home/Jake/dev/hadron/crates/gpui-component", branch = "text-mark-color" }
-gpui-component-assets = { git = "file:///home/Jake/dev/hadron/crates/gpui-component", branch = "text-mark-color" }
+gpui-component = { git = "file:///home/Jake/dev/hadron/crates/gpui-component", branch = "main" }
+gpui-component-macros = { git = "file:///home/Jake/dev/hadron/crates/gpui-component", branch = "main" }
+gpui-component-assets = { git = "file:///home/Jake/dev/hadron/crates/gpui-component", branch = "main" }
