@@ -816,7 +816,9 @@ impl Chamber {
                 .cursor_pointer()
                 .flex_none()
                 .on_click(cx.listener(move |this, _, _, cx| this.cycle_quark_mode(&qid, cx)))
-                .child(mode_tag(r.mode, r.mode_is_override))
+                // A quark with no per-quark override shows a grey "Default" chip;
+                // an override shows the actual mode. (`is_default = !override`.)
+                .child(mode_tag(r.mode, !r.mode_is_override))
                 .into_any_element();
 
             // Restart is meaningful for any resident (ACP) seat — a one-shot CLI quark
@@ -1148,12 +1150,11 @@ impl Chamber {
                                                 )
                                                 .build(window, cx)
                                             })
-                                            // Not an override — this chip is the global
-                                            // default itself. `true` used to be a hack to
-                                            // defeat `mode_tag`'s old `!is_override` early
-                                            // return; now that every mode renders, `false`
-                                            // both reads correctly and preserves this
-                                            // chip's prior (outlined) look.
+                                            // This chip IS the global mode selector, so it
+                                            // must always show the live ASK/WRITE/AUTO/BYPASS,
+                                            // never "Default". `is_default = false` does that
+                                            // (the grey "Default" chip is only for a per-quark
+                                            // roster row with no override).
                                             .child(mode_tag(self.view.global_mode, false)),
                                     ),
                             )
