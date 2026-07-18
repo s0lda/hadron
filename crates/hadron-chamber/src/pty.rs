@@ -409,6 +409,67 @@ mod tests {
         );
     }
 
+    /// Concatenate a line's runs back into its plain text.
+    fn line_text(l: &TermLine) -> String {
+        l.runs.iter().map(|r| r.text.as_str()).collect()
+    }
+
+    /// The mechanism behind the "first prompt splits into two lines until you
+    /// type" fix: when the PTY is widened, the shell redraws its prompt on the
+    /// SIGWINCH, so a prompt that was wrapped at a narrow width collapses back to
+    /// one row with no keystroke. `pump_terminal` relies on exactly this — it
+    /// keeps resizing the PTY to the settled screen width — so if this ever stops
+    /// holding, the on-screen glitch returns. Uses bash explicitly: the redraw is
+    /// a readline behaviour and `sh`/dash does not guarantee it (and Jake's shell
+    /// is bash).
+    #[test]
+    fn widening_the_pty_redraws_a_wrapped_prompt_onto_one_row() {
+        if !std::path::Path::new("/bin/bash").exists() {
+            return; // readline-specific; skip where bash is unavailable
+        }
+        let prev_shell = std::env::var("SHELL").ok();
+        std::env::set_var("SHELL", "/bin/bash");
+        let dir = tempdir().unwrap();
+        let mut term = PtyTerminal::new(dir.path(), 12, 24).unwrap();
+        // Restore immediately so a concurrent test's spawn is unaffected.
+        match prev_shell {
+            Some(s) => std::env::set_var("SHELL", s),
+            None => std::env::remove_var("SHELL"),
+        }
+
+        // A fixed prompt 18 cols wide — wider than the 12-col grid, so it wraps.
+        term.send_input(b"PS1='PROMPTABCDEFGHIJ> '\n");
+        let frag = "PROMPTABCDEF"; // the first 12 cols (one full narrow row)
+        let marker = "PROMPTABCDEFGHIJ>"; // the whole prompt (only fits when wide)
+        let row_has = |s: &TermSnapshot, needle: &str| {
+            s.lines.iter().any(|l| line_text(l).contains(needle))
+        };
+
+        // The new prompt has been drawn once its leading fragment appears...
+        let wrapped = wait_for(&term, |s| row_has(s, frag));
+        assert!(
+            row_has(&wrapped, frag),
+            "the PS1 prompt was never drawn:\n{}",
+            wrapped.plain_text()
+        );
+        // ...and at 12 cols no single row holds the whole prompt — it is wrapped.
+        assert!(
+            !row_has(&wrapped, marker),
+            "expected the prompt to WRAP across two rows at 12 cols:\n{}",
+            wrapped.plain_text()
+        );
+
+        // Widen the PTY. No input is sent — the fix depends on the resize alone
+        // making the prompt whole again.
+        term.resize(80, 24);
+        let unwrapped = wait_for(&term, |s| row_has(s, marker));
+        assert!(
+            row_has(&unwrapped, marker),
+            "widening should redraw the prompt onto ONE row with no keystroke:\n{}",
+            unwrapped.plain_text()
+        );
+    }
+
     #[test]
     fn indexed_palette_matches_xterm() {
         assert_eq!(indexed_to_rgb(0), ANSI16[0]);
