@@ -224,6 +224,28 @@ pub fn builtins() -> Vec<ResolvedSkill> {
         .collect()
 }
 
+/// Whether a quark may use `tool` while `skill` is the active skill for the turn.
+///
+/// The decision the engine's tool-gating consults (spec §3.2). It is deliberately a
+/// PURE function of the tool name and the active skill's declared `tools:` allow-list,
+/// so it is fully unit-testable without any transport:
+/// - A skill that declares **no** `tools` (empty list) imposes NO restriction — every
+///   tool is allowed. This is the default (all built-in skills), so tool-gating is
+///   opt-in per skill and changes nothing until a skill actually lists tools.
+/// - A skill that declares a `tools` allow-list permits ONLY those tools, matched
+///   case-insensitively by name; anything else is denied.
+///
+/// ENFORCEMENT (not built here — it is transport-specific and rides later work):
+/// - **SDK quarks**: expose only the allowed tools in the registry/prompt (needs the
+///   resident SDK adapter, sub-project #3 — not built).
+/// - **ACP/CLI quarks**: reject a disallowed tool at permission-request time (in
+///   `acp.rs`'s `on_receive_request`), or escalate via the §2 gate. This is the same
+///   "notional until a real per-tool ask exists" situation §2's adjudication is in.
+/// This function is the shared, tested decision all of those will call.
+pub fn is_tool_allowed(tool: &str, skill: &ResolvedSkill) -> bool {
+    skill.tools.is_empty() || skill.tools.iter().any(|t| t.eq_ignore_ascii_case(tool))
+}
+
 /// Load custom skills from disk and merge them with the built-ins.
 ///
 /// Starts from [`builtins`], then walks `global_dir` and then `repo_dir` (each
@@ -593,6 +615,41 @@ pub fn render(m: &Match, self_id: &QuarkId, handoff: &Handoff, include_body: boo
 mod tests {
     use super::*;
     use std::path::Path;
+
+    fn skill_with_tools(tools: &[&str]) -> ResolvedSkill {
+        ResolvedSkill {
+            id: "s".into(),
+            triggers: vec![],
+            body: String::new(),
+            description: None,
+            tools: tools.iter().map(|t| t.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn no_tools_list_allows_everything() {
+        let s = skill_with_tools(&[]);
+        assert!(is_tool_allowed("read_file", &s));
+        assert!(is_tool_allowed("run_bash", &s));
+        assert!(is_tool_allowed("anything", &s));
+    }
+
+    #[test]
+    fn a_tools_list_allows_only_listed_tools() {
+        let s = skill_with_tools(&["read_file", "grep_search"]);
+        assert!(is_tool_allowed("read_file", &s));
+        assert!(is_tool_allowed("grep_search", &s));
+        assert!(!is_tool_allowed("run_bash", &s), "a tool not on the allow-list is denied");
+        assert!(!is_tool_allowed("write_file", &s));
+    }
+
+    #[test]
+    fn tool_match_is_case_insensitive() {
+        let s = skill_with_tools(&["Read_File"]);
+        assert!(is_tool_allowed("read_file", &s));
+        assert!(is_tool_allowed("READ_FILE", &s));
+        assert!(!is_tool_allowed("read_files", &s), "no partial/substring match");
+    }
 
     /// A skill whose `include_str!` points at the wrong path would compile only if the
     /// file existed, but an EMPTY file compiles fine and injects nothing — a rule the
