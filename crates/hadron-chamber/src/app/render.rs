@@ -1777,26 +1777,36 @@ impl Chamber {
                             if parts.is_empty() {
                                 return;
                             }
-                            let full = path.trim_end_matches('/');
                             let mut current = self;
+                            let mut running = String::new();
                             for (i, part) in parts.iter().enumerate() {
                                 let last = i == parts.len() - 1;
                                 let is_file = last && !is_dir_leaf;
+                                if running.is_empty() {
+                                    running = part.to_string();
+                                } else {
+                                    running = format!("{running}/{part}");
+                                }
                                 current =
                                     current.children.entry(part.to_string()).or_insert_with(|| {
                                         FileTreeNode {
                                             children: std::collections::BTreeMap::new(),
-                                            is_file,
+                                            is_file: false,
                                             is_ignored: false,
                                             full_path: String::new(),
                                         }
                                     });
+                                // EVERY node gets its running path — not just the leaf. An
+                                // intermediate folder node left with an empty `full_path`
+                                // makes every folder row share the gpui id `tree-row-`, which
+                                // collides and mis-routes the expand click (folders "won't
+                                // open") and points folder context menus at an empty path.
+                                if current.full_path.is_empty() {
+                                    current.full_path = running.clone();
+                                }
                                 if last {
                                     current.is_file = is_file;
                                     current.is_ignored = is_ignored;
-                                    if current.full_path.is_empty() {
-                                        current.full_path = full.to_string();
-                                    }
                                 }
                             }
                         }
