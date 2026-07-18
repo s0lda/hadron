@@ -216,10 +216,10 @@ struct Chamber {
     /// store, always blank on load and cleared again after Set/Clear so the
     /// stored value is never rendered back into the UI.
     settings_secret_value: Entity<InputState>,
-    /// Cached "key set" / "not set" status for `settings_secret_var`, refreshed on
-    /// load/Set/Clear (not read every render — a keychain lookup per frame would
-    /// hammer the OS credential store, e.g. a D-Bus round trip to Secret Service).
-    settings_secret_status: bool,
+    /// Cached set / not-set / keychain-unavailable status for `settings_secret_var`,
+    /// refreshed on load/Set/Clear (not read every render — a keychain lookup per frame
+    /// would hammer the OS credential store, e.g. a D-Bus round trip to Secret Service).
+    settings_secret_status: settings::SecretStatus,
     /// Live filter for the add-quark preset catalogue (~37 entries): a case-insensitive
     /// substring match on preset name + command, so the list is searchable instead of a
     /// long scroll.
@@ -504,7 +504,7 @@ impl Chamber {
             settings_max_exchanges,
             settings_secret_var,
             settings_secret_value,
-            settings_secret_status: false,
+            settings_secret_status: settings::SecretStatus::NotSet,
             preset_filter,
             custom_cli_vendor,
             custom_cli_program,
