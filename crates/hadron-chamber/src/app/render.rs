@@ -2207,7 +2207,10 @@ impl Chamber {
                     .messages
                     .iter()
                     .rev()
-                    .find_map(|m| hadron_gluon::skills::plan_ref(&m.body));
+                    .find_map(|m| {
+                        hadron_gluon::skills::plan_ref(&m.body)
+                            .filter(|rel_path| repo.join(rel_path).is_file())
+                    });
 
                 // Resolve the referenced plan to its on-disk content in one step; either
                 // the reference or the file may be absent (a plan can be named before it
