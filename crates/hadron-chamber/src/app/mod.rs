@@ -593,6 +593,37 @@ impl Chamber {
         };
         let ks = &event.keystroke;
         let m = &ks.modifiers;
+
+        let is_paste = (m.control && ks.key == "v")
+            || (m.control && m.shift && (ks.key == "v" || ks.key == "V"))
+            || (m.platform && ks.key == "v");
+        if is_paste {
+            if let Some(clipboard) = cx.read_from_clipboard() {
+                if let Some(text) = clipboard.text() {
+                    term.send_input(text.as_bytes());
+                    cx.notify();
+                }
+            }
+            return;
+        }
+
+        let is_copy = (m.control && m.shift && (ks.key == "c" || ks.key == "C"))
+            || (m.platform && ks.key == "c");
+        if is_copy {
+            let snap = term.snapshot();
+            let mut text = String::new();
+            for line in &snap.lines {
+                let mut line_text = String::new();
+                for run in &line.runs {
+                    line_text.push_str(&run.text);
+                }
+                text.push_str(line_text.trim_end());
+                text.push('\n');
+            }
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+            return;
+        }
+
         let bytes: Vec<u8> = match ks.key.as_str() {
             "enter" => vec![b'\r'],
             "backspace" => vec![0x7f],
