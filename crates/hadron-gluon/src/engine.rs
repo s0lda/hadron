@@ -714,6 +714,28 @@ impl Engine {
         targets
     }
 
+    /// Whether the task about to drive `target`'s turn actually names it — by one of
+    /// its `roles` (a `@role` mention resolving to it) or its own `@id` — the
+    /// eligibility test an `exclusive` card must pass before it is ever admitted.
+    ///
+    /// Deliberately reads the task's TEXT rather than trusting `to == target`: the
+    /// event that produced `target` may have addressed it directly (a hand-off, or a
+    /// `Kind::Assign` written straight to its id) with no relation between `to` and
+    /// the task body at all. `fallback_task` covers the unaddressed-human-message
+    /// case (the body IS the task, already in hand); anything else re-resolves the
+    /// driving event the same way dispatch itself will a moment later.
+    fn exclusive_task_names_target(
+        &self,
+        events: &[Event],
+        target: &QuarkId,
+        fallback_task: Option<&str>,
+    ) -> bool {
+        let task_text = fallback_task
+            .map(|s| s.to_string())
+            .or_else(|| self.driver_for(events, target, None).map(|d| d.task));
+        task_text.as_deref().is_some_and(|t| human_mentions(t, &self.roster).contains(target))
+    }
+
     /// The event that drives this turn — the *assignment*. Its `Ulid` names the
     /// quark's branch, so every turn of one assignment (including a turn resumed
     /// after a permission pause) resolves the **same** ULID and lands back in the
@@ -1426,6 +1448,33 @@ impl Engine {
                         );
                         self.reroute_blocked(&target, &msg).await?;
                         continue;
+                    }
+
+                    // Exclusivity filter (WS4 §4 Phase 2): an `exclusive` card must
+                    // never take a turn it isn't scoped for. `to == target` alone is
+                    // NOT proof of that — a directly-addressed event (a hand-off, or a
+                    // `Kind::Assign` written straight to this quark's id) can name any
+                    // id in `to` with task text that never mentions it at all, which is
+                    // exactly the "picked as a general fallback worker" case the spec
+                    // warns against. So the check re-derives eligibility from the task
+                    // TEXT, with the same matcher (`human_mentions`) the router itself
+                    // uses to resolve `@role`/`@id` mentions — "eligible" here means
+                    // exactly what "addressed" means everywhere else in the field.
+                    //
+                    // A card that never opted into `exclusive` skips this entirely and
+                    // stays in general dispatch, same as before this filter existed.
+                    if let Some(card) = self.roster.iter().find(|c| c.id == target) {
+                        if card.exclusive
+                            && !self.exclusive_task_names_target(&events, &target, fallback_task.as_deref())
+                        {
+                            let msg = format!(
+                                "⚠️ @{} is exclusive to role(s) [{}] and this task did not address it by role or @id; skipping.",
+                                target.as_str(),
+                                card.roles.join(", ")
+                            );
+                            self.reroute_blocked(&target, &msg).await?;
+                            continue;
+                        }
                     }
 
                     if let Some(ledger) = &self.ledger {
@@ -3913,6 +3962,163 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
             "re-enabled, it must take its turn"
+        );
+    }
+
+    // ---- exclusivity filter + routing-gap reporting (WS4 §4 Phase 2) -----------
+
+    /// A quark carrying `roles` and `exclusive`, for the exclusivity-filter tests
+    /// below. `roles()`/`exclusive()` override the `Quark` trait's defaults exactly
+    /// the way a real (e.g. ACP) seat built from `team.json` would.
+    struct RoledQuark {
+        id: QuarkId,
+        roles: Vec<String>,
+        exclusive: bool,
+        reply: String,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for RoledQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn roles(&self) -> Vec<String> {
+            self.roles.clone()
+        }
+        fn exclusive(&self) -> bool {
+            self.exclusive
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+            Ok(TurnOutcome { message: Some(self.reply.clone()), permission: None, usage: Default::default() })
+        }
+    }
+
+    fn roled_quark(id: &str, roles: &[&str], exclusive: bool, reply: &str) -> RoledQuark {
+        RoledQuark {
+            id: QuarkId::new(id),
+            roles: roles.iter().map(|r| r.to_string()).collect(),
+            exclusive,
+            reply: reply.into(),
+        }
+    }
+
+    /// **The exclusivity property.** A card marked `exclusive` must never take a turn
+    /// it isn't scoped for — even when something *directly* addresses it (`to:
+    /// Some(id)`) for a task whose text never names its role or its id. This is the
+    /// gap a text-only router check can't close: `seed_human_message` here mirrors
+    /// exactly what a raw `Kind::Assign`/hand-off event can do — set `to` to any id,
+    /// completely independent of what the task text says — which is the "picked as a
+    /// general fallback worker" case the spec calls out.
+    #[tokio::test]
+    async fn exclusive_seat_excluded_from_non_matching_task() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(roled_quark("sec", &["security"], true, "I ANSWERED"))],
+            12,
+        );
+        // Directly addressed, but the task text names neither "@security" nor "@sec".
+        seed_human_message(&field, "sec", "please fix the css typo on the landing page");
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(
+            !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
+            "an exclusive seat took a turn it was never scoped for"
+        );
+        assert!(
+            events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("exclusive"))),
+            "the field must SAY why the exclusive seat was skipped, not silently swallow the task"
+        );
+    }
+
+    /// The same exclusive card IS eligible once the task actually names its role or
+    /// its id — exclusivity is a restriction, not a block on ever being reached.
+    #[tokio::test]
+    async fn exclusive_seat_eligible_for_matching_role_task() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(roled_quark("sec", &["security"], true, "I ANSWERED"))],
+            12,
+        );
+        seed_human_message(&field, "sec", "please review this @security issue");
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(
+            events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
+            "a role-matching task must still reach the exclusive seat"
+        );
+    }
+
+    /// A card carrying `roles` but NOT `exclusive` stays in general dispatch — the
+    /// filter only ever *removes* eligibility, never grants it, and it must not
+    /// over-fire on a seat that never opted into exclusivity.
+    #[tokio::test]
+    async fn non_exclusive_role_seat_always_eligible() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(roled_quark("docs", &["documentation"], false, "I ANSWERED"))],
+            12,
+        );
+        // Task text names neither its role nor its id — irrelevant, since it is not exclusive.
+        seed_human_message(&field, "docs", "please fix the css typo on the landing page");
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(
+            events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
+            "a non-exclusive role seat must take any task, matching or not"
+        );
+    }
+
+    /// **Routing gap, reported not stalled.** A task needs a role; the only seat that
+    /// carries it is `exclusive` AND disabled. The router's role resolution (Phase 1)
+    /// still resolves the mention to that card (it only filters `Depleted`, not
+    /// disabled), so this rides the EXISTING `is_enabled`/`reroute_blocked` diagnostic
+    /// — reused, not reinvented — and the turn quiesces instead of hanging.
+    #[tokio::test]
+    async fn routing_gap_is_reported_not_stalled() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![Box::new(roled_quark("sec", &["security"], true, "I ANSWERED"))],
+            12,
+        );
+        engine.set_enabled(&QuarkId::new("sec"), false);
+
+        // Unaddressed human message naming the ROLE, not the id — routed by Phase 1.
+        append_event(
+            &field,
+            &Event::new(Actor::Human, None, Kind::Message { body: "@security please look at this".into() }),
+        )
+        .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), engine.run_until_quiesce())
+            .await
+            .expect("must quiesce, not hang, on an unreachable role")
+            .unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(
+            !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
+            "a disabled exclusive seat must never take the turn"
+        );
+        assert!(
+            events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("disabled"))),
+            "the routing gap must be reported in the field, not silently dropped"
         );
     }
 
