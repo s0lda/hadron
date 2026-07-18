@@ -3,6 +3,7 @@ pub mod engine;
 pub mod field;
 pub mod mock;
 pub mod nucleus;
+pub mod personas;
 pub mod quark;
 pub mod reseat;
 pub mod router;
