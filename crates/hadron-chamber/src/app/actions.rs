@@ -170,7 +170,9 @@ impl Chamber {
     /// right rail needs to switch to the Terminal tab first — so one press
     /// always reaches the terminal, and a second press always returns to chat.
     pub(super) fn toggle_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let target = if self.terminal_focus.is_focused(window) {
+        let is_terminal_focused = self.terminal_focus.is_focused(window)
+            || (self.right_rail_tab == RightRailTab::Terminal && !self.input.focus_handle(cx).is_focused(window));
+        let target = if is_terminal_focused {
             FocusTarget::Chat
         } else {
             let (target, switch_rail_to_terminal) = toggle_focus_target(self.right_rail_tab);
