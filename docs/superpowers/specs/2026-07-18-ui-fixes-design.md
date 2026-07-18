@@ -50,3 +50,21 @@ None of the three touch auth, permissions, files, network, or untrusted input. I
 - **B:** the real fix is in the /tmp fork; only a Cargo.lock bump lands in-repo. If you'd rather not carry a fork patch, the alternative is a chamber-side workaround (harder — the input's scroll is `pub(crate)`), which I did not take.
 - **C1:** if the terminal tab isn't showing, `ToggleFocus` switches the right rail to Terminal and focuses it (one chord always reaches the terminal). Alternative: no-op when terminal hidden. Chosen the more useful behaviour.
 - **C2:** chord `ctrl-\`` (fallback `F6`) — pending the implementer's verification against Input bindings and your real-window confirmation it isn't WM-stolen.
+
+---
+## POST-IMPLEMENTATION CORRECTION — Issue B (chat scroll)
+During implementation the premise was empirically falsified and re-verified at source:
+`enter()` already scrolls the input to the caret after inserting a newline — the insert goes
+`enter() → replace_text_in_range_silent → replace_text_in_range`, which calls
+`self.scroll_to(new_offset, None, cx)` UNCONDITIONALLY (state.rs:2953; the `silent` flag at
+:2950 only suppresses the completion trigger, not the scroll). The originally-prescribed
+one-line fix would be a byte-identical duplicate — a no-op (proven by a test that passes with
+and without it). **No code change was made for Issue B.** Most likely the reported symptom is a
+STALE running binary built before that scroll fix landed in the pinned fork (`f1e4d214`);
+the actionable step is to REBUILD the chamber and re-test Shift+Enter. If it persists after a
+rebuild, it needs observation at a real window (this box is headless). Two adjacent findings,
+not applied: (1) the chamber `mod.rs:760-768` shift branch's `return` is LOAD-BEARING (removing
+the block would make Shift+Enter both newline AND submit) — only its misdirected
+`chat_scrolls.scroll_to_bottom()` call is dead-weight; (2) the in-repo vendored
+`crates/gpui-component` has drifted from the `/tmp` fork (missing the scroll line) but does not
+affect the build, which compiles the fork.
