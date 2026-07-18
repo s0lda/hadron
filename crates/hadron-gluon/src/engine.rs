@@ -5356,9 +5356,11 @@ mod tests {
     #[test]
     fn a_seats_display_name_reaches_the_router_so_at_mentions_resolve() {
         use crate::adapter::registry;
+        use hadron_lattice::secrets::MemoryStore;
         use hadron_lattice::Seat;
         let dir = tempdir().unwrap();
         let path = dir.path().join("field.jsonl");
+        let store = MemoryStore::new();
 
         let mut claude = Seat::cli(QuarkId::new("acp-claude"), "claude", "opus", Flavor::Worker);
         claude.display_name = Some("Claude".into());
@@ -5371,7 +5373,10 @@ mod tests {
 
         let engine = Engine::new(
             path,
-            vec![registry::build_seat(&claude).unwrap(), registry::build_seat(&agy).unwrap()],
+            vec![
+                registry::build_seat(&claude, &store).unwrap(),
+                registry::build_seat(&agy, &store).unwrap(),
+            ],
             10,
         );
 
@@ -5403,6 +5408,7 @@ mod tests {
     #[test]
     fn roster_card_carries_the_quarks_roles() {
         use crate::adapter::registry;
+        use hadron_lattice::secrets::MemoryStore;
         use hadron_lattice::Seat;
         let dir = tempdir().unwrap();
         let path = dir.path().join("field.jsonl");
@@ -5411,7 +5417,7 @@ mod tests {
         security.roles = vec!["security".to_string()];
         security.exclusive = true;
 
-        let engine = Engine::new(path, vec![registry::build_seat(&security).unwrap()], 10);
+        let engine = Engine::new(path, vec![registry::build_seat(&security, &MemoryStore::new()).unwrap()], 10);
 
         let card = engine
             .roster
