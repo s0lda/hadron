@@ -255,6 +255,29 @@ impl CliSpec {
     }
 }
 
+/// Per-seat command allow/deny lists, folded into the gatekeeper's
+/// `AllowRules`/`DenyRules` under No-Human-Mode (a later task wires this in;
+/// `hadron_gatekeeper::decide` is untouched by this one).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeatCommands {
+    /// Command-op patterns this seat may auto-run under No-Human-Mode (Auto).
+    /// Each entry is an `op_matches` pattern: an exact command string or a
+    /// trailing-`*` glob (e.g. `"git *"`). Empty = no config allow-list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<String>,
+    /// Command-op patterns explicitly denied. A deny is absolute against the
+    /// orchestrator under No-Human-Mode (see gatekeeper `decide`). Same pattern
+    /// syntax as `allowed`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub not_allowed: Vec<String>,
+}
+
+impl SeatCommands {
+    pub fn is_empty(&self) -> bool {
+        self.allowed.is_empty() && self.not_allowed.is_empty()
+    }
+}
+
 /// One seat: an identity bound to a provider (CLI/vendor) and a model. Same
 /// provider with a different model is a different seat (independent trust).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -320,6 +343,12 @@ pub struct Seat {
     /// so a legacy `team.json` keeps every seat in general dispatch exactly as before.
     #[serde(default, skip_serializing_if = "is_false")]
     pub exclusive: bool,
+    /// Per-seat command allow/deny lists, folded into the gatekeeper's
+    /// `AllowRules`/`DenyRules` under No-Human-Mode. Empty by default, so a
+    /// `team.json` written before this field existed decodes to no rules and
+    /// behaves exactly as before.
+    #[serde(default, skip_serializing_if = "SeatCommands::is_empty")]
+    pub commands: SeatCommands,
 }
 
 /// `true`. Serde needs a function, and an absent `enabled` must mean *on* — a seat
@@ -352,7 +381,7 @@ impl Seat {
     /// a field to `Seat` without deciding which side of this line it falls on will not
     /// compile.
     pub fn same_agent(&self, other: &Seat) -> bool {
-        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive } = self;
+        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands } = self;
         id == &other.id
             && vendor == &other.vendor
             && model == &other.model
@@ -364,6 +393,7 @@ impl Seat {
             && mode_config == &other.mode_config
             && roles == &other.roles
             && exclusive == &other.exclusive
+            && commands == &other.commands
     }
 
     /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
@@ -383,6 +413,7 @@ impl Seat {
             mode_config: None,
             roles: vec![],
             exclusive: false,
+            commands: SeatCommands::default(),
         }
     }
 
@@ -458,6 +489,9 @@ pub struct SeatOverride {
     /// Per-repo exclusivity. Absent = inherit the catalogue's `exclusive`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exclusive: Option<bool>,
+    /// Per-repo command allow/deny lists. Absent = inherit the catalogue's `commands`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commands: Option<SeatCommands>,
 }
 
 /// Deserialize an `Option<Option<T>>` field so the three states stay distinct: an
@@ -491,6 +525,7 @@ impl SeatOverride {
             display_name: None,
             roles: None,
             exclusive: None,
+            commands: None,
         }
     }
 }
@@ -598,6 +633,9 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
         }
         if let Some(exclusive) = ov.exclusive {
             seat.exclusive = exclusive;
+        }
+        if let Some(commands) = ov.commands.clone() {
+            seat.commands = commands;
         }
         seen.insert(ov.id.clone());
         quarks.push(seat);
@@ -981,6 +1019,42 @@ mod tests {
         assert!(!base.same_agent(&exclusive_changed), "an exclusivity change must not look like the same agent");
     }
 
+    /// `Seat.commands` round-trips through JSON: allow/deny patterns come back
+    /// exactly as written.
+    #[test]
+    fn seat_commands_serde_round_trips() {
+        let mut s = seat("architect", "claude", "opus", Flavor::Worker);
+        s.commands = SeatCommands {
+            allowed: vec!["git *".into()],
+            not_allowed: vec!["rm -rf *".into()],
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Seat = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.commands, s.commands);
+    }
+
+    /// A seat with no `commands` config — every `team.json` written before this
+    /// field existed — must decode to an empty `SeatCommands`, and re-serializing
+    /// it must not grow a `"commands"` key into the file.
+    #[test]
+    fn absent_commands_is_empty_and_omitted() {
+        let s = seat("architect", "claude", "opus", Flavor::Worker);
+        assert!(s.commands.is_empty());
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("\"commands\""), "empty commands must not grow the file: {json}");
+    }
+
+    /// A `commands` change is a different agent — same as a role/exclusive change —
+    /// so the re-seat planner must rebuild rather than silently keep the old
+    /// allow/deny list live.
+    #[test]
+    fn same_agent_rebuilds_on_commands_change() {
+        let base = Seat::cli(QuarkId::new("x"), "claude", "opus", Flavor::Worker);
+        let mut changed = base.clone();
+        changed.commands.not_allowed.push("rm -rf *".into());
+        assert!(!base.same_agent(&changed), "a commands change must not look like the same agent");
+    }
+
     #[test]
     fn team_round_trips() {
         let team = Team {
@@ -1275,6 +1349,48 @@ mod resolve_tests {
         let s = &resolve_team(&overridden, &global).quarks[0];
         assert_eq!(s.roles, vec!["architect".to_string(), "security".to_string()], "override lands");
         assert!(s.exclusive, "override lands");
+    }
+
+    /// A repo override MAY set `commands`; the resolved seat carries the override's
+    /// allow/deny lists rather than the catalogue's (empty) default.
+    #[test]
+    fn resolve_team_applies_commands_override() {
+        let global = Team {
+            quarks: vec![seat("q", "acp-claude", "opus", Flavor::Worker)],
+            roster: vec![],
+            max_exchanges: None,
+        };
+        let repo = Team {
+            roster: vec![SeatOverride {
+                commands: Some(SeatCommands {
+                    not_allowed: vec!["curl *".into()],
+                    ..Default::default()
+                }),
+                ..SeatOverride::role(QuarkId::new("q"))
+            }],
+            ..Team::default()
+        };
+        let s = &resolve_team(&repo, &global).quarks[0];
+        assert_eq!(s.commands.not_allowed, vec!["curl *".to_string()]);
+    }
+
+    /// Absent `commands` on the override inherits the catalogue's `commands`.
+    #[test]
+    fn resolve_team_inherits_commands_when_override_absent() {
+        let global = Team {
+            quarks: vec![Seat {
+                commands: SeatCommands { allowed: vec!["git *".into()], not_allowed: vec![] },
+                ..seat("q", "acp-claude", "opus", Flavor::Worker)
+            }],
+            roster: vec![],
+            max_exchanges: None,
+        };
+        let repo = Team {
+            roster: vec![SeatOverride::role(QuarkId::new("q"))],
+            ..Team::default()
+        };
+        let s = &resolve_team(&repo, &global).quarks[0];
+        assert_eq!(s.commands.allowed, vec!["git *".to_string()], "inherits catalogue commands");
     }
 
     /// An override naming an id the catalogue does not define is dropped — a
