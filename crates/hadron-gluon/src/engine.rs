@@ -1290,7 +1290,10 @@ impl Engine {
             return None;
         }
 
-        let mode = hadron_gatekeeper::effective_mode(events, quark, self.no_human, false);
+        // `is_orchestrator = false` here isn't a hardcoded assumption: we already
+        // returned `None` above if `*quark == orch`, so the asker is provably
+        // never the orchestrator seat by this point.
+        let mode = hadron_gatekeeper::effective_mode(events, quark, self.no_human, self.is_orchestrator(quark));
         let global = hadron_gatekeeper::global_mode(events);
         let rules = hadron_gatekeeper::allow_rules(events);
         let deny = hadron_gatekeeper::DenyRules::new(); // see the permission-ask gate's comment
