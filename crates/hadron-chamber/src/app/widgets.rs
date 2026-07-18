@@ -469,8 +469,9 @@ pub(super) fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
 }
 
 /// The reasoning-effort badge, e.g. `Some("high")` → an outlined `HIGH` tag. `None` or
-/// empty renders nothing (the seat inherits / has no explicit effort), mirroring how
-/// [`mode_tag`] shows nothing when the mode is not a per-quark override.
+/// empty renders nothing (the seat inherits / has no explicit effort). Unlike [`mode_tag`]
+/// — which now renders for every quark (solid override / outlined inherited) — effort has
+/// no ambient default to show, so an absent effort still renders nothing.
 pub(super) fn effort_tag(effort: &Option<String>) -> gpui::AnyElement {
     match effort.as_deref() {
         Some(e) if !e.is_empty() => Tag::secondary()
