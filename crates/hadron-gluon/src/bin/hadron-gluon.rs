@@ -26,6 +26,7 @@ use hadron_gluon::engine::Engine;
 use hadron_gluon::field::read_events;
 use hadron_gluon::quark::Quark;
 use hadron_gluon::reseat;
+use hadron_lattice::secrets::SecretStore;
 use hadron_lattice::{
     load_team, orphan_overrides, parse_team, resolve_team, team_config_path, EnergyState, Flavor,
     Projection, QuarkId, Team,
@@ -121,7 +122,10 @@ fn resolve_team_path(explicit: Option<PathBuf>, field_path: &Path) -> Option<Pat
 
 /// Seat the quarks: real adapters from `team.json` when present, else the
 /// deterministic mock pair (zero-spend). Returns the quarks and a mode label.
-fn seat_quarks(team: &Team, live_dir: &Path) -> (Vec<Box<dyn Quark>>, &'static str) {
+///
+/// `store` resolves each seat's `secret_env` names to values. // TODO(next task):
+/// swap `MemoryStore` for a real `KeyringStore` at the call site once one exists.
+fn seat_quarks(team: &Team, live_dir: &Path, store: &dyn SecretStore) -> (Vec<Box<dyn Quark>>, &'static str) {
     if team.is_empty() {
         eprintln!(
             "  ⚠ no usable team.json — running MOCK quarks: only '@claude' and '@agy' exist \
@@ -136,7 +140,7 @@ fn seat_quarks(team: &Team, live_dir: &Path) -> (Vec<Box<dyn Quark>>, &'static s
     }
     let mut quarks: Vec<Box<dyn Quark>> = Vec::new();
     for seat in &team.quarks {
-        match registry::build_seat_watched(seat, live_dir) {
+        match registry::build_seat_watched(seat, live_dir, store) {
             Ok(q) => {
                 eprintln!(
                     "  seated {} — {} · {} ({:?})",
@@ -166,6 +170,7 @@ fn apply_reseat(
     running: &Team,
     plan: &reseat::ReseatPlan,
     live_dir: &Path,
+    store: &dyn SecretStore,
 ) -> Team {
     let mut out = Team::default();
 
@@ -215,7 +220,7 @@ fn apply_reseat(
     }
 
     for seat in plan.added.iter().chain(plan.replaced.iter()) {
-        match registry::build_seat_watched(seat, live_dir) {
+        match registry::build_seat_watched(seat, live_dir, store) {
             Ok(q) => {
                 engine.seat(q);
                 // Set participation explicitly, both ways. A seat added or re-pointed
@@ -286,7 +291,13 @@ async fn main() {
         let _ = hadron_lattice::live::clear(&live_dir, &seat.id);
     }
 
-    let (quarks, mode_label) = seat_quarks(&team, &live_dir);
+    // TODO(next task): a real `KeyringStore` backs this once it exists — this daemon
+    // has never resolved a live secret and `MemoryStore` starts empty, so
+    // `resolve_env` returns `[]` for every seat and behaviour is unchanged from
+    // before this task.
+    let secret_store = hadron_lattice::secrets::MemoryStore::new();
+
+    let (quarks, mode_label) = seat_quarks(&team, &live_dir, &secret_store);
     if quarks.is_empty() {
         eprintln!("hadron-gluon: team.json had no usable quarks; nothing to run.");
         std::process::exit(2);
@@ -419,7 +430,7 @@ async fn main() {
                         if !plan.is_empty() {
                             eprintln!("gluon: team changed — re-seating [{}]", plan.summary());
                             running_team =
-                                apply_reseat(&mut engine, &running_team, &plan, &live_dir);
+                                apply_reseat(&mut engine, &running_team, &plan, &live_dir, &secret_store);
                             eprintln!("gluon: roster is now {} quark(s)", engine.seated_count());
                         }
                     }

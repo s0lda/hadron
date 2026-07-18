@@ -2,7 +2,7 @@ use hadron_lattice::{CliSpec, Flavor, QuarkId, Seat, SeatCommands, Transport};
 
 use crate::adapter::acp::AcpQuark;
 use crate::adapter::cli::CliQuark;
-use crate::adapter::runner::ProcessRunner;
+use crate::adapter::runner::{ProcessRunner, RedactedEnv};
 use crate::quark::Quark;
 
 /// Which **transport** backs a configured quark — the one-shot CLI, or a resident
@@ -481,6 +481,11 @@ pub struct QuarkSpec {
     /// This seat's per-seat command allow/deny lists (see [`Quark::commands`]).
     /// Resolved from the team config; empty means no config allow/deny.
     pub commands: SeatCommands,
+    /// This seat's resolved secret env — `(name, value)` pairs from
+    /// `Seat::resolve_env(store)` — carried onto the built adapter and, from there,
+    /// onto the spawned subprocess's `Command::env()` and NOWHERE else. Wrapped in
+    /// `RedactedEnv` so this struct's derived `Debug` cannot leak a value.
+    pub env: RedactedEnv,
 }
 
 /// Enforce the naming contract: ids must be non-empty, whitespace-free, path- and
@@ -552,18 +557,21 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
     let roles = spec.roles.clone();
     let exclusive = spec.exclusive;
     let commands = spec.commands.clone();
+    let env = spec.env.clone();
     let quark: Box<dyn Quark> = match spec.kind {
         QuarkKind::Cli(cli_spec) => Box::new(
             CliQuark::new(spec.id, spec.flavor, spec.model, cli_spec, ProcessRunner)
                 .with_display_name(name)
                 .with_roles(roles, exclusive)
-                .with_commands(commands),
+                .with_commands(commands)
+                .with_env(env),
         ),
         QuarkKind::Acp(target) => Box::new(
             AcpQuark::new(spec.id, spec.flavor, spec.model, spec.effort, spec.mode_config, target)
                 .with_display_name(name)
                 .with_roles(roles, exclusive)
-                .with_commands(commands),
+                .with_commands(commands)
+                .with_env(env),
         ),
     };
     Ok(quark)
@@ -571,7 +579,12 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
 
 /// Build a live quark from a team-config `Seat`. The seat's `transport` picks CLI vs
 /// ACP; the seat's `vendor` (`claude`/`agy`/…) picks which one within that transport.
-pub fn build_seat(seat: &Seat) -> anyhow::Result<Box<dyn Quark>> {
+///
+/// `store` resolves the seat's `secret_env` NAMES to VALUES (`Seat::resolve_env`) —
+/// tests pass a `MemoryStore`; the daemon passes whatever backs its real credential
+/// store. Resolution happens here, once, so every caller gets the same seam a real
+/// keychain will eventually sit behind.
+pub fn build_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore) -> anyhow::Result<Box<dyn Quark>> {
     build(QuarkSpec {
         id: seat.id.clone(),
         flavor: seat.flavor.clone(),
@@ -583,6 +596,7 @@ pub fn build_seat(seat: &Seat) -> anyhow::Result<Box<dyn Quark>> {
         roles: seat.roles.clone(),
         exclusive: seat.exclusive,
         commands: seat.commands.clone(),
+        env: seat.resolve_env(store).into(),
     })
 }
 
@@ -592,7 +606,11 @@ pub fn build_seat(seat: &Seat) -> anyhow::Result<Box<dyn Quark>> {
 /// Only the ACP transport has a mid-turn stream to publish: the CLI adapters run a
 /// process to completion and hand back one blob, so there is nothing to watch until
 /// it is over. That is a fact about the transports, not an omission here.
-pub fn build_seat_watched(seat: &Seat, live_dir: &std::path::Path) -> anyhow::Result<Box<dyn Quark>> {
+pub fn build_seat_watched(
+    seat: &Seat,
+    live_dir: &std::path::Path,
+    store: &dyn hadron_lattice::secrets::SecretStore,
+) -> anyhow::Result<Box<dyn Quark>> {
     validate_quark_id(&seat.id)?;
     let kind = QuarkKind::from_seat(seat)?;
     if let QuarkKind::Acp(target) = kind {
@@ -601,16 +619,26 @@ pub fn build_seat_watched(seat: &Seat, live_dir: &std::path::Path) -> anyhow::Re
                 .watching(live_dir.to_path_buf())
                 .with_display_name(seat.display_name.clone())
                 .with_roles(seat.roles.clone(), seat.exclusive)
-                .with_commands(seat.commands.clone()),
+                .with_commands(seat.commands.clone())
+                .with_env(seat.resolve_env(store)),
         ));
     }
-    build_seat(seat)
+    build_seat(seat, store)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hadron_lattice::secrets::MemoryStore;
     use hadron_lattice::{AcpCommand, CliSpec};
+
+    /// A fresh, empty `SecretStore` for tests that are not exercising secret
+    /// resolution itself (that is `cli.rs`'s `cli_invocation_carries_resolved_secret_env`)
+    /// — every seat here has an empty `secret_env`, so `resolve_env` always returns
+    /// `[]` regardless of what this store holds.
+    fn store() -> MemoryStore {
+        MemoryStore::new()
+    }
 
     /// A CLI seat, vendor `"agy"`, no explicit `cli` spec and no `command` — the
     /// exact shape a live `cli-agy` seat has today. Must resolve to the built-in
@@ -729,6 +757,7 @@ mod tests {
             roles: Vec::new(),
             exclusive: false,
             commands: SeatCommands::default(),
+            env: RedactedEnv::default(),
         })
         .unwrap();
         assert_eq!(agy.id(), QuarkId::new("agy"));
@@ -745,6 +774,7 @@ mod tests {
             roles: Vec::new(),
             exclusive: false,
             commands: SeatCommands::default(),
+            env: RedactedEnv::default(),
         })
         .unwrap();
         assert_eq!(generic.id(), QuarkId::new("custom"));
@@ -764,6 +794,7 @@ mod tests {
             roles: Vec::new(),
             exclusive: false,
             commands: SeatCommands::default(),
+            env: RedactedEnv::default(),
         });
         assert!(err.is_err());
     }
@@ -782,13 +813,13 @@ mod tests {
     fn build_seat_maps_provider_and_rejects_unknown() {
         use hadron_lattice::Seat;
         let seat = Seat::cli(QuarkId::new("opus"), "agy", "opus-4.8", Flavor::Orchestrator);
-        let q = build_seat(&seat).unwrap();
+        let q = build_seat(&seat, &store()).unwrap();
         assert_eq!(q.id(), QuarkId::new("opus"));
 
         // A CLI seat on an uncatalogued vendor with no `cli` spec and no bare
         // `command` has nothing to build from — still an error.
         let bad = Seat::cli(QuarkId::new("x"), "chatgpt", "gpt-5", Flavor::Worker);
-        assert!(build_seat(&bad).is_err());
+        assert!(build_seat(&bad, &store()).is_err());
     }
 
     /// **The transport seam.** The existing `agy` provider must still resolve to
@@ -932,7 +963,7 @@ mod tests {
     #[test]
     fn building_an_acp_seat_spawns_no_process() {
         let s = acp_seat("acp", "claude");
-        let q = build_seat(&s).unwrap();
+        let q = build_seat(&s, &store()).unwrap();
         assert_eq!(q.id(), QuarkId::new("acp"));
         assert_eq!(q.flavor(), Flavor::Worker);
     }
@@ -954,7 +985,7 @@ mod tests {
         s.roles = vec!["security".to_string()];
         s.exclusive = true;
 
-        let q = build_seat(&s).unwrap();
+        let q = build_seat(&s, &store()).unwrap();
         assert_eq!(q.roles(), vec!["security".to_string()], "roles never reached the built quark");
         assert!(q.exclusive(), "exclusive never reached the built quark");
     }
@@ -974,7 +1005,7 @@ mod tests {
         s.roles = vec!["security".to_string()];
         s.exclusive = true;
 
-        let q = build_seat_watched(&s, dir.path()).unwrap();
+        let q = build_seat_watched(&s, dir.path(), &store()).unwrap();
         assert_eq!(q.roles(), vec!["security".to_string()], "roles never reached the ACP quark");
         assert!(q.exclusive(), "exclusive never reached the ACP quark");
     }
@@ -987,11 +1018,36 @@ mod tests {
         let mut s = seat("cmd-quark", "agy");
         s.commands = SeatCommands { not_allowed: vec!["rm -rf *".into()], ..Default::default() };
 
-        let q = build_seat(&s).unwrap();
+        let q = build_seat(&s, &store()).unwrap();
         assert_eq!(
             q.commands().not_allowed,
             vec!["rm -rf *".to_string()],
             "commands never reached the built quark"
         );
+    }
+
+    /// **The leak-rules test, at the spec level.** `QuarkSpec` derives `Debug`, and
+    /// its `env` field carries the resolved secret between `build_seat` and the
+    /// adapter — so `QuarkSpec`'s `Debug` is just as much a leak vector as
+    /// `CliInvocation`'s. Only the var NAME may ever come back out of `{:?}`.
+    #[test]
+    fn resolved_env_is_not_in_debug_output() {
+        let secret_value = "s3cr3t-payload-xyz789";
+        let spec = QuarkSpec {
+            id: QuarkId::new("agy"),
+            flavor: Flavor::Worker,
+            kind: QuarkKind::Cli(CliSpec::agy()),
+            model: String::new(),
+            effort: None,
+            mode_config: None,
+            display_name: None,
+            roles: Vec::new(),
+            exclusive: false,
+            commands: SeatCommands::default(),
+            env: RedactedEnv(vec![("GEMINI_API_KEY".to_string(), secret_value.to_string())]),
+        };
+        let debug = format!("{spec:?}");
+        assert!(!debug.contains(secret_value), "the secret VALUE leaked into Debug: {debug}");
+        assert!(debug.contains("GEMINI_API_KEY"), "the var NAME should still be visible: {debug}");
     }
 }

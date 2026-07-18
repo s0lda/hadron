@@ -2,6 +2,38 @@ use async_trait::async_trait;
 use hadron_lattice::TurnOutcome;
 use std::path::PathBuf;
 
+/// A resolved secret env, wrapped so a `Debug` derive on the type that carries it
+/// (`QuarkSpec`, `CliInvocation`) can never accidentally print a VALUE.
+///
+/// `Deref`s to the underlying pairs for iteration/`.envs()`; its own `Debug` prints
+/// only the var NAMES — `["GEMINI_API_KEY=<redacted>"]` — never the value. This is
+/// the ONE place a resolved secret's `Debug` shape is defined (CLAUDE.md rule 3:
+/// one definition, one place), so every carrier redacts identically instead of each
+/// one having to remember to.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct RedactedEnv(pub Vec<(String, String)>);
+
+impl std::fmt::Debug for RedactedEnv {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list()
+            .entries(self.0.iter().map(|(k, _)| format!("{k}=<redacted>")))
+            .finish()
+    }
+}
+
+impl std::ops::Deref for RedactedEnv {
+    type Target = Vec<(String, String)>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<Vec<(String, String)>> for RedactedEnv {
+    fn from(pairs: Vec<(String, String)>) -> Self {
+        RedactedEnv(pairs)
+    }
+}
+
 /// A single CLI invocation: the program, its args, the text piped to stdin, and
 /// **the directory it runs in**.
 ///
@@ -16,6 +48,10 @@ pub struct CliInvocation {
     pub args: Vec<String>,
     pub stdin: String,
     pub cwd: PathBuf,
+    /// A seat's resolved secret env — `(name, value)` pairs from `Seat::resolve_env`
+    /// — carried through to `Command::env()` and NOWHERE else. Wrapped in
+    /// `RedactedEnv` so this struct's derived `Debug` cannot leak a value.
+    pub env: RedactedEnv,
 }
 
 /// The result of one invocation. Kept CLI-agnostic: session ids and other
@@ -60,6 +96,9 @@ impl CliRunner for ProcessRunner {
             // THE fix: the CLI runs in the quark's own worktree, not wherever the
             // daemon happened to be launched from.
             .current_dir(&inv.cwd)
+            // A seat's resolved secrets. This is the ONLY place a resolved value
+            // reaches anything — never argv, never a log line, never the field.
+            .envs(inv.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -176,6 +215,7 @@ mod tests {
                 args: vec![],
                 stdin: "hello world".into(),
                 cwd: std::env::temp_dir(),
+                env: RedactedEnv::default(),
             })
             .await
             .unwrap();
@@ -195,6 +235,7 @@ mod tests {
                 args: vec!["-c".into(), "true".into()],
                 stdin: String::new(),
                 cwd: PathBuf::from("/definitely/not/a/real/directory"),
+                env: RedactedEnv::default(),
             })
             .await
             .expect_err("a missing cwd must fail the spawn");
@@ -222,6 +263,7 @@ mod tests {
                 args: vec![],
                 stdin: String::new(),
                 cwd: want.clone(),
+                env: RedactedEnv::default(),
             })
             .await
             .unwrap();
@@ -237,12 +279,32 @@ mod tests {
                 args: vec!["-c".into(), "echo boom >&2; exit 3".into()],
                 stdin: String::new(),
                 cwd: std::env::temp_dir(),
+                env: RedactedEnv::default(),
             })
             .await
             .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("boom"), "stderr should surface in the error: {msg}");
         assert!(msg.contains('3'), "exit code should surface: {msg}");
+    }
+
+    /// **The other end of the CLI carry path.** `inv.env` is a seat's resolved secret
+    /// — it must land in the subprocess's actual environment via `Command::envs()`,
+    /// not just ride along inert on the struct.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_runner_passes_env_to_the_subprocess() {
+        let out = ProcessRunner
+            .run(CliInvocation {
+                program: "sh".into(),
+                args: vec!["-c".into(), "echo \"$SECRET_VAR\"".into()],
+                stdin: String::new(),
+                cwd: std::env::temp_dir(),
+                env: RedactedEnv(vec![("SECRET_VAR".into(), "s3cr3t-payload".into())]),
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.stdout.trim(), "s3cr3t-payload");
     }
 
     #[tokio::test]
@@ -254,6 +316,7 @@ mod tests {
                 args: vec!["-p".into()],
                 stdin: "a".into(),
                 cwd: PathBuf::from("/tmp"),
+                env: RedactedEnv::default(),
             })
             .await
             .unwrap();
@@ -263,6 +326,7 @@ mod tests {
                 args: vec![],
                 stdin: "b".into(),
                 cwd: PathBuf::from("/tmp"),
+                env: RedactedEnv::default(),
             })
             .await
             .unwrap();
@@ -274,5 +338,24 @@ mod tests {
         assert_eq!(recorded[0].program, "claude");
         assert_eq!(recorded[0].stdin, "a");
         assert_eq!(recorded[1].program, "agy");
+    }
+
+    /// **The leak-rules test.** A resolved secret's VALUE must never come back out of
+    /// `{:?}` — not on `CliInvocation`, and not on `RedactedEnv` alone. Only the var
+    /// NAME may appear.
+    #[test]
+    fn resolved_env_is_not_in_debug_output() {
+        let secret_value = "s3cr3t-payload-xyz789";
+        let inv = CliInvocation {
+            program: "agy".into(),
+            args: vec![],
+            stdin: String::new(),
+            cwd: PathBuf::from("/tmp"),
+            env: RedactedEnv(vec![("GEMINI_API_KEY".into(), secret_value.into())]),
+        };
+        let debug = format!("{inv:?}");
+        assert!(!debug.contains(secret_value), "the secret VALUE leaked into Debug: {debug}");
+        assert!(debug.contains("GEMINI_API_KEY"), "the var NAME should still be visible: {debug}");
+        assert!(debug.contains("<redacted>"), "must say the value was redacted, not just omit it: {debug}");
     }
 }

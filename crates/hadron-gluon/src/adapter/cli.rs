@@ -5,7 +5,7 @@ use hadron_lattice::{
 };
 use std::path::PathBuf;
 
-use crate::adapter::runner::{reply_to_outcome, CliInvocation, CliRunner};
+use crate::adapter::runner::{reply_to_outcome, CliInvocation, CliRunner, RedactedEnv};
 use crate::quark::Quark;
 
 /// Linux's hard cap on a **single** argv element (`MAX_ARG_STRLEN` = 32 pages =
@@ -124,6 +124,10 @@ pub struct CliQuark<R: CliRunner> {
     exclusive: bool,
     /// This quark's per-seat command allow/deny lists (see [`Quark::commands`]).
     commands: SeatCommands,
+    /// This seat's resolved secret env — `(name, value)` pairs from
+    /// `Seat::resolve_env`. Carried onto every [`CliInvocation`] and NOWHERE else
+    /// (never argv, never a log line, never the field/prompt).
+    env: RedactedEnv,
     /// Whether this quark already has a conversation for `spec.resume` to resume.
     ///
     /// In-memory on purpose: a daemon restart resets it, and the next turn re-sends
@@ -146,6 +150,7 @@ impl<R: CliRunner> CliQuark<R> {
             roles: Vec::new(),
             exclusive: false,
             commands: SeatCommands::default(),
+            env: RedactedEnv::default(),
         }
     }
 
@@ -165,6 +170,13 @@ impl<R: CliRunner> CliQuark<R> {
     /// Set the per-seat command allow/deny lists (from the resolved seat).
     pub fn with_commands(mut self, commands: SeatCommands) -> Self {
         self.commands = commands;
+        self
+    }
+
+    /// Set this seat's resolved secret env (from `Seat::resolve_env`), carried onto
+    /// every invocation's `CliInvocation.env`.
+    pub fn with_env(mut self, env: impl Into<RedactedEnv>) -> Self {
+        self.env = env.into();
         self
     }
 
@@ -202,7 +214,7 @@ impl<R: CliRunner> CliQuark<R> {
         }
         args.extend(self.spec.posture.for_mode(mode).iter().cloned());
 
-        CliInvocation { program: self.spec.program.clone(), args, stdin, cwd }
+        CliInvocation { program: self.spec.program.clone(), args, stdin, cwd, env: self.env.clone() }
     }
 }
 
@@ -492,6 +504,37 @@ mod tests {
         assert!(
             !resumed_prompt.contains("MEMORABLE-TRANSCRIPT-LINE"),
             "a resumed turn re-sent the transcript agy already has"
+        );
+    }
+
+    /// **The CLI carry path, end to end.** A seat's `secret_env` names resolve
+    /// through a `SecretStore` to `(name, value)` pairs (`Seat::resolve_env`, from a
+    /// prior task) and must land on the `CliInvocation` the runner actually receives
+    /// — never anywhere else. Drives the real `MemoryStore` → `resolve_env` →
+    /// `with_env` → `CliInvocation.env` chain; never a real keychain, never a real
+    /// spawn (`FakeRunner`).
+    #[tokio::test]
+    async fn cli_invocation_carries_resolved_secret_env() {
+        use hadron_lattice::secrets::{MemoryStore, SecretStore};
+        use hadron_lattice::Seat;
+
+        let mut seat = Seat::cli(QuarkId::new("cli-agy"), "agy", "", Flavor::Worker);
+        seat.secret_env = vec!["GEMINI_API_KEY".to_string()];
+
+        let store = MemoryStore::new();
+        store.set(&seat.id, "GEMINI_API_KEY", "k").unwrap();
+
+        let runner = FakeRunner::with_stdout(vec!["ok"]);
+        let mut q = CliQuark::new(seat.id.clone(), Flavor::Worker, "", CliSpec::agy(), runner)
+            .with_env(seat.resolve_env(&store));
+
+        q.excite(projection("go")).await.unwrap();
+
+        let recorded = q.runner.recorded.lock().unwrap();
+        assert_eq!(
+            recorded[0].env.0,
+            vec![("GEMINI_API_KEY".to_string(), "k".to_string())],
+            "the resolved secret must reach CliInvocation.env"
         );
     }
 
