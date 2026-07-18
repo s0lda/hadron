@@ -211,6 +211,7 @@ pub fn completion_candidates(
             let cmds = [
                 ("clear", "Archive and clear the current chat history"),
                 ("team-brainstorm", "Kick off brainstorming with the team"),
+                ("reboot", "Force-restart a resident quark (e.g. /reboot @acp-claude or /reboot all)"),
                 ("toggle-roster", "Toggle the Roster sidebar"),
                 ("toggle-inspector", "Toggle the Inspector sidebar"),
                 ("goal", "Run a long-running task thoroughly"),
@@ -304,6 +305,11 @@ mod tests {
         let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels.contains(&"/toggle-roster"), "matched toggle-roster offered: {labels:?}");
         assert!(completion_candidates("/goa", 4, &[], &[]).is_some());
+        
+        let c_reboot = completion_candidates("/reb", 4, &[], &[]).expect("has rows");
+        let labels_reboot: Vec<&str> = c_reboot.candidates.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels_reboot.contains(&"/reboot"), "matched reboot offered: {labels_reboot:?}");
+        
         // Mid-line `/` is not a trigger (see extract_completion_query).
         assert!(completion_candidates("hi /goa", 8, &[], &[]).is_none());
     }
