@@ -715,7 +715,9 @@ impl Chamber {
             // dot), just smaller. Scrolls within the strip (mirrors the expanded
             // roster's own `overflow_y_scroll` rows) so a long roster doesn't
             // push the pinned Settings button off the bottom.
-            let mut avatars = v_flex().w_full().gap_2().items_center();
+            // A touch of horizontal padding + a smaller (20px) avatar so the folded
+            // avatars keep a clear gutter from the strip edges instead of touching them.
+            let mut avatars = v_flex().w_full().gap_2p5().items_center().px_1();
             for r in &self.view.roster {
                 let id = self.resolve_identity(&r.id);
                 let dot_color = if r.adopted && r.enabled {
@@ -727,7 +729,7 @@ impl Chamber {
                     .absolute()
                     .bottom_0()
                     .right_0()
-                    .size(px(8.0))
+                    .size(px(7.0))
                     .rounded_full()
                     .bg(dot_color)
                     .border_2()
@@ -738,7 +740,7 @@ impl Chamber {
                         .relative()
                         .child(
                             div()
-                                .child(identity_avatar(&id, 24.0))
+                                .child(identity_avatar(&id, 20.0))
                                 .map(|el| if r.enabled { el } else { el.opacity(0.6) }),
                         )
                         .child(dot),
