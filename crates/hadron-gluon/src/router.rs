@@ -885,4 +885,81 @@ mod tests {
         assert!(task_names_card_specifically("@security-reviewer please look", &sec, &p));
         assert!(!task_names_card_specifically("please fix the css typo", &sec, &p));
     }
+
+    // ---- review follow-up: role pass / card_for_role cross-checks -------------
+
+    /// Direct cross-check of the drift risk `card_for_role`'s doc comment flags:
+    /// the role pass (fused text-match loop) and the persona pass (`card_for_role`,
+    /// a separate direct lookup) must independently agree on which seat a SHARED
+    /// role resolves to. Two cards carry "security"; `@security` (role pass) and
+    /// `@security-reviewer` (persona pass, `preferred_role: security`) must land
+    /// on the exact same first-roster-order card — this is not tautological: the
+    /// two assertions exercise two genuinely different code paths
+    /// (`try_match`-fused role loop vs. `card_for_role`'s `.find()`) against the
+    /// same roster, not the same call twice.
+    ///
+    /// The depleted variant re-runs both against a roster where the FIRST
+    /// same-role card is `Depleted`, proving the two paths also agree on
+    /// *skipping* it and falling through to the second — the other half of the
+    /// shared "skip-depleted, roster-order-wins" rule.
+    #[test]
+    fn persona_and_its_role_resolve_to_the_same_card() {
+        let r = vec![card("sec-a", &["security"]), card("sec-b", &["security"])];
+        let p = vec![persona("security-reviewer", "security")];
+
+        let via_role = human_mentions("@security go", &r, &p);
+        let via_persona = human_mentions("@security-reviewer go", &r, &p);
+        assert_eq!(via_role, vec![QuarkId::new("sec-a")], "the role pass must land on the first same-role card");
+        assert_eq!(via_persona, vec![QuarkId::new("sec-a")], "the persona pass must land on the SAME card");
+        assert_eq!(via_role, via_persona, "role pass and persona pass must never disagree about a shared role");
+
+        // Same roster, first same-role card now Depleted — both paths must skip
+        // it identically and resolve to the second.
+        let mut first_depleted = r.clone();
+        first_depleted[0].energy = EnergyState::Depleted;
+        assert_eq!(
+            human_mentions("@security go", &first_depleted, &p),
+            vec![QuarkId::new("sec-b")],
+            "the role pass must skip a depleted seat"
+        );
+        assert_eq!(
+            human_mentions("@security-reviewer go", &first_depleted, &p),
+            vec![QuarkId::new("sec-b")],
+            "the persona pass must skip a depleted seat the same way"
+        );
+    }
+
+    /// A card's OWN role beats a persona named identically: the role pass runs
+    /// BEFORE the persona pass (`match_longest_mention`'s gate), so `@architect`
+    /// resolves to whichever seat carries the role `architect`, never through a
+    /// persona whose `name` happens to also be `architect` — even when that
+    /// persona's `preferred_role` points somewhere else entirely.
+    #[test]
+    fn a_cards_role_beats_a_same_named_persona() {
+        let r = vec![card("qa1", &["architect"])];
+        // A persona named identically to the role, but preferring a DIFFERENT
+        // role held by no one — if the persona pass ever won here, this would
+        // resolve to nobody instead of `qa1`.
+        let p = vec![persona("architect", "some-other-role-nobody-has")];
+        assert_eq!(human_mentions("@architect go", &r, &p), vec![QuarkId::new("qa1")]);
+
+        // A same-length persona name ties with the role text under
+        // `try_match`'s strict `len > *best_len` comparison, so the assertion
+        // above alone would still pass even if the persona pass's precedence
+        // GATE (`if best_match.is_none()`) were deleted — the role pass simply
+        // runs first in source order and the tie never overwrites it. This
+        // second case is gate-sensitive: a persona name LONGER than the role
+        // text is a legal literal match too (spaces are valid inside a mention
+        // name, per `match_longest_mention`'s own doc comment), so if the
+        // persona pass were ever allowed to run unconditionally, its strictly
+        // LONGER match would overwrite the role pass's shorter one under plain
+        // longest-match rules. Only the gate stops that.
+        let r2 = vec![card("qa1", &["architect"]), card("qa3", &["support"])];
+        let p2 = vec![persona("architect team", "support")];
+        assert_eq!(
+            human_mentions("@architect team please help", &r2, &p2),
+            vec![QuarkId::new("qa1")],
+            "role precedence must hold even when a persona name is a literally LONGER match"
+        );
+    }
 }
