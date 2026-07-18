@@ -3,6 +3,7 @@ pub mod live;
 mod nucleus;
 mod projection;
 mod quark;
+pub mod secrets;
 mod snapshot;
 mod team;
 mod telemetry;
