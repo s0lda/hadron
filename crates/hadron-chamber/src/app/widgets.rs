@@ -303,11 +303,12 @@ pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::A
                         .opacity(if r.enabled { 0.7 } else { 0.4 })
                         .truncate()
                         .child(detail_2),
-                ),
+                )
+                // Effort + permission-mode tags on their OWN line beneath the details, so
+                // they never compete with the name/model column for horizontal width
+                // (which was truncating the model). Full row width, left-aligned.
+                .child(h_flex().mt_0p5().child(controls)),
         )
-        // Trailing controls: effort tag, effective permission mode (click to cycle a
-        // per-quark override), and — for a resident seat — the ⟳ restart glyph.
-        .child(controls)
         .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
 }
 
@@ -463,8 +464,16 @@ pub(super) fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
         ModeTagStyle::Solid => tag,
         ModeTagStyle::Outline => tag.outline(),
     };
+    // A quark with no per-quark override reads "Default" (it's on the global/inherited
+    // mode); the tag's colour still carries the resolved temperature so you can see what
+    // the default currently resolves to. An override shows the mode name outright.
+    let label = if is_override {
+        mode_label(mode).to_string()
+    } else {
+        "Default".to_string()
+    };
     tag.small()
-        .child(div().child(mode_label(mode).to_string()))
+        .child(div().child(label))
         .into_any_element()
 }
 
