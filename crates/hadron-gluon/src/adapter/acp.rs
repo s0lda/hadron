@@ -55,7 +55,34 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, ConnectionTo};
 
 use crate::adapter::registry::AcpTarget;
+use crate::adapter::runner::RedactedEnv;
 use crate::quark::Quark;
+
+/// Build the ACP JSON stdio descriptor `AcpAgent::from_str` parses (see the crate
+/// doc example on `AcpAgent`), with a resolved secret env baked into its `env`
+/// array. `agent_client_protocol::AcpAgent::spawn_process` applies each entry via
+/// `cmd.env(name, value)` before spawning (`agent-client-protocol` 1.2.0,
+/// `acp_agent.rs:185-187`) — this is how a secret VALUE reaches the ACP transport
+/// without ever riding on argv or a bare command string.
+///
+/// Pure and side-effect-free on purpose: no process is spawned here, so it is
+/// unit-testable without touching a real agent.
+fn acp_stdio_descriptor(program: &str, args: &[String], env: &[(String, String)]) -> String {
+    let env_json: Vec<serde_json::Value> = env
+        .iter()
+        .map(|(name, value)| serde_json::json!({ "name": name, "value": value }))
+        .collect();
+    serde_json::json!({
+        "type": "stdio",
+        // The descriptor requires a human-readable name; the program itself is a
+        // fine one and carries no secret.
+        "name": program,
+        "command": program,
+        "args": args,
+        "env": env_json,
+    })
+    .to_string()
+}
 
 /// One turn, handed to the resident pump.
 struct TurnRequest {
@@ -410,6 +437,10 @@ pub struct AcpQuark {
     exclusive: bool,
     /// This quark's per-seat command allow/deny lists (see [`Quark::commands`]).
     commands: SeatCommands,
+    /// This seat's resolved secret env — `(name, value)` pairs from
+    /// `Seat::resolve_env`. Carried into the ACP boot's JSON stdio descriptor's
+    /// `env` array (see [`acp_stdio_descriptor`]) and NOWHERE else.
+    env: RedactedEnv,
     /// The model this seat **asks** for. It is not necessarily the one that runs: the
     /// agent advertises what it can offer on `session/new` and we match against that
     /// (see [`model_selector`] and [`resolve_model`]). The model that actually ran is
@@ -438,6 +469,7 @@ impl AcpQuark {
             roles: Vec::new(),
             exclusive: false,
             commands: SeatCommands::default(),
+            env: RedactedEnv::default(),
             model: model.into(),
             effort,
             mode_config,
@@ -479,6 +511,13 @@ impl AcpQuark {
         self
     }
 
+    /// Set this seat's resolved secret env (from `Seat::resolve_env`), carried into
+    /// the boot's JSON stdio descriptor.
+    pub fn with_env(mut self, env: impl Into<RedactedEnv>) -> Self {
+        self.env = env.into();
+        self
+    }
+
     /// The model the agent reported it is **actually** running, once a session is open.
     ///
     /// **Implemented, unwired.** Nothing consumes this yet, and that is a deliberate
@@ -507,6 +546,7 @@ impl AcpQuark {
         want_effort: Option<String>,
         want_mode: Option<String>,
         live: Option<LiveFeed>,
+        env: Vec<(String, String)>,
     ) -> anyhow::Result<AcpSession> {
         let (turns_tx, mut turns_rx) = tokio::sync::mpsc::unbounded_channel::<TurnRequest>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<()>>();
@@ -518,7 +558,15 @@ impl AcpQuark {
         let model = Arc::new(Mutex::new(None::<String>));
         let pump_model = Arc::clone(&model);
 
-        let command = target.command_line();
+        // `display_command` is what ever appears in a diagnostic — the bare command
+        // line, no secrets. `agent_source` is the JSON stdio descriptor actually
+        // handed to `AcpAgent::from_str`, which is the only place `env`'s resolved
+        // VALUES go: they must never end up in an error string, a log line, or
+        // anything else that could surface them. An empty `env` produces a
+        // `{"env": []}` descriptor, which `AcpAgent`'s stdio spawn treats identically
+        // to the old bare-command path (see `acp_stdio_descriptor_no_env_matches_bare_command`).
+        let display_command = target.command_line();
+        let agent_source = acp_stdio_descriptor(&target.program, &target.args, &env);
         // The reply accumulator and the context watermark are written by the
         // notification handler (which the SDK drives on the connection) and read by
         // the turn pump. Hence the Arcs.
@@ -536,8 +584,10 @@ impl AcpQuark {
             .name("hadron-acp".to_string())
             .spawn(move || {
                 let outcome: anyhow::Result<()> = futures::executor::block_on(async move {
-                    let agent = AcpAgent::from_str(&command)
-                        .map_err(|e| anyhow::anyhow!("bad ACP command {command:?}: {e}"))?;
+                    // NEVER format `agent_source` into an error: it carries the
+                    // resolved secret values. `display_command` is the safe stand-in.
+                    let agent = AcpAgent::from_str(&agent_source)
+                        .map_err(|e| anyhow::anyhow!("bad ACP command {display_command:?}: {e}"))?;
 
                     let connect = agent_client_protocol::Client
                         .builder()
@@ -870,6 +920,7 @@ impl AcpQuark {
                 self.effort.clone(),
                 self.mode_config.clone(),
                 self.live.clone(),
+                self.env.0.clone(),
             )?);
         }
         let session = self.session.as_ref().expect("just booted");
@@ -1192,6 +1243,59 @@ mod tests {
         );
         let custom = AcpTarget { program: "goose".into(), args: vec!["acp".into()] };
         assert_eq!(custom.command_line(), "goose acp");
+    }
+
+    /// **The ACP carry path's pure core.** A resolved secret env must reach the
+    /// descriptor's `env` array in the exact shape `AcpAgent::from_str` (and the
+    /// underlying `McpServerStdio`/`EnvVariable` schema) expects — proven here by
+    /// round-tripping it through `AcpAgent::from_str` itself, not by re-implementing
+    /// the schema's shape as a second source of truth.
+    #[test]
+    fn acp_stdio_descriptor_includes_env() {
+        let json = acp_stdio_descriptor(
+            "python",
+            &["a.py".to_string()],
+            &[("GEMINI_API_KEY".to_string(), "k".to_string())],
+        );
+
+        let agent = AcpAgent::from_str(&json).expect("a well-formed stdio descriptor parses");
+        let agent_client_protocol::schema::v1::McpServer::Stdio(stdio) = agent.into_server() else {
+            panic!("expected a Stdio descriptor");
+        };
+        assert_eq!(stdio.command, std::path::PathBuf::from("python"));
+        assert_eq!(stdio.args, vec!["a.py".to_string()]);
+        assert_eq!(stdio.env.len(), 1);
+        assert_eq!(stdio.env[0].name, "GEMINI_API_KEY");
+        assert_eq!(stdio.env[0].value, "k");
+    }
+
+    /// **The no-secrets equivalence guarantee.** `boot` now ALWAYS builds a JSON
+    /// descriptor instead of a bare command string, so an ACP seat with no
+    /// `secret_env` must resolve to the exact same `command`/`args`/empty-`env` that
+    /// the old `AcpAgent::from_str(&target.command_line())` path produced — a seat
+    /// with no secrets must see no behaviour change at all.
+    #[test]
+    fn acp_stdio_descriptor_no_env_matches_bare_command() {
+        let target = AcpTarget::claude_adapter();
+        let json = acp_stdio_descriptor(&target.program, &target.args, &[]);
+
+        let via_json = AcpAgent::from_str(&json).unwrap();
+        let via_bare = AcpAgent::from_str(&target.command_line()).unwrap();
+
+        let agent_client_protocol::schema::v1::McpServer::Stdio(json_stdio) = via_json.into_server() else {
+            panic!("expected a Stdio descriptor");
+        };
+        let agent_client_protocol::schema::v1::McpServer::Stdio(bare_stdio) = via_bare.into_server() else {
+            panic!("expected a Stdio descriptor");
+        };
+
+        // `name` is a cosmetic label only (`AcpAgent`'s stdio spawn never reads it —
+        // see `spawn_process`), so it is deliberately excluded from this comparison;
+        // only `command`/`args`/`env` affect what actually gets spawned.
+        assert_eq!(json_stdio.command, bare_stdio.command);
+        assert_eq!(json_stdio.args, bare_stdio.args);
+        assert!(json_stdio.env.is_empty(), "no secret_env must mean an empty env array");
+        assert_eq!(json_stdio.env.len(), bare_stdio.env.len());
     }
 
     /// A boot that cannot possibly work must FAIL the turn, not hang it. The pump
