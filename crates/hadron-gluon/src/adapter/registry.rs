@@ -928,4 +928,24 @@ mod tests {
         assert_eq!(q.roles(), vec!["security".to_string()], "roles never reached the built quark");
         assert!(q.exclusive(), "exclusive never reached the built quark");
     }
+
+    /// The site the brief flagged as easiest to miss: `build_seat_watched`'s ACP
+    /// fast-path constructs `AcpQuark` directly, bypassing `build()` entirely — so
+    /// `build_seat`'s coverage above proves nothing about it. This is also the
+    /// daemon's REAL production path for a resident quark (`seat_quarks`/
+    /// `apply_reseat` call `build_seat_watched`), so an untested gap here would mean
+    /// the live `@Claude` seat's roles never actually reach its roster card.
+    /// Building spawns nothing (see `building_an_acp_seat_spawns_no_process`), so
+    /// this is free and INERT.
+    #[test]
+    fn build_seat_watched_carries_roles_onto_an_acp_quark() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = acp_seat("acp-sec", "claude");
+        s.roles = vec!["security".to_string()];
+        s.exclusive = true;
+
+        let q = build_seat_watched(&s, dir.path()).unwrap();
+        assert_eq!(q.roles(), vec!["security".to_string()], "roles never reached the ACP quark");
+        assert!(q.exclusive(), "exclusive never reached the ACP quark");
+    }
 }
