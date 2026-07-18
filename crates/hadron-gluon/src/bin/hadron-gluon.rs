@@ -291,11 +291,12 @@ async fn main() {
         let _ = hadron_lattice::live::clear(&live_dir, &seat.id);
     }
 
-    // TODO(next task): a real `KeyringStore` backs this once it exists — this daemon
-    // has never resolved a live secret and `MemoryStore` starts empty, so
-    // `resolve_env` returns `[]` for every seat and behaviour is unchanged from
-    // before this task.
-    let secret_store = hadron_lattice::secrets::MemoryStore::new();
+    // Real seats get real keys: `KeyringStore` resolves each seat's
+    // `secret_env` names against the OS credential store (Keychain /
+    // Credential Manager / Secret Service). team.json only ever holds names;
+    // values live only in the keychain. See `hadron_gluon::secrets` and the
+    // Security note in the encrypted-secrets design doc.
+    let secret_store = hadron_gluon::secrets::KeyringStore::new();
 
     let (quarks, mode_label) = seat_quarks(&team, &live_dir, &secret_store);
     if quarks.is_empty() {

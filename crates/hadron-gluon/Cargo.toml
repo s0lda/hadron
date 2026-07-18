@@ -25,6 +25,7 @@ tokio = { version = "1", features = [
 agent-client-protocol = { version = "1.2.0", features = ["unstable_end_turn_token_usage"] }
 futures = "0.3"
 chrono = "0.4.45"
+keyring = { version = "4.1.5", default-features = false, features = ["v1"] }
 
 [dev-dependencies]
 chrono = "0.4.45"
