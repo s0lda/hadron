@@ -259,6 +259,10 @@ pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::A
 
     h_flex()
         .id(SharedString::from(format!("quark-{}", r.id)))
+        // `relative` so the trailing tags can be pinned to the row's top-right corner
+        // (absolute, below) instead of riding in the flex flow — where, as `flex_none`
+        // siblings, they stole width from the name/model column and truncated the model.
+        .relative()
         .items_start()
         .gap_2p5()
         .px_2()
@@ -286,6 +290,11 @@ pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::A
                         .text_sm()
                         .text_color(if r.enabled { theme::text() } else { theme::text_muted() })
                         .truncate()
+                        // Reserve room for the absolutely-pinned tags on this (name) line,
+                        // so a long name truncates before the tags rather than under them.
+                        // The model/detail lines below carry no such reserve — they get the
+                        // full width back.
+                        .pr(px(88.))
                         .child(name),
                 )
                 .child(
@@ -305,9 +314,17 @@ pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::A
                         .child(detail_2),
                 ),
         )
-        // Trailing controls: effort tag, effective permission mode (click to cycle a
-        // per-quark override), and — for a resident seat — the ⟳ restart glyph.
-        .child(controls)
+        // Trailing controls (effort + permission-mode tags), pinned absolutely to the
+        // row's top-right so they don't compete with the name/model column for width
+        // (which was truncating the model). They sit on the name line only, so the
+        // model/detail lines below get the full row width back.
+        .child(
+            div()
+                .absolute()
+                .top(px(6.))
+                .right(px(8.))
+                .child(controls),
+        )
         .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
 }
 
@@ -463,8 +480,16 @@ pub(super) fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
         ModeTagStyle::Solid => tag,
         ModeTagStyle::Outline => tag.outline(),
     };
+    // A quark with no per-quark override reads "Default" (it's on the global/inherited
+    // mode); the tag's colour still carries the resolved temperature so you can see what
+    // the default currently resolves to. An override shows the mode name outright.
+    let label = if is_override {
+        mode_label(mode).to_string()
+    } else {
+        "Default".to_string()
+    };
     tag.small()
-        .child(div().child(mode_label(mode).to_string()))
+        .child(div().child(label))
         .into_any_element()
 }
 
