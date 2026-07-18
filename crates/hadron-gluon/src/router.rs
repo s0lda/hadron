@@ -1,5 +1,7 @@
 use hadron_lattice::{Actor, EnergyState, Event, Flavor, Kind, QuarkCard, QuarkId, QuarkState};
 
+use crate::personas::Persona;
+
 /// Which quark should be excited next.
 ///
 /// v1 rule (stateless, reconstructed from the field): find the most recent event
@@ -108,12 +110,44 @@ fn boundary_match(text: &str, target_name: &str) -> bool {
     !matches!(next_char, Some(c) if c.is_alphanumeric() || c == '-' || c == '_')
 }
 
+/// First enabled (non-depleted) card in roster order carrying `role` (case-
+/// insensitive) — "enabled" here meaning the same *selection* filter the role
+/// pass below applies (a depleted seat is skipped), not the id/alias path's
+/// "resolve even a disabled seat" rule.
+///
+/// This is the persona pass's counterpart to the role pass's fused text-match
+/// loop below, not a literal extraction of it: the role pass matches TEXT
+/// against roster role strings it doesn't know in advance (so it fuses the
+/// match into `try_match`'s longest-wins scan); the persona pass already has
+/// the exact `preferred_role` string in hand from a persona that matched by
+/// name, so it needs only a direct roster-order lookup. Both agree on roster-
+/// order-wins-ties and skip-depleted, so a role resolved by `@role` and by
+/// `@persona-name` never disagree about which seat holds it — but the role
+/// pass itself is deliberately left untouched: threading every card/role pair
+/// through this instead risks shifting the existing equal-length tie order.
+fn card_for_role<'a>(roster: &'a [QuarkCard], role: &str) -> Option<&'a QuarkCard> {
+    roster.iter().find(|card| {
+        card.energy != EnergyState::Depleted
+            && card.roles.iter().any(|r| !r.is_empty() && r.eq_ignore_ascii_case(role))
+    })
+}
+
 /// Tries to find the longest target that matches the START of `text` (case-insensitively).
 /// To prevent partial word matches (e.g. `@Google` matching `@GoogleBot`),
 /// the character immediately following the match in `text` must NOT be a valid
 /// intra-word mention character (alphanumeric, '-', '_'). Note that spaces ARE
 /// allowed inside display names, but a matched name's boundary still applies.
-fn match_longest_mention<'a>(text: &str, roster: &'a [QuarkCard]) -> Option<(usize, ResolvedMention<'a>)> {
+///
+/// `personas` adds a fourth, LOWEST-precedence pass (after id/alias/role): a
+/// token matching a persona's `name` resolves as if it were that persona's
+/// `preferred_role` — i.e. via [`card_for_role`]. A persona with no
+/// `preferred_role`, or whose role holds no seat, simply never matches here —
+/// no panic, no error, the same soft fall-through an unmatched `@role` gets.
+fn match_longest_mention<'a>(
+    text: &str,
+    roster: &'a [QuarkCard],
+    personas: &[Persona],
+) -> Option<(usize, ResolvedMention<'a>)> {
     // A free function rather than a capturing closure: `best_match` is passed in
     // explicitly so the borrow ends when each call returns, letting the id/alias
     // pass and the role pass below run as two separate, sequential loops over
@@ -174,6 +208,21 @@ fn match_longest_mention<'a>(text: &str, roster: &'a [QuarkCard]) -> Option<(usi
         }
     }
 
+    // Persona resolution (Phase 2, soft): only attempted when NOTHING above
+    // matched — id, alias, AND role all keep precedence over a persona name,
+    // same "separate, later pass" reasoning the role pass's own comment gives
+    // for id/alias. A persona name resolves to whichever seat carries its
+    // `preferred_role` (`card_for_role`); a persona with no `preferred_role`,
+    // or whose role holds no seat, is simply skipped — soft fall-through, not
+    // an error.
+    if best_match.is_none() {
+        for persona in personas {
+            let Some(role) = &persona.preferred_role else { continue };
+            let Some(card) = card_for_role(roster, role) else { continue };
+            try_match(text, persona.name.as_str(), ResolvedMention::Quark(card), &mut best_match);
+        }
+    }
+
     best_match
 }
 
@@ -189,12 +238,17 @@ fn match_longest_mention<'a>(text: &str, roster: &'a [QuarkCard]) -> Option<(usi
 /// its reply to whoever it happened to name: the original whole-body scan tagged
 /// opus's reply `→ agy` merely because it quoted the string `@agy`, spuriously
 /// exciting agy. Sender-exclusion is kept as a belt-and-suspenders guard.
-pub fn parse_addressee(body: &str, roster: &[QuarkCard], sender: Option<&QuarkId>) -> Option<QuarkId> {
+pub fn parse_addressee(
+    body: &str,
+    roster: &[QuarkCard],
+    sender: Option<&QuarkId>,
+    personas: &[Persona],
+) -> Option<QuarkId> {
     for line in body.lines() {
         let Some(rest) = line.trim_start().strip_prefix('@') else {
             continue;
         };
-        if let Some((_, resolution)) = match_longest_mention(rest, roster) {
+        if let Some((_, resolution)) = match_longest_mention(rest, roster, personas) {
             match resolution {
                 ResolvedMention::Quark(card) => {
                     // Sender-exclusion also makes `@orchestrator` a no-op for the
@@ -217,16 +271,16 @@ pub fn parse_addressee(body: &str, roster: &[QuarkCard], sender: Option<&QuarkId
 /// they name — so "@opus do X and you @agy do Y" returns `[opus, agy]` and the
 /// daemon fans the turn out to each. Mentions of ids not on the roster are
 /// ignored; an `@` not starting a word (e.g. inside `email@host`) is not a mention.
-pub fn human_mentions(body: &str, roster: &[QuarkCard]) -> Vec<QuarkId> {
+pub fn human_mentions(body: &str, roster: &[QuarkCard], personas: &[Persona]) -> Vec<QuarkId> {
     let mut out: Vec<QuarkId> = Vec::new();
     let mut i = 0;
     while let Some(at_idx) = body[i..].find('@') {
         let actual_at = i + at_idx;
         let valid_start = actual_at == 0 || body.as_bytes()[actual_at - 1].is_ascii_whitespace();
-        
+
         if valid_start {
             let rest = &body[actual_at + 1..];
-            if let Some((match_len, resolution)) = match_longest_mention(rest, roster) {
+            if let Some((match_len, resolution)) = match_longest_mention(rest, roster, personas) {
                 match resolution {
                     ResolvedMention::Team => {
                         for card in roster {
@@ -275,7 +329,15 @@ pub fn human_mentions(body: &str, roster: &[QuarkCard]) -> Vec<QuarkId> {
 /// router's `@role` resolution land on this exact card." Two cards can share a role,
 /// and a task naming that role is a role-matching task for BOTH of them even though
 /// `@role` mention-routing only ever picks one (roster-order tie-break).
-pub fn task_names_card_specifically(task: &str, card: &QuarkCard) -> bool {
+///
+/// `personas` extends the same reasoning one hop further: a persona names one
+/// role, and a task naming that persona is treated as naming EVERY card that
+/// carries the persona's `preferred_role` — not just the one seat `@persona-name`
+/// mention-routing would land on. A persona addresses a role, not a specific
+/// seat, so admitting it is consistent with (not a new exception to) the
+/// shared-role rule above; a persona with no `preferred_role` never matches
+/// any card here.
+pub fn task_names_card_specifically(task: &str, card: &QuarkCard, personas: &[Persona]) -> bool {
     let mut i = 0;
     while let Some(at_idx) = task[i..].find('@') {
         let actual_at = i + at_idx;
@@ -285,6 +347,11 @@ pub fn task_names_card_specifically(task: &str, card: &QuarkCard) -> bool {
             if boundary_match(rest, card.id.as_str())
                 || card.display_name.as_deref().is_some_and(|dn| boundary_match(rest, dn))
                 || card.roles.iter().any(|role| !role.is_empty() && boundary_match(rest, role))
+                || personas.iter().any(|p| {
+                    p.preferred_role.as_deref().is_some_and(|pr| {
+                        card.roles.iter().any(|role| role.eq_ignore_ascii_case(pr))
+                    }) && boundary_match(rest, p.name.as_str())
+                })
             {
                 return true;
             }
@@ -324,6 +391,13 @@ mod tests {
         }
     }
 
+    /// A persona named `name` preferring `role`, body empty (the router pass
+    /// under test never reads the body — that's a separate, deferred concern,
+    /// see the module doc). Mirrors `card()` for the persona-routing tests below.
+    fn persona(name: &str, role: &str) -> Persona {
+        Persona { name: name.to_string(), preferred_role: Some(role.to_string()), body: String::new() }
+    }
+
     /// A message whose bytes place a multi-byte char (e.g. the smart apostrophe
     /// '’', 3 bytes) across a candidate mention's byte length must not panic. The
     /// 12-byte `@orchestrator` alias is the real-world trigger: any human line
@@ -334,8 +408,8 @@ mod tests {
         // rest after '@' = "abcdefghij’klmn": '’' occupies bytes 10..13, so byte 12
         // (the "orchestrator" alias length) lands INSIDE it.
         let body = "@abcdefghij’klmn and that’s all";
-        assert_eq!(human_mentions(body, &roster()), Vec::<QuarkId>::new());
-        assert_eq!(parse_addressee(body, &roster(), None), None);
+        assert_eq!(human_mentions(body, &roster(), &[]), Vec::<QuarkId>::new());
+        assert_eq!(parse_addressee(body, &roster(), None, &[]), None);
     }
 
     /// The escalation path: a worker addresses the ROLE, and it lands on whoever
@@ -344,14 +418,14 @@ mod tests {
     fn orchestrator_alias_resolves_to_the_role_holder() {
         let worker = QuarkId::new("worker");
         assert_eq!(
-            parse_addressee("@orchestrator which schema should I use?", &roster(), Some(&worker)),
+            parse_addressee("@orchestrator which schema should I use?", &roster(), Some(&worker), &[]),
             Some(QuarkId::new("orch"))
         );
         // A human can address the role too, alongside plain id mentions.
-        assert_eq!(human_mentions("@orchestrator take this", &roster()), vec![QuarkId::new("orch")]);
+        assert_eq!(human_mentions("@orchestrator take this", &roster(), &[]), vec![QuarkId::new("orch")]);
         // Id mentions keep working — the alias is an addition, not a replacement.
         assert_eq!(
-            human_mentions("@orch do X and @worker do Y", &roster()),
+            human_mentions("@orch do X and @worker do Y", &roster(), &[]),
             vec![QuarkId::new("orch"), QuarkId::new("worker")]
         );
     }
@@ -361,12 +435,12 @@ mod tests {
     #[test]
     fn team_alias_addresses_the_whole_roster() {
         assert_eq!(
-            human_mentions("@team report progress please", &roster()),
+            human_mentions("@team report progress please", &roster(), &[]),
             vec![QuarkId::new("orch"), QuarkId::new("worker")]
         );
         // Mixing `@team` with an id names each quark once, not twice.
         assert_eq!(
-            human_mentions("@team status, @worker especially you", &roster()),
+            human_mentions("@team status, @worker especially you", &roster(), &[]),
             vec![QuarkId::new("orch"), QuarkId::new("worker")]
         );
     }
@@ -377,7 +451,7 @@ mod tests {
     #[test]
     fn a_quark_cannot_broadcast_to_the_team() {
         let worker = QuarkId::new("worker");
-        assert_eq!(parse_addressee("@team status?", &roster(), Some(&worker)), None);
+        assert_eq!(parse_addressee("@team status?", &roster(), Some(&worker), &[]), None);
     }
 
     /// Re-flavouring the team retargets the alias with no code or prompt change —
@@ -388,7 +462,7 @@ mod tests {
         reflavoured[0].flavor = Flavor::Worker; // orch demoted…
         reflavoured[1].flavor = Flavor::Orchestrator; // …worker promoted
         assert_eq!(
-            parse_addressee("@orchestrator your call", &reflavoured, Some(&QuarkId::new("orch"))),
+            parse_addressee("@orchestrator your call", &reflavoured, Some(&QuarkId::new("orch")), &[]),
             Some(QuarkId::new("worker"))
         );
     }
@@ -399,15 +473,15 @@ mod tests {
     fn mentions_resolve_regardless_of_case() {
         let r = roster();
         assert_eq!(
-            parse_addressee("@Worker take this", &r, Some(&QuarkId::new("orch"))),
+            parse_addressee("@Worker take this", &r, Some(&QuarkId::new("orch")), &[]),
             Some(QuarkId::new("worker"))
         );
         assert_eq!(
-            parse_addressee("@ORCHESTRATOR your call", &r, Some(&QuarkId::new("worker"))),
+            parse_addressee("@ORCHESTRATOR your call", &r, Some(&QuarkId::new("worker")), &[]),
             Some(QuarkId::new("orch"))
         );
         assert_eq!(
-            human_mentions("@Team report progress", &r),
+            human_mentions("@Team report progress", &r, &[]),
             vec![QuarkId::new("orch"), QuarkId::new("worker")]
         );
     }
@@ -418,7 +492,7 @@ mod tests {
     #[test]
     fn orchestrator_cannot_escalate_to_itself() {
         let orch = QuarkId::new("orch");
-        assert_eq!(parse_addressee("@orchestrator hmm", &roster(), Some(&orch)), None);
+        assert_eq!(parse_addressee("@orchestrator hmm", &roster(), Some(&orch), &[]), None);
     }
 
     /// With nobody holding the role, the alias resolves to nobody rather than
@@ -427,8 +501,8 @@ mod tests {
     fn orchestrator_alias_resolves_to_nobody_on_an_orchestrator_less_roster() {
         let workers_only: Vec<QuarkCard> =
             roster().into_iter().map(|mut c| { c.flavor = Flavor::Worker; c }).collect();
-        assert_eq!(parse_addressee("@orchestrator anyone?", &workers_only, None), None);
-        assert_eq!(human_mentions("@orchestrator anyone?", &workers_only), Vec::<QuarkId>::new());
+        assert_eq!(parse_addressee("@orchestrator anyone?", &workers_only, None, &[]), None);
+        assert_eq!(human_mentions("@orchestrator anyone?", &workers_only, &[]), Vec::<QuarkId>::new());
     }
 
     #[test]
@@ -510,15 +584,15 @@ mod tests {
     fn parse_addressee_matches_a_line_starting_mention() {
         // A delegation begins a line (optionally indented).
         assert_eq!(
-            parse_addressee("@worker please handle it.", &roster(), None),
+            parse_addressee("@worker please handle it.", &roster(), None, &[]),
             Some(QuarkId::new("worker"))
         );
         assert_eq!(
-            parse_addressee("Here's the plan.\n@worker execute it.", &roster(), None),
+            parse_addressee("Here's the plan.\n@worker execute it.", &roster(), None, &[]),
             Some(QuarkId::new("worker"))
         );
-        assert_eq!(parse_addressee("no mention here", &roster(), None), None);
-        assert_eq!(parse_addressee("@ghost unknown", &roster(), None), None);
+        assert_eq!(parse_addressee("no mention here", &roster(), None, &[]), None);
+        assert_eq!(parse_addressee("@ghost unknown", &roster(), None, &[]), None);
     }
 
     #[test]
@@ -527,13 +601,13 @@ mod tests {
         // bug where a quark listing the conversation quoted "@agy"/"@worker" and
         // its reply got mis-routed there, spuriously exciting that quark.
         assert_eq!(
-            parse_addressee("Sure, @worker please handle it.", &roster(), None),
+            parse_addressee("Sure, @worker please handle it.", &roster(), None, &[]),
             None,
             "mid-line mention must not route"
         );
         let quoted = "I can see these messages:\n1. human: @worker do X\n2. @orch replied\nThat's all.";
         assert_eq!(
-            parse_addressee(quoted, &roster(), Some(&QuarkId::new("orch"))),
+            parse_addressee(quoted, &roster(), Some(&QuarkId::new("orch")), &[]),
             None,
             "quoted mentions inside a numbered list must not route"
         );
@@ -543,10 +617,10 @@ mod tests {
     fn parse_addressee_ignores_sender() {
         // A quark starting a line with its OWN handle must not self-address.
         let worker = QuarkId::new("worker");
-        assert_eq!(parse_addressee("@worker I'm on it", &roster(), Some(&worker)), None);
+        assert_eq!(parse_addressee("@worker I'm on it", &roster(), Some(&worker), &[]), None);
         // A line-starting mention of a DIFFERENT quark still routes.
         assert_eq!(
-            parse_addressee("@worker take over", &roster(), Some(&QuarkId::new("orch"))),
+            parse_addressee("@worker take over", &roster(), Some(&QuarkId::new("orch")), &[]),
             Some(QuarkId::new("worker"))
         );
     }
@@ -556,19 +630,19 @@ mod tests {
         // A human addresses whoever they name, mid-sentence and in any order —
         // this is the multi-dispatch case: "@orch do X and you @worker do Y".
         assert_eq!(
-            human_mentions("@orch please proceed and you @worker start task 3", &roster()),
+            human_mentions("@orch please proceed and you @worker start task 3", &roster(), &[]),
             vec![QuarkId::new("orch"), QuarkId::new("worker")]
         );
         // Order follows first appearance; duplicates collapse.
         assert_eq!(
-            human_mentions("@worker and @orch, then @worker again", &roster()),
+            human_mentions("@worker and @orch, then @worker again", &roster(), &[]),
             vec![QuarkId::new("worker"), QuarkId::new("orch")]
         );
         // Punctuation ends a handle; unknown ids and bare '@' are ignored.
-        assert_eq!(human_mentions("hey @orch, thanks!", &roster()), vec![QuarkId::new("orch")]);
-        assert_eq!(human_mentions("@ghost @nobody nothing here", &roster()), Vec::<QuarkId>::new());
+        assert_eq!(human_mentions("hey @orch, thanks!", &roster(), &[]), vec![QuarkId::new("orch")]);
+        assert_eq!(human_mentions("@ghost @nobody nothing here", &roster(), &[]), Vec::<QuarkId>::new());
         // An '@' not starting a word (an email) is not a mention.
-        assert_eq!(human_mentions("mail me at jake@orch.dev", &roster()), Vec::<QuarkId>::new());
+        assert_eq!(human_mentions("mail me at jake@orch.dev", &roster(), &[]), Vec::<QuarkId>::new());
     }
 
     /// Phase 1 soft `@role` routing: a token that is neither a quark id nor a
@@ -576,7 +650,7 @@ mod tests {
     #[test]
     fn role_mention_resolves_to_the_role_holder() {
         let r = vec![card("qa1", &["architect"]), card("worker", &[])];
-        assert_eq!(human_mentions("@architect do X", &r), vec![QuarkId::new("qa1")]);
+        assert_eq!(human_mentions("@architect do X", &r, &[]), vec![QuarkId::new("qa1")]);
     }
 
     /// A role that matches no seat falls through to the existing no-match
@@ -584,8 +658,8 @@ mod tests {
     #[test]
     fn role_falls_back_softly_when_no_seat_has_it() {
         let r = vec![card("qa1", &["architect"])];
-        assert_eq!(human_mentions("@nobody do X", &r), Vec::<QuarkId>::new());
-        assert_eq!(parse_addressee("@nobody do X", &r, None), None);
+        assert_eq!(human_mentions("@nobody do X", &r, &[]), Vec::<QuarkId>::new());
+        assert_eq!(parse_addressee("@nobody do X", &r, None, &[]), None);
     }
 
     /// A card whose ID equals the token wins over a different card whose ROLE
@@ -597,7 +671,7 @@ mod tests {
     #[test]
     fn id_precedence_over_role() {
         let r = vec![card("has_role", &["architect"]), card("architect", &[])];
-        assert_eq!(human_mentions("@architect go", &r), vec![QuarkId::new("architect")]);
+        assert_eq!(human_mentions("@architect go", &r, &[]), vec![QuarkId::new("architect")]);
     }
 
     /// `@team`/`@orchestrator` are reserved aliases and must resolve before a
@@ -607,14 +681,14 @@ mod tests {
         let mut r = roster(); // has "orch" as Flavor::Orchestrator
         r.push(card("team_role_holder", &["team"]));
         r.push(card("orch_role_holder", &["orchestrator"]));
-        assert_eq!(human_mentions("@team status", &r), vec![
+        assert_eq!(human_mentions("@team status", &r, &[]), vec![
             QuarkId::new("orch"),
             QuarkId::new("worker"),
             QuarkId::new("team_role_holder"),
             QuarkId::new("orch_role_holder"),
         ]);
         assert_eq!(
-            parse_addressee("@orchestrator your call", &r, Some(&QuarkId::new("worker"))),
+            parse_addressee("@orchestrator your call", &r, Some(&QuarkId::new("worker")), &[]),
             Some(QuarkId::new("orch"))
         );
     }
@@ -623,7 +697,7 @@ mod tests {
     #[test]
     fn role_match_is_case_insensitive() {
         let r = vec![card("qa1", &["architect"])];
-        assert_eq!(human_mentions("@Architect do X", &r), vec![QuarkId::new("qa1")]);
+        assert_eq!(human_mentions("@Architect do X", &r, &[]), vec![QuarkId::new("qa1")]);
     }
 
     /// Two cards share a role; the first in roster order wins (deterministic
@@ -631,7 +705,7 @@ mod tests {
     #[test]
     fn role_tiebreak_is_roster_order() {
         let r = vec![card("second", &["architect"]), card("first", &["architect"])];
-        assert_eq!(human_mentions("@architect go", &r), vec![QuarkId::new("second")]);
+        assert_eq!(human_mentions("@architect go", &r, &[]), vec![QuarkId::new("second")]);
     }
 
     /// A depleted seat is skipped in the role SELECTION pass — this is picking
@@ -644,7 +718,7 @@ mod tests {
         let mut depleted = card("tired", &["architect"]);
         depleted.energy = EnergyState::Depleted;
         let r = vec![depleted, card("fresh", &["architect"])];
-        assert_eq!(human_mentions("@architect go", &r), vec![QuarkId::new("fresh")]);
+        assert_eq!(human_mentions("@architect go", &r, &[]), vec![QuarkId::new("fresh")]);
     }
 
     // ---- task_names_card_specifically (WS4 §4 Phase 2 exclusivity eligibility) --
@@ -655,7 +729,7 @@ mod tests {
     #[test]
     fn team_broadcast_does_not_name_a_specific_card() {
         let sec = card("sec", &["security"]);
-        assert!(!task_names_card_specifically("@team status check", &sec));
+        assert!(!task_names_card_specifically("@team status check", &sec, &[]));
     }
 
     /// A `@team` broadcast that ALSO names the card's role still counts — the
@@ -664,21 +738,21 @@ mod tests {
     #[test]
     fn team_broadcast_naming_the_role_still_names_the_card() {
         let sec = card("sec", &["security"]);
-        assert!(task_names_card_specifically("@team we have a @security incident", &sec));
+        assert!(task_names_card_specifically("@team we have a @security incident", &sec, &[]));
     }
 
     /// An explicit `@id` names the card, independent of any role.
     #[test]
     fn explicit_id_names_the_card() {
         let sec = card("sec", &["security"]);
-        assert!(task_names_card_specifically("please loop in @sec on this", &sec));
+        assert!(task_names_card_specifically("please loop in @sec on this", &sec, &[]));
     }
 
     /// A task naming neither the card's id nor any of its roles does not name it.
     #[test]
     fn unrelated_task_does_not_name_the_card() {
         let sec = card("sec", &["security"]);
-        assert!(!task_names_card_specifically("please fix the css typo", &sec));
+        assert!(!task_names_card_specifically("please fix the css typo", &sec, &[]));
     }
 
     /// Two cards share a role: a task naming that role names BOTH of them, even
@@ -689,8 +763,8 @@ mod tests {
     fn a_shared_role_names_every_card_that_carries_it() {
         let first = card("first", &["architect"]);
         let second = card("second", &["architect"]);
-        assert!(task_names_card_specifically("@architect go", &first));
-        assert!(task_names_card_specifically("@architect go", &second));
+        assert!(task_names_card_specifically("@architect go", &first, &[]));
+        assert!(task_names_card_specifically("@architect go", &second, &[]));
     }
 
     /// `@orchestrator` is a reserved alias, never a card's own id or role — it must
@@ -698,7 +772,7 @@ mod tests {
     #[test]
     fn orchestrator_alias_does_not_name_an_unrelated_card() {
         let sec = card("sec", &["security"]);
-        assert!(!task_names_card_specifically("@orchestrator please advise", &sec));
+        assert!(!task_names_card_specifically("@orchestrator please advise", &sec, &[]));
     }
 
     /// Inherits `boundary_match`'s char-boundary safety: a multi-byte char (the
@@ -710,7 +784,7 @@ mod tests {
     fn multibyte_char_straddling_a_candidate_length_does_not_panic_here_either() {
         let sec = card("sec", &["security"]);
         let task = "@abcdefghij’klmn and that’s all";
-        assert!(!task_names_card_specifically(task, &sec));
+        assert!(!task_names_card_specifically(task, &sec, &[]));
     }
 
     /// **Whole-branch review follow-up.** `match_longest_mention` resolves
@@ -721,9 +795,9 @@ mod tests {
     fn display_name_names_the_card() {
         let mut claude = card("acp-claude", &["security"]);
         claude.display_name = Some("Claude".to_string());
-        assert!(task_names_card_specifically("@Claude handle this", &claude));
+        assert!(task_names_card_specifically("@Claude handle this", &claude, &[]));
         // Case-insensitive, same as id/role matching.
-        assert!(task_names_card_specifically("@claude handle this", &claude));
+        assert!(task_names_card_specifically("@claude handle this", &claude, &[]));
     }
 
     /// A display name is still just a specific-card handle, not a broadcast: `@team`
@@ -732,6 +806,83 @@ mod tests {
     fn team_broadcast_does_not_name_a_card_via_its_display_name() {
         let mut claude = card("acp-claude", &["security"]);
         claude.display_name = Some("Claude".to_string());
-        assert!(!task_names_card_specifically("@team status check", &claude));
+        assert!(!task_names_card_specifically("@team status check", &claude, &[]));
+    }
+
+    // ---- persona-name routing (spec §4: `@persona-name` routes via preferred_role) --
+
+    /// The core case: `@security-reviewer` is neither a card id, an alias, nor a
+    /// role — it's a persona whose `preferred_role` is `security`, and that role
+    /// is carried by `sec`. The persona pass resolves the name to that seat.
+    #[test]
+    fn persona_routes_to_a_seat_with_its_preferred_role() {
+        let r = vec![card("sec", &["security"])];
+        let p = vec![persona("security-reviewer", "security")];
+        assert_eq!(human_mentions("@security-reviewer go", &r, &p), vec![QuarkId::new("sec")]);
+    }
+
+    /// A persona whose `preferred_role` holds no seat on the roster falls through
+    /// softly — empty result, no panic — exactly like an unmatched `@role`.
+    #[test]
+    fn persona_with_no_matching_seat_falls_back_softly() {
+        let r = vec![card("sec", &["security"])];
+        let p = vec![persona("security-reviewer", "nobody-has-this-role")];
+        assert_eq!(human_mentions("@security-reviewer go", &r, &p), Vec::<QuarkId>::new());
+        assert_eq!(parse_addressee("@security-reviewer go", &r, None, &p), None);
+    }
+
+    /// A card id, or a reserved alias, named the same as a persona wins — id and
+    /// alias precedence over a persona name, same as over a role.
+    #[test]
+    fn id_and_alias_beat_a_persona_name() {
+        // A card whose id IS the persona's name wins over the persona resolving to
+        // a DIFFERENT seat via its preferred_role.
+        let r = vec![card("security-reviewer", &[]), card("sec", &["security"])];
+        let p = vec![persona("security-reviewer", "security")];
+        assert_eq!(human_mentions("@security-reviewer go", &r, &p), vec![QuarkId::new("security-reviewer")]);
+
+        // `@team`, named the same as a persona, still broadcasts rather than
+        // resolving through the persona's preferred_role.
+        let p2 = vec![persona("team", "worker")];
+        assert_eq!(
+            human_mentions("@team go", &roster(), &p2),
+            vec![QuarkId::new("orch"), QuarkId::new("worker")]
+        );
+    }
+
+    /// Persona-name matching is case-insensitive, same as id/alias/role matching.
+    #[test]
+    fn persona_match_is_case_insensitive() {
+        let r = vec![card("sec", &["security"])];
+        let p = vec![persona("security-reviewer", "security")];
+        assert_eq!(human_mentions("@Security-Reviewer go", &r, &p), vec![QuarkId::new("sec")]);
+    }
+
+    /// The back-compat pin: an EMPTY personas slice must route byte-for-byte the
+    /// way WS4§4 did before this pass existed, across id, alias, role, and the
+    /// soft-fallback cases — the persona pass runs, finds nothing, and does not
+    /// change a single outcome.
+    #[test]
+    fn no_personas_is_todays_routing() {
+        let r = vec![card("has_role", &["architect"]), card("architect", &[])];
+        assert_eq!(human_mentions("@architect go", &r, &[]), vec![QuarkId::new("architect")]);
+        assert_eq!(human_mentions("@team status", &roster(), &[]), vec![QuarkId::new("orch"), QuarkId::new("worker")]);
+        assert_eq!(
+            parse_addressee("@orchestrator your call", &roster(), Some(&QuarkId::new("worker")), &[]),
+            Some(QuarkId::new("orch"))
+        );
+        assert_eq!(human_mentions("@ghost @nobody nothing here", &roster(), &[]), Vec::<QuarkId>::new());
+    }
+
+    /// A task naming a persona is treated as naming every card that carries the
+    /// persona's `preferred_role` — the same "a shared role names every card that
+    /// carries it" rule `a_shared_role_names_every_card_that_carries_it` pins for
+    /// `@role`, extended to `@persona-name`.
+    #[test]
+    fn persona_name_in_a_task_names_the_role_holder_specifically() {
+        let sec = card("sec", &["security"]);
+        let p = vec![persona("security-reviewer", "security")];
+        assert!(task_names_card_specifically("@security-reviewer please look", &sec, &p));
+        assert!(!task_names_card_specifically("please fix the css typo", &sec, &p));
     }
 }

@@ -296,7 +296,11 @@ async fn main() {
         // `Engine::new` defaults this to `None` (hermetic — see the field doc), so the
         // real daemon must opt in explicitly or custom global skills under
         // `~/.hadron/skills` would silently never load in production.
-        .with_global_skills_dir(hadron_lattice::user_hadron_dir().map(|d| d.join("skills")));
+        .with_global_skills_dir(hadron_lattice::user_hadron_dir().map(|d| d.join("skills")))
+        // Same seam, same reason: without this the real daemon would never look in
+        // `~/.hadron/agents`, so `@persona-name` mentions could only ever resolve
+        // via the repo half.
+        .with_global_agents_dir(hadron_lattice::user_hadron_dir().map(|d| d.join("agents")));
     // A seat can boot switched OFF. It is still seated (still addressable, still owns
     // its instance) — it just does not take turns until the human enables it.
     for seat in &team.quarks {
