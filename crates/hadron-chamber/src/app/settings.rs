@@ -53,7 +53,7 @@ impl Chamber {
             // Defaults for a non-quark target (Human/Providers), which never shows the
             // API-key field — overwritten below when `key` resolves to a seat.
             let mut var = DEFAULT_SECRET_VAR.to_string();
-            let mut is_set = false;
+            let mut is_set = SecretStatus::NotSet;
             let id = if key == "human" {
                 Some(&self.prefs.human)
             } else {
@@ -260,7 +260,13 @@ impl Chamber {
             return;
         }
         if let Err(e) = self.secret_store.set(&qid, &var, &value) {
+            // Surface the failure in the UI — an `eprintln` alone is invisible in the
+            // GUI, so a Set that failed (e.g. no credential service on WSL2) looked like
+            // a silent no-op. Fails closed: nothing plaintext is written. (The error `e`
+            // may name the service/account but never the secret value.)
             eprintln!("chamber: failed to write secret to the OS credential store: {e}");
+            self.settings_secret_status = SecretStatus::Unavailable;
+            cx.notify();
             return;
         }
         if let Some(g) = self.global.quarks.iter_mut().find(|s| s.id == qid) {
@@ -295,6 +301,8 @@ impl Chamber {
         }
         if let Err(e) = self.secret_store.delete(&qid, &var) {
             eprintln!("chamber: failed to clear secret from the OS credential store: {e}");
+            self.settings_secret_status = SecretStatus::Unavailable;
+            cx.notify();
             return;
         }
         if let Some(g) = self.global.quarks.iter_mut().find(|s| s.id == qid) {
@@ -344,11 +352,17 @@ impl Chamber {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(theme::text_muted())
-                            .child(if self.settings_secret_status {
-                                "key set"
-                            } else {
-                                "not set"
+                            .text_color(match self.settings_secret_status {
+                                SecretStatus::Unavailable => theme::danger(),
+                                _ => theme::text_muted(),
+                            })
+                            .child(match self.settings_secret_status {
+                                SecretStatus::Set => "key set",
+                                SecretStatus::NotSet => "not set",
+                                SecretStatus::Unavailable => {
+                                    "keychain unavailable — no OS credential service \
+                                     (on WSL2, start gnome-keyring + a D-Bus session)"
+                                }
                             }),
                     ),
             )
@@ -1731,8 +1745,24 @@ pub(super) fn undeclare_secret_var(seat: &mut Seat, var: &str) -> bool {
 /// "not set" status the masked field shows. Only ever reports presence, never the
 /// value: a store error (e.g. no credential service available, as on a headless
 /// WSL2 session) reads the same as "not set" rather than surfacing the error here.
-pub(super) fn secret_status(store: &dyn SecretStore, seat: &QuarkId, var: &str) -> bool {
-    store.get(seat, var).is_ok_and(|o| o.is_some())
+/// Whether a seat's secret is set, unset, or the credential store is unreachable.
+/// The store being DOWN (no Secret Service — e.g. a bare WSL2 with no D-Bus/keyring
+/// daemon) is a DISTINCT state from a key simply not being set: without the
+/// distinction, a `Set` that failed because the keychain is unavailable looks
+/// identical to a no-op, and the user has no idea their key was not stored.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum SecretStatus {
+    Set,
+    NotSet,
+    Unavailable,
+}
+
+pub(super) fn secret_status(store: &dyn SecretStore, seat: &QuarkId, var: &str) -> SecretStatus {
+    match store.get(seat, var) {
+        Ok(Some(_)) => SecretStatus::Set,
+        Ok(None) => SecretStatus::NotSet,
+        Err(_) => SecretStatus::Unavailable,
+    }
 }
 
 #[cfg(test)]
@@ -1795,7 +1825,7 @@ mod tests {
     }
 
     /// The behaviour the masked field's status line depends on: setting a value
-    /// via a `SecretStore` flips the status to "set", clearing it flips it back —
+    /// via a `SecretStore` flips the status to `Set`, clearing it back to `NotSet` —
     /// exercised against a `MemoryStore`, never a real keychain.
     #[test]
     fn set_then_status_reports_set() {
@@ -1803,13 +1833,35 @@ mod tests {
         let id = QuarkId::new("acp-agy");
         let var = "GEMINI_API_KEY";
 
-        assert!(!secret_status(&store, &id, var), "unset must report not-set");
+        assert_eq!(secret_status(&store, &id, var), SecretStatus::NotSet, "unset");
 
         store.set(&id, var, "sk-live-value").unwrap();
-        assert!(secret_status(&store, &id, var), "set must report set");
+        assert_eq!(secret_status(&store, &id, var), SecretStatus::Set, "set");
 
         store.delete(&id, var).unwrap();
-        assert!(!secret_status(&store, &id, var), "cleared must report not-set again");
+        assert_eq!(secret_status(&store, &id, var), SecretStatus::NotSet, "cleared");
     }
 
+    /// A store that ERRORS (stands in for no OS credential service, e.g. bare WSL2)
+    /// must report `Unavailable`, NOT `NotSet` — otherwise a failed keychain looks
+    /// exactly like an unset key and the user has no signal.
+    #[test]
+    fn store_error_reports_unavailable_not_notset() {
+        struct DeadStore;
+        impl SecretStore for DeadStore {
+            fn get(&self, _: &QuarkId, _: &str) -> anyhow::Result<Option<String>> {
+                anyhow::bail!("no credential service")
+            }
+            fn set(&self, _: &QuarkId, _: &str, _: &str) -> anyhow::Result<()> {
+                anyhow::bail!("no credential service")
+            }
+            fn delete(&self, _: &QuarkId, _: &str) -> anyhow::Result<()> {
+                anyhow::bail!("no credential service")
+            }
+        }
+        assert_eq!(
+            secret_status(&DeadStore, &QuarkId::new("acp-agy"), "GEMINI_API_KEY"),
+            SecretStatus::Unavailable,
+        );
+    }
 }
