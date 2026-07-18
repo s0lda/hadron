@@ -1630,37 +1630,34 @@ impl Chamber {
                 // cell baked into the snapshot.
                 let grid: gpui::AnyElement = if let Some(term) = &self.terminal {
                     let snap = term.snapshot();
-                    let mut html = String::new();
-                    html.push_str("<pre>");
-                    for (i, line) in snap.lines.iter().enumerate() {
+                    let mut lines = v_flex()
+                        .font_family("Cascadia Code")
+                        .text_size(px(TERM_FONT))
+                        .line_height(px(TERM_CELL_H))
+                        .size_full();
+                    for line in &snap.lines {
+                        let mut row = h_flex()
+                            .h(px(TERM_CELL_H))
+                            .whitespace_nowrap()
+                            .min_w_0();
                         let mut line_empty = true;
                         for run in &line.runs {
                             if !run.text.is_empty() {
                                 line_empty = false;
-                                let esc = run.text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-                                let fg_hex = format!("#{:06x}", pack_rgb(run.fg));
-                                let bg_hex = format!("#{:06x}", pack_rgb(run.bg));
-                                html.push_str(&format!(
-                                    "<span style=\"color: {}\"><mark style=\"background-color: {}\">{}</mark></span>",
-                                    fg_hex, bg_hex, esc
-                                ));
+                                row = row.child(
+                                    div()
+                                        .text_color(gpui::rgb(pack_rgb(run.fg)))
+                                        .bg(gpui::rgb(pack_rgb(run.bg)))
+                                        .child(run.text.clone())
+                                );
                             }
                         }
                         if line_empty {
-                            html.push_str(" ");
+                            row = row.child(div().child(" "));
                         }
-                        if i + 1 < snap.lines.len() {
-                            html.push_str("<br/>");
-                        }
+                        lines = lines.child(row);
                     }
-                    html.push_str("</pre>");
-
-                    gpui_component::text::TextView::html("terminal-text", html)
-                        .selectable(true)
-                        .font_family("Cascadia Code")
-                        .text_size(px(TERM_FONT))
-                        .line_height(px(TERM_CELL_H))
-                        .into_any_element()
+                    lines.into_any_element()
                 } else {
                     div()
                         .flex_1()
