@@ -85,6 +85,29 @@ enum ResolvedMention<'a> {
     Team,
 }
 
+/// Does `text` start (case-insensitively) with `target_name`, at a mention-safe word
+/// boundary? The single boundary rule every mention matcher in this file shares —
+/// `try_match` below and [`task_names_card_specifically`] both ride it, so a
+/// multi-byte-char panic fixed once here can never resurface in a second hand-rolled
+/// matcher.
+///
+/// `get(..n)` is `None` when `n` is past the end OR not a char boundary. The boundary
+/// case is the one a raw `&text[..n]` slice panicked on: a multi-byte char (e.g. a
+/// smart quote) straddling the candidate's byte length. Skipping is correct — a
+/// prefix cut mid-char could never equal an ASCII target name. The character
+/// immediately following the match must NOT be a valid intra-word mention character
+/// (alphanumeric, '-', '_'), so `@Google` doesn't match `@GoogleBot`.
+fn boundary_match(text: &str, target_name: &str) -> bool {
+    let Some(prefix) = text.get(..target_name.len()) else {
+        return false;
+    };
+    if !prefix.eq_ignore_ascii_case(target_name) {
+        return false;
+    }
+    let next_char = text[target_name.len()..].chars().next();
+    !matches!(next_char, Some(c) if c.is_alphanumeric() || c == '-' || c == '_')
+}
+
 /// Tries to find the longest target that matches the START of `text` (case-insensitively).
 /// To prevent partial word matches (e.g. `@Google` matching `@GoogleBot`),
 /// the character immediately following the match in `text` must NOT be a valid
@@ -102,24 +125,10 @@ fn match_longest_mention<'a>(text: &str, roster: &'a [QuarkCard]) -> Option<(usi
         resolution: ResolvedMention<'a>,
         best_match: &mut Option<(usize, ResolvedMention<'a>)>,
     ) {
-        // `get(..n)` is `None` when `n` is past the end OR not a char boundary. The
-        // boundary case is the one a raw `&text[..n]` slice panicked on: a multi-byte
-        // char (e.g. a smart quote) straddling the candidate's byte length. Skipping
-        // is correct — a prefix cut mid-char could never equal an ASCII target name.
-        if let Some(prefix) = text.get(..target_name.len()) {
-            if prefix.eq_ignore_ascii_case(target_name) {
-                let next_char = text[target_name.len()..].chars().next();
-                let boundary_ok = match next_char {
-                    Some(c) if c.is_alphanumeric() || c == '-' || c == '_' => false,
-                    _ => true,
-                };
-
-                if boundary_ok {
-                    let len = target_name.len();
-                    if best_match.as_ref().map_or(true, |(best_len, _)| len > *best_len) {
-                        *best_match = Some((len, resolution));
-                    }
-                }
+        if boundary_match(text, target_name) {
+            let len = target_name.len();
+            if best_match.as_ref().map_or(true, |(best_len, _)| len > *best_len) {
+                *best_match = Some((len, resolution));
             }
         }
     }
@@ -239,6 +248,43 @@ pub fn human_mentions(body: &str, roster: &[QuarkCard]) -> Vec<QuarkId> {
         i = actual_at + 1;
     }
     out
+}
+
+/// Whether `task` specifically names `card` — by its own `@id` (case-insensitive) or
+/// by a `@role` it carries — using the same char-boundary-safe mention scan
+/// [`human_mentions`] uses ([`boundary_match`], inherited, not re-implemented).
+///
+/// This is the eligibility test an `exclusive` card must pass (WS4 §4 Phase 2), and
+/// it is deliberately narrower than `human_mentions`: a `@team` broadcast expands to
+/// EVERY card there, which would make "addressed to everyone" indistinguishable from
+/// "addressed to this card specifically" — exactly the gap that let an exclusive
+/// `security` card slip into a plain `@team status` turn. Here `@team` and
+/// `@orchestrator` are never treated as naming `card` (no expansion, no alias
+/// resolution) — only a literal `@<id>` or `@<role>` counts. `"@team we have a
+/// @security incident"` still admits the `security` card, because the `@security`
+/// token — not the `@team` one — matches its role.
+///
+/// Also deliberately skips `match_longest_mention`'s full-roster tie-break: the
+/// question here is "does the task match THIS card's own id/role," not "did the
+/// router's `@role` resolution land on this exact card." Two cards can share a role,
+/// and a task naming that role is a role-matching task for BOTH of them even though
+/// `@role` mention-routing only ever picks one (roster-order tie-break).
+pub fn task_names_card_specifically(task: &str, card: &QuarkCard) -> bool {
+    let mut i = 0;
+    while let Some(at_idx) = task[i..].find('@') {
+        let actual_at = i + at_idx;
+        let valid_start = actual_at == 0 || task.as_bytes()[actual_at - 1].is_ascii_whitespace();
+        if valid_start {
+            let rest = &task[actual_at + 1..];
+            if boundary_match(rest, card.id.as_str())
+                || card.roles.iter().any(|role| !role.is_empty() && boundary_match(rest, role))
+            {
+                return true;
+            }
+        }
+        i = actual_at + 1;
+    }
+    false
 }
 
 #[cfg(test)]
@@ -592,5 +638,71 @@ mod tests {
         depleted.energy = EnergyState::Depleted;
         let r = vec![depleted, card("fresh", &["architect"])];
         assert_eq!(human_mentions("@architect go", &r), vec![QuarkId::new("fresh")]);
+    }
+
+    // ---- task_names_card_specifically (WS4 §4 Phase 2 exclusivity eligibility) --
+
+    /// The gap this function exists to close: `human_mentions` expands `@team` to
+    /// the whole roster, so a plain broadcast must NOT read as "named this card
+    /// specifically" — no role, no id, just everyone.
+    #[test]
+    fn team_broadcast_does_not_name_a_specific_card() {
+        let sec = card("sec", &["security"]);
+        assert!(!task_names_card_specifically("@team status check", &sec));
+    }
+
+    /// A `@team` broadcast that ALSO names the card's role still counts — the
+    /// exclusion above is about `@team` itself conferring no naming power, not about
+    /// broadcasts being disqualified wholesale.
+    #[test]
+    fn team_broadcast_naming_the_role_still_names_the_card() {
+        let sec = card("sec", &["security"]);
+        assert!(task_names_card_specifically("@team we have a @security incident", &sec));
+    }
+
+    /// An explicit `@id` names the card, independent of any role.
+    #[test]
+    fn explicit_id_names_the_card() {
+        let sec = card("sec", &["security"]);
+        assert!(task_names_card_specifically("please loop in @sec on this", &sec));
+    }
+
+    /// A task naming neither the card's id nor any of its roles does not name it.
+    #[test]
+    fn unrelated_task_does_not_name_the_card() {
+        let sec = card("sec", &["security"]);
+        assert!(!task_names_card_specifically("please fix the css typo", &sec));
+    }
+
+    /// Two cards share a role: a task naming that role names BOTH of them, even
+    /// though `@role` mention-routing (`human_mentions`/`match_longest_mention`)
+    /// only ever picks one via roster-order tie-break. Eligibility is "is this a
+    /// role-matching task for this card", not "did routing land on this card".
+    #[test]
+    fn a_shared_role_names_every_card_that_carries_it() {
+        let first = card("first", &["architect"]);
+        let second = card("second", &["architect"]);
+        assert!(task_names_card_specifically("@architect go", &first));
+        assert!(task_names_card_specifically("@architect go", &second));
+    }
+
+    /// `@orchestrator` is a reserved alias, never a card's own id or role — it must
+    /// not be read as naming an unrelated card.
+    #[test]
+    fn orchestrator_alias_does_not_name_an_unrelated_card() {
+        let sec = card("sec", &["security"]);
+        assert!(!task_names_card_specifically("@orchestrator please advise", &sec));
+    }
+
+    /// Inherits `boundary_match`'s char-boundary safety: a multi-byte char (the
+    /// smart apostrophe '’', 3 bytes) straddling a candidate's byte length must not
+    /// panic — the same real-world trigger as
+    /// `multibyte_char_straddling_a_candidate_length_does_not_panic` above, now
+    /// exercised through the new function instead of a second hand-rolled matcher.
+    #[test]
+    fn multibyte_char_straddling_a_candidate_length_does_not_panic_here_either() {
+        let sec = card("sec", &["security"]);
+        let task = "@abcdefghij’klmn and that’s all";
+        assert!(!task_names_card_specifically(task, &sec));
     }
 }
