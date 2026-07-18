@@ -349,6 +349,12 @@ pub struct Seat {
     /// behaves exactly as before.
     #[serde(default, skip_serializing_if = "SeatCommands::is_empty")]
     pub commands: SeatCommands,
+    /// Names of environment variables whose VALUES are secrets kept in the OS
+    /// credential store (see `secrets::SecretStore`), injected into this seat's
+    /// spawned subprocess. Only the NAMES live here — never the values, which are
+    /// never written to `team.json`. Empty by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_env: Vec<String>,
 }
 
 /// `true`. Serde needs a function, and an absent `enabled` must mean *on* — a seat
@@ -381,7 +387,7 @@ impl Seat {
     /// a field to `Seat` without deciding which side of this line it falls on will not
     /// compile.
     pub fn same_agent(&self, other: &Seat) -> bool {
-        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands } = self;
+        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env } = self;
         id == &other.id
             && vendor == &other.vendor
             && model == &other.model
@@ -394,6 +400,7 @@ impl Seat {
             && roles == &other.roles
             && exclusive == &other.exclusive
             && commands == &other.commands
+            && secret_env == &other.secret_env
     }
 
     /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
@@ -414,6 +421,7 @@ impl Seat {
             roles: vec![],
             exclusive: false,
             commands: SeatCommands::default(),
+            secret_env: Vec::new(),
         }
     }
 
@@ -426,6 +434,22 @@ impl Seat {
                 return;
             }
         }
+    }
+
+    /// Resolve this seat's `secret_env` names to `(name, value)` pairs via `store`,
+    /// for injection into the spawned subprocess env. A name with no stored value
+    /// (or a store error) is SKIPPED — the agent then surfaces its own
+    /// "missing credential" error, exactly as it does today when the env var is
+    /// simply unset. The resolved VALUES are secrets: never log them, never put
+    /// them in `team.json`, argv, the field, or a prompt.
+    pub fn resolve_env(&self, store: &dyn crate::secrets::SecretStore) -> Vec<(String, String)> {
+        self.secret_env
+            .iter()
+            .filter_map(|name| match store.get(&self.id, name) {
+                Ok(Some(value)) => Some((name.clone(), value)),
+                _ => None,
+            })
+            .collect()
     }
 }
 
@@ -1053,6 +1077,70 @@ mod tests {
         let mut changed = base.clone();
         changed.commands.not_allowed.push("rm -rf *".into());
         assert!(!base.same_agent(&changed), "a commands change must not look like the same agent");
+    }
+
+    /// `Seat.secret_env` round-trips through JSON: declared names come back exactly
+    /// as written. Only the NAMES live here — never values.
+    #[test]
+    fn seat_secret_env_serde_round_trips() {
+        let mut s = seat("agy", "agy", "gemini-3-pro", Flavor::Worker);
+        s.secret_env = vec!["GEMINI_API_KEY".into()];
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Seat = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.secret_env, s.secret_env);
+    }
+
+    /// A seat with no `secret_env` config — every `team.json` written before this
+    /// field existed — must decode to an empty `Vec`, and re-serializing it must
+    /// not grow a `"secret_env"` key into the file.
+    #[test]
+    fn absent_secret_env_is_empty_and_omitted() {
+        let s = seat("architect", "claude", "opus", Flavor::Worker);
+        assert!(s.secret_env.is_empty());
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("\"secret_env\""), "empty secret_env must not grow the file: {json}");
+    }
+
+    /// A `secret_env` change is a different agent — the subprocess env changes —
+    /// so the re-seat planner must rebuild rather than silently keep the old env
+    /// live.
+    #[test]
+    fn same_agent_rebuilds_on_secret_env_change() {
+        let base = Seat::cli(QuarkId::new("x"), "claude", "opus", Flavor::Worker);
+        let mut changed = base.clone();
+        changed.secret_env.push("GEMINI_API_KEY".into());
+        assert!(!base.same_agent(&changed), "a secret_env change must not look like the same agent");
+    }
+
+    #[test]
+    fn resolve_env_pulls_values_from_the_store() {
+        use crate::secrets::{MemoryStore, SecretStore};
+        let mut s = seat("agy", "agy", "gemini-3-pro", Flavor::Worker);
+        s.secret_env = vec!["GEMINI_API_KEY".into()];
+        let store = MemoryStore::new();
+        store.set(&s.id, "GEMINI_API_KEY", "k").unwrap();
+
+        assert_eq!(s.resolve_env(&store), vec![("GEMINI_API_KEY".to_string(), "k".to_string())]);
+    }
+
+    #[test]
+    fn resolve_env_skips_absent_names() {
+        use crate::secrets::{MemoryStore, SecretStore};
+        let mut s = seat("agy", "agy", "gemini-3-pro", Flavor::Worker);
+        s.secret_env = vec!["A".into(), "B".into()];
+        let store = MemoryStore::new();
+        store.set(&s.id, "A", "a-value").unwrap();
+
+        assert_eq!(s.resolve_env(&store), vec![("A".to_string(), "a-value".to_string())]);
+    }
+
+    #[test]
+    fn resolve_env_empty_when_no_secret_env() {
+        use crate::secrets::MemoryStore;
+        let s = seat("agy", "agy", "gemini-3-pro", Flavor::Worker);
+        let store = MemoryStore::new();
+
+        assert!(s.resolve_env(&store).is_empty());
     }
 
     #[test]
