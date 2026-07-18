@@ -210,8 +210,7 @@ pub struct ResolvedSkill {
 }
 
 /// The compiled-in [`SKILLS`], mapped into owned [`ResolvedSkill`]s. The starting
-/// point for [`load_skills`], and what every existing call site uses today (Task 1
-/// wires callers to `&builtins()`; Task 2 adds the real directory loading).
+/// point for [`load_skills`], onto which custom global/repo skills are merged.
 pub fn builtins() -> Vec<ResolvedSkill> {
     SKILLS
         .iter()
@@ -283,7 +282,16 @@ fn load_dir(dir: &Path) -> Vec<ResolvedSkill> {
     paths
         .into_iter()
         .filter_map(|path| {
-            let text = fs::read_to_string(&path).ok()?;
+            let text = match fs::read_to_string(&path) {
+                Ok(t) => t,
+                // Unreadable (non-UTF-8, permissions, …) — warn rather than skip
+                // silently, mirroring the missing-`name:` case below: an authoring
+                // mistake should be visible, not a skill that never loads with no clue.
+                Err(e) => {
+                    eprintln!("skills: skipping {} — could not read it: {e}", path.display());
+                    return None;
+                }
+            };
             match parse_skill_file(&text) {
                 Some(skill) => Some(skill),
                 None => {
