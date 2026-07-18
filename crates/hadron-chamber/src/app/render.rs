@@ -1630,37 +1630,34 @@ impl Chamber {
                 // cell baked into the snapshot.
                 let grid: gpui::AnyElement = if let Some(term) = &self.terminal {
                     let snap = term.snapshot();
-                    let mut html = String::new();
-                    html.push_str("<pre>");
-                    for (i, line) in snap.lines.iter().enumerate() {
-                        let mut line_empty = true;
-                        for run in &line.runs {
-                            if !run.text.is_empty() {
-                                line_empty = false;
-                                let esc = run.text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-                                let fg_hex = format!("#{:06x}", pack_rgb(run.fg));
-                                let bg_hex = format!("#{:06x}", pack_rgb(run.bg));
-                                html.push_str(&format!(
-                                    "<span style=\"color: {}\"><mark style=\"background-color: {}\">{}</mark></span>",
-                                    fg_hex, bg_hex, esc
-                                ));
-                            }
-                        }
-                        if line_empty {
-                            html.push_str(" ");
-                        }
-                        if i + 1 < snap.lines.len() {
-                            html.push_str("<br/>");
-                        }
-                    }
-                    html.push_str("</pre>");
-
-                    gpui_component::text::TextView::html("terminal-text", html)
-                        .selectable(true)
+                    // One physical row per terminal line, each line a few coalesced
+                    // same-colour runs. A markdown/HTML text view (the previous
+                    // approach) is document-oriented: it collapses runs of spaces to
+                    // one and drops `<br/>`/`<pre>` semantics, so `ls` output rendered
+                    // as a single unspaced line. A grid must be laid out as a grid.
+                    // Inner padding (px_3/py_2) keeps text off the border for a native
+                    // look. Trade-off: plain divs are not mouse-selectable.
+                    let mut rows = v_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .px_3()
+                        .py_2()
                         .font_family("Cascadia Code")
                         .text_size(px(TERM_FONT))
-                        .line_height(px(TERM_CELL_H))
-                        .into_any_element()
+                        .line_height(px(TERM_CELL_H));
+                    for line in &snap.lines {
+                        let mut row = h_flex().h(px(TERM_CELL_H));
+                        for run in &line.runs {
+                            row = row.child(
+                                div()
+                                    .text_color(rgb(pack_rgb(run.fg)))
+                                    .bg(rgb(pack_rgb(run.bg)))
+                                    .child(run.text.clone()),
+                            );
+                        }
+                        rows = rows.child(row);
+                    }
+                    rows.into_any_element()
                 } else {
                     div()
                         .flex_1()
