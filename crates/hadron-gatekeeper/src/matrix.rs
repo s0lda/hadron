@@ -9,8 +9,13 @@ use hadron_lattice::{Actor, Event, Kind, Mode, QuarkId, Risk};
 /// The set of `(quark, op)` pairs the human has chosen to *always* allow.
 /// `op` is the self-declared `PermissionReq` description — the daemon never sees
 /// the raw command on the CLI-adapter path, so matching is on the declared
-/// string (exact match in v1).
+/// string (exact match, or a trailing-`*` prefix glob — see [`op_matches`]).
 pub type AllowRules = HashSet<(QuarkId, String)>;
+
+/// The set of `(quark, op)` pairs the human has explicitly *denied* — only
+/// consulted under No-Human-Mode (`decide(..., no_human = true, ...)`); a deny
+/// match always wins over an allow match. Same matching rules as `AllowRules`.
+pub type DenyRules = HashSet<(QuarkId, String)>;
 
 /// The matrix's verdict for a single proposed operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,6 +25,28 @@ pub enum Decision {
     AutoApprove,
     /// Pause and surface a permission request to the human.
     AskHuman,
+    /// No-Human-Mode only (global `Bypass`): pause and surface the request to
+    /// the orchestrator quark for adjudication instead of a human. Never
+    /// returned unless `decide` is called with `no_human = true`.
+    AskOrchestrator,
+}
+
+/// Exact match, or a trailing-`*` prefix glob: `"git push*"` matches any op
+/// starting with `"git push"` (e.g. `"git push origin main"`). No other glob
+/// syntax is supported — this is a hand-rolled, deliberately tiny matcher, not
+/// a general glob engine.
+pub fn op_matches(pattern: &str, op: &str) -> bool {
+    match pattern.strip_suffix('*') {
+        Some(prefix) => op.starts_with(prefix),
+        None => pattern == op,
+    }
+}
+
+/// Whether any rule in `rules` names `quark` with a pattern matching `op`
+/// (see [`op_matches`]). Shared by the allow- and deny-list checks under
+/// No-Human-Mode.
+fn rules_match(rules: &HashSet<(QuarkId, String)>, quark: &QuarkId, op: &str) -> bool {
+    rules.iter().any(|(q, pattern)| q == quark && op_matches(pattern, op))
 }
 
 /// The effective global default mode: the latest `ModeSet` addressed to no one
@@ -93,27 +120,70 @@ pub fn allow_rules(events: &[Event]) -> AllowRules {
 
 /// Decide a single self-declared op under the effective `mode`.
 ///
+/// Two tables, selected by `no_human` (additive — see below):
+///
+/// **`no_human == false` (today's table, byte-for-byte — `global`/`deny` ignored,
+/// `AskOrchestrator` never returned):**
+///
 /// | mode \ risk | WorkspaceEdit | BashExec                         |
 /// |-------------|---------------|----------------------------------|
 /// | Ask         | AskHuman      | AskHuman                         |
 /// | Write       | AutoApprove   | AskHuman                         |
 /// | Auto        | AutoApprove   | allow-listed ? AutoApprove : Ask |
 /// | Bypass      | AutoApprove   | AutoApprove                      |
-pub fn decide(mode: Mode, risk: Risk, op: &str, quark: &QuarkId, rules: &AllowRules) -> Decision {
-    match (mode, risk) {
-        (Mode::Ask, _) => Decision::AskHuman,
-        // Write / Auto / Bypass all auto-approve edits.
-        (_, Risk::WorkspaceEdit) => Decision::AutoApprove,
-        (Mode::Write, Risk::BashExec) => Decision::AskHuman,
-        (Mode::Auto, Risk::BashExec) => {
-            if rules.contains(&(quark.clone(), op.to_string())) {
-                Decision::AutoApprove
-            } else {
-                Decision::AskHuman
+///
+/// **`no_human == true` (No-Human-Mode, worker `mode` already clamped by the
+/// caller — see spec §2):**
+/// 1. `mode == Bypass` → `AutoApprove` (an explicit per-quark standing grant).
+/// 2. a `deny` match (exact or trailing-`*` glob) → escalate — **deny wins even
+///    over an allow match**.
+/// 3. an `allow` match → `AutoApprove`.
+/// 4. else → escalate.
+///
+/// Where `escalate = AskOrchestrator` if `global == Bypass`, else `AskHuman`
+/// (No-Human-Mode itself is only meaningful once the global default is
+/// `Bypass`; short of that it degrades to the ordinary human-ask path).
+#[allow(clippy::too_many_arguments)]
+pub fn decide(
+    mode: Mode,
+    global: Mode,
+    no_human: bool,
+    risk: Risk,
+    op: &str,
+    quark: &QuarkId,
+    allow: &AllowRules,
+    deny: &DenyRules,
+) -> Decision {
+    if !no_human {
+        // Byte-for-byte today's logic. `global` and `deny` are intentionally
+        // unused here — see `additive_off_matches_todays_matrix`.
+        return match (mode, risk) {
+            (Mode::Ask, _) => Decision::AskHuman,
+            // Write / Auto / Bypass all auto-approve edits.
+            (_, Risk::WorkspaceEdit) => Decision::AutoApprove,
+            (Mode::Write, Risk::BashExec) => Decision::AskHuman,
+            (Mode::Auto, Risk::BashExec) => {
+                if allow.contains(&(quark.clone(), op.to_string())) {
+                    Decision::AutoApprove
+                } else {
+                    Decision::AskHuman
+                }
             }
-        }
-        (Mode::Bypass, Risk::BashExec) => Decision::AutoApprove,
+            (Mode::Bypass, Risk::BashExec) => Decision::AutoApprove,
+        };
     }
+
+    if mode == Mode::Bypass {
+        return Decision::AutoApprove;
+    }
+    let escalate = if global == Mode::Bypass { Decision::AskOrchestrator } else { Decision::AskHuman };
+    if rules_match(deny, quark, op) {
+        return escalate; // deny wins, even if also allow-listed
+    }
+    if rules_match(allow, quark, op) {
+        return Decision::AutoApprove;
+    }
+    escalate
 }
 
 #[cfg(test)]
@@ -144,6 +214,12 @@ mod tests {
         )
     }
 
+    /// `no_human = false` throughout: `global` is irrelevant (pass `Ask` as a
+    /// stand-in) and `deny` is unconsulted (pass empty).
+    fn decide_today(mode: Mode, risk: Risk, op: &str, quark: &QuarkId, allow: &AllowRules) -> Decision {
+        decide(mode, Mode::Ask, false, risk, op, quark, allow, &DenyRules::new())
+    }
+
     #[test]
     fn decide_truth_table() {
         let none = AllowRules::new();
@@ -151,17 +227,17 @@ mod tests {
         use Decision::*;
         use Mode::*;
         // Ask: everything asks.
-        assert_eq!(decide(Ask, Risk::WorkspaceEdit, "", &k, &none), AskHuman);
-        assert_eq!(decide(Ask, Risk::BashExec, "x", &k, &none), AskHuman);
+        assert_eq!(decide_today(Ask, Risk::WorkspaceEdit, "", &k, &none), AskHuman);
+        assert_eq!(decide_today(Ask, Risk::BashExec, "x", &k, &none), AskHuman);
         // Write: edits auto, bash asks.
-        assert_eq!(decide(Write, Risk::WorkspaceEdit, "", &k, &none), AutoApprove);
-        assert_eq!(decide(Write, Risk::BashExec, "x", &k, &none), AskHuman);
+        assert_eq!(decide_today(Write, Risk::WorkspaceEdit, "", &k, &none), AutoApprove);
+        assert_eq!(decide_today(Write, Risk::BashExec, "x", &k, &none), AskHuman);
         // Auto: edits auto; bash asks unless remembered.
-        assert_eq!(decide(Auto, Risk::WorkspaceEdit, "", &k, &none), AutoApprove);
-        assert_eq!(decide(Auto, Risk::BashExec, "cargo test", &k, &none), AskHuman);
+        assert_eq!(decide_today(Auto, Risk::WorkspaceEdit, "", &k, &none), AutoApprove);
+        assert_eq!(decide_today(Auto, Risk::BashExec, "cargo test", &k, &none), AskHuman);
         // Bypass: everything auto.
-        assert_eq!(decide(Bypass, Risk::WorkspaceEdit, "", &k, &none), AutoApprove);
-        assert_eq!(decide(Bypass, Risk::BashExec, "rm -rf", &k, &none), AutoApprove);
+        assert_eq!(decide_today(Bypass, Risk::WorkspaceEdit, "", &k, &none), AutoApprove);
+        assert_eq!(decide_today(Bypass, Risk::BashExec, "rm -rf", &k, &none), AutoApprove);
     }
 
     #[test]
@@ -170,11 +246,11 @@ mod tests {
         rules.insert((q("agy"), "cargo test".to_string()));
         use Decision::*;
         // Remembered op for agy → auto.
-        assert_eq!(decide(Mode::Auto, Risk::BashExec, "cargo test", &q("agy"), &rules), AutoApprove);
+        assert_eq!(decide_today(Mode::Auto, Risk::BashExec, "cargo test", &q("agy"), &rules), AutoApprove);
         // Same op, different quark → still asks (rules are per-quark).
-        assert_eq!(decide(Mode::Auto, Risk::BashExec, "cargo test", &q("kimi"), &rules), AskHuman);
+        assert_eq!(decide_today(Mode::Auto, Risk::BashExec, "cargo test", &q("kimi"), &rules), AskHuman);
         // Different op for agy → asks.
-        assert_eq!(decide(Mode::Auto, Risk::BashExec, "cargo publish", &q("agy"), &rules), AskHuman);
+        assert_eq!(decide_today(Mode::Auto, Risk::BashExec, "cargo publish", &q("agy"), &rules), AskHuman);
     }
 
     #[test]
@@ -279,5 +355,147 @@ mod tests {
         let rules = allow_rules(&evs);
         assert!(rules.contains(&(q("agy"), "cargo test".to_string())));
         assert!(!rules.contains(&(q("kimi"), "cargo publish".to_string())));
+    }
+
+    /// THE additive proof: `no_human = false` reproduces today's `decide` body
+    /// (copied here verbatim as `old_decide`), across the full mode × risk grid,
+    /// with both an empty and a populated allow-list, and — critically — across
+    /// every `global` value and with `deny` populated (proving both are ignored
+    /// on this path, exactly as the spec requires).
+    #[test]
+    fn additive_off_matches_todays_matrix() {
+        // Verbatim snapshot of the pre-change `decide` body.
+        fn old_decide(mode: Mode, risk: Risk, op: &str, quark: &QuarkId, rules: &AllowRules) -> Decision {
+            match (mode, risk) {
+                (Mode::Ask, _) => Decision::AskHuman,
+                (_, Risk::WorkspaceEdit) => Decision::AutoApprove,
+                (Mode::Write, Risk::BashExec) => Decision::AskHuman,
+                (Mode::Auto, Risk::BashExec) => {
+                    if rules.contains(&(quark.clone(), op.to_string())) {
+                        Decision::AutoApprove
+                    } else {
+                        Decision::AskHuman
+                    }
+                }
+                (Mode::Bypass, Risk::BashExec) => Decision::AutoApprove,
+            }
+        }
+
+        let modes = [Mode::Ask, Mode::Write, Mode::Auto, Mode::Bypass];
+        let risks = [Risk::WorkspaceEdit, Risk::BashExec];
+        let globals = [Mode::Ask, Mode::Write, Mode::Auto, Mode::Bypass];
+        let k = q("agy");
+        let op = "cargo test";
+
+        let mut populated = AllowRules::new();
+        populated.insert((k.clone(), op.to_string()));
+        // A deny match on the very same (quark, op) — proves `deny` is
+        // unconsulted when `no_human = false`, since old_decide never denies.
+        let mut deny = DenyRules::new();
+        deny.insert((k.clone(), op.to_string()));
+
+        for allow in [AllowRules::new(), populated.clone()] {
+            for &mode in &modes {
+                for &risk in &risks {
+                    let expected = old_decide(mode, risk, op, &k, &allow);
+                    for &global in &globals {
+                        let got = decide(mode, global, false, risk, op, &k, &allow, &deny);
+                        assert_eq!(
+                            got, expected,
+                            "mode={mode:?} risk={risk:?} global={global:?} allow_populated={}",
+                            !allow.is_empty()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn deny_wins_over_allow_when_no_human() {
+        let k = q("agy");
+        let op = "cargo publish";
+        let mut allow = AllowRules::new();
+        allow.insert((k.clone(), op.to_string()));
+        let mut deny = DenyRules::new();
+        deny.insert((k.clone(), op.to_string()));
+
+        // Worker mode is Auto (not Bypass), so the lists are consulted. Even
+        // though `op` is allow-listed, the deny match wins → escalate.
+        assert_eq!(
+            decide(Mode::Auto, Mode::Auto, true, Risk::BashExec, op, &k, &allow, &deny),
+            Decision::AskHuman
+        );
+        assert_eq!(
+            decide(Mode::Auto, Mode::Bypass, true, Risk::BashExec, op, &k, &allow, &deny),
+            Decision::AskOrchestrator
+        );
+    }
+
+    #[test]
+    fn glob_deny_matches() {
+        let k = q("agy");
+        let mut deny = DenyRules::new();
+        deny.insert((k.clone(), "git push*".to_string()));
+        let allow = AllowRules::new();
+
+        assert_eq!(
+            decide(Mode::Auto, Mode::Auto, true, Risk::BashExec, "git push origin main", &k, &allow, &deny),
+            Decision::AskHuman
+        );
+        // A different op the glob doesn't cover is unaffected by the deny entry.
+        assert_eq!(
+            decide(Mode::Auto, Mode::Auto, true, Risk::BashExec, "git pull", &k, &allow, &deny),
+            Decision::AskHuman // still escalates: not allow-listed either
+        );
+    }
+
+    #[test]
+    fn no_human_escalates_to_orchestrator_only_under_global_bypass() {
+        let k = q("agy");
+        let allow = AllowRules::new();
+        let deny = DenyRules::new();
+        // Not allow-listed, not deny-listed, worker mode Auto (not Bypass).
+        assert_eq!(
+            decide(Mode::Auto, Mode::Bypass, true, Risk::BashExec, "cargo publish", &k, &allow, &deny),
+            Decision::AskOrchestrator
+        );
+        assert_eq!(
+            decide(Mode::Auto, Mode::Auto, true, Risk::BashExec, "cargo publish", &k, &allow, &deny),
+            Decision::AskHuman
+        );
+    }
+
+    #[test]
+    fn worker_bypass_override_auto_approves() {
+        let k = q("agy");
+        // Even with a deny match and a non-Bypass global, an explicit per-quark
+        // Bypass override on the worker short-circuits straight to AutoApprove.
+        let mut deny = DenyRules::new();
+        deny.insert((k.clone(), "rm -rf*".to_string()));
+        let allow = AllowRules::new();
+        assert_eq!(
+            decide(Mode::Bypass, Mode::Auto, true, Risk::BashExec, "rm -rf /tmp/x", &k, &allow, &deny),
+            Decision::AutoApprove
+        );
+    }
+
+    #[test]
+    fn op_matches_exact() {
+        assert!(op_matches("git push", "git push"));
+        assert!(!op_matches("git push", "git pull"));
+    }
+
+    #[test]
+    fn op_matches_trailing_glob() {
+        assert!(op_matches("git push*", "git push"));
+        assert!(op_matches("git push*", "git push origin main"));
+        assert!(!op_matches("git push*", "git pull origin main"));
+    }
+
+    #[test]
+    fn op_matches_non_match() {
+        assert!(!op_matches("cargo test", "cargo test --release"));
+        assert!(!op_matches("cargo test*", "cargo publish"));
     }
 }
