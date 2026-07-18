@@ -358,6 +358,8 @@ mod tests {
                 energy: EnergyState::Available,
                 provider: String::new(),
                 model: String::new(),
+                roles: vec![],
+                exclusive: false,
             }],
             field_window: vec![Event::new(
                 Actor::Human,
@@ -471,6 +473,8 @@ mod tests {
             energy: EnergyState::Available,
             provider: String::new(),
             model: String::new(),
+            roles: vec![],
+            exclusive: false,
         });
 
         let worker_prompt = build(&proj, &QuarkId::new("agy"));
@@ -496,6 +500,8 @@ mod tests {
             energy: EnergyState::Available,
             provider: String::new(),
             model: String::new(),
+            roles: vec![],
+            exclusive: false,
         });
 
         let worker = build(&proj, &QuarkId::new("agy"));
@@ -535,6 +541,8 @@ mod tests {
             energy: EnergyState::Available,
             provider: String::new(),
             model: String::new(),
+            roles: vec![],
+            exclusive: false,
         });
 
         let orch_prompt = build(&proj, &QuarkId::new("opus"));
@@ -600,6 +608,8 @@ mod tests {
             energy: EnergyState::Available,
             provider: String::new(),
             model: String::new(),
+            roles: vec![],
+            exclusive: false,
         });
 
         let orch = build(&proj, &QuarkId::new("opus"));
