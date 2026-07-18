@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use hadron_lattice::{
     Actor, CliSpec, EnergyState, Event, Flavor, Kind, Mode, Projection, PromptChannel, QuarkId,
-    ResumeMode, TurnOutcome,
+    ResumeMode, SeatCommands, TurnOutcome,
 };
 use std::path::PathBuf;
 
@@ -122,6 +122,8 @@ pub struct CliQuark<R: CliRunner> {
     roles: Vec<String>,
     /// Whether this quark is scoped only to its roles (see [`Quark::exclusive`]).
     exclusive: bool,
+    /// This quark's per-seat command allow/deny lists (see [`Quark::commands`]).
+    commands: SeatCommands,
     /// Whether this quark already has a conversation for `spec.resume` to resume.
     ///
     /// In-memory on purpose: a daemon restart resets it, and the next turn re-sends
@@ -143,6 +145,7 @@ impl<R: CliRunner> CliQuark<R> {
             runner,
             roles: Vec::new(),
             exclusive: false,
+            commands: SeatCommands::default(),
         }
     }
 
@@ -156,6 +159,12 @@ impl<R: CliRunner> CliQuark<R> {
     pub fn with_roles(mut self, roles: Vec<String>, exclusive: bool) -> Self {
         self.roles = roles;
         self.exclusive = exclusive;
+        self
+    }
+
+    /// Set the per-seat command allow/deny lists (from the resolved seat).
+    pub fn with_commands(mut self, commands: SeatCommands) -> Self {
+        self.commands = commands;
         self
     }
 
@@ -213,6 +222,9 @@ impl<R: CliRunner> Quark for CliQuark<R> {
     }
     fn exclusive(&self) -> bool {
         self.exclusive
+    }
+    fn commands(&self) -> &SeatCommands {
+        &self.commands
     }
     fn energy(&self) -> EnergyState {
         EnergyState::Available

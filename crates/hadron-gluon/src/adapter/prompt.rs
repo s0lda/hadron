@@ -360,6 +360,7 @@ mod tests {
                 model: String::new(),
                 roles: vec![],
                 exclusive: false,
+                commands: Default::default(),
             }],
             field_window: vec![Event::new(
                 Actor::Human,
@@ -475,6 +476,7 @@ mod tests {
             model: String::new(),
             roles: vec![],
             exclusive: false,
+            commands: Default::default(),
         });
 
         let worker_prompt = build(&proj, &QuarkId::new("agy"));
@@ -502,6 +504,7 @@ mod tests {
             model: String::new(),
             roles: vec![],
             exclusive: false,
+            commands: Default::default(),
         });
 
         let worker = build(&proj, &QuarkId::new("agy"));
@@ -543,6 +546,7 @@ mod tests {
             model: String::new(),
             roles: vec![],
             exclusive: false,
+            commands: Default::default(),
         });
 
         let orch_prompt = build(&proj, &QuarkId::new("opus"));
@@ -610,6 +614,7 @@ mod tests {
             model: String::new(),
             roles: vec![],
             exclusive: false,
+            commands: Default::default(),
         });
 
         let orch = build(&proj, &QuarkId::new("opus"));

@@ -450,6 +450,11 @@ impl Engine {
                 // the card with the right roles instead of silently dropping them.
                 roles: q.roles(),
                 exclusive: q.exclusive(),
+                // The per-seat command allow/deny lists, carried on the quark exactly
+                // like `roles`/`exclusive` above (resolved from the seat at build
+                // time), so `Engine::commands_for` can fold them at the `decide()`
+                // call sites without re-reading `team.json`.
+                commands: q.commands().clone(),
             })
             .collect();
         let resident = quarks
@@ -517,6 +522,15 @@ impl Engine {
         self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator).map(|c| c.id.clone())
     }
 
+    /// The command allow/deny lists carried on `id`'s roster card, if seated —
+    /// the SSOT `decide()`'s three call sites fold into their `AllowRules`/
+    /// `DenyRules` under No-Human-Mode. Mirrors `is_orchestrator`/`orchestrator_id`'s
+    /// pattern of reading straight off the roster rather than re-deriving from
+    /// `team.json`.
+    fn commands_for(&self, id: &QuarkId) -> Option<&hadron_lattice::SeatCommands> {
+        self.roster.iter().find(|c| &c.id == id).map(|c| &c.commands)
+    }
+
     /// Seat a quark on the **live** roster, replacing any quark already holding its id.
     ///
     /// Both `quarks` and `roster` are updated here, together, because they are the
@@ -546,6 +560,7 @@ impl Engine {
             // Carried on the quark exactly as `Engine::new` reads it (see above).
             roles: quark.roles(),
             exclusive: quark.exclusive(),
+            commands: quark.commands().clone(),
         };
         self.roster.retain(|c| c.id != id);
         self.roster.push(card);
@@ -1223,14 +1238,22 @@ impl Engine {
             let mode =
                 hadron_gatekeeper::effective_mode(&events, target, self.no_human, self.is_orchestrator(target));
             let global = hadron_gatekeeper::global_mode(&events);
-            let rules = hadron_gatekeeper::allow_rules(&events);
+            let mut rules = hadron_gatekeeper::allow_rules(&events);
             // No deny-rule SOURCE exists in the field yet — no event teaches a
             // deny the way a remembered `PermissionGrant` teaches an allow — so
-            // this is always empty (same placeholder Task 1/2 shipped with).
+            // this starts empty (same placeholder Task 1/2 shipped with) and is
+            // then folded with the seat's own `commands` config below.
             // `decide`'s deny-absolute branch is exercised at the matrix level
-            // (`deny_listed_op_never_reaches_orchestrator`); wiring a real deny
-            // source into the field is a follow-up, not this task's scope.
-            let deny = hadron_gatekeeper::DenyRules::new();
+            // (`deny_listed_op_never_reaches_orchestrator`).
+            let mut deny = hadron_gatekeeper::DenyRules::new();
+            if let Some(cmds) = self.commands_for(target) {
+                for p in &cmds.allowed {
+                    rules.insert((target.clone(), p.clone()));
+                }
+                for p in &cmds.not_allowed {
+                    deny.insert((target.clone(), p.clone()));
+                }
+            }
             match hadron_gatekeeper::decide(mode, global, self.no_human, risk, &op, target, &rules, &deny) {
                 hadron_gatekeeper::Decision::AutoApprove => {
                     // Pre-authorized by the mode: the gluon grants on the
@@ -1391,8 +1414,16 @@ impl Engine {
         // never the orchestrator seat by this point.
         let mode = hadron_gatekeeper::effective_mode(events, quark, self.no_human, self.is_orchestrator(quark));
         let global = hadron_gatekeeper::global_mode(events);
-        let rules = hadron_gatekeeper::allow_rules(events);
-        let deny = hadron_gatekeeper::DenyRules::new(); // see the permission-ask gate's comment
+        let mut rules = hadron_gatekeeper::allow_rules(events);
+        let mut deny = hadron_gatekeeper::DenyRules::new(); // see the permission-ask gate's comment
+        if let Some(cmds) = self.commands_for(quark) {
+            for p in &cmds.allowed {
+                rules.insert((quark.clone(), p.clone()));
+            }
+            for p in &cmds.not_allowed {
+                deny.insert((quark.clone(), p.clone()));
+            }
+        }
         let decision =
             hadron_gatekeeper::decide(mode, global, self.no_human, *risk, description, quark, &rules, &deny);
         if decision != hadron_gatekeeper::Decision::AskOrchestrator {
@@ -1452,10 +1483,19 @@ impl Engine {
         let mode =
             hadron_gatekeeper::effective_mode(&events, target, self.no_human, self.is_orchestrator(target));
         let global = hadron_gatekeeper::global_mode(&events);
-        let rules = hadron_gatekeeper::allow_rules(&events);
+        let mut rules = hadron_gatekeeper::allow_rules(&events);
         // Same placeholder as the permission-ask gate above: no deny source
-        // exists in the field yet, so this is always empty.
-        let deny = hadron_gatekeeper::DenyRules::new();
+        // exists in the field yet, so this starts empty and is folded with the
+        // seat's own `commands` config below.
+        let mut deny = hadron_gatekeeper::DenyRules::new();
+        if let Some(cmds) = self.commands_for(target) {
+            for p in &cmds.allowed {
+                rules.insert((target.clone(), p.clone()));
+            }
+            for p in &cmds.not_allowed {
+                deny.insert((target.clone(), p.clone()));
+            }
+        }
         // Under No-Human-Mode a non-delegated merge falls to `MergeVerdict::Block
         // (NotApproved)` below, which parks the SAME PermissionReq/Waiting the
         // permission-ask gate does — so a merge that escalates to AskOrchestrator
@@ -2102,6 +2142,10 @@ mod tests {
         reply: String,
         calls: usize,
         tasks: Arc<Mutex<Vec<String>>>,
+        /// This seat's config command allow/deny lists (see
+        /// `crate::quark::Quark::commands`) — defaults to empty in every
+        /// constructor below; the No-Human-Mode config-fold tests override it.
+        commands: hadron_lattice::SeatCommands,
     }
 
     #[async_trait::async_trait]
@@ -2111,6 +2155,9 @@ mod tests {
         }
         fn flavor(&self) -> Flavor {
             self.flavor.clone()
+        }
+        fn commands(&self) -> &hadron_lattice::SeatCommands {
+            &self.commands
         }
         fn energy(&self) -> EnergyState {
             EnergyState::Available
@@ -2165,6 +2212,7 @@ mod tests {
             reply: reply.into(),
             calls: 0,
             tasks,
+            commands: hadron_lattice::SeatCommands::default(),
         }
     }
 
@@ -2187,6 +2235,7 @@ mod tests {
             reply: reply.into(),
             calls: 0,
             tasks,
+            commands: hadron_lattice::SeatCommands::default(),
         }
     }
 
@@ -2911,6 +2960,112 @@ mod tests {
             .count();
         assert_eq!(asks, 1, "the orchestrator is asked exactly once, not re-spun");
         assert!(!has_kind(&events, |k| matches!(k, Kind::PermissionGrant { .. })), "still no grant — worker stays parked");
+    }
+
+    // ---- per-seat `commands` allow/deny fold (config source into `decide()`) ----
+
+    /// **SECURITY**: a config `not_allowed` pattern must block a worker's op under
+    /// No-Human-Mode via `AskHuman`, and NEVER via `AskOrchestrator` — even under
+    /// global `Bypass`, where a non-deny-listed op would escalate to the
+    /// orchestrator LLM instead of a human. `decide`'s deny branch already
+    /// guarantees this (see its SECURITY note); this test proves the config
+    /// `commands.not_allowed` list actually reaches that branch — the wiring
+    /// this task adds, not a change to the decision table itself.
+    #[tokio::test]
+    async fn config_deny_blocks_under_no_human() {
+        use crate::mock::MockQuark;
+        use hadron_gatekeeper::{Mode, Risk};
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        seed_mode(&field, None, Mode::Bypass); // global Bypass
+        let tasks = Arc::new(Mutex::new(vec![]));
+        let mut worker = perm_worker_risk("agy", tasks.clone(), Risk::BashExec, "danger now", "done");
+        worker.commands = hadron_lattice::SeatCommands { not_allowed: vec!["danger *".into()], ..Default::default() };
+        let mut engine = Engine::new(
+            field.clone(),
+            vec![
+                Box::new(worker),
+                // Seated so a wrongly-escalated AskOrchestrator would be
+                // observable (it would get the `[no-human-mode]` ask below).
+                Box::new(MockQuark::repeating(QuarkId::new("orch"), Flavor::Orchestrator, "reviewing")),
+            ],
+            8,
+        )
+        .with_no_human(true);
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(has_kind(&events, |k| matches!(k, Kind::PermissionReq { .. })), "req recorded");
+        assert!(has_kind(&events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })), "worker parks");
+        assert!(!has_kind(&events, |k| matches!(k, Kind::PermissionGrant { .. })), "never auto-granted");
+        assert!(
+            !events.iter().any(|e| e.to.as_ref() == Some(&QuarkId::new("orch"))
+                && matches!(&e.kind, Kind::Message { body } if body.starts_with("[no-human-mode]"))),
+            "a config-denied op must go to AskHuman, never AskOrchestrator — even under global Bypass"
+        );
+    }
+
+    /// A config `allowed` pattern lets a clamped-`Auto` worker auto-approve its op
+    /// under No-Human-Mode, exactly as a remembered field-taught allow rule would —
+    /// proving the config `commands.allowed` list reaches the same `AllowRules`
+    /// fold `decide`'s `Mode::Auto` branch already consults.
+    #[tokio::test]
+    async fn config_allow_auto_approves_under_auto_no_human() {
+        use hadron_gatekeeper::{Mode, Risk};
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "agy", "hello");
+        seed_mode(&field, None, Mode::Bypass); // global Bypass; no per-quark override → clamps to Auto
+        let tasks = Arc::new(Mutex::new(vec![]));
+        let mut worker = perm_worker_risk("agy", tasks.clone(), Risk::BashExec, "safe cmd", "done");
+        worker.commands = hadron_lattice::SeatCommands { allowed: vec!["safe *".into()], ..Default::default() };
+        let mut engine = Engine::new(field.clone(), vec![Box::new(worker)], 8).with_no_human(true);
+        engine.run_until_quiesce().await.unwrap();
+
+        let events = read_events(&field).unwrap();
+        assert!(gluon_auto_granted(&events), "the config allow-list auto-approved the op");
+        assert!(has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "done")), "the op completed");
+        assert!(!has_kind(&events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })), "never parked");
+    }
+
+    /// With the No-Human-Mode toggle OFF, `decide` runs today's table byte-for-byte
+    /// and never consults `deny` — so a config `not_allowed` pattern must be
+    /// completely inert. Proven by running the SAME op/mode with and without the
+    /// config deny configured and showing the field ends up in an identical shape
+    /// either way.
+    #[tokio::test]
+    async fn config_rules_inert_when_no_human_off() {
+        use hadron_gatekeeper::{Mode, Risk};
+
+        async fn run_with(commands: hadron_lattice::SeatCommands) -> Vec<Event> {
+            let dir = tempdir().unwrap();
+            let field = dir.path().join("field.jsonl");
+            seed_human_message(&field, "agy", "hello");
+            seed_mode(&field, None, Mode::Auto); // global default Auto, no per-quark override
+            let tasks = Arc::new(Mutex::new(vec![]));
+            let mut worker = perm_worker_risk("agy", tasks.clone(), Risk::BashExec, "danger now", "done");
+            worker.commands = commands;
+            let mut engine = Engine::new(field.clone(), vec![Box::new(worker)], 8);
+            // No `.with_no_human(true)` — toggle stays off.
+            engine.run_until_quiesce().await.unwrap();
+            read_events(&field).unwrap()
+        }
+
+        let deny_events =
+            run_with(hadron_lattice::SeatCommands { not_allowed: vec!["danger *".into()], ..Default::default() })
+                .await;
+        let control_events = run_with(hadron_lattice::SeatCommands::default()).await;
+
+        assert!(!gluon_auto_granted(&deny_events), "Auto+BashExec+no field-allow asks, deny or not");
+        assert!(!gluon_auto_granted(&control_events), "control: same result with no commands configured");
+        assert!(has_kind(&deny_events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })));
+        assert!(has_kind(&control_events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })));
+        assert_eq!(
+            deny_events.iter().filter(|e| matches!(e.kind, Kind::PermissionReq { .. })).count(),
+            control_events.iter().filter(|e| matches!(e.kind, Kind::PermissionReq { .. })).count(),
+            "identical shape with and without the config deny — it had zero effect while the toggle is off"
+        );
     }
 
     fn seed_human_message(path: &std::path::Path, to: &str, body: &str) {

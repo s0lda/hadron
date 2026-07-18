@@ -1,4 +1,4 @@
-use hadron_lattice::{CliSpec, Flavor, QuarkId, Seat, Transport};
+use hadron_lattice::{CliSpec, Flavor, QuarkId, Seat, SeatCommands, Transport};
 
 use crate::adapter::acp::AcpQuark;
 use crate::adapter::cli::CliQuark;
@@ -460,6 +460,9 @@ pub struct QuarkSpec {
     pub roles: Vec<String>,
     /// Whether this seat is scoped only to its roles (see [`Quark::exclusive`]).
     pub exclusive: bool,
+    /// This seat's per-seat command allow/deny lists (see [`Quark::commands`]).
+    /// Resolved from the team config; empty means no config allow/deny.
+    pub commands: SeatCommands,
 }
 
 /// Enforce the naming contract: ids must be non-empty, whitespace-free, path- and
@@ -530,16 +533,19 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
     let name = spec.display_name.clone();
     let roles = spec.roles.clone();
     let exclusive = spec.exclusive;
+    let commands = spec.commands.clone();
     let quark: Box<dyn Quark> = match spec.kind {
         QuarkKind::Cli(cli_spec) => Box::new(
             CliQuark::new(spec.id, spec.flavor, spec.model, cli_spec, ProcessRunner)
                 .with_display_name(name)
-                .with_roles(roles, exclusive),
+                .with_roles(roles, exclusive)
+                .with_commands(commands),
         ),
         QuarkKind::Acp(target) => Box::new(
             AcpQuark::new(spec.id, spec.flavor, spec.model, spec.effort, spec.mode_config, target)
                 .with_display_name(name)
-                .with_roles(roles, exclusive),
+                .with_roles(roles, exclusive)
+                .with_commands(commands),
         ),
     };
     Ok(quark)
@@ -558,6 +564,7 @@ pub fn build_seat(seat: &Seat) -> anyhow::Result<Box<dyn Quark>> {
         display_name: seat.display_name.clone(),
         roles: seat.roles.clone(),
         exclusive: seat.exclusive,
+        commands: seat.commands.clone(),
     })
 }
 
@@ -575,7 +582,8 @@ pub fn build_seat_watched(seat: &Seat, live_dir: &std::path::Path) -> anyhow::Re
             AcpQuark::new(seat.id.clone(), seat.flavor.clone(), seat.model.clone(), seat.effort.clone(), seat.mode_config.clone(), target)
                 .watching(live_dir.to_path_buf())
                 .with_display_name(seat.display_name.clone())
-                .with_roles(seat.roles.clone(), seat.exclusive),
+                .with_roles(seat.roles.clone(), seat.exclusive)
+                .with_commands(seat.commands.clone()),
         ));
     }
     build_seat(seat)
@@ -702,6 +710,7 @@ mod tests {
             display_name: None,
             roles: Vec::new(),
             exclusive: false,
+            commands: SeatCommands::default(),
         })
         .unwrap();
         assert_eq!(agy.id(), QuarkId::new("agy"));
@@ -717,6 +726,7 @@ mod tests {
             display_name: None,
             roles: Vec::new(),
             exclusive: false,
+            commands: SeatCommands::default(),
         })
         .unwrap();
         assert_eq!(generic.id(), QuarkId::new("custom"));
@@ -735,6 +745,7 @@ mod tests {
             display_name: None,
             roles: Vec::new(),
             exclusive: false,
+            commands: SeatCommands::default(),
         });
         assert!(err.is_err());
     }
@@ -948,5 +959,21 @@ mod tests {
         let q = build_seat_watched(&s, dir.path()).unwrap();
         assert_eq!(q.roles(), vec!["security".to_string()], "roles never reached the ACP quark");
         assert!(q.exclusive(), "exclusive never reached the ACP quark");
+    }
+
+    /// The command allow/deny carry path's build-time seam: a seat's `commands`
+    /// must reach the quark `build_seat` constructs, the same way `roles`/
+    /// `exclusive` already do (see `build_seat_carries_the_seats_roles_onto_the_quark`).
+    #[test]
+    fn built_quark_exposes_its_seat_commands() {
+        let mut s = seat("cmd-quark", "agy");
+        s.commands = SeatCommands { not_allowed: vec!["rm -rf *".into()], ..Default::default() };
+
+        let q = build_seat(&s).unwrap();
+        assert_eq!(
+            q.commands().not_allowed,
+            vec!["rm -rf *".to_string()],
+            "commands never reached the built quark"
+        );
     }
 }
