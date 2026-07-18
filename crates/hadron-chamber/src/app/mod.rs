@@ -116,6 +116,16 @@ const TERM_FONT: f32 = 13.0;
 const TERM_CELL_W: f32 = 7.8;
 const TERM_CELL_H: f32 = 17.0;
 
+/// Translate the terminal screen's measured pixel size into a PTY column/row
+/// grid. The single source of truth for the cell → grid conversion, used both to
+/// spawn the PTY and to resize it. Floored, and never below a 2×2 usable grid.
+fn term_dims((w, h): (f32, f32)) -> (usize, usize) {
+    (
+        ((w / TERM_CELL_W).floor() as usize).max(2),
+        ((h / TERM_CELL_H).floor() as usize).max(2),
+    )
+}
+
 /// The live completion card for the chat box: the rows it offers and which one
 /// Enter accepts. Held as `Option<CompletionCard>` on the chamber — `None` is
 /// "no card", so the open-flag and the rows can never disagree (there is no
@@ -270,6 +280,13 @@ struct Chamber {
     /// The terminal screen's measured pixel size, written by a paint-time canvas
     /// probe and read by the pump loop to size the PTY to fit.
     terminal_px: std::rc::Rc<std::cell::Cell<Option<(f32, f32)>>>,
+    /// Pump ticks left in which to force a repaint so the paint-time size probe
+    /// re-measures. The measured size only refreshes on paint, and an idle
+    /// terminal forces none — so without this the PTY stays stuck at whatever
+    /// width the first (often transient-narrow) frame measured, leaving the shell
+    /// prompt wrapped until the user types. Re-armed whenever the size moves; runs
+    /// down to zero once it settles, then the pump goes quiet again.
+    terminal_warmup: u8,
     info_panel: Option<String>,
     /// The About dialog, opened from the app menu.
     about_open: bool,
@@ -530,6 +547,7 @@ impl Chamber {
             terminal: None,
             terminal_focus: cx.focus_handle(),
             terminal_px: std::rc::Rc::new(std::cell::Cell::new(None)),
+            terminal_warmup: 0,
             info_panel: None,
             about_open: false,
             file_tree_scroll: ScrollHandle::new(),
@@ -547,32 +565,53 @@ impl Chamber {
     }
 
     /// Drive the live terminal each tick: spawn the PTY lazily when the Terminal
-    /// tab is open, size it to the measured screen, and repaint only when the
-    /// child has produced new output (an idle terminal forces no frames).
+    /// tab is open (once its size has settled), keep it sized to the measured
+    /// screen, and repaint only when the child has produced new output (an idle
+    /// terminal forces no frames).
     fn pump_terminal(&mut self, cx: &mut Context<Self>) {
         if self.right_rail_tab != RightRailTab::Terminal || self.prefs.inspector_collapsed {
             return;
         }
-        // Translate the last painted screen size into columns/rows (default until
-        // the first frame has measured it).
-        let (cols, rows) = match self.terminal_px.get() {
-            Some((w, h)) => (
-                ((w / TERM_CELL_W).floor() as usize).max(2),
-                ((h / TERM_CELL_H).floor() as usize).max(2),
-            ),
-            None => (80, 24),
-        };
+        // Translate the last painted screen size into a column/row grid (None
+        // until the first frame has measured it).
+        let dims = self.terminal_px.get().map(term_dims);
+
         if self.terminal.is_none() {
-            let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-            if let Ok(term) = crate::pty::PtyTerminal::new(&root, cols, rows) {
-                self.terminal = Some(term);
-                cx.notify();
+            match dims {
+                Some((cols, rows)) => {
+                    let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                    if let Ok(term) = crate::pty::PtyTerminal::new(&root, cols, rows) {
+                        self.terminal = Some(term);
+                        // The panel is still settling its width as the window
+                        // opens; keep re-measuring so we track it to the final
+                        // size (see `terminal_warmup`).
+                        self.terminal_warmup = 20;
+                    }
+                }
+                // No frame has measured the screen yet — force one so we can size
+                // the PTY before spawning it.
+                None => {}
             }
+            cx.notify();
             return;
         }
         if let Some(term) = &mut self.terminal {
-            term.resize(cols, rows);
-            if term.take_dirty() {
+            if let Some((cols, rows)) = dims {
+                if term.size() != (cols, rows) {
+                    // The measured size moved (the window is still opening, or the
+                    // user dragged the splitter). Resize the PTY — bash redraws its
+                    // prompt on the resulting SIGWINCH — and re-arm the warmup so we
+                    // keep re-measuring until the size stops moving.
+                    term.resize(cols, rows);
+                    self.terminal_warmup = 20;
+                }
+            }
+            let mut want_paint = term.take_dirty();
+            if self.terminal_warmup > 0 {
+                self.terminal_warmup -= 1;
+                want_paint = true;
+            }
+            if want_paint {
                 cx.notify();
             }
         }
