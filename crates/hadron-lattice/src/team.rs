@@ -36,8 +36,12 @@ pub enum Transport {
     Cli,
     /// A resident ACP agent spoken to over JSON-RPC on stdio.
     Acp,
-    /// Reserved: a resident per-provider SDK adapter. Nameable (`sdk-agy`) so the axis is
-    /// first-class, but not yet implemented — `from_seat` rejects it. Landed by sub-project #3.
+    /// Reserved, unsupported: a native per-provider SDK adapter. Kept nameable
+    /// (`sdk-agy`) so the transport axis stays first-class and the id namespace is
+    /// reserved, but a native SDK is NOT on the roadmap — the only providers a raw
+    /// SDK would reach are metered API keys, not the users-with-AI-plans path Hadron
+    /// targets, so every provider is reached over CLI or ACP instead. `from_seat`
+    /// rejects an `sdk` seat; do not present it as a build in progress.
     Sdk,
 }
 
