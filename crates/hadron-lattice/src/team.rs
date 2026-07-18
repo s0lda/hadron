@@ -1535,6 +1535,37 @@ mod resolve_tests {
         assert_eq!(global.quarks[0].effort.as_deref(), Some("high"), "default effort unchanged");
     }
 
+    /// The "differs from default → Some" branch for `roles`/`exclusive` specifically:
+    /// every other delta test leaves `desired.roles`/`desired.exclusive` equal to the
+    /// catalogue default, so only the `None` (inherit) arm of those two fields ever
+    /// ran. This edits both away from the default and checks the delta carries the
+    /// edit AND that resolving it reproduces `desired` — the same round-trip property
+    /// `a_settings_edit_becomes_a_delta_that_resolves_back_to_the_edit` proves for the
+    /// other knobs.
+    #[test]
+    fn seat_override_delta_carries_changed_roles_and_exclusive() {
+        let def = seat("acp-claude", "acp-claude", "opus", Flavor::Worker); // roles: [], exclusive: false
+        let global = Team { quarks: vec![def.clone()], roster: vec![], max_exchanges: None };
+
+        let desired = Seat {
+            roles: vec!["security".into()],
+            exclusive: true,
+            ..def.clone()
+        };
+        let ov = seat_override_delta(QuarkId::new("acp-claude"), &def, &desired, None);
+
+        assert_eq!(ov.roles, Some(vec!["security".to_string()]), "role edit is carried");
+        assert_eq!(ov.exclusive, Some(true), "exclusivity edit is carried");
+
+        // Resolving the delta reproduces `desired`; the catalogue default is untouched.
+        let repo = Team { roster: vec![ov], ..Team::default() };
+        let s = &resolve_team(&repo, &global).quarks[0];
+        assert_eq!(s.roles, vec!["security".to_string()]);
+        assert!(s.exclusive);
+        assert!(global.quarks[0].roles.is_empty(), "shared catalogue default unchanged");
+        assert!(!global.quarks[0].exclusive, "shared catalogue default unchanged");
+    }
+
     /// An edit that changes nothing back to the catalogue default produces an all-inherit
     /// delta — so "reset to default in this repo" genuinely drops the override rather than
     /// pinning a copy of the default that would not track a later catalogue change.
