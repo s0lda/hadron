@@ -126,6 +126,30 @@ impl Chamber {
         cx.notify();
     }
 
+    /// `ToggleFocus`: move keyboard focus between the chat input and the
+    /// terminal. If the terminal already has focus, this returns focus to chat —
+    /// that direction reads live focus state (`FocusHandle::is_focused`), which a
+    /// pure function of `right_rail_tab` alone cannot see. Otherwise it moves
+    /// *toward* the terminal, using [`toggle_focus_target`] to decide whether the
+    /// right rail needs to switch to the Terminal tab first — so one press
+    /// always reaches the terminal, and a second press always returns to chat.
+    pub(super) fn toggle_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let target = if self.terminal_focus.is_focused(window) {
+            FocusTarget::Chat
+        } else {
+            let (target, switch_rail_to_terminal) = toggle_focus_target(self.right_rail_tab);
+            if switch_rail_to_terminal {
+                self.right_rail_tab = RightRailTab::Terminal;
+            }
+            target
+        };
+        match target {
+            FocusTarget::Terminal => window.focus(&self.terminal_focus, cx),
+            FocusTarget::Chat => window.focus(&self.input.focus_handle(cx), cx),
+        }
+        cx.notify();
+    }
+
     /// Cycle the Stats time window by `delta`. Only meaningful on the Stats chat tab,
     /// so it is a deliberate no-op elsewhere (the key is never surprising).
     pub(super) fn cycle_stats_window(&mut self, delta: isize, cx: &mut Context<Self>) {
@@ -526,5 +550,47 @@ impl Chamber {
             ..SeatOverride::role(qid) // inherit the catalogue's role + definition
         });
         self.save_repo_team(cx);
+    }
+}
+
+/// Where `ToggleFocus` sends focus when moving *toward* the terminal — always
+/// [`FocusTarget::Terminal`], since this is a pure function of the right rail's
+/// active tab alone. `FocusTarget::Chat` exists so [`Chamber::toggle_focus`]'s
+/// live-focus branch (terminal-focused → chat) can be expressed with the same
+/// type; this function never returns it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FocusTarget {
+    Chat,
+    Terminal,
+}
+
+/// Pure decision half of `ToggleFocus`'s "move toward the terminal" branch:
+/// given the right rail's currently active tab, decide the focus target (always
+/// terminal) and whether the rail needs to switch to the Terminal tab first. The
+/// other direction of the toggle — terminal-focused back to chat — depends on
+/// live window focus state, not just `active_rail_tab`, so it isn't representable
+/// as a pure function and is decided in [`Chamber::toggle_focus`] instead.
+pub(super) fn toggle_focus_target(active_rail_tab: RightRailTab) -> (FocusTarget, bool) {
+    (FocusTarget::Terminal, active_rail_tab != RightRailTab::Terminal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toggle_focus_targets_terminal_when_terminal_tab_active() {
+        let (target, switch_rail) = toggle_focus_target(RightRailTab::Terminal);
+        assert_eq!(target, FocusTarget::Terminal);
+        assert!(!switch_rail, "already on the Terminal tab, no rail switch needed");
+    }
+
+    #[test]
+    fn toggle_focus_else_case_switches_rail_to_terminal() {
+        for tab in [RightRailTab::FileTree, RightRailTab::Changes, RightRailTab::Plan] {
+            let (target, switch_rail) = toggle_focus_target(tab);
+            assert_eq!(target, FocusTarget::Terminal);
+            assert!(switch_rail, "a non-Terminal tab active must switch the rail to Terminal");
+        }
     }
 }

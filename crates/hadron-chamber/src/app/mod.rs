@@ -13,9 +13,9 @@ use std::time::Duration;
 use gpui::{
     actions, div, linear_color_stop, linear_gradient, prelude::*, px, rgb, rgba, App, Context,
     Decorations, Entity,
-    FocusHandle, Hsla, KeyBinding, MouseButton, Pixels, Render, Rgba, ScrollHandle, SharedString,
-    Subscription, Window, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowOptions,
+    FocusHandle, Focusable, Hsla, KeyBinding, MouseButton, Pixels, Render, Rgba, ScrollHandle,
+    SharedString, Subscription, Window, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowDecorations, WindowOptions,
 };
 use gpui_component::avatar::Avatar;
 // badge removed
@@ -88,6 +88,7 @@ actions!(
         PrevQuark,
         ToggleSelectedQuark,
         OpenMenu,
+        ToggleFocus,
     ]
 );
 
@@ -1068,15 +1069,21 @@ pub fn run(field_path: Option<String>) {
             t.font_family =
                 "Inter, Segoe UI, sans-serif, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
         }
-        // Keyboard navigation. Every chord here is one the text input's own key
-        // context (`crate::input::CONTEXT`) does NOT claim — verified against its
-        // KeyBinding set (which takes ctrl/cmd arrows, ctrl-shift arrows, tab,
-        // shift-tab, escape, brackets, …). A key the input doesn't bind falls
-        // through to this Chamber context even while the chat box has focus, so
-        // navigation works mid-typing instead of being swallowed. ctrl-based
-        // (not alt/super) to dodge the WM's own workspace chords on Linux/WSL.
+        // Keyboard navigation. Every chord here is meant to be one the text
+        // input's own key context (`gpui_component::input::state::CONTEXT`) does
+        // NOT claim, so a key the input doesn't bind falls through to this
+        // Chamber context even while the chat box has focus and navigation works
+        // mid-typing instead of being swallowed. That claim used to be taken on
+        // faith for `shift-tab`: Input binds `shift-tab` for `OutdentInline`
+        // (`input/state.rs`), so `CycleMode` was silently dead whenever the chat
+        // box had focus. Every chord below (including `CycleMode`'s new one) has
+        // now actually been grepped against every `KeyBinding::new(...)` in
+        // `crates/gpui-component/crates/ui/src/input/state.rs` and confirmed
+        // unclaimed. ctrl-based (not alt/super) to dodge the WM's own workspace
+        // chords on Linux/WSL, except where noted.
         cx.bind_keys([
-            KeyBinding::new("shift-tab", CycleMode, Some(KEY_CONTEXT)),
+            // Verified-free (was shift-tab, dead while typing — see above).
+            KeyBinding::new("f6", CycleMode, Some(KEY_CONTEXT)),
             // Chat column tabs (Chat / Log / Stats) — the universal tab chord.
             KeyBinding::new("ctrl-tab", NextChatTab, Some(KEY_CONTEXT)),
             KeyBinding::new("ctrl-shift-tab", PrevChatTab, Some(KEY_CONTEXT)),
@@ -1092,6 +1099,9 @@ pub fn run(field_path: Option<String>) {
             KeyBinding::new("ctrl-alt-enter", ToggleSelectedQuark, Some(KEY_CONTEXT)),
             // App menu overlay — F10, the conventional "focus the menu" key.
             KeyBinding::new("f10", OpenMenu, Some(KEY_CONTEXT)),
+            // Chat <-> terminal focus toggle — the widespread terminal-toggle
+            // convention (VS Code, JetBrains, …). Verified unclaimed by Input.
+            KeyBinding::new("ctrl-`", ToggleFocus, Some(KEY_CONTEXT)),
         ]);
 
         // Build window options here (needs `&App`, not the async cx below).
