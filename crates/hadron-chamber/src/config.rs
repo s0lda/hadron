@@ -57,7 +57,9 @@ fn default_false() -> bool {
     false
 }
 fn default_roster_width() -> f32 {
-    310.0
+    // +100px over the old 310 so effort + mode tags fit beside the name/model
+    // column without squishing (Jake's request).
+    410.0
 }
 fn default_inspector_width() -> f32 {
     300.0
