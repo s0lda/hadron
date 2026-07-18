@@ -236,8 +236,8 @@ pub fn builtins() -> Vec<ResolvedSkill> {
 ///   case-insensitively by name; anything else is denied.
 ///
 /// ENFORCEMENT (not built here — it is transport-specific and rides later work):
-/// - **SDK quarks**: expose only the allowed tools in the registry/prompt (needs the
-///   resident SDK adapter, sub-project #3 — not built).
+/// - **SDK quarks**: n/a — the `sdk` transport is unsupported and has no native adapter
+///   (see [`hadron_lattice::Transport::Sdk`]); every provider runs over ACP or CLI.
 /// - **ACP/CLI quarks**: reject a disallowed tool at permission-request time (in
 ///   `acp.rs`'s `on_receive_request`), or escalate via the §2 gate. This is the same
 ///   "notional until a real per-tool ask exists" situation §2's adjudication is in.

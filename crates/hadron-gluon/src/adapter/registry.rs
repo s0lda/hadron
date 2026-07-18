@@ -434,8 +434,9 @@ impl QuarkKind {
                 Ok(QuarkKind::Acp(target))
             }
             Transport::Sdk => anyhow::bail!(
-                "seat '{}' uses the sdk transport, which is reserved but not yet implemented \
-                 (see sub-project #3); use transport \"cli\" or \"acp\" for now",
+                "seat '{}' uses the sdk transport, which is unsupported — Hadron has no \
+                 native SDK adapter and none is planned; reach this provider over transport \
+                 \"acp\" or \"cli\" instead",
                 seat.id.as_str()
             ),
         }
@@ -843,13 +844,13 @@ mod tests {
     }
 
     #[test]
-    fn sdk_transport_is_reserved_and_not_seatable() {
+    fn sdk_transport_is_unsupported_and_not_seatable() {
         let mut seat = acp_seat("sdk-agy", "agy");
         seat.transport = Transport::Sdk;
-        let err = QuarkKind::from_seat(&seat).expect_err("sdk must not resolve yet");
+        let err = QuarkKind::from_seat(&seat).expect_err("sdk must not resolve");
         assert!(
-            err.to_string().contains("sdk") && err.to_string().contains("not yet implemented"),
-            "error must name the reserved transport, got: {err}"
+            err.to_string().contains("sdk") && err.to_string().contains("unsupported"),
+            "error must name the unsupported transport, got: {err}"
         );
     }
 

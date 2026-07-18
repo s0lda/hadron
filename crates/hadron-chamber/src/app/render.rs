@@ -180,7 +180,7 @@ impl Chamber {
                 })
                 .unwrap_or_else(|| format!("default ({})", roster_row.vendor)),
             hadron_lattice::Transport::Cli => "hadron-adapter".to_string(),
-            hadron_lattice::Transport::Sdk => "reserved (not yet implemented)".to_string(),
+            hadron_lattice::Transport::Sdk => "unsupported — use ACP or CLI".to_string(),
         };
         let model_str = if roster_row.model.is_empty() {
             "—".to_string()
@@ -190,7 +190,7 @@ impl Chamber {
         let transport_str = match roster_row.transport {
             hadron_lattice::Transport::Cli => "CLI (one-shot)",
             hadron_lattice::Transport::Acp => "ACP (resident)",
-            hadron_lattice::Transport::Sdk => "SDK (reserved)",
+            hadron_lattice::Transport::Sdk => "SDK (unsupported)",
         };
 
         // Presence: a live (adopted + enabled) quark shows its state colour; otherwise
