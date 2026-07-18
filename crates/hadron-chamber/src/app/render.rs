@@ -1631,7 +1631,7 @@ impl Chamber {
                 let grid: gpui::AnyElement = if let Some(term) = &self.terminal {
                     let snap = term.snapshot();
                     let mut html = String::new();
-                    html.push_str("<pre><code>");
+                    html.push_str("<pre>");
                     for (i, line) in snap.lines.iter().enumerate() {
                         let mut line_empty = true;
                         for run in &line.runs {
@@ -1653,7 +1653,7 @@ impl Chamber {
                             html.push_str("<br/>");
                         }
                     }
-                    html.push_str("</code></pre>");
+                    html.push_str("</pre>");
 
                     gpui_component::text::TextView::html("terminal-text", html)
                         .selectable(true)
