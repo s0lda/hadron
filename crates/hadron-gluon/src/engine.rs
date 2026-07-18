@@ -363,9 +363,11 @@ pub struct Engine {
     /// Quarks whose transport is **resident** (an ACP session that persists across
     /// turns), captured from [`Quark::resident`] at seat time — because the quark then
     /// lives behind an async `Mutex` that a synchronous `projection_for` cannot lock.
-    /// The engine hands a resident quark the whole skill library once; a one-shot quark
-    /// gets only the selected skill each turn. Maintained beside `roster`/`quarks` at
-    /// every seating path (`new`, `seat`, `unseat`).
+    /// Maintained beside `roster`/`quarks` at every seating path (`new`, `seat`,
+    /// `unseat`). `projection_for` no longer branches on this for skill injection —
+    /// every quark, resident or one-shot, now gets the same index + active-skill-body
+    /// shape (WS4 §5, prompt-bloat trim) — but the set is kept for whatever else needs
+    /// to know a seat's transport shape.
     resident: HashSet<QuarkId>,
     /// Bookkeeping for [`Kind::Reboot`] servicing: the set of reboot-event **identities**
     /// (ULIDs) this engine has already acted on. `None` until the first field read
@@ -827,17 +829,6 @@ impl Engine {
         // SessionStart hook that does not exist over ACP.
         invariants_text.push_str(&skills::index());
 
-        // A resident (ACP) quark keeps its context across turns, so hand it the WHOLE
-        // library once, here in the cache-stable prefix: composition is then free (it
-        // already holds systematic-debugging when a bug turns up) and no skill's
-        // cross-reference dangles. A one-shot (CLI) quark remembers nothing between turns,
-        // so it gets only the selected skill's body (below) — the whole library every
-        // turn would be paid for in full every turn.
-        let resident = self.resident.contains(target);
-        if resident {
-            invariants_text.push_str(&skills::corpus());
-        }
-
         if let Some(m) = skills::select(&task_desc) {
             let peers = self
                 .roster
@@ -855,14 +846,14 @@ impl Engine {
                 .and_then(|path| fs::read_to_string(path).ok())
                 .and_then(|md| skills::plan_author(&md));
 
-            // Resident quark: the body is already in the corpus above, so name the
-            // starting skill and point at it. One-shot quark: hand it the full body.
-            invariants_text.push_str(&skills::render(
-                &m,
-                target,
-                &skills::Handoff { peers, plan_author },
-                !resident,
-            ));
+            // Every quark — resident (ACP) or one-shot (CLI) — gets the SAME shape now:
+            // the always-on index above (the full menu, so it can still invoke a skill
+            // this task didn't start in) plus the active skill's full body here. A
+            // resident quark used to also get the whole library dumped into its
+            // cache-stable prefix every turn (`skills::corpus()`, ~70-80k tokens); that
+            // is gone — composition still works off the index, and the one skill this
+            // turn actually needs arrives in full, same as it always has for CLI.
+            invariants_text.push_str(&skills::render(&m, target, &skills::Handoff { peers, plan_author }, true));
         }
 
         // Resolve the quark's effective mode from the field before the turn:
@@ -3688,6 +3679,79 @@ mod tests {
             matches!(&last.kind, Kind::Message { body } if body.contains("state of things")),
             "the newest event is kept, the oldest are the ones dropped"
         );
+    }
+
+    /// **THE DISCRIMINATING TEST for the prompt-bloat trim (WS4 §5).** A resident
+    /// (ACP) quark used to get `skills::index()` PLUS the entire skill library
+    /// (`skills::corpus()`) crammed into its cache-stable prefix every turn — ~70-80k
+    /// tokens of markdown the quark mostly never touches. It must now get the index
+    /// (so it still knows the full menu) and the ACTIVE skill's body — nothing more.
+    #[test]
+    fn resident_quark_gets_index_plus_active_body_not_the_whole_corpus() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "worker", "execute the plan at docs/plans/2026-07-14-acp-auth.md");
+        let events = read_events(&field).unwrap();
+
+        let mut engine = Engine::new(field.clone(), vec![], 8);
+        // No quark is seated (the engine's turn machinery is irrelevant here — only
+        // `projection_for` is under test), so residency is set directly, exactly the
+        // way `Engine::seat` records it off `Quark::resident()`.
+        engine.resident.insert(QuarkId::new("worker"));
+
+        let driver = engine.driver_for(&events, &QuarkId::new("worker"), None);
+        let proj = engine.projection_for(&events, &QuarkId::new("worker"), driver.as_ref(), String::new(), None);
+
+        // (1) The always-on index: a stable index-only line (skill id + its
+        // front-matter description), which `render()`'s output never reproduces.
+        assert!(
+            proj.invariants.contains(
+                "**executing-plans** — Use when you have a written implementation plan"
+            ),
+            "the index must still list every skill:\n{}",
+            proj.invariants
+        );
+
+        // (2) The MATCHED skill's body — "execute the plan at docs/plans/..." selects
+        // executing-plans (the bare `docs/plans/` path is itself a trigger).
+        assert!(
+            proj.invariants.contains("Load plan, review critically, execute all tasks, report when complete."),
+            "the active skill's body must be injected in full:\n{}",
+            proj.invariants
+        );
+
+        // (3) NOT a body-only line from a DIFFERENT, non-matched skill — this line
+        // lives only in brainstorming.md's body, so it can only appear here if the
+        // whole corpus were still being dumped.
+        assert!(
+            !proj.invariants.contains(
+                "Help turn ideas into fully formed designs and specs through natural collaborative dialogue."
+            ),
+            "a resident quark must NOT get the whole skill library any more:\n{}",
+            proj.invariants
+        );
+    }
+
+    /// The CLI (one-shot) path is the pin: it already got index + active body, never
+    /// the corpus, and the trim must leave it byte-for-byte the same shape.
+    #[test]
+    fn one_shot_quark_still_gets_index_plus_active_body_only() {
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        seed_human_message(&field, "worker", "execute the plan at docs/plans/2026-07-14-acp-auth.md");
+        let events = read_events(&field).unwrap();
+
+        // Not marked resident — this is the one-shot CLI shape.
+        let engine = Engine::new(field.clone(), vec![], 8);
+
+        let driver = engine.driver_for(&events, &QuarkId::new("worker"), None);
+        let proj = engine.projection_for(&events, &QuarkId::new("worker"), driver.as_ref(), String::new(), None);
+
+        assert!(proj.invariants.contains("**executing-plans** — Use when you have a written implementation plan"));
+        assert!(proj.invariants.contains("Load plan, review critically, execute all tasks, report when complete."));
+        assert!(!proj.invariants.contains(
+            "Help turn ideas into fully formed designs and specs through natural collaborative dialogue."
+        ));
     }
 
     // ---- live re-seating -------------------------------------------------------
