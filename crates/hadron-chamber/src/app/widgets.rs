@@ -303,12 +303,11 @@ pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::A
                         .opacity(if r.enabled { 0.7 } else { 0.4 })
                         .truncate()
                         .child(detail_2),
-                )
-                // Effort + permission-mode tags on their OWN line beneath the details, so
-                // they never compete with the name/model column for horizontal width
-                // (which was truncating the model). Full row width, left-aligned.
-                .child(h_flex().mt_0p5().child(controls)),
+                ),
         )
+        // Effort + permission-mode tags, trailing (top-right) as before. Kept `xsmall`
+        // so they stay clear of the name/model column instead of squishing it.
+        .child(controls)
         .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
 }
 
@@ -430,50 +429,41 @@ pub(super) fn next_mode(mode: Mode) -> Mode {
     }
 }
 
-/// Whether a mode badge renders filled or hollow: an explicit per-quark override
-/// is [`ModeTagStyle::Solid`] (it's a deliberate choice); an inherited/global mode
-/// is [`ModeTagStyle::Outline`] (it's just the ambient default). Split out as a
-/// pure `fn(bool) -> ModeTagStyle` so the render decision — "every quark gets a
-/// tag, styled by override-ness" — is unit-testable without a GPUI window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ModeTagStyle {
-    Solid,
-    Outline,
-}
-
-pub(super) fn mode_tag_style(is_override: bool) -> ModeTagStyle {
-    if is_override {
-        ModeTagStyle::Solid
+/// The text on a permission-mode badge. A quark with no per-quark override reads
+/// **"Default"** (it rides the global/inherited mode); otherwise the actual mode
+/// name. Pure so it's unit-testable without a GPUI window. The GLOBAL mode chip
+/// passes `is_default = false` so it always shows the live ASK/WRITE/AUTO/BYPASS.
+pub(super) fn mode_tag_label(mode: Mode, is_default: bool) -> &'static str {
+    if is_default {
+        "Default"
     } else {
-        ModeTagStyle::Outline
+        mode_label(mode)
     }
 }
 
-/// A permission-mode badge, rendered for every quark (not only ones with an
-/// explicit per-quark override) so the resolved mode is always visible. Variant
-/// carries the risk temperature (Ask muted → Bypass danger). A per-quark override
-/// renders solid; an inherited/global mode renders outlined — see [`mode_tag_style`].
-pub(super) fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
+/// A permission-mode badge. When `is_default` (no per-quark override), a neutral
+/// GREY outlined "Default" chip — the quark is on the global mode. Otherwise the
+/// actual mode in its risk colour (Ask muted → Bypass danger). Kept `xsmall` so it
+/// doesn't crowd the name/model column of the roster row.
+pub(super) fn mode_tag(mode: Mode, is_default: bool) -> gpui::AnyElement {
+    let label = mode_tag_label(mode, is_default);
+    if is_default {
+        // Neutral grey — a "Default" chip must not borrow the risk colour of
+        // whatever the global mode happens to be right now.
+        return Tag::secondary()
+            .xsmall()
+            .outline()
+            .child(div().text_xs().child(label))
+            .into_any_element();
+    }
     let tag = match mode {
         Mode::Ask => Tag::secondary(),
         Mode::Write => Tag::info(),
         Mode::Auto => Tag::warning(),
         Mode::Bypass => Tag::danger(),
     };
-    let tag = match mode_tag_style(is_override) {
-        ModeTagStyle::Solid => tag,
-        ModeTagStyle::Outline => tag.outline(),
-    };
-    // A quark with no per-quark override reads "Default" (it's on the global/inherited
-    // mode); the tag's colour still carries the resolved temperature so you can see what
-    // the default currently resolves to. An override shows the mode name outright.
-    let label = if is_override {
-        mode_label(mode).to_string()
-    } else {
-        "Default".to_string()
-    };
-    tag.small()
-        .child(div().child(label))
+    tag.xsmall()
+        .child(div().text_xs().child(label))
         .into_any_element()
 }
 
@@ -484,9 +474,9 @@ pub(super) fn mode_tag(mode: Mode, is_override: bool) -> gpui::AnyElement {
 pub(super) fn effort_tag(effort: &Option<String>) -> gpui::AnyElement {
     match effort.as_deref() {
         Some(e) if !e.is_empty() => Tag::secondary()
-            .small()
+            .xsmall()
             .outline()
-            .child(div().child(e.to_uppercase()))
+            .child(div().text_xs().child(e.to_uppercase()))
             .into_any_element(),
         _ => div().into_any_element(),
     }
@@ -685,8 +675,13 @@ mod tests {
     /// styles per the function's own doc comment (override = solid, inherited =
     /// outline).
     #[test]
-    fn mode_tag_renders_for_inherited_mode_not_only_overrides() {
-        assert_eq!(mode_tag_style(true), ModeTagStyle::Solid, "an explicit per-quark override renders solid");
-        assert_eq!(mode_tag_style(false), ModeTagStyle::Outline, "an inherited/global mode renders outlined, not nothing");
+    fn mode_tag_label_is_default_only_when_inherited() {
+        // No per-quark override → the grey "Default" chip.
+        assert_eq!(mode_tag_label(Mode::Auto, true), "Default");
+        assert_eq!(mode_tag_label(Mode::Bypass, true), "Default");
+        // An override (and the global chip, which passes is_default=false) → the real mode.
+        assert_eq!(mode_tag_label(Mode::Auto, false), "AUTO");
+        assert_eq!(mode_tag_label(Mode::Ask, false), "ASK");
+        assert_eq!(mode_tag_label(Mode::Bypass, false), "BYPASS");
     }
 }
