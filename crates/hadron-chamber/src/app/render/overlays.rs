@@ -21,7 +21,9 @@ impl super::Chamber {
             .p_1()
             .gap_1()
             .rounded_lg()
-            .bg(theme::bg_surface())
+            // Flat #101010 field colour so the mentions popup matches the solid
+            // background (Jake's request).
+            .bg(theme::field_base())
             .border_1()
             .border_color(theme::border());
 
@@ -151,10 +153,10 @@ impl super::Chamber {
                     .p_5()
                     .gap_4()
                     .rounded(INNER_RADIUS)
-                    // Opaque, like the info panel and Settings: a focused dialog must not
-                    // let the bright field bleed through (glass_surface read as too
-                    // transparent). One shared modal token so every dialog matches.
-                    .bg(theme::modal_surface())
+                    // Flat #101010 field colour — opaque, so the field can't bleed
+                    // through, and matches the About dialog to the solid background
+                    // (Jake's request). Settings/app-menu still use modal_surface.
+                    .bg(theme::field_base())
                     .border_1()
                     .border_color(theme::glass_highlight())
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // swallow inner clicks

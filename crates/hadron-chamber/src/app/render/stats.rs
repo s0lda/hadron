@@ -339,9 +339,10 @@ impl super::Chamber {
                     .w(px(560.0))
                     .max_h(px(660.0))
                     .overflow_y_scroll()
-                    // Opaque: a focused info panel must not let the bright field bleed
-                    // through (glass_surface read as too transparent). Solid, like Settings.
-                    .bg(theme::modal_surface())
+                    // Flat #101010 field colour — opaque, so the bright field can't
+                    // bleed through, and matches the Quark Info panel to the solid
+                    // background (Jake's request).
+                    .bg(theme::field_base())
                     .border_1()
                     .border_color(theme::glass_highlight())
                     .rounded(INNER_RADIUS)
