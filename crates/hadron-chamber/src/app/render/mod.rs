@@ -106,37 +106,15 @@ impl Render for Chamber {
             .rounded_bl(bottom_radius)
             .rounded_br(bottom_radius)
             .text_color(theme::text())
-            // The ambient field: a bright blue-violet glow, painted first so every panel
-            // floats over it. A base wash (bright top -> deep bottom) plus soft bright glows
-            // down the two side edges give the "Built"-style lit surround with a darker
-            // centre behind the panels. Static gradients only (no blur / no animation), so
-            // it costs only per-repaint — tune the angles/tones freely.
+            // The ambient field: the solid `#101010` housing (the root `.bg` above) with a
+            // faint quark-state glow whispered into each corner, painted first so every panel
+            // floats over it. The background photo was dropped in favour of this flat field.
+            // Static gradients only (no blur / no animation), so it costs only per-repaint.
             .child(
                 div()
                     .absolute()
                     .inset_0()
                     .overflow_hidden()
-                    // The background photo (Jake's asset), replacing the two-colour
-                    // gradient wash. Baked absolute at compile time so it resolves
-                    // regardless of the runtime cwd; loaded via `Resource::Path`
-                    // (fs::read, decoded once and cached by gpui), so it costs a
-                    // texture composite per repaint, not a re-decode. `Cover` fills
-                    // the field, cropping overflow; rounded to the housing radius so
-                    // the corners sit under the window's rounded frame.
-                    .child(
-                        gpui::img(std::path::PathBuf::from(concat!(
-                            env!("CARGO_MANIFEST_DIR"),
-                            "/../../assets/background.jpeg"
-                        )))
-                        .absolute()
-                        .inset_0()
-                        .size_full()
-                        .object_fit(gpui::ObjectFit::Cover)
-                        .rounded_tl(top_radius)
-                        .rounded_tr(top_radius)
-                        .rounded_bl(bottom_radius)
-                        .rounded_br(bottom_radius),
-                    )
                     // Quark-state hues, one per corner (angle points at the OPPOSITE corner,
                     // so the hue sits bright in the named corner and fades across).
                     .child(glow_layer(135.0, theme::glow_blue(), top_radius, bottom_radius)) // working — top-left

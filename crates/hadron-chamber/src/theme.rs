@@ -29,7 +29,7 @@ use hadron_lattice::QuarkState;
 /// here would show the desktop, not the field). Just off pure black so the rounded corners
 /// and any panel seam still read against it.
 pub fn field_base() -> Rgba {
-    rgb(0x0a0a0b)
+    rgb(0x101010) // flat near-black — the field the frosted panels float on
 }
 /// The top of the field wash — a barely-lifted near-black, so the housing is a whisper
 /// lighter at the top than behind the panels rather than a bright glow.
