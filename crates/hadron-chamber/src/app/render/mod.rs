@@ -106,21 +106,7 @@ impl Render for Chamber {
             .rounded_bl(bottom_radius)
             .rounded_br(bottom_radius)
             .text_color(theme::text())
-            // The ambient field: the solid `#101010` housing (the root `.bg` above) with a
-            // faint quark-state glow whispered into each corner, painted first so every panel
-            // floats over it. The background photo was dropped in favour of this flat field.
-            // Static gradients only (no blur / no animation), so it costs only per-repaint.
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .overflow_hidden()
-                    // Quark-state hues, one per corner (angle points at the OPPOSITE corner,
-                    // so the hue sits bright in the named corner and fades across).
-                    .child(glow_layer(135.0, theme::glow_blue(), top_radius, bottom_radius)) // working — top-left
-                    .child(glow_layer(225.0, theme::glow_pink(), top_radius, bottom_radius)) // thinking — top-right
-                    .child(glow_layer(45.0, theme::glow_green(), top_radius, bottom_radius)), // available — bottom-left
-            )
+
             .child(titlebar)
             .child(body)
             .children(settings)
