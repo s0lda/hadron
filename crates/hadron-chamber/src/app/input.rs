@@ -213,6 +213,14 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
                 // reboot consumes the rest of the line, so nothing is left to post.
                 return (cmds, None);
             }
+            Some("approve") => {
+                cmds.push(("approve".to_string(), head[tok_end..].trim().to_string()));
+                return (cmds, None);
+            }
+            Some("deny") => {
+                cmds.push(("deny".to_string(), head[tok_end..].trim().to_string()));
+                return (cmds, None);
+            }
             // First non-command token: the untouched remainder is the message body.
             _ => break,
         }
