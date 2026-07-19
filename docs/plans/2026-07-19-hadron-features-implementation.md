@@ -36,7 +36,7 @@
 - Consumes: GPUI `MouseDownEvent`
 - Produces: None (internal click filter)
 
-- [ ] **Step 1: Implement activation click filter**
+- [x] **Step 1: Implement activation click filter**
   Locate `paint` method in `crates/gpui-component/crates/ui/src/text/window_selection.rs` and update the `MouseDownEvent` listener:
   ```rust
   window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
@@ -60,11 +60,11 @@
   });
   ```
 
-- [ ] **Step 2: Run workspace tests to verify they pass**
+- [x] **Step 2: Run workspace tests to verify they pass**
   Run: `cargo test --workspace`
   Expected: PASS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
   ```bash
   git add crates/gpui-component/crates/ui/src/text/window_selection.rs
   git commit -m "fix(chamber): ignore first_mouse clicks for text selection to prevent sticky highlight"
