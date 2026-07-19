@@ -49,14 +49,16 @@ mod spend;
 mod tests;
 
 use session::{AcpSession, LiveFeed};
-use spend::SpendWatermark;
 
 // Re-exported: `AcpModel`/`probe`/`probe_selector` are the crate's public ACP
 // surface (the chamber's Settings "Connect" wizard and model dropdown call these
 // at `hadron_gluon::adapter::acp::{probe, probe_selector, AcpModel}`), so moving
 // their implementation into the private `model` submodule must not change their
-// public path.
+// public path. `turn_spend`/`SpendWatermark` were likewise `pub` at
+// `hadron_gluon::adapter::acp::` before the split; re-exporting keeps that path
+// (and brings `SpendWatermark` into scope for the struct field below).
 pub use model::{probe, probe_selector, AcpModel};
+pub use spend::{turn_spend, SpendWatermark};
 
 pub struct AcpQuark {
     id: QuarkId,
