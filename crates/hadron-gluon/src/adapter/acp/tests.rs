@@ -698,6 +698,7 @@ async fn a_live_turn_publishes_what_it_is_doing() {
     });
 
     let mut t = projection();
+    t.mode = Mode::Bypass;
     // A task that forces a tool call: the agent must LOOK at the tree, so we get
     // a `ToolCall` update and not just thought chunks.
     t.task = "List the files in the current directory using your tools, then reply with the word: done.".into();

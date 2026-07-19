@@ -212,6 +212,20 @@ impl super::Chamber {
                 self.file_tree_paths = files;
                 changed = true;
             }
+
+            let live_dir = hadron_lattice::live::live_dir(&self.path);
+            let mut live_activity_changed = false;
+            for r in &self.view.roster {
+                let activity = hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), chrono::Utc::now());
+                if self.last_live_activities.get(&r.id) != Some(&activity) {
+                    self.last_live_activities.insert(r.id.clone(), activity);
+                    live_activity_changed = true;
+                }
+            }
+            if live_activity_changed {
+                changed = true;
+            }
+
             if changed {
                 cx.notify();
             }
