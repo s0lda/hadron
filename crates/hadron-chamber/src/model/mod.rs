@@ -46,6 +46,7 @@ pub struct MessageRow {
     pub usage: Option<hadron_lattice::Usage>,
     pub ts: chrono::DateTime<chrono::Utc>,
     pub legacy_used_tokens: Option<u32>,
+    pub turn: Option<String>,
 }
 
 fn resolve_fresh(
@@ -313,6 +314,7 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
             .or_else(|| e.usage.clone()),
         ts: e.ts,
         legacy_used_tokens,
+        turn: e.turn.map(|t| t.to_string()),
     }
 }
 

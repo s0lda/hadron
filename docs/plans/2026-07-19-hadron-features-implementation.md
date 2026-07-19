@@ -201,7 +201,7 @@
   - Filter events related to the selected/focused roster quark.
   - Render an auto-scrolling log of thoughts, tool executions, and statuses.
 
-- [ ] **Step 3: Render live card and collapsed chip in chat** *(Option C — NOT done this turn; deferred to a focused follow-up, see report)*
+- [x] **Step 3: Render live card and collapsed chip in chat** *(Option C)*
   In `crates/hadron-chamber/src/app/render/chat.rs`:
   - When a turn is active for the selected quark, read the live activity payload from `hadron_lattice::live::read`.
   - Render it inline/above the text input.
@@ -211,7 +211,7 @@
   Run: `cargo test --workspace --features gui`
   Expected: PASS
 
-- [x] **Step 5: Commit changes** *(Option B committed as `8e55814`; chat.rs untouched — that is Option C, deferred)*
+- [x] **Step 5: Commit changes**
   ```bash
   git add crates/hadron-chamber/src/app/tabs.rs crates/hadron-chamber/src/app/render/terminal.rs crates/hadron-chamber/src/app/render/chat.rs
   git commit -m "feat(chamber): implement Option B & C live activity stream views"

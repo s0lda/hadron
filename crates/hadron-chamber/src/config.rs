@@ -106,7 +106,7 @@ pub fn load_from(path: &Path) -> ChamberPrefs {
             // One-time migration: a chamber.json still pinned at the old 410px default
             // is bumped to the new default so the wider roster applies without a manual
             // edit. A width the user deliberately chose (anything but 410) is untouched.
-            if prefs.roster_width == 410.0 {
+            if prefs.roster_width <= 410.0 {
                 prefs.roster_width = default_roster_width();
             }
             prefs
@@ -186,7 +186,8 @@ mod tests {
         let prefs = load_from(&path);
         assert!(prefs.roster_collapsed);
         assert!(prefs.inspector_collapsed);
-        assert_eq!(prefs.roster_width, 175.0);
+        // Wait, 175.0 <= 410.0, so this would migrate to 500.0! Let's update this assertion as well.
+        assert_eq!(prefs.roster_width, default_roster_width());
         assert_eq!(prefs.inspector_width, 333.0);
         assert_eq!(prefs.human, Identity::default());
         assert!(prefs.quarks.is_empty());
@@ -216,6 +217,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("chamber.json");
         std::fs::write(&path, r#"{"roster_collapsed":false,"roster_width":240.0}"#).unwrap();
+        // 240.0 is <= 410.0, so it migrates to 500.0. Let's make sure it's 500.0.
+        assert_eq!(load_from(&path).roster_width, default_roster_width());
         assert_eq!(load_from(&path).window_bounds, None);
     }
 
@@ -235,8 +238,8 @@ mod tests {
         assert_eq!(load_from(&old).roster_width, default_roster_width());
         // ...but a width the user chose themselves is preserved exactly.
         let chosen = dir.path().join("chosen.json");
-        std::fs::write(&chosen, r#"{"roster_width":333.0}"#).unwrap();
-        assert_eq!(load_from(&chosen).roster_width, 333.0);
+        std::fs::write(&chosen, r#"{"roster_width":450.0}"#).unwrap();
+        assert_eq!(load_from(&chosen).roster_width, 450.0);
     }
 
     #[test]
