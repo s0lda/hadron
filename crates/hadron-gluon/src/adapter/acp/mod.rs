@@ -130,6 +130,7 @@ impl AcpQuark {
             dir,
             quark: self.id.clone(),
             last: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         });
         self
     }
@@ -212,8 +213,12 @@ impl Quark for AcpQuark {
     /// what makes "a turn that died still goes idle" true by construction: a quark
     /// whose agent crashed must not sit in the chamber `thinking` forever.
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+        if let Some(feed) = &self.live {
+            feed.set_active(true);
+        }
         let outcome = self.run_turn(turn).await;
         if let Some(feed) = &self.live {
+            feed.set_active(false);
             feed.clear();
         }
         outcome
