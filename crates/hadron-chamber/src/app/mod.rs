@@ -44,7 +44,7 @@ use crate::model::{self, ChamberView, MessageRow, RosterRow, StatsWindow};
 use crate::theme;
 
 mod mentions;
-use mentions::{color_mentions, parse_plan_progress};
+use mentions::{color_mentions, parse_plan_progress, parse_plan_tasks};
 
 mod identity;
 use identity::{
@@ -196,6 +196,8 @@ struct Chamber {
     changes_scroll: ScrollHandle,
     /// Scroll position of the Plan tracker pane.
     plan_scroll: ScrollHandle,
+    pub(super) plan_collapsed_tasks: std::collections::HashSet<String>,
+    pub(super) last_plan_path: Option<String>,
     /// Virtual list state for the Chat tab.
     chat_list_state: gpui::ListState,
     log_list_state: gpui::ListState,
@@ -492,7 +494,7 @@ impl Chamber {
             .map(|p| crate::model::load_archived_messages(&p.join("sessions")))
             .unwrap_or_default();
 
-        Chamber {
+        let mut chamber = Chamber {
             view,
             prefs,
             team,
@@ -513,6 +515,8 @@ impl Chamber {
             changes_open_ixs: std::collections::HashSet::new(),
             changes_scroll: ScrollHandle::new(),
             plan_scroll: ScrollHandle::new(),
+            plan_collapsed_tasks: std::collections::HashSet::new(),
+            last_plan_path: None,
             chat_list_state,
             log_list_state,
             log_expanded: std::collections::HashSet::new(),
@@ -559,7 +563,9 @@ impl Chamber {
             about_open: false,
             file_tree_scroll: ScrollHandle::new(),
             file_tree_open_scroll: ScrollHandle::new(),
-        }
+        };
+        chamber.update_active_plan();
+        chamber
     }
 
     /// Whether the chat viewport is scrolled to (or within a message-height of)

@@ -8,6 +8,37 @@ impl super::Chamber {
     pub(super) fn reproject(&mut self, events: &[Event]) {
         let resolved = resolve_team(&self.team, &self.global);
         self.view = model::project_with_team(events, &resolved, &self.global);
+        self.update_active_plan();
+    }
+
+    pub(super) fn update_active_plan(&mut self) {
+        let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        let active_plan_path = self.view
+            .messages
+            .iter()
+            .rev()
+            .find_map(|m| {
+                hadron_gluon::skills::plan_ref(&m.body)
+                    .filter(|rel_path| repo.join(rel_path).is_file())
+            });
+
+        if let Some(rel_path) = active_plan_path {
+            let path_str = rel_path.clone();
+            if self.last_plan_path.as_deref() != Some(&path_str) {
+                self.last_plan_path = Some(path_str);
+                if let Some(content) = crate::sys::read_workspace_file(&repo, &rel_path) {
+                    let tasks = parse_plan_tasks(&content);
+                    if let Some((first_incomplete_task, _)) = tasks
+                        .iter()
+                        .find(|(_, steps)| steps.iter().any(|(_, done)| !*done))
+                    {
+                        self.plan_collapsed_tasks.remove(first_incomplete_task);
+                    }
+                }
+            }
+        } else {
+            self.last_plan_path = None;
+        }
     }
 
     /// Re-read the field; if it grew, re-project and repaint. Comparing event
