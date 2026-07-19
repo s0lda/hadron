@@ -49,7 +49,7 @@
 - Consumes: `gpui_component::ui::clipboard::Clipboard` component, `TextView::code_block_actions` hook.
 - Produces: Bordered, padded code blocks with a hover "Copy" button.
 
-- [ ] **Step 1: Add code block styling**
+- [x] **Step 1: Add code block styling**
   In `crates/hadron-chamber/src/app/widgets.rs` inside the `markdown_style()` helper, find `style.code_block` and change it to use `theme::bg_elevated()` and borders:
   ```rust
   style.code_block = {
@@ -63,7 +63,7 @@
   };
   ```
 
-- [ ] **Step 2: Wire copy button to TextView::html**
+- [x] **Step 2: Wire copy button to TextView::html**
   In `crates/hadron-chamber/src/app/render/chat.rs` inside `pub(super) fn message_row`, look for the `gpui_component::text::TextView::html` call and append `.code_block_actions(...)`:
   ```rust
   gpui_component::text::TextView::html((view, ix), html)
@@ -75,15 +75,15 @@
       })
   ```
 
-- [ ] **Step 3: Verify workspace compiles cleanly**
+- [x] **Step 3: Verify workspace compiles cleanly**
   Run: `cargo check --workspace --features gui`
   Expected: PASS
 
-- [ ] **Step 4: Run unit tests**
+- [x] **Step 4: Run unit tests**
   Run: `cargo test -p hadron-chamber --features gui`
   Expected: PASS
 
-- [ ] **Step 5: Commit changes**
+- [x] **Step 5: Commit changes**
   ```bash
   git add crates/hadron-chamber/src/app/widgets.rs crates/hadron-chamber/src/app/render/chat.rs
   git commit -m "feat(chamber): add styling and clipboard copy button to markdown code blocks"
