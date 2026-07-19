@@ -697,6 +697,22 @@ impl super::Chamber {
                                 format!("task-header-{}", task_name)
                             };
 
+                            let all_done = steps.iter().all(|(_, done)| *done);
+                            let status_marker = if all_done {
+                                Icon::new(IconName::CircleCheck)
+                                    .small()
+                                    .text_color(gpui::rgb(0x34d399))
+                                    .into_any_element()
+                            } else {
+                                div()
+                                    .size(px(14.0))
+                                    .flex_shrink_0()
+                                    .rounded_full()
+                                    .border_1()
+                                    .border_color(theme::text_muted())
+                                    .into_any_element()
+                            };
+
                             let header = h_flex()
                                 .id(gpui::SharedString::from(id_str))
                                 .w_full()
@@ -721,6 +737,7 @@ impl super::Chamber {
                                     .small()
                                     .text_color(theme::text_muted())
                                 )
+                                .child(status_marker)
                                 .child(
                                     div()
                                         .font_weight(gpui::FontWeight::BOLD)
