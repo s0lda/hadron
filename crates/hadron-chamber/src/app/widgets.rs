@@ -171,7 +171,12 @@ pub(super) fn drag_region(id: &'static str) -> impl IntoElement {
 /// One roster entry, styled as a presence list-item: the resolved avatar with a
 /// status [`Badge`] dot, a display name, and a one-word presence subtitle, with a
 /// tooltip on hover.
-pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::AnyElement) -> impl IntoElement {
+pub(super) fn roster_row(
+    id: &ResolvedIdentity,
+    r: &RosterRow,
+    activity: Option<hadron_lattice::live::Activity>,
+    controls: gpui::AnyElement,
+) -> impl IntoElement {
     let name = id.name.clone();
     // Not adopted here → "available" (in the catalogue, off in this repo); adopted but
     // switched off → "disabled"; otherwise the live presence word.
@@ -210,7 +215,9 @@ pub(super) fn roster_row(id: &ResolvedIdentity, r: &RosterRow, controls: gpui::A
         None => "",
     };
 
-    let detail_1: SharedString = if r.vendor.is_empty() && r.model.is_empty() {
+    let detail_1: SharedString = if let Some(act) = activity {
+        format!("{}: {}", act.doing.label(), act.detail).into()
+    } else if r.vendor.is_empty() && r.model.is_empty() {
         label.into()
     } else if r.model.is_empty() {
         format!("{} · {}", transport_label, cap(&r.vendor)).into()
