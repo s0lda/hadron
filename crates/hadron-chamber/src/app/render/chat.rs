@@ -6,12 +6,14 @@ impl super::Chamber {
     /// thing is a rounded, filled card that floats on the unified canvas.
     pub(super) fn chat_pane(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let live_dir = hadron_lattice::live::live_dir(&self.path);
-        let selected_quark = self.selected_quark_ix.and_then(|ix| self.view.roster.get(ix));
-        let live_activity = selected_quark.and_then(|r| {
+        let live_activity = self.view.roster.iter().find_map(|r| {
             hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), chrono::Utc::now())
         });
         
         let live_card = live_activity.map(|act| {
+            let quark_id_str = act.quark.as_str();
+            let identity = self.resolve_identity(quark_id_str);
+            let name = identity.name;
             let label = act.doing.label();
             let detail = act.detail;
             h_flex()
@@ -35,7 +37,7 @@ impl super::Chamber {
                         .text_xs()
                         .font_weight(gpui::FontWeight::BOLD)
                         .text_color(theme::accent())
-                        .child(format!("{}:", label))
+                        .child(format!("{} is {}:", name, label))
                 )
                 .child(
                     div()
