@@ -1001,6 +1001,136 @@ async fn config_rules_inert_when_no_human_off() {
     }
 }
 
+#[tokio::test]
+async fn orchestrator_recursion_guard_downgrades_to_ask_human() {
+    use hadron_gatekeeper::{Mode, Risk};
+    let dir = tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+    seed_human_message(&field, "orch", "hello");
+    seed_mode(&field, None, Mode::Bypass); // global Bypass
+    seed_mode(&field, Some("orch"), Mode::Auto); // per-quark override for orch to Auto
+    
+    let tasks = Arc::new(Mutex::new(vec![]));
+    let orchestrator = PermissionQuark {
+        id: QuarkId::new("orch"),
+        flavor: Flavor::Orchestrator,
+        ask: PermissionAsk { risk: Risk::BashExec, description: "some bash cmd".into() },
+        reply: "done".into(),
+        calls: 0,
+        tasks: tasks.clone(),
+        commands: hadron_lattice::SeatCommands::default(),
+    };
+    
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(orchestrator)],
+        8,
+    )
+    .with_no_human(true);
+    
+    engine.run_until_quiesce().await.unwrap();
+    
+    let events = read_events(&field).unwrap();
+    assert!(has_kind(&events, |k| matches!(k, Kind::PermissionReq { .. })), "req recorded");
+    assert!(has_kind(&events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })), "orchestrator parks in waiting state");
+    
+    let already_asked = events.iter().any(|e| {
+        e.to.as_ref() == Some(&QuarkId::new("orch"))
+            && matches!(&e.kind, Kind::Message { body } if body.starts_with("[no-human-mode]"))
+    });
+    assert!(!already_asked, "orchestrator must not be auto-scheduled to adjudicate its own request");
+}
+
+#[tokio::test]
+async fn orchestrator_slash_commands_in_finish_turn() {
+    let dir = tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+    
+    struct CommandOrchestrator {
+        id: QuarkId,
+        messages: Vec<String>,
+        calls: usize,
+    }
+    
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for CommandOrchestrator {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Orchestrator
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+            let msg = if self.calls < self.messages.len() {
+                Some(self.messages[self.calls].clone())
+            } else {
+                None
+            };
+            self.calls += 1;
+            Ok(TurnOutcome {
+                message: msg,
+                permission: None,
+                usage: Default::default(),
+            })
+        }
+    }
+    
+    seed_human_message(&field, "orch", "hello");
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![
+            Box::new(CommandOrchestrator {
+                id: QuarkId::new("orch"),
+                messages: vec!["/approve @worker".to_string()],
+                calls: 0,
+            }),
+            Box::new(crate::mock::MockQuark::repeating(QuarkId::new("worker"), Flavor::Worker, "reply")),
+        ],
+        8,
+    );
+    engine.run_until_quiesce().await.unwrap();
+    
+    let events = read_events(&field).unwrap();
+    assert!(
+        events.iter().any(|e| {
+            e.from == Actor::Quark(QuarkId::new("orch"))
+                && e.to.as_ref() == Some(&QuarkId::new("worker"))
+                && matches!(e.kind, Kind::PermissionGrant { approved: true, remember: false })
+        }),
+        "should parse /approve @worker and append permission grant"
+    );
+    
+    let dir2 = tempdir().unwrap();
+    let field2 = dir2.path().join("field.jsonl");
+    seed_human_message(&field2, "orch", "hello");
+    let mut engine2 = Engine::new(
+        field2.clone(),
+        vec![
+            Box::new(CommandOrchestrator {
+                id: QuarkId::new("orch"),
+                messages: vec!["/deny @worker remember".to_string()],
+                calls: 0,
+            }),
+            Box::new(crate::mock::MockQuark::repeating(QuarkId::new("worker"), Flavor::Worker, "reply")),
+        ],
+        8,
+    );
+    engine2.run_until_quiesce().await.unwrap();
+    
+    let events2 = read_events(&field2).unwrap();
+    assert!(
+        events2.iter().any(|e| {
+            e.from == Actor::Quark(QuarkId::new("orch"))
+                && e.to.as_ref() == Some(&QuarkId::new("worker"))
+                && matches!(e.kind, Kind::PermissionGrant { approved: false, remember: true })
+        }),
+        "should parse /deny @worker remember and append permission grant with remember: true"
+    );
+}
+
 fn seed_human_message(path: &std::path::Path, to: &str, body: &str) {
     append_event(
         path,
