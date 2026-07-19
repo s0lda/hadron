@@ -91,6 +91,7 @@ pub(super) struct LiveFeed {
     pub(super) dir: PathBuf,
     pub(super) quark: QuarkId,
     pub(super) last: Arc<Mutex<Option<Instant>>>,
+    pub(super) active: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl LiveFeed {
@@ -98,7 +99,14 @@ impl LiveFeed {
     /// it is the one update the human is actually reading.
     const THROTTLE: std::time::Duration = std::time::Duration::from_millis(200);
 
+    pub(super) fn set_active(&self, active: bool) {
+        self.active.store(active, std::sync::atomic::Ordering::Relaxed);
+    }
+
     fn publish(&self, doing: Doing, detail: &str) {
+        if !self.active.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         let forced = matches!(doing, Doing::Working | Doing::Planning);
         {
             let mut last = self.last.lock().unwrap();
@@ -176,62 +184,71 @@ impl super::AcpQuark {
                     let agent = AcpAgent::from_str(&agent_source)
                         .map_err(|e| anyhow::anyhow!("bad ACP command {display_command:?}: {e}"))?;
 
+                    let in_turn = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let pump_in_turn = Arc::clone(&in_turn);
+
                     let connect = agent_client_protocol::Client
                         .builder()
                         .name("hadron")
                         .on_receive_notification(
-                            async move |n: SessionNotification, _cx| {
-                                match n.update {
-                                    // The reply text. `PromptResponse` carries none,
-                                    // so this is the only place a message exists.
-                                    SessionUpdate::AgentMessageChunk(chunk) => {
-                                        if let ContentBlock::Text(t) = chunk.content {
-                                            transcript.lock().unwrap().push_str(&t.text);
-                                        }
+                            {
+                                let in_turn = Arc::clone(&in_turn);
+                                async move |n: SessionNotification, _cx| {
+                                    if !in_turn.load(std::sync::atomic::Ordering::Relaxed) {
+                                        return Ok(());
                                     }
-                                    // Real context numbers, including the window SIZE
-                                    // — which the claude CLI never reports.
-                                    SessionUpdate::UsageUpdate(u) => {
-                                        *context.lock().unwrap() = Some((u.used, u.size));
-                                    }
-                                    // The agent's reasoning, streamed. Volatile: it
-                                    // is published for the chamber to render live and
-                                    // never written to the field.
-                                    SessionUpdate::AgentThoughtChunk(chunk) => {
-                                        if let (Some(feed), ContentBlock::Text(t)) =
-                                            (&live, chunk.content)
-                                        {
-                                            feed.publish(Doing::Thinking, &t.text);
-                                        }
-                                    }
-                                    // A tool call is the update the human is actually
-                                    // reading — "what is it DOING" — so it is never
-                                    // throttled away.
-                                    SessionUpdate::ToolCall(call) => {
-                                        if let Some(feed) = &live {
-                                            feed.publish(Doing::Working, &call.title);
-                                        }
-                                    }
-                                    SessionUpdate::Plan(plan) => {
-                                        if let Some(feed) = &live {
-                                            let step = plan
-                                                .entries
-                                                .iter()
-                                                .find(|e| {
-                                                    e.status == PlanEntryStatus::InProgress
-                                                })
-                                                .or_else(|| plan.entries.first());
-                                            if let Some(step) = step {
-                                                feed.publish(Doing::Planning, &step.content);
+                                    match n.update {
+                                        // The reply text. `PromptResponse` carries none,
+                                        // so this is the only place a message exists.
+                                        SessionUpdate::AgentMessageChunk(chunk) => {
+                                            if let ContentBlock::Text(t) = chunk.content {
+                                                transcript.lock().unwrap().push_str(&t.text);
                                             }
                                         }
+                                        // Real context numbers, including the window SIZE
+                                        // — which the claude CLI never reports.
+                                        SessionUpdate::UsageUpdate(u) => {
+                                            *context.lock().unwrap() = Some((u.used, u.size));
+                                        }
+                                        // The agent's reasoning, streamed. Volatile: it
+                                        // is published for the chamber to render live and
+                                        // never written to the field.
+                                        SessionUpdate::AgentThoughtChunk(chunk) => {
+                                            if let (Some(feed), ContentBlock::Text(t)) =
+                                                (&live, chunk.content)
+                                            {
+                                                feed.publish(Doing::Thinking, &t.text);
+                                            }
+                                        }
+                                        // A tool call is the update the human is actually
+                                        // reading — "what is it DOING" — so it is never
+                                        // throttled away.
+                                        SessionUpdate::ToolCall(call) => {
+                                            if let Some(feed) = &live {
+                                                feed.publish(Doing::Working, &call.title);
+                                            }
+                                        }
+                                        SessionUpdate::Plan(plan) => {
+                                            if let Some(feed) = &live {
+                                                let step = plan
+                                                    .entries
+                                                    .iter()
+                                                    .find(|e| {
+                                                        e.status == PlanEntryStatus::InProgress
+                                                    })
+                                                    .or_else(|| plan.entries.first());
+                                                if let Some(step) = step {
+                                                    feed.publish(Doing::Planning, &step.content);
+                                                }
+                                            }
+                                        }
+                                        // Everything else (user echoes, tool-call updates,
+                                        // command lists, mode changes) is protocol
+                                        // bookkeeping with nothing for a human to read.
+                                        _ => {}
                                     }
-                                    // Everything else (user echoes, tool-call updates,
-                                    // command lists, mode changes) is protocol
-                                    // bookkeeping with nothing for a human to read.
-                                    _ => {}
+                                    Ok(())
                                 }
-                                Ok(())
                             },
                             agent_client_protocol::on_receive_notification!(),
                         )
@@ -386,6 +403,7 @@ impl super::AcpQuark {
                             while let Some(turn) = turns_rx.recv().await {
                                 pump_transcript.lock().unwrap().clear();
                                 *pump_context.lock().unwrap() = None;
+                                pump_in_turn.store(true, std::sync::atomic::Ordering::Relaxed);
 
                                 let sent = cx
                                     .send_request(PromptRequest::new(
@@ -394,6 +412,8 @@ impl super::AcpQuark {
                                     ))
                                     .block_task()
                                     .await;
+
+                                pump_in_turn.store(false, std::sync::atomic::Ordering::Relaxed);
 
                                 let reply = match sent {
                                     Ok(resp) => Ok(TurnReply {
