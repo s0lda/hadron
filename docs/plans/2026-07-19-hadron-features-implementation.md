@@ -145,7 +145,7 @@
   - In `about_overlay`: Change `.bg(theme::modal_surface())` to `.bg(theme::field_base())` for the dialog container.
   - In `completion_card_overlay`: Change `.bg(theme::bg_surface())` to `.bg(theme::field_base())`.
 
-- [ ] **Step 4: Update RightRailTab focus test array**
+- [x] **Step 4: Update RightRailTab focus test array** *(done alongside Task 4 Step 1, once `RightRailTab::Activity` existed)*
   In `crates/hadron-chamber/src/app/actions.rs` inside `toggle_focus_else_case_switches_rail_to_terminal`, add `RightRailTab::Activity`:
   ```rust
   for tab in [RightRailTab::FileTree, RightRailTab::Changes, RightRailTab::Plan, RightRailTab::Activity]
@@ -172,7 +172,7 @@
 - Consumes: `.hadron/field.jsonl` event log via `io::read_events`.
 - Produces: Detailed "Activity" multitool tab, live collapsible chat thought cards.
 
-- [ ] **Step 1: Declare RightRailTab::Activity**
+- [x] **Step 1: Declare RightRailTab::Activity**
   In `crates/hadron-chamber/src/app/tabs.rs`, add the `Activity` variant to `RightRailTab` and update `ALL`, `index()`, `from_index()`, and `label()`:
   ```rust
   #[derive(Clone, Copy, PartialEq, Eq)]
@@ -195,23 +195,23 @@
       // match index 4 for Activity
   ```
 
-- [ ] **Step 2: Render Activity feed in terminal.rs**
+- [x] **Step 2: Render Activity feed in terminal.rs**
   In `crates/hadron-chamber/src/app/render/terminal.rs` inside `terminal_pane`, add `RightRailTab::Activity` branch:
   - Retrieve the events from the log: `let events = io::read_events(&self.path).unwrap_or_default();`
   - Filter events related to the selected/focused roster quark.
   - Render an auto-scrolling log of thoughts, tool executions, and statuses.
 
-- [ ] **Step 3: Render live card and collapsed chip in chat**
+- [ ] **Step 3: Render live card and collapsed chip in chat** *(Option C — NOT done this turn; deferred to a focused follow-up, see report)*
   In `crates/hadron-chamber/src/app/render/chat.rs`:
   - When a turn is active for the selected quark, read the live activity payload from `hadron_lattice::live::read`.
   - Render it inline/above the text input.
   - Once completed, render a collapsed summary chip above the generated chat response.
 
-- [ ] **Step 4: Verify compilation and tests**
+- [x] **Step 4: Verify compilation and tests**
   Run: `cargo test --workspace --features gui`
   Expected: PASS
 
-- [ ] **Step 5: Commit changes**
+- [x] **Step 5: Commit changes** *(Option B committed as `8e55814`; chat.rs untouched — that is Option C, deferred)*
   ```bash
   git add crates/hadron-chamber/src/app/tabs.rs crates/hadron-chamber/src/app/render/terminal.rs crates/hadron-chamber/src/app/render/chat.rs
   git commit -m "feat(chamber): implement Option B & C live activity stream views"
