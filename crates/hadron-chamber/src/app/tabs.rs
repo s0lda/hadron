@@ -93,16 +93,14 @@ pub(super) enum RightRailTab {
     FileTree,
     Changes,
     Plan,
-    Activity,
 }
 
 impl RightRailTab {
-    pub(super) const ALL: [RightRailTab; 5] = [
+    pub(super) const ALL: [RightRailTab; 4] = [
         RightRailTab::Terminal,
         RightRailTab::FileTree,
         RightRailTab::Changes,
         RightRailTab::Plan,
-        RightRailTab::Activity,
     ];
 
     pub(super) fn index(self) -> usize {
@@ -111,7 +109,6 @@ impl RightRailTab {
             RightRailTab::FileTree => 1,
             RightRailTab::Changes => 2,
             RightRailTab::Plan => 3,
-            RightRailTab::Activity => 4,
         }
     }
 
@@ -125,7 +122,6 @@ impl RightRailTab {
             RightRailTab::FileTree => "File Tree",
             RightRailTab::Changes => "Changes",
             RightRailTab::Plan => "Plan",
-            RightRailTab::Activity => "Activity",
         }
     }
 }

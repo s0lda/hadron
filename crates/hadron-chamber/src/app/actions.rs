@@ -657,7 +657,7 @@ mod tests {
 
     #[test]
     fn toggle_focus_else_case_switches_rail_to_terminal() {
-        for tab in [RightRailTab::FileTree, RightRailTab::Changes, RightRailTab::Plan, RightRailTab::Activity] {
+        for tab in [RightRailTab::FileTree, RightRailTab::Changes, RightRailTab::Plan] {
             let (target, switch_rail) = toggle_focus_target(tab);
             assert_eq!(target, FocusTarget::Terminal);
             assert!(switch_rail, "a non-Terminal tab active must switch the rail to Terminal");

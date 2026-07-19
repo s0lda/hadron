@@ -823,56 +823,6 @@ impl super::Chamber {
                     )
                     .into_any_element()
             }
-            RightRailTab::Activity => {
-                // Option B: the durable per-quark activity trail, read straight from
-                // the field log — the edits (files touched), commands run, snapshots,
-                // status changes and messages of the roster-selected quark. The
-                // fine-grained streaming "thoughts" are live-only (never persisted), so
-                // this is the lasting record of what a quark has actually been doing.
-                let target = self
-                    .selected_quark_ix
-                    .and_then(|ix| self.view.roster.get(ix))
-                    .map(|r| r.id.clone());
-
-                let feed: gpui::AnyElement = match target {
-                    None => empty_hint("Select a quark in the roster to see its activity.")
-                        .into_any_element(),
-                    Some(qid) => {
-                        let rows: Vec<&crate::model::MessageRow> =
-                            self.view.messages.iter().filter(|m| m.from == qid).collect();
-                        if rows.is_empty() {
-                            empty_hint("No activity yet for this quark.").into_any_element()
-                        } else {
-                            let color = self.color_for(&qid);
-                            let mut list = v_flex().gap_2().p_3().w_full();
-                            for m in rows {
-                                list = list.child(log_row(m, false, color));
-                            }
-                            list.into_any_element()
-                        }
-                    }
-                };
-
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .relative()
-                    .child(
-                        div()
-                            .id("activity-scroll")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.activity_scroll)
-                            .child(feed),
-                    )
-                    .child(
-                        div().absolute().top_0().bottom_0().right_0().child(
-                            Scrollbar::vertical(&self.activity_scroll)
-                                .scrollbar_show(ScrollbarShow::Hover),
-                        ),
-                    )
-                    .into_any_element()
-            }
         };
 
         let card = v_flex()
