@@ -377,7 +377,12 @@ impl super::Chamber {
         div().text_size(px(13.65)).child(
             gpui_component::text::TextView::html((view, ix), html)
                 .selectable(true)
-                .style(markdown_style()),
+                .style(markdown_style())
+                .code_block_actions(|code_block, _window, _cx| {
+                    gpui_component::clipboard::Clipboard::new("code-copy")
+                        .value(code_block.code())
+                        .tooltip("Copy")
+                }),
         )
     }
 
