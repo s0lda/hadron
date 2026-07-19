@@ -304,7 +304,10 @@ async fn main() {
         std::process::exit(2);
     }
     let max_exchanges = team.max_exchanges.unwrap_or(12);
+    let repo_root = hadron_lattice::repo_root_of(&args.field_path).to_path_buf();
     let mut engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
+        .with_git(repo_root)
+        .with_merge_gate(std::sync::Arc::new(hadron_gluon::merge::CargoMergeRunner))
         // `Engine::new` defaults this to `None` (hermetic — see the field doc), so the
         // real daemon must opt in explicitly or custom global skills under
         // `~/.hadron/skills` would silently never load in production.
