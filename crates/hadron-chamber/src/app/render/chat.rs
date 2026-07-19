@@ -5,6 +5,46 @@ impl super::Chamber {
     /// selected view, with the human's message box pinned at the foot. The whole
     /// thing is a rounded, filled card that floats on the unified canvas.
     pub(super) fn chat_pane(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let live_dir = hadron_lattice::live::live_dir(&self.path);
+        let selected_quark = self.selected_quark_ix.and_then(|ix| self.view.roster.get(ix));
+        let live_activity = selected_quark.and_then(|r| {
+            hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), chrono::Utc::now())
+        });
+        
+        let live_card = live_activity.map(|act| {
+            let label = act.doing.label();
+            let detail = act.detail;
+            h_flex()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .mb_2()
+                .rounded_lg()
+                .bg(theme::glass_surface())
+                .border_1()
+                .border_color(theme::glass_highlight())
+                .child(
+                    div()
+                        .size_2()
+                        .rounded_full()
+                        .bg(theme::accent())
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(theme::accent())
+                        .child(format!("{}:", label))
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(detail)
+                )
+        });
+
         let selected = self.chat_tab;
         let tabs = TabBar::new("chat-tabs")
             .segmented()
@@ -107,6 +147,7 @@ impl super::Chamber {
                     .when(self.completion.is_some(), |el| {
                         el.child(self.completion_card_overlay(cx))
                     })
+                    .when_some(live_card, |el, card| el.child(card))
                     .child(
                         h_flex()
                             .px_1()
@@ -395,6 +436,42 @@ impl super::Chamber {
         ix: usize,
         roster: &[crate::model::RosterRow],
     ) -> impl IntoElement {
+        let summary_chip = m.turn.as_ref().and_then(|turn_id| {
+            let turn_events: Vec<&MessageRow> = self.view.messages.iter()
+                .filter(|x| x.turn.as_ref() == Some(turn_id))
+                .collect();
+            if turn_events.is_empty() {
+                return None;
+            }
+            let start_time = turn_events.iter().map(|x| x.ts).min()?;
+            let duration_secs = (m.ts - start_time).num_seconds();
+            let num_commands = turn_events.iter().filter(|x| x.kind_label == "command").count();
+            let num_edits = turn_events.iter().filter(|x| x.kind_label == "edit").count();
+            let num_tools = num_commands + num_edits;
+            
+            if duration_secs > 0 || num_tools > 0 {
+                let mut parts = Vec::new();
+                parts.push(format!("thought for {}s", duration_secs));
+                if num_tools > 0 {
+                    parts.push(format!("ran {} tool{}", num_tools, if num_tools == 1 { "" } else { "s" }));
+                }
+                Some(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .mb_1()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child(format!("⟳ {}", parts.join(" · ")))
+                        )
+                )
+            } else {
+                None
+            }
+        });
+
         h_flex()
             .items_start()
             .gap_2p5()
@@ -452,6 +529,7 @@ impl super::Chamber {
                                 }
                             }),
                     )
+                    .when_some(summary_chip, |this, chip| this.child(chip))
                     .child(self.markdown_body("chat-md", ix, &m.body, roster)),
             )
     }
