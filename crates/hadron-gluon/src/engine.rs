@@ -236,6 +236,7 @@ impl Engine {
                 // time), so `Engine::commands_for` can fold them at the `decide()`
                 // call sites without re-reading `team.json`.
                 commands: q.commands().clone(),
+                energy_limit: q.energy_limit(),
             })
             .collect();
         let resident = quarks
@@ -319,6 +320,7 @@ impl Engine {
             roles: quark.roles(),
             exclusive: quark.exclusive(),
             commands: quark.commands().clone(),
+            energy_limit: quark.energy_limit(),
         };
         self.roster.retain(|c| c.id != id);
         self.roster.push(card);

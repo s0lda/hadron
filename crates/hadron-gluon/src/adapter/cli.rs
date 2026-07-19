@@ -135,6 +135,7 @@ pub struct CliQuark<R: CliRunner> {
     /// conversation that does not exist would silently answer the wrong question.
     resident: bool,
     runner: R,
+    energy_limit: Option<u32>,
 }
 
 impl<R: CliRunner> CliQuark<R> {
@@ -151,7 +152,14 @@ impl<R: CliRunner> CliQuark<R> {
             exclusive: false,
             commands: SeatCommands::default(),
             env: RedactedEnv::default(),
+            energy_limit: None,
         }
+    }
+
+    /// Set the energy limit.
+    pub fn with_energy_limit(mut self, limit: Option<u32>) -> Self {
+        self.energy_limit = limit;
+        self
     }
 
     /// Set the `@mention` display name (from the resolved team config).
@@ -240,6 +248,9 @@ impl<R: CliRunner> Quark for CliQuark<R> {
     }
     fn energy(&self) -> EnergyState {
         EnergyState::Available
+    }
+    fn energy_limit(&self) -> Option<u32> {
+        self.energy_limit
     }
 
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {

@@ -131,6 +131,9 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
         if let Some(commands) = ov.commands.clone() {
             seat.commands = commands;
         }
+        if let Some(limit) = ov.energy_limit {
+            seat.energy_limit = Some(limit);
+        }
         seen.insert(ov.id.clone());
         quarks.push(seat);
     }

@@ -199,6 +199,8 @@ pub struct QuarkSpec {
     /// onto the spawned subprocess's `Command::env()` and NOWHERE else. Wrapped in
     /// `RedactedEnv` so this struct's derived `Debug` cannot leak a value.
     pub env: RedactedEnv,
+    /// Per-seat energy limit (token ceiling).
+    pub energy_limit: Option<u32>,
 }
 
 /// Enforce the naming contract: ids must be non-empty, whitespace-free, path- and
@@ -271,20 +273,23 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
     let exclusive = spec.exclusive;
     let commands = spec.commands.clone();
     let env = spec.env.clone();
+    let energy_limit = spec.energy_limit;
     let quark: Box<dyn Quark> = match spec.kind {
         QuarkKind::Cli(cli_spec) => Box::new(
             CliQuark::new(spec.id, spec.flavor, spec.model, cli_spec, ProcessRunner)
                 .with_display_name(name)
                 .with_roles(roles, exclusive)
                 .with_commands(commands)
-                .with_env(env),
+                .with_env(env)
+                .with_energy_limit(energy_limit),
         ),
         QuarkKind::Acp(target) => Box::new(
             AcpQuark::new(spec.id, spec.flavor, spec.model, spec.effort, spec.mode_config, target)
                 .with_display_name(name)
                 .with_roles(roles, exclusive)
                 .with_commands(commands)
-                .with_env(env),
+                .with_env(env)
+                .with_energy_limit(energy_limit),
         ),
     };
     Ok(quark)
@@ -310,6 +315,7 @@ pub fn build_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore)
         exclusive: seat.exclusive,
         commands: seat.commands.clone(),
         env: seat.resolve_env(store).into(),
+        energy_limit: seat.energy_limit,
     })
 }
 
@@ -333,7 +339,8 @@ pub fn build_seat_watched(
                 .with_display_name(seat.display_name.clone())
                 .with_roles(seat.roles.clone(), seat.exclusive)
                 .with_commands(seat.commands.clone())
-                .with_env(seat.resolve_env(store)),
+                .with_env(seat.resolve_env(store))
+                .with_energy_limit(seat.energy_limit),
         ));
     }
     build_seat(seat, store)

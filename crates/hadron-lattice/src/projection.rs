@@ -138,6 +138,7 @@ mod tests {
                 roles: vec![],
                 exclusive: false,
                 commands: crate::team::SeatCommands::default(),
+                energy_limit: None,
             }],
             field_window: vec![Event::new(
                 Actor::Human,
