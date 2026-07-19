@@ -59,7 +59,7 @@ fn default_false() -> bool {
 fn default_roster_width() -> f32 {
     // Wide enough for effort + mode tags beside the name/model column, bumped from
     // the old 410 to give the live activity subtitle room too (Jake's request).
-    500.0
+    450.0
 }
 fn default_inspector_width() -> f32 {
     300.0
@@ -238,8 +238,8 @@ mod tests {
         assert_eq!(load_from(&old).roster_width, default_roster_width());
         // ...but a width the user chose themselves is preserved exactly.
         let chosen = dir.path().join("chosen.json");
-        std::fs::write(&chosen, r#"{"roster_width":450.0}"#).unwrap();
-        assert_eq!(load_from(&chosen).roster_width, 450.0);
+        std::fs::write(&chosen, r#"{"roster_width":460.0}"#).unwrap();
+        assert_eq!(load_from(&chosen).roster_width, 460.0);
     }
 
     #[test]
