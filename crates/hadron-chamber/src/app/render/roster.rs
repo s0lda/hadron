@@ -19,8 +19,10 @@ impl super::Chamber {
         // The roster rows, stacked to natural height so they scroll within the
         // rail rather than pushing the pinned Settings button off the bottom.
         let mut rows = v_flex().w_full().gap_2();
+        let live_dir = hadron_lattice::live::live_dir(&self.path);
         for (ix, r) in self.view.roster.iter().enumerate() {
             let is_selected = self.selected_quark_ix == Some(ix);
+            let activity = hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), chrono::Utc::now());
             // The per-quark mode tag is clickable → cycle this quark's override.
             let qid = r.id.clone();
             let mode_el = div()
@@ -178,7 +180,7 @@ impl super::Chamber {
                         menu
                     }
                 })
-                .child(roster_row(&self.resolve_identity(&r.id), r, controls));
+                .child(roster_row(&self.resolve_identity(&r.id), r, activity, controls));
             rows = rows.child(row_el);
         }
         if self.view.roster.is_empty() {
