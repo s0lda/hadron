@@ -67,7 +67,7 @@ use widgets::{
     control_button, drag_region, effort_tag, empty_hint, fallback_pick_image, format_num,
     frame_corner_radii, glow_layer, kind_icon, kv_row, log_row, markdown_style, menu_button,
     mode_color, mode_hint, mode_label, mode_tag, next_mode, panel_eyebrow, progress_meter,
-    roster_row, session_card, settings_field, stat_tile, text_button, wash_layer,
+    roster_row, session_card, settings_field, stat_tile, text_button,
 };
 
 mod actions;

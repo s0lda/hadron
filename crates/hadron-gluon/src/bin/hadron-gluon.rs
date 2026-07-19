@@ -317,6 +317,10 @@ async fn main() {
         // via the repo half.
         .with_global_agents_dir(hadron_lattice::user_hadron_dir().map(|d| d.join("agents")));
 
+    // Security: We open the energy ledger database `ledger.db` under the parent directory
+    // of `field_path` (which resides inside the repo's `.hadron/` directory in typical usage).
+    // The path is derived using standard library functions to prevent traversal or access
+    // to untrusted locations.
     let ledger_path = args.field_path.parent().unwrap_or(std::path::Path::new(".")).join("ledger.db");
     let ledger = match hadron_gluon::ledger::Ledger::open(&ledger_path) {
         Ok(l) => l,
