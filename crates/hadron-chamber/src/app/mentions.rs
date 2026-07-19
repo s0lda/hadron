@@ -43,6 +43,42 @@ pub(super) fn parse_plan_progress(content: &str) -> (usize, usize, Vec<(String, 
     (total, completed, items)
 }
 
+/// Parse plan content into grouped tasks: a list of `(task_name, steps)` tuples.
+/// Any step body is stripped of bold or backtick marks.
+pub(super) fn parse_plan_tasks(content: &str) -> Vec<(String, Vec<(String, bool)>)> {
+    let mut tasks = Vec::new();
+    let mut current_task = String::new();
+    let mut current_steps = Vec::new();
+
+    for line in content.lines() {
+        if line.starts_with("## Task") || line.starts_with("### Task") {
+            if !current_steps.is_empty() || !current_task.is_empty() {
+                tasks.push((current_task.clone(), std::mem::take(&mut current_steps)));
+            }
+            current_task = line.trim_start_matches('#').trim().to_string();
+            continue;
+        }
+        let trimmed = line.trim_start();
+        let done = if trimmed.starts_with("- [ ]") {
+            false
+        } else if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
+            true
+        } else {
+            continue;
+        };
+
+        // `- [ ]` and `- [x]` are both 5 bytes, so a fixed skip is safe for either case.
+        let body = trimmed[5..].trim().trim_matches(|c| c == '*' || c == '`').trim();
+        current_steps.push((body.to_string(), done));
+    }
+
+    if !current_steps.is_empty() || !current_task.is_empty() {
+        tasks.push((current_task, current_steps));
+    }
+
+    tasks
+}
+
 const MENTION_QUARK_OPEN: &str = "<span style=\"color: pink-400\"><strong>";
 const MENTION_FILE_OPEN: &str = "<span style=\"color: purple-400\"><strong>";
 const MENTION_CLOSE: &str = "</strong></span>";
@@ -196,6 +232,52 @@ mod tests {
         assert_eq!(items[1], ("Task 1: First — Step 2: Do the other thing".to_string(), false));
         assert!(items[2].1); // nested [X] counts as done
         assert!(!items[3].1);
+    }
+
+    #[test]
+    fn test_parse_plan_tasks() {
+        let content = "\
+# A Plan
+
+### Task 1: First
+- [x] **Step 1: Do the thing**
+- [ ] Step 2: Do the other thing
+
+### Task 2: Second
+  - [X] Nested done step
+  - [ ] Nested pending step
+";
+        let tasks = parse_plan_tasks(content);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].0, "Task 1: First");
+        assert_eq!(tasks[0].1.len(), 2);
+        assert_eq!(tasks[0].1[0], ("Step 1: Do the thing".to_string(), true));
+        assert_eq!(tasks[0].1[1], ("Step 2: Do the other thing".to_string(), false));
+        assert_eq!(tasks[1].0, "Task 2: Second");
+        assert_eq!(tasks[1].1.len(), 2);
+        assert_eq!(tasks[1].1[0], ("Nested done step".to_string(), true));
+        assert_eq!(tasks[1].1[1], ("Nested pending step".to_string(), false));
+    }
+
+    #[test]
+    fn test_first_incomplete_task() {
+        let content = "\
+### Task 1: First
+- [x] Step 1
+- [x] Step 2
+
+### Task 2: Second
+- [ ] Step 3
+
+### Task 3: Third
+- [ ] Step 4
+";
+        let tasks = parse_plan_tasks(content);
+        let first_incomplete = tasks
+            .iter()
+            .find(|(_, steps)| steps.iter().any(|(_, done)| !*done))
+            .map(|(name, _)| name.as_str());
+        assert_eq!(first_incomplete, Some("Task 2: Second"));
     }
 
     #[test]
