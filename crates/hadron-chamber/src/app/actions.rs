@@ -134,6 +134,38 @@ impl Chamber {
                 cx.notify();
                 true
             }
+            "approve" | "deny" => {
+                let target = args.trim().trim_start_matches('@');
+                let parts: Vec<&str> = target.split_whitespace().collect();
+                if parts.is_empty() {
+                    eprintln!("chamber: `/approve` or `/deny` requires a worker target");
+                    return true;
+                }
+                let worker_name = parts[0];
+                let remember = parts.get(1).map(|s| *s == "remember").unwrap_or(false);
+                let approved = cmd == "approve";
+                
+                let real_id = self.view.roster.iter()
+                    .find(|r| r.id == worker_name || r.display_name.as_deref() == Some(worker_name))
+                    .map(|r| r.id.clone());
+                
+                if let Some(worker_id) = real_id {
+                    let ev = Event::new(
+                        Actor::Human,
+                        Some(QuarkId::new(worker_id)),
+                        Kind::PermissionGrant { approved, remember },
+                    );
+                    if let Err(e) = io::append_event(&self.path, &ev) {
+                        eprintln!("chamber: failed to append permission grant: {e}");
+                    }
+                } else {
+                    eprintln!("chamber: target worker not found on roster: {worker_name}");
+                }
+                let events = io::read_events(&self.path).unwrap_or_default();
+                self.reproject(&events);
+                cx.notify();
+                true
+            }
             _ => {
                 // If it contains a slash, it's probably a path. 
                 // Return false to let it pass through as a normal message.

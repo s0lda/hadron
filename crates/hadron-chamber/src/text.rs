@@ -212,6 +212,8 @@ pub fn completion_candidates(
                 ("clear", "Archive and clear the current chat history"),
                 ("team-brainstorm", "Kick off brainstorming with the team"),
                 ("reboot", "Force-restart a resident quark (e.g. /reboot @acp-claude or /reboot all)"),
+                ("approve", "Approve a pending permission request (e.g. /approve @worker or /approve @worker remember)"),
+                ("deny", "Deny a pending permission request (e.g. /deny @worker)"),
                 ("toggle-roster", "Toggle the Roster sidebar"),
                 ("toggle-inspector", "Toggle the Inspector sidebar"),
                 ("goal", "Run a long-running task thoroughly"),
@@ -309,6 +311,14 @@ mod tests {
         let c_reboot = completion_candidates("/reb", 4, &[], &[]).expect("has rows");
         let labels_reboot: Vec<&str> = c_reboot.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels_reboot.contains(&"/reboot"), "matched reboot offered: {labels_reboot:?}");
+
+        let c_approve = completion_candidates("/app", 4, &[], &[]).expect("has rows");
+        let labels_approve: Vec<&str> = c_approve.candidates.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels_approve.contains(&"/approve"), "matched approve offered: {labels_approve:?}");
+
+        let c_deny = completion_candidates("/den", 4, &[], &[]).expect("has rows");
+        let labels_deny: Vec<&str> = c_deny.candidates.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels_deny.contains(&"/deny"), "matched deny offered: {labels_deny:?}");
         
         // Mid-line `/` is not a trigger (see extract_completion_query).
         assert!(completion_candidates("hi /goa", 8, &[], &[]).is_none());
