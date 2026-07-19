@@ -60,6 +60,9 @@ pub struct QuarkCard {
     /// re-reading `team.json`. Empty for a card built before this field existed.
     #[serde(default, skip_serializing_if = "crate::team::SeatCommands::is_empty")]
     pub commands: crate::team::SeatCommands,
+    /// Per-seat energy limit (token ceiling).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy_limit: Option<u32>,
 }
 
 #[cfg(test)]
@@ -79,6 +82,7 @@ mod tests {
             roles: vec![],
             exclusive: false,
             commands: SeatCommands::default(),
+            energy_limit: None,
         };
         let json = serde_json::to_string(&card).unwrap();
         assert_eq!(json, r#"{"id":"claude","display_name":"Claude","flavor":"orchestrator","energy":"available","provider":"claude","model":"opus-4.8"}"#);
@@ -107,6 +111,7 @@ mod tests {
             roles: vec![],
             exclusive: false,
             commands: SeatCommands::default(),
+            energy_limit: None,
         };
         // Default (empty roles, not exclusive) must not appear in the JSON — back-compat
         // with a card built before role-routing existed.

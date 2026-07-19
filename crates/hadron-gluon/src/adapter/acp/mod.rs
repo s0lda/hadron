@@ -92,6 +92,7 @@ pub struct AcpQuark {
     /// Where to publish mid-turn activity. `None` = nobody is watching (tests, and
     /// any caller that has no field on disk), and the stream is simply dropped.
     live: Option<LiveFeed>,
+    energy_limit: Option<u32>,
 }
 
 impl AcpQuark {
@@ -111,7 +112,14 @@ impl AcpQuark {
             session: None,
             last_spend: SpendWatermark::default(),
             live: None,
+            energy_limit: None,
         }
+    }
+
+    /// Set the energy limit.
+    pub fn with_energy_limit(mut self, limit: Option<u32>) -> Self {
+        self.energy_limit = limit;
+        self
     }
 
     /// Stream this quark's mid-turn activity into `dir` (see `hadron_lattice::live`).
@@ -188,6 +196,9 @@ impl Quark for AcpQuark {
     }
     fn energy(&self) -> EnergyState {
         EnergyState::Available
+    }
+    fn energy_limit(&self) -> Option<u32> {
+        self.energy_limit
     }
     /// An ACP quark is a **resident** session: the agent is booted once and keeps the
     /// conversation across turns, so the skill library injected on the first turn stays

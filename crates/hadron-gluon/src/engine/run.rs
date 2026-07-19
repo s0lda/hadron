@@ -132,10 +132,15 @@ impl super::Engine {
                     }
 
                     if let Some(ledger) = &self.ledger {
-                        if ledger.is_depleted(&target, self.energy_limit)? {
-                            let msg = format!("⚠️ Quark {} is depleted (exceeded {} tokens).", target.as_str(), self.energy_limit);
+                        // Find the limit on the seat (if custom defined), otherwise fall back to self.energy_limit
+                        let limit = self.roster.iter()
+                            .find(|c| c.id == target)
+                            .and_then(|c| c.energy_limit)
+                            .unwrap_or(self.energy_limit);
+                        if ledger.is_depleted(&target, limit)? {
+                            let msg = format!("⚠️ Quark {} is depleted (exceeded {} tokens).", target.as_str(), limit);
                             self.reroute_blocked(&target, &msg).await?;
-                            continue; // Reroute: skip this quark, dispatch the rest
+                            continue;
                         }
                     }
 
