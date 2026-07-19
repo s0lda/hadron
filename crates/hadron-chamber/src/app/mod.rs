@@ -36,7 +36,7 @@ use gpui_component::{
     h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar,
 };
 use hadron_lattice::{
-    io, load_team, resolve_team, Actor, Event, Kind, Mode, QuarkId, Seat, SeatOverride, Team,
+    io, load_team, resolve_team, Actor, Event, Kind, Mode, QuarkId, QuarkState, Seat, SeatOverride, Team,
 };
 
 use crate::config::{self, ChamberPrefs, Identity};
