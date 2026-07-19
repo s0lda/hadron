@@ -198,6 +198,7 @@ struct Chamber {
     plan_scroll: ScrollHandle,
     pub(super) plan_collapsed_tasks: std::collections::HashSet<String>,
     pub(super) last_plan_path: Option<String>,
+    pub(super) last_incomplete_task: Option<String>,
     /// Virtual list state for the Chat tab.
     chat_list_state: gpui::ListState,
     log_list_state: gpui::ListState,
@@ -517,6 +518,7 @@ impl Chamber {
             plan_scroll: ScrollHandle::new(),
             plan_collapsed_tasks: std::collections::HashSet::new(),
             last_plan_path: None,
+            last_incomplete_task: None,
             chat_list_state,
             log_list_state,
             log_expanded: std::collections::HashSet::new(),
