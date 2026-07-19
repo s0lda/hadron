@@ -231,7 +231,15 @@ pub fn sorted_children(node: &FileTreeNode) -> Vec<(&String, &FileTreeNode)> {
 /// Reads the contents of a workspace file.
 pub fn read_workspace_file(repo_root: &Path, file_path: &str) -> Option<String> {
     let full_path = repo_root.join(file_path);
-    std::fs::read_to_string(full_path).ok()
+    if let (Ok(canon_root), Ok(canon_full)) = (repo_root.canonicalize(), full_path.canonicalize()) {
+        if canon_full.starts_with(canon_root) {
+            std::fs::read_to_string(canon_full).ok()
+        } else {
+            None
+        }
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -414,5 +422,19 @@ mod tests {
             .map(|(name, _)| name.as_str())
             .collect();
         assert_eq!(order, vec!["alpha", "beta.rs", "zeta.rs"]);
+    }
+
+    #[test]
+    fn read_workspace_file_prevents_directory_traversal() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let parent = root.parent().unwrap();
+        let sibling = parent.join("sibling_dir");
+        fs::create_dir_all(&sibling).unwrap();
+        fs::write(sibling.join("secret.txt"), "secret data").unwrap();
+
+        // Try reading a file that is outside repo_root using traversal
+        let content = read_workspace_file(root, "../sibling_dir/secret.txt");
+        assert_eq!(content, None);
     }
 }

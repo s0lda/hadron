@@ -19,7 +19,14 @@ impl super::Chamber {
             .rev()
             .find_map(|m| {
                 hadron_gluon::skills::plan_ref(&m.body)
-                    .filter(|rel_path| repo.join(rel_path).is_file())
+                    .filter(|rel_path| {
+                        let full_path = repo.join(rel_path);
+                        if let (Ok(canon_repo), Ok(canon_full)) = (repo.canonicalize(), full_path.canonicalize()) {
+                            canon_full.is_file() && canon_full.starts_with(canon_repo)
+                        } else {
+                            false
+                        }
+                    })
             });
 
         if let Some(rel_path) = active_plan_path {
