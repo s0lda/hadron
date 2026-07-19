@@ -671,6 +671,15 @@ pub(super) fn markdown_style() -> gpui_component::text::TextViewStyle {
         s.overflow.x = Some(gpui::Overflow::Scroll);
         s
     };
+    // Fenced code blocks: a raised, bordered, padded card so they read as a
+    // distinct block over the flat #101010 field (paired with the hover Copy
+    // button wired onto the same `TextView` in `markdown_body`).
+    style.code_block = gpui::StyleRefinement::default()
+        .bg(theme::bg_elevated())
+        .border_1()
+        .border_color(theme::border())
+        .rounded_md()
+        .p_2();
     style
 }
 
