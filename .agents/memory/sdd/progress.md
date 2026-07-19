@@ -14,7 +14,7 @@
 - Task 2: complete (commits d9fba36..1caac47, review clean)
 - Task 3: complete (commit 36c726e, review clean)
 - Task 4: complete (commit 6eb8e23, review clean)
-- Task 5: complete (commit 4d0931c, review clean)
+- Task 5: complete (commit 4d0931c, review clean. Fixed mid-turn repaint issue in reload.rs by polling live activities and calling cx.notify() on change, and removed the unused Activity tab from the right rail.)
 - Task 6: complete (commits 6f22bde..24a356c, review clean)
 - Task 7: complete (commit 340f0b0, review clean)
 - Security: Sanitized path traversal in active plan loading and workspace file reading (commit b8c50b4, review clean)
