@@ -109,6 +109,30 @@ impl super::Engine {
             .await?;
         }
 
+        if let Some(body) = outcome.message.as_ref() {
+            if self.is_orchestrator(target) {
+                let body_trimmed = body.trim();
+                if body_trimmed.starts_with("/approve ") || body_trimmed.starts_with("/deny ") {
+                    let parts: Vec<&str> = body_trimmed.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        let cmd = parts[0];
+                        let worker_name = parts[1].trim_start_matches('@');
+                        let remember = parts.get(2).map(|s| *s == "remember").unwrap_or(false);
+                        let approved = cmd == "/approve";
+                        
+                        if let Some(worker_id) = self.roster.iter().find(|c| c.id.as_str() == worker_name || c.display_name.as_deref() == Some(worker_name)).map(|c| c.id.clone()) {
+                            let grant_ev = Event::new(
+                                Actor::Quark(target.clone()),
+                                Some(worker_id),
+                                Kind::PermissionGrant { approved, remember },
+                            );
+                            self.append(grant_ev).await?;
+                        }
+                    }
+                }
+            }
+        }
+
         if let Some(body) = outcome.message {
             // The reply enters the field whole — the engine does NOT trim it. Brevity is
             // asked for in the prompt and explained, never enforced by cutting bytes: a
@@ -172,7 +196,14 @@ impl super::Engine {
                     }
                 }
             }
-            match hadron_gatekeeper::decide(mode, global, self.no_human, risk, &op, target, &rules, &deny) {
+            let asker_is_orchestrator = self.orchestrator_id().as_ref() == Some(target);
+            let decision = hadron_gatekeeper::decide(mode, global, self.no_human, risk, &op, target, &rules, &deny);
+            let decision = if asker_is_orchestrator && decision == hadron_gatekeeper::Decision::AskOrchestrator {
+                hadron_gatekeeper::Decision::AskHuman
+            } else {
+                decision
+            };
+            match decision {
                 hadron_gatekeeper::Decision::AutoApprove => {
                     // Pre-authorized by the mode: the gluon grants on the
                     // orchestrator's / human's standing authority.
