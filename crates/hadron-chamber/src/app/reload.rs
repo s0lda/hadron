@@ -31,20 +31,58 @@ impl super::Chamber {
 
         if let Some(rel_path) = active_plan_path {
             let path_str = rel_path.clone();
-            if self.last_plan_path.as_deref() != Some(&path_str) {
+            let path_changed = self.last_plan_path.as_deref() != Some(&path_str);
+            if path_changed {
                 self.last_plan_path = Some(path_str);
-                if let Some(content) = crate::sys::read_workspace_file(&repo, &rel_path) {
-                    let tasks = parse_plan_tasks(&content);
-                    if let Some((first_incomplete_task, _)) = tasks
-                        .iter()
-                        .find(|(_, steps)| steps.iter().any(|(_, done)| !*done))
-                    {
-                        self.plan_collapsed_tasks.remove(first_incomplete_task);
-                    }
-                }
+            }
+            if let Some(content) = crate::sys::read_workspace_file(&repo, &rel_path) {
+                let tasks = parse_plan_tasks(&content);
+                Self::calculate_collapsed_tasks(
+                    &tasks,
+                    &mut self.plan_collapsed_tasks,
+                    &mut self.last_incomplete_task,
+                    path_changed,
+                );
             }
         } else {
             self.last_plan_path = None;
+            self.last_incomplete_task = None;
+        }
+    }
+
+    fn calculate_collapsed_tasks(
+        tasks: &[(String, Vec<(String, bool)>)],
+        plan_collapsed_tasks: &mut std::collections::HashSet<String>,
+        last_incomplete_task: &mut Option<String>,
+        path_changed: bool,
+    ) {
+        if path_changed {
+            plan_collapsed_tasks.clear();
+            for (task_name, _) in tasks {
+                plan_collapsed_tasks.insert(task_name.clone());
+            }
+            if let Some((first_incomplete_task, _)) = tasks
+                .iter()
+                .find(|(_, steps)| steps.iter().any(|(_, done)| !*done))
+            {
+                plan_collapsed_tasks.remove(first_incomplete_task);
+                *last_incomplete_task = Some(first_incomplete_task.clone());
+            } else {
+                *last_incomplete_task = None;
+            }
+        } else {
+            if let Some((first_incomplete_task, _)) = tasks
+                .iter()
+                .find(|(_, steps)| steps.iter().any(|(_, done)| !*done))
+            {
+                if last_incomplete_task.as_ref() != Some(first_incomplete_task) {
+                    if let Some(old_task) = last_incomplete_task.take() {
+                        plan_collapsed_tasks.insert(old_task);
+                    }
+                    plan_collapsed_tasks.remove(first_incomplete_task);
+                    *last_incomplete_task = Some(first_incomplete_task.clone());
+                }
+            }
         }
     }
 
@@ -178,5 +216,63 @@ impl super::Chamber {
                 cx.notify();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_collapsed_tasks_path_changed() {
+        let tasks = vec![
+            ("Task 1".to_string(), vec![("Step 1".to_string(), true), ("Step 2".to_string(), false)]),
+            ("Task 2".to_string(), vec![("Step 3".to_string(), false)]),
+        ];
+        let mut plan_collapsed_tasks = std::collections::HashSet::new();
+        let mut last_incomplete_task = None;
+
+        Chamber::calculate_collapsed_tasks(&tasks, &mut plan_collapsed_tasks, &mut last_incomplete_task, true);
+
+        assert_eq!(plan_collapsed_tasks.len(), 1);
+        assert!(plan_collapsed_tasks.contains("Task 2"));
+        assert!(!plan_collapsed_tasks.contains("Task 1"));
+        assert_eq!(last_incomplete_task, Some("Task 1".to_string()));
+    }
+
+    #[test]
+    fn test_calculate_collapsed_tasks_transition() {
+        let tasks = vec![
+            ("Task 1".to_string(), vec![("Step 1".to_string(), true), ("Step 2".to_string(), true)]),
+            ("Task 2".to_string(), vec![("Step 3".to_string(), false)]),
+        ];
+        let mut plan_collapsed_tasks = std::collections::HashSet::new();
+        plan_collapsed_tasks.insert("Task 2".to_string());
+        let mut last_incomplete_task = Some("Task 1".to_string());
+
+        Chamber::calculate_collapsed_tasks(&tasks, &mut plan_collapsed_tasks, &mut last_incomplete_task, false);
+
+        assert_eq!(plan_collapsed_tasks.len(), 1);
+        assert!(plan_collapsed_tasks.contains("Task 1"));
+        assert!(!plan_collapsed_tasks.contains("Task 2"));
+        assert_eq!(last_incomplete_task, Some("Task 2".to_string()));
+    }
+
+    #[test]
+    fn test_calculate_collapsed_tasks_no_change() {
+        let tasks = vec![
+            ("Task 1".to_string(), vec![("Step 1".to_string(), true), ("Step 2".to_string(), false)]),
+            ("Task 2".to_string(), vec![("Step 3".to_string(), false)]),
+        ];
+        let mut plan_collapsed_tasks = std::collections::HashSet::new();
+        plan_collapsed_tasks.insert("Task 2".to_string());
+        let mut last_incomplete_task = Some("Task 1".to_string());
+
+        Chamber::calculate_collapsed_tasks(&tasks, &mut plan_collapsed_tasks, &mut last_incomplete_task, false);
+
+        assert_eq!(plan_collapsed_tasks.len(), 1);
+        assert!(plan_collapsed_tasks.contains("Task 2"));
+        assert!(!plan_collapsed_tasks.contains("Task 1"));
+        assert_eq!(last_incomplete_task, Some("Task 1".to_string()));
     }
 }
