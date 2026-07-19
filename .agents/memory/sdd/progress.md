@@ -16,7 +16,8 @@
 - Task 4: complete (commit 6eb8e23, review clean)
 - Task 5: complete (commit 4d0931c, review clean)
 - Task 6: complete (commits 6f22bde..24a356c, review clean)
-- Task 7: complete (commit of this task)
+- Task 7: complete (commit 340f0b0, review clean)
+- Security: Sanitized path traversal in active plan loading and workspace file reading (commit b8c50b4, review clean)
 
 ## Minor Findings / Cleanup List
 - `crates/hadron-chamber/src/app/widgets.rs:L56`: The `wash_layer` helper function is unused and generates a compiler warning.
