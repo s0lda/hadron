@@ -654,7 +654,7 @@ impl super::Chamber {
 
                 let plan_element = match resolved {
                     Some((rel_path, content)) => {
-                        let (total, completed, tasks) = parse_plan_progress(&content);
+                        let (total, completed, _) = parse_plan_progress(&content);
                         let frac = if total > 0 {
                             completed as f32 / total as f32
                         } else {
@@ -677,38 +677,100 @@ impl super::Chamber {
                         );
                         list = list.child(progress_meter(frac, gpui::rgb(0x34d399)));
 
-                        for (task_desc, done) in tasks {
-                            let marker = if done {
-                                Icon::new(IconName::CircleCheck)
-                                    .small()
-                                    .text_color(gpui::rgb(0x34d399))
-                                    .into_any_element()
+                        let task_groups = parse_plan_tasks(&content);
+                        for (task_name, steps) in task_groups {
+                            if steps.is_empty() {
+                                continue;
+                            }
+                            let is_collapsed = self.plan_collapsed_tasks.contains(&task_name);
+                            let name_clone = task_name.clone();
+
+                            let header_title = if task_name.is_empty() {
+                                "Overview".to_string()
                             } else {
-                                // No hollow-circle glyph ships in the icon set, so draw one:
-                                // a small ringed dot reads as an empty checkbox.
-                                div()
-                                    .size(px(14.0))
-                                    .flex_shrink_0()
-                                    .mt(px(2.0))
-                                    .rounded_full()
-                                    .border_1()
-                                    .border_color(theme::text_muted())
-                                    .into_any_element()
+                                task_name.clone()
                             };
-                            list = list.child(
-                                h_flex().w_full().gap_2().items_start().child(marker).child(
+
+                            let id_str = if task_name.is_empty() {
+                                "task-header-general".to_string()
+                            } else {
+                                format!("task-header-{}", task_name)
+                            };
+
+                            let header = h_flex()
+                                .id(gpui::SharedString::from(id_str))
+                                .w_full()
+                                .items_center()
+                                .gap_2()
+                                .py_1()
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if this.plan_collapsed_tasks.contains(&name_clone) {
+                                        this.plan_collapsed_tasks.remove(&name_clone);
+                                    } else {
+                                        this.plan_collapsed_tasks.insert(name_clone.clone());
+                                    }
+                                    cx.notify();
+                                }))
+                                .child(
+                                    Icon::new(if is_collapsed {
+                                        IconName::ChevronRight
+                                    } else {
+                                        IconName::ChevronDown
+                                    })
+                                    .small()
+                                    .text_color(theme::text_muted())
+                                )
+                                .child(
                                     div()
-                                        .flex_1()
-                                        .min_w_0()
+                                        .font_weight(gpui::FontWeight::BOLD)
                                         .text_sm()
-                                        .text_color(if done {
-                                            theme::text_muted()
-                                        } else {
-                                            theme::text()
-                                        })
-                                        .child(task_desc),
-                                ),
-                            );
+                                        .text_color(theme::text())
+                                        .child(header_title)
+                                );
+
+                            let mut task_container = v_flex().w_full().gap_2().child(header);
+
+                            if !is_collapsed {
+                                let mut steps_list = v_flex().w_full().gap_2().pl_4();
+                                for (step_desc, done) in steps {
+                                    let marker = if done {
+                                        Icon::new(IconName::CircleCheck)
+                                            .small()
+                                            .text_color(gpui::rgb(0x34d399))
+                                            .into_any_element()
+                                    } else {
+                                        // No hollow-circle glyph ships in the icon set, so draw one:
+                                        // a small ringed dot reads as an empty checkbox.
+                                        div()
+                                            .size(px(14.0))
+                                            .flex_shrink_0()
+                                            .mt(px(2.0))
+                                            .rounded_full()
+                                            .border_1()
+                                            .border_color(theme::text_muted())
+                                            .into_any_element()
+                                    };
+
+                                    steps_list = steps_list.child(
+                                        h_flex().w_full().gap_2().items_start().child(marker).child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .text_sm()
+                                                .text_color(if done {
+                                                    theme::text_muted()
+                                                } else {
+                                                    theme::text()
+                                                })
+                                                .child(step_desc),
+                                        ),
+                                    );
+                                }
+                                task_container = task_container.child(steps_list);
+                            }
+
+                            list = list.child(task_container);
                         }
                         list.into_any_element()
                     }
