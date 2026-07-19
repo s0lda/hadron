@@ -31,17 +31,21 @@ The engine parks the worker quark in the `Waiting` status and appends a `[no-hum
 However, because the orchestrator can only reply via the standard chat text stream, there is currently no mechanism to translate its text reply into a formal `PermissionGrant` event to resume the worker.
 
 ### Design
-1. **Natural Language Text Parsing (Gluon Engine)**:
-   - When a worker quark is `Waiting` for a permission, the Gluon daemon watches for messages from the orchestrator quark addressed to that worker.
-   - The daemon parses the text body for approval patterns (case-insensitive):
-     - **Approval**: `@worker approved` or `@worker allowed` or `@worker allowed (always)` -> Translates to `Kind::PermissionGrant { approved: true, remember: false }` (or `remember: true` if always is matched).
-     - **Denial**: `@worker denied` or `@worker rejected` or `@worker blocked` -> Translates to `Kind::PermissionGrant { approved: false, remember: false }`.
-   - Upon matching, the Gluon engine automatically appends the `PermissionGrant` event to `field.jsonl` on the orchestrator's behalf, which excites the worker and resumes execution.
-
-2. **Chamber Slash Commands**:
-   - Register `/approve @worker` and `/deny @worker` in `crates/hadron-chamber/src/app/actions.rs` and `app.rs`.
+1. **Slash Commands as single source of truth (SSOT)**:
+   - Instead of fragile natural language scraping, both the human and the orchestrator use the exact same slash commands:
+     - `/approve @worker [remember]` or `/deny @worker`.
+   - In `hadron-chamber`'s chat interface, register `/approve` and `/deny` in `crates/hadron-chamber/src/app/actions.rs` and `app.rs`.
    - Autocomplete candidates will be populated via `text::completion_candidates`.
-   - When a human types the command, it immediately appends a `Kind::PermissionGrant` event to `field.jsonl` to resume the target worker.
+   - When parsed (either from a human in Chamber or from the orchestrator quark's message block in Gluon), these commands append a `Kind::PermissionGrant { approved, remember }` event addressed to the worker, which excites the worker and resumes execution.
+
+2. **Exciting the Orchestrator**:
+   - The auto-scheduler in the engine (`orchestrator_adjudication_message`) is responsible for putting the request in front of the orchestrator quark.
+   - When the swarm quiesces, the scheduler generates a `Kind::Message` addressed to the orchestrator quark containing the `[no-human-mode]` prefix and detail about the worker, risk level, and command to run.
+   - This message excites the orchestrator quark, causing it to run, evaluate the request, and reply with the `/approve @worker` or `/deny @worker` command.
+
+3. **Recursion Guard**:
+   - If the orchestrator itself triggers a permission request (e.g. attempting to run a dangerous command during adjudication or setup), it cannot self-adjudicate.
+   - The engine checks if `asker == orchestrator` during the permission gate check. If so, it overrides the decision to `Decision::AskHuman`, prompting the human as a backstop.
 
 ---
 
