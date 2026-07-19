@@ -2,422 +2,217 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement window focus selection bugfix, No-Human-Mode adjudication, Worktree isolation & Merge Gate, Live stream UI, Budget ceilings, and Foldable Plan tab.
+**Goal:** Implement text selection hover bugfix, code block copying and styling, flat dark theme UI adjustments, and Options B & C for the live ACP quark activity stream.
 
-**Architecture:** 
-- Fix focus behavior in the GPUI window mouse event listener.
-- Register `/approve` and `/deny` slash commands in the Chamber and parse them as SSOT commands in both Chamber and Gluon daemon.
-- Wire worktree isolation and merge gate together using `CargoMergeRunner` in `hadron-gluon`.
-- Read and display live activity JSON files in the Chamber's roster.
-- Configure energy/cost limits on seats and enforce them in the engine using a wired sqlite ledger.
-- Group plan checklists under tasks, showing them as collapsible accordions in the Plan rail.
+**Architecture:**
+- ignore first_mouse clicks in window_selection to prevent sticky highlighting.
+- Refine markdown code block styling and wire a Clipboard copy element to the HTML renderer actions hook.
+- Set theme backgrounds and roster widths to align with the solid #101010 theme field base.
+- Implement the right-rail Activity tab parsing history from field.jsonl, and a live inline chat card that collapses to a summary chip.
 
-**Tech Stack:** Rust, GPUI, Git, Sqlite (rusqlite), Serde.
+**Tech Stack:** Rust, GPUI.
 
 ## Global Constraints
 
 - Passing tests only prove compile, find the caller (Rule 1)
 - Reuse before you create (Rule 2)
 - One definition, one place (SSOT) (Rule 3)
-- Defense in depth: do not remove redundant checks (Rule 4)
+- Never remove a layer because it looks redundant (Rule 4)
 - Know your baseline before you touch anything (Rule 5)
 - Evidence, not adjectives (Rule 6)
-- Security note if touches permissions, file access, process execution (Rule 7)
+- Name the risk when there is one (Rule 7)
 - Make invalid states unrepresentable (Rule 8)
 
 ---
 
-### Task 1: Focus Hover-Selection Bugfix
+### Task 1: Focus Hover-Selection Bugfix (Completed)
 
 **Files:**
-- Modify: `crates/gpui-component/crates/ui/src/text/window_selection.rs:786-795`
+- Modify: `crates/gpui-component/crates/ui/src/text/window_selection.rs`
 
-**Interfaces:**
-- Consumes: GPUI `MouseDownEvent`
-- Produces: None (internal click filter)
-
-- [x] **Step 1: Implement activation click filter**
-  Locate `paint` method in `crates/gpui-component/crates/ui/src/text/window_selection.rs` and update the `MouseDownEvent` listener:
-  ```rust
-  window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-      if event.button != MouseButton::Left {
-          return;
-      }
-      if event.first_mouse {
-          return; // Ignore clicks whose sole purpose is window activation
-      }
-      if phase.capture() {
-          GlobalState::global_mut(cx).suppress_text_selection = false;
-          Root::update(window, cx, |root, _, cx| root.clear_text_selection(cx));
-      } else if event.click_count == 1 {
-          if GlobalState::global(cx).suppress_text_selection {
-              return;
-          }
-          Root::update(window, cx, |root, window, cx| {
-              root.start_text_selection(event.position, window, cx);
-          });
-      }
-  });
-  ```
-
-- [x] **Step 2: Run workspace tests to verify they pass**
-  Run: `cargo test --workspace`
-  Expected: PASS
-
+- [x] **Step 1: Check for first_mouse clicks**
+  The first_mouse click filter is already implemented in fork `main@448c2d16`.
+- [x] **Step 2: Run test suite to verify**
+  Tests pass at baseline.
 - [x] **Step 3: Commit**
-  ```bash
-  git add crates/gpui-component/crates/ui/src/text/window_selection.rs
-  git commit -m "fix(chamber): ignore first_mouse clicks for text selection to prevent sticky highlight"
-  ```
+  Landed in fork.
 
 ---
 
-### Task 2: Slash Commands in Chamber
+### Task 2: Code Block Styling & Copy Button
 
 **Files:**
-- Modify: `crates/hadron-chamber/src/app/actions.rs:136-146`
-- Modify: `crates/hadron-chamber/src/app/input.rs:190-210`
-- Modify: `crates/hadron-chamber/src/text.rs:210-223`
+- Modify: `crates/hadron-chamber/src/app/widgets.rs`
+- Modify: `crates/hadron-chamber/src/app/render/chat.rs`
 
 **Interfaces:**
-- Consumes: Roster information via view reload
-- Produces: `/approve @worker [remember]` and `/deny @worker` commands
+- Consumes: `gpui_component::ui::clipboard::Clipboard` component, `TextView::code_block_actions` hook.
+- Produces: Bordered, padded code blocks with a hover "Copy" button.
 
-- [ ] **Step 1: Register autocomplete commands in text completions**
-  In `crates/hadron-chamber/src/text.rs` under `completion_candidates` '`/'` match:
+- [ ] **Step 1: Add code block styling**
+  In `crates/hadron-chamber/src/app/widgets.rs` inside the `markdown_style()` helper, find `style.code_block` and change it to use `theme::bg_elevated()` and borders:
   ```rust
-  let cmds = [
-      ("clear", "Archive and clear the current chat history"),
-      ("team-brainstorm", "Kick off brainstorming with the team"),
-      ("reboot", "Force-restart a resident quark (e.g. /reboot @acp-claude or /reboot all)"),
-      ("approve", "Approve a pending permission request (e.g. /approve @worker or /approve @worker remember)"),
-      ("deny", "Deny a pending permission request (e.g. /deny @worker)"),
-      ("toggle-roster", "Toggle the Roster sidebar"),
-      ...
-  ];
-  ```
-
-- [ ] **Step 2: Parse slash commands in split_leading_commands**
-  In `crates/hadron-chamber/src/app/input.rs` in `split_leading_commands`:
-  ```rust
-  Some("reboot") => {
-      cmds.push(("reboot".to_string(), head[tok_end..].trim().to_string()));
-      return (cmds, None);
-  }
-  Some("approve") => {
-      cmds.push(("approve".to_string(), head[tok_end..].trim().to_string()));
-      return (cmds, None);
-  }
-  Some("deny") => {
-      cmds.push(("deny".to_string(), head[tok_end..].trim().to_string()));
-      return (cmds, None);
-  }
-  ```
-
-- [ ] **Step 3: Handle commands in actions.rs**
-  In `crates/hadron-chamber/src/app/actions.rs` in `handle_chat_command`:
-  ```rust
-  "approve" | "deny" => {
-      let target = args.trim().trim_start_matches('@');
-      let parts: Vec<&str> = target.split_whitespace().collect();
-      if parts.is_empty() {
-          eprintln!("chamber: `/approve` or `/deny` requires a worker target");
-          return true;
-      }
-      let worker_name = parts[0];
-      let remember = parts.get(1).map(|s| *s == "remember").unwrap_or(false);
-      let approved = cmd == "approve";
-      
-      let real_id = self.view.roster.iter()
-          .find(|r| r.id == worker_name || r.display_name.as_deref() == Some(worker_name))
-          .map(|r| r.id.clone());
-      
-      if let Some(worker_id) = real_id {
-          let ev = Event::new(
-              Actor::Human,
-              Some(worker_id),
-              Kind::PermissionGrant { approved, remember },
-          );
-          if let Err(e) = io::append_event(&self.path, &ev) {
-              eprintln!("chamber: failed to append permission grant: {e}");
-          }
-      } else {
-          eprintln!("chamber: target worker not found on roster: {worker_name}");
-      }
-      let events = io::read_events(&self.path).unwrap_or_default();
-      self.reproject(&events);
-      cx.notify();
-      true
-  }
-  ```
-
-- [ ] **Step 4: Verify compiles & tests pass**
-  Run: `cargo test -p hadron-chamber --features gui`
-  Expected: PASS
-
-- [ ] **Step 5: Commit**
-  ```bash
-  git add crates/hadron-chamber/src/text.rs crates/hadron-chamber/src/app/input.rs crates/hadron-chamber/src/app/actions.rs
-  git commit -m "feat(chamber): add /approve and /deny slash commands for permissions"
-  ```
-
----
-
-### Task 3: No-Human-Mode Adjudication Loop in Gluon
-
-**Files:**
-- Modify: `crates/hadron-gluon/src/engine/turn.rs:130-225`
-
-**Interfaces:**
-- Consumes: Orchestrator `/approve` / `/deny` command replies
-- Produces: Resumed worker turn via `PermissionGrant` events
-
-- [ ] **Step 1: Implement recursion guard in decision path**
-  In `crates/hadron-gluon/src/engine/turn.rs` inside `finish_turn` where `hadron_gatekeeper::decide` is called:
-  ```rust
-  let asker_is_orchestrator = self.orchestrator_id().as_ref() == Some(target);
-  let decision = hadron_gatekeeper::decide(mode, global, self.no_human, risk, &op, target, &rules, &deny);
-  let decision = if asker_is_orchestrator && decision == hadron_gatekeeper::Decision::AskOrchestrator {
-      hadron_gatekeeper::Decision::AskHuman
-  } else {
-      decision
+  style.code_block = {
+      let mut s = gpui::StyleRefinement::default();
+      s.background = Some(theme::bg_elevated().into());
+      s.border_width = Some(gpui::EdgeRefinement::all(px(1.0)));
+      s.border_color = Some(gpui::EdgeRefinement::all(theme::border()));
+      s.padding = Some(gpui::EdgesRefinement::all(px(8.0)));
+      s.rounded_corner = Some(gpui::CornersRefinement::all(px(6.0)));
+      s
   };
   ```
 
-- [ ] **Step 2: Parse orchestrator's slash commands in finish_turn**
-  In `crates/hadron-gluon/src/engine/turn.rs` in `finish_turn` right before appending `Kind::Message`:
+- [ ] **Step 2: Wire copy button to TextView::html**
+  In `crates/hadron-chamber/src/app/render/chat.rs` inside `pub(super) fn message_row`, look for the `gpui_component::text::TextView::html` call and append `.code_block_actions(...)`:
   ```rust
-  if let Some(body) = outcome.message.as_ref() {
-      if self.is_orchestrator(target) {
-          let body_trimmed = body.trim();
-          if body_trimmed.starts_with("/approve ") || body_trimmed.starts_with("/deny ") {
-              let parts: Vec<&str> = body_trimmed.split_whitespace().collect();
-              if parts.len() >= 2 {
-                  let cmd = parts[0];
-                  let worker_name = parts[1].trim_start_matches('@');
-                  let remember = parts.get(2).map(|s| *s == "remember").unwrap_or(false);
-                  let approved = cmd == "/approve";
-                  
-                  if let Some(worker_id) = self.roster.iter().find(|c| c.id.as_str() == worker_name || c.display_name.as_deref() == Some(worker_name)).map(|c| c.id.clone()) {
-                      let grant_ev = Event::new(
-                          Actor::Quark(target.clone()),
-                          Some(worker_id),
-                          Kind::PermissionGrant { approved, remember },
-                      );
-                      self.append(grant_ev).await?;
-                  }
+  gpui_component::text::TextView::html((view, ix), html)
+      .selectable(true)
+      .style(markdown_style())
+      .code_block_actions(|code_block, _window, _cx| {
+          let code = code_block.code();
+          gpui_component::ui::clipboard::Clipboard::new("copy").value(code.clone()).into_any_element()
+      })
+  ```
+
+- [ ] **Step 3: Verify workspace compiles cleanly**
+  Run: `cargo check --workspace --features gui`
+  Expected: PASS
+
+- [ ] **Step 4: Run unit tests**
+  Run: `cargo test -p hadron-chamber --features gui`
+  Expected: PASS
+
+- [ ] **Step 5: Commit changes**
+  ```bash
+  git add crates/hadron-chamber/src/app/widgets.rs crates/hadron-chamber/src/app/render/chat.rs
+  git commit -m "feat(chamber): add styling and clipboard copy button to markdown code blocks"
+  ```
+
+---
+
+### Task 3: UI Color Themes & Roster Width
+
+**Files:**
+- Modify: `crates/hadron-chamber/src/config.rs`
+- Modify: `crates/hadron-chamber/src/app/render/chat.rs`
+- Modify: `crates/hadron-chamber/src/app/render/terminal.rs`
+- Modify: `crates/hadron-chamber/src/app/render/stats.rs`
+- Modify: `crates/hadron-chamber/src/app/render/overlays.rs`
+- Modify: `crates/hadron-chamber/src/app/actions.rs`
+
+**Interfaces:**
+- Consumes: `theme::field_base()` color token.
+- Produces: Dark modal backgrounds, wider roster defaults, and matching TabBar segments.
+
+- [ ] **Step 1: Increase default roster width and add configuration migration**
+  In `crates/hadron-chamber/src/config.rs`, modify `default_roster_width()`:
+  ```rust
+  fn default_roster_width() -> f32 {
+      500.0
+  }
+  ```
+  In `crates/hadron-chamber/src/config.rs`, modify `load_from()` to migrate 410.0 layout values:
+  ```rust
+  pub fn load_from(path: &Path) -> ChamberPrefs {
+      match std::fs::read_to_string(path) {
+          Ok(text) => {
+              let mut prefs: ChamberPrefs = serde_json::from_str(&text).unwrap_or_default();
+              if prefs.roster_width == 410.0 {
+                  prefs.roster_width = 500.0;
               }
+              prefs
           }
+          Err(_) => ChamberPrefs::default(),
       }
   }
   ```
 
-- [ ] **Step 3: Run gluon tests to verify implementation**
-  Run: `cargo test -p hadron-gluon`
-  Expected: PASS
-
-- [ ] **Step 4: Commit**
-  ```bash
-  git add crates/hadron-gluon/src/engine/turn.rs
-  git commit -m "feat(gluon): implement orchestrator slash command parser and recursion guard"
-  ```
-
----
-
-### Task 4: Worktree Isolation & Merge Gate Activation
-
-**Files:**
-- Modify: `crates/hadron-gluon/src/bin/hadron-gluon.rs:307-315`
-
-**Interfaces:**
-- Consumes: `hadron_lattice::workspace::repo_root_of`
-- Produces: isolated worktree run + Cargo merge checks
-
-- [ ] **Step 1: Wire repo root and merge gate into the engine**
-  Update engine initialization in `crates/hadron-gluon/src/bin/hadron-gluon.rs`:
+- [ ] **Step 2: Update segmented TabBar backgrounds**
+  In `crates/hadron-chamber/src/app/render/terminal.rs` (Right-rail tabs) and `crates/hadron-chamber/src/app/render/chat.rs` (Chat tabs), append `.bg(theme::field_base())` to the `TabBar::new` builders.
+  Example:
   ```rust
-  let repo_root = hadron_lattice::workspace::repo_root_of(&args.field_path).to_path_buf();
-  let mut engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
-      .with_git(repo_root)
-      .with_merge_gate(std::sync::Arc::new(hadron_gluon::merge::CargoMergeRunner))
-      .with_global_skills_dir(hadron_lattice::user_hadron_dir().map(|d| d.join("skills")))
-      .with_global_agents_dir(hadron_lattice::user_hadron_dir().map(|d| d.join("agents")));
+  let tabs = TabBar::new("right-rail-tabs")
+      .segmented()
+      .selected_index(selected.index())
+      .bg(theme::field_base())
   ```
 
-- [ ] **Step 2: Run all tests in the workspace**
-  Run: `cargo test --workspace`
-  Expected: PASS
+- [ ] **Step 3: Update overlays and info panel card backgrounds to match**
+  In `crates/hadron-chamber/src/app/render/stats.rs` inside `info_panel_overlay`:
+  - Change `.bg(theme::modal_surface())` to `.bg(theme::field_base())` for the `#quark-info-panel` div.
+  In `crates/hadron-chamber/src/app/render/overlays.rs`:
+  - In `about_overlay`: Change `.bg(theme::modal_surface())` to `.bg(theme::field_base())` for the dialog container.
+  - In `completion_card_overlay`: Change `.bg(theme::bg_surface())` to `.bg(theme::field_base())`.
 
-- [ ] **Step 3: Commit**
-  ```bash
-  git add crates/hadron-gluon/src/bin/hadron-gluon.rs
-  git commit -m "feat(gluon): enable worktree isolation and wire CargoMergeRunner"
-  ```
-
----
-
-### Task 5: Live Mid-Turn Stream UI
-
-**Files:**
-- Modify: `crates/hadron-chamber/src/app/render/roster.rs:22-181`
-- Modify: `crates/hadron-chamber/src/app/widgets.rs:174-249`
-
-**Interfaces:**
-- Consumes: Volatile `live/` directory files
-- Produces: Subtitle stream updates under active worker rows
-
-- [ ] **Step 1: Update roster_row signature**
-  In `crates/hadron-chamber/src/app/widgets.rs` update `roster_row` signature:
+- [ ] **Step 4: Update RightRailTab focus test array**
+  In `crates/hadron-chamber/src/app/actions.rs` inside `toggle_focus_else_case_switches_rail_to_terminal`, add `RightRailTab::Activity`:
   ```rust
-  pub(super) fn roster_row(
-      id: &ResolvedIdentity,
-      r: &RosterRow,
-      activity: Option<hadron_lattice::live::Activity>,
-      controls: gpui::AnyElement,
-  ) -> impl IntoElement {
+  for tab in [RightRailTab::FileTree, RightRailTab::Changes, RightRailTab::Plan, RightRailTab::Activity]
   ```
 
-- [ ] **Step 2: Render active subtitle in widgets.rs**
-  In `crates/hadron-chamber/src/app/widgets.rs` replace `detail_1` parsing logic:
-  ```rust
-  let detail_1: SharedString = if let Some(act) = activity {
-      format!("{}: {}", act.doing.label(), act.detail).into()
-  } else if r.vendor.is_empty() && r.model.is_empty() {
-      label.into()
-  } else if r.model.is_empty() {
-      format!("{} · {}", transport_label, cap(&r.vendor)).into()
-  } else {
-      format!("{} · {} · {}", transport_label, cap(&r.vendor), cap(&r.model)).into()
-  };
-  ```
-
-- [ ] **Step 3: Read and pass live activity in roster.rs**
-  In `crates/hadron-chamber/src/app/render/roster.rs` update the loop over roster rows:
-  ```rust
-  let live_dir = hadron_lattice::live::live_dir(&self.path);
-  for (ix, r) in self.view.roster.iter().enumerate() {
-      let is_selected = self.selected_quark_ix == Some(ix);
-      let activity = hadron_lattice::live::read(&live_dir, &r.id, chrono::Utc::now());
-      ...
-      .child(roster_row(&self.resolve_identity(&r.id), r, activity, controls));
-  ```
-
-- [ ] **Step 4: Verify compile and tests**
+- [ ] **Step 5: Verify tests and commit**
   Run: `cargo test -p hadron-chamber --features gui`
   Expected: PASS
-
-- [ ] **Step 5: Commit**
   ```bash
-  git add crates/hadron-chamber/src/app/widgets.rs crates/hadron-chamber/src/app/render/roster.rs
-  git commit -m "feat(chamber): display live stream activities under roster rows"
+  git add crates/hadron-chamber/src/config.rs crates/hadron-chamber/src/app/render/chat.rs crates/hadron-chamber/src/app/render/terminal.rs crates/hadron-chamber/src/app/render/stats.rs crates/hadron-chamber/src/app/render/overlays.rs crates/hadron-chamber/src/app/actions.rs
+  git commit -m "style(chamber): set bg colors to theme field_base and bump roster default width to 500"
   ```
 
 ---
 
-### Task 6: Budget Ceilings
+### Task 4: ACP Quark Activity Stream (Options B & C)
 
 **Files:**
-- Modify: `crates/hadron-gluon/src/bin/hadron-gluon.rs:307-315`
-- Modify: `crates/hadron-lattice/src/team/seat.rs:80-100` and `227-268` (Seat / SeatOverride serialization)
+- Modify: `crates/hadron-chamber/src/app/tabs.rs`
+- Modify: `crates/hadron-chamber/src/app/render/terminal.rs`
+- Modify: `crates/hadron-chamber/src/app/render/chat.rs`
 
 **Interfaces:**
-- Consumes: Configured cost limits in `team.json`
-- Produces: Depletion checks and execution blocks
+- Consumes: `.hadron/field.jsonl` event log via `io::read_events`.
+- Produces: Detailed "Activity" multitool tab, live collapsible chat thought cards.
 
-- [ ] **Step 1: Add budget fields to seat.rs**
-  Add optional `energy_limit` to `Seat` and `SeatOverride` in `crates/hadron-lattice/src/team/seat.rs`:
-  In `Seat`:
+- [ ] **Step 1: Declare RightRailTab::Activity**
+  In `crates/hadron-chamber/src/app/tabs.rs`, add the `Activity` variant to `RightRailTab` and update `ALL`, `index()`, `from_index()`, and `label()`:
   ```rust
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub energy_limit: Option<u32>,
-  ```
-  In `SeatOverride`:
-  ```rust
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub energy_limit: Option<u32>,
-  ```
-  And update `Seat::cli` constructor with `energy_limit: None` and `SeatOverride::role` constructor with `energy_limit: None`.
-  Update `resolve_team` in `crates/hadron-lattice/src/team/mod.rs` to propagate `energy_limit`:
-  ```rust
-  if let Some(limit) = ov.energy_limit {
-      seat.energy_limit = Some(limit);
+  #[derive(Clone, Copy, PartialEq, Eq)]
+  pub(super) enum RightRailTab {
+      Terminal,
+      FileTree,
+      Changes,
+      Plan,
+      Activity,
   }
+
+  impl RightRailTab {
+      pub(super) const ALL: [RightRailTab; 5] = [
+          RightRailTab::Terminal,
+          RightRailTab::FileTree,
+          RightRailTab::Changes,
+          RightRailTab::Plan,
+          RightRailTab::Activity,
+      ];
+      // match index 4 for Activity
   ```
 
-- [ ] **Step 2: Wire ledger in bin/hadron-gluon.rs**
-  In `crates/hadron-gluon/src/bin/hadron-gluon.rs`:
-  ```rust
-  let ledger_path = args.field_path.parent().unwrap_or(std::path::Path::new(".")).join("ledger.db");
-  let ledger = hadron_gluon::ledger::Ledger::open(&ledger_path)?;
-  let global_limit = 500_000u32;
-  let mut engine = engine.with_ledger(ledger, global_limit);
-  ```
+- [ ] **Step 2: Render Activity feed in terminal.rs**
+  In `crates/hadron-chamber/src/app/render/terminal.rs` inside `terminal_pane`, add `RightRailTab::Activity` branch:
+  - Retrieve the events from the log: `let events = io::read_events(&self.path).unwrap_or_default();`
+  - Filter events related to the selected/focused roster quark.
+  - Render an auto-scrolling log of thoughts, tool executions, and statuses.
 
-- [ ] **Step 3: Parse per-quark limits in engine's is_depleted check**
-  In `crates/hadron-gluon/src/engine/run.rs` in the dispatch loop:
-  ```rust
-  if let Some(ledger) = &self.ledger {
-      // Find the limit on the seat (if custom defined), otherwise fall back to self.energy_limit
-      let limit = self.roster.iter()
-          .find(|c| c.id == target)
-          .and_then(|c| c.energy_limit)
-          .unwrap_or(self.energy_limit);
-      if ledger.is_depleted(&target, limit)? {
-          let msg = format!("⚠️ Quark {} is depleted (exceeded {} tokens).", target.as_str(), limit);
-          self.reroute_blocked(&target, &msg).await?;
-          continue;
-      }
-  }
-  ```
+- [ ] **Step 3: Render live card and collapsed chip in chat**
+  In `crates/hadron-chamber/src/app/render/chat.rs`:
+  - When a turn is active for the selected quark, read the live activity payload from `hadron_lattice::live::read`.
+  - Render it inline/above the text input.
+  - Once completed, render a collapsed summary chip above the generated chat response.
 
-- [ ] **Step 4: Run workspace tests to verify compatibility**
-  Run: `cargo test --workspace`
+- [ ] **Step 4: Verify compilation and tests**
+  Run: `cargo test --workspace --features gui`
   Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Commit changes**
   ```bash
-  git add crates/hadron-lattice/src/team/seat.rs crates/hadron-lattice/src/team/mod.rs crates/hadron-gluon/src/bin/hadron-gluon.rs crates/hadron-gluon/src/engine/run.rs
-  git commit -m "feat(gluon): wire energy ledger and support custom per-quark budget ceilings"
-  ```
-
----
-
-### Task 7: Foldable Plan Tab
-
-**Files:**
-- Modify: `crates/hadron-chamber/src/app/mod.rs:30-100` (state initialization)
-- Modify: `crates/hadron-chamber/src/app/render/terminal.rs:655-720`
-
-**Interfaces:**
-- Consumes: Markdown headings parsed from plans on disk
-- Produces: Collapsible plan checklist views grouped under tasks
-
-- [ ] **Step 1: Add toggle state to Chamber struct**
-  In `crates/hadron-chamber/src/app/mod.rs` inside the `Chamber` struct:
-  ```rust
-  pub(super) plan_collapsed_tasks: std::collections::HashSet<String>,
-  ```
-  And initialize it in `Chamber::new`:
-  ```rust
-  plan_collapsed_tasks: std::collections::HashSet::new(),
-  ```
-
-- [ ] **Step 2: Parse tasks and render accordions in terminal.rs**
-  In `crates/hadron-chamber/src/app/render/terminal.rs` inside `RightRailTab::Plan`:
-  Replace the rendering loop to group steps under task headings:
-  - Loop through tasks and build a grouped structure: `Vec<(String, Vec<(String, bool)>)>` where the first String is the task name.
-  - Render each task name as a row with a Chevron icon:
-    - If `plan_collapsed_tasks` contains the task name, show `ChevronRight` and do NOT show the steps.
-    - Else show `ChevronDown` and render the checklist steps below.
-    - Set the click listener on the header to toggle the entry in `plan_collapsed_tasks` and call `cx.notify()`.
-  - Auto-expand logic: when loading a new plan file, find the first task with an incomplete step, and ensure it is NOT in `plan_collapsed_tasks`.
-
-- [ ] **Step 3: Run chamber tests to verify compiles**
-  Run: `cargo test -p hadron-chamber --features gui`
-  Expected: PASS
-
-- [ ] **Step 4: Commit**
-  ```bash
-  git add crates/hadron-chamber/src/app/mod.rs crates/hadron-chamber/src/app/render/terminal.rs
-  git commit -m "feat(chamber): render foldable plan accordions in the Plan rail"
+  git add crates/hadron-chamber/src/app/tabs.rs crates/hadron-chamber/src/app/render/terminal.rs crates/hadron-chamber/src/app/render/chat.rs
+  git commit -m "feat(chamber): implement Option B & C live activity stream views"
   ```
