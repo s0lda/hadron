@@ -116,13 +116,27 @@ impl Render for Chamber {
                     .absolute()
                     .inset_0()
                     .overflow_hidden()
-                    .child(wash_layer(
-                        180.0,
-                        theme::field_bright(),
-                        theme::field_deep(),
-                        top_radius,
-                        bottom_radius,
-                    ))
+                    // The background photo (Jake's asset), replacing the two-colour
+                    // gradient wash. Baked absolute at compile time so it resolves
+                    // regardless of the runtime cwd; loaded via `Resource::Path`
+                    // (fs::read, decoded once and cached by gpui), so it costs a
+                    // texture composite per repaint, not a re-decode. `Cover` fills
+                    // the field, cropping overflow; rounded to the housing radius so
+                    // the corners sit under the window's rounded frame.
+                    .child(
+                        gpui::img(std::path::PathBuf::from(concat!(
+                            env!("CARGO_MANIFEST_DIR"),
+                            "/../../assets/background.jpeg"
+                        )))
+                        .absolute()
+                        .inset_0()
+                        .size_full()
+                        .object_fit(gpui::ObjectFit::Cover)
+                        .rounded_tl(top_radius)
+                        .rounded_tr(top_radius)
+                        .rounded_bl(bottom_radius)
+                        .rounded_br(bottom_radius),
+                    )
                     // Quark-state hues, one per corner (angle points at the OPPOSITE corner,
                     // so the hue sits bright in the named corner and fades across).
                     .child(glow_layer(135.0, theme::glow_blue(), top_radius, bottom_radius)) // working — top-left
