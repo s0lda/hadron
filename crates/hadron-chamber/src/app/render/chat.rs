@@ -8,6 +8,8 @@ impl super::Chamber {
         let selected = self.chat_tab;
         let tabs = TabBar::new("chat-tabs")
             .segmented()
+            // Flat #101010 so the segmented bar dissolves into the field (Jake's request).
+            .bg(theme::field_base())
             .selected_index(selected.index())
             .children(ChatTab::ALL.map(|t| {
                 // The active tab reads as a dark cutout; give its label the pink

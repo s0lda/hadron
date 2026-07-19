@@ -57,9 +57,9 @@ fn default_false() -> bool {
     false
 }
 fn default_roster_width() -> f32 {
-    // +100px over the old 310 so effort + mode tags fit beside the name/model
-    // column without squishing (Jake's request).
-    410.0
+    // Wide enough for effort + mode tags beside the name/model column, bumped from
+    // the old 410 to give the live activity subtitle room too (Jake's request).
+    500.0
 }
 fn default_inspector_width() -> f32 {
     300.0
@@ -101,7 +101,16 @@ pub fn config_path() -> Option<PathBuf> {
 /// Read preferences from an explicit path; missing or malformed → defaults.
 pub fn load_from(path: &Path) -> ChamberPrefs {
     match std::fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Ok(text) => {
+            let mut prefs: ChamberPrefs = serde_json::from_str(&text).unwrap_or_default();
+            // One-time migration: a chamber.json still pinned at the old 410px default
+            // is bumped to the new default so the wider roster applies without a manual
+            // edit. A width the user deliberately chose (anything but 410) is untouched.
+            if prefs.roster_width == 410.0 {
+                prefs.roster_width = default_roster_width();
+            }
+            prefs
+        }
         Err(_) => ChamberPrefs::default(),
     }
 }
@@ -215,6 +224,19 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("nope.json");
         assert_eq!(load_from(&path), ChamberPrefs::default());
+    }
+
+    #[test]
+    fn a_stored_410_roster_width_migrates_to_the_new_default() {
+        let dir = tempdir().unwrap();
+        // A chamber.json pinned at the old 410 default is bumped on load...
+        let old = dir.path().join("old.json");
+        std::fs::write(&old, r#"{"roster_width":410.0}"#).unwrap();
+        assert_eq!(load_from(&old).roster_width, default_roster_width());
+        // ...but a width the user chose themselves is preserved exactly.
+        let chosen = dir.path().join("chosen.json");
+        std::fs::write(&chosen, r#"{"roster_width":333.0}"#).unwrap();
+        assert_eq!(load_from(&chosen).roster_width, 333.0);
     }
 
     #[test]
