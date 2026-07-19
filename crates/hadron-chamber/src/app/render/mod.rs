@@ -62,7 +62,7 @@ impl Render for Chamber {
         // corners. Zero on any tiled edge, so a maximized/snapped window stays square.
         let (top_radius, bottom_radius) = frame_corner_radii(window);
         let titlebar = self.titlebar(window, cx);
-        let body = self.body(cx);
+        let body = self.body(window, cx);
         let settings = self.settings_open.then(|| self.settings_overlay(cx));
         let info = self
             .info_panel
@@ -128,7 +128,7 @@ impl Chamber {
     /// into the chat instead of stranding a stored width). A collapsed rail is a
     /// thin strip. The group is re-keyed on the terminal's presence so a fresh
     /// sizing state seeds its width from prefs; `on_resize` persists it back.
-    pub(super) fn body(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let roster_collapsed = self.prefs.roster_collapsed;
         let inspector_collapsed = self.prefs.inspector_collapsed;
         let chamber = cx.entity();
@@ -154,7 +154,7 @@ impl Chamber {
         group = group.child(
             resizable_panel()
                 .size_range(px(CHAT_MIN)..px(TERMINAL_MAX))
-                .child(self.chat_pane(cx)),
+                .child(self.chat_pane(window, cx)),
         );
         if !inspector_collapsed {
             group = group.child(

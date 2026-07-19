@@ -4,7 +4,7 @@ impl super::Chamber {
     /// The center column: a segmented Chat / Log / Timeline tab bar over the
     /// selected view, with the human's message box pinned at the foot. The whole
     /// thing is a rounded, filled card that floats on the unified canvas.
-    pub(super) fn chat_pane(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn chat_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let live_dir = hadron_lattice::live::live_dir(&self.path);
         let live_activity = self.view.roster.iter().find_map(|r| {
             hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), chrono::Utc::now())
@@ -150,7 +150,8 @@ impl super::Chamber {
                         el.child(self.completion_card_overlay(cx))
                     })
                     .when_some(live_card, |el, card| el.child(card))
-                    .child(
+                    .child({
+                        let is_focused = self.input.read(cx).focus_handle(cx).is_focused(window);
                         h_flex()
                             .px_1()
                             .rounded_lg()
@@ -158,9 +159,13 @@ impl super::Chamber {
                             // A hairline border lifts the field off the card behind it
                             // — the modern outlined-input look, using the shared token.
                             .border_1()
-                            .border_color(theme::border())
-                            .child(Input::new(&self.input)),
-                    )
+                            .border_color(if is_focused {
+                                cx.theme().ring
+                            } else {
+                                theme::border().into()
+                            })
+                            .child(Input::new(&self.input).bordered(false).focus_bordered(false))
+                    })
                     .child(
                         h_flex()
                             .w_full()

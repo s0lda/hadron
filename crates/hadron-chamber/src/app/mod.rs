@@ -33,7 +33,7 @@ use gpui_component::tooltip::Tooltip;
 
 // table imports removed
 use gpui_component::{
-    h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar,
+    ActiveTheme, h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar,
 };
 use hadron_lattice::{
     io, load_team, resolve_team, Actor, Event, Kind, Mode, QuarkId, QuarkState, Seat, SeatOverride, Team,
