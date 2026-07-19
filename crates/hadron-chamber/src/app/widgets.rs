@@ -168,6 +168,19 @@ pub(super) fn drag_region(id: &'static str) -> impl IntoElement {
         .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
 }
 
+pub(super) fn effective_presence_state(
+    r_state: QuarkState,
+    adopted: bool,
+    enabled: bool,
+    has_activity: bool,
+) -> QuarkState {
+    if has_activity && adopted && enabled {
+        QuarkState::Excited
+    } else {
+        r_state
+    }
+}
+
 /// One roster entry, styled as a presence list-item: the resolved avatar with a
 /// status [`Badge`] dot, a display name, and a one-word presence subtitle, with a
 /// tooltip on hover.
@@ -178,12 +191,13 @@ pub(super) fn roster_row(
     controls: gpui::AnyElement,
 ) -> impl IntoElement {
     let name = id.name.clone();
+    let effective_state = effective_presence_state(r.state, r.adopted, r.enabled, activity.is_some());
     // Not adopted here → "available" (in the catalogue, off in this repo); adopted but
     // switched off → "disabled"; otherwise the live presence word.
     let label = if !r.adopted {
         "available"
     } else if r.enabled {
-        theme::presence_label(r.state)
+        theme::presence_label(effective_state)
     } else {
         "disabled"
     };
@@ -244,7 +258,7 @@ pub(super) fn roster_row(
     // Grey dot for both a disabled seat and an available-but-not-adopted quark — the
     // same "there to use, but off" signal the user asked for.
     let dot_color = if r.adopted && r.enabled {
-        theme::presence(r.state)
+        theme::presence(effective_state)
     } else {
         theme::presence_disabled()
     };
@@ -704,5 +718,29 @@ mod tests {
         assert_eq!(mode_tag_label(Mode::Auto, false), "AUTO");
         assert_eq!(mode_tag_label(Mode::Ask, false), "ASK");
         assert_eq!(mode_tag_label(Mode::Bypass, false), "BYPASS");
+    }
+
+    #[test]
+    fn presence_state_overrides_to_excited_when_active_live_activity() {
+        // Base case: no activity -> keep state
+        assert_eq!(
+            effective_presence_state(QuarkState::Ground, true, true, false),
+            QuarkState::Ground
+        );
+        // Active activity, adopted, and enabled -> override to Excited
+        assert_eq!(
+            effective_presence_state(QuarkState::Ground, true, true, true),
+            QuarkState::Excited
+        );
+        // Active activity but not adopted -> keep base state
+        assert_eq!(
+            effective_presence_state(QuarkState::Ground, false, true, true),
+            QuarkState::Ground
+        );
+        // Active activity but not enabled -> keep base state
+        assert_eq!(
+            effective_presence_state(QuarkState::Ground, true, false, true),
+            QuarkState::Ground
+        );
     }
 }
