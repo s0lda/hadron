@@ -196,6 +196,7 @@ struct Chamber {
     changes_scroll: ScrollHandle,
     /// Scroll position of the Plan tracker pane.
     plan_scroll: ScrollHandle,
+    activity_scroll: ScrollHandle,
     pub(super) plan_collapsed_tasks: std::collections::HashSet<String>,
     pub(super) last_plan_path: Option<String>,
     pub(super) last_incomplete_task: Option<String>,
@@ -516,6 +517,7 @@ impl Chamber {
             changes_open_ixs: std::collections::HashSet::new(),
             changes_scroll: ScrollHandle::new(),
             plan_scroll: ScrollHandle::new(),
+            activity_scroll: ScrollHandle::new(),
             plan_collapsed_tasks: std::collections::HashSet::new(),
             last_plan_path: None,
             last_incomplete_task: None,
