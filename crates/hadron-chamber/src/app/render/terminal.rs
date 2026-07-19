@@ -150,7 +150,7 @@ impl super::Chamber {
                                 .bg(theme::bg_surface_raised())
                                 .child(div().text_color(theme::text()).child(path.clone()))
                                 .child(text_button("close-file", "Close").on_click(cx.listener(
-                                    |this, _, window, cx| {
+                                    |this, _, _window, cx| {
                                         this.parsed_markdown.borrow_mut().remove(&usize::MAX);
                                         this.file_tree_open = None;
                                         cx.notify();
