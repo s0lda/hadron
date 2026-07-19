@@ -1,0 +1,99 @@
+use super::*;
+use super::secrets::{declare_secret_var, secret_status, undeclare_secret_var, SecretStatus};
+use hadron_lattice::secrets::MemoryStore;
+use hadron_lattice::secrets::SecretStore;
+use hadron_lattice::{Flavor, Seat};
+
+fn seat(id: &str) -> Seat {
+    Seat::cli(QuarkId::new(id), "agy", "gemini-3-pro", Flavor::Worker)
+}
+
+#[test]
+fn declare_secret_var_adds_when_absent() {
+    let mut s = seat("acp-agy");
+    assert!(s.secret_env.is_empty());
+
+    let changed = declare_secret_var(&mut s, "GEMINI_API_KEY");
+
+    assert!(changed, "adding a new var must report a change");
+    assert_eq!(s.secret_env, vec!["GEMINI_API_KEY".to_string()]);
+}
+
+#[test]
+fn declare_secret_var_noop_when_present() {
+    let mut s = seat("acp-agy");
+    s.secret_env.push("GEMINI_API_KEY".to_string());
+
+    let changed = declare_secret_var(&mut s, "GEMINI_API_KEY");
+
+    assert!(!changed, "an already-declared var must not report a change");
+    assert_eq!(s.secret_env, vec!["GEMINI_API_KEY".to_string()], "must not duplicate");
+}
+
+#[test]
+fn declare_secret_var_ignores_blank() {
+    let mut s = seat("acp-agy");
+    let changed = declare_secret_var(&mut s, "");
+    assert!(!changed);
+    assert!(s.secret_env.is_empty());
+}
+
+#[test]
+fn undeclare_secret_var_removes_when_present() {
+    let mut s = seat("acp-agy");
+    s.secret_env.push("GEMINI_API_KEY".to_string());
+
+    let changed = undeclare_secret_var(&mut s, "GEMINI_API_KEY");
+
+    assert!(changed);
+    assert!(s.secret_env.is_empty());
+}
+
+#[test]
+fn undeclare_secret_var_noop_when_absent() {
+    let mut s = seat("acp-agy");
+    let changed = undeclare_secret_var(&mut s, "GEMINI_API_KEY");
+    assert!(!changed);
+    assert!(s.secret_env.is_empty());
+}
+
+/// The behaviour the masked field's status line depends on: setting a value
+/// via a `SecretStore` flips the status to `Set`, clearing it back to `NotSet` —
+/// exercised against a `MemoryStore`, never a real keychain.
+#[test]
+fn set_then_status_reports_set() {
+    let store = MemoryStore::new();
+    let id = QuarkId::new("acp-agy");
+    let var = "GEMINI_API_KEY";
+
+    assert_eq!(secret_status(&store, &id, var), SecretStatus::NotSet, "unset");
+
+    store.set(&id, var, "sk-live-value").unwrap();
+    assert_eq!(secret_status(&store, &id, var), SecretStatus::Set, "set");
+
+    store.delete(&id, var).unwrap();
+    assert_eq!(secret_status(&store, &id, var), SecretStatus::NotSet, "cleared");
+}
+
+/// A store that ERRORS (stands in for no OS credential service, e.g. bare WSL2)
+/// must report `Unavailable`, NOT `NotSet` — otherwise a failed keychain looks
+/// exactly like an unset key and the user has no signal.
+#[test]
+fn store_error_reports_unavailable_not_notset() {
+    struct DeadStore;
+    impl SecretStore for DeadStore {
+        fn get(&self, _: &QuarkId, _: &str) -> anyhow::Result<Option<String>> {
+            anyhow::bail!("no credential service")
+        }
+        fn set(&self, _: &QuarkId, _: &str, _: &str) -> anyhow::Result<()> {
+            anyhow::bail!("no credential service")
+        }
+        fn delete(&self, _: &QuarkId, _: &str) -> anyhow::Result<()> {
+            anyhow::bail!("no credential service")
+        }
+    }
+    assert_eq!(
+        secret_status(&DeadStore, &QuarkId::new("acp-agy"), "GEMINI_API_KEY"),
+        SecretStatus::Unavailable,
+    );
+}

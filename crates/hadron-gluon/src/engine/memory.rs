@@ -1,0 +1,231 @@
+
+use hadron_lattice::{
+    Event, Kind,
+};
+
+use std::fs;
+
+use super::*;
+
+/// The swarm's memory INDEX for this project — one file, shared by every quark.
+///
+/// It was one file *per quark*, which meant a lesson agy paid for in blood was one
+/// opus would pay for again. Shared, so the swarm learns once.
+pub(super) fn memory_index_path(workspace_root: &std::path::Path) -> std::path::PathBuf {
+    memory_dir(workspace_root).join("index.md")
+}
+
+/// Where the long-form notes live: `.hadron/memory/notes/<slug>.md`. The index names
+/// them; the engine never loads them. That is the whole token argument — an index of
+/// one-liners stays cheap forever, and the detail is paid for only on the turn a quark
+/// actually opens it.
+pub(super) fn memory_notes_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
+    memory_dir(workspace_root).join("notes")
+}
+
+fn memory_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
+    workspace_root.join(".hadron").join("memory")
+}
+
+/// The index is in **every** prompt of **every** turn, so its size is a tax paid
+/// forever — and the tax is *context*, not money. Prompt caching makes re-sending it
+/// cheap; it does not make it free, because every token here is a token the model is
+/// not spending on the task. It is also the wrong thing to grow: the index is a
+/// routing table (one line per lesson) and the detail belongs in `notes/`, which the
+/// engine never loads. A file that outgrows this has stopped being an index.
+pub(super) const MEMORY_INDEX_BUDGET: usize = 32 * 1024;
+
+/// Read the memory index, capped. A missing file is the normal first-run case, not an
+/// error — it simply means the swarm has learned nothing here yet.
+///
+/// Returns the text and whether it was cut. Cutting silently is the one thing we do
+/// not do: a quark that cannot see a lesson, and cannot tell that it cannot see it,
+/// acts confidently on a partial picture.
+///
+/// **What we cut matters as much as that we cut.** Slicing the first N bytes keeps the
+/// OLDEST lessons and throws away the newest — exactly backwards, since the index is
+/// appended to and the freshest lesson is the one just paid for. So we keep the header
+/// (it defines the format a quark must write back in) and then the most recent lines
+/// that fit, dropping the middle.
+pub(super) fn read_memory_index(path: &std::path::Path) -> (String, bool) {
+    let raw = fs::read_to_string(path).unwrap_or_default();
+    if raw.len() <= MEMORY_INDEX_BUDGET {
+        return (raw, false);
+    }
+
+    let lines: Vec<&str> = raw.lines().collect();
+    // The header is everything before the first lesson line: it carries the format.
+    let first_lesson = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with("- **"))
+        .unwrap_or(0);
+    let (header, lessons) = lines.split_at(first_lesson);
+
+    let header_text = header.join("\n");
+    // Reserve room for the header; if the header alone blows the budget the file is
+    // not an index at all, and the old head-slice is the only honest thing left.
+    if header_text.len() >= MEMORY_INDEX_BUDGET {
+        let mut end = MEMORY_INDEX_BUDGET;
+        while end > 0 && !raw.is_char_boundary(end) {
+            end -= 1;
+        }
+        return (raw[..end].to_string(), true);
+    }
+
+    // Take lessons from the END backwards — newest first — until the budget is spent.
+    let mut kept: Vec<&str> = Vec::new();
+    let mut used = header_text.len();
+    for line in lessons.iter().rev() {
+        let cost = line.len() + 1; // +1 for the newline
+        if used + cost > MEMORY_INDEX_BUDGET {
+            break;
+        }
+        used += cost;
+        kept.push(line);
+    }
+    kept.reverse();
+
+    let mut out = header_text;
+    out.push('\n');
+    out.push_str(&kept.join("\n"));
+    out.push('\n');
+    (out, true)
+}
+
+/// Where a user's own always-on rules live, under their home directory. Their
+/// preferences, across every project they run Hadron in.
+fn global_invariants_dir() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(
+        std::path::PathBuf::from(home)
+            .join(".hadron")
+            .join("nucleus")
+            .join("invariants"),
+    )
+}
+
+/// Read every `*.md` in a directory, sorted by name so the prompt is deterministic
+/// (a projection that reorders itself between turns busts every prompt cache).
+/// A directory that isn't there is not an error — the tier is simply absent.
+fn read_invariant_dir(dir: &std::path::Path) -> Vec<(String, String)> {
+    let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
+
+    let mut found: Vec<(String, String)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let stem = name.strip_suffix(".md")?.to_string();
+            match fs::read_to_string(e.path()) {
+                Ok(body) => Some((stem, body)),
+                Err(err) => {
+                    // Loud, not silent: an unreadable rule file is a rule the quark
+                    // is not being given, and nobody would otherwise ever know.
+                    eprintln!(
+                        "warning: invariant exists but could not be read: {} — {err}",
+                        e.path().display()
+                    );
+                    None
+                }
+            }
+        })
+        .collect();
+
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found
+}
+
+/// Assemble the three tiers of working protocol handed to a quark.
+///
+/// 1. **Hardcoded** — [`STANDARD_MODEL`], compiled in, always present, not optional.
+/// 2. **Global** — `~/.hadron/nucleus/invariants/`, the user's own standing rules.
+/// 3. **Repo** — `<workspace>/.hadron/nucleus/invariants/`, this project's rules.
+///
+/// Ordered narrowest-last, and the prompt *says* which tier each block came from:
+/// a quark that cannot tell a shipped rule from a project rule cannot reason about
+/// which one to question when they conflict. `requested` names extra repo rules to
+/// pull in for this specific turn.
+pub(super) fn build_invariants(workspace_root: &std::path::Path, requested: &[String]) -> (String, Vec<String>) {
+    let mut combined = String::new();
+
+    // Tier 1 — always, whatever else is or isn't on disk.
+    combined.push_str(STANDARD_MODEL.trim());
+    combined.push('\n');
+
+    // Tier 2 — the user's preferences, across all their projects.
+    if let Some(global_dir) = global_invariants_dir() {
+        for (name, body) in read_invariant_dir(&global_dir) {
+            combined.push_str(&format!("\n# Your rule: {name}\n{}\n", body.trim()));
+        }
+    }
+
+    // Tier 3 — this project. A cybersecurity repo and an indie game do not want the
+    // same rules, so the repo tier is where the domain gets to speak.
+    let repo_dir = workspace_root.join(".hadron").join("nucleus").join("invariants");
+    let repo_rules = read_invariant_dir(&repo_dir);
+
+    let mut available: Vec<String> = repo_rules.iter().map(|(n, _)| n.clone()).collect();
+    available.sort();
+
+    let mut requested_sorted = requested.to_vec();
+    requested_sorted.sort();
+
+    for (name, body) in &repo_rules {
+        // Repo rules named `always.md` load unconditionally; the rest load when the
+        // turn asks for them by name, so a big rulebook doesn't blow the budget.
+        if name == "always" || requested_sorted.contains(name) {
+            combined.push_str(&format!("\n# Project rule: {name}\n{}\n", body.trim()));
+        }
+    }
+
+    (combined.trim().to_string(), available)
+}
+
+/// How many bytes of *rendered field transcript* a projection may carry.
+///
+/// Two hard reasons, not a taste:
+///
+/// 1. **`execve` rejects a long argv element.** `agy` has no stdin in print mode
+///    and no `--prompt-file`, so its whole prompt is one argv element — and Linux
+///    caps a single element at `MAX_ARG_STRLEN` = 128 KiB, unraisable. The field
+///    window used to be `events.to_vec()` (the *entire* field), which grew past
+///    that in normal use and killed every agy turn with E2BIG in ~0.7 ms, before
+///    any subprocess started.
+/// 2. **Tokens are money.** Re-sending the whole field on every turn of every quark
+///    is quadratic in the swarm's lifetime, and the oldest events are the least
+///    useful.
+///
+/// 48 KiB keeps a generous multi-turn transcript while leaving room under the
+/// adapter's own [safety net](crate::adapter::cli) for the diff, nucleus and task.
+/// A *byte* budget, not an event count: one long message can blow an event count.
+pub const FIELD_WINDOW_BUDGET_BYTES: usize = 48 * 1024;
+
+/// What one event costs the rendered prompt. Only `Message` bodies are rendered
+/// (`prompt::build`), plus a small allowance for the `**from → to:**` prefix.
+pub(super) fn event_cost(e: &Event) -> usize {
+    let body = match &e.kind {
+        Kind::Message { body } => body.len(),
+        _ => 0,
+    };
+    body + 32
+}
+
+/// The most recent events that fit in `budget` bytes, in field order.
+///
+/// Most-recent-wins: the driving message and the freshest context are the ones a
+/// quark actually needs; the oldest are the ones to drop. Always yields at least
+/// the single newest event, even if that one event is itself over budget — a quark
+/// with no transcript at all cannot act, and the adapter's guard bounds the final
+/// argv anyway.
+pub(super) fn bounded_window(events: &[Event], budget: usize) -> Vec<Event> {
+    let mut spent = 0usize;
+    let mut keep = 0usize;
+    for e in events.iter().rev() {
+        let cost = event_cost(e);
+        if keep > 0 && spent + cost > budget {
+            break;
+        }
+        spent += cost;
+        keep += 1;
+    }
+    events[events.len().saturating_sub(keep)..].to_vec()
+}
