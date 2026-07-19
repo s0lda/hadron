@@ -105,7 +105,7 @@
 - Consumes: `theme::field_base()` color token.
 - Produces: Dark modal backgrounds, wider roster defaults, and matching TabBar segments.
 
-- [ ] **Step 1: Increase default roster width and add configuration migration**
+- [x] **Step 1: Increase default roster width and add configuration migration**
   In `crates/hadron-chamber/src/config.rs`, modify `default_roster_width()`:
   ```rust
   fn default_roster_width() -> f32 {
@@ -128,7 +128,7 @@
   }
   ```
 
-- [ ] **Step 2: Update segmented TabBar backgrounds**
+- [x] **Step 2: Update segmented TabBar backgrounds**
   In `crates/hadron-chamber/src/app/render/terminal.rs` (Right-rail tabs) and `crates/hadron-chamber/src/app/render/chat.rs` (Chat tabs), append `.bg(theme::field_base())` to the `TabBar::new` builders.
   Example:
   ```rust
@@ -138,7 +138,7 @@
       .bg(theme::field_base())
   ```
 
-- [ ] **Step 3: Update overlays and info panel card backgrounds to match**
+- [x] **Step 3: Update overlays and info panel card backgrounds to match**
   In `crates/hadron-chamber/src/app/render/stats.rs` inside `info_panel_overlay`:
   - Change `.bg(theme::modal_surface())` to `.bg(theme::field_base())` for the `#quark-info-panel` div.
   In `crates/hadron-chamber/src/app/render/overlays.rs`:
@@ -151,7 +151,7 @@
   for tab in [RightRailTab::FileTree, RightRailTab::Changes, RightRailTab::Plan, RightRailTab::Activity]
   ```
 
-- [ ] **Step 5: Verify tests and commit**
+- [x] **Step 5: Verify tests and commit**
   Run: `cargo test -p hadron-chamber --features gui`
   Expected: PASS
   ```bash
