@@ -60,6 +60,11 @@ impl super::Chamber {
                 .id(SharedString::from(format!("roster-row-{}", r.id)))
                 .rounded(px(8.0))
                 .border_1()
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.selected_quark_ix = Some(ix);
+                    cx.notify();
+                }))
                 // Keyboard-cursor cue: a fuchsia ring, matching the slash-command accent.
                 // Transparent when unselected so rows don't shift by a border width.
                 .border_color(if is_selected {
