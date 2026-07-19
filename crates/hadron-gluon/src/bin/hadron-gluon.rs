@@ -304,7 +304,8 @@ async fn main() {
         std::process::exit(2);
     }
     let max_exchanges = team.max_exchanges.unwrap_or(12);
-    let repo_root = hadron_lattice::repo_root_of(&args.field_path).to_path_buf();
+    let repo_root = std::fs::canonicalize(hadron_lattice::repo_root_of(&args.field_path))
+        .unwrap_or_else(|_| hadron_lattice::repo_root_of(&args.field_path).to_path_buf());
     let engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
         .with_git(repo_root)
         .with_merge_gate(std::sync::Arc::new(hadron_gluon::merge::CargoMergeRunner))
