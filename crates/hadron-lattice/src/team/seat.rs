@@ -104,6 +104,9 @@ pub struct Seat {
     /// never written to `team.json`. Empty by default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub secret_env: Vec<String>,
+    /// Per-seat budget energy limit (token ceiling).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy_limit: Option<u32>,
 }
 
 /// `true`. Serde needs a function, and an absent `enabled` must mean *on* — a seat
@@ -136,7 +139,7 @@ impl Seat {
     /// a field to `Seat` without deciding which side of this line it falls on will not
     /// compile.
     pub fn same_agent(&self, other: &Seat) -> bool {
-        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env } = self;
+        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env, energy_limit } = self;
         id == &other.id
             && vendor == &other.vendor
             && model == &other.model
@@ -150,6 +153,7 @@ impl Seat {
             && exclusive == &other.exclusive
             && commands == &other.commands
             && secret_env == &other.secret_env
+            && energy_limit == &other.energy_limit
     }
 
     /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
@@ -171,6 +175,7 @@ impl Seat {
             exclusive: false,
             commands: SeatCommands::default(),
             secret_env: Vec::new(),
+            energy_limit: None,
         }
     }
 
@@ -265,6 +270,9 @@ pub struct SeatOverride {
     /// Per-repo command allow/deny lists. Absent = inherit the catalogue's `commands`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commands: Option<SeatCommands>,
+    /// Per-repo energy limit. Absent = inherit the catalogue's `energy_limit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy_limit: Option<u32>,
 }
 
 /// Deserialize an `Option<Option<T>>` field so the three states stay distinct: an
@@ -299,6 +307,7 @@ impl SeatOverride {
             roles: None,
             exclusive: None,
             commands: None,
+            energy_limit: None,
         }
     }
 }

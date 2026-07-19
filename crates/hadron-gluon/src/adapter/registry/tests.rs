@@ -141,6 +141,7 @@ fn build_wires_the_right_adapter() {
         exclusive: false,
         commands: SeatCommands::default(),
         env: RedactedEnv::default(),
+        energy_limit: None,
     })
     .unwrap();
     assert_eq!(agy.id(), QuarkId::new("agy"));
@@ -158,6 +159,7 @@ fn build_wires_the_right_adapter() {
         exclusive: false,
         commands: SeatCommands::default(),
         env: RedactedEnv::default(),
+        energy_limit: None,
     })
     .unwrap();
     assert_eq!(generic.id(), QuarkId::new("custom"));
@@ -178,6 +180,7 @@ fn build_rejects_reserved_id() {
         exclusive: false,
         commands: SeatCommands::default(),
         env: RedactedEnv::default(),
+        energy_limit: None,
     });
     assert!(err.is_err());
 }
@@ -428,6 +431,7 @@ fn resolved_env_is_not_in_debug_output() {
         exclusive: false,
         commands: SeatCommands::default(),
         env: RedactedEnv(vec![("GEMINI_API_KEY".to_string(), secret_value.to_string())]),
+        energy_limit: None,
     };
     let debug = format!("{spec:?}");
     assert!(!debug.contains(secret_value), "the secret VALUE leaked into Debug: {debug}");

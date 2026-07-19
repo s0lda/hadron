@@ -17,6 +17,7 @@ fn projection(task: &str) -> Projection {
             roles: vec![],
             exclusive: false,
             commands: Default::default(),
+            energy_limit: None,
         }],
         field_window: vec![Event::new(
             Actor::Human,
@@ -63,6 +64,7 @@ fn peers_are_named_by_display_name_not_raw_id() {
         roles: vec![],
         exclusive: false,
         commands: Default::default(),
+        energy_limit: None,
     });
     proj.field_window.push(Event::new(
         Actor::Quark(QuarkId::new("acp-claude")),
@@ -171,6 +173,7 @@ fn worker_is_told_to_escalate_to_the_orchestrator_role() {
         roles: vec![],
         exclusive: false,
         commands: Default::default(),
+        energy_limit: None,
     });
 
     let worker_prompt = build(&proj, &QuarkId::new("agy"));
@@ -199,6 +202,7 @@ fn a_finished_worker_reports_up_and_is_never_told_to_drop_the_mention() {
         roles: vec![],
         exclusive: false,
         commands: Default::default(),
+        energy_limit: None,
     });
 
     let worker = build(&proj, &QuarkId::new("agy"));
@@ -241,6 +245,7 @@ fn only_the_orchestrator_is_told_to_stay_available() {
         roles: vec![],
         exclusive: false,
         commands: Default::default(),
+        energy_limit: None,
     });
 
     let orch_prompt = build(&proj, &QuarkId::new("opus"));
@@ -309,6 +314,7 @@ fn the_orchestrator_must_verify_a_workers_claim_before_relaying_it() {
         roles: vec![],
         exclusive: false,
         commands: Default::default(),
+        energy_limit: None,
     });
 
     let orch = build(&proj, &QuarkId::new("opus"));

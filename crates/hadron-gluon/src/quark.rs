@@ -40,6 +40,10 @@ pub trait Quark: Send {
         &EMPTY
     }
     fn energy(&self) -> EnergyState;
+    /// Per-seat budget energy limit (token ceiling).
+    fn energy_limit(&self) -> Option<u32> {
+        None
+    }
     /// Whether this quark keeps its context **across turns** (a resident ACP session) or
     /// is re-spawned fresh each turn (a one-shot CLI process). The engine tracks this at
     /// seat time (`Engine::resident`) for whatever needs a seat's transport shape; skill

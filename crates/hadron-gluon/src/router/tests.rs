@@ -7,8 +7,8 @@ fn msg(from: Actor, to: Option<&str>, body: &str) -> Event {
 
 fn roster() -> Vec<QuarkCard> {
     vec![
-        QuarkCard { id: QuarkId::new("orch"), display_name: None, flavor: Flavor::Orchestrator, energy: EnergyState::Available, provider: String::new(), model: String::new(), roles: vec![], exclusive: false, commands: Default::default() },
-        QuarkCard { id: QuarkId::new("worker"), display_name: None, flavor: Flavor::Worker, energy: EnergyState::Available, provider: String::new(), model: String::new(), roles: vec![], exclusive: false, commands: Default::default() },
+        QuarkCard { id: QuarkId::new("orch"), display_name: None, flavor: Flavor::Orchestrator, energy: EnergyState::Available, provider: String::new(), model: String::new(), roles: vec![], exclusive: false, commands: Default::default(), energy_limit: None },
+        QuarkCard { id: QuarkId::new("worker"), display_name: None, flavor: Flavor::Worker, energy: EnergyState::Available, provider: String::new(), model: String::new(), roles: vec![], exclusive: false, commands: Default::default(), energy_limit: None },
     ]
 }
 
@@ -24,6 +24,7 @@ fn card(id: &str, roles: &[&str]) -> QuarkCard {
         roles: roles.iter().map(|r| r.to_string()).collect(),
         exclusive: false,
         commands: Default::default(),
+        energy_limit: None,
     }
 }
 

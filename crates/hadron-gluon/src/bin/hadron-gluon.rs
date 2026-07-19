@@ -305,7 +305,7 @@ async fn main() {
     }
     let max_exchanges = team.max_exchanges.unwrap_or(12);
     let repo_root = hadron_lattice::repo_root_of(&args.field_path).to_path_buf();
-    let mut engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
+    let engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
         .with_git(repo_root)
         .with_merge_gate(std::sync::Arc::new(hadron_gluon::merge::CargoMergeRunner))
         // `Engine::new` defaults this to `None` (hermetic — see the field doc), so the
@@ -316,6 +316,17 @@ async fn main() {
         // `~/.hadron/agents`, so `@persona-name` mentions could only ever resolve
         // via the repo half.
         .with_global_agents_dir(hadron_lattice::user_hadron_dir().map(|d| d.join("agents")));
+
+    let ledger_path = args.field_path.parent().unwrap_or(std::path::Path::new(".")).join("ledger.db");
+    let ledger = match hadron_gluon::ledger::Ledger::open(&ledger_path) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("hadron-gluon: failed to open ledger at {}: {e:#}", ledger_path.display());
+            std::process::exit(2);
+        }
+    };
+    let global_limit = 500_000u32;
+    let mut engine = engine.with_ledger(ledger, global_limit);
     // A seat can boot switched OFF. It is still seated (still addressable, still owns
     // its instance) — it just does not take turns until the human enables it.
     for seat in &team.quarks {
