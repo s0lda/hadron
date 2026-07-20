@@ -65,6 +65,7 @@ impl super::Chamber {
             .border_color(theme::border())
             .rounded_lg()
             .relative()
+            .overflow_hidden()
             .child(list)
             .child(
                 Scrollbar::vertical(&self.completion_scroll)
