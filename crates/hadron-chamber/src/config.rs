@@ -57,9 +57,9 @@ fn default_false() -> bool {
     false
 }
 fn default_roster_width() -> f32 {
-    // Wide enough for effort + mode tags beside the name/model column, bumped from
-    // the old 410 to give the live activity subtitle room too (Jake's request).
-    450.0
+    // Wide enough for effort + mode tags beside the name/model column, trimmed
+    // ~11% from the previous 450 default (Jake's request).
+    400.0
 }
 fn default_inspector_width() -> f32 {
     300.0
@@ -103,10 +103,14 @@ pub fn load_from(path: &Path) -> ChamberPrefs {
     match std::fs::read_to_string(path) {
         Ok(text) => {
             let mut prefs: ChamberPrefs = serde_json::from_str(&text).unwrap_or_default();
-            // One-time migration: a chamber.json still pinned at the old 410px default
-            // is bumped to the new default so the wider roster applies without a manual
-            // edit. A width the user deliberately chose (anything but 410) is untouched.
-            if prefs.roster_width <= 410.0 {
+            // One-time migration: a chamber.json still pinned at an old default
+            // (≤410, 450 or 500) is bumped to the new default so the trimmed roster
+            // applies without a manual edit. Any other width was deliberately chosen
+            // by the user and is untouched.
+            if prefs.roster_width <= 410.0
+                || prefs.roster_width == 450.0
+                || prefs.roster_width == 500.0
+            {
                 prefs.roster_width = default_roster_width();
             }
             prefs
@@ -232,10 +236,12 @@ mod tests {
     #[test]
     fn a_stored_410_roster_width_migrates_to_the_new_default() {
         let dir = tempdir().unwrap();
-        // A chamber.json pinned at the old 410 default is bumped on load...
-        let old = dir.path().join("old.json");
-        std::fs::write(&old, r#"{"roster_width":410.0}"#).unwrap();
-        assert_eq!(load_from(&old).roster_width, default_roster_width());
+        // A chamber.json pinned at any old default (410, 450, 500) is bumped on load...
+        for old_default in ["410.0", "450.0", "500.0"] {
+            let old = dir.path().join(format!("old-{old_default}.json"));
+            std::fs::write(&old, format!(r#"{{"roster_width":{old_default}}}"#)).unwrap();
+            assert_eq!(load_from(&old).roster_width, default_roster_width());
+        }
         // ...but a width the user chose themselves is preserved exactly.
         let chosen = dir.path().join("chosen.json");
         std::fs::write(&chosen, r#"{"roster_width":460.0}"#).unwrap();
