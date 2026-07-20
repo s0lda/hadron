@@ -22,7 +22,7 @@
 - Role Preference & locks: complete (all tasks 1–6 implemented, verified by passing unit tests across engine, prompt, personas, and chamber UI)
 - Task 1: complete (commits d27f548..0af746d, review clean)
 - Task 2: complete (commits 0af746d..1cf6848, review clean)
-- Task 3: complete (commit 6cd8d68, review clean)
+- Task 3: complete (commits 1cf6848..82210e0, review clean)
 
 ## Minor Findings / Cleanup List
 - `crates/hadron-chamber/src/app/widgets.rs:L56`: The `wash_layer` helper function is unused and generates a compiler warning.
