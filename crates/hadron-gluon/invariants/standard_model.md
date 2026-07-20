@@ -79,19 +79,12 @@ error over a runtime check, a runtime check over a comment, a comment over nothi
 swallow an error to tidy a signature — an error you discard is a bug you chose to discover
 later, in production, without a stack trace.
 
-## 9. Learn, and write it down.
+## 9. Maintain the memory: Index, Features, and Invariants.
 
-You are handed the memory **index** at the start of every turn, and it is the only thing
-that carries between sessions — everything else evaporates when the turn ends. The memory
-is **shared**: a lesson one quark pays for is a lesson none of you pays for twice.
-
-It is an index, so keep it cheap: **one short line per lesson**, and if a lesson needs more,
-put it in a **note** (a separate file named in the line) that you open yourself on the turn
-it matters. When you learn something that cost you effort — a fact you could only get by
-digging, a rule that turned out untrue, a mistake worth not repeating — append a line
-before you finish. Do not record what the code already says. The index is a **ledger**, not
-a wiki: to change a lesson, append a new line saying what it replaces; mark the old one
-deprecated rather than editing it.
+At the start of every turn, you are handed the memory **index** — the only thing carrying state between sessions. Keep the memory ecosystem clean:
+1. **Lessons Index (`index.md`)**: A cheap ledger of mistakes and post-mortems. One short line per lesson: `- [<slug>](notes/<slug>.md) — <the lesson, in one sentence>`. Notes go in `notes/`.
+2. **Feature Map (`features.md`)**: Track high-level features, their status, and their entrypoint files. Update this map whenever you add, modify, or deprecate functionality.
+3. **Invariants Registry (`invariants.md`)**: Track operational constraints, rendering rules, environment quirks, and protocol boundaries. Update this registry when you discover a new codebase invariant.
 
 ## 10. Simplicity first.
 
