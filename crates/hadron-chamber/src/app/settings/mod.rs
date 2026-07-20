@@ -90,7 +90,7 @@ impl Chamber {
                     // seat already declares decide whether to show the field and what to
                     // name it — never the value, only ever the NAME (see `secret_status`).
                     let catalogue_vars =
-                        hadron_gluon::adapter::registry::QuarkKind::secret_env_for(&seat.vendor);
+                        hadron_gluon::adapter::registry::QuarkKind::secret_env_for(&seat.vendor, seat.transport);
                     needs_secret = !catalogue_vars.is_empty() || !seat.secret_env.is_empty();
                     var = seat
                         .secret_env

@@ -8,11 +8,13 @@ use hadron_lattice::{AcpCommand, CliSpec};
 /// uses it (exactly the bug this guards).
 #[test]
 fn secret_env_for_declares_agy_only() {
-    assert_eq!(QuarkKind::secret_env_for("agy"), &["GEMINI_API_KEY"]);
-    assert!(QuarkKind::secret_env_for("claude").is_empty());
-    assert!(QuarkKind::secret_env_for("codex").is_empty());
-    assert!(QuarkKind::secret_env_for("gemini").is_empty());
-    assert!(QuarkKind::secret_env_for("some-unknown-vendor").is_empty());
+    assert_eq!(QuarkKind::secret_env_for("agy", hadron_lattice::Transport::Acp), &["GEMINI_API_KEY"]);
+    assert_eq!(QuarkKind::secret_env_for("agy", hadron_lattice::Transport::Sdk), &["GEMINI_API_KEY"]);
+    assert!(QuarkKind::secret_env_for("agy", hadron_lattice::Transport::Cli).is_empty());
+    assert!(QuarkKind::secret_env_for("claude", hadron_lattice::Transport::Acp).is_empty());
+    assert!(QuarkKind::secret_env_for("codex", hadron_lattice::Transport::Acp).is_empty());
+    assert!(QuarkKind::secret_env_for("gemini", hadron_lattice::Transport::Acp).is_empty());
+    assert!(QuarkKind::secret_env_for("some-unknown-vendor", hadron_lattice::Transport::Acp).is_empty());
 }
 
 /// A fresh, empty `SecretStore` for tests that are not exercising secret

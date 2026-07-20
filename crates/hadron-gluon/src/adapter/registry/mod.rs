@@ -119,9 +119,9 @@ impl QuarkKind {
     /// gemini CLI) need none, so the chamber shows no API-key field for them.
     /// Empty for any vendor not listed. Extend as providers are confirmed to need a
     /// key — do not guess (a wrong entry shows a pointless field).
-    pub fn secret_env_for(vendor: &str) -> &'static [&'static str] {
-        match vendor {
-            "agy" => &["GEMINI_API_KEY"],
+    pub fn secret_env_for(vendor: &str, transport: Transport) -> &'static [&'static str] {
+        match (vendor, transport) {
+            ("agy", Transport::Acp) | ("agy", Transport::Sdk) => &["GEMINI_API_KEY"],
             _ => &[],
         }
     }
