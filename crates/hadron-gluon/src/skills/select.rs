@@ -51,6 +51,16 @@ pub fn select(task: &str, skills: &[ResolvedSkill]) -> Option<Match> {
     })
 }
 
+/// The role a task of this kind prefers (spec 2026-07-20 §3.2). None = no preference.
+pub fn preferred_role(skill_name: &str) -> Option<&'static str> {
+    match skill_name {
+        "writing-plans" | "brainstorming" => Some("architect"),
+        "requesting-code-review" | "reviewing-work" => Some("reviewer"),
+        "executing-plans" | "subagent-driven-development" => Some("executor"),
+        _ => None,
+    }
+}
+
 /// Who can take the next step, computed by the engine from the live roster — not
 /// guessed by the model.
 ///

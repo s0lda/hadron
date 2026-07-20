@@ -521,6 +521,7 @@ impl super::Chamber {
                                         commands: hadron_lattice::SeatCommands::default(),
                                         secret_env: Vec::new(),
                                         energy_limit: None,
+                                        deny_skills: vec![],
                                     };
                                     // `vendor` is already pure (Task 3's re-keyed preset list), so this
                                     // is a no-op today — left in as a defensive strip in case a vendor

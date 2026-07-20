@@ -125,7 +125,7 @@ fn boundary_match(text: &str, target_name: &str) -> bool {
 /// `@persona-name` never disagree about which seat holds it — but the role
 /// pass itself is deliberately left untouched: threading every card/role pair
 /// through this instead risks shifting the existing equal-length tie order.
-fn card_for_role<'a>(roster: &'a [QuarkCard], role: &str) -> Option<&'a QuarkCard> {
+pub(crate) fn card_for_role<'a>(roster: &'a [QuarkCard], role: &str) -> Option<&'a QuarkCard> {
     roster.iter().find(|card| {
         card.energy != EnergyState::Depleted
             && card.roles.iter().any(|r| !r.is_empty() && r.eq_ignore_ascii_case(role))

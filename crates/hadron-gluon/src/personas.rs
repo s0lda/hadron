@@ -53,6 +53,19 @@ pub fn load_personas(global_dir: Option<&Path>, repo_dir: Option<&Path>) -> Vec<
     personas
 }
 
+/// Load roles from disk and merge them by name.
+pub fn load_roles(global_dir: Option<&Path>, repo_dir: Option<&Path>) -> Vec<Persona> {
+    let mut roles: Vec<Persona> = Vec::new();
+
+    for dir in [global_dir, repo_dir].into_iter().flatten() {
+        for loaded in load_dir(dir) {
+            upsert(&mut roles, loaded);
+        }
+    }
+
+    roles
+}
+
 /// Insert `persona`, replacing any existing entry with the same `name` in place
 /// (so later sources keep their position relative to unrelated personas — only
 /// the overridden name's content changes, not the corpus order).
@@ -237,5 +250,18 @@ mod tests {
         assert_eq!(loaded.len(), 2);
         assert!(loaded.iter().any(|p| p.name == "alpha"));
         assert!(loaded.iter().any(|p| p.name == "beta"));
+    }
+
+    #[test]
+    fn load_roles_works() {
+        let global = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        write_persona(global.path(), "architect.md", "---\nname: architect\n---\n\nARCHITECT GLOBAL.\n");
+        write_persona(repo.path(), "architect.md", "---\nname: architect\n---\n\nARCHITECT REPO.\n");
+
+        let loaded = load_roles(Some(global.path()), Some(repo.path()));
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "architect");
+        assert!(loaded[0].body.contains("ARCHITECT REPO."));
     }
 }

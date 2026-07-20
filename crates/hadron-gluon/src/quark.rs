@@ -30,6 +30,11 @@ pub trait Quark: Send {
     fn exclusive(&self) -> bool {
         false
     }
+    /// Skill names this quark must NEVER be handed (hard lock). Matched against
+    /// `skills::select`'s chosen name.
+    fn deny_skills(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// This quark's per-seat command allow/deny lists (see
     /// `hadron_lattice::SeatCommands`), folded into the gatekeeper's
     /// `AllowRules`/`DenyRules` under No-Human-Mode. Carried the same way

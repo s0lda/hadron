@@ -93,6 +93,7 @@ pub struct AcpQuark {
     /// any caller that has no field on disk), and the stream is simply dropped.
     live: Option<LiveFeed>,
     energy_limit: Option<u32>,
+    deny_skills: Vec<String>,
 }
 
 impl AcpQuark {
@@ -113,12 +114,19 @@ impl AcpQuark {
             last_spend: SpendWatermark::default(),
             live: None,
             energy_limit: None,
+            deny_skills: Vec::new(),
         }
     }
 
     /// Set the energy limit.
     pub fn with_energy_limit(mut self, limit: Option<u32>) -> Self {
         self.energy_limit = limit;
+        self
+    }
+
+    /// Set the skill locks.
+    pub fn with_deny_skills(mut self, deny_skills: Vec<String>) -> Self {
+        self.deny_skills = deny_skills;
         self
     }
 
@@ -191,6 +199,9 @@ impl Quark for AcpQuark {
     }
     fn exclusive(&self) -> bool {
         self.exclusive
+    }
+    fn deny_skills(&self) -> Vec<String> {
+        self.deny_skills.clone()
     }
     fn commands(&self) -> &SeatCommands {
         &self.commands

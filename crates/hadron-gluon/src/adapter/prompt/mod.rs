@@ -83,6 +83,12 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         p.push_str("\n\n");
     }
 
+    if let Some(ref role_body) = projection.role_body {
+        p.push_str("# Your role\n");
+        p.push_str(role_body.trim());
+        p.push_str("\n\n");
+    }
+
     // 2. Nucleus digest — project SSOT context.
     if !projection.nucleus_digest.trim().is_empty() {
         p.push_str("# Project knowledge (nucleus)\n");

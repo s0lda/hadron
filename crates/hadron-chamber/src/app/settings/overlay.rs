@@ -176,6 +176,14 @@ impl super::Chamber {
                     // `ModeSet`, so it is live-honoured and independent of team.json. A
                     // per-quark choice persists even when the global default later changes.
                     .child(settings_field("Permission", self.mode_select(target.key(), cx)))
+                    .child(settings_field(
+                        "Roles",
+                        Input::new(&self.settings_roles).into_any_element(),
+                    ))
+                    .child(settings_field(
+                        "Denied skills",
+                        Input::new(&self.settings_deny_skills).into_any_element(),
+                    ))
                     // The secret env-var value (e.g. `GEMINI_API_KEY`) goes to the OS
                     // keychain via `SecretStore`, never into team.json or this panel's
                     // rendered state — see `secret_field`. Shown ONLY for a quark whose

@@ -136,6 +136,7 @@ pub struct CliQuark<R: CliRunner> {
     resident: bool,
     runner: R,
     energy_limit: Option<u32>,
+    deny_skills: Vec<String>,
 }
 
 impl<R: CliRunner> CliQuark<R> {
@@ -153,12 +154,19 @@ impl<R: CliRunner> CliQuark<R> {
             commands: SeatCommands::default(),
             env: RedactedEnv::default(),
             energy_limit: None,
+            deny_skills: Vec::new(),
         }
     }
 
     /// Set the energy limit.
     pub fn with_energy_limit(mut self, limit: Option<u32>) -> Self {
         self.energy_limit = limit;
+        self
+    }
+
+    /// Set the skill locks.
+    pub fn with_deny_skills(mut self, deny_skills: Vec<String>) -> Self {
+        self.deny_skills = deny_skills;
         self
     }
 
@@ -243,6 +251,9 @@ impl<R: CliRunner> Quark for CliQuark<R> {
     fn exclusive(&self) -> bool {
         self.exclusive
     }
+    fn deny_skills(&self) -> Vec<String> {
+        self.deny_skills.clone()
+    }
     fn commands(&self) -> &SeatCommands {
         &self.commands
     }
@@ -310,6 +321,7 @@ mod tests {
             git_diff: String::new(),
             cwd,
             mode,
+            role_body: None,
         }
     }
 

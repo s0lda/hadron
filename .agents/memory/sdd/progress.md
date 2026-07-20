@@ -8,6 +8,7 @@
 - [x] Task 5: Live Mid-Turn Stream UI
 - [x] Task 6: Budget Ceilings
 - [x] Task 7: Foldable Plan Tab
+- [x] Role Preference & locks: Task 1 (deny_skills plumbing), Task 2 (task-to-role preferred mapping), Task 3 (deny_skills dispatch hard lock), Task 4 (soft role preference resolution), Task 5 (role prompt body injection), Task 6 (Settings UI edit inputs)
 
 ## Changelog
 - Task 1: complete (commits 8154e12a..448c2d16, review clean)
@@ -18,6 +19,7 @@
 - Task 6: complete (commits 6f22bde..24a356c, review clean)
 - Task 7: complete (commit 340f0b0, review clean)
 - Security: Sanitized path traversal in active plan loading and workspace file reading (commit b8c50b4, review clean)
+- Role Preference & locks: complete (all tasks 1–6 implemented, verified by passing unit tests across engine, prompt, personas, and chamber UI)
 
 ## Minor Findings / Cleanup List
 - `crates/hadron-chamber/src/app/widgets.rs:L56`: The `wash_layer` helper function is unused and generates a compiler warning.

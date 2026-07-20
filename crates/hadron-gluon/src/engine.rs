@@ -237,6 +237,7 @@ impl Engine {
                 // call sites without re-reading `team.json`.
                 commands: q.commands().clone(),
                 energy_limit: q.energy_limit(),
+                deny_skills: q.deny_skills(),
             })
             .collect();
         let resident = quarks
@@ -321,6 +322,7 @@ impl Engine {
             exclusive: quark.exclusive(),
             commands: quark.commands().clone(),
             energy_limit: quark.energy_limit(),
+            deny_skills: quark.deny_skills(),
         };
         self.roster.retain(|c| c.id != id);
         self.roster.push(card);
@@ -496,6 +498,14 @@ impl Engine {
         let workspace_root = workspace_root_of(&self.field_path, &base);
         let repo_agents_dir = workspace_root.join(".hadron").join("agents");
         personas::load_personas(self.global_agents_dir.as_deref(), Some(&repo_agents_dir))
+    }
+
+    fn loaded_roles(&self) -> Vec<Persona> {
+        let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let workspace_root = workspace_root_of(&self.field_path, &base);
+        let repo_roles_dir = workspace_root.join(".hadron").join("roles");
+        let global_roles_dir = self.global_agents_dir.as_deref().and_then(|p| p.parent()).map(|p| p.join("roles"));
+        personas::load_roles(global_roles_dir.as_deref(), Some(&repo_roles_dir))
     }
 
 }
