@@ -188,46 +188,85 @@ pub fn completion_candidates(
             }
         }
         ':' => {
-            const MODERN_EMOJIS: &[(&str, &str)] = &[
-                ("rofl", "🤣"),
-                ("skull", "💀"),
-                ("sob", "😭"),
-                ("fire", "🔥"),
-                ("100", "💯"),
-                ("sparkles", "✨"),
-                ("rocket", "🚀"),
-                ("eyes", "👀"),
-                ("thinking", "🤔"),
-                ("thumbsup", "👍"),
-                ("tada", "🎉"),
-                ("warning", "⚠️"),
-                ("white_check_mark", "✅"),
-                ("x", "❌"),
-                ("bulb", "💡"),
-                ("bug", "🪲"),
-                ("clown", "🤡"),
-                ("coffee", "☕"),
-                ("exploding_head", "🤯"),
-                ("nerd", "🤓"),
-                ("salute", "🫡"),
-                ("shrug", "🤷"),
-                ("pleading", "🥺"),
-                ("heart_hands", "🫶"),
-                ("raised_hands", "🙌"),
-                ("poop", "💩"),
-                ("handshake", "🤝"),
-                ("computer", "💻"),
-                ("hammer_and_wrench", "🛠️"),
-                ("art", "🎨"),
-                ("zap", "⚡"),
-                ("dart", "🎯"),
-            ];
+            if query_lower.is_empty() {
+                const MODERN_EMOJIS: &[(&str, &str)] = &[
+                    ("rofl", "🤣"),
+                    ("skull", "💀"),
+                    ("sob", "😭"),
+                    ("fire", "🔥"),
+                    ("100", "💯"),
+                    ("sparkles", "✨"),
+                    ("rocket", "🚀"),
+                    ("eyes", "👀"),
+                    ("thinking", "🤔"),
+                    ("thumbsup", "👍"),
+                    ("tada", "🎉"),
+                    ("warning", "⚠️"),
+                    ("white_check_mark", "✅"),
+                    ("x", "❌"),
+                    ("bulb", "💡"),
+                    ("bug", "🪲"),
+                    ("clown", "🤡"),
+                    ("coffee", "☕"),
+                    ("exploding_head", "🤯"),
+                    ("nerd", "🤓"),
+                    ("salute", "🫡"),
+                    ("shrug", "🤷"),
+                    ("pleading", "🥺"),
+                    ("heart_hands", "🫶"),
+                    ("raised_hands", "🙌"),
+                    ("poop", "💩"),
+                    ("handshake", "🤝"),
+                    ("computer", "💻"),
+                    ("hammer_and_wrench", "🛠️"),
+                    ("art", "🎨"),
+                    ("zap", "⚡"),
+                    ("dart", "🎯"),
+                    ("sweat_smile", "😅"),
+                    ("heart_eyes", "😍"),
+                    ("sunglasses", "😎"),
+                    ("partying", "🥳"),
+                    ("scream", "😱"),
+                    ("roll_eyes", "🙄"),
+                    ("cry", "😢"),
+                    ("rage", "😡"),
+                    ("sleepy", "😪"),
+                    ("wave", "👋"),
+                    ("clap", "👏"),
+                    ("pray", "🙏"),
+                    ("heart", "❤️"),
+                    ("broken_heart", "💔"),
+                    ("star", "⭐"),
+                    ("money_bag", "💰"),
+                    ("key", "🔑"),
+                    ("lock", "🔒"),
+                ];
 
-            for &(shortcode, glyph) in MODERN_EMOJIS {
-                if out.len() >= MAX_CANDIDATES {
-                    break;
+                for &(shortcode, glyph) in MODERN_EMOJIS {
+                    if out.len() >= MAX_CANDIDATES {
+                        break;
+                    }
+                    out.push(Candidate {
+                        label: format!(":{shortcode} {glyph}"),
+                        detail: "Emoji".into(),
+                        new_text: glyph.to_string(),
+                    });
                 }
-                if query_lower.is_empty() || shortcode.to_lowercase().contains(&query_lower) {
+            } else {
+                let mut matched_emojis = Vec::new();
+                for emoji in emojis::iter() {
+                    if let Some(shortcode) = emoji.shortcode() {
+                        if shortcode.to_lowercase().contains(&query_lower) {
+                            matched_emojis.push((shortcode, emoji.as_str()));
+                        }
+                    }
+                }
+                matched_emojis.sort_by_key(|&(shortcode, _)| (shortcode.len(), shortcode.to_string()));
+
+                for (shortcode, glyph) in matched_emojis {
+                    if out.len() >= MAX_CANDIDATES {
+                        break;
+                    }
                     out.push(Candidate {
                         label: format!(":{shortcode} {glyph}"),
                         detail: "Emoji".into(),
@@ -328,6 +367,23 @@ mod tests {
         assert!(first.label.starts_with(":rofl"));
         // Accepting inserts the glyph itself, not the `:rofl:` text.
         assert!(!first.new_text.starts_with(':'));
+    }
+
+    #[test]
+    fn an_emoji_query_searches_the_entire_crate() {
+        // "globe_with_meridians" is a real but less common emoji in the emojis crate.
+        let c = completion_candidates(":globe_with_meridians", 21, &[], &[]).expect("has rows");
+        let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.iter().any(|l| l.starts_with(":globe_with_meridians")), "should search the whole crate: {labels:?}");
+    }
+
+    #[test]
+    fn a_bare_emoji_query_returns_curated_modern_emojis() {
+        let c = completion_candidates(":", 1, &[], &[]).expect("has rows");
+        // Verify we got the curated 50 emojis (or at least capped to MAX_CANDIDATES).
+        assert_eq!(c.candidates.len(), 50);
+        let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels[0].starts_with(":rofl"), "first emoji should be rofl: {:?}", labels[0]);
     }
 
     #[test]

@@ -329,9 +329,10 @@ mod tests {
     fn the_parsed_telemetry_crossing_the_boundary_carries_no_identity() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("turn.json");
+        let started = std::time::SystemTime::now();
         persist(LIVE_PAYLOAD, Some(out.clone()), None);
 
-        let t = read_turn_capture(&out, Path::new("/x"), std::time::SystemTime::now()).unwrap();
+        let t = read_turn_capture(&out, Path::new("/x"), started).unwrap();
         let dump = format!("{t:?}");
         assert!(!dump.contains('@'), "no email escapes the shim boundary: {dump}");
         assert!(!dump.contains("Ultra"), "no plan tier escapes the shim boundary");

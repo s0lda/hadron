@@ -304,6 +304,7 @@ struct Chamber {
     about_open: bool,
     file_tree_scroll: ScrollHandle,
     file_tree_open_scroll: ScrollHandle,
+    completion_scroll: ScrollHandle,
     pub(super) last_live_activities: std::collections::HashMap<String, Option<hadron_lattice::live::Activity>>,
 }
 
@@ -571,6 +572,7 @@ impl Chamber {
             about_open: false,
             file_tree_scroll: ScrollHandle::new(),
             file_tree_open_scroll: ScrollHandle::new(),
+            completion_scroll: ScrollHandle::new(),
             last_live_activities: std::collections::HashMap::new(),
         };
         chamber.update_active_plan();
