@@ -128,10 +128,13 @@ impl super::Chamber {
         let files = self.completion_files.borrow();
         let result = crate::text::completion_candidates(&text, cursor, &quarks, files.as_slice());
         drop(files);
-        self.completion = result.map(|c| CompletionCard {
-            start: c.start,
-            candidates: c.candidates,
-            selected: 0,
+        self.completion = result.map(|c| {
+            self.completion_scroll.scroll_to_item(0);
+            CompletionCard {
+                start: c.start,
+                candidates: c.candidates,
+                selected: 0,
+            }
         });
     }
 
@@ -144,6 +147,7 @@ impl super::Chamber {
             }
             let max = len as isize - 1;
             card.selected = (card.selected as isize + delta).clamp(0, max) as usize;
+            self.completion_scroll.scroll_to_item(card.selected);
             cx.notify();
         }
     }
