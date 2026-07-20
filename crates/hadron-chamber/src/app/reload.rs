@@ -200,7 +200,7 @@ impl super::Chamber {
             // Rescan files unconditionally so autocomplete mentions are always live,
             // regardless of which right rail tab is active.
             let root = crate::vcs::repo_root_of(&self.path);
-            let files = crate::sys::list_workspace_files(root);
+            let files = crate::sys::list_workspace_files(root, &self.file_tree_expanded);
             if files != self.file_tree_paths {
                 // Autocomplete offers only real, editable files — never muted gitignored
                 // entries — mirroring the filter in `new`.
@@ -210,6 +210,12 @@ impl super::Chamber {
                     .map(|(p, _)| p.clone())
                     .collect();
                 self.file_tree_paths = files;
+                changed = true;
+            }
+
+            let git_statuses = crate::vcs::get_git_statuses(root);
+            if git_statuses != self.git_statuses {
+                self.git_statuses = git_statuses;
                 changed = true;
             }
 

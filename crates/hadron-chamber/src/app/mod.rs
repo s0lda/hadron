@@ -280,6 +280,8 @@ struct Chamber {
     /// Every workspace entry with its ignored flag; drives the file tree. Gitignored
     /// entries are flagged `true` (rendered muted) and wholly-ignored dirs are collapsed.
     file_tree_paths: Vec<(String, bool)>,
+    _lock_file: Option<std::fs::File>,
+    git_statuses: std::collections::HashMap<String, crate::vcs::GitStatus>,
     completion_files: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     file_tree_open: Option<(String, String)>,
     file_tree_expanded: std::collections::HashSet<String>,
@@ -329,11 +331,12 @@ impl Chamber {
         team: Team,
         global: Team,
         path: PathBuf,
+        lock_file: Option<std::fs::File>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let repo_root = crate::vcs::repo_root_of(&path);
-        let files = crate::sys::list_workspace_files(&repo_root);
+        let repo_root = crate::vcs::repo_root_of(&path).to_path_buf();
+        let files = crate::sys::list_workspace_files(&repo_root, &std::collections::HashSet::new());
         // `@`-mention autocomplete only offers real, editable files — never the muted
         // gitignored entries (collapsed build dirs etc.), so filter them out here.
         let completion_files = std::rc::Rc::new(std::cell::RefCell::new(
@@ -555,6 +558,8 @@ impl Chamber {
             wizard_state: WizardState::None,
             acp_model_probe: None,
             file_tree_paths: files,
+            _lock_file: lock_file,
+            git_statuses: crate::vcs::get_git_statuses(&repo_root),
             completion_files,
             file_tree_open: None,
             file_tree_expanded: std::collections::HashSet::new(),
@@ -618,7 +623,7 @@ impl Chamber {
 }
 
 /// Launch the chamber window against a field file path.
-pub fn run(field_path: Option<String>) {
+pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>) {
     let Some(path) = field_path else {
         eprintln!("usage: hadron-chamber <field.jsonl>");
         return;
@@ -792,6 +797,7 @@ pub fn run(field_path: Option<String>) {
                         team.clone(),
                         global.clone(),
                         field_path.clone(),
+                        chamber_lock_file,
                         window,
                         cx,
                     )

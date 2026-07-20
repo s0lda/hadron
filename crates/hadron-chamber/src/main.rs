@@ -34,13 +34,83 @@ mod window_frame;
 fn main() {
     let path = std::env::args().nth(1);
 
+    let mut chamber_lock_file = None;
+    if let Some(p) = &path {
+        let field_path = std::path::Path::new(p);
+        let field_dir = field_path.parent().unwrap_or(std::path::Path::new("."));
+
+        // Check second chamber instance
+        let chamber_lock_path = field_dir.join("chamber.lock");
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&chamber_lock_path)
+        {
+            Ok(file) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::io::AsRawFd;
+                    let fd = file.as_raw_fd();
+                    let lock_res = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+                    if lock_res == 0 {
+                        chamber_lock_file = Some(file);
+                    } else {
+                        eprintln!("hadron-chamber: warning: another instance of chamber is already running.");
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    chamber_lock_file = Some(file);
+                }
+            }
+            Err(e) => {
+                eprintln!("hadron-chamber: warning: failed to open chamber lock file: {}", e);
+            }
+        }
+
+        // Check if gluon is running
+        let gluon_lock_path = field_dir.join("gluon.lock");
+        let mut gluon_running = false;
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&gluon_lock_path)
+        {
+            Ok(file) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::io::AsRawFd;
+                    let fd = file.as_raw_fd();
+                    let lock_res = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+                    if lock_res == 0 {
+                        // Lock acquired successfully, so gluon is NOT running!
+                        unsafe { libc::flock(fd, libc::LOCK_UN) };
+                    } else {
+                        // Lock failed, so gluon is running!
+                        gluon_running = true;
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+
+        if gluon_running {
+            eprintln!("hadron-chamber: gluon is running.");
+        } else {
+            eprintln!("hadron-chamber: gluon is not running.");
+        }
+    }
+
     #[cfg(feature = "gui")]
     {
-        app::run(path);
+        app::run(path, chamber_lock_file);
     }
 
     #[cfg(not(feature = "gui"))]
     {
+        let _ = chamber_lock_file;
         run_headless(path);
     }
 }
