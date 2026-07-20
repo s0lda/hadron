@@ -263,6 +263,31 @@ async fn main() {
         std::process::exit(2);
     };
 
+    let lock_path = args.field_path.parent().unwrap_or(std::path::Path::new(".")).join("gluon.lock");
+    let lock_file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&lock_path)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("hadron-gluon: failed to open lock file: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let fd = lock_file.as_raw_fd();
+        let lock_res = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+        if lock_res != 0 {
+            eprintln!("hadron-gluon: another instance of gluon is already running.");
+            std::process::exit(1);
+        }
+    }
+
     // Seat the team: explicit --team, else a sibling team.json next to the field
     // (the .hadron/ convention), else the config-dir default; mock when none.
     let team_path = resolve_team_path(args.team_path.clone(), &args.field_path);

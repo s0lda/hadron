@@ -285,6 +285,9 @@ impl Chamber {
                 // changes). Trial on a clone so the "≥1 orchestrator" guard is checked
                 // against the RESOLVED team before committing.
                 let mut trial = self.team.clone();
+                if flavor == hadron_lattice::Flavor::Orchestrator {
+                    apply_orchestrator_exclusivity(&mut trial, &self.global, &qid);
+                }
                 if let Some(seat) = trial.quarks.iter_mut().find(|s| s.id == qid) {
                     seat.flavor = flavor.clone();
                 } else if let Some(ov) = trial.roster.iter_mut().find(|o| o.id == qid) {
@@ -623,6 +626,26 @@ impl Chamber {
     }
 }
 
+pub(super) fn apply_orchestrator_exclusivity(
+    team: &mut hadron_lattice::Team,
+    global: &hadron_lattice::Team,
+    target_qid: &QuarkId,
+) {
+    for seat in &mut team.quarks {
+        if seat.id != *target_qid {
+            seat.flavor = hadron_lattice::Flavor::Worker;
+        }
+    }
+    for ov in &mut team.roster {
+        if ov.id != *target_qid {
+            let base_is_orchestrator = global.get(&ov.id).map(|s| s.flavor == hadron_lattice::Flavor::Orchestrator).unwrap_or(false);
+            if ov.flavor == Some(hadron_lattice::Flavor::Orchestrator) || (ov.flavor.is_none() && base_is_orchestrator) {
+                ov.flavor = Some(hadron_lattice::Flavor::Worker);
+            }
+        }
+    }
+}
+
 /// Where `ToggleFocus` sends focus when moving *toward* the terminal — always
 /// [`FocusTarget::Terminal`], since this is a pure function of the right rail's
 /// active tab alone. `FocusTarget::Chat` exists so [`Chamber::toggle_focus`]'s
@@ -662,5 +685,46 @@ mod tests {
             assert_eq!(target, FocusTarget::Terminal);
             assert!(switch_rail, "a non-Terminal tab active must switch the rail to Terminal");
         }
+    }
+
+    #[test]
+    fn orchestrator_exclusivity_demotes_other_orchestrators() {
+        use hadron_lattice::SeatOverride;
+        use hadron_lattice::{Flavor, QuarkId, Seat, Team};
+
+        let mut team = Team {
+            quarks: vec![
+                Seat::cli(QuarkId::new("cli-agy"), "agy", "gemini", Flavor::Orchestrator),
+                Seat::cli(QuarkId::new("cli-opus"), "claude", "opus", Flavor::Worker),
+            ],
+            roster: vec![
+                SeatOverride {
+                    flavor: Some(Flavor::Orchestrator),
+                    ..SeatOverride::role(QuarkId::new("override-one"))
+                },
+                SeatOverride {
+                    flavor: None, // Inherits Orchestrator from global in this test case
+                    ..SeatOverride::role(QuarkId::new("override-two"))
+                },
+            ],
+            max_exchanges: None,
+        };
+
+        let global = Team {
+            quarks: vec![
+                Seat::cli(QuarkId::new("override-two"), "claude", "opus", Flavor::Orchestrator),
+            ],
+            roster: vec![],
+            max_exchanges: None,
+        };
+
+        apply_orchestrator_exclusivity(&mut team, &global, &QuarkId::new("override-one"));
+
+        // cli-agy was Orchestrator, should be demoted to Worker
+        assert_eq!(team.quarks[0].flavor, Flavor::Worker);
+        // cli-opus was Worker, should stay Worker
+        assert_eq!(team.quarks[1].flavor, Flavor::Worker);
+        // override-two resolved to Orchestrator by default, should be overridden to Worker
+        assert_eq!(team.roster[1].flavor, Some(Flavor::Worker));
     }
 }

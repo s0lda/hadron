@@ -144,6 +144,54 @@ pub fn repo_root_of(field_path: &Path) -> &Path {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitStatus {
+    Modified,
+    Added,
+    Deleted,
+}
+
+pub fn get_git_statuses(repo_root: &Path) -> std::collections::HashMap<String, GitStatus> {
+    let mut statuses = std::collections::HashMap::new();
+    let out = Command::new("git")
+        .current_dir(repo_root)
+        .args(["status", "--porcelain"])
+        .output();
+    if let Ok(output) = out {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                if line.len() < 4 {
+                    continue;
+                }
+                let code = &line[0..2];
+                let path_part = &line[3..];
+                let path = if code.starts_with('R') {
+                    if let Some(pos) = path_part.find(" -> ") {
+                        &path_part[pos + 4..]
+                    } else {
+                        path_part
+                    }
+                } else {
+                    path_part
+                };
+                let path = path.trim_matches('"').to_string();
+
+                let status = if code.contains('D') {
+                    GitStatus::Deleted
+                } else if code.contains('A') || code.contains('?') {
+                    GitStatus::Added
+                } else if code.contains('M') || code.contains('R') || code.contains('T') {
+                    GitStatus::Modified
+                } else {
+                    continue;
+                };
+                statuses.insert(path, status);
+            }
+        }
+    }
+    statuses
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

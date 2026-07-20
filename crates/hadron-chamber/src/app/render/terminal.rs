@@ -212,6 +212,7 @@ impl super::Chamber {
                         repo_root: &std::path::PathBuf,
                         current_path: String,
                         expanded_set: &std::collections::HashSet<String>,
+                        git_statuses: &std::collections::HashMap<String, crate::vcs::GitStatus>,
                     ) -> gpui::AnyElement {
                         let mut list = v_flex().w_full();
                         // root node has empty name and we don't render it directly
@@ -226,6 +227,7 @@ impl super::Chamber {
                                     repo_root,
                                     child_path,
                                     expanded_set,
+                                    git_statuses,
                                 ));
                             }
                             return list.into_any_element();
@@ -246,7 +248,12 @@ impl super::Chamber {
                             .text_color(if node.is_ignored {
                                 theme::text_muted()
                             } else {
-                                theme::text()
+                                match git_statuses.get(&node.full_path) {
+                                    Some(crate::vcs::GitStatus::Modified) => gpui::rgb(0xfb923c),
+                                    Some(crate::vcs::GitStatus::Added) => gpui::rgb(0x22c55e),
+                                    Some(crate::vcs::GitStatus::Deleted) => gpui::rgb(0xef4444),
+                                    None => theme::text(),
+                                }
                             })
                             .font_family("Cascadia Code")
                             .text_size(gpui::px(13.56))
@@ -372,6 +379,9 @@ impl super::Chamber {
                                         } else {
                                             this.file_tree_expanded.insert(toggle_path.clone());
                                         }
+                                        let repo_root = crate::vcs::repo_root_of(&this.path);
+                                        this.file_tree_paths = crate::sys::list_workspace_files(repo_root, &this.file_tree_expanded);
+                                        this.git_statuses = crate::vcs::get_git_statuses(repo_root);
                                         cx.notify();
                                     }
                                 },
@@ -448,6 +458,7 @@ impl super::Chamber {
                                         repo_root,
                                         child_path,
                                         expanded_set,
+                                        git_statuses,
                                     ));
                                 }
                             }
@@ -475,6 +486,7 @@ impl super::Chamber {
                                     &repo_root,
                                     String::new(),
                                     &self.file_tree_expanded,
+                                    &self.git_statuses,
                                 )),
                         )
                         .child(

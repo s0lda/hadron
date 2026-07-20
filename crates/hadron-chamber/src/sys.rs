@@ -94,7 +94,10 @@ impl Terminal {
 /// listing is ~100k files (all of `target/`, the vendored `gpui-component/`, venvs), which
 /// would swamp both the tree and the `@`-mention index. A collapsed directory keeps its
 /// trailing `/` so the tree can render it as an (empty, muted) folder rather than a file.
-pub fn list_workspace_files(repo_root: &Path) -> Vec<(String, bool)> {
+pub fn list_workspace_files(
+    repo_root: &Path,
+    expanded_dirs: &std::collections::HashSet<String>,
+) -> Vec<(String, bool)> {
     let mut files: Vec<(String, bool)> = Vec::new();
 
     // Tracked ∪ untracked, minus ignored — the real, editable files.
@@ -119,6 +122,7 @@ pub fn list_workspace_files(repo_root: &Path) -> Vec<(String, bool)> {
     }
 
     // Ignored entries, with wholly-ignored directories collapsed to a single entry.
+    let mut ignored_dirs_to_expand = Vec::new();
     if let Ok(output) = Command::new("git")
         .args([
             "ls-files",
@@ -138,9 +142,42 @@ pub fn list_workspace_files(repo_root: &Path) -> Vec<(String, bool)> {
                 let bare = line.trim_end_matches('/');
                 if !bare.is_empty() && !line.starts_with(".git/") && repo_root.join(bare).exists() {
                     files.push((line.to_string(), true));
+                    if line.ends_with('/') {
+                        let path_str = bare.to_string();
+                        if expanded_dirs.contains(&path_str) {
+                            ignored_dirs_to_expand.push(path_str);
+                        }
+                    }
                 }
             }
         }
+    }
+
+    // Recursively expand gitignored directories if they are in the expanded set
+    let mut i = 0;
+    while i < ignored_dirs_to_expand.len() {
+        let dir_rel = ignored_dirs_to_expand[i].clone();
+        let dir_abs = repo_root.join(&dir_rel);
+        if let Ok(entries) = std::fs::read_dir(dir_abs) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name == ".git" {
+                    continue;
+                }
+                let child_rel = format!("{dir_rel}/{name}");
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                let entry_path = if is_dir {
+                    format!("{child_rel}/")
+                } else {
+                    child_rel.clone()
+                };
+                files.push((entry_path, true));
+                if is_dir && expanded_dirs.contains(&child_rel) {
+                    ignored_dirs_to_expand.push(child_rel);
+                }
+            }
+        }
+        i += 1;
     }
 
     files.sort_by(|a, b| a.0.cmp(&b.0));
@@ -281,7 +318,7 @@ mod tests {
             .output()
             .unwrap();
 
-        let files = list_workspace_files(root);
+        let files = list_workspace_files(root, &std::collections::HashSet::new());
         assert_eq!(files, vec![("test.txt".to_string(), false)]);
 
         let content = read_workspace_file(root, "test.txt");
@@ -321,7 +358,7 @@ mod tests {
         fs::write(root.join(".gitignore"), "ignored.tmp\n").unwrap();
         fs::write(root.join("ignored.tmp"), "noise").unwrap();
 
-        let files = list_workspace_files(root);
+        let files = list_workspace_files(root, &std::collections::HashSet::new());
         assert!(
             files.contains(&("brand-new.png".to_string(), false)),
             "an untracked file on disk must appear in the tree (not ignored), got {files:?}"
