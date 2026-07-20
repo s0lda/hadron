@@ -129,6 +129,8 @@ impl Chamber {
             .update(cx, |s, cx| s.set_value(mode, window, cx));
         self.settings_roles
             .update(cx, |s, cx| s.set_value(roles, window, cx));
+        self.settings_new_role
+            .update(cx, |s, cx| s.set_value(String::new(), window, cx));
         self.settings_deny_skills
             .update(cx, |s, cx| s.set_value(deny_skills, window, cx));
         self.settings_secret_var
