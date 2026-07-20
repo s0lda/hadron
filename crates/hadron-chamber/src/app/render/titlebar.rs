@@ -89,11 +89,19 @@ impl super::Chamber {
             // push the pinned Settings button off the bottom.
             // A touch of horizontal padding + a smaller (20px) avatar so the folded
             // avatars keep a clear gutter from the strip edges instead of touching them.
+            let live_dir = hadron_lattice::live::live_dir(&self.path);
             let mut avatars = v_flex().w_full().gap_2p5().items_center().px_1();
             for r in &self.view.roster {
                 let id = self.resolve_identity(&r.id);
+                let activity = hadron_lattice::live::read(
+                    &live_dir,
+                    &hadron_lattice::QuarkId::new(&r.id),
+                    chrono::Utc::now(),
+                );
+                let effective_state =
+                    effective_presence_state(r.state, r.adopted, r.enabled, activity.is_some());
                 let dot_color = if r.adopted && r.enabled {
-                    theme::presence(r.state)
+                    theme::presence(effective_state)
                 } else {
                     theme::presence_disabled()
                 };

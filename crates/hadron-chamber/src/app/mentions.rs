@@ -152,16 +152,22 @@ pub(super) fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> 
             // We need to find the longest matching display name or id.
             let mut matched_quark = false;
             let mut best_match_len = 0;
+            // What to *show* for the match: the display name when the quark has one,
+            // even if the raw text (e.g. a stored `@acp-claude-2`) matched on the id —
+            // a mention should read the way the human names the quark, not its seat id.
+            let mut matched_display: Option<&str> = None;
 
             for q in roster {
                 let q_id = &q.id;
-                let q_name = q.display_name.as_ref().unwrap_or(q_id);
+                let q_name = q.display_name.as_deref().unwrap_or(q_id.as_str());
                 if name.starts_with(q_name) && q_name.len() > best_match_len {
                     best_match_len = q_name.len();
                     matched_quark = true;
-                } else if name.starts_with(q_id) && q_id.len() > best_match_len {
+                    matched_display = Some(q_name);
+                } else if name.starts_with(q_id.as_str()) && q_id.len() > best_match_len {
                     best_match_len = q_id.len();
                     matched_quark = true;
+                    matched_display = Some(q_name);
                 }
             }
 
@@ -170,13 +176,15 @@ pub(super) fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> 
                 if m.len() > best_match_len {
                     best_match_len = m.len();
                     matched_quark = true;
+                    matched_display = Some(m);
                 }
             }
 
             if matched_quark {
                 let matched_name = name[..best_match_len].to_string();
                 let remainder = name[best_match_len..].to_string();
-                out.push_str(&format!("{}@{}{}", MENTION_QUARK_OPEN, matched_name, MENTION_CLOSE));
+                let shown = matched_display.unwrap_or(matched_name.as_str());
+                out.push_str(&format!("{}@{}{}", MENTION_QUARK_OPEN, shown, MENTION_CLOSE));
                 out.push_str(&remainder);
             } else {
                 // If it's a file, we shouldn't have consumed spaces/parens.
@@ -327,6 +335,42 @@ mod tests {
         let html = markdown::to_html_with_options(&colored, &options).unwrap();
         // The HTML should literally contain the span, meaning it wasn't escaped
         assert!(html.contains("<span style=\"color: pink-400\"><strong>@opus</strong></span>"));
+    }
+
+    /// A mention typed or stored by its raw seat id (e.g. `@acp-claude-2`) must render
+    /// using the quark's display name (`@Sonnet`) when one is set — matching still
+    /// happens on the id, only the shown text changes.
+    #[test]
+    fn a_mention_by_raw_id_renders_as_the_display_name() {
+        let roster = vec![RosterRow {
+            id: "acp-claude-2".to_string(),
+            display_name: Some("Sonnet".to_string()),
+            state: QuarkState::Excited,
+            mode: hadron_lattice::Mode::Ask,
+            mode_is_override: false,
+            vendor: "anthropic".to_string(),
+            model: "claude-sonnet-5".to_string(),
+            flavor: Some(hadron_lattice::Flavor::Worker),
+            transport: hadron_lattice::Transport::Acp,
+            effort: None,
+            enabled: true,
+            adopted: true,
+            tokens: 0,
+            unknown_turns: 0,
+        }];
+
+        let colored = color_mentions("Hello @acp-claude-2!", &roster);
+        assert_eq!(
+            colored,
+            "Hello <span style=\"color: pink-400\"><strong>@Sonnet</strong></span>!"
+        );
+
+        // Mentioning by the display name itself still works, unchanged.
+        let colored_by_name = color_mentions("Hello @Sonnet!", &roster);
+        assert_eq!(
+            colored_by_name,
+            "Hello <span style=\"color: pink-400\"><strong>@Sonnet</strong></span>!"
+        );
     }
 
     /// `@team` and `@orchestrator` route to the swarm rather than to a roster row, so

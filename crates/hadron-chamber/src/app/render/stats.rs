@@ -58,13 +58,26 @@ impl super::Chamber {
             hadron_lattice::Transport::Sdk => "SDK (unsupported)",
         };
 
-        // Presence: a live (adopted + enabled) quark shows its state colour; otherwise
-        // it is greyed, distinguishing "available here but not adopted" from "disabled".
+        // Presence: a live (adopted + enabled) quark shows its state colour, overridden
+        // to Excited while it has fresh live activity — matching the roster row and rail
+        // strip so the dot never disagrees with what the quark is actually doing.
+        let live_dir = hadron_lattice::live::live_dir(&self.path);
+        let activity = hadron_lattice::live::read(
+            &live_dir,
+            &hadron_lattice::QuarkId::new(&qid),
+            chrono::Utc::now(),
+        );
+        let effective_state = effective_presence_state(
+            roster_row.state,
+            roster_row.adopted,
+            roster_row.enabled,
+            activity.is_some(),
+        );
         let live = roster_row.adopted && roster_row.enabled;
         let (dot_color, presence_txt) = if live {
             (
-                theme::presence(roster_row.state),
-                theme::presence_label(roster_row.state).to_string(),
+                theme::presence(effective_state),
+                theme::presence_label(effective_state).to_string(),
             )
         } else if !roster_row.adopted {
             (theme::presence_disabled(), "available — not adopted here".to_string())
