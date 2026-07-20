@@ -18,6 +18,7 @@ fn projection(task: &str) -> Projection {
             exclusive: false,
             commands: Default::default(),
             energy_limit: None,
+            deny_skills: vec![],
         }],
         field_window: vec![Event::new(
             Actor::Human,
@@ -33,6 +34,7 @@ fn projection(task: &str) -> Projection {
         isolated: true,
         cwd: std::path::PathBuf::from("/repo/.hadron/trees/agy"),
         mode: hadron_lattice::Mode::default(),
+        role_body: None,
     }
 }
 
@@ -65,6 +67,7 @@ fn peers_are_named_by_display_name_not_raw_id() {
         exclusive: false,
         commands: Default::default(),
         energy_limit: None,
+        deny_skills: vec![],
     });
     proj.field_window.push(Event::new(
         Actor::Quark(QuarkId::new("acp-claude")),
@@ -174,6 +177,7 @@ fn worker_is_told_to_escalate_to_the_orchestrator_role() {
         exclusive: false,
         commands: Default::default(),
         energy_limit: None,
+        deny_skills: vec![],
     });
 
     let worker_prompt = build(&proj, &QuarkId::new("agy"));
@@ -203,6 +207,7 @@ fn a_finished_worker_reports_up_and_is_never_told_to_drop_the_mention() {
         exclusive: false,
         commands: Default::default(),
         energy_limit: None,
+        deny_skills: vec![],
     });
 
     let worker = build(&proj, &QuarkId::new("agy"));
@@ -246,6 +251,7 @@ fn only_the_orchestrator_is_told_to_stay_available() {
         exclusive: false,
         commands: Default::default(),
         energy_limit: None,
+        deny_skills: vec![],
     });
 
     let orch_prompt = build(&proj, &QuarkId::new("opus"));
@@ -315,6 +321,7 @@ fn the_orchestrator_must_verify_a_workers_claim_before_relaying_it() {
         exclusive: false,
         commands: Default::default(),
         energy_limit: None,
+        deny_skills: vec![],
     });
 
     let orch = build(&proj, &QuarkId::new("opus"));
@@ -400,4 +407,13 @@ fn empty_optional_sections_are_omitted() {
     assert!(!p.contains("nucleus"));
     assert!(!p.contains("working diff"));
     assert!(p.contains("# Your task"));
+}
+
+#[test]
+fn prompt_contains_your_role_when_present() {
+    let mut proj = projection("Build login");
+    proj.role_body = Some("You must act as the lead architect and write design docs.".into());
+    let p = build(&proj, &QuarkId::new("agy"));
+    assert!(p.contains("# Your role"));
+    assert!(p.contains("You must act as the lead architect and write design docs."));
 }

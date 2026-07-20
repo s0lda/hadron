@@ -82,6 +82,9 @@ pub struct Projection {
     /// most restrictive rung.
     #[serde(default)]
     pub mode: Mode,
+    /// Matched role body if this turn matched a role (spec §3.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_body: Option<String>,
 }
 
 /// What an adapter returns after a turn. File mutations are NOT reported here —
@@ -139,6 +142,7 @@ mod tests {
                 exclusive: false,
                 commands: crate::team::SeatCommands::default(),
                 energy_limit: None,
+                deny_skills: vec![],
             }],
             field_window: vec![Event::new(
                 Actor::Human,
@@ -155,6 +159,7 @@ mod tests {
             isolated: true,
             cwd: std::path::PathBuf::from("/tmp/wt"),
             mode: Mode::Bypass,
+            role_body: None,
         };
         assert_eq!(proj.cwd, std::path::Path::new("/tmp/wt"));
         assert_eq!(proj.roster.len(), 1);

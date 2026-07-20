@@ -402,6 +402,7 @@ fn projection() -> Projection {
         cwd: std::env::temp_dir(),
         isolated: false,
         mode: Mode::Ask,
+        role_body: None,
     }
 }
 

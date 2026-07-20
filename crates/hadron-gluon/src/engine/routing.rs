@@ -49,6 +49,20 @@ impl super::Engine {
                 addressees.push(orch.id.clone());
             }
         }
+
+        // Soft preference (spec 2026-07-20 §3.2): bubble preferred role-holder to the front
+        let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let workspace_root = workspace_root_of(&self.field_path, &base);
+        let repo_skills_dir = workspace_root.join(".hadron").join("skills");
+        let skill_corpus = skills::load_skills(self.global_skills_dir.as_deref(), Some(&repo_skills_dir));
+        if let Some(m) = skills::select(body, &skill_corpus) {
+            if let Some(role) = skills::preferred_role(&m.id) {
+                if let Some(preferred) = crate::router::card_for_role(&self.roster, role) {
+                    addressees.sort_by_key(|id| if id == &preferred.id { 0 } else { 1 });
+                }
+            }
+        }
+
         addressees
     }
 
@@ -325,7 +339,19 @@ impl super::Engine {
         let skill_corpus = skills::load_skills(self.global_skills_dir.as_deref(), Some(&repo_skills_dir));
         invariants_text.push_str(&skills::index(&skill_corpus));
 
+        let mut role_body = None;
         if let Some(m) = skills::select(&task_desc, &skill_corpus) {
+            if let Some(role) = skills::preferred_role(&m.id) {
+                if let Some(card) = self.roster.iter().find(|c| &c.id == target) {
+                    if card.roles.iter().any(|r| r.eq_ignore_ascii_case(role)) {
+                        let roles_corpus = self.loaded_roles();
+                        if let Some(matched_role) = roles_corpus.iter().find(|p| p.name.eq_ignore_ascii_case(role)) {
+                            role_body = Some(matched_role.body.clone());
+                        }
+                    }
+                }
+            }
+
             let peers = self
                 .roster
                 .iter()
@@ -403,6 +429,7 @@ impl super::Engine {
             isolated: cwd.is_some(),
             cwd: cwd.unwrap_or(workspace_root),
             mode: turn_mode,
+            role_body,
         }
     }
 }

@@ -105,6 +105,7 @@ pub(super) fn cli_seat_from(
         commands: hadron_lattice::SeatCommands::default(),
         secret_env: Vec::new(),
         energy_limit: None,
+        deny_skills: vec![],
     };
     seat.normalize_vendor();
     // SSOT: the same `<transport>-<vendor>` builder the ACP save path uses, just off

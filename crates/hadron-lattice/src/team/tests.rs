@@ -557,6 +557,33 @@ mod resolve_tests {
         assert!(s.exclusive, "override lands");
     }
 
+    #[test]
+    fn resolve_team_applies_deny_skills_override() {
+        let global = Team {
+            quarks: vec![Seat {
+                deny_skills: vec!["writing-plans".into()],
+                ..seat("q", "acp-claude", "opus", Flavor::Worker)
+            }],
+            roster: vec![],
+            max_exchanges: None,
+        };
+        // Absent override fields inherit the catalogue's deny_skills.
+        let inherit = Team { roster: vec![SeatOverride::role(QuarkId::new("q"))], ..Team::default() };
+        let s = &resolve_team(&inherit, &global).quarks[0];
+        assert_eq!(s.deny_skills, vec!["writing-plans".to_string()], "inherits catalogue deny_skills");
+
+        // An explicit override lands on the resolved seat.
+        let overridden = Team {
+            roster: vec![SeatOverride {
+                deny_skills: Some(vec!["executing-plans".into()]),
+                ..SeatOverride::role(QuarkId::new("q"))
+            }],
+            ..Team::default()
+        };
+        let s = &resolve_team(&overridden, &global).quarks[0];
+        assert_eq!(s.deny_skills, vec!["executing-plans".to_string()], "override lands");
+    }
+
     /// A repo override MAY set `commands`; the resolved seat carries the override's
     /// allow/deny lists rather than the catalogue's (empty) default.
     #[test]
@@ -890,6 +917,26 @@ mod resolve_tests {
         assert!(s.exclusive);
         assert!(global.quarks[0].roles.is_empty(), "shared catalogue default unchanged");
         assert!(!global.quarks[0].exclusive, "shared catalogue default unchanged");
+    }
+
+    #[test]
+    fn seat_override_delta_carries_changed_deny_skills() {
+        let def = seat("acp-claude", "acp-claude", "opus", Flavor::Worker); // deny_skills: []
+        let global = Team { quarks: vec![def.clone()], roster: vec![], max_exchanges: None };
+
+        let desired = Seat {
+            deny_skills: vec!["writing-plans".into()],
+            ..def.clone()
+        };
+        let ov = seat_override_delta(QuarkId::new("acp-claude"), &def, &desired, None);
+
+        assert_eq!(ov.deny_skills, Some(vec!["writing-plans".to_string()]), "deny_skills edit is carried");
+
+        // Resolving the delta reproduces `desired`; the catalogue default is untouched.
+        let repo = Team { roster: vec![ov], ..Team::default() };
+        let s = &resolve_team(&repo, &global).quarks[0];
+        assert_eq!(s.deny_skills, vec!["writing-plans".to_string()]);
+        assert!(global.quarks[0].deny_skills.is_empty(), "shared catalogue default unchanged");
     }
 
     /// An edit that changes nothing back to the catalogue default produces an all-inherit

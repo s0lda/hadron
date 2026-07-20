@@ -168,6 +168,7 @@ mod tests {
             commands: hadron_lattice::SeatCommands::default(),
             secret_env: Vec::new(),
             energy_limit: None,
+            deny_skills: vec![],
         };
         let mut desired = running.clone();
         desired.quarks.push(new_seat.clone());
@@ -225,6 +226,7 @@ mod tests {
             commands: hadron_lattice::SeatCommands::default(),
             secret_env: Vec::new(),
             energy_limit: None,
+            deny_skills: vec![],
         };
         let running = team(&[seat(&["-y", "old-agent"])]);
         let desired = team(&[seat(&["-y", "new-agent"])]);
@@ -255,6 +257,7 @@ mod enabled_tests {
             commands: hadron_lattice::SeatCommands::default(),
             secret_env: Vec::new(),
             energy_limit: None,
+            deny_skills: vec![],
         }
     }
     fn team(seats: &[Seat]) -> Team {

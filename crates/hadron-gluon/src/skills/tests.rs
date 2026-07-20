@@ -527,3 +527,14 @@ fn parse_list_value_accepts_bracketed_and_bare_forms() {
     assert_eq!(parse_list_value("[\"a\", 'b']"), vec!["a", "b"]);
     assert_eq!(parse_list_value(""), Vec::<String>::new());
 }
+
+#[test]
+fn skills_map_to_their_preferred_role() {
+    assert_eq!(preferred_role("writing-plans"), Some("architect"));
+    assert_eq!(preferred_role("brainstorming"), Some("architect"));
+    assert_eq!(preferred_role("requesting-code-review"), Some("reviewer"));
+    assert_eq!(preferred_role("reviewing-work"), Some("reviewer"));
+    assert_eq!(preferred_role("executing-plans"), Some("executor"));
+    assert_eq!(preferred_role("subagent-driven-development"), Some("executor"));
+    assert_eq!(preferred_role("systematic-debugging"), None);
+}

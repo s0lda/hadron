@@ -129,6 +129,28 @@ impl super::Engine {
                             self.reroute_blocked(&target, &msg).await?;
                             continue;
                         }
+
+                        // Hard lock (spec 2026-07-20 §3.4): a seat that denies this task's starting
+                        // skill never receives the turn. Same reporting discipline as `exclusive`:
+                        // say so in the field, never drop silently.
+                        let task_text = self.driver_for(&events, &target, fallback_task.as_deref())
+                            .map(|d| d.task)
+                            .unwrap_or_else(|| fallback_task.clone().unwrap_or_default());
+                        let base = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                        let workspace_root = workspace_root_of(&self.field_path, &base);
+                        let repo_skills_dir = workspace_root.join(".hadron").join("skills");
+                        let skill_corpus = crate::skills::load_skills(self.global_skills_dir.as_deref(), Some(&repo_skills_dir));
+                        if let Some(m) = crate::skills::select(&task_text, &skill_corpus) {
+                            if card.deny_skills.iter().any(|d| d.eq_ignore_ascii_case(&m.id)) {
+                                let msg = format!(
+                                    "⚠️ @{} locks out '{}' tasks (deny_skills); skipping.",
+                                    target.as_str(),
+                                    m.id
+                                );
+                                self.reroute_blocked(&target, &msg).await?;
+                                continue;
+                            }
+                        }
                     }
 
                     if let Some(ledger) = &self.ledger {

@@ -63,6 +63,10 @@ pub struct QuarkCard {
     /// Per-seat energy limit (token ceiling).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub energy_limit: Option<u32>,
+    /// Skill names this seat must NEVER be handed (hard lock). Matched against
+    /// `skills::select`'s chosen name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny_skills: Vec<String>,
 }
 
 #[cfg(test)]
@@ -83,6 +87,7 @@ mod tests {
             exclusive: false,
             commands: SeatCommands::default(),
             energy_limit: None,
+            deny_skills: vec![],
         };
         let json = serde_json::to_string(&card).unwrap();
         assert_eq!(json, r#"{"id":"claude","display_name":"Claude","flavor":"orchestrator","energy":"available","provider":"claude","model":"opus-4.8"}"#);
@@ -112,6 +117,7 @@ mod tests {
             exclusive: false,
             commands: SeatCommands::default(),
             energy_limit: None,
+            deny_skills: vec![],
         };
         // Default (empty roles, not exclusive) must not appear in the JSON — back-compat
         // with a card built before role-routing existed.
@@ -133,5 +139,26 @@ mod tests {
         let legacy_card: QuarkCard = serde_json::from_str(legacy).unwrap();
         assert!(legacy_card.roles.is_empty());
         assert!(!legacy_card.exclusive);
+    }
+
+    #[test]
+    fn quark_card_round_trips_deny_skills() {
+        let card = QuarkCard {
+            id: QuarkId::new("claude"),
+            display_name: None,
+            flavor: Flavor::Worker,
+            energy: EnergyState::Available,
+            provider: "claude".into(),
+            model: "opus".into(),
+            roles: vec![],
+            exclusive: false,
+            commands: SeatCommands::default(),
+            energy_limit: None,
+            deny_skills: vec!["writing-plans".into()],
+        };
+        let json = serde_json::to_string(&card).unwrap();
+        assert!(json.contains("\"deny_skills\":[\"writing-plans\"]"), "{json}");
+        let back: QuarkCard = serde_json::from_str(&json).unwrap();
+        assert_eq!(card, back);
     }
 }

@@ -279,6 +279,7 @@
                     commands: hadron_lattice::SeatCommands::default(),
                     secret_env: Vec::new(),
                     energy_limit: None,
+                    deny_skills: vec![],
                 },
                 Seat {
                     id: QuarkId::new("opus"),
@@ -297,6 +298,7 @@
                     commands: hadron_lattice::SeatCommands::default(),
                     secret_env: Vec::new(),
                     energy_limit: None,
+                    deny_skills: vec![],
                 },
             ],
             roster: vec![],
