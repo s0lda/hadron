@@ -289,6 +289,7 @@ impl super::Chamber {
         let info_selected = self.info_tab;
         let info_tabs = TabBar::new("info-tabs")
             .segmented()
+            .bg(theme::field_base())
             .selected_index(info_selected.index())
             .children(InfoTab::ALL.map(|t| {
                 if t.index() == info_selected.index() {
@@ -425,6 +426,7 @@ impl super::Chamber {
             .unwrap_or(0);
         TabBar::new(id)
             .segmented()
+            .bg(theme::field_base())
             .selected_index(sel_ix)
             .children(StatsWindow::ALL.map(|w| {
                 if w == selected {
