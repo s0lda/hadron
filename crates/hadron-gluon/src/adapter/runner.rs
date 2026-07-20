@@ -7,7 +7,7 @@ use std::path::PathBuf;
 ///
 /// `Deref`s to the underlying pairs for iteration/`.envs()`; its own `Debug` prints
 /// only the var NAMES — `["GEMINI_API_KEY=<redacted>"]` — never the value. This is
-/// the ONE place a resolved secret's `Debug` shape is defined (CLAUDE.md rule 3:
+/// the ONE place a resolved secret's `Debug` shape is defined (Standard Model rule 3:
 /// one definition, one place), so every carrier redacts identically instead of each
 /// one having to remember to.
 #[derive(Clone, PartialEq, Eq, Default)]
