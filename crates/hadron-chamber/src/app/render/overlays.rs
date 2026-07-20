@@ -9,23 +9,13 @@ impl super::Chamber {
     pub(super) fn completion_card_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let card = self.completion.as_ref();
         let mut list = v_flex()
-            .id("completion-card")
-            .absolute()
-            .bottom(gpui::relative(1.0))
-            .left_0()
-            .right_0()
-            .mb_2()
-            .occlude()
-            .max_h(px(280.0))
+            .id("completion-card-list")
+            .flex_1()
+            .min_h_0()
             .overflow_y_scroll()
+            .track_scroll(&self.completion_scroll)
             .p_1()
-            .gap_1()
-            .rounded_lg()
-            // Flat #101010 field colour so the mentions popup matches the solid
-            // background (Jake's request).
-            .bg(theme::field_base())
-            .border_1()
-            .border_color(theme::border());
+            .gap_1();
 
         if let Some(card) = card {
             let sel = card.selected.min(card.candidates.len().saturating_sub(1));
@@ -60,7 +50,26 @@ impl super::Chamber {
                 );
             }
         }
-        list
+
+        h_flex()
+            .id("completion-card")
+            .absolute()
+            .bottom(gpui::relative(1.0))
+            .left_0()
+            .right_0()
+            .mb_2()
+            .occlude()
+            .max_h(px(280.0))
+            .bg(theme::field_base())
+            .border_1()
+            .border_color(theme::border())
+            .rounded_lg()
+            .relative()
+            .child(list)
+            .child(
+                Scrollbar::vertical(&self.completion_scroll)
+                    .scrollbar_show(ScrollbarShow::Hover)
+            )
     }
 
     /// The non-blocking permission toast: when a quark is waiting on the human,
