@@ -9,13 +9,30 @@ impl super::Chamber {
         let live_activity = self.view.roster.iter().find_map(|r| {
             hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), chrono::Utc::now())
         });
-        
-        let live_card = live_activity.map(|act| {
-            let quark_id_str = act.quark.as_str();
-            let identity = self.resolve_identity(quark_id_str);
+
+        // The card and the roster's blue dot must agree: a quark whose field state
+        // says a turn is in flight but which has published no live detail yet (a
+        // CLI quark, or the gap between publishes) still shows a placeholder card.
+        let live_info: Option<(String, &'static str, String)> = live_activity
+            .map(|act| (act.quark.as_str().to_string(), act.doing.label(), act.detail))
+            .or_else(|| {
+                self.view
+                    .roster
+                    .iter()
+                    .find(|r| {
+                        r.adopted
+                            && r.enabled
+                            && matches!(
+                                r.state,
+                                hadron_lattice::QuarkState::Excited | hadron_lattice::QuarkState::Thinking
+                            )
+                    })
+                    .map(|r| (r.id.clone(), "working", "taking a turn…".to_string()))
+            });
+
+        let live_card = live_info.map(|(quark_id_str, label, detail)| {
+            let identity = self.resolve_identity(&quark_id_str);
             let name = identity.name;
-            let label = act.doing.label();
-            let detail = act.detail;
             h_flex()
                 .items_center()
                 .gap_2()

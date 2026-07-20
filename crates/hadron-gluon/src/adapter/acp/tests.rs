@@ -721,3 +721,41 @@ async fn a_live_turn_publishes_what_it_is_doing() {
         "a finished turn must leave no activity behind"
     );
 }
+
+/// The live detail a human reads mid-turn: a kind verb + file for file tools,
+/// the real command line for a shell call, the bare title only as a last resort.
+#[test]
+fn tool_call_detail_enriches_the_bare_title() {
+    let call = |json: &str| -> agent_client_protocol::schema::v1::ToolCall {
+        serde_json::from_str(json).expect("test ToolCall")
+    };
+
+    // A file tool with a location: verb + file name, not the title.
+    let read = call(
+        r#"{"toolCallId":"1","title":"Read","kind":"read",
+            "locations":[{"path":"/repo/crates/hadron-gluon/src/lib.rs"}]}"#,
+    );
+    assert_eq!(session::tool_call_detail(&read), "Reading lib.rs");
+
+    // A shell call: the actual command beats the generic "Terminal" title.
+    let sh = call(
+        r#"{"toolCallId":"2","title":"Terminal","kind":"execute",
+            "rawInput":{"command":"cargo test --workspace"}}"#,
+    );
+    assert_eq!(session::tool_call_detail(&sh), "Running `cargo test --workspace`");
+
+    // A long multi-line command is first-line-only and cut at 80 CHARS, not bytes.
+    let long = format!(
+        r#"{{"toolCallId":"3","title":"Terminal","kind":"execute",
+            "rawInput":{{"command":"echo {}\nsecond line"}}}}"#,
+        "é".repeat(100)
+    );
+    let detail = session::tool_call_detail(&call(&long));
+    assert!(detail.starts_with("Running `echo ééé"));
+    assert!(detail.ends_with("…`"));
+    assert!(!detail.contains("second line"));
+
+    // Nothing richer than the title → the title.
+    let other = call(r#"{"toolCallId":"4","title":"Do a thing","kind":"other"}"#);
+    assert_eq!(session::tool_call_detail(&other), "Do a thing");
+}

@@ -181,6 +181,22 @@ pub(super) fn effective_presence_state(
     }
 }
 
+/// The dot and the words must agree: when the dot renders blue (a turn is in
+/// flight) but the adapter has published no live detail — a CLI quark, or the
+/// gap between publishes — the subtitle shows a "working…" placeholder rather
+/// than the seat's static vendor · model caption.
+pub(super) fn needs_activity_placeholder(
+    effective: QuarkState,
+    adopted: bool,
+    enabled: bool,
+    has_activity: bool,
+) -> bool {
+    !has_activity
+        && adopted
+        && enabled
+        && matches!(effective, QuarkState::Excited | QuarkState::Thinking)
+}
+
 /// One roster entry, styled as a presence list-item: the resolved avatar with a
 /// status [`Badge`] dot, a display name, and a one-word presence subtitle, with a
 /// tooltip on hover.
@@ -229,8 +245,11 @@ pub(super) fn roster_row(
         None => "",
     };
 
+    let has_activity = activity.is_some();
     let detail_1: SharedString = if let Some(act) = activity {
         format!("{}: {}", act.doing.label(), act.detail).into()
+    } else if needs_activity_placeholder(effective_state, r.adopted, r.enabled, has_activity) {
+        "working…".into()
     } else if r.vendor.is_empty() && r.model.is_empty() {
         label.into()
     } else if r.model.is_empty() {
@@ -742,5 +761,22 @@ mod tests {
             effective_presence_state(QuarkState::Ground, true, false, true),
             QuarkState::Ground
         );
+    }
+
+    /// A blue dot must never sit next to a static vendor·model caption: an
+    /// excited quark with no published live detail gets the placeholder, and
+    /// every other combination does not.
+    #[test]
+    fn a_blue_dot_without_live_detail_gets_the_placeholder() {
+        // Excited (blue dot), no live file — a CLI quark mid-turn → placeholder.
+        assert!(needs_activity_placeholder(QuarkState::Excited, true, true, false));
+        assert!(needs_activity_placeholder(QuarkState::Thinking, true, true, false));
+        // Live detail present → the real activity line renders instead.
+        assert!(!needs_activity_placeholder(QuarkState::Excited, true, true, true));
+        // Idle (green dot) → the static caption is correct, no placeholder.
+        assert!(!needs_activity_placeholder(QuarkState::Ground, true, true, false));
+        // Not adopted / disabled seats never fake activity.
+        assert!(!needs_activity_placeholder(QuarkState::Excited, false, true, false));
+        assert!(!needs_activity_placeholder(QuarkState::Excited, true, false, false));
     }
 }
