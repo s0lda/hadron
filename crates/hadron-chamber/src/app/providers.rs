@@ -143,7 +143,7 @@ pub(super) fn custom_cli_vendor_is_valid(vendor: &str) -> bool {
 ///   so the UI hint must say "daemon default", never "unlimited". This function
 ///   deliberately does not hardcode that default's numeral: it lives in exactly one
 ///   place (the daemon bin), and duplicating it here would be a second source of truth
-///   that silently drifts if that default ever changes (SSOT, CLAUDE.md rule 3).
+///   that silently drifts if that default ever changes (SSOT, Standard Model rule 3).
 /// - `"0"` → `None` too, not `Some(0)`. `Some(0)` would trip the backstop's
 ///   `exchanges >= max_exchanges` check before a single exchange runs, silently
 ///   freezing the swarm — a footgun no one clearing the field down to zero would
