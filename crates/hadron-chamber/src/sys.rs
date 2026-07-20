@@ -474,4 +474,23 @@ mod tests {
         let content = read_workspace_file(root, "../sibling_dir/secret.txt");
         assert_eq!(content, None);
     }
+
+    #[test]
+    fn read_workspace_file_gitignored_file() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let target_dir = root.join("target").join("debug");
+        fs::create_dir_all(&target_dir).unwrap();
+        fs::write(target_dir.join("test.d"), "ignored file content").unwrap();
+
+        let content = read_workspace_file(root, "target/debug/test.d");
+        assert_eq!(content, Some("ignored file content".to_string()));
+    }
+
+    #[test]
+    fn read_workspace_file_relative_root() {
+        let content = read_workspace_file(Path::new("."), "Cargo.toml");
+        assert!(content.is_some());
+        assert!(content.unwrap().contains("hadron"));
+    }
 }
