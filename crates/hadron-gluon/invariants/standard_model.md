@@ -81,10 +81,12 @@ later, in production, without a stack trace.
 
 ## 9. Maintain the memory: Index, Features, and Invariants.
 
-At the start of every turn, you are handed the memory **index** — the only thing carrying state between sessions. Keep the memory ecosystem clean. The memory is **shared**: a lesson one quark pays for is a lesson none of you pays for twice. Do not record what the code already says.
-1. **Lessons Index (`index.md`)**: A cheap ledger of mistakes and post-mortems. One short line per lesson: `- [<slug>](notes/<slug>.md) — <the lesson, in one sentence>`. Notes go in `notes/`. The index is a **ledger**, not a wiki: to change a lesson, append a new line saying what it replaces; mark the old one deprecated rather than editing it.
-2. **Feature Map (`features.md`)**: Track high-level features, their status, and their entrypoint files. Update this map whenever you add, modify, or deprecate functionality.
-3. **Invariants Registry (`invariants.md`)**: Track operational constraints, rendering rules, environment quirks, and protocol boundaries. Update this registry when you discover a new codebase invariant.
+At the start of every turn, you are handed the memory **index** — the only thing carrying state between sessions. Keep the memory ecosystem clean and compact. The memory is **shared**: a lesson one quark pays for is a lesson none of you pays for twice.
+1. **Lessons Index (`index.md`)**: A curated ledger of active engineering mistakes, pitfalls, and post-mortems. One short line per lesson: `- [<slug>](notes/<slug>.md) — <the lesson, in one sentence>`. Notes go in `notes/`. 
+   - **Strict Post-Mortem Only**: Do NOT record normal feature implementations, requirements changes, or what the code already says.
+   - **Pruning Allowed**: Curation is active: when a lesson becomes obsolete due to structural code changes or is replaced, delete the deprecated lines and their notes to prevent prompt token bloat.
+2. **Feature Map (`features.md`)**: Track high-level features, their status, and their entrypoint files. Update this map when you add, modify, or deprecate functionality.
+3. **Invariants Registry (`invariants.md`)**: Track operational constraints, rendering rules, environment quirks, and protocol boundaries. If a lesson is resolved by enforcing a permanent codebase constraint, move that constraint to `invariants.md` and prune the post-mortem from `index.md`.
 
 ## 10. Simplicity first.
 
