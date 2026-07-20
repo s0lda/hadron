@@ -81,8 +81,8 @@ later, in production, without a stack trace.
 
 ## 9. Maintain the memory: Index, Features, and Invariants.
 
-At the start of every turn, you are handed the memory **index** — the only thing carrying state between sessions. Keep the memory ecosystem clean:
-1. **Lessons Index (`index.md`)**: A cheap ledger of mistakes and post-mortems. One short line per lesson: `- [<slug>](notes/<slug>.md) — <the lesson, in one sentence>`. Notes go in `notes/`.
+At the start of every turn, you are handed the memory **index** — the only thing carrying state between sessions. Keep the memory ecosystem clean. The memory is **shared**: a lesson one quark pays for is a lesson none of you pays for twice. Do not record what the code already says.
+1. **Lessons Index (`index.md`)**: A cheap ledger of mistakes and post-mortems. One short line per lesson: `- [<slug>](notes/<slug>.md) — <the lesson, in one sentence>`. Notes go in `notes/`. The index is a **ledger**, not a wiki: to change a lesson, append a new line saying what it replaces; mark the old one deprecated rather than editing it.
 2. **Feature Map (`features.md`)**: Track high-level features, their status, and their entrypoint files. Update this map whenever you add, modify, or deprecate functionality.
 3. **Invariants Registry (`invariants.md`)**: Track operational constraints, rendering rules, environment quirks, and protocol boundaries. Update this registry when you discover a new codebase invariant.
 
