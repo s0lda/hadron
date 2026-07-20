@@ -197,6 +197,30 @@ pub(super) fn needs_activity_placeholder(
         && matches!(effective, QuarkState::Excited | QuarkState::Thinking)
 }
 
+/// Every mid-turn quark, not just the first: an adopted, enabled seat with fresh
+/// live detail (an ACP seat), or one whose field state says a turn is in flight but
+/// which has published no detail (a CLI seat, or the gap between publishes) gets a
+/// `(id, label, detail)` row — `detail` is the placeholder text for the latter case.
+/// `live` is injected so this stays a pure function testable without touching disk.
+pub(super) fn active_quarks(
+    roster: &[RosterRow],
+    live: impl Fn(&str) -> Option<hadron_lattice::live::Activity>,
+) -> Vec<(String, &'static str, String)> {
+    roster
+        .iter()
+        .filter(|r| r.adopted && r.enabled)
+        .filter_map(|r| {
+            if let Some(act) = live(&r.id) {
+                Some((act.quark.as_str().to_string(), act.doing.label(), act.detail))
+            } else if matches!(r.state, QuarkState::Excited | QuarkState::Thinking) {
+                Some((r.id.clone(), "working", "taking a turn…".to_string()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// One roster entry, styled as a presence list-item: the resolved avatar with a
 /// status [`Badge`] dot, a display name, and a one-word presence subtitle, with a
 /// tooltip on hover.
@@ -778,5 +802,55 @@ mod tests {
         // Not adopted / disabled seats never fake activity.
         assert!(!needs_activity_placeholder(QuarkState::Excited, false, true, false));
         assert!(!needs_activity_placeholder(QuarkState::Excited, true, false, false));
+    }
+
+    fn roster_row_fixture(id: &str, state: QuarkState, adopted: bool, enabled: bool) -> RosterRow {
+        RosterRow {
+            id: id.to_string(),
+            display_name: None,
+            state,
+            mode: hadron_lattice::Mode::Ask,
+            mode_is_override: false,
+            vendor: "anthropic".to_string(),
+            model: "claude".to_string(),
+            flavor: None,
+            transport: hadron_lattice::Transport::Acp,
+            effort: None,
+            enabled,
+            adopted,
+            tokens: 0,
+            unknown_turns: 0,
+        }
+    }
+
+    /// One row per mid-turn quark, not just the first: an ACP seat with fresh live
+    /// detail, a CLI seat with no detail but an excited field state, an idle seat,
+    /// and a not-adopted seat all coexist on one roster — only the first two should
+    /// surface, each with its own label/detail.
+    #[test]
+    fn active_quarks_lists_every_quark_mid_turn_not_just_the_first() {
+        let roster = vec![
+            roster_row_fixture("acp-claude", QuarkState::Ground, true, true),
+            roster_row_fixture("cli-agy", QuarkState::Excited, true, true),
+            roster_row_fixture("acp-claude-2", QuarkState::Ground, true, true),
+            roster_row_fixture("acp-codex", QuarkState::Excited, false, true),
+        ];
+
+        let active = active_quarks(&roster, |id| match id {
+            "acp-claude" => Some(hadron_lattice::live::Activity::new(
+                hadron_lattice::QuarkId::new("acp-claude"),
+                hadron_lattice::live::Doing::Working,
+                "Terminal",
+            )),
+            _ => None,
+        });
+
+        assert_eq!(
+            active,
+            vec![
+                ("acp-claude".to_string(), "working", "Terminal".to_string()),
+                ("cli-agy".to_string(), "working", "taking a turn…".to_string()),
+            ]
+        );
     }
 }
