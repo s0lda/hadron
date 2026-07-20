@@ -12,6 +12,7 @@ impl super::Chamber {
             .id("completion-card-list")
             .flex_1()
             .min_h_0()
+            .max_h(px(280.0))
             .overflow_y_scroll()
             .track_scroll(&self.completion_scroll)
             .p_1()
