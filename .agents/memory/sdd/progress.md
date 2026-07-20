@@ -24,3 +24,9 @@
 ## Minor Findings / Cleanup List
 - `crates/hadron-chamber/src/app/widgets.rs:L56`: The `wash_layer` helper function is unused and generates a compiler warning.
 - `assets/background.jpeg`: Unrequested 9 MB image asset was added by the user; keep/ignore since it was committed by the user.
+
+## Memory Feature Map & Invariants Registry
+- [x] Task 1: Initialize Invariants Registry
+- [ ] Task 2: Initialize Feature Map
+- [ ] Task 3: Update Standard Model Rules
+
