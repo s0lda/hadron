@@ -252,20 +252,28 @@ impl super::Chamber {
             .child(kv_row("First seen", first_seen_str))
             .child(kv_row("Last active", last_active_str));
 
-        if let Some(ctx) = q_stats.context.as_ref() {
-            stats_block = stats_block.child(kv_row(
-                "Context",
-                format!(
-                    "{:.1}% ({} / {})",
-                    ctx.used_percentage,
-                    format_num(ctx.used_tokens),
-                    format_num(ctx.context_window_size)
-                ),
-            ));
-            // Context occupancy is a proportion, not a series — a progress bar reads it
-            // better than a two-bar chart. Fill in the quark's colour.
-            let frac = (ctx.used_percentage as f32 / 100.0).clamp(0.0, 1.0);
-            stats_block = stats_block.child(div().mt_1().child(progress_meter(frac, q_color)));
+        if self.stats_window == StatsWindow::Current {
+            let live_context = self.view.messages
+                .iter()
+                .rfind(|m| m.from == qid)
+                .and_then(|m| m.usage.as_ref())
+                .and_then(|u| u.context.as_ref());
+
+            if let Some(ctx) = live_context {
+                stats_block = stats_block.child(kv_row(
+                    "Context",
+                    format!(
+                        "{:.1}% ({} / {})",
+                        ctx.used_percentage,
+                        format_num(ctx.used_tokens),
+                        format_num(ctx.context_window_size)
+                    ),
+                ));
+                // Context occupancy is a proportion, not a series — a progress bar reads it
+                // better than a two-bar chart. Fill in the quark's colour.
+                let frac = (ctx.used_percentage as f32 / 100.0).clamp(0.0, 1.0);
+                stats_block = stats_block.child(div().mt_1().child(progress_meter(frac, q_color)));
+            }
         }
         if !q_stats.spend_history.is_empty() {
             // Fresh-spend over turns as an area under the curve: the quark's hue stroke
@@ -577,18 +585,26 @@ impl super::Chamber {
                     )),
             );
 
-            if let Some(ctx) = &s.context {
-                let frac = (ctx.used_percentage as f32 / 100.0).clamp(0.0, 1.0);
-                block = block
-                    .child(
-                        div().text_xs().text_color(theme::text_muted()).child(format!(
-                            "Context {:.0}% · {} / {}",
-                            ctx.used_percentage,
-                            format_num(ctx.used_tokens),
-                            format_num(ctx.context_window_size),
-                        )),
-                    )
-                    .child(progress_meter(frac, q_color));
+            if self.stats_window == StatsWindow::Current {
+                let live_context = self.view.messages
+                    .iter()
+                    .rfind(|m| m.from == *q)
+                    .and_then(|m| m.usage.as_ref())
+                    .and_then(|u| u.context.as_ref());
+
+                if let Some(ctx) = live_context {
+                    let frac = (ctx.used_percentage as f32 / 100.0).clamp(0.0, 1.0);
+                    block = block
+                        .child(
+                            div().text_xs().text_color(theme::text_muted()).child(format!(
+                                "Context {:.0}% · {} / {}",
+                                ctx.used_percentage,
+                                format_num(ctx.used_tokens),
+                                format_num(ctx.context_window_size),
+                            )),
+                        )
+                        .child(progress_meter(frac, q_color));
+                }
             }
             // An empty quota list means the provider has no quota concept — not that the
             // quota is spent. Say nothing rather than render a zero.
