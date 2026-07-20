@@ -188,21 +188,50 @@ pub fn completion_candidates(
             }
         }
         ':' => {
-            for emoji in emojis::iter() {
+            const MODERN_EMOJIS: &[(&str, &str)] = &[
+                ("rofl", "🤣"),
+                ("skull", "💀"),
+                ("sob", "😭"),
+                ("fire", "🔥"),
+                ("100", "💯"),
+                ("sparkles", "✨"),
+                ("rocket", "🚀"),
+                ("eyes", "👀"),
+                ("thinking", "🤔"),
+                ("thumbsup", "👍"),
+                ("tada", "🎉"),
+                ("warning", "⚠️"),
+                ("white_check_mark", "✅"),
+                ("x", "❌"),
+                ("bulb", "💡"),
+                ("bug", "🪲"),
+                ("clown", "🤡"),
+                ("coffee", "☕"),
+                ("exploding_head", "🤯"),
+                ("nerd", "🤓"),
+                ("salute", "🫡"),
+                ("shrug", "🤷"),
+                ("pleading", "🥺"),
+                ("heart_hands", "🫶"),
+                ("raised_hands", "🙌"),
+                ("poop", "💩"),
+                ("handshake", "🤝"),
+                ("computer", "💻"),
+                ("hammer_and_wrench", "🛠️"),
+                ("art", "🎨"),
+                ("zap", "⚡"),
+                ("dart", "🎯"),
+            ];
+
+            for &(shortcode, glyph) in MODERN_EMOJIS {
                 if out.len() >= MAX_CANDIDATES {
                     break;
                 }
-                let Some(shortcode) = emoji.shortcode() else {
-                    continue;
-                };
                 if query_lower.is_empty() || shortcode.to_lowercase().contains(&query_lower) {
-                    // The card renders the label as one plain string (no byte-range
-                    // prefix highlight), so the emoji-first shape that crashed the
-                    // fork menu cannot slice mid-character here.
                     out.push(Candidate {
-                        label: format!(":{shortcode} {}", emoji.as_str()),
+                        label: format!(":{shortcode} {glyph}"),
                         detail: "Emoji".into(),
-                        new_text: emoji.as_str().to_string(),
+                        new_text: glyph.to_string(),
                     });
                 }
             }
@@ -294,10 +323,10 @@ mod tests {
 
     #[test]
     fn an_emoji_query_accepts_the_glyph_not_the_shortcode() {
-        let c = completion_candidates(":smile", 6, &[], &[]).expect("has rows");
+        let c = completion_candidates(":rofl", 5, &[], &[]).expect("has rows");
         let first = &c.candidates[0];
-        assert!(first.label.starts_with(":smile"));
-        // Accepting inserts the glyph itself, not the `:smile:` text.
+        assert!(first.label.starts_with(":rofl"));
+        // Accepting inserts the glyph itself, not the `:rofl:` text.
         assert!(!first.new_text.starts_with(':'));
     }
 

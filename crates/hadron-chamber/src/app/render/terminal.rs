@@ -142,7 +142,7 @@ impl super::Chamber {
                     .into_any_element()
             }
             RightRailTab::FileTree => {
-                let mut list = v_flex().w_full();
+                let mut list = v_flex().size_full();
                 if let Some((path, content)) = &self.file_tree_open {
                     list = list
                         .child(
