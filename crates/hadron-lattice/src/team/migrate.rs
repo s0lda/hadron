@@ -61,6 +61,7 @@ pub fn seat_override_delta(
             .then(|| desired.display_name.clone()),
         roles: (desired.roles != def.roles).then(|| desired.roles.clone()),
         exclusive: (desired.exclusive != def.exclusive).then_some(desired.exclusive),
+        deny_skills: (desired.deny_skills != def.deny_skills).then(|| desired.deny_skills.clone()),
         ..SeatOverride::role(id)
     }
 }

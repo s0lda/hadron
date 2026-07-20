@@ -224,6 +224,8 @@ struct Chamber {
     settings_model: Entity<InputState>,
     settings_effort: Entity<InputState>,
     settings_mode_config: Entity<InputState>,
+    settings_roles: Entity<InputState>,
+    settings_deny_skills: Entity<InputState>,
     /// The team-wide "Max exchanges" field on the Providers panel (not per-identity, so
     /// it's loaded/committed unconditionally in `load_settings_inputs`/
     /// `commit_settings_inputs` rather than keyed off `settings_target`). Blank = clear
@@ -369,6 +371,8 @@ impl Chamber {
         let settings_model = cx.new(|cx| InputState::new(window, cx).placeholder("inherit catalogue default"));
         let settings_effort = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. low, standard, high"));
         let settings_mode_config = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. architect, code, ask"));
+        let settings_roles = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. architect, reviewer"));
+        let settings_deny_skills = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. writing-plans, brainstorming"));
         let settings_max_exchanges = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. 50 (blank = daemon default)"));
         let settings_secret_var = cx.new(|cx| InputState::new(window, cx).placeholder(DEFAULT_SECRET_VAR));
         // `.masked(true)`: a password field — the stored value is never rendered back
@@ -540,6 +544,8 @@ impl Chamber {
             settings_model,
             settings_effort,
             settings_mode_config,
+            settings_roles,
+            settings_deny_skills,
             settings_max_exchanges,
             settings_secret_var,
             settings_secret_value,

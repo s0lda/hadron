@@ -2981,6 +2981,7 @@ struct RoledQuark {
     roles: Vec<String>,
     exclusive: bool,
     reply: String,
+    deny_skills: Vec<String>,
 }
 
 #[async_trait::async_trait]
@@ -3000,6 +3001,9 @@ impl crate::quark::Quark for RoledQuark {
     fn exclusive(&self) -> bool {
         self.exclusive
     }
+    fn deny_skills(&self) -> Vec<String> {
+        self.deny_skills.clone()
+    }
     fn energy(&self) -> EnergyState {
         EnergyState::Available
     }
@@ -3015,6 +3019,7 @@ fn roled_quark(id: &str, roles: &[&str], exclusive: bool, reply: &str) -> RoledQ
         roles: roles.iter().map(|r| r.to_string()).collect(),
         exclusive,
         reply: reply.into(),
+        deny_skills: vec![],
     }
 }
 
@@ -3029,6 +3034,7 @@ fn roled_quark_named(id: &str, display_name: &str, roles: &[&str], exclusive: bo
         roles: roles.iter().map(|r| r.to_string()).collect(),
         exclusive,
         reply: reply.into(),
+        deny_skills: vec![],
     }
 }
 
@@ -3216,6 +3222,105 @@ async fn non_exclusive_role_seat_always_eligible() {
         events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
         "a non-exclusive role seat must take any task, matching or not"
     );
+}
+
+/// **The deny_skills property.** A card carrying `deny_skills: vec!["writing-plans".into()]`
+/// must never receive a task whose starting skill is `writing-plans`.
+#[tokio::test]
+async fn deny_skills_locks_out_matching_skill_task() {
+    let dir = tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+    let mut q = roled_quark("sec", &["security"], false, "I ANSWERED");
+    q.deny_skills = vec!["writing-plans".into()];
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(q)],
+        12,
+    );
+    // Directly addressed, but the task matches the denied skill "writing-plans"
+    seed_human_message(&field, "sec", "write a plan for authentication");
+    engine.run_until_quiesce().await.unwrap();
+
+    let events = read_events(&field).unwrap();
+    assert!(
+        !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
+        "a seat received a task whose starting skill it denied"
+    );
+    assert!(
+        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("locks out 'writing-plans' tasks"))),
+        "the field must SAY why the seat was skipped (locks out 'writing-plans' tasks)"
+    );
+}
+
+/// **The soft preference property.** A task whose skill maps to a role
+/// prefers the role-holder first among candidate targets.
+#[tokio::test]
+async fn soft_preference_bubbles_role_holder_to_front() {
+    let dir = tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+
+    // Roster of two workers, the second carries the role "architect"
+    let q1 = roled_quark("w1", &[], false, "W1 ANSWERED");
+    let q2 = roled_quark("w2", &["architect"], false, "W2 ANSWERED");
+
+    let engine = Engine::new(
+        field.clone(),
+        vec![Box::new(q1), Box::new(q2)],
+        12,
+    );
+
+    // Broadcast target list: a "@team write a plan" message.
+    // It matches the skill "writing-plans", which prefers the role "architect" (held by w2).
+    let addressees = engine.human_addressees("@team write a plan for authentication");
+    assert_eq!(addressees, vec![QuarkId::new("w2"), QuarkId::new("w1")]);
+}
+
+/// **Role prompt injection.** A turn dispatched to a seat holding role R,
+/// for a task whose skill maps to R, carries the roles/R.md body.
+#[tokio::test]
+async fn role_prompt_injection_carries_role_body() {
+    let dir = tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+
+    // Write a roles directory structure
+    let roles_dir = dir.path().join(".hadron").join("roles");
+    std::fs::create_dir_all(&roles_dir).unwrap();
+    std::fs::write(
+        roles_dir.join("architect.md"),
+        "---\nname: architect\n---\n\nYou design the system architecture.\n",
+    ).unwrap();
+
+    // Roster of two workers, the second carries the role "architect"
+    let q1 = roled_quark("w1", &[], false, "W1 ANSWERED");
+    let q2 = roled_quark("w2", &["architect"], false, "W2 ANSWERED");
+
+    let engine = Engine::new(
+        field.clone(),
+        vec![Box::new(q1), Box::new(q2)],
+        12,
+    );
+
+    let driver = Some(crate::engine::Driver {
+        assignment: ulid::Ulid::new(),
+        task: "write a plan for auth".into(),
+        invariants: vec![],
+    });
+
+    // Get projection for w2 with a task that matches "writing-plans"
+    let events = vec![Event::new(
+        Actor::Human,
+        Some(QuarkId::new("w2")),
+        Kind::Message { body: "write a plan for auth".into() },
+    )];
+    let proj = engine.projection_for(&events, &QuarkId::new("w2"), driver.as_ref(), String::new(), None);
+    assert_eq!(
+        proj.role_body.as_deref(),
+        Some("You design the system architecture.")
+    );
+
+    // A worker not holding the role does not get the body
+    let proj_w1 = engine.projection_for(&events, &QuarkId::new("w1"), driver.as_ref(), String::new(), None);
+    assert_eq!(proj_w1.role_body, None);
 }
 
 /// **Routing gap, reported not stalled.** A task needs a role; the only seat that

@@ -57,11 +57,13 @@ impl Chamber {
 
     /// Load the current target's name + image path into the editor inputs.
     pub(super) fn load_settings_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (name, path, model, effort, mode, secret_var, secret_is_set, secret_applies) = {
+        let (name, path, model, effort, mode, roles, deny_skills, secret_var, secret_is_set, secret_applies) = {
             let key = self.settings_target.key();
             let mut mdl = String::new();
             let mut eff = None;
             let mut mod_cfg = None;
+            let mut roles_str = String::new();
+            let mut deny_skills_str = String::new();
             // Defaults for a non-quark target (Human/Providers), which never shows the
             // API-key field — overwritten below when `key` resolves to a seat.
             let mut var = String::new();
@@ -82,6 +84,8 @@ impl Chamber {
                     mdl = seat.model.clone();
                     eff = seat.effort.clone();
                     mod_cfg = seat.mode_config.clone();
+                    roles_str = seat.roles.join(", ");
+                    deny_skills_str = seat.deny_skills.join(", ");
                     // The provider's required secret vars (catalogue SSOT) plus any the
                     // seat already declares decide whether to show the field and what to
                     // name it — never the value, only ever the NAME (see `secret_status`).
@@ -106,6 +110,8 @@ impl Chamber {
                 mdl,
                 eff.unwrap_or_default(),
                 mod_cfg.unwrap_or_default(),
+                roles_str,
+                deny_skills_str,
                 var,
                 is_set,
                 needs_secret,
@@ -121,6 +127,10 @@ impl Chamber {
             .update(cx, |s, cx| s.set_value(effort, window, cx));
         self.settings_mode_config
             .update(cx, |s, cx| s.set_value(mode, window, cx));
+        self.settings_roles
+            .update(cx, |s, cx| s.set_value(roles, window, cx));
+        self.settings_deny_skills
+            .update(cx, |s, cx| s.set_value(deny_skills, window, cx));
         self.settings_secret_var
             .update(cx, |s, cx| s.set_value(secret_var, window, cx));
         // Never populated from the store — write-only, always blank on (re)load.
@@ -143,6 +153,20 @@ impl Chamber {
         let model_val = self.settings_model.read(cx).value().trim().to_string();
         let effort_val = self.settings_effort.read(cx).value().trim().to_string();
         let mode_val = self.settings_mode_config.read(cx).value().trim().to_string();
+
+        let roles_val = self.settings_roles.read(cx).value();
+        let new_roles: Vec<String> = roles_val
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let deny_skills_val = self.settings_deny_skills.read(cx).value();
+        let new_deny_skills: Vec<String> = deny_skills_val
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
 
         // Team-wide "Max exchanges" (Providers panel) — gated on the Providers target,
         // like the per-quark model/effort/mode fields below are gated on `key`. This
@@ -210,19 +234,19 @@ impl Chamber {
                     }
                 }
 
-                // Model / effort / mode are **per-repo** knobs (unchanged behaviour). The
-                // name is deliberately NOT among them — it was handled globally above, and
-                // the delta below inherits `def`'s name so no per-repo name override is ever
-                // written.
                 let knobs_changed = base.model != new_model
                     || base.effort != new_effort
-                    || base.mode_config != new_mode;
+                    || base.mode_config != new_mode
+                    || base.roles != new_roles
+                    || base.deny_skills != new_deny_skills;
                 if knobs_changed {
                     if let Some(existing) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
                         // Self-contained legacy seat — pin the values on it directly.
                         existing.model = new_model;
                         existing.effort = new_effort;
                         existing.mode_config = new_mode;
+                        existing.roles = new_roles;
+                        existing.deny_skills = new_deny_skills;
                         self.save_repo_team(cx);
                     } else if let Some(def) = def {
                         // Adopted via the catalogue — write a delta override (only what
@@ -234,8 +258,10 @@ impl Chamber {
                             model: new_model,
                             effort: new_effort,
                             mode_config: new_mode,
+                            roles: new_roles,
+                            deny_skills: new_deny_skills,
                             // display_name inherits `def` (via the spread) — names are global.
-                            ..def.clone()
+                            ..base.clone()
                         };
                         let prev = self.team.roster.iter().find(|o| o.id == qid).cloned();
                         let ov = hadron_lattice::seat_override_delta(

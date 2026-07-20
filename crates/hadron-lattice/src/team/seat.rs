@@ -107,6 +107,10 @@ pub struct Seat {
     /// Per-seat budget energy limit (token ceiling).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub energy_limit: Option<u32>,
+    /// Skill names this seat must NEVER be handed (hard lock, e.g. an image model
+    /// never gets `writing-plans`). Matched against `skills::select`'s chosen name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny_skills: Vec<String>,
 }
 
 /// `true`. Serde needs a function, and an absent `enabled` must mean *on* — a seat
@@ -139,7 +143,7 @@ impl Seat {
     /// a field to `Seat` without deciding which side of this line it falls on will not
     /// compile.
     pub fn same_agent(&self, other: &Seat) -> bool {
-        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env, energy_limit } = self;
+        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env, energy_limit, deny_skills } = self;
         id == &other.id
             && vendor == &other.vendor
             && model == &other.model
@@ -154,6 +158,7 @@ impl Seat {
             && commands == &other.commands
             && secret_env == &other.secret_env
             && energy_limit == &other.energy_limit
+            && deny_skills == &other.deny_skills
     }
 
     /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
@@ -176,6 +181,7 @@ impl Seat {
             commands: SeatCommands::default(),
             secret_env: Vec::new(),
             energy_limit: None,
+            deny_skills: vec![],
         }
     }
 
@@ -273,6 +279,9 @@ pub struct SeatOverride {
     /// Per-repo energy limit. Absent = inherit the catalogue's `energy_limit`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub energy_limit: Option<u32>,
+    /// Per-repo skill locks. Absent = inherit the catalogue's `deny_skills`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deny_skills: Option<Vec<String>>,
 }
 
 /// Deserialize an `Option<Option<T>>` field so the three states stay distinct: an
@@ -308,6 +317,7 @@ impl SeatOverride {
             exclusive: None,
             commands: None,
             energy_limit: None,
+            deny_skills: None,
         }
     }
 }

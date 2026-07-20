@@ -34,7 +34,7 @@ mod select;
 #[cfg(test)]
 mod tests;
 
-pub use select::{description, index, plan_author, plan_ref, render, select, Handoff, Match};
+pub use select::{description, index, plan_author, plan_ref, render, select, preferred_role, Handoff, Match};
 pub(crate) use parse::{front_matter_value, split_front_matter};
 
 /// One procedure, compiled into the binary.

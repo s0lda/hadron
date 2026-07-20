@@ -201,6 +201,9 @@ pub struct QuarkSpec {
     pub env: RedactedEnv,
     /// Per-seat energy limit (token ceiling).
     pub energy_limit: Option<u32>,
+    /// Skill names this seat must NEVER be handed (hard lock). Matched against
+    /// `skills::select`'s chosen name.
+    pub deny_skills: Vec<String>,
 }
 
 /// Enforce the naming contract: ids must be non-empty, whitespace-free, path- and
@@ -274,6 +277,7 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
     let commands = spec.commands.clone();
     let env = spec.env.clone();
     let energy_limit = spec.energy_limit;
+    let deny_skills = spec.deny_skills.clone();
     let quark: Box<dyn Quark> = match spec.kind {
         QuarkKind::Cli(cli_spec) => Box::new(
             CliQuark::new(spec.id, spec.flavor, spec.model, cli_spec, ProcessRunner)
@@ -281,7 +285,8 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
                 .with_roles(roles, exclusive)
                 .with_commands(commands)
                 .with_env(env)
-                .with_energy_limit(energy_limit),
+                .with_energy_limit(energy_limit)
+                .with_deny_skills(deny_skills),
         ),
         QuarkKind::Acp(target) => Box::new(
             AcpQuark::new(spec.id, spec.flavor, spec.model, spec.effort, spec.mode_config, target)
@@ -289,7 +294,8 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
                 .with_roles(roles, exclusive)
                 .with_commands(commands)
                 .with_env(env)
-                .with_energy_limit(energy_limit),
+                .with_energy_limit(energy_limit)
+                .with_deny_skills(deny_skills),
         ),
     };
     Ok(quark)
@@ -316,6 +322,7 @@ pub fn build_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore)
         commands: seat.commands.clone(),
         env: seat.resolve_env(store).into(),
         energy_limit: seat.energy_limit,
+        deny_skills: seat.deny_skills.clone(),
     })
 }
 
@@ -340,7 +347,8 @@ pub fn build_seat_watched(
                 .with_roles(seat.roles.clone(), seat.exclusive)
                 .with_commands(seat.commands.clone())
                 .with_env(seat.resolve_env(store))
-                .with_energy_limit(seat.energy_limit),
+                .with_energy_limit(seat.energy_limit)
+                .with_deny_skills(seat.deny_skills.clone()),
         ));
     }
     build_seat(seat, store)
