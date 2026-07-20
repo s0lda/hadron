@@ -5,37 +5,16 @@ impl super::Chamber {
     /// selected view, with the human's message box pinned at the foot. The whole
     /// thing is a rounded, filled card that floats on the unified canvas.
     pub(super) fn chat_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // One row per quark mid-turn, not just the first — the card and the
+        // roster's blue dot must agree on who counts as "working".
         let live_dir = hadron_lattice::live::live_dir(&self.path);
-        let live_activity = self.view.roster.iter().find_map(|r| {
-            hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), chrono::Utc::now())
+        let active = active_quarks(&self.view.roster, |id| {
+            hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(id), chrono::Utc::now())
         });
 
-        // The card and the roster's blue dot must agree: a quark whose field state
-        // says a turn is in flight but which has published no live detail yet (a
-        // CLI quark, or the gap between publishes) still shows a placeholder card.
-        let live_info: Option<(String, &'static str, String)> = live_activity
-            .map(|act| (act.quark.as_str().to_string(), act.doing.label(), act.detail))
-            .or_else(|| {
-                self.view
-                    .roster
-                    .iter()
-                    .find(|r| {
-                        r.adopted
-                            && r.enabled
-                            && matches!(
-                                r.state,
-                                hadron_lattice::QuarkState::Excited | hadron_lattice::QuarkState::Thinking
-                            )
-                    })
-                    .map(|r| (r.id.clone(), "working", "taking a turn…".to_string()))
-            });
-
-        let live_card = live_info.map(|(quark_id_str, label, detail)| {
-            let identity = self.resolve_identity(&quark_id_str);
-            let name = identity.name;
-            h_flex()
-                .items_center()
-                .gap_2()
+        let live_card = (!active.is_empty()).then(|| {
+            v_flex()
+                .gap_1p5()
                 .px_3()
                 .py_2()
                 .mb_2()
@@ -43,25 +22,27 @@ impl super::Chamber {
                 .bg(theme::glass_surface())
                 .border_1()
                 .border_color(theme::glass_highlight())
-                .child(
-                    div()
-                        .size_2()
-                        .rounded_full()
-                        .bg(theme::accent())
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(theme::accent())
-                        .child(format!("{} is {}:", name, label))
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme::text_muted())
-                        .child(detail)
-                )
+                .children(active.into_iter().map(|(quark_id_str, label, detail)| {
+                    let identity = self.resolve_identity(&quark_id_str);
+                    let name = identity.name;
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().size_2().rounded_full().bg(theme::accent()))
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(theme::accent())
+                                .child(format!("{} is {}:", name, label)),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child(detail),
+                        )
+                }))
         });
 
         let selected = self.chat_tab;
