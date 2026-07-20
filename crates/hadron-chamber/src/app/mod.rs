@@ -685,9 +685,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             // is computed once at theme construction and does NOT re-derive from the mutated
             // `colors.popover` above — so without this line they stay the stock-dark theme
             // colour (near-black) instead of our surface. Same gotcha as `tokens.title_bar`.
-            // A neutral gray with a touch of translucency — deliberately NOT the violet
-            // glass tone, so a menu opened over a glass panel reads as a distinct surface.
-            t.tokens.popover = gpui::Hsla::from(gpui::rgba(0x2c2c33e0)).into();
+            t.tokens.popover = gpui::Hsla::from(theme::popover()).into();
             // now a bright field, so a dark line stood out between the chat and the right
             // pane — make the idle border fully transparent so the handle vanishes at rest.
             // Dragging still paints `drag_border` (on-brand pink) for feedback. This also
