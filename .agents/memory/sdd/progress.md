@@ -20,6 +20,7 @@
 - Task 7: complete (commit 340f0b0, review clean)
 - Security: Sanitized path traversal in active plan loading and workspace file reading (commit b8c50b4, review clean)
 - Role Preference & locks: complete (all tasks 1–6 implemented, verified by passing unit tests across engine, prompt, personas, and chamber UI)
+- Task 1: complete (commits d27f548..0af746d, review clean)
 
 ## Minor Findings / Cleanup List
 - `crates/hadron-chamber/src/app/widgets.rs:L56`: The `wash_layer` helper function is unused and generates a compiler warning.
@@ -27,6 +28,6 @@
 
 ## Memory Feature Map & Invariants Registry
 - [x] Task 1: Initialize Invariants Registry
-- [ ] Task 2: Initialize Feature Map
+- [x] Task 2: Initialize Feature Map
 - [ ] Task 3: Update Standard Model Rules
 
