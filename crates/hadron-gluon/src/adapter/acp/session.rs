@@ -11,7 +11,7 @@ use agent_client_protocol::schema::v1::{
     ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionKind, PlanEntryStatus,
     PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SelectedPermissionOutcome, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
-    StopReason, TextContent, Usage as AcpUsage,
+    StopReason, TextContent, ToolCall, ToolKind, Usage as AcpUsage,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, ConnectionTo};
@@ -45,6 +45,56 @@ pub(super) fn acp_stdio_descriptor(program: &str, args: &[String], env: &[(Strin
         "env": env_json,
     })
     .to_string()
+}
+
+/// The one-line "what is it doing" a human reads mid-turn. An agent's bare
+/// `title` is often just the tool's name ("Terminal", "Write"), so enrich it:
+/// the kind's verb plus the file being touched, or the actual command line for
+/// a shell call, falling back to the title when the call carries nothing richer.
+pub(super) fn tool_call_detail(call: &ToolCall) -> String {
+    let verb = match call.kind {
+        ToolKind::Read => Some("Reading"),
+        ToolKind::Edit => Some("Editing"),
+        ToolKind::Delete => Some("Deleting"),
+        ToolKind::Move => Some("Moving"),
+        ToolKind::Search => Some("Searching"),
+        ToolKind::Execute => Some("Running"),
+        ToolKind::Think => Some("Thinking"),
+        ToolKind::Fetch => Some("Fetching"),
+        _ => None,
+    };
+    // The file a follow-along client would jump to: the call's first location.
+    let target = call.locations.first().map(|loc| {
+        loc.path
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_else(|| loc.path.display().to_string())
+    });
+    // A shell call's command line beats its generic "Terminal" title.
+    let command = matches!(call.kind, ToolKind::Execute)
+        .then(|| call.raw_input.as_ref())
+        .flatten()
+        .and_then(|input| input.get("command"))
+        .and_then(|cmd| cmd.as_str())
+        .map(first_line_truncated);
+    match (verb, target, command) {
+        (Some(verb), Some(target), _) => format!("{verb} {target}"),
+        (Some(verb), None, Some(command)) => format!("{verb} `{command}`"),
+        _ => call.title.clone(),
+    }
+}
+
+/// First line only, cut at 80 **chars** (never bytes — a mid-character byte cut
+/// panics the chamber's label rendering).
+fn first_line_truncated(s: &str) -> String {
+    const MAX: usize = 80;
+    let line = s.lines().next().unwrap_or("");
+    if line.chars().count() > MAX {
+        let cut: String = line.chars().take(MAX).collect();
+        format!("{cut}…")
+    } else {
+        line.to_string()
+    }
 }
 
 /// One turn, handed to the resident pump.
@@ -225,7 +275,7 @@ impl super::AcpQuark {
                                         // throttled away.
                                         SessionUpdate::ToolCall(call) => {
                                             if let Some(feed) = &live {
-                                                feed.publish(Doing::Working, &call.title);
+                                                feed.publish(Doing::Working, &tool_call_detail(&call));
                                             }
                                         }
                                         SessionUpdate::Plan(plan) => {
