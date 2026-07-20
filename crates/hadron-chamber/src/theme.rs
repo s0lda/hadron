@@ -121,7 +121,7 @@ pub fn input_bg() -> Rgba {
     rgb(0x18181b) // zinc-900
 }
 pub fn popover() -> Rgba {
-    rgb(0x1f1f25) // solid context-menu surface (opaque — no translucency to re-blend)
+    field_base() // flat #101010 field color for context menus (Jake's request)
 }
 pub fn border() -> Rgba {
     rgb(0x3f3f46) // zinc-700
