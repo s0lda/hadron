@@ -159,6 +159,8 @@ pub struct QuarkStats {
 /// fold archived sessions in and bound by *time* ([`StatsWindow::cutoff`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatsWindow {
+    /// The current run: since the last human message. No archives, no time bound.
+    Current,
     /// The live field: this session since the last `/clear`. No archives, no time bound.
     Session,
     /// Rolling `now − 7 days`, across the live field and archived sessions.
@@ -171,7 +173,8 @@ pub enum StatsWindow {
 
 impl StatsWindow {
     /// In tab order.
-    pub const ALL: [StatsWindow; 4] = [
+    pub const ALL: [StatsWindow; 5] = [
+        StatsWindow::Current,
         StatsWindow::Session,
         StatsWindow::Week,
         StatsWindow::Month,
@@ -180,6 +183,7 @@ impl StatsWindow {
 
     pub fn label(self) -> &'static str {
         match self {
+            StatsWindow::Current => "Current",
             StatsWindow::Session => "Session",
             StatsWindow::Week => "Week",
             StatsWindow::Month => "Month",
@@ -187,11 +191,11 @@ impl StatsWindow {
         }
     }
 
-    /// The inclusive lower bound for an event's `ts`. `None` = no lower bound. `Session`
-    /// is `None` too: it is bounded by its source (the live field), not by a timestamp.
+    /// The inclusive lower bound for an event's `ts`. `None` = no lower bound. `Session`/`Current`
+    /// is `None` too: it is bounded by its source, not by a timestamp.
     pub fn cutoff(self, now: DateTime<chrono::Utc>) -> Option<DateTime<chrono::Utc>> {
         match self {
-            StatsWindow::Session | StatsWindow::AllTime => None,
+            StatsWindow::Current | StatsWindow::Session | StatsWindow::AllTime => None,
             StatsWindow::Week => Some(now - chrono::Duration::days(7)),
             StatsWindow::Month => Some(now - chrono::Duration::days(30)),
         }
@@ -199,7 +203,7 @@ impl StatsWindow {
 
     /// Whether this window folds in archived sessions or reads the live field alone.
     pub fn includes_archives(self) -> bool {
-        !matches!(self, StatsWindow::Session)
+        !matches!(self, StatsWindow::Current | StatsWindow::Session)
     }
 }
 

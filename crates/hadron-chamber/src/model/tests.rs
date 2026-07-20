@@ -26,11 +26,12 @@
 
     use chrono::{TimeZone, Utc};
 
-    /// `StatsWindow::cutoff`: Session and All-time are unbounded; Week/Month are rolling
+    /// `StatsWindow::cutoff`: Session, Current and All-time are unbounded; Week/Month are rolling
     /// lower bounds relative to `now`.
     #[test]
     fn stats_window_cutoffs_bound_the_rolling_windows_only() {
         let now = Utc.with_ymd_and_hms(2026, 7, 16, 12, 0, 0).unwrap();
+        assert_eq!(StatsWindow::Current.cutoff(now), None);
         assert_eq!(StatsWindow::Session.cutoff(now), None);
         assert_eq!(StatsWindow::AllTime.cutoff(now), None);
         assert_eq!(
@@ -41,6 +42,7 @@
             StatsWindow::Month.cutoff(now),
             Some(Utc.with_ymd_and_hms(2026, 6, 16, 12, 0, 0).unwrap())
         );
+        assert!(!StatsWindow::Current.includes_archives());
         assert!(!StatsWindow::Session.includes_archives());
         assert!(StatsWindow::Week.includes_archives());
     }
@@ -99,6 +101,31 @@
         // Session: live field only, ignores the archived slice entirely.
         let session = view.stats_for(&archived, StatsWindow::Session, now);
         assert_eq!(session.total_fresh, 100, "session never folds archives");
+    }
+
+    #[test]
+    fn stats_for_current_filters_by_last_human_message() {
+        let now = Utc.with_ymd_and_hms(2026, 7, 16, 12, 0, 0).unwrap();
+        let t = |secs| now - chrono::Duration::seconds(secs);
+        
+        let mut first_msg = ev(Actor::Human, Some("opus"), Kind::Message { body: "first task".into() });
+        first_msg.ts = t(50);
+        let mut second_msg = ev(Actor::Human, Some("opus"), Kind::Message { body: "second task".into() });
+        second_msg.ts = t(30);
+        
+        let live = vec![
+            first_msg,
+            spend_reply("opus", 50, t(40)),
+            second_msg,
+            spend_reply("opus", 100, t(20)),
+        ];
+        
+        let view = project(&live);
+        let current = view.stats_for(&[], StatsWindow::Current, now);
+        let session = view.stats_for(&[], StatsWindow::Session, now);
+        
+        assert_eq!(current.total_fresh, 100, "current only contains second run");
+        assert_eq!(session.total_fresh, 150, "session contains whole field");
     }
 
     /// `spend_timeline` accumulates fresh spend per quark and team over chronological
