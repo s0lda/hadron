@@ -5,7 +5,7 @@ use hadron_lattice::{
 };
 
 use crate::field::read_events;
-use crate::router::parse_addressee;
+use crate::router::{parse_addressee, parse_all_addressees};
 
 use super::*;
 
@@ -139,7 +139,12 @@ impl super::Engine {
             // truncated report can hide the one line the human needed (a reported-but-
             // unread critical issue is worse than a long one). The addressee is parsed
             // from the reply as written, so what routes is exactly what the field carries.
-            let to = parse_addressee(&body, &self.roster, Some(target), &personas);
+            let addressees = parse_all_addressees(&body, &self.roster, Some(target), &personas);
+            let to = if addressees.len() == 1 {
+                Some(addressees[0].clone())
+            } else {
+                None
+            };
             let event = Event::new(Actor::Quark(target.clone()), to, Kind::Message { body })
                 .with_turn(turn)
                 .answering(assignment);
