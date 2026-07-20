@@ -178,7 +178,7 @@ impl super::Chamber {
                     .child(settings_field("Permission", self.mode_select(target.key(), cx)))
                     .child(settings_field(
                         "Roles",
-                        Input::new(&self.settings_roles).into_any_element(),
+                        self.role_selector(cx),
                     ))
                     .child(settings_field(
                         "Denied skills",

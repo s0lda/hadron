@@ -124,4 +124,134 @@ impl super::Chamber {
             cx.notify();
         }
     }
+
+    pub(super) fn available_roles(&self) -> Vec<String> {
+        let mut roles = vec!["architect".to_string(), "reviewer".to_string(), "executor".to_string()];
+        
+        let hadron_dir = match self.path.parent() {
+            Some(p) => p.to_path_buf(),
+            None => std::path::PathBuf::from(".hadron"),
+        };
+        let repo_roles_dir = hadron_dir.join("roles");
+        if let Ok(rd) = std::fs::read_dir(repo_roles_dir) {
+            for entry in rd.filter_map(Result::ok) {
+                let path = entry.path();
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        let name = stem.to_string();
+                        if !roles.contains(&name) {
+                            roles.push(name);
+                        }
+                    }
+                }
+            }
+        }
+        
+        if let Ok(home) = std::env::var("HOME") {
+            let global_roles_dir = std::path::Path::new(&home).join(".hadron").join("roles");
+            if let Ok(rd) = std::fs::read_dir(global_roles_dir) {
+                for entry in rd.filter_map(Result::ok) {
+                    let path = entry.path();
+                    if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                            let name = stem.to_string();
+                            if !roles.contains(&name) {
+                                roles.push(name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        roles
+    }
+
+    pub(super) fn role_selector(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let available = self.available_roles();
+        let current_roles_val = self.settings_roles.read(cx).value().trim().to_string();
+        let current_roles: Vec<String> = current_roles_val
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let mut row = h_flex().gap_1p5().flex_wrap();
+        for role in &available {
+            let selected = current_roles.iter().any(|r| r.eq_ignore_ascii_case(role));
+            let f = self.settings_roles.clone();
+            let r = role.clone();
+            let current_roles_clone = current_roles.clone();
+            
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("role-chip-{}", role)))
+                    .px_2p5()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(selected, |d| {
+                        d.bg(theme::accent())
+                            .border_color(theme::accent())
+                            .text_color(theme::text())
+                    })
+                    .when(!selected, |d| {
+                        d.bg(theme::bg_surface())
+                            .border_color(theme::border())
+                            .text_color(theme::text_secondary())
+                            .hover(|s| s.bg(theme::bg_surface_raised()))
+                    })
+                    .child(role.clone())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let mut new_roles = current_roles_clone.clone();
+                        let target_role = r.to_string();
+                        if let Some(pos) = new_roles.iter().position(|x| x.eq_ignore_ascii_case(&target_role)) {
+                            new_roles.remove(pos);
+                        } else {
+                            new_roles.push(target_role);
+                        }
+                        f.update(cx, |s, cx| s.set_value(new_roles.join(", "), window, cx));
+                        this.commit_settings_inputs(cx);
+                        cx.notify();
+                    })),
+            );
+        }
+
+        // Add custom role input field and add button next to it.
+        let f_roles = self.settings_roles.clone();
+        let f_new = self.settings_new_role.clone();
+        let current_roles_clone = current_roles.clone();
+        let add_custom = h_flex()
+            .gap_2()
+            .items_center()
+            .child(
+                div()
+                    .w(px(140.0))
+                    .child(Input::new(&self.settings_new_role))
+            )
+            .child(
+                text_button("add-custom-role-btn", "Add")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let custom = f_new.read(cx).value().trim().to_string();
+                        if !custom.is_empty() {
+                            let mut new_roles = current_roles_clone.clone();
+                            if !new_roles.iter().any(|r| r.eq_ignore_ascii_case(&custom)) {
+                                new_roles.push(custom);
+                                f_roles.update(cx, |s, cx| s.set_value(new_roles.join(", "), window, cx));
+                                this.commit_settings_inputs(cx);
+                            }
+                            f_new.update(cx, |s, cx| s.set_value("", window, cx));
+                        }
+                        cx.notify();
+                    }))
+            );
+
+        v_flex()
+            .gap_2()
+            .child(row)
+            .child(add_custom)
+            .into_any_element()
+    }
 }

@@ -142,24 +142,7 @@ impl super::Chamber {
                             }));
                         if let Some(flavor) = &r_flavor {
                             match flavor {
-                                hadron_lattice::Flavor::Orchestrator => {
-                                    let qid3 = qid_str.clone();
-                                    let view3 = view.clone();
-                                    menu = menu.item(PopupMenuItem::new("Make Worker").on_click(
-                                        move |_, window, cx| {
-                                            view3.update(cx, |this, cx| {
-                                                this.handle_context_menu_action(
-                                                    ContextMenuAction::SetFlavor(
-                                                        qid3.clone(),
-                                                        hadron_lattice::Flavor::Worker,
-                                                    ),
-                                                    cx,
-                                                );
-                                            });
-                                            window.refresh();
-                                        },
-                                    ));
-                                }
+                                hadron_lattice::Flavor::Orchestrator => {}
                                 hadron_lattice::Flavor::Worker => {
                                     let qid4 = qid_str.clone();
                                     let view4 = view.clone();

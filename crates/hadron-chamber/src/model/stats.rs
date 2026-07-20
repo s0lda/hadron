@@ -53,6 +53,11 @@ impl super::ChamberView {
             self.messages.iter().filter(in_window).collect()
         };
         msgs.sort_by_key(|m| m.ts);
+        if window == StatsWindow::Current {
+            if let Some(pos) = msgs.iter().rposition(|m| m.from == "human") {
+                msgs = msgs[pos..].to_vec();
+            }
+        }
         msgs
     }
 
