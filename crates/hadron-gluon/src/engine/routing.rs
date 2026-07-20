@@ -5,7 +5,7 @@ use hadron_lattice::{
     Actor, EnergyState, Event, Flavor, Kind, Projection, QuarkId,
 };
 
-use crate::router::{human_mentions, next_pending};
+use crate::router::{human_mentions, next_pending, parse_all_addressees};
 use crate::skills;
 use std::fs;
 
@@ -88,20 +88,28 @@ impl super::Engine {
     /// `Status{Blocked}` a `reroute_blocked` leaves behind — so a dispatched, in-flight,
     /// or un-dispatchable quark is not re-selected. The walk stops once every seat is
     /// accounted for, because an older message can add no addressee a newer one hasn't.
-    pub(super) fn human_message_targets(&self, events: &[Event]) -> Vec<(QuarkId, String)> {
+    pub(super) fn unaddressed_message_targets(&self, events: &[Event]) -> Vec<(QuarkId, String)> {
         let mut out: Vec<(QuarkId, String)> = Vec::new();
         let mut seen: HashSet<QuarkId> = HashSet::new();
+        let personas = self.loaded_personas();
         for idx in (0..events.len()).rev() {
             if seen.len() >= self.roster.len() {
                 break; // every seat already has its most-recent status; older msgs add none
             }
             let e = &events[idx];
             let Kind::Message { body } = &e.kind else { continue };
-            if e.from != Actor::Human || e.to.is_some() {
-                continue; // not an unaddressed human message → next_pending's job
+            if e.to.is_some() {
+                continue; // only unaddressed messages
             }
             let msg_id = e.id;
-            for addressee in self.human_addressees(body) {
+            let addressees = match &e.from {
+                Actor::Human => self.human_addressees(body),
+                Actor::Quark(sender) => {
+                    parse_all_addressees(body, &self.roster, Some(sender), &personas)
+                }
+                _ => continue,
+            };
+            for addressee in addressees {
                 // A newer message already claimed this quark → this older mention is stale.
                 if !seen.insert(addressee.clone()) {
                     continue;
@@ -156,7 +164,7 @@ impl super::Engine {
         if let Some(q) = next_pending(events) {
             targets.push((q, None));
         }
-        for (q, task) in self.human_message_targets(events) {
+        for (q, task) in self.unaddressed_message_targets(events) {
             if !targets.iter().any(|(id, _)| id == &q) {
                 targets.push((q, Some(task)));
             }
@@ -215,10 +223,21 @@ impl super::Engine {
         //    routing): the task is that message itself — there is no `to == target`
         //    event to recover it from.
         if let Some(task) = fallback_task {
+            let personas = self.loaded_personas();
             let ev = events.iter().rev().find(|e| {
-                matches!(&e.kind, Kind::Message { body } if e.from == Actor::Human
-                    && e.to.is_none()
-                    && self.human_addressees(body).contains(target))
+                let Kind::Message { body } = &e.kind else { return false; };
+                if e.to.is_some() {
+                    return false;
+                }
+                match &e.from {
+                    Actor::Human => {
+                        self.human_addressees(body).contains(target)
+                    }
+                    Actor::Quark(sender) => {
+                        parse_all_addressees(body, &self.roster, Some(sender), &personas).contains(target)
+                    }
+                    _ => false,
+                }
             })?;
             return Some(Driver {
                 assignment: ev.id,
