@@ -1,5 +1,19 @@
 use super::*;
 
+/// First free seat id: the conventional one, else `<base>-2`, `-3`, … A second
+/// seat of the same provider is a real, wanted thing (same vendor, different
+/// model — "Claude on Fable" next to "Claude on Opus"), so a collision must mint
+/// a NEW id rather than silently re-adopting the existing seat.
+pub(super) fn unique_seat_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String {
+    if !taken(base) {
+        return base.to_string();
+    }
+    (2u32..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|id| !taken(id))
+        .expect("an unbounded counter always finds a free id")
+}
+
 impl super::Chamber {
     pub(super) fn providers_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.wizard_state {
@@ -460,7 +474,20 @@ impl super::Chamber {
                                     // derived once via `conventional_id` and reused for BOTH records
                                     // below so they never diverge — `remove_quark` keys the roster off
                                     // `ConfiguredQuark.id`, so it must match `Seat.id` exactly.
-                                    let seat_id = hadron_lattice::Transport::Acp.conventional_id(&desc_inner.id);
+                                    let base_id = hadron_lattice::Transport::Acp.conventional_id(&desc_inner.id);
+                                    // Saving the same provider again must create a SECOND seat
+                                    // (same vendor, its own model/identity), not re-adopt the
+                                    // first — so mint a fresh id when the conventional one is
+                                    // taken anywhere this chamber can see a seat.
+                                    let seat_id = {
+                                        let taken = |id: &str| {
+                                            this.providers.iter().any(|p| p.id == id)
+                                                || this.global.quarks.iter().any(|s| s.id.as_str() == id)
+                                                || this.team.quarks.iter().any(|s| s.id.as_str() == id)
+                                                || this.team.roster.iter().any(|o| o.id.as_str() == id)
+                                        };
+                                        unique_seat_id(&base_id, &taken)
+                                    };
 
                                     this.providers.push(ConfiguredQuark {
                                         id: seat_id.clone(),

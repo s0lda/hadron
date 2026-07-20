@@ -97,3 +97,15 @@ fn store_error_reports_unavailable_not_notset() {
         SecretStatus::Unavailable,
     );
 }
+
+/// A second seat of the same provider mints a fresh id instead of colliding
+/// with (and silently re-adopting) the first.
+#[test]
+fn a_second_same_provider_seat_gets_a_unique_id() {
+    let existing = vec!["acp-claude".to_string(), "acp-claude-2".to_string()];
+    let taken = |id: &str| existing.iter().any(|e| e == id);
+    // Free base → unchanged.
+    assert_eq!(super::providers::unique_seat_id("acp-codex", &taken), "acp-codex");
+    // Taken base and taken -2 → the next free suffix.
+    assert_eq!(super::providers::unique_seat_id("acp-claude", &taken), "acp-claude-3");
+}
