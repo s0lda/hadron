@@ -519,7 +519,7 @@ impl Chamber {
             focus_handle,
             chat_tab: ChatTab::Chat,
             info_tab: InfoTab::Identity,
-            stats_window: StatsWindow::Session,
+            stats_window: StatsWindow::Current,
             archived_messages,
             right_rail_tab: RightRailTab::Terminal,
             selected_quark_ix: None,

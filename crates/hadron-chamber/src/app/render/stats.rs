@@ -445,28 +445,30 @@ impl super::Chamber {
             .iter()
             .position(|w| *w == selected)
             .unwrap_or(0);
-        TabBar::new(id)
-            .segmented()
-            .bg(theme::field_base())
-            .selected_index(sel_ix)
-            .children(StatsWindow::ALL.map(|w| {
-                if w == selected {
-                    Tab::new().child(
-                        div()
-                            .text_color(theme::accent())
-                            .child(w.label().to_string()),
-                    )
-                } else {
-                    Tab::new().label(w.label())
-                }
-            }))
-            .on_click(cx.listener(|this, ix: &usize, _window, cx| {
-                this.stats_window = StatsWindow::ALL
-                    .get(*ix)
-                    .copied()
-                    .unwrap_or(StatsWindow::Session);
-                cx.notify();
-            }))
+        h_flex().child(
+            TabBar::new(id)
+                .segmented()
+                .bg(theme::field_base())
+                .selected_index(sel_ix)
+                .children(StatsWindow::ALL.map(|w| {
+                    if w == selected {
+                        Tab::new().child(
+                            div()
+                                .text_color(theme::accent())
+                                .child(w.label().to_string()),
+                        )
+                    } else {
+                        Tab::new().label(w.label())
+                    }
+                }))
+                .on_click(cx.listener(|this, ix: &usize, _window, cx| {
+                    this.stats_window = StatsWindow::ALL
+                        .get(*ix)
+                        .copied()
+                        .unwrap_or(StatsWindow::Current);
+                    cx.notify();
+                }))
+        )
     }
 
     /// The chat column's Stats tab: team-wide telemetry over the selected window.
