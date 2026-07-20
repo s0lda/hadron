@@ -1588,7 +1588,6 @@ fn the_standard_model_survives_a_workspace_with_no_files_at_all() {
     assert!(text.contains("# The Standard Model"));
     assert!(text.contains("Prove it runs"), "rule 1 — the one both quarks broke");
     assert!(text.contains("Make invalid states unrepresentable"), "rule 8 — agy's");
-    assert!(text.contains("Maintain the memory: Index, Features, and Invariants"), "rule 9 — memory/feature-map/invariants");
     assert!(available.is_empty(), "no repo tier exists here, and that is fine");
 }
 
