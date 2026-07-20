@@ -265,6 +265,42 @@ pub fn parse_addressee(
     None
 }
 
+/// Parses all unique line-start mentions in a message body, excluding the sender.
+pub fn parse_all_addressees(
+    body: &str,
+    roster: &[QuarkCard],
+    sender: Option<&QuarkId>,
+    personas: &[Persona],
+) -> Vec<QuarkId> {
+    let mut out = Vec::new();
+    for line in body.lines() {
+        let Some(rest) = line.trim_start().strip_prefix('@') else {
+            continue;
+        };
+        if let Some((_, resolution)) = match_longest_mention(rest, roster, personas) {
+            match resolution {
+                ResolvedMention::Quark(card) => {
+                    if Some(&card.id) != sender {
+                        if !out.contains(&card.id) {
+                            out.push(card.id.clone());
+                        }
+                    }
+                }
+                ResolvedMention::Team => {
+                    for card in roster {
+                        if Some(&card.id) != sender {
+                            if !out.contains(&card.id) {
+                                out.push(card.id.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Every roster quark id `@mentioned` ANYWHERE in a human message, in first-seen
 /// order, deduped. Unlike `parse_addressee` (line-start only, for quark replies
 /// where an incidental/quoted mention must not route), a human addresses whoever

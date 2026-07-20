@@ -2242,7 +2242,7 @@ async fn every_unserved_human_message_is_serviced_not_just_the_latest() {
     );
 
     let events = read_events(&path).unwrap();
-    let targets = engine.human_message_targets(&events);
+    let targets = engine.unaddressed_message_targets(&events);
     let ids: Vec<&str> = targets.iter().map(|(q, _)| q.as_str()).collect();
 
     assert!(ids.contains(&"claude"), "claude's request was abandoned: {ids:?}");
@@ -2291,7 +2291,7 @@ async fn a_quark_that_only_went_excited_is_still_pending_not_stranded() {
     );
 
     let events = read_events(&path).unwrap();
-    let targets = engine.human_message_targets(&events);
+    let targets = engine.unaddressed_message_targets(&events);
     let ids: Vec<&str> = targets.iter().map(|(q, _)| q.as_str()).collect();
     assert!(
         ids.contains(&"claude"),
@@ -2336,7 +2336,7 @@ async fn a_reply_or_terminal_status_counts_as_answered() {
     );
 
     let events = read_events(&path).unwrap();
-    let targets = engine.human_message_targets(&events);
+    let targets = engine.unaddressed_message_targets(&events);
     let ids: Vec<&str> = targets.iter().map(|(q, _)| q.as_str()).collect();
     assert!(!ids.contains(&"claude"), "a quark that replied must not be re-dispatched: {ids:?}");
 }
@@ -2390,6 +2390,69 @@ async fn two_quarks_named_in_one_message_run_concurrently() {
         overlap.load(Ordering::SeqCst),
         "the two turns never overlapped — dispatch is still serial"
     );
+}
+
+#[tokio::test]
+async fn multiple_mentions_in_quark_message_run_concurrently() {
+    use crate::mock::MockQuark;
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+
+    // Seed the event: a message from the orchestrator containing line-start mentions
+    let orch_msg = Event::new(
+        Actor::Quark(QuarkId::new("orch")),
+        None,
+        Kind::Message {
+            body: "Plan:\n@a do X\n@b do Y".into(),
+        },
+    );
+    append_event(&path, &orch_msg).unwrap();
+
+    let engine = Engine::new(
+        path.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("a"), Flavor::Worker, "ok")),
+            Box::new(MockQuark::repeating(QuarkId::new("b"), Flavor::Worker, "ok")),
+            Box::new(MockQuark::repeating(QuarkId::new("orch"), Flavor::Orchestrator, "ok")),
+        ],
+        10,
+    );
+
+    let events = read_events(&path).unwrap();
+    let targets = engine.unaddressed_message_targets(&events);
+    let ids: Vec<&str> = targets.iter().map(|(q, _)| q.as_str()).collect();
+
+    assert!(ids.contains(&"a"), "worker a was not targeted: {ids:?}");
+    assert!(ids.contains(&"b"), "worker b was not targeted: {ids:?}");
+}
+
+#[tokio::test]
+async fn multiple_mentions_in_quark_reply_results_in_unaddressed_event() {
+    use crate::mock::MockQuark;
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+
+    let mut engine = Engine::new(
+        path.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("a"), Flavor::Worker, "ok")),
+            Box::new(MockQuark::repeating(QuarkId::new("b"), Flavor::Worker, "ok")),
+            Box::new(MockQuark::repeating(QuarkId::new("orch"), Flavor::Orchestrator, "ok")),
+        ],
+        10,
+    );
+
+    // Let the orchestrator run a turn and emit a reply with multiple mentions
+    let outcome = TurnOutcome {
+        message: Some("Plan:\n@a do X\n@b do Y".into()),
+        ..Default::default()
+    };
+    engine.finish_turn(&QuarkId::new("orch"), outcome, None, Some(ulid::Ulid::new())).await.unwrap();
+
+    // Check that the written event has to: None
+    let events = read_events(&path).unwrap();
+    let reply_ev = events.iter().find(|e| e.from == Actor::Quark(QuarkId::new("orch")) && matches!(e.kind, Kind::Message { .. })).unwrap();
+    assert!(reply_ev.to.is_none(), "quark message with multiple mentions must have to: None");
 }
 
 /// The behaviour the human actually asked for: while a worker grinds through a
