@@ -80,7 +80,7 @@ impl Chamber {
                 // lookup would show blank and a later commit could wipe the real value.
                 // These show the *effective* value (catalogue default + any repo override).
                 let resolved = resolve_team(&self.team, &self.global);
-                if let Some(seat) = resolved.get(&QuarkId::new(key)) {
+                if let Some(seat) = resolved.get(&QuarkId::new(key)).or_else(|| self.global.get(&QuarkId::new(key))) {
                     mdl = seat.model.clone();
                     eff = seat.effort.clone();
                     mod_cfg = seat.mode_config.clone();
