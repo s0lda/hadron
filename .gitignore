@@ -16,11 +16,6 @@ gpui-component
 # on every turn without depending on any file surviving a clone.
 .hadron/
 
-# Claude Code local state (incl. embedded worktrees)
-.claude/
-.remember/
-.superpowers/
-
 # Screenshot and recording files
 assets/screenshots/
 
