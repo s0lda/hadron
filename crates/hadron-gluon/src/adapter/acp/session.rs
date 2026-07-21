@@ -577,9 +577,15 @@ impl super::AcpQuark {
                 anyhow::bail!("the ACP agent died mid-turn (it will re-boot on the next turn)");
             }
         };
-        // A failed `session/prompt` on a LIVE connection (a refusal, a bad request) is
-        // not a dead agent — keep the session and let the turn fail on its own.
-        let reply = reply?;
+        // If session/prompt failed (e.g. WebSocket connection closed or agent exception),
+        // drop the session so the next turn re-boots a fresh session instead of stranding the seat.
+        let reply = match reply {
+            Ok(r) => r,
+            Err(e) => {
+                self.session = None;
+                return Err(e);
+            }
+        };
 
         // Per-turn spend, by component, from the cumulative counters.
         let (spend, new_watermark) = turn_spend(self.last_spend, reply.usage.as_ref());
