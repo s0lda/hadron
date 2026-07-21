@@ -225,6 +225,175 @@ impl super::Chamber {
             )
     }
 
+    /// Best-effort, read-only probe of whether `hadron-gluon` currently holds
+    /// `gluon.lock` — the same flock check `main.rs` runs once at chamber startup
+    /// (`gluon_running`), made callable live each time the Process Manager opens.
+    /// Any lock this acquires is released immediately; it never blocks the daemon.
+    fn gluon_running(&self) -> bool {
+        let field_dir = self.path.parent().unwrap_or(std::path::Path::new("."));
+        let lock_path = field_dir.join("gluon.lock");
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            let Ok(file) = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(&lock_path)
+            else {
+                return false;
+            };
+            let fd = file.as_raw_fd();
+            // SAFETY: `fd` is a valid, open descriptor owned by `file` for this call.
+            let acquired = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0;
+            if acquired {
+                unsafe { libc::flock(fd, libc::LOCK_UN) };
+            }
+            // We could take the lock ourselves → nobody holds it → gluon is NOT running.
+            !acquired
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    }
+
+    /// Live rows for the Process Manager overlay: the daemon's real running state
+    /// (a flock probe — only the OS knows) plus every adopted roster seat. See
+    /// [`crate::model::build_process_rows`] for the pure row-building logic.
+    pub(super) fn resolve_running_processes(&self) -> Vec<crate::model::ProcessRow> {
+        crate::model::build_process_rows(self.gluon_running(), &self.view.roster)
+    }
+
+    /// The Process Manager overlay: a dim backdrop (click to dismiss) behind a card
+    /// listing the daemon and every adopted quark seat, each with its live status
+    /// and whichever *real* control action applies — force-restart (`Kind::Reboot`,
+    /// [`Self::reboot_quark`]) for an enabled resident ACP seat, and the
+    /// enable/disable toggle ([`Self::toggle_quark_enabled`]) every adopted seat
+    /// already has in Settings. Deliberately no OS-level "Kill": the chamber is a
+    /// separate process from the daemon and never sees a quark's child PID, so a
+    /// kill switch here would have nothing real to act on.
+    pub(super) fn process_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let rows = self.resolve_running_processes();
+
+        let mut list = v_flex().gap_1();
+        for row in rows {
+            let dot = match row.status.as_str() {
+                "Running" | "Excited" | "Thinking" => rgb(0x22c55e),
+                "Waiting" => rgb(0xf59e0b),
+                "Blocked" | "Error" => rgb(0xef4444),
+                _ => rgb(0x71717a), // Stopped / Disabled / Idle
+            };
+
+            let mut row_actions = h_flex().gap_1p5();
+            if row.can_restart {
+                let id = row.id.clone();
+                row_actions = row_actions.child(
+                    text_button(SharedString::from(format!("proc-restart-{}", row.id)), "Restart")
+                        .on_click(cx.listener(move |this, _, _, cx| this.reboot_quark(&id, cx))),
+                );
+            }
+            if row.can_toggle {
+                let id = row.id.clone();
+                let label = if row.enabled { "Disable" } else { "Enable" };
+                row_actions = row_actions.child(
+                    text_button(SharedString::from(format!("proc-toggle-{}", row.id)), label).on_click(
+                        cx.listener(move |this, _, _, cx| this.toggle_quark_enabled(&id, cx)),
+                    ),
+                );
+            }
+
+            list = list.child(
+                h_flex()
+                    .id(SharedString::from(format!("proc-row-{}", row.id)))
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .px_3()
+                    .py_2()
+                    .rounded_md()
+                    .bg(theme::bg_surface())
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().size(px(8.0)).rounded_full().bg(dot))
+                            .child(div().text_sm().text_color(theme::text()).child(row.label)),
+                    )
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(row.status),
+                            )
+                            .child(row_actions),
+                    ),
+            );
+        }
+
+        let card = v_flex()
+            .occlude()
+            .w(px(480.0))
+            .max_h(px(560.0))
+            .p_4()
+            .gap_3()
+            .rounded_lg()
+            .bg(theme::modal_surface())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // swallow inner clicks
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_color(theme::text())
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child("Processes"),
+                    )
+                    .child(
+                        div()
+                            .id("processes-close")
+                            .px_3()
+                            .py_1p5()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .text_sm()
+                            .text_color(theme::text_secondary())
+                            .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
+                            .child("Close")
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_process_manager(cx))),
+                    ),
+            )
+            .child(
+                div()
+                    .id("processes-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(list),
+            );
+
+        div()
+            .id("processes-backdrop")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000088))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.toggle_process_manager(cx)),
+            )
+            .child(card)
+    }
+
     /// The per-quark permission ladder (Ask / Write / Auto / Bypass) as an explicit
     /// segmented picker for Settings. Unlike the roster's cycle-on-click tag, each rung is
     /// directly selectable, the current resolved mode is highlighted on its risk colour,

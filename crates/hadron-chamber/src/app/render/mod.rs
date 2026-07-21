@@ -70,6 +70,9 @@ impl Render for Chamber {
             .then(|| self.info_panel_overlay(cx));
         let about = self.about_open.then(|| self.about_overlay(cx));
         let app_menu = self.app_menu_open.then(|| self.app_menu_overlay(cx));
+        let processes = self
+            .process_manager_open
+            .then(|| self.process_overlay(cx));
 
         let content = v_flex()
             .key_context(KEY_CONTEXT)
@@ -122,7 +125,8 @@ impl Render for Chamber {
             .children(settings)
             .children(info)
             .children(about)
-            .children(app_menu);
+            .children(app_menu)
+            .children(processes);
 
         let wrapped_content = crate::window_frame::window_frame(window, cx, content);
 
