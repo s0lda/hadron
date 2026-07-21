@@ -207,7 +207,7 @@ impl Seat {
             .iter()
             .filter_map(|name| match store.get(&self.id, name) {
                 Ok(Some(value)) => Some((name.clone(), value)),
-                _ => None,
+                _ => std::env::var(name).ok().map(|val| (name.clone(), val)),
             })
             .collect()
     }

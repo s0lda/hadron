@@ -18,7 +18,7 @@ impl super::Chamber {
     pub(super) fn start_acp_model_probe(&mut self, id: &str, cx: &mut Context<Self>) {
         let target = resolve_team(&self.team, &self.global)
             .get(&QuarkId::new(id))
-            .and_then(hadron_gluon::adapter::registry::AcpTarget::for_seat);
+            .and_then(|seat| hadron_gluon::adapter::registry::AcpTarget::for_seat_with_env(seat, self.secret_store.as_ref()));
         let Some(target) = target else {
             self.acp_model_probe = None;
             return;

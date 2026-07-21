@@ -35,10 +35,11 @@ pub enum QuarkKind {
 /// straight from `team.json`, so reaching a **new** ACP-speaking provider is a
 /// config change rather than a code change — which is the entire point of putting
 /// a protocol here instead of another vendor adapter.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AcpTarget {
     pub program: String,
     pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
 }
 
 impl AcpTarget {
@@ -55,6 +56,7 @@ impl AcpTarget {
         ACP_AGENTS.iter().find(|a| a.vendor == vendor).map(|a| AcpTarget {
             program: a.program.to_string(),
             args: a.args.iter().map(|s| s.to_string()).collect(),
+            env: Vec::new(),
         })
     }
 
@@ -68,9 +70,17 @@ impl AcpTarget {
             return None;
         }
         match &seat.command {
-            Some(cmd) => Some(AcpTarget { program: cmd.program.clone(), args: cmd.args.clone() }),
+            Some(cmd) => Some(AcpTarget { program: cmd.program.clone(), args: cmd.args.clone(), env: Vec::new() }),
             None => AcpTarget::for_vendor(&seat.vendor),
         }
+    }
+
+    /// Build an [`AcpTarget`] for `seat` with its resolved secret environment
+    /// from `store` attached so probe boots inherit required API keys.
+    pub fn for_seat_with_env(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore) -> Option<AcpTarget> {
+        let mut target = Self::for_seat(seat)?;
+        target.env = seat.resolve_env(store);
+        Some(target)
     }
 
     /// The shell-ish command line, for `AcpAgent::from_str` and for diagnostics.

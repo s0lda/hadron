@@ -179,23 +179,27 @@ pub fn probe_selector(target: &AcpTarget) -> anyhow::Result<Option<ModelSelector
     Ok(model_selector(&opts))
 }
 
+use super::session::acp_stdio_descriptor;
+
 /// Boot an ACP agent, complete `initialize` + `session/new`, read back the agent's
 /// name and its advertised `config_options`, and shut it down. The shared core of
 /// [`probe`] and [`probe_selector`] — one boot path, so a change to the handshake
 /// (or the 120s guard) can never drift between the two callers. **Blocking.**
 fn probe_session(target: &AcpTarget) -> anyhow::Result<(Option<String>, Vec<SessionConfigOption>)> {
-    let command = target.command_line();
     type Probed = (Option<String>, Vec<SessionConfigOption>);
     let (tx, rx) = std::sync::mpsc::channel::<anyhow::Result<Probed>>();
 
+    let target_clone = target.clone();
     // Same shape as `boot`: the SDK's connection API is scoped to its closure and
     // wants its own executor, so it gets its own thread.
     std::thread::Builder::new()
         .name("hadron-acp-probe".to_string())
         .spawn(move || {
             let outcome: anyhow::Result<Probed> = futures::executor::block_on(async move {
-                let agent = AcpAgent::from_str(&command)
-                    .map_err(|e| anyhow::anyhow!("bad ACP command {command:?}: {e}"))?;
+                let display_command = target_clone.command_line();
+                let agent_source = acp_stdio_descriptor(&target_clone.program, &target_clone.args, &target_clone.env);
+                let agent = AcpAgent::from_str(&agent_source)
+                    .map_err(|e| anyhow::anyhow!("bad ACP command {display_command:?}: {e}"))?;
                 let probed = agent_client_protocol::Client
                     .builder()
                     .name("hadron")
