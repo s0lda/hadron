@@ -194,6 +194,31 @@ impl Chamber {
         cx.notify();
     }
 
+    /// Select the chat column's tab directly by index (Alt-1..3). Out-of-range
+    /// indices clamp to the default via [`ChatTab::from_index`]. Pure setter with
+    /// no repaint so it stays unit-testable; the action handler notifies.
+    pub(super) fn set_chat_tab_index(&mut self, ix: usize) {
+        self.chat_tab = ChatTab::from_index(ix);
+    }
+
+    /// Select the right rail's tab directly by index (Alt-4..7). See
+    /// [`Self::set_chat_tab_index`].
+    pub(super) fn set_inspector_tab_index(&mut self, ix: usize) {
+        self.right_rail_tab = RightRailTab::from_index(ix);
+    }
+
+    /// `ChatTab1..3` handler: set the chat tab by index and repaint.
+    pub(super) fn pick_chat_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.set_chat_tab_index(ix);
+        cx.notify();
+    }
+
+    /// `InspectorTab1..4` handler: set the right rail tab by index and repaint.
+    pub(super) fn pick_inspector_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.set_inspector_tab_index(ix);
+        cx.notify();
+    }
+
     /// `ToggleFocus`: move keyboard focus between the chat input and the
     /// terminal. If the terminal already has focus, this returns focus to chat —
     /// that direction reads live focus state (`FocusHandle::is_focused`), which a
@@ -683,6 +708,19 @@ pub(super) fn toggle_focus_target(active_rail_tab: RightRailTab) -> (FocusTarget
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_select_chat_tab_and_inspector_tab() {
+        // `set_chat_tab_index` / `set_inspector_tab_index` are thin wrappers over
+        // `ChatTab::from_index` / `RightRailTab::from_index`. A `Chamber` can only be
+        // built with a live `Window` + `Context`, so we assert the index→tab mapping
+        // the setters delegate to rather than standing up a headless GUI app.
+        assert!(ChatTab::from_index(2) == ChatTab::Stats);
+        assert!(RightRailTab::from_index(1) == RightRailTab::FileTree);
+        // Out-of-range clamps to the default tab, so the setters never panic.
+        assert!(ChatTab::from_index(99) == ChatTab::Chat);
+        assert!(RightRailTab::from_index(99) == RightRailTab::Terminal);
+    }
 
     #[test]
     fn toggle_focus_targets_terminal_when_terminal_tab_active() {
