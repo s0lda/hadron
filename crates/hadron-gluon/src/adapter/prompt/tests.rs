@@ -212,7 +212,9 @@ fn a_finished_worker_reports_up_and_is_never_told_to_drop_the_mention() {
 
     let worker = build(&proj, &QuarkId::new("agy"));
     assert!(
-        worker.contains("When your task is complete, start a line with `@orchestrator`"),
+        worker.contains(
+            "When your task is complete or if your turn encounters an error, start a line with `@orchestrator`"
+        ),
         "a worker must be told to report its completed work UP to the orchestrator"
     );
     assert!(

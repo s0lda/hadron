@@ -274,7 +274,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     // chain; only the quark that actually answers to the human hands back to them.
     if is_worker(projection, self_id) {
         p.push_str(
-            "**When your task is complete, start a line with `@orchestrator` and report there.** \
+            "**When your task is complete or if your turn encounters an error, start a line with `@orchestrator` and report there.** \
              You report to the orchestrator, not to the human — a reply with no `@mention` \
              excites nobody and your work stops dead in the field. Do not hand back to the \
              human directly.\n\n",
@@ -308,8 +308,8 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     // dispatch the long work and hand back, rather than doing it inline.
     if is_orchestrator(projection, self_id) {
         p.push_str(
-            "You are the **orchestrator**: you are the human's conversational partner, the \
-             workers report to you, and you carry their work to the human. Three duties.\n\n\
+            "You are the **orchestrator**: you are the human's conversational partner, worker Quarks in the \
+             swarm and your sub-agents report their progress and errors to you, and you carry their work to the human. Three duties.\n\n\
              **Stay available.** The human waits on your turn, and turns run serially — a long \
              orchestrator turn IS the chat freezing. When a request implies long work, do NOT \
              grind through it inline: decide, hand it out, and reply promptly. **Prefer real \
