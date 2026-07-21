@@ -299,6 +299,77 @@ async fn a_failed_turn_does_not_strand_the_quark_as_excited() {
     );
 }
 
+#[tokio::test]
+async fn failing_quark_turn_sends_error_message_to_orchestrator() {
+    struct FailingWorker;
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for FailingWorker {
+        fn id(&self) -> QuarkId {
+            QuarkId::new("agy")
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+            Err(anyhow::anyhow!("cli blew up"))
+        }
+    }
+
+    struct OrchQuark;
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for OrchQuark {
+        fn id(&self) -> QuarkId {
+            QuarkId::new("opus")
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Orchestrator
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+            Ok(TurnOutcome {
+                message: Some("acknowledged".into()),
+                permission: None,
+                usage: Default::default(),
+            })
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+    seed_human_message(&field, "agy", "hello");
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(FailingWorker), Box::new(OrchQuark)],
+        8,
+    );
+    let _ = engine.run_until_quiesce().await;
+
+    let events = read_events(&field).unwrap();
+    let gluon_msg = events.iter().find(|e| {
+        e.from == Actor::Gluon
+            && matches!(&e.kind, Kind::Message { body } if body.contains("errored"))
+    });
+    assert!(
+        gluon_msg.is_some(),
+        "gluon should emit an error message event"
+    );
+    let body = match &gluon_msg.unwrap().kind {
+        Kind::Message { body } => body,
+        _ => unreachable!(),
+    };
+    assert!(
+        body.starts_with("@orchestrator ⚠️ Quark `agy` turn errored: cli blew up"),
+        "error message must address orchestrator when one exists: got {body}"
+    );
+}
+
 /// **THE discriminating test for the turn watchdog.**
 ///
 /// The production failure, exactly: a quark is excited, its process dies (or

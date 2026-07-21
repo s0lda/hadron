@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use hadron_lattice::{
-    Actor, Event, Kind, Mode, QuarkId, QuarkState,
+    Actor, Event, Flavor, Kind, Mode, QuarkId, QuarkState,
     TurnOutcome,
 };
 use tokio::task::{AbortHandle, JoinSet};
@@ -11,6 +11,20 @@ use crate::field::read_events;
 use super::*;
 
 impl super::Engine {
+    fn format_error_message(&self, quark_id: &QuarkId, err: &anyhow::Error) -> String {
+        let orchestrator = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator);
+        if let Some(orch) = orchestrator {
+            if &orch.id != quark_id {
+                return format!(
+                    "@{} ⚠️ Quark `{}` turn errored: {err:#}",
+                    crate::router::ORCHESTRATOR_ALIAS,
+                    quark_id.as_str()
+                );
+            }
+        }
+        format!("⚠️ Quark `{}` turn errored: {err:#}", quark_id.as_str())
+    }
+
     /// Dispatch every pending quark turn CONCURRENTLY until the field has no pending
     /// work **and** no turn is still in flight (quiesce), or the exchange budget is
     /// exhausted (backstop).
@@ -369,6 +383,10 @@ impl super::Engine {
                     // quark reads as forever-working. Its siblings keep running.
                     in_flight.remove(&target);
                     abort_handles.remove(&target);
+                    let err_msg = self.format_error_message(&target, &err);
+                    let _ = self
+                        .append(Event::new(Actor::Gluon, None, Kind::Message { body: err_msg }))
+                        .await;
                     let grounded = self
                         .append(Event::new(
                             Actor::Quark(target.clone()),
@@ -407,6 +425,17 @@ impl super::Engine {
                             .await;
                     }
                     turns.abort_all();
+                    let orchestrator = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator);
+                    let panic_msg = match orchestrator {
+                        Some(_orch) => format!(
+                            "@{} ⚠️ A quark turn panicked: {join_err}",
+                            crate::router::ORCHESTRATOR_ALIAS
+                        ),
+                        None => format!("⚠️ A quark turn panicked: {join_err}"),
+                    };
+                    let _ = self
+                        .append(Event::new(Actor::Gluon, None, Kind::Message { body: panic_msg }))
+                        .await;
                     if first_err.is_none() {
                         first_err = Some(anyhow::anyhow!("a quark turn panicked: {join_err}"));
                     }
