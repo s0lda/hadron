@@ -262,13 +262,14 @@ impl super::Chamber {
             .h_full()
             .max_w(px(960.0))
             .max_h(px(640.0))
-            .rounded_lg()
+            .rounded(INNER_RADIUS)
             .overflow_hidden()
             // Opaque: a focused settings modal shouldn't let the bright field bleed through
             // (it read as too transparent). Solid, not glass — shared with the info panel.
             .bg(theme::modal_surface())
             .border_1()
             .border_color(theme::glass_highlight())
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // swallow inner clicks
             .child(sidebar)
             .child(panel);
 
@@ -283,8 +284,11 @@ impl super::Chamber {
             .flex_col()
             .items_center()
             .justify_center()
-            .bg(rgba(0x00000088))
-            .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx)))
+            .bg(rgba(0x00000099))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.close_settings(window, cx)),
+            )
             .child(card)
     }
 
