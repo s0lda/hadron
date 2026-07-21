@@ -276,13 +276,58 @@ impl super::Chamber {
     pub(super) fn process_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self.resolve_running_processes();
 
-        let mut list = v_flex().gap_1();
+        let live_dir = hadron_lattice::live::live_dir(&self.path);
+        let now = chrono::Utc::now();
+
+        let mut list = v_flex().gap_1p5();
         for row in rows {
-            let dot = match row.status.as_str() {
-                "Running" | "Excited" | "Thinking" => rgb(0x22c55e),
-                "Waiting" => rgb(0xf59e0b),
-                "Blocked" | "Error" => rgb(0xef4444),
-                _ => rgb(0x71717a), // Stopped / Disabled / Idle
+            // Determine dot color & presence label using Hadron SSOT theme presence logic
+            let (dot, status_label) = if row.id == "hadron-gluon" {
+                if row.status == "Running" {
+                    (theme::presence(hadron_lattice::QuarkState::Ground), "Running".to_string())
+                } else {
+                    (theme::presence_disabled(), "Stopped".to_string())
+                }
+            } else if let Some(roster_row) = self.view.roster.iter().find(|r| r.id == row.id) {
+                let activity = hadron_lattice::live::read(
+                    &live_dir,
+                    &hadron_lattice::QuarkId::new(&row.id),
+                    now,
+                );
+                let effective_state = effective_presence_state(
+                    roster_row.state,
+                    roster_row.adopted,
+                    roster_row.enabled,
+                    activity.is_some(),
+                );
+                if roster_row.adopted && roster_row.enabled {
+                    (
+                        theme::presence(effective_state),
+                        theme::presence_label(effective_state).to_string(),
+                    )
+                } else if !roster_row.adopted {
+                    (theme::presence_disabled(), "available".to_string())
+                } else {
+                    (theme::presence_disabled(), "disabled".to_string())
+                }
+            } else {
+                (theme::presence_disabled(), row.status.clone())
+            };
+
+            let avatar_or_icon = if row.id == "hadron-gluon" {
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.0))
+                    .rounded_full()
+                    .bg(theme::bg_surface_raised())
+                    .text_color(theme::text_secondary())
+                    .child(Icon::new(IconName::Cpu).small())
+                    .into_any_element()
+            } else {
+                let resolved = self.resolve_identity(&row.id);
+                identity_avatar(&resolved, 24.0).into_any_element()
             };
 
             let mut row_actions = h_flex().gap_1p5();
@@ -313,12 +358,14 @@ impl super::Chamber {
                     .py_2()
                     .rounded_md()
                     .bg(theme::bg_surface())
+                    .hover(|s| s.bg(theme::bg_surface_raised()))
                     .child(
                         h_flex()
                             .items_center()
-                            .gap_2()
-                            .child(div().size(px(8.0)).rounded_full().bg(dot))
-                            .child(div().text_sm().text_color(theme::text()).child(row.label)),
+                            .gap_2p5()
+                            .child(avatar_or_icon)
+                            .child(div().size(px(7.0)).rounded_full().bg(dot))
+                            .child(div().text_sm().font_weight(gpui::FontWeight::MEDIUM).text_color(theme::text()).child(row.label)),
                     )
                     .child(
                         h_flex()
@@ -328,7 +375,7 @@ impl super::Chamber {
                                 div()
                                     .text_xs()
                                     .text_color(theme::text_muted())
-                                    .child(row.status),
+                                    .child(status_label),
                             )
                             .child(row_actions),
                     ),
@@ -337,11 +384,11 @@ impl super::Chamber {
 
         let card = v_flex()
             .occlude()
-            .w(px(480.0))
+            .w(px(500.0))
             .max_h(px(560.0))
             .p_4()
-            .gap_3()
-            .rounded_lg()
+            .gap_4()
+            .rounded(INNER_RADIUS)
             .bg(theme::modal_surface())
             .border_1()
             .border_color(theme::glass_highlight())
@@ -351,22 +398,33 @@ impl super::Chamber {
                     .items_center()
                     .justify_between()
                     .child(
-                        div()
-                            .text_color(theme::text())
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child("Processes"),
+                        v_flex()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::text())
+                                    .child("Processes"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child("Daemon & Quark Seat Control"),
+                            ),
                     )
                     .child(
                         div()
                             .id("processes-close")
-                            .px_3()
-                            .py_1p5()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .text_sm()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(24.0))
+                            .rounded_full()
                             .text_color(theme::text_secondary())
                             .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
-                            .child("Close")
+                            .child(Icon::new(IconName::WindowClose).small())
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_process_manager(cx))),
                     ),
             )
@@ -386,7 +444,7 @@ impl super::Chamber {
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgba(0x00000088))
+            .bg(rgba(0x00000099))
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, cx| this.toggle_process_manager(cx)),
