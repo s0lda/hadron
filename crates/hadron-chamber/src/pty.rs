@@ -18,8 +18,10 @@ use std::sync::{Arc, Mutex};
 
 use alacritty_terminal::event::VoidListener;
 use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::index::{Column, Point, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::term::{point_to_viewport, Config, Term};
+use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
@@ -231,6 +233,64 @@ impl PtyTerminal {
         (self.cols, self.rows)
     }
 
+    /// Map a viewport cell (row/col from the top-left of the visible screen) to a
+    /// grid point, clamped to the grid and offset for any scrollback.
+    fn grid_point(&self, offset: usize, row: usize, col: usize) -> Point {
+        viewport_to_point(
+            offset,
+            Point::new(
+                row.min(self.rows.saturating_sub(1)),
+                Column(col.min(self.cols.saturating_sub(1))),
+            ),
+        )
+    }
+
+    /// Begin a mouse text selection at viewport cell `(row, col)`. `clicks` picks
+    /// the granularity — 1: character drag, 2: word, 3+: line — the usual
+    /// double/triple-click terminal behaviour. `right_half` says the pointer sits
+    /// on the right half of the cell, so the boundary cell is included naturally.
+    pub fn selection_start(&self, row: usize, col: usize, right_half: bool, clicks: usize) {
+        if let Ok(mut term) = self.term.lock() {
+            let point = self.grid_point(term.grid().display_offset(), row, col);
+            let side = if right_half { Side::Right } else { Side::Left };
+            let ty = match clicks {
+                2 => SelectionType::Semantic,
+                n if n >= 3 => SelectionType::Lines,
+                _ => SelectionType::Simple,
+            };
+            term.selection = Some(Selection::new(ty, point, side));
+        }
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// Extend the active selection to viewport cell `(row, col)` (drag).
+    pub fn selection_update(&self, row: usize, col: usize, right_half: bool) {
+        if let Ok(mut term) = self.term.lock() {
+            let point = self.grid_point(term.grid().display_offset(), row, col);
+            let side = if right_half { Side::Right } else { Side::Left };
+            if let Some(sel) = term.selection.as_mut() {
+                sel.update(point, side);
+            }
+        }
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// Drop any active selection (clears its highlight on the next frame).
+    pub fn selection_clear(&self) {
+        if let Ok(mut term) = self.term.lock() {
+            if term.selection.take().is_some() {
+                self.dirty.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// The selected text — scrollback-aware, with wrapped lines joined by the VTE.
+    /// `None` when the selection is empty.
+    pub fn selection_text(&self) -> Option<String> {
+        let term = self.term.lock().ok()?;
+        term.selection_to_string().filter(|s| !s.is_empty())
+    }
+
     /// Build a render-ready snapshot of the visible screen: each row coalesced
     /// into runs of identical colour, with the block cursor rendered as an
     /// inverted cell.
@@ -242,6 +302,9 @@ impl PtyTerminal {
         let rows = self.rows;
         let content = term.renderable_content();
         let display_offset = content.display_offset;
+        // The active mouse selection, in grid coordinates — its cells render
+        // inverted so the marked text is visible (see the per-cell swap below).
+        let selection = content.selection;
         let cursor = if content.cursor.shape == CursorShape::Hidden {
             None
         } else {
@@ -270,6 +333,9 @@ impl PtyTerminal {
                 fg = bg;
             }
             if cursor.is_some_and(|c| c.line == vp.line && c.column == vp.column) {
+                std::mem::swap(&mut fg, &mut bg);
+            }
+            if selection.is_some_and(|range| range.contains(indexed.point)) {
                 std::mem::swap(&mut fg, &mut bg);
             }
             let ch = if cell.c == '\0' { ' ' } else { cell.c };
@@ -477,5 +543,45 @@ mod tests {
         assert_eq!(indexed_to_rgb(16), (0, 0, 0)); // cube origin
         assert_eq!(indexed_to_rgb(231), (255, 255, 255)); // cube max
         assert_eq!(indexed_to_rgb(232), (8, 8, 8)); // first grey
+    }
+
+    /// First (row, col) where `needle` appears in the visible grid — ascii is one
+    /// cell per column, so the byte index into the joined line IS the column.
+    fn find_text(snap: &TermSnapshot, needle: &str) -> Option<(usize, usize)> {
+        snap.lines.iter().enumerate().find_map(|(r, line)| {
+            let text = line_text(line);
+            text.find(needle).map(|byte_idx| (r, text[..byte_idx].chars().count()))
+        })
+    }
+
+    /// Mouse selection is what copy reads: drive a drag across a known span and
+    /// prove `selection_text` returns exactly that span's text, then that a clear
+    /// empties it. This is the headless proof the copy path works, since the grid
+    /// renders as raw `div`s that the fork's TextView selection can never see.
+    #[test]
+    fn mouse_selection_yields_the_marked_text() {
+        let marker = "ZZSELZZ";
+        let dir = tempdir().unwrap();
+        let mut term = PtyTerminal::new(dir.path(), 40, 12).unwrap();
+        // `printf ZZSELZZ` prints the literal (no `%`), so the marker lands on the
+        // grid — the echoed command line carries it too, either occurrence works.
+        term.send_input(b"printf ZZSELZZ\n");
+        let snap = wait_for(&term, |s| s.plain_text().contains(marker));
+        let (row, col) = find_text(&snap, marker).expect("marker on grid");
+
+        term.selection_start(row, col, false, 1);
+        // Extend through the marker's last cell (right half → inclusive).
+        term.selection_update(row, col + marker.len() - 1, true);
+        let selected = term.selection_text().expect("a non-empty selection");
+        assert!(
+            selected.contains(marker),
+            "drag over `{marker}` should select it, got {selected:?}"
+        );
+
+        term.selection_clear();
+        assert!(
+            term.selection_text().is_none(),
+            "clearing the selection should leave nothing selected"
+        );
     }
 }

@@ -11,7 +11,7 @@ impl super::Chamber {
         }
         // Translate the last painted screen size into a column/row grid (None
         // until the first frame has measured it).
-        let dims = self.terminal_px.get().map(term_dims);
+        let dims = self.terminal_px.get().map(|(_, _, w, h)| term_dims((w, h)));
 
         if self.terminal.is_none() {
             match dims {
@@ -61,7 +61,7 @@ impl super::Chamber {
     pub(super) fn on_terminal_key(
         &mut self,
         event: &gpui::KeyDownEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(term) = &mut self.terminal else {
@@ -88,9 +88,10 @@ impl super::Chamber {
             || (m.control && m.shift && (ks.key == "c" || ks.key == "C"))
             || (m.platform && ks.key == "c");
         if is_copy {
-            use gpui_component::WindowExt as _;
-            let selected = window.selected_text(cx).trim().to_string();
-            if !selected.is_empty() {
+            // The mouse selection lives in the VTE grid (`pty::selection_*`), not in
+            // the fork's TextView layer — the grid renders as raw `div`s the TextView
+            // selection can't see, so read the copy text from the terminal itself.
+            if let Some(selected) = term.selection_text() {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
                 return;
             }
@@ -152,7 +153,25 @@ impl super::Chamber {
                 }
             }
         };
+        // Typing dismisses any mouse selection, as a real terminal does.
+        term.selection_clear();
         term.send_input(&bytes);
         cx.notify();
+    }
+
+    /// Map a pointer position (window pixels) to a terminal grid cell, as
+    /// `(row, col, right_half)`. Uses the grid's painted origin (from the
+    /// `size_probe` canvas) and the fixed monospace cell metrics; the cell is
+    /// clamped into the grid by the PTY, so an out-of-bounds drag selects to the
+    /// nearest edge. `None` before the first frame has measured the screen.
+    pub(super) fn terminal_cell_at(
+        &self,
+        pos: gpui::Point<gpui::Pixels>,
+    ) -> Option<(usize, usize, bool)> {
+        let (ox, oy, _, _) = self.terminal_px.get()?;
+        let x = (f32::from(pos.x) - ox).max(0.0);
+        let y = (f32::from(pos.y) - oy).max(0.0);
+        let col_f = x / TERM_CELL_W;
+        Some(((y / TERM_CELL_H) as usize, col_f as usize, col_f.fract() >= 0.5))
     }
 }
