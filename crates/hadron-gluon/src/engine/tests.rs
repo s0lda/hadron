@@ -3972,3 +3972,54 @@ async fn a_mid_turn_reboot_aborts_only_that_quark_and_spares_the_sibling() {
         "the sibling's turn was lost — the reboot tripped the ground-everyone panic path"
     );
 }
+
+#[tokio::test]
+async fn gluon_notification_to_orchestrator_resolves_gluon_driver_and_does_not_loop() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+
+    // 1. Human message (older)
+    append_event(
+        &path,
+        &Event::new(Actor::Human, None, Kind::Message { body: "initial human request".into() }),
+    )
+    .unwrap();
+
+    // 2. Worker fails and Gluon posts error message to @orchestrator
+    append_event(
+        &path,
+        &Event::new(Actor::Gluon, None, Kind::Message { body: "@orchestrator ⚠️ Quark worker turn errored: timeout".into() }),
+    )
+    .unwrap();
+
+    struct MockOrch {
+        id: QuarkId,
+        turns: Arc<Mutex<Vec<String>>>,
+    }
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for MockOrch {
+        fn id(&self) -> QuarkId { self.id.clone() }
+        fn flavor(&self) -> Flavor { Flavor::Orchestrator }
+        fn energy(&self) -> EnergyState { EnergyState::Available }
+        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+            self.turns.lock().unwrap().push(turn.task);
+            Ok(TurnOutcome { message: Some("handled error notification".into()), permission: None, usage: Default::default() })
+        }
+    }
+
+    let turns = Arc::new(Mutex::new(vec![]));
+    let orch = MockOrch { id: QuarkId::new("orch"), turns: turns.clone() };
+
+    let mut engine = Engine::new(path.clone(), vec![Box::new(orch)], 10);
+
+    // Pass 1: Should excite orchestrator ONCE to handle the Gluon error notification
+    engine.run_until_quiesce().await.unwrap();
+
+    let recorded = turns.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "orchestrator should take exactly 1 turn for the Gluon notification");
+
+    // Pass 2: Engine should quiesce immediately (0 additional turns)
+    engine.run_until_quiesce().await.unwrap();
+    assert_eq!(turns.lock().unwrap().len(), 1, "orchestrator must not loop on handled Gluon notification");
+}
+
