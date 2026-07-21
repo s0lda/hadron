@@ -446,9 +446,14 @@ impl Engine {
         self
     }
 
+    /// The roster of seated quarks.
+    pub fn roster(&self) -> &[hadron_lattice::QuarkCard] {
+        &self.roster
+    }
+
     /// The one way the engine writes to the field: serialized behind `field_lock`,
     /// so concurrent turns can never interleave their event sequences.
-    async fn append(&self, event: Event) -> anyhow::Result<()> {
+    pub async fn append(&self, event: Event) -> anyhow::Result<()> {
         let _guard = self.field_lock.lock().await;
         Ok(append_event(&self.field_path, &event)?)
     }

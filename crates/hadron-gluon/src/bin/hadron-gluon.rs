@@ -28,7 +28,7 @@ use hadron_gluon::quark::Quark;
 use hadron_gluon::reseat;
 use hadron_lattice::secrets::SecretStore;
 use hadron_lattice::{
-    load_team, orphan_overrides, parse_team, resolve_team, team_config_path, EnergyState, Flavor,
+    load_team, orphan_overrides, parse_team, resolve_team, team_config_path, Actor, EnergyState, Event, Flavor, Kind,
     Projection, QuarkId, Team,
     TurnOutcome,
 };
@@ -398,9 +398,18 @@ async fn main() {
 
     loop {
         let before = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
-        // Mock quarks never error; a real daemon would decide abort-vs-continue here.
         if let Err(e) = engine.run_until_quiesce().await {
             eprintln!("gluon: excite error (continuing): {e:#}");
+            let orch_exists =
+                engine.roster().iter().any(|c| c.flavor == Flavor::Orchestrator);
+            let body = if orch_exists {
+                format!("@{} ⚠️ Gluon excite error: {e:#}", hadron_gluon::router::ORCHESTRATOR_ALIAS)
+            } else {
+                format!("⚠️ Gluon excite error: {e:#}")
+            };
+            let _ = engine
+                .append(Event::new(Actor::Gluon, None, Kind::Message { body }))
+                .await;
         }
         let after = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
         if after > before {
