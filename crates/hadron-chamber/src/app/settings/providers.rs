@@ -344,6 +344,7 @@ impl super::Chamber {
                                     let target = hadron_gluon::adapter::registry::AcpTarget {
                                         program: desc_clone.command.clone(),
                                         args: desc_clone.args.clone(),
+                                        env: Vec::new(),
                                     };
                                     let desc_for_task = desc_clone.clone();
                                     cx.spawn(
@@ -418,6 +419,7 @@ impl super::Chamber {
                                                 let target = hadron_gluon::adapter::registry::AcpTarget {
                                                     program: desc_inner.command.clone(),
                                                     args: desc_inner.args.clone(),
+                                                    env: Vec::new(),
                                                 };
                                                 let desc_for_task = desc_inner.clone();
                                                 cx.spawn(

@@ -93,9 +93,25 @@ fn store_error_reports_unavailable_not_notset() {
         }
     }
     assert_eq!(
-        secret_status(&DeadStore, &QuarkId::new("acp-agy"), "GEMINI_API_KEY"),
+        secret_status(&DeadStore, &QuarkId::new("acp-agy"), "GEMINI_API_KEY_TEST_VAR_NOT_SET_1234"),
         SecretStatus::Unavailable,
     );
+}
+
+#[test]
+fn env_var_reports_set_when_not_in_secret_store() {
+    let store = MemoryStore::new();
+    let id = QuarkId::new("acp-agy");
+    let test_var = "TEST_HADRON_GEMINI_KEY_ENV";
+    std::env::set_var(test_var, "env_test_val");
+
+    assert_eq!(
+        secret_status(&store, &id, test_var),
+        SecretStatus::Set,
+        "must report Set when key is present in process env"
+    );
+
+    std::env::remove_var(test_var);
 }
 
 /// A second seat of the same provider mints a fresh id instead of colliding

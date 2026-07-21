@@ -179,7 +179,19 @@ pub(crate) enum SecretStatus {
 pub(super) fn secret_status(store: &dyn SecretStore, seat: &QuarkId, var: &str) -> SecretStatus {
     match store.get(seat, var) {
         Ok(Some(_)) => SecretStatus::Set,
-        Ok(None) => SecretStatus::NotSet,
-        Err(_) => SecretStatus::Unavailable,
+        Ok(None) => {
+            if std::env::var(var).is_ok() {
+                SecretStatus::Set
+            } else {
+                SecretStatus::NotSet
+            }
+        }
+        Err(_) => {
+            if std::env::var(var).is_ok() {
+                SecretStatus::Set
+            } else {
+                SecretStatus::Unavailable
+            }
+        }
     }
 }
