@@ -60,6 +60,26 @@ def send_notification(method, params):
     _write({"jsonrpc": "2.0", "method": method, "params": params})
 
 
+def send_session_update(session_id, update):
+    """Emit one ACP `session/update` notification — the ONLY way a turn's text,
+    thoughts, or usage reach the client.
+
+    The wire contract is the ACP schema's `SessionNotification`/`SessionUpdate`,
+    and it is unforgiving in two places that are easy to get wrong:
+
+      * the method is `session/update` (NOT `session/notification`): the Rust
+        client routes notifications by method name, so a wrong method never
+        reaches the handler at all;
+      * the update's discriminator field is `sessionUpdate` (NOT `type`):
+        `SessionUpdate` is `#[serde(tag = "sessionUpdate")]`, so a wrong tag
+        fails to deserialize and the update is dropped.
+
+    Get either wrong and every chunk is silently discarded — the turn bills
+    tokens and posts an empty message. So the wire shape lives HERE, once.
+    """
+    send_notification("session/update", {"sessionId": session_id, "update": update})
+
+
 async def handle_prompt(msg_id, session_id, prompt):
     session_data = sessions.get(session_id)
     if not session_data:
@@ -79,21 +99,15 @@ async def handle_prompt(msg_id, session_id, prompt):
         async for chunk in response.chunks:
             if isinstance(chunk, Text):
                 text_accumulated.append(chunk.text)
-                send_notification("session/notification", {
-                    "sessionId": session_id,
-                    "update": {
-                        "type": "agent_message_chunk",
-                        "content": {"type": "text", "text": chunk.text}
-                    }
+                send_session_update(session_id, {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {"type": "text", "text": chunk.text}
                 })
             elif isinstance(chunk, Thought):
                 thought_accumulated.append(chunk.text)
-                send_notification("session/notification", {
-                    "sessionId": session_id,
-                    "update": {
-                        "type": "agent_thought_chunk",
-                        "content": {"type": "text", "text": chunk.text}
-                    }
+                send_session_update(session_id, {
+                    "sessionUpdate": "agent_thought_chunk",
+                    "content": {"type": "text", "text": chunk.text}
                 })
 
         # Fallback if no Text chunks were streamed (e.g. model generated thoughts or text only via resolve())
@@ -102,23 +116,17 @@ async def handle_prompt(msg_id, session_id, prompt):
             if not fallback_text and thought_accumulated:
                 fallback_text = "".join(thought_accumulated)
             if fallback_text:
-                send_notification("session/notification", {
-                    "sessionId": session_id,
-                    "update": {
-                        "type": "agent_message_chunk",
-                        "content": {"type": "text", "text": fallback_text}
-                    }
+                send_session_update(session_id, {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {"type": "text", "text": fallback_text}
                 })
 
         usage = response.usage_metadata
         if usage:
-            send_notification("session/notification", {
-                "sessionId": session_id,
-                "update": {
-                    "type": "usage_update",
-                    "used": getattr(usage, "total_token_count", 0),
-                    "size": getattr(usage, "context_window_size", 2000000)
-                }
+            send_session_update(session_id, {
+                "sessionUpdate": "usage_update",
+                "used": getattr(usage, "total_token_count", 0),
+                "size": getattr(usage, "context_window_size", 2000000)
             })
 
         send_response(msg_id, {

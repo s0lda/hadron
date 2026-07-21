@@ -11,8 +11,8 @@ use chrono::Utc;
 use hadron_lattice::{live, Doing, Flavor, Mode, Projection, QuarkId};
 
 use agent_client_protocol::schema::v1::{
-    InitializeRequest, NewSessionRequest, PermissionOptionKind, SessionConfigKind,
-    SessionConfigOption, SessionConfigOptionCategory, Usage as AcpUsage,
+    ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionKind, SessionConfigKind,
+    SessionConfigOption, SessionConfigOptionCategory, SessionUpdate, Usage as AcpUsage,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, ConnectionTo};
@@ -795,4 +795,62 @@ fn append_message_chunk_first_chunk_has_no_leading_separator() {
     let mut transcript = String::new();
     session::append_message_chunk(&mut transcript, "hello");
     assert_eq!(transcript, "hello");
+}
+
+/// **The bug that made `acp-agy` bill tokens and post nothing.** The Python SDK
+/// adapter (`scripts/agy_acp.py`) hand-rolls the `session/update` JSON, and the
+/// Rust client here is the only thing that ever deserializes it — the Rust tests
+/// exercised Rust *types*, never the Python's actual output, so a wire mismatch
+/// sailed through. `SessionUpdate` is `#[serde(tag = "sessionUpdate")]`: the
+/// discriminator MUST be `sessionUpdate`, not `type`. Feed the exact object the
+/// adapter emits and prove it lands as `AgentMessageChunk` with the text intact.
+#[test]
+fn the_python_adapters_message_update_deserializes_to_a_text_chunk() {
+    let update: SessionUpdate = serde_json::from_value(serde_json::json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": {"type": "text", "text": "PONG"}
+    }))
+    .expect("the adapter's `sessionUpdate`-tagged object must deserialize");
+
+    match update {
+        SessionUpdate::AgentMessageChunk(chunk) => match chunk.content {
+            ContentBlock::Text(t) => assert_eq!(t.text, "PONG"),
+            other => panic!("expected a text content block, got {other:?}"),
+        },
+        other => panic!("expected AgentMessageChunk, got {other:?}"),
+    }
+}
+
+/// The negative control: the OLD shape the adapter used to send — discriminator
+/// `type` instead of `sessionUpdate` — does NOT deserialize. This is exactly why
+/// every chunk was silently dropped and the turn posted an empty message.
+#[test]
+fn the_old_type_tagged_shape_fails_to_deserialize() {
+    let result: Result<SessionUpdate, _> = serde_json::from_value(serde_json::json!({
+        "type": "agent_message_chunk",
+        "content": {"type": "text", "text": "PONG"}
+    }));
+    assert!(
+        result.is_err(),
+        "a `type`-tagged update must fail — if this ever passes, the wire drift is back"
+    );
+}
+
+/// The usage update travels the same path and must survive the same contract.
+#[test]
+fn the_python_adapters_usage_update_deserializes() {
+    let update: SessionUpdate = serde_json::from_value(serde_json::json!({
+        "sessionUpdate": "usage_update",
+        "used": 13570,
+        "size": 2000000
+    }))
+    .expect("the adapter's usage update must deserialize");
+
+    match update {
+        SessionUpdate::UsageUpdate(u) => {
+            assert_eq!(u.used, 13570);
+            assert_eq!(u.size, 2000000);
+        }
+        other => panic!("expected UsageUpdate, got {other:?}"),
+    }
 }
