@@ -97,12 +97,6 @@ fn first_line_truncated(s: &str) -> String {
     }
 }
 
-/// Append one `AgentMessageChunk` notification's text to the accumulating
-/// transcript, inserting a paragraph break first when needed.
-///
-/// Each `on_receive_notification` call is a **separate wire notification**, not
-/// a sub-token delta of the previous one — empirically, Claude emits one whole
-/// narration sentence or reply block per notification (e.g. "Let me check the
 /// plan." then, later, the final "@orchestrator Task 2 complete..." report).
 /// The old code `push_str`'d every notification straight onto the last with no
 /// separator, so a report's leading `@mention` landed mid-line, glued onto the
@@ -113,17 +107,15 @@ fn first_line_truncated(s: &str) -> String {
 /// `orchestrator_alias_does_not_name_an_unrelated_card` and friends) — so a
 /// glued-on mention silently routed to nobody and the orchestrator was never
 /// dispatched. A blank line between notifications restores the line-start
-/// property without loosening the mention matcher itself.
+/// Appends a streaming message chunk to an ACP session's transcript.
 ///
-/// Skips the separator when either side already ends/starts with whitespace,
-/// so genuinely-continuous streaming (if a future agent ever deltas
-/// mid-sentence) is not needlessly fragmented.
+/// Ensures that if a chunk starts with an `@` mention, it begins on a new line
+/// so `parse_all_addressees` line-start mention routing succeeds, while
+/// preserving continuous streaming text without inserting spurious mid-sentence
+/// or mid-word newlines.
 pub(super) fn append_message_chunk(transcript: &mut String, chunk: &str) {
-    if !transcript.is_empty()
-        && !transcript.ends_with(char::is_whitespace)
-        && !chunk.starts_with(char::is_whitespace)
-    {
-        transcript.push_str("\n\n");
+    if !transcript.is_empty() && chunk.starts_with('@') && !transcript.ends_with('\n') {
+        transcript.push('\n');
     }
     transcript.push_str(chunk);
 }
