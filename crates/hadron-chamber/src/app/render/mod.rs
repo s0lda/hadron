@@ -95,6 +95,9 @@ impl Render for Chamber {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleFocus, window, cx| this.toggle_focus(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &ToggleProcessManager, _, cx| this.toggle_process_manager(cx)),
+            )
             .relative()
             .size_full()
             .overflow_hidden()

@@ -624,6 +624,19 @@ impl Chamber {
         });
         self.save_repo_team(cx);
     }
+
+    /// Toggle the Process Manager overlay (pinned Roster rail button, above Settings).
+    pub(super) fn toggle_process_manager(&mut self, cx: &mut Context<Self>) {
+        self.process_manager_open = toggle_process_manager_open(self.process_manager_open);
+        cx.notify();
+    }
+}
+
+/// Pure decision half of `toggle_process_manager`: the next `process_manager_open`
+/// value, extracted so it's testable without a live `Chamber`/window (mirrors
+/// [`toggle_focus_target`] below).
+pub(super) fn toggle_process_manager_open(current: bool) -> bool {
+    !current
 }
 
 pub(super) fn apply_orchestrator_exclusivity(
@@ -685,6 +698,12 @@ mod tests {
             assert_eq!(target, FocusTarget::Terminal);
             assert!(switch_rail, "a non-Terminal tab active must switch the rail to Terminal");
         }
+    }
+
+    #[test]
+    fn toggle_process_manager_open_flips_state() {
+        assert!(toggle_process_manager_open(false));
+        assert!(!toggle_process_manager_open(true));
     }
 
     #[test]

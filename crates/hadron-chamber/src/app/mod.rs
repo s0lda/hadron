@@ -97,6 +97,7 @@ actions!(
         ToggleSelectedQuark,
         OpenMenu,
         ToggleFocus,
+        ToggleProcessManager,
     ]
 );
 
@@ -215,6 +216,9 @@ struct Chamber {
     /// A debounced window-bounds save is already in flight, so a drag (which
     /// re-renders every frame) coalesces into one write instead of one per frame.
     bounds_save_pending: bool,
+    /// Whether the Process Manager overlay is showing (pinned Roster rail button,
+    /// above Settings).
+    process_manager_open: bool,
     /// Whether the Settings overlay is showing, and which identity it edits.
     settings_open: bool,
     settings_target: SettingsTarget,
@@ -539,6 +543,7 @@ impl Chamber {
             chat_scrolls,
             parsed_markdown: std::cell::RefCell::new(std::collections::HashMap::new()),
             bounds_save_pending: false,
+            process_manager_open: false,
             settings_open: false,
             settings_target: SettingsTarget::Human,
             settings_name,
