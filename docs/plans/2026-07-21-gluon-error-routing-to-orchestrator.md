@@ -7,9 +7,9 @@ status: draft
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Automatically append an error message event addressed to `@orchestrator` whenever a Quark turn fails, panics, or encounters a Gluon excite error.
+**Goal:** Automatically append an error message event addressed to `@orchestrator` whenever a Quark turn fails, panics, or encounters a Gluon excite error, and update worker/orchestrator prompt instructions to explicitly clarify error reporting.
 
-**Architecture:** Update `Engine::run_until_quiesce` in `crates/hadron-gluon/src/engine/run.rs` to append a `Kind::Message` event addressing `@orchestrator` when a turn fails or panics, and update `crates/hadron-gluon/src/bin/hadron-gluon.rs` to log excite errors to the field log.
+**Architecture:** Update `Engine::run_until_quiesce` in `crates/hadron-gluon/src/engine/run.rs` to append a `Kind::Message` event addressing `@orchestrator` when a turn fails or panics, update worker/orchestrator prompt text in `crates/hadron-gluon/src/adapter/prompt/mod.rs`, and update `crates/hadron-gluon/src/bin/hadron-gluon.rs` to log excite errors to the field log.
 
 **Tech Stack:** Rust (hadron-gluon, hadron-lattice).
 
@@ -17,20 +17,22 @@ status: draft
 - Failed turn errors and excite errors must append a `Kind::Message` event from `Actor::Gluon`.
 - If an orchestrator seat exists on the roster and the failed quark is NOT the orchestrator, the message body MUST prefix `@orchestrator`.
 - If the failing quark is the orchestrator itself or no orchestrator exists, do NOT prefix `@orchestrator` (prevents self-loop).
+- Worker and Orchestrator prompt instructions MUST explicitly state that errors are reported up to `@orchestrator`.
 
 ---
 
-### Task 1: Add Error Message Event Generation to Engine Turn Execution
+### Task 1: Add Error Message Event Generation to Engine & Update Prompt Instructions
 
 **Files:**
 
 - Modify: `crates/hadron-gluon/src/engine/run.rs:360-415`
-- Test: `crates/hadron-gluon/src/engine/tests.rs`
+- Modify: `crates/hadron-gluon/src/adapter/prompt/mod.rs:275-333`
+- Test: `crates/hadron-gluon/src/engine/tests.rs`, `crates/hadron-gluon/src/adapter/prompt/tests.rs`
 
 **Interfaces:**
 
-- Consumes: `Engine::run_until_quiesce`, `Event`, `Actor::Gluon`, `Kind::Message`.
-- Produces: Error notification events appended to the field log addressing `@orchestrator`.
+- Consumes: `Engine::run_until_quiesce`, `Event`, `Actor::Gluon`, `Kind::Message`, `build_prompt`.
+- Produces: Error notification events appended to the field log addressing `@orchestrator`, and prompt instructions clarifying error escalation.
 
 - [ ] **Step 1: Check baseline hadron-gluon tests pass**
 
@@ -76,18 +78,23 @@ let _ = self
     .await;
 ```
 
-- [ ] **Step 3: Add unit tests in `src/engine/tests.rs`**
+- [ ] **Step 3: Update Worker and Orchestrator Prompt Instructions in `src/adapter/prompt/mod.rs`**
 
-Add test `failing_quark_turn_sends_error_message_to_orchestrator`:
-
+Update worker prompt instruction (lines 276-281):
 ```rust
-#[tokio::test]
-async fn failing_quark_turn_sends_error_message_to_orchestrator() {
-    // Verify that when a worker quark turn errors out, an error message mentioning @orchestrator is appended
-}
+"**When your task is complete or if your turn encounters an error, start a line with `@orchestrator` and report there.** \
+ You report to the orchestrator, not to the human — a reply with no `@mention` \
+ excites nobody and your work stops dead in the field. Do not hand back to the \
+ human directly.\n\n"
 ```
 
-- [ ] **Step 4: Run tests to verify**
+Update orchestrator prompt instruction (lines 310-313):
+```rust
+"You are the **orchestrator**: you are the human's conversational partner, worker Quarks in the \
+ swarm and your sub-agents report their progress and errors to you, and you carry their work to the human. Three duties.\n\n"
+```
+
+- [ ] **Step 4: Run tests & update prompt tests in `src/adapter/prompt/tests.rs`**
 
 Run: `cargo test -p hadron-gluon`
 Expected: PASS
@@ -95,8 +102,8 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/hadron-gluon/src/engine/run.rs crates/hadron-gluon/src/engine/tests.rs
-git commit -m "feat(engine): send turn error messages to orchestrator"
+git add crates/hadron-gluon/src/engine/run.rs crates/hadron-gluon/src/adapter/prompt/mod.rs crates/hadron-gluon/src/engine/tests.rs crates/hadron-gluon/src/adapter/prompt/tests.rs
+git commit -m "feat(engine): send turn error messages and update prompt instructions for orchestrator escalation"
 ```
 
 ---
