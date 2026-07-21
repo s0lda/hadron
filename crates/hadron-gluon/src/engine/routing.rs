@@ -107,7 +107,9 @@ impl super::Engine {
                 Actor::Quark(sender) => {
                     parse_all_addressees(body, &self.roster, Some(sender), &personas)
                 }
-                _ => continue,
+                Actor::Gluon => {
+                    parse_all_addressees(body, &self.roster, None, &personas)
+                }
             };
             for addressee in addressees {
                 // A newer message already claimed this quark → this older mention is stale.
