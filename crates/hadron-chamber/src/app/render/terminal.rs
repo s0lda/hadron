@@ -239,9 +239,11 @@ impl super::Chamber {
                         // an id-less element shares its state with every sibling.
                         let row = h_flex()
                             .id(SharedString::from(format!("tree-row-{}", node.full_path)))
+                            .w_full()
                             .px_2()
                             .py_1()
-                            .ml(gpui::px(depth as f32 * 12.0))
+                            .pl(gpui::px(depth as f32 * 12.0 + 8.0))
+                            .rounded_sm()
                             .hover(|s| s.bg(theme::bg_surface_raised()))
                             .cursor_pointer()
                             // Gitignored entries read as present-but-inactive: muted text.
