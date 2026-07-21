@@ -83,6 +83,13 @@ impl Render for Chamber {
             .on_action(
                 cx.listener(|this, _: &PrevInspectorTab, _, cx| this.cycle_inspector_tab(-1, cx)),
             )
+            .on_action(cx.listener(|this, _: &ChatTab1, _, cx| this.pick_chat_tab(0, cx)))
+            .on_action(cx.listener(|this, _: &ChatTab2, _, cx| this.pick_chat_tab(1, cx)))
+            .on_action(cx.listener(|this, _: &ChatTab3, _, cx| this.pick_chat_tab(2, cx)))
+            .on_action(cx.listener(|this, _: &InspectorTab1, _, cx| this.pick_inspector_tab(0, cx)))
+            .on_action(cx.listener(|this, _: &InspectorTab2, _, cx| this.pick_inspector_tab(1, cx)))
+            .on_action(cx.listener(|this, _: &InspectorTab3, _, cx| this.pick_inspector_tab(2, cx)))
+            .on_action(cx.listener(|this, _: &InspectorTab4, _, cx| this.pick_inspector_tab(3, cx)))
             .on_action(cx.listener(|this, _: &NextStatsSubTab, _, cx| this.cycle_stats_window(1, cx)))
             .on_action(
                 cx.listener(|this, _: &PrevStatsSubTab, _, cx| this.cycle_stats_window(-1, cx)),
