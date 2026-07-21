@@ -72,9 +72,12 @@ impl super::Chamber {
         // default" among the offered chips below), so it gets its own honest label.
         let mut chips: Vec<(String, String, bool)> =
             vec![("Inherit".to_string(), String::new(), current_model.is_empty())];
-        let mut note: Option<String> = None;
+        // (message, is_error). An error note is click-to-copy: a failed probe's
+        // reason is often longer than the panel is wide, so the human must be able
+        // to lift the whole thing rather than read a truncated head.
+        let mut note: Option<(String, bool)> = None;
         match self.acp_model_probe.as_ref().map(|p| &p.state) {
-            Some(AcpModelState::Probing) => note = Some("Detecting models…".into()),
+            Some(AcpModelState::Probing) => note = Some(("Detecting models…".into(), false)),
             Some(AcpModelState::Ready { models, current }) => {
                 for m in models {
                     // The agent's current pick is the "Default" the blank chip resolves to,
@@ -88,7 +91,7 @@ impl super::Chamber {
                     chips.push((label, m.value.clone(), selected));
                 }
             }
-            Some(AcpModelState::Unavailable(msg)) => note = Some(msg.clone()),
+            Some(AcpModelState::Unavailable(msg)) => note = Some((msg.clone(), true)),
             None => {}
         }
         // A model the seat pinned that the agent didn't offer still shows, selected — so
@@ -132,13 +135,25 @@ impl super::Chamber {
         }
 
         let mut col = v_flex().gap_1p5().child(row);
-        if let Some(n) = note {
-            col = col.child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child(n),
-            );
+        if let Some((msg, is_error)) = note {
+            let base = div().text_xs().text_color(theme::text_muted());
+            let note_el = if is_error {
+                // Click-to-copy the full reason — a probe failure is often longer
+                // than the panel, so lift the whole thing to the clipboard rather
+                // than leave the human squinting at a truncated head.
+                let full = msg.clone();
+                base.id("acp-model-note")
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(theme::text_secondary()))
+                    .child(format!("{msg}  ·  click to copy"))
+                    .on_click(cx.listener(move |_this, _, _window, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(full.clone()));
+                    }))
+                    .into_any_element()
+            } else {
+                base.child(msg).into_any_element()
+            };
+            col = col.child(note_el);
         }
         col.into_any_element()
     }

@@ -86,7 +86,16 @@ async def handle_prompt(msg_id, session_id, prompt):
         send_error(msg_id, f"unknown session {session_id!r}")
         return
 
-    agent = session_data["agent"]
+    # Boot the SDK Agent lazily, on the FIRST prompt — not at session/new. Model
+    # detection (Settings' probe) opens a session but never prompts, so it must
+    # not require the key or a live Google connection; a real turn does. Keep the
+    # old init_session error text so a boot failure still reads the same way.
+    try:
+        agent = await ensure_agent(session_data)
+    except Exception as e:
+        logger.error(f"could not start the Antigravity agent: {e}")
+        send_error(msg_id, f"could not start the Antigravity agent: {e}")
+        return
 
     prompt_text = "\n".join(
         b.get("text", "") for b in prompt if b.get("type") == "text"
@@ -144,31 +153,51 @@ async def handle_prompt(msg_id, session_id, prompt):
         send_error(msg_id, f"Antigravity SDK turn failed: {e}")
 
 
-async def init_session(msg_id, session_id, agent):
-    try:
-        await agent.__aenter__()
-        sessions[session_id] = {"agent": agent, "model": DEFAULT_MODEL}
-        send_response(msg_id, {
-            "sessionId": session_id,
-            "configOptions": [
-                {
-                    "id": "model",
-                    "name": "Model",
-                    "type": "select",
-                    # Without `category`, the client does not recognise this as
-                    # the model selector at all.
-                    "category": "model",
-                    # Advertise the model we ACTUALLY run — the SDK's own default,
-                    # imported rather than copied. Offering a model we never pass
-                    # to the SDK is a picker that lies.
-                    "currentValue": DEFAULT_MODEL,
-                    "options": [{"value": DEFAULT_MODEL, "name": DEFAULT_MODEL}]
-                }
-            ]
-        })
-    except Exception as e:
-        logger.error(f"session/new failed: {e}")
-        send_error(msg_id, f"could not start the Antigravity agent: {e}")
+def session_config_response(session_id):
+    """The static capabilities a `session/new` advertises: the one model this
+    seat runs. Fixed and known, so reporting it needs NO live connection and NO
+    key — the Settings model probe reads exactly this. Booting the SDK here was
+    what made model detection fail (and bill a connection) whenever the key or
+    Google was momentarily unreachable."""
+    return {
+        "sessionId": session_id,
+        "configOptions": [
+            {
+                "id": "model",
+                "name": "Model",
+                "type": "select",
+                # Without `category`, the client does not recognise this as
+                # the model selector at all.
+                "category": "model",
+                # Advertise the model we ACTUALLY run — the SDK's own default,
+                # imported rather than copied. Offering a model we never pass
+                # to the SDK is a picker that lies.
+                "currentValue": DEFAULT_MODEL,
+                "options": [{"value": DEFAULT_MODEL, "name": DEFAULT_MODEL}]
+            }
+        ]
+    }
+
+
+async def ensure_agent(session_data):
+    """Boot the SDK Agent on first use and cache it on the session. Deferred from
+    session/new so model detection needs no key or live connection; a real turn
+    does. Raises with a human-readable reason the caller turns into an error."""
+    if session_data.get("agent") is not None:
+        return session_data["agent"]
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        raise RuntimeError(NO_KEY)
+    cwd = session_data.get("cwd") or ""
+    agent = Agent(
+        config=LocalAgentConfig(
+            api_key=api_key,
+            workspaces=[cwd] if cwd else None
+        )
+    )
+    await agent.__aenter__()
+    session_data["agent"] = agent
+    return agent
 
 
 async def main():
@@ -195,23 +224,17 @@ async def main():
             })
 
         elif method == "session/new":
-            api_key = os.environ.get("GEMINI_API_KEY", "")
-            if not api_key:
-                # Fail here, with the reason. The SDK would otherwise raise deep
-                # inside its connection code and the seat would just say "error".
-                logger.error(NO_KEY)
-                send_error(msg_id, NO_KEY)
-                continue
-
+            # Register the session and advertise the static model list WITHOUT a
+            # key or an SDK boot. The Agent is booted lazily on the first prompt
+            # (ensure_agent), where the key is genuinely required. This keeps the
+            # model probe fast, free, and independent of Google reachability.
             session_id = str(uuid.uuid4())
-            cwd = params.get("cwd", "")
-            agent = Agent(
-                config=LocalAgentConfig(
-                    api_key=api_key,
-                    workspaces=[cwd] if cwd else None
-                )
-            )
-            asyncio.create_task(init_session(msg_id, session_id, agent))
+            sessions[session_id] = {
+                "agent": None,
+                "model": DEFAULT_MODEL,
+                "cwd": params.get("cwd", ""),
+            }
+            send_response(msg_id, session_config_response(session_id))
 
         elif method == "session/set_config_option":
             session_id = params.get("sessionId")
