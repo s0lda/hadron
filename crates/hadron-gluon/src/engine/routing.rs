@@ -238,7 +238,9 @@ impl super::Engine {
                     Actor::Quark(sender) => {
                         parse_all_addressees(body, &self.roster, Some(sender), &personas).contains(target)
                     }
-                    _ => false,
+                    Actor::Gluon => {
+                        parse_all_addressees(body, &self.roster, None, &personas).contains(target)
+                    }
                 }
             })?;
             return Some(Driver {
