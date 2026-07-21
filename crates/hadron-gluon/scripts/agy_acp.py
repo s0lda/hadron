@@ -132,6 +132,7 @@ async def handle_prompt(msg_id, session_id, prompt):
         # A bare `stopReason: error` tells the swarm the turn failed and nothing
         # about why. Hand back the reason — the client turns it into a real error.
         logger.error(f"turn failed: {e}")
+        sessions.pop(session_id, None)
         send_error(msg_id, f"Antigravity SDK turn failed: {e}")
 
 
