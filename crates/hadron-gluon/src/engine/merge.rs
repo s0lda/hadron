@@ -99,11 +99,7 @@ impl super::Engine {
                     .await?;
                 }
                 let landed = runner.land(root, &t.wt, &t.base)?;
-                let body = if self.roster.iter().any(|c| c.flavor == Flavor::Orchestrator) {
-                    format!("@{} {}", crate::router::ORCHESTRATOR_ALIAS, landed.describe(&t.wt.branch, &t.base))
-                } else {
-                    landed.describe(&t.wt.branch, &t.base)
-                };
+                let body = landed.describe(&t.wt.branch, &t.base);
                 self.append(Event::new(
                     Actor::Gluon,
                     None,
