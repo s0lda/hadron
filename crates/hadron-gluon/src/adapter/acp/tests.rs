@@ -267,7 +267,7 @@ fn a_target_renders_its_command_line() {
         AcpTarget::claude_adapter().command_line(),
         "npx -y @agentclientprotocol/claude-agent-acp@latest"
     );
-    let custom = AcpTarget { program: "goose".into(), args: vec!["acp".into()] };
+    let custom = AcpTarget { program: "goose".into(), args: vec!["acp".into()], env: Vec::new() };
     assert_eq!(custom.command_line(), "goose acp");
 }
 
@@ -338,6 +338,7 @@ async fn a_dead_agent_fails_the_turn_instead_of_hanging() {
     let target = AcpTarget {
         program: "hadron-definitely-not-a-real-acp-agent".into(),
         args: vec![],
+        env: Vec::new(),
     };
     let mut q = AcpQuark::new(QuarkId::new("dead"), Flavor::Worker, "", None, None, target);
 
@@ -644,6 +645,7 @@ fn the_antigravity_seat_names_the_credential_it_lacks() {
     let target = AcpTarget {
         program: root.join(&preset.program).display().to_string(),
         args: preset.args.iter().map(|a| root.join(a).display().to_string()).collect(),
+        env: Vec::new(),
     };
 
     let outcome = super::model::probe(&target);
