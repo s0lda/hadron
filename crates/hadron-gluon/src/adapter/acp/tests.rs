@@ -856,3 +856,37 @@ fn the_python_adapters_usage_update_deserializes() {
         other => panic!("expected UsageUpdate, got {other:?}"),
     }
 }
+
+/// **The Settings model probe's boundary.** `agy_acp.py` now answers `session/new`
+/// with its static model list and WITHOUT booting the SDK — so model detection no
+/// longer needs the API key or a live Google connection (that dependency is why the
+/// probe failed with "handshake failed …" whenever the key/keychain or Google was
+/// momentarily unreachable, and it billed a connection on every Settings open). The
+/// Rust client is the only thing that deserializes that response, so — per the
+/// wire-contract lesson — assert the EXACT JSON the adapter emits deserializes to a
+/// `NewSessionResponse` and that `model_selector` finds the model in it. This is the
+/// proof the dropdown populates; the boot is deferred to the first prompt.
+#[test]
+fn the_python_adapters_session_new_response_yields_the_model_selector() {
+    use agent_client_protocol::schema::v1::NewSessionResponse;
+
+    // Byte-for-byte the object session/new returns (camelCase, `category: "model"`).
+    let resp: NewSessionResponse = serde_json::from_value(serde_json::json!({
+        "sessionId": "60a83257-f0dc-46b4-a21e-bd7076ab1bd9",
+        "configOptions": [{
+            "id": "model",
+            "name": "Model",
+            "type": "select",
+            "category": "model",
+            "currentValue": "gemini-3.5-flash",
+            "options": [{"value": "gemini-3.5-flash", "name": "gemini-3.5-flash"}]
+        }]
+    }))
+    .expect("the adapter's session/new response must deserialize to NewSessionResponse");
+
+    let opts = resp.config_options.unwrap_or_default();
+    let selector = model_selector(&opts).expect("the model selector must be found by category");
+    assert_eq!(selector.current, "gemini-3.5-flash");
+    assert_eq!(selector.available.len(), 1);
+    assert_eq!(selector.available[0].value, "gemini-3.5-flash");
+}
