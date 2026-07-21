@@ -14,6 +14,8 @@ impl super::Chamber {
 
         let live_card = (!active.is_empty()).then(|| {
             v_flex()
+                .w_full()
+                .overflow_hidden()
                 .gap_1p5()
                 .px_3()
                 .py_2()
@@ -26,11 +28,13 @@ impl super::Chamber {
                     let identity = self.resolve_identity(&quark_id_str);
                     let name = identity.name;
                     h_flex()
+                        .w_full()
                         .items_center()
                         .gap_2()
-                        .child(div().size_2().rounded_full().bg(theme::accent()))
+                        .child(div().flex_none().size_2().rounded_full().bg(theme::accent()))
                         .child(
                             div()
+                                .flex_none()
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_color(theme::accent())
@@ -38,8 +42,11 @@ impl super::Chamber {
                         )
                         .child(
                             div()
+                                .flex_1()
+                                .min_w_0()
                                 .text_xs()
                                 .text_color(theme::text_muted())
+                                .truncate()
                                 .child(detail),
                         )
                 }))
