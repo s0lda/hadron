@@ -760,3 +760,39 @@ fn tool_call_detail_enriches_the_bare_title() {
     let other = call(r#"{"toolCallId":"4","title":"Do a thing","kind":"other"}"#);
     assert_eq!(session::tool_call_detail(&other), "Do a thing");
 }
+
+/// The regression this exists for: a worker's final `@orchestrator` report
+/// arrived as a separate `AgentMessageChunk` notification right after a
+/// narration sentence, with no whitespace of its own. Glued with a bare
+/// `push_str`, `"...now.@orchestrator done"` is one line — `parse_all_addressees`
+/// only matches a mention that STARTS a line, so the report silently routed to
+/// nobody. A paragraph break between notifications restores the line start.
+#[test]
+fn append_message_chunk_separates_notifications_so_a_trailing_mention_starts_a_line() {
+    let mut transcript = String::new();
+    session::append_message_chunk(&mut transcript, "Committing now.");
+    session::append_message_chunk(&mut transcript, "@orchestrator Task 2 complete.");
+    assert!(
+        transcript.lines().any(|l| l == "@orchestrator Task 2 complete."),
+        "transcript: {transcript:?}"
+    );
+}
+
+/// No spurious blank line when a chunk already carries its own leading/trailing
+/// whitespace (the common case: the model's own text already has "\n\n" before
+/// a fresh paragraph) — the separator is only inserted when truly needed.
+#[test]
+fn append_message_chunk_does_not_double_up_existing_whitespace() {
+    let mut transcript = String::new();
+    session::append_message_chunk(&mut transcript, "First paragraph.\n\n");
+    session::append_message_chunk(&mut transcript, "@orchestrator second paragraph.");
+    assert_eq!(transcript, "First paragraph.\n\n@orchestrator second paragraph.");
+}
+
+/// The first chunk never gets a leading separator.
+#[test]
+fn append_message_chunk_first_chunk_has_no_leading_separator() {
+    let mut transcript = String::new();
+    session::append_message_chunk(&mut transcript, "hello");
+    assert_eq!(transcript, "hello");
+}
