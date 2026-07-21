@@ -18,6 +18,7 @@ import os
 
 from google.antigravity import Agent, LocalAgentConfig
 from google.antigravity.models import DEFAULT_MODEL
+from google.antigravity.types import Text, Thought
 
 # stdout is the protocol. Anything that prints to it — a stray `print`, a chatty
 # dependency — corrupts the JSON-RPC stream and takes the seat down with no clue
@@ -73,13 +74,39 @@ async def handle_prompt(msg_id, session_id, prompt):
 
     try:
         response = await agent.chat(prompt_text)
-        async for chunk in response:
-            if chunk:
+        text_accumulated = []
+        thought_accumulated = []
+        async for chunk in response.chunks:
+            if isinstance(chunk, Text):
+                text_accumulated.append(chunk.text)
                 send_notification("session/notification", {
                     "sessionId": session_id,
                     "update": {
                         "type": "agent_message_chunk",
-                        "content": {"type": "text", "text": chunk}
+                        "content": {"type": "text", "text": chunk.text}
+                    }
+                })
+            elif isinstance(chunk, Thought):
+                thought_accumulated.append(chunk.text)
+                send_notification("session/notification", {
+                    "sessionId": session_id,
+                    "update": {
+                        "type": "agent_thought_chunk",
+                        "content": {"type": "text", "text": chunk.text}
+                    }
+                })
+
+        # Fallback if no Text chunks were streamed (e.g. model generated thoughts or text only via resolve())
+        if not text_accumulated:
+            fallback_text = await response.text()
+            if not fallback_text and thought_accumulated:
+                fallback_text = "".join(thought_accumulated)
+            if fallback_text:
+                send_notification("session/notification", {
+                    "sessionId": session_id,
+                    "update": {
+                        "type": "agent_message_chunk",
+                        "content": {"type": "text", "text": fallback_text}
                     }
                 })
 
