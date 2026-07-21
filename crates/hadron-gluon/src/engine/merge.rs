@@ -1,6 +1,6 @@
 
 use hadron_lattice::{
-    Actor, Event, Kind, QuarkId, QuarkState,
+    Actor, Event, Flavor, Kind, QuarkId, QuarkState,
 };
 
 use crate::field::read_events;
@@ -99,10 +99,15 @@ impl super::Engine {
                     .await?;
                 }
                 let landed = runner.land(root, &t.wt, &t.base)?;
+                let body = if self.roster.iter().any(|c| c.flavor == Flavor::Orchestrator) {
+                    format!("@{} {}", crate::router::ORCHESTRATOR_ALIAS, landed.describe(&t.wt.branch, &t.base))
+                } else {
+                    landed.describe(&t.wt.branch, &t.base)
+                };
                 self.append(Event::new(
                     Actor::Gluon,
                     None,
-                    Kind::Message { body: landed.describe(&t.wt.branch, &t.base) },
+                    Kind::Message { body },
                 ))
                 .await?;
                 Ok(false) // landed → the quark grounds normally

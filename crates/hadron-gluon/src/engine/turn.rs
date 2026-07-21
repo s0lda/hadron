@@ -1,6 +1,6 @@
 
 use hadron_lattice::{
-    Actor, Event, Kind, QuarkId, QuarkState,
+    Actor, Event, Flavor, Kind, QuarkId, QuarkState,
     TurnOutcome,
 };
 
@@ -24,7 +24,12 @@ impl super::Engine {
     /// One shape for every refusal (energy depletion, an unusable worktree, a turn
     /// with no assignment) rather than a new mechanism per reason.
     pub(super) async fn reroute_blocked(&self, target: &QuarkId, why: &str) -> anyhow::Result<()> {
-        self.append(Event::new(Actor::Gluon, None, Kind::Message { body: why.to_string() }))
+        let msg = if self.roster.iter().any(|c| c.flavor == Flavor::Orchestrator) && !why.starts_with('@') {
+            format!("@{} {why}", crate::router::ORCHESTRATOR_ALIAS)
+        } else {
+            why.to_string()
+        };
+        self.append(Event::new(Actor::Gluon, None, Kind::Message { body: msg }))
             .await?;
         self.append(Event::new(
             Actor::Quark(target.clone()),
