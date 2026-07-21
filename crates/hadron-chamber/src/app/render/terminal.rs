@@ -101,6 +101,8 @@ impl super::Chamber {
                 let size_probe = gpui::canvas(
                     move |bounds, _, _| {
                         px_cell.set(Some((
+                            f32::from(bounds.origin.x),
+                            f32::from(bounds.origin.y),
                             f32::from(bounds.size.width),
                             f32::from(bounds.size.height),
                         )));
@@ -124,10 +126,31 @@ impl super::Chamber {
                     .border_1()
                     .border_color(theme::border())
                     .bg(theme::term_bg())
+                    // Mouse-down focuses the screen and anchors a text selection
+                    // (double/triple-click widen to word/line); dragging extends it,
+                    // and copy (`on_terminal_key`) reads it back via `selection_text`.
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, _, window, cx| window.focus(&this.terminal_focus, cx)),
+                        cx.listener(|this, ev: &gpui::MouseDownEvent, window, cx| {
+                            window.focus(&this.terminal_focus, cx);
+                            if let (Some(term), Some((row, col, right))) =
+                                (this.terminal.as_ref(), this.terminal_cell_at(ev.position))
+                            {
+                                term.selection_start(row, col, right, ev.click_count);
+                                cx.notify();
+                            }
+                        }),
                     )
+                    .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _window, cx| {
+                        if ev.pressed_button == Some(MouseButton::Left) {
+                            if let (Some(term), Some((row, col, right))) =
+                                (this.terminal.as_ref(), this.terminal_cell_at(ev.position))
+                            {
+                                term.selection_update(row, col, right);
+                                cx.notify();
+                            }
+                        }
+                    }))
                     .on_key_down(cx.listener(Self::on_terminal_key))
                     .child(size_probe)
                     .child(grid);
