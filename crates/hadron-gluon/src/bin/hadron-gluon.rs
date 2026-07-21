@@ -400,16 +400,19 @@ async fn main() {
         let before = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
         if let Err(e) = engine.run_until_quiesce().await {
             eprintln!("gluon: excite error (continuing): {e:#}");
-            let orch_exists =
-                engine.roster().iter().any(|c| c.flavor == Flavor::Orchestrator);
-            let body = if orch_exists {
-                format!("@{} ⚠️ Gluon excite error: {e:#}", hadron_gluon::router::ORCHESTRATOR_ALIAS)
-            } else {
-                format!("⚠️ Gluon excite error: {e:#}")
-            };
-            let _ = engine
-                .append(Event::new(Actor::Gluon, None, Kind::Message { body }))
-                .await;
+            let events_after = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
+            if events_after == before {
+                let orch_exists =
+                    engine.roster().iter().any(|c| c.flavor == Flavor::Orchestrator);
+                let body = if orch_exists {
+                    format!("@{} ⚠️ Gluon excite error: {e:#}", hadron_gluon::router::ORCHESTRATOR_ALIAS)
+                } else {
+                    format!("⚠️ Gluon excite error: {e:#}")
+                };
+                let _ = engine
+                    .append(Event::new(Actor::Gluon, None, Kind::Message { body }))
+                    .await;
+            }
         }
         let after = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
         if after > before {
