@@ -98,6 +98,16 @@ Hadron orchestrates models it did not build. Credit where it is due:
 
 Every dependency above is used under its own licence.
 
+## Keyboard Shortcuts
+
+| Shortcut                | Action                                    |
+| ------------------------ | ------------------------------------------ |
+| `Ctrl+Tab` / `Ctrl+\``    | Toggle focus between the chat input and the terminal |
+| `Alt+Left` / `Alt+Right`  | Switch chat column tabs                    |
+| `Alt+PageUp` / `Alt+PageDown` | Switch right-rail (inspector) tabs    |
+| `Alt+Up` / `Alt+Down`     | Switch Stats time window                   |
+| `F6`                     | Cycle the global permission mode           |
+
 ## Licence
 
 Hadron is licensed under the **[Apache License 2.0](LICENSE)** — the same licence
