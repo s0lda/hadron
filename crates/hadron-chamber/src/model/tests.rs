@@ -218,6 +218,41 @@
         assert_eq!(targets, vec!["opus".to_string(), "gemini".to_string()]);
     }
 
+    /// Process Manager rows: the daemon first (from the caller's live probe), then
+    /// every *adopted* seat with a real status and only the control actions that
+    /// mechanism actually supports — restart only for an enabled ACP seat, and the
+    /// not-adopted seat omitted entirely (nothing to list — no process exists for it).
+    #[test]
+    fn build_process_rows_lists_daemon_then_adopted_seats_only() {
+        use hadron_lattice::Transport;
+
+        let mut resident = roster_entry("acp-claude", Transport::Acp);
+        resident.state = QuarkState::Excited;
+
+        let mut disabled_cli = roster_entry("cli-agy", Transport::Cli);
+        disabled_cli.enabled = false;
+
+        let mut not_adopted = roster_entry("acp-agy", Transport::Acp);
+        not_adopted.adopted = false;
+
+        let rows = build_process_rows(true, &[resident, disabled_cli, not_adopted]);
+
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["gluon", "acp-claude", "cli-agy"],
+            "not-adopted seat holds no process, so it's omitted, not greyed"
+        );
+
+        assert_eq!(rows[0].status, "Running");
+        assert!(!rows[0].can_restart && !rows[0].can_toggle, "chamber has no daemon control path");
+
+        assert_eq!(rows[1].status, "Excited");
+        assert!(rows[1].can_restart, "enabled ACP seat can be force-restarted");
+
+        assert_eq!(rows[2].status, "Disabled");
+        assert!(!rows[2].can_restart, "a disabled seat holds nothing resident to reap");
+    }
+
     /// The Session tab reported zeros for every quark: it decided who was a quark by
     /// testing `from` for an `@` prefix, and `actor_str` renders a quark as its bare
     /// id. The filter matched nothing, so every statistic silently read as 0 — the

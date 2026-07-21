@@ -131,6 +131,64 @@ pub fn post_clear_reboots(roster: &[RosterRow]) -> Vec<Event> {
         .collect()
 }
 
+/// One row in the Process Manager overlay: the daemon, or one adopted quark seat,
+/// with a human status line and which of the codebase's *existing* control
+/// mechanisms apply (`Kind::Reboot` for a resident ACP seat, the `Seat.enabled`
+/// toggle for any adopted seat) — not a fabricated OS-level kill switch, which
+/// this view has no wiring for (the chamber never holds a quark's child PID; the
+/// daemon does).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessRow {
+    pub id: String,
+    pub label: String,
+    pub status: String,
+    /// Force-restart is meaningful only for a resident (ACP) seat that is
+    /// currently enabled — a disabled or one-shot CLI seat holds nothing to reap.
+    pub can_restart: bool,
+    /// Whether this row's participation can be flipped at all (every adopted
+    /// quark; not the daemon, which the chamber has no start/stop path for).
+    pub can_toggle: bool,
+    pub enabled: bool,
+}
+
+/// Builds the Process Manager's row list: the `hadron-gluon` daemon first (its
+/// running state is a live flock probe the caller supplies — only the OS knows),
+/// then every *adopted* roster seat. A not-adopted quark holds no process at
+/// all, so — unlike the roster pane, which greys it out — this omits it entirely.
+pub fn build_process_rows(gluon_running: bool, roster: &[RosterRow]) -> Vec<ProcessRow> {
+    let mut rows = vec![ProcessRow {
+        id: "gluon".to_string(),
+        label: "hadron-gluon (daemon)".to_string(),
+        status: if gluon_running { "Running".to_string() } else { "Stopped".to_string() },
+        can_restart: false,
+        can_toggle: false,
+        enabled: gluon_running,
+    }];
+    rows.extend(roster.iter().filter(|r| r.adopted).map(|r| {
+        let status = if !r.enabled {
+            "Disabled".to_string()
+        } else {
+            match r.state {
+                QuarkState::Excited => "Excited".to_string(),
+                QuarkState::Thinking => "Thinking".to_string(),
+                QuarkState::Waiting => "Waiting".to_string(),
+                QuarkState::Blocked => "Blocked".to_string(),
+                QuarkState::Error => "Error".to_string(),
+                QuarkState::Ground => "Idle".to_string(),
+            }
+        };
+        ProcessRow {
+            id: r.id.clone(),
+            label: r.display_name.clone().unwrap_or_else(|| r.id.clone()),
+            status,
+            can_restart: r.enabled && matches!(r.transport, hadron_lattice::Transport::Acp),
+            can_toggle: true,
+            enabled: r.enabled,
+        }
+    }));
+    rows
+}
+
 /// What one quark spent this session. `context` and `quota` are the *latest*
 /// the provider reported, not a sum: occupancy and remaining allowance are
 /// levels, and adding them up would mean nothing.
