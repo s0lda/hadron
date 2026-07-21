@@ -139,7 +139,12 @@ pub(super) const ACP_AGENTS: &[AcpAgentSpec] = &[
         vendor: "copilot",
         name: "GitHub Copilot (ACP)",
         program: "copilot",
-        args: &[],
+        // `copilot` bare launches the interactive TUI and never speaks ACP, so the
+        // client hangs forever on the `initialize` handshake ("never ending
+        // connecting"). `--acp` is the CLI's documented "Start as Agent Client
+        // Protocol server" flag; verified here to return a valid `initialize`
+        // result (agent v1.0.73). Not `proven` — no full turn driven yet.
+        args: &["--acp"],
         proven: false,
     },
     AcpAgentSpec {
