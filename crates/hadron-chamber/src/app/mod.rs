@@ -90,15 +90,6 @@ actions!(
         PrevChatTab,
         NextInspectorTab,
         PrevInspectorTab,
-        // Direct chat-column tab selection (Chat/Log/Stats), bound to Alt-1..3.
-        ChatTab1,
-        ChatTab2,
-        ChatTab3,
-        // Direct right-rail tab selection (Terminal/Files/Changes/Plan), bound to Alt-4..7.
-        InspectorTab1,
-        InspectorTab2,
-        InspectorTab3,
-        InspectorTab4,
         NextStatsSubTab,
         PrevStatsSubTab,
         NextQuark,
@@ -308,7 +299,9 @@ struct Chamber {
     terminal_focus: FocusHandle,
     /// The terminal screen's measured pixel size, written by a paint-time canvas
     /// probe and read by the pump loop to size the PTY to fit.
-    terminal_px: std::rc::Rc<std::cell::Cell<Option<(f32, f32)>>>,
+    /// The terminal grid's painted screen rect in window pixels: `(x, y, w, h)`.
+    /// Width/height size the PTY; the origin maps a pointer position to a cell.
+    terminal_px: std::rc::Rc<std::cell::Cell<Option<(f32, f32, f32, f32)>>>,
     /// Pump ticks left in which to force a repaint so the paint-time size probe
     /// re-measures. The measured size only refreshes on paint, and an idle
     /// terminal forces none — so without this the PTY stays stuck at whatever
@@ -746,43 +739,46 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
         // been grepped against `crates/gpui-component/crates/ui/src/input/state.rs`
         // and confirmed unclaimed.)
         //
-        // The tab-navigation chords, by contrast, are bound with `None` (global)
-        // so they dispatch regardless of which sub-context holds focus — `content`
-        // (which carries `KEY_CONTEXT`) is always their ancestor, so this is a
-        // strict superset of the old scoped behaviour, not a regression. The input
-        // claims bare `tab`/`pageup`/`pagedown` but none of the `ctrl-*` variants
-        // nor `alt-1..7`, so none of these are shadowed. ctrl-based (not alt/super)
-        // was originally chosen to dodge the WM's own workspace chords on Linux/WSL;
-        // the direct `alt-1..7` shortcuts added here may be grabbed by the WM first.
+        // The navigation chords are bound with `None` (global) so they dispatch
+        // regardless of which sub-context holds focus — `content` (which carries
+        // `KEY_CONTEXT`) is always their ancestor, so a global binding still reaches
+        // its handler. Jake's requested scheme is modifier + arrows:
+        //   alt-tab            chat input  <-> terminal (reuses `ToggleFocus`)
+        //   alt-left/right     chat column tabs   (Chat / Log / Stats)
+        //   alt-pageup/pagedn  right-rail tabs     (Terminal / Files / Changes / Plan)
+        //   alt-up/down        Stats time window
+        // Two caveats, both flagged to Jake: `alt-tab` is the WSLg/Windows-host
+        // window switcher and may be grabbed before the app ever sees it; and the
+        // text input claims `alt-left`/`alt-right` (word nav), so those switch chat
+        // tabs only when the chat box is NOT focused. `ctrl-tab`/`ctrl-shift-tab` are
+        // kept as a typing-safe fallback for chat tabs (unclaimed by the input).
+        // `alt-up/down` and `alt-pageup/pagedown` are unclaimed, so they always fire.
         cx.bind_keys([
             // Verified-free (was shift-tab, dead while typing — see above).
             KeyBinding::new("f6", CycleMode, Some(KEY_CONTEXT)),
-            // Chat column tabs (Chat / Log / Stats) — the universal tab chord.
+            // Chat column tabs (Chat / Log / Stats): requested alt-arrows + the
+            // typing-safe ctrl-tab fallback (the input owns alt-left/right).
+            KeyBinding::new("alt-right", NextChatTab, None),
+            KeyBinding::new("alt-left", PrevChatTab, None),
             KeyBinding::new("ctrl-tab", NextChatTab, None),
             KeyBinding::new("ctrl-shift-tab", PrevChatTab, None),
-            // Right rail tabs (Terminal / Files / Changes / Plan) — browser-style.
-            KeyBinding::new("ctrl-pagedown", NextInspectorTab, None),
-            KeyBinding::new("ctrl-pageup", PrevInspectorTab, None),
-            // Direct chat-column tabs (Alt-1..3) and right-rail tabs (Alt-4..7).
-            KeyBinding::new("alt-1", ChatTab1, None),
-            KeyBinding::new("alt-2", ChatTab2, None),
-            KeyBinding::new("alt-3", ChatTab3, None),
-            KeyBinding::new("alt-4", InspectorTab1, None),
-            KeyBinding::new("alt-5", InspectorTab2, None),
-            KeyBinding::new("alt-6", InspectorTab3, None),
-            KeyBinding::new("alt-7", InspectorTab4, None),
-            // Stats time window, only while the Stats tab is up.
-            KeyBinding::new("ctrl-alt-pagedown", NextStatsSubTab, Some(KEY_CONTEXT)),
-            KeyBinding::new("ctrl-alt-pageup", PrevStatsSubTab, Some(KEY_CONTEXT)),
+            // Right rail tabs (Terminal / Files / Changes / Plan).
+            KeyBinding::new("alt-pagedown", NextInspectorTab, None),
+            KeyBinding::new("alt-pageup", PrevInspectorTab, None),
+            // Stats time window (Session / Week / Month / All time).
+            KeyBinding::new("alt-down", NextStatsSubTab, None),
+            KeyBinding::new("alt-up", PrevStatsSubTab, None),
             // Roster cursor (vim-style j/k) and open-selected.
             KeyBinding::new("ctrl-j", NextQuark, Some(KEY_CONTEXT)),
             KeyBinding::new("ctrl-k", PrevQuark, Some(KEY_CONTEXT)),
             KeyBinding::new("ctrl-alt-enter", ToggleSelectedQuark, Some(KEY_CONTEXT)),
             // App menu overlay — F10, the conventional "focus the menu" key.
             KeyBinding::new("f10", OpenMenu, Some(KEY_CONTEXT)),
-            // Chat <-> terminal focus toggle — the widespread terminal-toggle
-            // convention (VS Code, JetBrains, …). Verified unclaimed by Input.
-            KeyBinding::new("ctrl-`", ToggleFocus, Some(KEY_CONTEXT)),
+            // Chat input <-> terminal focus toggle (Jake's requested `alt-tab`).
+            // Global so it fires from either side; `ctrl-\`` kept as a fallback in
+            // case the WSLg/Windows host grabs `alt-tab` for its window switcher.
+            KeyBinding::new("alt-tab", ToggleFocus, None),
+            KeyBinding::new("ctrl-`", ToggleFocus, None),
         ]);
 
         // Build window options here (needs `&App`, not the async cx below).
