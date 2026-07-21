@@ -2497,6 +2497,37 @@ async fn multiple_mentions_in_quark_message_run_concurrently() {
     assert!(ids.contains(&"b"), "worker b was not targeted: {ids:?}");
 }
 
+#[test]
+fn gluon_messages_addressed_to_a_quark_are_routed_to_target() {
+    use crate::mock::MockQuark;
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+
+    let gluon_msg = Event::new(
+        Actor::Gluon,
+        None,
+        Kind::Message {
+            body: "@orch ⚠️ Quark `acp-agy` turn errored: API key missing".into(),
+        },
+    );
+    append_event(&path, &gluon_msg).unwrap();
+
+    let engine = Engine::new(
+        path.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("orch"), Flavor::Orchestrator, "ok")),
+        ],
+        10,
+    );
+
+    let events = read_events(&path).unwrap();
+    let targets = engine.unaddressed_message_targets(&events);
+    let ids: Vec<&str> = targets.iter().map(|(q, _)| q.as_str()).collect();
+
+    assert!(ids.contains(&"orch"), "orchestrator was not targeted by Gluon message: {ids:?}");
+}
+
+
 #[tokio::test]
 async fn multiple_mentions_in_quark_reply_results_in_unaddressed_event() {
     use crate::mock::MockQuark;
