@@ -743,25 +743,16 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
         // regardless of which sub-context holds focus — `content` (which carries
         // `KEY_CONTEXT`) is always their ancestor, so a global binding still reaches
         // its handler. Jake's requested scheme is modifier + arrows:
-        //   alt-tab            chat input  <-> terminal (reuses `ToggleFocus`)
+        //   ctrl-tab           chat input  <-> terminal (reuses `ToggleFocus`)
         //   alt-left/right     chat column tabs   (Chat / Log / Stats)
         //   alt-pageup/pagedn  right-rail tabs     (Terminal / Files / Changes / Plan)
         //   alt-up/down        Stats time window
-        // Two caveats, both flagged to Jake: `alt-tab` is the WSLg/Windows-host
-        // window switcher and may be grabbed before the app ever sees it; and the
-        // text input claims `alt-left`/`alt-right` (word nav), so those switch chat
-        // tabs only when the chat box is NOT focused. `ctrl-tab`/`ctrl-shift-tab` are
-        // kept as a typing-safe fallback for chat tabs (unclaimed by the input).
-        // `alt-up/down` and `alt-pageup/pagedown` are unclaimed, so they always fire.
         cx.bind_keys([
             // Verified-free (was shift-tab, dead while typing — see above).
             KeyBinding::new("f6", CycleMode, Some(KEY_CONTEXT)),
-            // Chat column tabs (Chat / Log / Stats): requested alt-arrows + the
-            // typing-safe ctrl-tab fallback (the input owns alt-left/right).
+            // Chat column tabs (Chat / Log / Stats).
             KeyBinding::new("alt-right", NextChatTab, None),
             KeyBinding::new("alt-left", PrevChatTab, None),
-            KeyBinding::new("ctrl-tab", NextChatTab, None),
-            KeyBinding::new("ctrl-shift-tab", PrevChatTab, None),
             // Right rail tabs (Terminal / Files / Changes / Plan).
             KeyBinding::new("alt-pagedown", NextInspectorTab, None),
             KeyBinding::new("alt-pageup", PrevInspectorTab, None),
@@ -774,10 +765,9 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             KeyBinding::new("ctrl-alt-enter", ToggleSelectedQuark, Some(KEY_CONTEXT)),
             // App menu overlay — F10, the conventional "focus the menu" key.
             KeyBinding::new("f10", OpenMenu, Some(KEY_CONTEXT)),
-            // Chat input <-> terminal focus toggle (Jake's requested `alt-tab`).
-            // Global so it fires from either side; `ctrl-\`` kept as a fallback in
-            // case the WSLg/Windows host grabs `alt-tab` for its window switcher.
-            KeyBinding::new("alt-tab", ToggleFocus, None),
+            // Chat input <-> terminal focus toggle (`ctrl-tab` / `ctrl-``).
+            // Global so it fires from either side.
+            KeyBinding::new("ctrl-tab", ToggleFocus, None),
             KeyBinding::new("ctrl-`", ToggleFocus, None),
         ]);
 
