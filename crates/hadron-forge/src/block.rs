@@ -1,10 +1,11 @@
 use tree_sitter::{Node, Parser};
+use crate::lang::Lang;
 
 /// How many hex chars of the blake3 digest identify a block.
 /// 8 hex = 32 bits — enough to disambiguate blocks within files for production.
 pub const HASH_LEN: usize = 8;
 
-/// The kind of top-level Rust item a [`Block`] represents.
+/// The kind of top-level item a [`Block`] represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockKind {
     Function,
@@ -15,14 +16,34 @@ pub enum BlockKind {
 }
 
 impl BlockKind {
-    fn from_node_kind(kind: &str) -> Option<BlockKind> {
-        match kind {
-            "function_item" => Some(BlockKind::Function),
-            "struct_item" => Some(BlockKind::Struct),
-            "enum_item" => Some(BlockKind::Enum),
-            "impl_item" => Some(BlockKind::Impl),
-            "trait_item" => Some(BlockKind::Trait),
-            _ => None,
+    fn from_node_kind_lang(kind: &str, lang: Lang) -> Option<BlockKind> {
+        match lang {
+            Lang::Rust => match kind {
+                "function_item" => Some(BlockKind::Function),
+                "struct_item" => Some(BlockKind::Struct),
+                "enum_item" => Some(BlockKind::Enum),
+                "impl_item" => Some(BlockKind::Impl),
+                "trait_item" => Some(BlockKind::Trait),
+                _ => None,
+            },
+            Lang::Python => match kind {
+                "function_definition" => Some(BlockKind::Function),
+                "class_definition" => Some(BlockKind::Struct),
+                _ => None,
+            },
+            Lang::TypeScript => match kind {
+                "function_declaration" | "method_definition" => Some(BlockKind::Function),
+                "class_declaration" => Some(BlockKind::Struct),
+                "interface_declaration" => Some(BlockKind::Trait),
+                "enum_declaration" => Some(BlockKind::Enum),
+                _ => None,
+            },
+            Lang::Go => match kind {
+                "function_declaration" | "method_declaration" => Some(BlockKind::Function),
+                "type_declaration" => Some(BlockKind::Struct),
+                _ => None,
+            },
+            Lang::Opaque => None,
         }
     }
 
@@ -71,19 +92,37 @@ fn node_name(node: Node, src: &str) -> String {
         }
         return ty_s;
     }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if let Some(n) = child.child_by_field_name("name") {
+            return src[n.byte_range()].to_string();
+        }
+    }
     "<anon>".to_string()
 }
 
 /// Parse Rust `source` into its top-level hashed blocks, in source order.
-/// Only top-level items are addressed in v1 (nested items ride inside their
-/// parent's block); unparseable or empty input yields an empty list.
 pub fn parse_blocks(source: &str) -> Vec<Block> {
+    parse_blocks_lang(source, Lang::Rust)
+}
+
+/// Parse `source` into its top-level hashed blocks for `lang`, in source order.
+/// Only top-level items are addressed in v1; unparseable or empty input yields an empty list.
+pub fn parse_blocks_lang(source: &str, lang: Lang) -> Vec<Block> {
+    if lang == Lang::Opaque {
+        return Vec::new();
+    }
     let mut parser = Parser::new();
-    // The grammar is a compile-time constant; set_language only fails on an
-    // ABI mismatch, a build-time impossibility here.
-    parser
-        .set_language(&tree_sitter_rust::LANGUAGE.into())
-        .expect("load tree-sitter-rust grammar");
+    let language: tree_sitter::Language = match lang {
+        Lang::Rust => tree_sitter_rust::LANGUAGE.into(),
+        Lang::Python => tree_sitter_python::LANGUAGE.into(),
+        Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        Lang::Go => tree_sitter_go::LANGUAGE.into(),
+        Lang::Opaque => unreachable!(),
+    };
+    if parser.set_language(&language).is_err() {
+        return Vec::new();
+    }
     let tree = match parser.parse(source, None) {
         Some(t) => t,
         None => return Vec::new(),
@@ -92,7 +131,7 @@ pub fn parse_blocks(source: &str) -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
-        if let Some(kind) = BlockKind::from_node_kind(child.kind()) {
+        if let Some(kind) = BlockKind::from_node_kind_lang(child.kind(), lang) {
             let range = child.byte_range();
             let text = &source[range.clone()];
             blocks.push(Block {
@@ -112,8 +151,12 @@ pub fn parse_blocks(source: &str) -> Vec<Block> {
 /// Render the blocks of `source` as the Markdown context handed to the swarm:
 /// one line per block, `[Hash: <h>] <kind> <name> (lines A–B)`.
 pub fn annotate(source: &str) -> String {
+    annotate_lang(source, Lang::Rust)
+}
+
+pub fn annotate_lang(source: &str, lang: Lang) -> String {
     let mut out = String::new();
-    for b in parse_blocks(source) {
+    for b in parse_blocks_lang(source, lang) {
         out.push_str(&format!(
             "[Hash: {}] {} {} (lines {}–{})\n",
             b.hash,
@@ -205,5 +248,34 @@ trait Shape { fn area(&self) -> f64; }
         // The marker's hash equals the block's hash.
         let alpha = &parse_blocks(SAMPLE)[0];
         assert!(text.contains(&format!("[Hash: {}] fn alpha", alpha.hash)));
+    }
+
+    #[test]
+    fn python_top_level_def_is_one_block() {
+        let src = "def alpha(x):\n    return x + 1";
+        let blocks = parse_blocks_lang(src, Lang::Python);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, BlockKind::Function);
+        assert_eq!(blocks[0].name, "alpha");
+        assert_eq!(&src[blocks[0].byte_start..blocks[0].byte_end], "def alpha(x):\n    return x + 1");
+    }
+
+    #[test]
+    fn typescript_function_and_class_are_blocks() {
+        let src = "function beta() {}\nclass Foo {}\ninterface Bar {}\n";
+        let blocks = parse_blocks_lang(src, Lang::TypeScript);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].name, "beta");
+        assert_eq!(blocks[1].name, "Foo");
+        assert_eq!(blocks[2].name, "Bar");
+    }
+
+    #[test]
+    fn go_function_and_type_are_blocks() {
+        let src = "func main() {}\ntype User struct{}\n";
+        let blocks = parse_blocks_lang(src, Lang::Go);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].name, "main");
+        assert_eq!(blocks[1].name, "User");
     }
 }
