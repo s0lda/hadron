@@ -11,19 +11,28 @@ use super::*;
 ///
 /// It was one file *per quark*, which meant a lesson agy paid for in blood was one
 /// opus would pay for again. Shared, so the swarm learns once.
+///
+/// Lives under `.hadron/nucleus/` — the single knowledge root, alongside
+/// `invariants/` — not the old `.hadron/memory/`. See
+/// [`read_memory_index_with_fallback`] for what covers the window before a
+/// project's legacy `memory/` has been migrated.
 pub(super) fn memory_index_path(workspace_root: &std::path::Path) -> std::path::PathBuf {
-    memory_dir(workspace_root).join("index.md")
+    nucleus_lessons_dir(workspace_root).join("index.md")
 }
 
-/// Where the long-form notes live: `.hadron/memory/notes/<slug>.md`. The index names
+/// Where the long-form notes live: `.hadron/nucleus/notes/<slug>.md`. The index names
 /// them; the engine never loads them. That is the whole token argument — an index of
 /// one-liners stays cheap forever, and the detail is paid for only on the turn a quark
 /// actually opens it.
 pub(super) fn memory_notes_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
-    memory_dir(workspace_root).join("notes")
+    nucleus_lessons_dir(workspace_root).join("notes")
 }
 
-fn memory_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
+fn nucleus_lessons_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
+    workspace_root.join(".hadron").join("nucleus")
+}
+
+fn legacy_memory_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
     workspace_root.join(".hadron").join("memory")
 }
 
@@ -90,6 +99,19 @@ pub(super) fn read_memory_index(path: &std::path::Path) -> (String, bool) {
     out.push_str(&kept.join("\n"));
     out.push('\n');
     (out, true)
+}
+
+/// Read the lessons index from its home (`.hadron/nucleus/index.md`),
+/// falling back to the pre-migration legacy location
+/// (`.hadron/memory/index.md`) if nucleus is empty — so a quark is never
+/// shown an empty memory in the window before `Engine::migrate_legacy_memory`
+/// has run at daemon boot.
+pub(super) fn read_memory_index_with_fallback(workspace_root: &std::path::Path) -> (String, bool) {
+    let (text, truncated) = read_memory_index(&memory_index_path(workspace_root));
+    if !text.trim().is_empty() {
+        return (text, truncated);
+    }
+    read_memory_index(&legacy_memory_dir(workspace_root).join("index.md"))
 }
 
 /// Where a user's own always-on rules live, under their home directory. Their

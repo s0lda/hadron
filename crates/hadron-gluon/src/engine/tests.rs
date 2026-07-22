@@ -1,7 +1,7 @@
 use super::*;
 use super::memory::{
-    build_invariants, event_cost, memory_index_path, read_memory_index, FIELD_WINDOW_BUDGET_BYTES,
-    MEMORY_INDEX_BUDGET,
+    build_invariants, event_cost, memory_index_path, memory_notes_dir, read_memory_index,
+    read_memory_index_with_fallback, FIELD_WINDOW_BUDGET_BYTES, MEMORY_INDEX_BUDGET,
 };
 use crate::field::{append_event, read_events};
 use crate::mock::MockQuark;
@@ -1764,9 +1764,9 @@ fn an_index_within_budget_is_untouched() {
 async fn the_shared_memory_index_actually_reaches_a_quarks_projection() {
     use std::fs;
     let ws = tempdir().unwrap();
-    let mem_dir = ws.path().join(".hadron").join("memory");
-    fs::create_dir_all(&mem_dir).unwrap();
-    fs::write(mem_dir.join("index.md"), "The forge crate is unwired.").unwrap();
+    let nucleus_dir = ws.path().join(".hadron").join("nucleus");
+    fs::create_dir_all(&nucleus_dir).unwrap();
+    fs::write(nucleus_dir.join("index.md"), "The forge crate is unwired.").unwrap();
 
     let path = ws.path().join(".hadron").join("field.jsonl");
     append_event(
@@ -1799,12 +1799,12 @@ async fn the_shared_memory_index_actually_reaches_a_quarks_projection() {
                 "the engine must load the shared memory index from disk"
             );
             assert!(
-                turn.memory_path.ends_with("memory/index.md"),
+                turn.memory_path.ends_with("nucleus/index.md"),
                 "one index for the whole swarm, not one file per quark, got {:?}",
                 turn.memory_path
             );
             assert!(
-                turn.memory_notes_dir.ends_with("memory/notes"),
+                turn.memory_notes_dir.ends_with("nucleus/notes"),
                 "and it must know where the long-form notes live, got {:?}",
                 turn.memory_notes_dir
             );
@@ -1850,6 +1850,47 @@ fn an_oversized_memory_index_is_cut_and_says_so() {
     // A missing index is the first-run case, not an error.
     let empty = tempdir().unwrap();
     assert_eq!(read_memory_index(&memory_index_path(empty.path())), (String::new(), false));
+}
+
+/// Nucleus is the single knowledge root now — lessons live there, not in the
+/// old `.hadron/memory/`.
+#[test]
+fn memory_paths_now_live_under_nucleus() {
+    let root = std::path::Path::new("/repo");
+    assert_eq!(memory_index_path(root), std::path::PathBuf::from("/repo/.hadron/nucleus/index.md"));
+    assert_eq!(memory_notes_dir(root), std::path::PathBuf::from("/repo/.hadron/nucleus/notes"));
+}
+
+/// Until a project's legacy `.hadron/memory/` has been migrated (daemon
+/// boot, `Engine::migrate_legacy_memory`), a quark must still see its real
+/// lessons — never an empty index just because the move hasn't happened yet.
+#[test]
+fn fallback_reads_legacy_memory_when_nucleus_is_empty() {
+    let dir = tempdir().unwrap();
+    let legacy = dir.path().join(".hadron").join("memory");
+    std::fs::create_dir_all(&legacy).unwrap();
+    std::fs::write(legacy.join("index.md"), "- **old-lesson** — from before the move\n").unwrap();
+
+    let (text, truncated) = read_memory_index_with_fallback(dir.path());
+    assert!(text.contains("old-lesson"));
+    assert!(!truncated);
+}
+
+/// Once nucleus has real content, the legacy file is ignored — no split-brain
+/// between the two locations.
+#[test]
+fn fallback_prefers_nucleus_once_it_has_content() {
+    let dir = tempdir().unwrap();
+    let nucleus = dir.path().join(".hadron").join("nucleus");
+    std::fs::create_dir_all(&nucleus).unwrap();
+    std::fs::write(nucleus.join("index.md"), "- **new-lesson** — after the move\n").unwrap();
+    let legacy = dir.path().join(".hadron").join("memory");
+    std::fs::create_dir_all(&legacy).unwrap();
+    std::fs::write(legacy.join("index.md"), "- **old-lesson** — should not appear\n").unwrap();
+
+    let (text, _) = read_memory_index_with_fallback(dir.path());
+    assert!(text.contains("new-lesson"));
+    assert!(!text.contains("old-lesson"));
 }
 
 /// Tiers are labelled. A quark that cannot tell a rule Hadron *ships* from a rule

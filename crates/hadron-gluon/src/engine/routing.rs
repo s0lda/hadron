@@ -10,7 +10,7 @@ use crate::skills;
 use std::fs;
 
 use super::*;
-use super::memory::{build_invariants, bounded_window, memory_index_path, memory_notes_dir, read_memory_index, FIELD_WINDOW_BUDGET_BYTES};
+use super::memory::{build_invariants, bounded_window, memory_index_path, memory_notes_dir, read_memory_index_with_fallback, FIELD_WINDOW_BUDGET_BYTES};
 
 impl super::Engine {
     /// Whether `id` holds the orchestrator seat — the SSOT this module uses
@@ -416,7 +416,7 @@ impl super::Engine {
         let truncated = window.len() < events.len();
 
         let memory_path = memory_index_path(&workspace_root);
-        let (memory, memory_truncated) = read_memory_index(&memory_path);
+        let (memory, memory_truncated) = read_memory_index_with_fallback(&workspace_root);
 
         let live_dir = hadron_lattice::live::live_dir(&self.field_path);
         let mut live_activities = Vec::new();
