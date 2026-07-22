@@ -55,7 +55,8 @@ fn main() {
     let mut gluon_running_no_pid = false;
     if let Some(p) = &path {
         let field_path = std::path::Path::new(p);
-        let field_dir = field_path.parent().unwrap_or(std::path::Path::new("."));
+        let field_dir = hadron_lattice::hadron_dir_of(field_path);
+        let _ = std::fs::create_dir_all(&field_dir);
 
         // Check second chamber instance
         let chamber_lock_path = field_dir.join("chamber.lock");

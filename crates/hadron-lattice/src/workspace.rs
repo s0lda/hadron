@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The project root that owns a field path — `<root>/.hadron/field.jsonl` → `<root>`.
 /// A field sitting outside a `.hadron/` directory is taken to be in the root already.
@@ -20,6 +20,21 @@ pub fn repo_root_of(field_path: &Path) -> &Path {
     } else {
         root
     }
+}
+
+/// The `.hadron/` directory that owns a field path.
+///
+/// If `field_path` is already inside a `.hadron/` directory, returns that `.hadron/` directory.
+/// Otherwise, returns `<repo_root>/.hadron`.
+///
+/// Single Source of Truth (SSOT) for all runtime files (`chamber.lock`, `gluon.lock`, `ledger.db`, `live/`).
+pub fn hadron_dir_of(field_path: &Path) -> PathBuf {
+    if let Some(parent) = field_path.parent() {
+        if parent.file_name() == Some(std::ffi::OsStr::new(".hadron")) {
+            return parent.to_path_buf();
+        }
+    }
+    repo_root_of(field_path).join(".hadron")
 }
 
 #[cfg(test)]
@@ -44,4 +59,17 @@ mod tests {
         let field = PathBuf::from("field.jsonl");
         assert_eq!(repo_root_of(&field), Path::new("."));
     }
+
+    #[test]
+    fn hadron_dir_of_resolves_to_hadron_subdir() {
+        let field_in_hadron = PathBuf::from("/home/jake/dev/hadron/.hadron/field.jsonl");
+        assert_eq!(hadron_dir_of(&field_in_hadron), PathBuf::from("/home/jake/dev/hadron/.hadron"));
+
+        let field_bare = PathBuf::from("field.jsonl");
+        assert_eq!(hadron_dir_of(&field_bare), PathBuf::from("./.hadron"));
+
+        let field_custom = PathBuf::from("/tmp/scratch/field.jsonl");
+        assert_eq!(hadron_dir_of(&field_custom), PathBuf::from("/tmp/scratch/.hadron"));
+    }
 }
+

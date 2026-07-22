@@ -110,10 +110,7 @@ fn one_line(s: &str) -> String {
 /// The directory that holds the live files, derived from the field path so that
 /// both processes agree without a second setting: `<field-dir>/live`.
 pub fn live_dir(field: &Path) -> PathBuf {
-    field
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("live")
+    crate::hadron_dir_of(field).join("live")
 }
 
 fn file_for(dir: &Path, quark: &QuarkId) -> PathBuf {
