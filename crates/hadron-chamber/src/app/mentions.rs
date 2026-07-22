@@ -1,6 +1,6 @@
-//! Chat-body text decoration and plan parsing: `@mention` / `/command` colouring
-//! (as inline HTML the forked markdown renderer understands) and the plan-checklist
-//! progress parser behind the Plan rail. Pure string work — no GPUI, no `Chamber`.
+//! Chat-body text preparation and plan parsing: `@mention` display-name resolution
+//! (the colouring itself is done natively by the forked markdown renderer) and the
+//! plan-checklist progress parser behind the Plan rail. Pure string work — no GPUI.
 
 /// Parse a plan's markdown checklist into `(total, completed, items)`. Any line whose
 /// trimmed form starts with `- [ ]` / `- [x]` (case-insensitive) is a checkbox; the
@@ -79,16 +79,19 @@ pub(super) fn parse_plan_tasks(content: &str) -> Vec<(String, Vec<(String, bool)
     tasks
 }
 
-const MENTION_QUARK_OPEN: &str = "<span style=\"color: pink-400\"><strong>";
-const MENTION_FILE_OPEN: &str = "<span style=\"color: purple-400\"><strong>";
-const MENTION_CLOSE: &str = "</strong></span>";
-
-/// Routing names that address the swarm rather than one quark. They are mentions of
-/// *us*, so they read as quarks even though no roster row carries the id.
-const SWARM_MENTIONS: [&str; 2] = ["team", "orchestrator"];
-
-pub(super) fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> String {
-    let mut out = String::with_capacity(body.len() + 100);
+/// Rewrite `@<seat-id>` mentions to `@<display-name>` so a mention typed or stored by
+/// its raw seat id (e.g. `@acp-claude-2`) reads the way the human names the quark
+/// (`@Sonnet`). Matching keys on the id; only the shown text changes. Everything else is
+/// passed through untouched.
+///
+/// This deliberately does *not* colour anything. The forked markdown renderer marks
+/// `@mention` and `/command` tokens natively at parse time (`push_mention_and_command_marks`
+/// in gpui-component's `markdown.rs`), so wrapping them in HTML `<span>`s here would only
+/// feed that parser tags it mangles — the bug that left mentions plain after chat moved to
+/// `TextView::markdown`. We stay code-block-aware only so a mention inside a fence or inline
+/// code is left as literal text rather than silently renamed.
+pub(super) fn resolve_mention_names(body: &str, roster: &[crate::model::RosterRow]) -> String {
+    let mut out = String::with_capacity(body.len());
     let mut chars = body.chars().peekable();
     let mut in_code_block = false;
     let mut in_inline_code = false;
@@ -111,32 +114,6 @@ pub(super) fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> 
             continue;
         }
 
-        // A `/command` at a word boundary (start of body, or after whitespace) is a
-        // slash command — colour it like a mention. A bare "/" or a slash mid-token
-        // (a path like `foo/bar`) is left untouched.
-        if c == '/'
-            && !in_code_block
-            && !in_inline_code
-            && (out.is_empty() || out.ends_with(' ') || out.ends_with('\n'))
-        {
-            let mut cmd = String::new();
-            while let Some(&nc) = chars.peek() {
-                if nc.is_alphanumeric() || nc == '-' || nc == '_' {
-                    cmd.push(chars.next().unwrap());
-                } else {
-                    break;
-                }
-            }
-            if cmd.is_empty() {
-                out.push('/');
-            } else {
-                out.push_str(&format!(
-                    "<span style=\"color: fuchsia-400\"><strong>/{cmd}</strong></span>"
-                ));
-            }
-            continue;
-        }
-
         if c == '@' && !in_code_block && !in_inline_code {
             let mut name = String::new();
             while let Some(&nc) = chars.peek() {
@@ -147,14 +124,13 @@ pub(super) fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> 
                 }
             }
 
-            // Because we greedily consumed spaces and parens, the name might have trailing characters
-            // that aren't actually part of a mention (e.g., "@Agy said hi").
-            // We need to find the longest matching display name or id.
-            let mut matched_quark = false;
+            // We greedily consumed spaces and parens, so `name` may run past the mention
+            // (e.g. "@Agy said hi"). Show the longest roster display-name or id it starts
+            // with; matching keys on the id, only the shown text changes. Anything with no
+            // roster match (a plain `@word`, a `@file/path`) is emitted verbatim for the
+            // renderer to mark — we no longer classify quark vs file, the renderer marks
+            // every `@token` the same.
             let mut best_match_len = 0;
-            // What to *show* for the match: the display name when the quark has one,
-            // even if the raw text (e.g. a stored `@acp-claude-2`) matched on the id —
-            // a mention should read the way the human names the quark, not its seat id.
             let mut matched_display: Option<&str> = None;
 
             for q in roster {
@@ -162,49 +138,20 @@ pub(super) fn color_mentions(body: &str, roster: &[crate::model::RosterRow]) -> 
                 let q_name = q.display_name.as_deref().unwrap_or(q_id.as_str());
                 if name.starts_with(q_name) && q_name.len() > best_match_len {
                     best_match_len = q_name.len();
-                    matched_quark = true;
                     matched_display = Some(q_name);
                 } else if name.starts_with(q_id.as_str()) && q_id.len() > best_match_len {
                     best_match_len = q_id.len();
-                    matched_quark = true;
                     matched_display = Some(q_name);
                 }
             }
 
-            let is_swarm = SWARM_MENTIONS.iter().find(|&&m| name.starts_with(m));
-            if let Some(m) = is_swarm {
-                if m.len() > best_match_len {
-                    best_match_len = m.len();
-                    matched_quark = true;
-                    matched_display = Some(m);
+            out.push('@');
+            match matched_display {
+                Some(shown) => {
+                    out.push_str(shown);
+                    out.push_str(&name[best_match_len..]);
                 }
-            }
-
-            if matched_quark {
-                let matched_name = name[..best_match_len].to_string();
-                let remainder = name[best_match_len..].to_string();
-                let shown = matched_display.unwrap_or(matched_name.as_str());
-                out.push_str(&format!("{}@{}{}", MENTION_QUARK_OPEN, shown, MENTION_CLOSE));
-                out.push_str(&remainder);
-            } else {
-                // If it's a file, we shouldn't have consumed spaces/parens.
-                // We fallback to the old behavior for files: break at first space/paren.
-                let mut file_name = String::new();
-                for c in name.chars() {
-                    if c.is_alphanumeric() || c == '.' || c == '/' || c == '-' || c == '_' {
-                        file_name.push(c);
-                    } else {
-                        break;
-                    }
-                }
-                if file_name.is_empty() {
-                    out.push('@');
-                    out.push_str(&name);
-                } else {
-                    let remainder = name[file_name.len()..].to_string();
-                    out.push_str(&format!("{}@{}{}", MENTION_FILE_OPEN, file_name, MENTION_CLOSE));
-                    out.push_str(&remainder);
-                }
+                None => out.push_str(&name),
             }
         } else {
             out.push(c);
@@ -288,21 +235,8 @@ mod tests {
         assert_eq!(first_incomplete, Some("Task 2: Second"));
     }
 
-    #[test]
-    fn test_color_commands() {
-        let colored = color_mentions("Please run /plan and /grill-me today.", &[]);
-        assert!(colored.contains("<span style=\"color: fuchsia-400\"><strong>/plan</strong></span>"));
-        assert!(colored.contains("<span style=\"color: fuchsia-400\"><strong>/grill-me</strong></span>"));
-
-        // Should ignore slashes inside code blocks
-        let code = color_mentions("Code `/plan` inside.", &[]);
-        assert!(!code.contains("color: fuchsia-400"));
-    }
-
-    #[test]
-    fn test_mentions_parse_as_raw_html() {
-        let body = "Hello @opus!";
-        let roster = vec![RosterRow {
+    fn opus_roster() -> Vec<RosterRow> {
+        vec![RosterRow {
             id: "opus".to_string(),
             display_name: None,
             state: QuarkState::Excited,
@@ -317,31 +251,32 @@ mod tests {
             adopted: true,
             tokens: 0,
             unknown_turns: 0,
-        }];
-
-        let colored = color_mentions(body, &roster);
-        assert_eq!(
-            colored,
-            "Hello <span style=\"color: pink-400\"><strong>@opus</strong></span>!"
-        );
-
-        let options = markdown::Options {
-            compile: markdown::CompileOptions {
-                allow_dangerous_html: true,
-                ..markdown::CompileOptions::default()
-            },
-            parse: markdown::ParseOptions::gfm(),
-        };
-        let html = markdown::to_html_with_options(&colored, &options).unwrap();
-        // The HTML should literally contain the span, meaning it wasn't escaped
-        assert!(html.contains("<span style=\"color: pink-400\"><strong>@opus</strong></span>"));
+        }]
     }
 
-    /// A mention typed or stored by its raw seat id (e.g. `@acp-claude-2`) must render
-    /// using the quark's display name (`@Sonnet`) when one is set — matching still
-    /// happens on the id, only the shown text changes.
+    /// The renderer, not this pass, colours `@mention`s and `/command`s now. Text with no
+    /// seat-id to resolve must come out byte-for-byte identical (no HTML, no `<span>`), so
+    /// the forked markdown parser sees the bare tokens it marks natively.
     #[test]
-    fn a_mention_by_raw_id_renders_as_the_display_name() {
+    fn text_with_nothing_to_resolve_passes_through_untouched() {
+        assert_eq!(
+            resolve_mention_names("Please run /plan and /grill-me today.", &[]),
+            "Please run /plan and /grill-me today."
+        );
+        // A quark whose id already matches the shown name is unchanged.
+        assert_eq!(resolve_mention_names("Hello @opus!", &opus_roster()), "Hello @opus!");
+        // Unknown mentions and file paths are left for the renderer to mark.
+        assert_eq!(
+            resolve_mention_names("@team and @orchestrator and @src/main.rs", &[]),
+            "@team and @orchestrator and @src/main.rs"
+        );
+    }
+
+    /// A mention typed or stored by its raw seat id (e.g. `@acp-claude-2`) must be rewritten
+    /// to the quark's display name (`@Sonnet`) when one is set — matching still keys on the
+    /// id, only the shown text changes. The renderer then colours the resulting `@Sonnet`.
+    #[test]
+    fn a_mention_by_raw_id_resolves_to_the_display_name() {
         let roster = vec![RosterRow {
             id: "acp-claude-2".to_string(),
             display_name: Some("Sonnet".to_string()),
@@ -359,82 +294,38 @@ mod tests {
             unknown_turns: 0,
         }];
 
-        let colored = color_mentions("Hello @acp-claude-2!", &roster);
+        assert_eq!(resolve_mention_names("Hello @acp-claude-2!", &roster), "Hello @Sonnet!");
+        // Trailing words after the mention are preserved.
         assert_eq!(
-            colored,
-            "Hello <span style=\"color: pink-400\"><strong>@Sonnet</strong></span>!"
+            resolve_mention_names("@acp-claude-2 please review", &roster),
+            "@Sonnet please review"
         );
-
-        // Mentioning by the display name itself still works, unchanged.
-        let colored_by_name = color_mentions("Hello @Sonnet!", &roster);
-        assert_eq!(
-            colored_by_name,
-            "Hello <span style=\"color: pink-400\"><strong>@Sonnet</strong></span>!"
-        );
+        // Mentioning by the display name itself is already resolved, unchanged.
+        assert_eq!(resolve_mention_names("Hello @Sonnet!", &roster), "Hello @Sonnet!");
     }
 
-    /// `@team` and `@orchestrator` route to the swarm rather than to a roster row, so
-    /// nothing in the roster carries those ids — they must still read as quarks, not
-    /// as filenames.
+    /// Resolution must not fire inside inline code or a fenced block: a `@seat-id` there is
+    /// literal text a human wrote, not a mention to rename.
     #[test]
-    fn swarm_mentions_colour_as_quarks_not_files() {
-        let colored = color_mentions("@team and @orchestrator and @src/main.rs", &[]);
-        assert!(colored.contains(&format!("{MENTION_QUARK_OPEN}@team")));
-        assert!(colored.contains(&format!("{MENTION_QUARK_OPEN}@orchestrator")));
-        assert!(colored.contains(&format!("{MENTION_FILE_OPEN}@src/main.rs")));
-    }
-
-    #[test]
-    fn color_mentions_ignores_mentions_in_code() {
-        let roster = vec![crate::model::RosterRow {
-            id: "opus".to_string(),
-            display_name: None,
-            state: QuarkState::Excited,
-            mode: hadron_lattice::Mode::Ask,
-            mode_is_override: false,
-            vendor: "anthropic".to_string(),
-            model: "Claude Opus 4.6".to_string(),
-            flavor: Some(hadron_lattice::Flavor::Worker),
-            transport: hadron_lattice::Transport::Cli,
-            effort: None,
-            enabled: true,
-            adopted: true,
-            tokens: 0,
-            unknown_turns: 0,
+    fn resolution_is_suppressed_inside_code() {
+        let roster = vec![RosterRow {
+            id: "acp-claude-2".to_string(),
+            display_name: Some("Sonnet".to_string()),
+            ..opus_roster().pop().unwrap()
         }];
 
-        // Inline code mention
-        let colored_inline = color_mentions("Here is `@opus` inside inline code.", &roster);
-        assert_eq!(colored_inline, "Here is `@opus` inside inline code.");
-
-        // Code block mention
-        let colored_block = color_mentions("```rust\n@opus\n```", &roster);
-        assert_eq!(colored_block, "```rust\n@opus\n```");
-
-        // Code block mention with multiple ticks and mixed text
-        let colored_mixed = color_mentions("Before `@opus` inside, and @opus outside.", &roster);
-        assert!(colored_mixed.contains(&format!("{MENTION_QUARK_OPEN}@opus")));
-        assert!(colored_mixed.contains("`@opus`"));
-    }
-
-    /// An unparseable colour is not an error in gpui-component — it is silently
-    /// dropped. And `TextMark::color` exists only in our fork (see the `[patch]` in
-    /// the workspace Cargo.toml): if that patch ever stops applying, we fall back to
-    /// upstream, mentions render as plain text, and nothing else would notice.
-    #[test]
-    fn mention_colours_are_ones_the_forked_renderer_can_apply() {
-        for markup in [MENTION_QUARK_OPEN, MENTION_FILE_OPEN] {
-            let color = markup
-                .split_once("color: ")
-                .and_then(|(_, rest)| rest.split_once('"'))
-                .map(|(c, _)| c)
-                .expect("mention markup carries a color declaration");
-            let parsed = gpui_component::try_parse_color(color)
-                .unwrap_or_else(|e| panic!("{color} is not a colour gpui-component accepts: {e}"));
-
-            // Fails to compile against upstream gpui-component, which has no `color`.
-            let mark = gpui_component::text::TextMark::default().color(parsed);
-            assert_eq!(mark.color, Some(parsed));
-        }
+        assert_eq!(
+            resolve_mention_names("Here is `@acp-claude-2` inline.", &roster),
+            "Here is `@acp-claude-2` inline."
+        );
+        assert_eq!(
+            resolve_mention_names("```\n@acp-claude-2\n```", &roster),
+            "```\n@acp-claude-2\n```"
+        );
+        // Inside code stays literal; outside resolves in the same string.
+        assert_eq!(
+            resolve_mention_names("`@acp-claude-2` then @acp-claude-2.", &roster),
+            "`@acp-claude-2` then @Sonnet."
+        );
     }
 }
