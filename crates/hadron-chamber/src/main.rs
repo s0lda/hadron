@@ -36,7 +36,26 @@ fn main() {
     // the field path is the first non-flag argument (so flag order does not matter).
     let args: Vec<String> = std::env::args().collect();
     let no_daemon = args.iter().any(|a| a == "--no-daemon");
-    let path = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned();
+    let explicit_path = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned();
+
+    let path = match explicit_path {
+        Some(p) => Some(p),
+        None => {
+            let hadron_dir = std::path::Path::new(".hadron");
+            if !hadron_dir.exists() {
+                if let Err(e) = std::fs::create_dir_all(hadron_dir) {
+                    eprintln!("hadron-chamber: warning: failed to create .hadron directory: {}", e);
+                }
+            }
+            let default_field = hadron_dir.join("field.jsonl");
+            if !default_field.exists() {
+                if let Err(e) = std::fs::File::create(&default_field) {
+                    eprintln!("hadron-chamber: warning: failed to create .hadron/field.jsonl file: {}", e);
+                }
+            }
+            Some(default_field.to_string_lossy().to_string())
+        }
+    };
 
     let mut chamber_lock_file = None;
     // The gluon child we spawn ourselves (gui only). We own its lifetime: it is the
