@@ -2814,6 +2814,88 @@ async fn concurrent_commits_are_attributed_to_the_turn_that_made_them() {
     assert_ne!(main_head, sha_b);
 }
 
+/// A merge runner whose tests are green but whose `land` always FAILS — the exact
+/// shape the live daemon hit: `git merge --ff-only` refused because the target
+/// checkout had an uncommitted local change to a file the branch rewrites.
+struct FailingLandRunner;
+
+#[async_trait::async_trait]
+impl crate::merge::MergeRunner for FailingLandRunner {
+    async fn tests(&self, _wt: &crate::worktree::Worktree) -> anyhow::Result<(bool, String)> {
+        Ok((true, String::new()))
+    }
+    fn land(
+        &self,
+        _repo_root: &std::path::Path,
+        _wt: &crate::worktree::Worktree,
+        _base: &str,
+    ) -> anyhow::Result<crate::merge::Landed> {
+        Err(anyhow::anyhow!(
+            "simulated: your local changes to f.txt would be overwritten by merge"
+        ))
+    }
+}
+
+/// **THE LOOP GUARD.** When the merge gate's `land()` fails (a real git error, not a
+/// rebase conflict — e.g. the target checkout is dirty with a file the branch
+/// rewrites), the turn must still end on a TERMINAL status. Before the fix, `land()`'s
+/// `Err` propagated out of `run_until_quiesce`; the daemon's re-invoke loop then re-read
+/// the leftover audit `PermissionGrant{→quark}` as an unanswered turn-request and
+/// re-dispatched the quark forever (observed live: many `Excited`, zero `Ground`).
+///
+/// The fix reroutes a failed land to `Blocked` (with an explanatory message), which is a
+/// turn-completion — so `next_pending` sees the dangling grant as answered and the loop
+/// cannot form. This test fails RED before the fix: `run_until_quiesce` returns `Err`
+/// (the propagated land error) and the `unwrap` panics.
+#[tokio::test]
+async fn a_failing_merge_land_blocks_the_quark_instead_of_looping() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    // Bypass ⇒ the merge is delegated (auto-approved), so the gate takes the SAME
+    // audit-grant-then-land path the live loop hit.
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w write w.txt".into() }),
+    )
+    .unwrap();
+
+    let cwds = Arc::new(Mutex::new(vec![]));
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(WriterQuark { id: QuarkId::new("w"), file: "w.txt", cwds })],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(FailingLandRunner));
+
+    // Must NOT propagate the land error. (RED before the fix: this returns Err.)
+    engine.run_until_quiesce().await.unwrap();
+
+    let events = read_events(&field).unwrap();
+    let w = QuarkId::new("w");
+    // The turn ends on a terminal Blocked — not stranded mid-turn.
+    assert!(
+        events.iter().any(|e| e.from == Actor::Quark(w.clone())
+            && matches!(e.kind, Kind::Status { state: QuarkState::Blocked })),
+        "a failed land must block the quark (terminal), not loop"
+    );
+    // And it never reports success (no Ground, no landed message).
+    assert!(
+        !events.iter().any(|e| e.from == Actor::Quark(w.clone())
+            && matches!(e.kind, Kind::Status { state: QuarkState::Ground })),
+        "a failed land must not ground as if the merge had succeeded"
+    );
+    // The human is told why, via the orchestrator channel.
+    assert!(
+        events.iter().any(|e| e.from == Actor::Gluon
+            && matches!(&e.kind, Kind::Message { body } if body.contains("could not be merged") || body.contains("merge"))),
+        "the failure is reported, not silent"
+    );
+}
+
 /// The other half of the truth, and the reason the daemon attributes nothing today:
 /// **without `with_git`, `TurnTree` is never constructed** (l. 1186), so the whole
 /// `if let Some(t) = tree` block — `head_before`, `commit_turn`, `Kind::Edit` — is
