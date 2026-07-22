@@ -264,6 +264,31 @@ fn only_the_orchestrator_is_told_to_stay_available() {
     assert!(!worker_prompt.contains("You are the **orchestrator**"));
 }
 
+#[test]
+fn bypass_orchestrator_gets_autonomous_loop_directives() {
+    let mut proj = projection("x");
+    proj.mode = hadron_lattice::Mode::Bypass;
+    proj.roster.push(QuarkCard {
+        id: QuarkId::new("opus"),
+        display_name: None,
+        flavor: Flavor::Orchestrator,
+        energy: EnergyState::Available,
+        provider: String::new(),
+        model: String::new(),
+        roles: vec![],
+        exclusive: false,
+        commands: Default::default(),
+        energy_limit: None,
+        deny_skills: vec![],
+    });
+
+    let prompt = build(&proj, &QuarkId::new("opus"));
+    assert!(prompt.contains("Autonomous Bypass Execution Loop"));
+    assert!(prompt.contains("update the active plan file on disk"));
+    assert!(prompt.contains("dispatch the next unchecked task"));
+}
+
+
 /// No orchestrator on the roster → don't point the worker at a target that
 /// cannot be reached.
 #[test]
