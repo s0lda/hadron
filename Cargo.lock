@@ -2934,6 +2934,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures",
+ "hadron-forge",
  "hadron-gatekeeper",
  "hadron-lattice",
  "keyring",
