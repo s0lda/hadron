@@ -414,23 +414,13 @@ impl super::Chamber {
         roster: &[crate::model::RosterRow],
     ) -> impl IntoElement {
         let mut cache = self.parsed_markdown.borrow_mut();
-        let html = cache
+        let content = cache
             .entry(ix)
-            .or_insert_with(|| {
-                let options = markdown::Options {
-                    compile: markdown::CompileOptions {
-                        allow_dangerous_html: true,
-                        ..markdown::CompileOptions::default()
-                    },
-                    parse: markdown::ParseOptions::gfm(),
-                };
-                markdown::to_html_with_options(&color_mentions(body, roster), &options)
-                    .unwrap_or_default()
-            })
+            .or_insert_with(|| color_mentions(body, roster))
             .clone();
 
         div().text_size(px(13.65)).child(
-            gpui_component::text::TextView::html((view, ix), html)
+            gpui_component::text::TextView::markdown((view, ix), content)
                 .selectable(true)
                 .style(markdown_style())
                 .code_block_actions(|code_block, _window, _cx| {
