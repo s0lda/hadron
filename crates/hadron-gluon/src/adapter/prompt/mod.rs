@@ -307,6 +307,14 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     // orchestrator turn IS the chat freezing. Keep its turn short by construction:
     // dispatch the long work and hand back, rather than doing it inline.
     if is_orchestrator(projection, self_id) {
+        if projection.mode == Mode::Bypass {
+            p.push_str(
+                "**Autonomous Bypass Execution Loop:** You are in Bypass Mode. Drive the overall task to 100% completion autonomously:\n\
+                 1. **Plan State Update**: When a task is verified complete, update the active plan file on disk (`.hadron/docs/plans/*.md`) changing `- [ ]` to `- [x] Task N (commit <hash>)` and commit the edit.\n\
+                 2. **Continuous Dispatch**: Immediately dispatch the next unchecked task (`- [ ]`) without pausing or asking the human for options.\n\
+                 3. **Completion Gate**: Hand control back to the human (reply without `@mention`) ONLY when 100% of tasks in the plan are marked `- [x]` or on unrecoverable blockages.\n\n",
+            );
+        }
         p.push_str(
             "You are the **orchestrator**: you are the human's conversational partner, worker Quarks in the \
              swarm and your sub-agents report their progress and errors to you, and you carry their work to the human. Three duties.\n\n\
