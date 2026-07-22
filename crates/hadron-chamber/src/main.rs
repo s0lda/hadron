@@ -32,9 +32,17 @@ mod theme;
 mod window_frame;
 
 fn main() {
-    let path = std::env::args().nth(1);
+    // `--no-daemon` attaches to an already-running gluon without auto-spawning one;
+    // the field path is the first non-flag argument (so flag order does not matter).
+    let args: Vec<String> = std::env::args().collect();
+    let no_daemon = args.iter().any(|a| a == "--no-daemon");
+    let path = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned();
 
     let mut chamber_lock_file = None;
+    // The gluon child we spawn ourselves (gui only). We own its lifetime: it is the
+    // only daemon we may kill on exit, and only when the user opted in.
+    #[cfg(feature = "gui")]
+    let mut spawned_gluon: Option<std::process::Child> = None;
     if let Some(p) = &path {
         let field_path = std::path::Path::new(p);
         let field_dir = field_path.parent().unwrap_or(std::path::Path::new("."));
@@ -100,19 +108,63 @@ fn main() {
             eprintln!("hadron-chamber: gluon is running.");
         } else {
             eprintln!("hadron-chamber: gluon is not running.");
+            // Single-command launch: bring the daemon up ourselves so the user only
+            // runs the chamber. Headless (no gui) stays side-effect-free by design.
+            #[cfg(feature = "gui")]
+            if !no_daemon {
+                let gluon_bin = resolve_gluon_binary();
+                eprintln!(
+                    "hadron-chamber: auto-spawning daemon {:?} on field {:?}",
+                    gluon_bin, p
+                );
+                match std::process::Command::new(&gluon_bin).arg(p).spawn() {
+                    Ok(child) => spawned_gluon = Some(child),
+                    Err(e) => {
+                        eprintln!("hadron-chamber: failed to spawn hadron-gluon: {}", e)
+                    }
+                }
+            }
         }
     }
 
     #[cfg(feature = "gui")]
     {
+        // Blocks until the window closes.
         app::run(path, chamber_lock_file);
+
+        // On exit, honour the user's preference: kill the daemon *we* spawned only
+        // when it is set. Default is false, so gluon outlives the viewer as intended.
+        if config::load().close_gluon_on_exit {
+            if let Some(mut child) = spawned_gluon {
+                eprintln!("hadron-chamber: closing hadron-gluon on exit...");
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
     }
 
     #[cfg(not(feature = "gui"))]
     {
-        let _ = chamber_lock_file;
+        let _ = (chamber_lock_file, no_daemon);
         run_headless(path);
     }
+}
+
+/// Resolve the `hadron-gluon` binary next to our own executable, falling back to
+/// the bare name (resolved via `PATH`) only if the sibling is absent. Resolving
+/// against `current_exe()` first means a `hadron-gluon` planted earlier on `PATH`
+/// cannot be run in place of the one we shipped.
+#[cfg(feature = "gui")]
+fn resolve_gluon_binary() -> std::path::PathBuf {
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            let candidate = parent.join("hadron-gluon");
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+    std::path::PathBuf::from("hadron-gluon")
 }
 
 #[cfg(not(feature = "gui"))]
