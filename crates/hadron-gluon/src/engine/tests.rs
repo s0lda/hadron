@@ -1296,6 +1296,45 @@ async fn projection_carries_nucleus_digest() {
 }
 
 #[tokio::test]
+async fn nucleus_digest_renders_from_a_real_features_file() {
+    // Pins the REAL composition the daemon bin uses — `build_nucleus_digest`
+    // feeding `with_nucleus` — against a real `.hadron/nucleus/features.md`
+    // on disk. Discharges `nucleus-load-digest-is-unwired`: proves the
+    // digest a quark actually sees comes from a file, not a hand-written
+    // literal.
+    let fdir = tempdir().unwrap();
+    let path = fdir.path().join("field.jsonl");
+    seed_human_message(&path, "orch", "go");
+
+    let nucleus_dir = fdir.path().join(".hadron").join("nucleus");
+    std::fs::create_dir_all(&nucleus_dir).unwrap();
+    std::fs::write(nucleus_dir.join("features.md"), "## Login\nstatus: done\n").unwrap();
+
+    use hadron_lattice::{Projection, TurnOutcome};
+    struct Probe;
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for Probe {
+        fn id(&self) -> QuarkId {
+            QuarkId::new("orch")
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Orchestrator
+        }
+        fn energy(&self) -> hadron_lattice::EnergyState {
+            hadron_lattice::EnergyState::Available
+        }
+        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+            assert!(turn.nucleus_digest.contains("Login"), "got: {:?}", turn.nucleus_digest);
+            Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
+        }
+    }
+
+    let digest = super::build_nucleus_digest(fdir.path());
+    let mut engine = Engine::new(path.clone(), vec![Box::new(Probe)], 10).with_nucleus(digest);
+    engine.run_until_quiesce().await.unwrap();
+}
+
+#[tokio::test]
 async fn orchestrated_handoff_runs_then_quiesces() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("field.jsonl");
