@@ -2902,6 +2902,7 @@ dependencies = [
  "lsp-types",
  "markdown",
  "portable-pty",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
