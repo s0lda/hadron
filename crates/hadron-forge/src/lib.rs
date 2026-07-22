@@ -2,5 +2,7 @@
 //! hash them, and reconcile concurrent edits by hash. Pure and offline.
 pub mod block;
 pub mod edit;
+pub mod file;
 pub mod lang;
+
 
