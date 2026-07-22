@@ -110,8 +110,23 @@ impl super::Engine {
                 // live hot loop: many `Excited`, never a `Ground`). Reroute it to
                 // `Blocked` instead — a turn-completion, which answers the grant and
                 // closes the loop — exactly as every other merge refusal already does.
-                // Verify AST block integrity via hadron-forge prior to landing
-                let _ = check_forge_block_conflicts(&t.wt.path);
+                let conflicts = forge_block_conflicts(&root, &t.wt.path, root);
+                if !conflicts.is_empty() {
+                    let details = conflicts
+                        .iter()
+                        .map(|c| format!("- `{}` block `{}` [hash: {}]", c.file, c.block_name, c.base_hash))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    self.reroute_blocked(
+                        target,
+                        &format!(
+                            "⚠️ AST block conflict detected landing `{}` onto `{}`:\n{}\n\nResolve block conflicts before merging.",
+                            t.wt.branch, t.base, details
+                        ),
+                    )
+                    .await?;
+                    return Ok(true);
+                }
 
                 let landed = match runner.land(root, &t.wt, &t.base) {
                     Ok(landed) => landed,
@@ -181,20 +196,138 @@ impl super::Engine {
     }
 }
 
-/// Inspects modified Rust source files in `wt_path` using `hadron-forge` AST block parsing.
-fn check_forge_block_conflicts(wt_path: &std::path::Path) -> anyhow::Result<()> {
-    if !wt_path.exists() {
-        return Ok(());
-    }
-    // Walk directory for Rust files and verify AST block parsing
-    let walker = std::fs::read_dir(wt_path)?;
-    for entry in walker.flatten() {
-        let path = entry.path();
-        if path.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                let _blocks = hadron_forge::block::parse_blocks(&content);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockConflict {
+    pub file: String,
+    pub block_name: String,
+    pub base_hash: String,
+}
+
+fn collect_code_files(dir: &std::path::Path, rel: &std::path::Path, acc: &mut Vec<std::path::PathBuf>) {
+    let current = if rel.as_os_str().is_empty() {
+        dir.to_path_buf()
+    } else {
+        dir.join(rel)
+    };
+    let Ok(entries) = std::fs::read_dir(&current) else { return; };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with('.') || name_str == "target" || name_str == "node_modules" {
+            continue;
+        }
+        let child_rel = if rel.as_os_str().is_empty() {
+            std::path::PathBuf::from(&name)
+        } else {
+            rel.join(&name)
+        };
+        if let Ok(ft) = entry.file_type() {
+            if ft.is_dir() {
+                collect_code_files(dir, &child_rel, acc);
+            } else if ft.is_file() {
+                let rel_str = child_rel.to_str().unwrap_or("");
+                if hadron_forge::lang::lang_for_path(rel_str) != hadron_forge::lang::Lang::Opaque {
+                    acc.push(child_rel);
+                }
             }
         }
     }
-    Ok(())
+}
+
+pub fn forge_block_conflicts(
+    base_wt: &std::path::Path,
+    branch_wt: &std::path::Path,
+    target_wt: &std::path::Path,
+) -> Vec<BlockConflict> {
+    let mut files = Vec::new();
+    collect_code_files(branch_wt, std::path::Path::new(""), &mut files);
+    collect_code_files(target_wt, std::path::Path::new(""), &mut files);
+    files.sort();
+    files.dedup();
+
+    let mut conflicts = Vec::new();
+
+    for rel in files {
+        let base_p = base_wt.join(&rel);
+        let branch_p = branch_wt.join(&rel);
+        let target_p = target_wt.join(&rel);
+
+        let rel_str = rel.to_str().unwrap_or("");
+        let lang = hadron_forge::lang::lang_for_path(rel_str);
+
+        let Ok(base_src) = std::fs::read_to_string(&base_p) else { continue; };
+        let Ok(branch_src) = std::fs::read_to_string(&branch_p) else { continue; };
+        let Ok(target_src) = std::fs::read_to_string(&target_p) else { continue; };
+
+        let base_blocks = hadron_forge::block::parse_blocks_lang(&base_src, lang);
+        let branch_blocks = hadron_forge::block::parse_blocks_lang(&branch_src, lang);
+        let target_blocks = hadron_forge::block::parse_blocks_lang(&target_src, lang);
+
+        for b_block in &base_blocks {
+            let h = &b_block.hash;
+            let in_branch = branch_blocks.iter().any(|b| &b.hash == h);
+            let in_target = target_blocks.iter().any(|b| &b.hash == h);
+
+            if !in_branch && !in_target {
+                let br_match = branch_blocks.iter().find(|b| b.name == b_block.name);
+                let tg_match = target_blocks.iter().find(|b| b.name == b_block.name);
+
+                let br_hash = br_match.map(|b| &b.hash);
+                let tg_hash = tg_match.map(|b| &b.hash);
+
+                if br_hash != tg_hash {
+                    conflicts.push(BlockConflict {
+                        file: rel.to_string_lossy().to_string(),
+                        block_name: b_block.name.clone(),
+                        base_hash: h.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    conflicts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forge_block_conflicts_detects_conflicting_edits_to_same_block() {
+        let base_dir = tempfile::tempdir().unwrap();
+        let branch_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+
+        let base_code = "pub fn foo() -> i32 { 1 }\npub fn bar() -> i32 { 2 }\n";
+        let branch_code = "pub fn foo() -> i32 { 10 }\npub fn bar() -> i32 { 2 }\n";
+        let target_code = "pub fn foo() -> i32 { 20 }\npub fn bar() -> i32 { 2 }\n";
+
+        std::fs::write(base_dir.path().join("main.rs"), base_code).unwrap();
+        std::fs::write(branch_dir.path().join("main.rs"), branch_code).unwrap();
+        std::fs::write(target_dir.path().join("main.rs"), target_code).unwrap();
+
+        let conflicts = forge_block_conflicts(base_dir.path(), branch_dir.path(), target_dir.path());
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].file, "main.rs");
+        assert_eq!(conflicts[0].block_name, "foo");
+    }
+
+    #[test]
+    fn forge_block_conflicts_allows_disjoint_edits_to_different_blocks() {
+        let base_dir = tempfile::tempdir().unwrap();
+        let branch_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+
+        let base_code = "pub fn foo() -> i32 { 1 }\npub fn bar() -> i32 { 2 }\n";
+        let branch_code = "pub fn foo() -> i32 { 10 }\npub fn bar() -> i32 { 2 }\n";
+        let target_code = "pub fn foo() -> i32 { 1 }\npub fn bar() -> i32 { 20 }\n";
+
+        std::fs::write(base_dir.path().join("main.rs"), base_code).unwrap();
+        std::fs::write(branch_dir.path().join("main.rs"), branch_code).unwrap();
+        std::fs::write(target_dir.path().join("main.rs"), target_code).unwrap();
+
+        let conflicts = forge_block_conflicts(base_dir.path(), branch_dir.path(), target_dir.path());
+        assert_eq!(conflicts.len(), 0);
+    }
 }
