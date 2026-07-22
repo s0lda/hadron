@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/hadron-lattice", "crates/hadron-gluon", "crates/hadron-chamber", "crates/hadron-forge", "crates/hadron-gatekeeper"]
+members = ["crates/hadron-lattice", "crates/hadron-gluon", "crates/hadron-chamber", "crates/hadron-forge", "crates/hadron-forge-mcp", "crates/hadron-gatekeeper"]
 default-members = ["crates/hadron-chamber"]
 
 # Optimize *dependencies* even in a debug build, while our own crates stay at

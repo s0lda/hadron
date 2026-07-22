@@ -1,0 +1,18 @@
+[package]
+name = "hadron-forge-mcp"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+hadron-forge = { path = "../hadron-forge" }
+rmcp = { version = "2.2.0", features = ["server", "transport-io", "macros"] }
+schemars = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
