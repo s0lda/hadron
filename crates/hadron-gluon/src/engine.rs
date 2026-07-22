@@ -107,6 +107,103 @@ pub(crate) fn workspace_root_of(field_path: &Path, base: &Path) -> PathBuf {
 /// every quark on every turn, always, with no file to go missing.
 pub const STANDARD_MODEL: &str = include_str!("../invariants/standard_model.md");
 
+/// Read `<workspace_root>/.hadron/nucleus/features.md` into the nucleus
+/// digest. This is the reader Standard Model rule 9 promises — a missing
+/// file is the normal first-run case (a fresh project has no feature map
+/// yet), not an error.
+pub fn build_nucleus_digest(workspace_root: &Path) -> String {
+    let path = workspace_root.join(".hadron").join("nucleus").join("features.md");
+    std::fs::read_to_string(path).unwrap_or_default()
+}
+
+/// One-time, idempotent migration of the legacy `.hadron/memory/` lessons
+/// ledger into `.hadron/nucleus/`, the swarm's single knowledge root.
+///
+/// `.hadron/` is gitignored, so this is the ONLY thing that can relocate a
+/// user's real on-disk lessons — a quark-worktree `mv` would be invisible to
+/// the daemon that actually reads them. Called once at daemon boot, before
+/// any turn can run, so there is no race with a quark writing a fresh
+/// `nucleus/index.md` before migration sees the legacy one.
+pub fn migrate_legacy_memory(workspace_root: &Path) -> std::io::Result<bool> {
+    let nucleus_dir = workspace_root.join(".hadron").join("nucleus");
+    let legacy_dir = workspace_root.join(".hadron").join("memory");
+    if nucleus_dir.join("index.md").exists() {
+        return Ok(false);
+    }
+    if !legacy_dir.join("index.md").exists() {
+        return Ok(false);
+    }
+    std::fs::create_dir_all(&nucleus_dir)?;
+    std::fs::rename(legacy_dir.join("index.md"), nucleus_dir.join("index.md"))?;
+    let legacy_notes = legacy_dir.join("notes");
+    if legacy_notes.exists() {
+        std::fs::rename(legacy_notes, nucleus_dir.join("notes"))?;
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod nucleus_tests {
+    use super::*;
+
+    #[test]
+    fn build_nucleus_digest_reads_features_md() {
+        let dir = tempfile::tempdir().unwrap();
+        let nucleus = dir.path().join(".hadron").join("nucleus");
+        std::fs::create_dir_all(&nucleus).unwrap();
+        std::fs::write(nucleus.join("features.md"), "## Widget\nstatus: shipped\n").unwrap();
+        let digest = build_nucleus_digest(dir.path());
+        assert!(digest.contains("Widget"));
+    }
+
+    #[test]
+    fn build_nucleus_digest_is_empty_when_no_features_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(build_nucleus_digest(dir.path()), "");
+    }
+
+    #[test]
+    fn migrates_legacy_index_and_notes_into_nucleus() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join(".hadron").join("memory");
+        std::fs::create_dir_all(legacy.join("notes")).unwrap();
+        std::fs::write(legacy.join("index.md"), "- **x** — real content\n").unwrap();
+        std::fs::write(legacy.join("notes").join("x.md"), "the long version").unwrap();
+
+        let moved = migrate_legacy_memory(dir.path()).unwrap();
+        assert!(moved);
+        let nucleus = dir.path().join(".hadron").join("nucleus");
+        assert_eq!(
+            std::fs::read_to_string(nucleus.join("index.md")).unwrap(),
+            "- **x** — real content\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(nucleus.join("notes").join("x.md")).unwrap(),
+            "the long version"
+        );
+    }
+
+    #[test]
+    fn migration_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join(".hadron").join("memory");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("index.md"), "old").unwrap();
+        assert!(migrate_legacy_memory(dir.path()).unwrap());
+        // Second boot: nucleus/index.md now exists — must not touch anything again.
+        std::fs::write(legacy.join("index.md"), "should be ignored now").unwrap();
+        assert!(!migrate_legacy_memory(dir.path()).unwrap());
+        let nucleus = dir.path().join(".hadron").join("nucleus");
+        assert_eq!(std::fs::read_to_string(nucleus.join("index.md")).unwrap(), "old");
+    }
+
+    #[test]
+    fn fresh_project_has_nothing_to_migrate() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!migrate_legacy_memory(dir.path()).unwrap());
+    }
+}
+
 /// Drives the concurrent coordination loop over a single field file.
 ///
 /// Turns run *in parallel*: every pending target found in one read of the field is
@@ -476,8 +573,8 @@ impl Engine {
         self
     }
 
-    /// Opt in to nucleus context: the pre-rendered digest (built by the daemon
-    /// via `nucleus::load` → `nucleus::digest`) is injected into every projection.
+    /// Opt in to nucleus context: the pre-rendered digest is injected into
+    /// every projection. Build it with [`build_nucleus_digest`].
     pub fn with_nucleus(mut self, digest: String) -> Self {
         self.nucleus_digest = digest;
         self
