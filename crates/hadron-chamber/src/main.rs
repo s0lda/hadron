@@ -36,26 +36,7 @@ fn main() {
     // the field path is the first non-flag argument (so flag order does not matter).
     let args: Vec<String> = std::env::args().collect();
     let no_daemon = args.iter().any(|a| a == "--no-daemon");
-    let explicit_path = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned();
-
-    let path = match explicit_path {
-        Some(p) => Some(p),
-        None => {
-            let hadron_dir = std::path::Path::new(".hadron");
-            if !hadron_dir.exists() {
-                if let Err(e) = std::fs::create_dir_all(hadron_dir) {
-                    eprintln!("hadron-chamber: warning: failed to create .hadron directory: {}", e);
-                }
-            }
-            let default_field = hadron_dir.join("field.jsonl");
-            if !default_field.exists() {
-                if let Err(e) = std::fs::File::create(&default_field) {
-                    eprintln!("hadron-chamber: warning: failed to create .hadron/field.jsonl file: {}", e);
-                }
-            }
-            Some(default_field.to_string_lossy().to_string())
-        }
-    };
+    let path = resolve_field_path(&args);
 
     let mut chamber_lock_file = None;
     // The gluon child we spawn ourselves (gui only). We own its lifetime: it is the
@@ -200,5 +181,107 @@ fn run_headless(path: Option<String>) {
             );
         }
         None => eprintln!("usage: hadron-chamber <field.jsonl>"),
+    }
+}
+
+/// Resolve the field path from command line arguments.
+///
+/// Skips flag arguments (starting with `-`) and binary/crate names (e.g. `hadron-chamber`,
+/// `hadron-gluon`), so `cargo run hadron-chamber` or `cargo run --bin hadron-chamber` does
+/// not misinterpret the binary name as the field path. If an explicit path argument is given
+/// that is a directory, resolves to `.hadron/field.jsonl` (or `field.jsonl`) inside that directory.
+/// Otherwise defaults to `.hadron/field.jsonl` in the current directory.
+fn resolve_field_path(args: &[String]) -> Option<String> {
+    let current_exe_name = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()));
+
+    let explicit_arg = args.iter().skip(1).find(|a| {
+        if a.starts_with('-') {
+            return false;
+        }
+        let is_bin_name = a.as_str() == "hadron-chamber"
+            || a.as_str() == "hadron-gluon"
+            || a.as_str() == "hadron"
+            || current_exe_name.as_deref() == Some(a.as_str());
+        !is_bin_name
+    });
+
+    match explicit_arg {
+        Some(raw_arg) => {
+            let path = std::path::Path::new(raw_arg);
+            if path.is_dir() {
+                let hadron_field = path.join(".hadron").join("field.jsonl");
+                let direct_field = path.join("field.jsonl");
+                if direct_field.exists() && !hadron_field.exists() {
+                    Some(direct_field.to_string_lossy().to_string())
+                } else {
+                    let hadron_dir = path.join(".hadron");
+                    if !hadron_dir.exists() {
+                        let _ = std::fs::create_dir_all(&hadron_dir);
+                    }
+                    if !hadron_field.exists() {
+                        let _ = std::fs::File::create(&hadron_field);
+                    }
+                    Some(hadron_field.to_string_lossy().to_string())
+                }
+            } else {
+                Some(raw_arg.clone())
+            }
+        }
+        None => {
+            let hadron_dir = std::path::Path::new(".hadron");
+            if !hadron_dir.exists() {
+                let _ = std::fs::create_dir_all(hadron_dir);
+            }
+            let default_field = hadron_dir.join("field.jsonl");
+            if !default_field.exists() {
+                let _ = std::fs::File::create(&default_field);
+            }
+            Some(default_field.to_string_lossy().to_string())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_field_path_ignores_binary_names() {
+        let args = vec![
+            "target/debug/hadron-chamber".to_string(),
+            "hadron-chamber".to_string(),
+        ];
+        let path = resolve_field_path(&args).unwrap();
+        assert_eq!(path, ".hadron/field.jsonl");
+
+        let args_gluon = vec![
+            "target/debug/hadron-chamber".to_string(),
+            "hadron-gluon".to_string(),
+        ];
+        let path_gluon = resolve_field_path(&args_gluon).unwrap();
+        assert_eq!(path_gluon, ".hadron/field.jsonl");
+    }
+
+    #[test]
+    fn test_resolve_field_path_ignores_flags() {
+        let args = vec![
+            "target/debug/hadron-chamber".to_string(),
+            "--no-daemon".to_string(),
+            "hadron-chamber".to_string(),
+        ];
+        let path = resolve_field_path(&args).unwrap();
+        assert_eq!(path, ".hadron/field.jsonl");
+    }
+
+    #[test]
+    fn test_resolve_field_path_accepts_explicit_jsonl_file() {
+        let args = vec![
+            "target/debug/hadron-chamber".to_string(),
+            "custom/path/field.jsonl".to_string(),
+        ];
+        let path = resolve_field_path(&args).unwrap();
+        assert_eq!(path, "custom/path/field.jsonl");
     }
 }
