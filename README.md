@@ -25,12 +25,12 @@ The system is a two-tier architecture communicating strictly through the field.j
 hadron/
 ├── Cargo.toml
 ├── crates/
-│   ├── hadron-lattice/   	  (The Shared Protocol: Structs, Intents, & Edit-by-Hash schemas)
-│   ├── hadron-gluon/     	  (The Headless Daemon: Watches files, routes tasks, runs Git)
-│   ├── hadron-chamber/   	  (The GPUI Glass: The 120 FPS Native Visualizer)
-│	├── hadron-forge/
-│	├── hadron-gaetekeeper/
-│	└── gpui-component/
+│   ├── hadron-lattice/     (The Shared Protocol: Structs, Intents, & Edit-by-Hash schemas)
+│   ├── hadron-gluon/       (The Headless Daemon: Watches files, routes tasks, runs Git)
+│   ├── hadron-chamber/     (The GPUI Glass: The 120 FPS Native Visualizer)
+│   ├── hadron-forge/       (The Edit-by-Hash Engine: AST block parsing & blake3 hashing)
+│   ├── hadron-gatekeeper/  (The Security Engine: Verification, permissions, & policy checks)
+│   └── gpui-component/     (The UI Component Library: Forked GPUI widgets & native text styling)
 ```
 
 ## The Vocabulary
