@@ -181,7 +181,6 @@ fn main() {
                      Rebuild and restart hadron-gluon so it records its PID."
                 );
             }
-            }
         }
     }
 
@@ -207,6 +206,17 @@ fn resolve_gluon_binary() -> std::path::PathBuf {
         }
     }
     std::path::PathBuf::from("hadron-gluon")
+}
+
+/// Read the daemon's PID from a `gluon.lock` file. Returns `None` when the file is
+/// missing, empty, or does not hold a parseable integer — the case that made the
+/// "close gluon on exit" option appear broken: a daemon from a build predating PID
+/// tracking holds the lock but leaves it empty, so there is nothing to terminate.
+#[cfg(feature = "gui")]
+fn read_lock_pid(lock_path: &std::path::Path) -> Option<u32> {
+    std::fs::read_to_string(lock_path)
+        .ok()
+        .and_then(|content| content.trim().parse::<u32>().ok())
 }
 
 #[cfg(not(feature = "gui"))]
@@ -325,5 +335,29 @@ mod tests {
         ];
         let path = resolve_field_path(&args).unwrap();
         assert_eq!(path, "custom/path/field.jsonl");
+    }
+
+    #[test]
+    fn read_lock_pid_parses_valid_and_rejects_empty() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // A valid PID line (as hadron-gluon writes it: `writeln!(f, "{}", pid)`).
+        let valid = dir.path().join("valid.lock");
+        std::fs::write(&valid, "213779\n").unwrap();
+        assert_eq!(read_lock_pid(&valid), Some(213779));
+
+        // The bug's root cause: a daemon predating PID tracking holds the lock but
+        // leaves it empty — must read as None, not a bogus PID.
+        let empty = dir.path().join("empty.lock");
+        std::fs::write(&empty, "").unwrap();
+        assert_eq!(read_lock_pid(&empty), None);
+
+        // Whitespace-only and garbage are equally unusable.
+        let blank = dir.path().join("blank.lock");
+        std::fs::write(&blank, "  \n").unwrap();
+        assert_eq!(read_lock_pid(&blank), None);
+
+        // A missing file is None, not a panic.
+        assert_eq!(read_lock_pid(&dir.path().join("nope.lock")), None);
     }
 }
