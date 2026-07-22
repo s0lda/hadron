@@ -45,7 +45,7 @@ use crate::model::{self, ChamberView, MessageRow, RosterRow, StatsWindow};
 use crate::theme;
 
 mod mentions;
-use mentions::{color_mentions, parse_plan_progress, parse_plan_tasks};
+use mentions::{parse_plan_progress, parse_plan_tasks, resolve_mention_names};
 
 mod identity;
 use identity::{
