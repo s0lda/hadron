@@ -2913,8 +2913,12 @@ name = "hadron-forge"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "tempfile",
  "tree-sitter",
+ "tree-sitter-go",
+ "tree-sitter-python",
  "tree-sitter-rust",
+ "tree-sitter-typescript",
 ]
 
 [[package]]
