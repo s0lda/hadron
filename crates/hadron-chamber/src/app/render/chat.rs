@@ -24,7 +24,7 @@ impl super::Chamber {
                 .bg(theme::glass_surface())
                 .border_1()
                 .border_color(theme::glass_highlight())
-                .children(active.into_iter().map(|(quark_id_str, label, detail)| {
+                .children(active.into_iter().map(|(quark_id_str, text)| {
                     let identity = self.resolve_identity(&quark_id_str);
                     let name = identity.name;
                     h_flex()
@@ -46,11 +46,7 @@ impl super::Chamber {
                                 .text_xs()
                                 .text_color(theme::text_muted())
                                 .truncate()
-                                .child(if detail.is_empty() {
-                                    label.to_string()
-                                } else {
-                                    format!("{} — {}", label, detail)
-                                }),
+                                .child(text),
                         )
                 }))
         });
