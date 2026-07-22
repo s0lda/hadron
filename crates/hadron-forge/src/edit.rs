@@ -1,4 +1,5 @@
-use crate::block::parse_blocks;
+use crate::block::parse_blocks_lang;
+use crate::lang::Lang;
 
 /// An agent's proposed replacement of the block currently hashing to
 /// `target_hash` with `new_text`. The hash is the optimistic-concurrency token:
@@ -19,16 +20,9 @@ pub enum EditOutcome {
     Rejected { reason: String },
 }
 
-/// Apply `edit` to `source` under optimistic concurrency.
-///
-/// - Exactly one current block hashes to `edit.target_hash` → splice `new_text`
-///   in its place and return [`EditOutcome::Applied`].
-/// - No block matches → the block was modified or removed since the agent read
-///   it; return [`EditOutcome::Rejected`] so the agent pulls fresh state and retries.
-/// - More than one block matches (identical text) → ambiguous; reject rather
-///   than guess which one.
-pub fn apply_edit(source: &str, edit: &HashedEdit) -> EditOutcome {
-    let matches: Vec<_> = parse_blocks(source)
+/// Apply `edit` to `source` under optimistic concurrency for `lang`.
+pub fn apply_edit_lang(source: &str, edit: &HashedEdit, lang: Lang) -> EditOutcome {
+    let matches: Vec<_> = parse_blocks_lang(source, lang)
         .into_iter()
         .filter(|b| b.hash == edit.target_hash)
         .collect();
@@ -56,6 +50,11 @@ pub fn apply_edit(source: &str, edit: &HashedEdit) -> EditOutcome {
             ),
         },
     }
+}
+
+/// Apply `edit` to `source` under optimistic concurrency.
+pub fn apply_edit(source: &str, edit: &HashedEdit) -> EditOutcome {
+    apply_edit_lang(source, edit, Lang::Rust)
 }
 
 #[cfg(test)]
