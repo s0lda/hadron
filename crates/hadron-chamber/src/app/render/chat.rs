@@ -31,14 +31,13 @@ impl super::Chamber {
                         .w_full()
                         .items_center()
                         .gap_2()
-                        .child(div().flex_none().size_2().rounded_full().bg(theme::accent()))
                         .child(
                             div()
                                 .flex_none()
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(theme::accent())
-                                .child(format!("{} is {}:", name, label)),
+                                .text_color(identity.color)
+                                .child(format!("{}:", name)),
                         )
                         .child(
                             div()
@@ -47,7 +46,11 @@ impl super::Chamber {
                                 .text_xs()
                                 .text_color(theme::text_muted())
                                 .truncate()
-                                .child(detail),
+                                .child(if detail.is_empty() {
+                                    label.to_string()
+                                } else {
+                                    format!("{} — {}", label, detail)
+                                }),
                         )
                 }))
         });
