@@ -39,12 +39,20 @@ fn main() {
     let path = resolve_field_path(&args);
 
     let mut chamber_lock_file = None;
-    // The gluon child we spawn ourselves (gui only). We own its lifetime: it is the
-    // only daemon we may kill on exit, and only when the user opted in.
+    // The gluon child we spawn ourselves (gui only), kept only so we can reap it on
+    // exit — the kill itself goes by PID, uniformly, whether we spawned the daemon or
+    // attached to an existing one.
     #[cfg(feature = "gui")]
     let mut spawned_gluon: Option<std::process::Child> = None;
+    // The daemon's PID, read from `gluon.lock` when it was already running, or taken
+    // from the child we spawned. Populated in BOTH cases so close-on-exit can target
+    // it either way.
     #[cfg(feature = "gui")]
-    let mut existing_gluon_pid: Option<u32> = None;
+    let mut gluon_pid: Option<u32> = None;
+    // A gluon holds the lock but wrote no PID (a daemon from a build predating PID
+    // tracking). Lets the exit path warn instead of silently no-op'ing.
+    #[cfg(feature = "gui")]
+    let mut gluon_running_no_pid = false;
     if let Some(p) = &path {
         let field_path = std::path::Path::new(p);
         let field_dir = field_path.parent().unwrap_or(std::path::Path::new("."));
@@ -110,11 +118,8 @@ fn main() {
             eprintln!("hadron-chamber: gluon is running.");
             #[cfg(feature = "gui")]
             {
-                if let Ok(content) = std::fs::read_to_string(&gluon_lock_path) {
-                    if let Ok(pid) = content.trim().parse::<u32>() {
-                        existing_gluon_pid = Some(pid);
-                    }
-                }
+                gluon_pid = read_lock_pid(&gluon_lock_path);
+                gluon_running_no_pid = gluon_pid.is_none();
             }
         } else {
             eprintln!("hadron-chamber: gluon is not running.");
@@ -128,7 +133,13 @@ fn main() {
                     gluon_bin, p
                 );
                 match std::process::Command::new(&gluon_bin).arg(p).spawn() {
-                    Ok(child) => spawned_gluon = Some(child),
+                    Ok(child) => {
+                        // Record the PID up front (same value the daemon writes to
+                        // gluon.lock, without the read-back race) so the exit path can
+                        // terminate it exactly as it would an already-running daemon.
+                        gluon_pid = Some(child.id());
+                        spawned_gluon = Some(child);
+                    }
                     Err(e) => {
                         eprintln!("hadron-chamber: failed to spawn hadron-gluon: {}", e)
                     }
@@ -142,19 +153,33 @@ fn main() {
         // Blocks until the window closes.
         app::run(path, chamber_lock_file);
 
-        // On exit, honour the user's preference: kill the daemon when enabled.
-        // If we spawned it, kill the child process; if it was already running, terminate its PID.
+        // On exit, honour the user's preference: kill the daemon when enabled. We
+        // terminate by PID either way — spawned-by-us or attached-to-existing — so the
+        // toggle behaves identically. SIGTERM (not SIGKILL) lets gluon flush the field
+        // and drop its lock cleanly before it exits.
         if config::load().close_gluon_on_exit {
-            if let Some(mut child) = spawned_gluon {
-                eprintln!("hadron-chamber: closing spawned hadron-gluon on exit...");
-                let _ = child.kill();
-                let _ = child.wait();
-            } else if let Some(pid) = existing_gluon_pid {
-                eprintln!("hadron-chamber: closing running hadron-gluon (PID {}) on exit...", pid);
+            if let Some(pid) = gluon_pid {
+                eprintln!("hadron-chamber: closing hadron-gluon (PID {}) on exit...", pid);
                 #[cfg(unix)]
-                {
-                    unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+                unsafe {
+                    libc::kill(pid as libc::pid_t, libc::SIGTERM);
                 }
+                // Reap the child if it was ours, so it does not linger as a zombie.
+                if let Some(mut child) = spawned_gluon {
+                    #[cfg(not(unix))]
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            } else if gluon_running_no_pid {
+                // A gluon holds the lock but recorded no PID, so we cannot target it.
+                // This is an older daemon build predating PID tracking — surface it
+                // instead of silently doing nothing.
+                eprintln!(
+                    "hadron-chamber: 'close gluon on exit' is set, but the running hadron-gluon \
+                     wrote no PID to gluon.lock (likely a daemon from an older build). \
+                     Rebuild and restart hadron-gluon so it records its PID."
+                );
+            }
             }
         }
     }
