@@ -10,6 +10,7 @@ impl super::ChamberView {
     /// A quark is one that holds a **roster seat** — `actor_str` renders a quark
     /// as its bare id, so testing `from` for an `@` sigil matches nothing and
     /// silently zeroes every statistic.
+    #[allow(dead_code)] // exercised by tests; no live GUI caller yet
     pub fn session_stats(&self) -> SessionStats {
         self.fold_stats(self.messages.iter())
     }

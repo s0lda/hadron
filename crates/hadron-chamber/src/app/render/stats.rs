@@ -384,6 +384,7 @@ impl super::Chamber {
     /// The Timeline tab: a vertical [`Stepper`] over the run's milestones — the
     /// non-message activity (status changes, edits, commands, snapshots), most
     /// recent marked as the current step.
+    #[allow(dead_code)] // built but not wired into the stats tab
     pub(super) fn timeline_view(&self) -> impl IntoElement {
         let steps: Vec<&MessageRow> = self
             .view

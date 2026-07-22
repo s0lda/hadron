@@ -1,6 +1,6 @@
 
 use hadron_lattice::{
-    Actor, Event, Flavor, Kind, QuarkId, QuarkState,
+    Actor, Event, Kind, QuarkId, QuarkState,
 };
 
 use crate::field::read_events;

@@ -28,6 +28,7 @@ pub(super) struct AuthMethod {
 pub(super) enum ProviderState {
     NotConnected,
     Connecting,
+    #[allow(dead_code)] // half-wired auth flow: matched in render, not yet constructed
     NeedsAuth(Vec<AuthMethod>),
     Ready { model: String },
     Failed(String),

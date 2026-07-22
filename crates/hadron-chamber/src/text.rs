@@ -79,11 +79,13 @@ pub fn extract_completion_query(text: &str, offset: usize) -> Option<(char, Stri
 /// text** always has a char boundary at `filter_text.len()`, because the filter text
 /// is a prefix of it. This type is the only way to construct a row, so the crashing
 /// shape cannot be written.
+#[allow(dead_code)] // char-boundary guard type, exercised only by tests
 pub struct MenuRow {
     label: String,
     filter_text: String,
 }
 
+#[allow(dead_code)] // char-boundary guard type, exercised only by tests
 impl MenuRow {
     /// `filter_text` is what the user is matching against and what the menu
     /// highlights; `trailing` is anything shown after it (an emoji glyph, a hint).
