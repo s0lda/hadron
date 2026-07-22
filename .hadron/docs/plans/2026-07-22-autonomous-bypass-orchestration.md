@@ -15,7 +15,7 @@
 
 ---
 
-### Task 1: Extend Prompt Adapter with Mode-Driven Orchestrator Directives
+### Task 1: Extend Prompt Adapter with Mode-Driven Orchestrator Directives (commit 9a8e2fa)
 
 **Files:**
 - Modify: `crates/hadron-gluon/src/adapter/prompt/mod.rs:309-354`
@@ -83,7 +83,7 @@ git commit -m "feat(prompt): add autonomous bypass directives and plan update ru
 
 ---
 
-### Task 2: Active Plan File Update Guidance for Workers and Workspace Gate
+### Task 2: Active Plan File Update Guidance for Workers and Workspace Gate (commit 87b419b)
 
 **Files:**
 - Modify: `crates/hadron-gluon/src/adapter/prompt/mod.rs`
