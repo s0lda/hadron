@@ -31,7 +31,7 @@ status: draft
 **Interfaces:**
 - Produces: `pub fn build_nucleus_digest(workspace_root: &Path) -> String` — reads `<workspace_root>/.hadron/nucleus/features.md`; missing file → `String::new()` (not an error — a fresh project has no feature map yet).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```rust
 #[test]
 fn build_nucleus_digest_reads_features_md() {
@@ -49,16 +49,16 @@ fn build_nucleus_digest_is_empty_when_no_features_file() {
     assert_eq!(build_nucleus_digest(dir.path()), "");
 }
 ```
-- [ ] **Step 2:** Run `cargo test -p hadron-gluon build_nucleus_digest` → FAIL (function undefined).
-- [ ] **Step 3: Implement**
+- [x] **Step 2:** Run `cargo test -p hadron-gluon build_nucleus_digest` → FAIL (function undefined).
+- [x] **Step 3: Implement**
 ```rust
 pub fn build_nucleus_digest(workspace_root: &Path) -> String {
     let path = workspace_root.join(".hadron").join("nucleus").join("features.md");
     std::fs::read_to_string(path).unwrap_or_default()
 }
 ```
-- [ ] **Step 4:** Run → PASS.
-- [ ] **Step 5:** Commit `feat(nucleus): read features.md into the nucleus digest`.
+- [x] **Step 4:** Run → PASS.
+- [x] **Step 5:** Commit `feat(nucleus): read features.md into the nucleus digest`.
 
 ---
 
@@ -71,7 +71,7 @@ pub fn build_nucleus_digest(workspace_root: &Path) -> String {
 **Interfaces:**
 - Consumes: `build_nucleus_digest` (Task 1), `Engine::with_nucleus` (existing, `engine.rs:481`).
 
-- [ ] **Step 1: Write the failing/characterizing test** — build the `Engine` exactly as the bin does (git + nucleus, no mocking) and assert the projection carries real content:
+- [x] **Step 1: Write the failing/characterizing test** — build the `Engine` exactly as the bin does (git + nucleus, no mocking) and assert the projection carries real content:
 ```rust
 #[tokio::test]
 async fn nucleus_digest_renders_from_a_real_features_file() {
@@ -88,8 +88,8 @@ async fn nucleus_digest_renders_from_a_real_features_file() {
     assert!(turn.nucleus_digest.contains("Login"));
 }
 ```
-- [ ] **Step 2:** Run → this should already PASS (it only exercises `with_nucleus`, which already works) — the point of this test is to pin the *real* composition (`build_nucleus_digest` → `with_nucleus`) that the bin will use, not to prove new engine behavior. If it fails, the composition itself is wrong — stop and re-check Task 1.
-- [ ] **Step 3: Wire the bin** — in `bin/hadron-gluon.rs`, add to the existing builder chain (do not reorder the other calls):
+- [x] **Step 2:** Run → this should already PASS (it only exercises `with_nucleus`, which already works) — the point of this test is to pin the *real* composition (`build_nucleus_digest` → `with_nucleus`) that the bin will use, not to prove new engine behavior. If it fails, the composition itself is wrong — stop and re-check Task 1.
+- [x] **Step 3: Wire the bin** — in `bin/hadron-gluon.rs`, add to the existing builder chain (do not reorder the other calls):
 ```rust
     let engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
         .with_git(repo_root.clone())
@@ -99,8 +99,8 @@ async fn nucleus_digest_renders_from_a_real_features_file() {
         .with_global_agents_dir(hadron_lattice::user_hadron_dir().map(|d| d.join("agents")));
 ```
 (`repo_root` already exists at this call site — `.clone()` it since `with_git` also consumes it by value.)
-- [ ] **Step 4:** `cargo build -p hadron-gluon --bin hadron-gluon` → compiles.
-- [ ] **Step 5:** Commit `feat(gluon): wire nucleus digest into the daemon bin (discharges nucleus-load-digest-is-unwired)`.
+- [x] **Step 4:** `cargo build -p hadron-gluon --bin hadron-gluon` → compiles.
+- [x] **Step 5:** Commit `feat(gluon): wire nucleus digest into the daemon bin (discharges nucleus-load-digest-is-unwired)`.
 
 **What this does NOT prove:** that the live daemon, booted for real against Jake's `.hadron/`, renders the section in an actual prompt sent to an actual model. That needs a running daemon + a live turn — out of reach this turn. State this plainly in the report; do not imply it was observed live.
 
@@ -118,7 +118,7 @@ async fn nucleus_digest_renders_from_a_real_features_file() {
 - Produces: `pub(super) fn read_memory_index_with_fallback(workspace_root: &Path) -> (String, bool)`.
 - `memory_index_path`/`memory_notes_dir` now return `.hadron/nucleus/index.md` / `.hadron/nucleus/notes` — same function names, new values (SSOT: the prompt header text in `prompt/mod.rs` already renders whatever these return, so repointing the value is enough — no second place to edit).
 
-- [ ] **Step 1: Failing tests** — path functions now point at nucleus; fallback reads legacy content when nucleus is empty:
+- [x] **Step 1: Failing tests** — path functions now point at nucleus; fallback reads legacy content when nucleus is empty:
 ```rust
 #[test]
 fn memory_paths_now_live_under_nucleus() {
@@ -153,8 +153,8 @@ fn fallback_prefers_nucleus_once_it_has_content() {
     assert!(!text.contains("old-lesson"));
 }
 ```
-- [ ] **Step 2:** Run → FAIL (function undefined; path assertions fail against the old `.hadron/memory/...` values).
-- [ ] **Step 3: Implement** in `memory.rs`:
+- [x] **Step 2:** Run → FAIL (function undefined; path assertions fail against the old `.hadron/memory/...` values).
+- [x] **Step 3: Implement** in `memory.rs`:
 ```rust
 fn nucleus_lessons_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
     workspace_root.join(".hadron").join("nucleus")
@@ -186,14 +186,14 @@ pub(super) fn read_memory_index_with_fallback(workspace_root: &std::path::Path) 
 }
 ```
 (`read_memory_index(path)` itself — the budget/truncation logic — is unchanged; this only changes what feeds it.)
-- [ ] **Step 4:** Update `routing.rs`'s one call site:
+- [x] **Step 4:** Update `routing.rs`'s one call site:
 ```rust
 let memory_path = memory_index_path(&workspace_root);
 let (memory, memory_truncated) = read_memory_index_with_fallback(&workspace_root);
 ```
-- [ ] **Step 5:** Update the stale assertion in `engine/tests.rs` (~line 1763) from `.ends_with("memory/index.md")` to `.ends_with("nucleus/index.md")` (and the neighboring `memory/notes` assertion to `nucleus/notes`) — this is the expected, intentional behavior change under test, not a workaround.
-- [ ] **Step 6:** Run `cargo test -p hadron-gluon` → all PASS, including the repointed test.
-- [ ] **Step 7:** Commit `feat(nucleus): repoint the lessons reader to .hadron/nucleus/, with a legacy fallback`.
+- [x] **Step 5:** Update the stale assertion in `engine/tests.rs` (~line 1763) from `.ends_with("memory/index.md")` to `.ends_with("nucleus/index.md")` (and the neighboring `memory/notes` assertion to `nucleus/notes`) — this is the expected, intentional behavior change under test, not a workaround.
+- [x] **Step 6:** Run `cargo test -p hadron-gluon` → all PASS, including the repointed test.
+- [x] **Step 7:** Commit `feat(nucleus): repoint the lessons reader to .hadron/nucleus/, with a legacy fallback`.
 
 ---
 
@@ -207,7 +207,7 @@ let (memory, memory_truncated) = read_memory_index_with_fallback(&workspace_root
 **Interfaces:**
 - Produces: `pub fn migrate_legacy_memory(workspace_root: &Path) -> std::io::Result<bool>` — `Ok(true)` if it moved files, `Ok(false)` if already migrated or nothing to migrate.
 
-- [ ] **Step 1: Failing tests** — moves real content; idempotent on a second call; no-op on a fresh project:
+- [x] **Step 1: Failing tests** — moves real content; idempotent on a second call; no-op on a fresh project:
 ```rust
 #[test]
 fn migrates_legacy_index_and_notes_into_nucleus() {
@@ -244,8 +244,8 @@ fn fresh_project_has_nothing_to_migrate() {
     assert!(!migrate_legacy_memory(dir.path()).unwrap());
 }
 ```
-- [ ] **Step 2:** Run → FAIL (function undefined).
-- [ ] **Step 3: Implement**
+- [x] **Step 2:** Run → FAIL (function undefined).
+- [x] **Step 3: Implement**
 ```rust
 /// One-time, idempotent migration of the legacy `.hadron/memory/` lessons
 /// ledger into `.hadron/nucleus/`, the swarm's single knowledge root.
@@ -273,16 +273,16 @@ pub fn migrate_legacy_memory(workspace_root: &Path) -> std::io::Result<bool> {
     Ok(true)
 }
 ```
-- [ ] **Step 4:** Run → PASS.
-- [ ] **Step 5: Wire it into the bin**, before the engine is constructed (so `build_nucleus_digest`/the reader see post-migration state on this very boot):
+- [x] **Step 4:** Run → PASS.
+- [x] **Step 5: Wire it into the bin**, before the engine is constructed (so `build_nucleus_digest`/the reader see post-migration state on this very boot):
 ```rust
     if let Err(e) = hadron_gluon::engine::migrate_legacy_memory(&repo_root) {
         eprintln!("hadron-gluon: memory→nucleus migration failed (non-fatal): {e:#}");
     }
 ```
 Place this immediately before the `let engine = Engine::new(...)` line (~342), after `repo_root` is computed. A failure is logged, not fatal — the fallback reader (Task 3) covers the gap.
-- [ ] **Step 6:** `cargo build -p hadron-gluon --bin hadron-gluon` → compiles.
-- [ ] **Step 7:** Commit `feat(nucleus): self-healing boot migration from .hadron/memory/ to .hadron/nucleus/`.
+- [x] **Step 6:** `cargo build -p hadron-gluon --bin hadron-gluon` → compiles.
+- [x] **Step 7:** Commit `feat(nucleus): self-healing boot migration from .hadron/memory/ to .hadron/nucleus/`.
 
 **Security (rule 7):** `migrate_legacy_memory` only ever touches two hardcoded, repo-relative subpaths (`.hadron/memory`, `.hadron/nucleus`) it derives itself from `workspace_root` — no user- or LLM-supplied path is involved. No new attack surface.
 
@@ -294,7 +294,7 @@ Place this immediately before the `let engine = Engine::new(...)` line (~342), a
 - Modify: `crates/hadron-gluon/invariants/standard_model.md` (rule 9)
 - Test: none (prose; the injection block's *paths* are already covered by Task 3's Projection values — this task is the surrounding prose only)
 
-- [ ] **Step 1:** In rule 9, add one clarifying line naming the physical home and the new features-map reader, without touching the "Lessons Index (`index.md`)" bullet's wording (that stays correct as-is):
+- [x] **Step 1:** In rule 9, add one clarifying line naming the physical home and the new features-map reader, without touching the "Lessons Index (`index.md`)" bullet's wording (that stays correct as-is):
 ```markdown
 ## 9. Maintain the memory: Index, Features, and Invariants.
 
@@ -302,16 +302,16 @@ At the start of every turn, you are handed the memory **index** — the only thi
 1. **Lessons Index (`index.md`)**: ...
 ```
 (Keep bullets 1–3 exactly as they are otherwise — only the intro line changes.)
-- [ ] **Step 2:** `cargo build -p hadron-gluon` → compiles (this file is `include_str!`'d — a syntax slip would still compile fine since it's a plain string, but confirm the build succeeds as a sanity check that nothing else broke).
-- [ ] **Step 3:** Commit `docs(standard-model): rule 9 names .hadron/nucleus/ as the physical home`.
+- [x] **Step 2:** `cargo build -p hadron-gluon` → compiles (this file is `include_str!`'d — a syntax slip would still compile fine since it's a plain string, but confirm the build succeeds as a sanity check that nothing else broke).
+- [x] **Step 3:** Commit `docs(standard-model): rule 9 names .hadron/nucleus/ as the physical home`.
 
 ---
 
 ## Final gate (rule 5)
 
-- [ ] `cargo test --workspace` — expect ≥120/18/40/332(8 ignored, or fewer once any repointed)/6/127 passed, 0 new failures. Baseline recorded above; report the delta.
-- [ ] `cargo test -p hadron-gluon` in isolation — the crate every task here touches.
-- [ ] Update `.hadron/memory/index.md`'s own index entry for `nucleus-load-digest-is-unwired`: it is corrected by this work (the loader now HAS a caller) — note the correction, don't just delete the lesson (the "unwired" history is still true of the *old* `nucleus::load`/`digest` module, which this plan does not touch or delete).
+- [x] `cargo test --workspace` — expect ≥120/18/40/332(8 ignored, or fewer once any repointed)/6/127 passed, 0 new failures. Baseline recorded above; report the delta.
+- [x] `cargo test -p hadron-gluon` in isolation — the crate every task here touches.
+- [x] Update `.hadron/memory/index.md`'s own index entry for `nucleus-load-digest-is-unwired`: it is corrected by this work (the loader now HAS a caller) — note the correction, don't just delete the lesson (the "unwired" history is still true of the *old* `nucleus::load`/`digest` module, which this plan does not touch or delete).
 
 ## Self-review notes (done while writing)
 
