@@ -926,3 +926,33 @@ fn the_python_adapters_session_new_response_yields_the_model_selector() {
     assert_eq!(selector.available.len(), 1);
     assert_eq!(selector.available[0].value, "gemini-3.5-flash");
 }
+
+#[test]
+fn native_edit_request_is_detected_and_rejected() {
+    use agent_client_protocol::schema::v1::{
+        PermissionOption, PermissionOptionKind, RequestPermissionRequest, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    };
+
+    let make_req = |kind: Option<ToolKind>, title: Option<&str>| -> RequestPermissionRequest {
+        let mut fields = ToolCallUpdateFields::default();
+        fields.kind = kind;
+        fields.title = title.map(String::from);
+
+        RequestPermissionRequest::new(
+            "sess1",
+            ToolCallUpdate::new("tc1", fields),
+            vec![
+                PermissionOption::new("opt_allow", "Allow", PermissionOptionKind::AllowOnce),
+                PermissionOption::new("opt_reject", "Reject", PermissionOptionKind::RejectOnce),
+            ],
+        )
+    };
+
+    assert!(session::is_native_edit_request(&make_req(Some(ToolKind::Edit), None)));
+    assert!(session::is_native_edit_request(&make_req(None, Some("Edit"))));
+    assert!(session::is_native_edit_request(&make_req(None, Some("Write"))));
+    assert!(session::is_native_edit_request(&make_req(None, Some("MultiEdit"))));
+    assert!(session::is_native_edit_request(&make_req(None, Some("fs/write_text_file"))));
+    assert!(!session::is_native_edit_request(&make_req(Some(ToolKind::Read), Some("Read"))));
+    assert!(!session::is_native_edit_request(&make_req(None, Some("hadron_forge_edit"))));
+}

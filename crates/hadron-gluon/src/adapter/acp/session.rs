@@ -8,7 +8,7 @@ use hadron_lattice::{
 };
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionKind, PlanEntryStatus,
+    ContentBlock, InitializeRequest, McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind, PlanEntryStatus,
     PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SelectedPermissionOutcome, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
     StopReason, TextContent, ToolCall, ToolCallContent, ToolCallUpdate, ToolKind, Usage as AcpUsage,
@@ -369,21 +369,23 @@ impl super::AcpQuark {
                         )
                         .on_receive_request(
                             async move |req: RequestPermissionRequest, responder, _cx| {
-                                let want = permission_choice(*handler_mode.lock().unwrap());
-                                // Pick the offered option whose kind matches our
-                                // posture. An agent need not offer every kind, so
-                                // fall back to *rejecting* rather than to whatever
-                                // happens to be first — never fail open.
-                                let chosen = req
-                                    .options
-                                    .iter()
-                                    .find(|o| o.kind == want)
-                                    .or_else(|| {
-                                        req.options
-                                            .iter()
-                                            .find(|o| o.kind == PermissionOptionKind::RejectOnce)
-                                    })
-                                    .map(|o| o.option_id.clone());
+                                let chosen = if is_native_edit_request(&req) {
+                                    req.options
+                                        .iter()
+                                        .find(|o| o.kind == PermissionOptionKind::RejectOnce)
+                                        .map(|o| o.option_id.clone())
+                                } else {
+                                    let want = permission_choice(*handler_mode.lock().unwrap());
+                                    req.options
+                                        .iter()
+                                        .find(|o| o.kind == want)
+                                        .or_else(|| {
+                                            req.options
+                                                .iter()
+                                                .find(|o| o.kind == PermissionOptionKind::RejectOnce)
+                                        })
+                                        .map(|o| o.option_id.clone())
+                                };
 
                                 match chosen {
                                     Some(id) => responder.respond(RequestPermissionResponse::new(
@@ -403,8 +405,24 @@ impl super::AcpQuark {
                                 .block_task()
                                 .await?;
 
+                            let forge_exe = std::env::current_exe()
+                                .ok()
+                                .and_then(|p| p.parent().map(|d| d.join("hadron-forge-mcp")))
+                                .unwrap_or_else(|| PathBuf::from("hadron-forge-mcp"));
+
+                            let mcp_servers = vec![
+                                McpServer::Stdio(
+                                    McpServerStdio::new("hadron-forge-mcp", forge_exe)
+                                        .args(vec![cwd.to_string_lossy().to_string()]),
+                                ),
+                                McpServer::Stdio(
+                                    McpServerStdio::new("context7", "npx")
+                                        .args(vec!["-y".to_string(), "@context7/mcp".to_string()]),
+                                ),
+                            ];
+
                             let session = cx
-                                .send_request(NewSessionRequest::new(cwd))
+                                .send_request(NewSessionRequest::new(cwd).mcp_servers(mcp_servers))
                                 .block_task()
                                 .await?;
                             let sid = session.session_id;
@@ -661,4 +679,21 @@ impl super::AcpQuark {
 
         Ok(TurnOutcome { message, permission: None, usage })
     }
+}
+
+pub fn is_native_edit_request(req: &RequestPermissionRequest) -> bool {
+    let fields = &req.tool_call.fields;
+    if matches!(fields.kind, Some(ToolKind::Edit)) {
+        return true;
+    }
+    if let Some(title) = &fields.title {
+        let name = title.trim();
+        if matches!(
+            name,
+            "Edit" | "Write" | "MultiEdit" | "NotebookEdit" | "fs/write_text_file" | "write_file"
+        ) {
+            return true;
+        }
+    }
+    false
 }
