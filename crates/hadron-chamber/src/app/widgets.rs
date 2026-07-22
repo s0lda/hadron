@@ -375,11 +375,49 @@ pub(super) fn roster_row(
         .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
 }
 
-/// A labeled row in the Settings card: a muted caption above its control.
-pub(super) fn settings_field(label: &'static str, content: gpui::AnyElement) -> impl IntoElement {
+/// A labeled row in the Settings card: `Name | control`, with an optional muted
+/// caption below explaining what it does. The name sits in a fixed-width column
+/// so every row's control lines up, and reads at full text contrast — the old
+/// `text_xs` + `text_muted` label was the "very hard to read" complaint.
+pub(super) fn settings_field(
+    label: &'static str,
+    description: Option<&'static str>,
+    content: gpui::AnyElement,
+) -> impl IntoElement {
+    v_flex()
+        .w_full()
+        .gap_1()
+        .child(
+            h_flex()
+                .w_full()
+                .items_center()
+                .gap_4()
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(140.0))
+                        .text_sm()
+                        .text_color(theme::text())
+                        .child(label),
+                )
+                .child(div().flex_1().min_w_0().child(content)),
+        )
+        .when_some(description, |v, desc| {
+            v.child(div().text_xs().text_color(theme::text_secondary()).child(desc))
+        })
+}
+
+/// A vertically-stacked labeled field: the label above a full-width control, no
+/// fixed-width column. For rows whose label already carries the explanation
+/// (the Custom CLI wizard's inline hints) and needs the full card width rather
+/// than sharing a line with a short name.
+pub(super) fn settings_field_stacked(
+    label: impl Into<gpui::SharedString>,
+    content: gpui::AnyElement,
+) -> impl IntoElement {
     v_flex()
         .gap_1p5()
-        .child(div().text_xs().text_color(theme::text_muted()).child(label))
+        .child(div().text_sm().text_color(theme::text()).child(label.into()))
         .child(content)
 }
 
