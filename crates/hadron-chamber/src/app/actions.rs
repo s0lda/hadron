@@ -166,6 +166,80 @@ impl Chamber {
                 cx.notify();
                 true
             }
+            "limit" => {
+                let parts: Vec<&str> = args.trim().split_whitespace().collect();
+                if parts.is_empty() {
+                    eprintln!("chamber: `/limit` usage: `/limit @target 1000000` or `/limit 1000000`");
+                    return true;
+                }
+                let (target_str, val_str) = if parts.len() == 1 {
+                    (None, parts[0])
+                } else {
+                    (Some(parts[0].trim_start_matches('@')), parts[1])
+                };
+                let limit_val: u32 = match val_str.parse() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        eprintln!("chamber: invalid limit number: {val_str}");
+                        return true;
+                    }
+                };
+
+                let target_id = target_str.and_then(|t| {
+                    self.view.roster.iter()
+                        .find(|r| r.id == t || r.display_name.as_deref() == Some(t))
+                        .map(|r| r.id.clone())
+                });
+
+                if let Some(real_id) = target_id {
+                    let qid = QuarkId::new(&real_id);
+                    if let Some(existing) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
+                        existing.energy_limit = Some(limit_val);
+                    } else if let Some(def) = self.global.get(&qid).cloned() {
+                        let resolved = resolve_team(&self.team, &self.global);
+                        if let Some(base) = resolved.get(&qid) {
+                            let mut desired = base.clone();
+                            desired.energy_limit = Some(limit_val);
+                            let prev = self.team.roster.iter().find(|o| o.id == qid).cloned();
+                            let ov = hadron_lattice::seat_override_delta(qid.clone(), &def, &desired, prev.as_ref());
+                            self.team.roster.retain(|o| o.id != qid);
+                            self.team.roster.push(ov);
+                        }
+                    }
+                    self.save_repo_team(cx);
+                } else {
+                    self.team.max_exchanges = Some(limit_val as usize);
+                    self.save_repo_team(cx);
+                }
+
+                let events = io::read_events(&self.path).unwrap_or_default();
+                self.reproject(&events);
+                cx.notify();
+                true
+            }
+            "reset-energy" => {
+                let target = args.trim().trim_start_matches('@');
+                let hadron_dir = match self.path.parent() {
+                    Some(p) => p.to_path_buf(),
+                    None => std::path::PathBuf::from(".hadron"),
+                };
+                let ledger_path = hadron_dir.join("ledger.db");
+                if let Ok(conn) = rusqlite::Connection::open(&ledger_path) {
+                    if target.is_empty() || target == "all" {
+                        let _ = conn.execute("DELETE FROM usage", []);
+                    } else {
+                        let real_id = self.view.roster.iter()
+                            .find(|r| r.id == target || r.display_name.as_deref() == Some(target))
+                            .map(|r| r.id.as_str())
+                            .unwrap_or(target);
+                        let _ = conn.execute("DELETE FROM usage WHERE quark_id = ?1", [real_id]);
+                    }
+                }
+                let events = io::read_events(&self.path).unwrap_or_default();
+                self.reproject(&events);
+                cx.notify();
+                true
+            }
             _ => {
                 // If it contains a slash, it's probably a path. 
                 // Return false to let it pass through as a normal message.

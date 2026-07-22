@@ -57,13 +57,14 @@ impl Chamber {
 
     /// Load the current target's name + image path into the editor inputs.
     pub(super) fn load_settings_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (name, path, model, effort, mode, roles, deny_skills, secret_var, secret_is_set, secret_applies) = {
+        let (name, path, model, effort, mode, roles, deny_skills, energy_limit_str, secret_var, secret_is_set, secret_applies) = {
             let key = self.settings_target.key();
             let mut mdl = String::new();
             let mut eff = None;
             let mut mod_cfg = None;
             let mut roles_str = String::new();
             let mut deny_skills_str = String::new();
+            let mut energy_limit_str = String::new();
             // Defaults for a non-quark target (Human/Providers), which never shows the
             // API-key field — overwritten below when `key` resolves to a seat.
             let mut var = String::new();
@@ -88,6 +89,7 @@ impl Chamber {
                     mod_cfg = seat.mode_config.clone();
                     roles_str = seat.roles.join(", ");
                     deny_skills_str = seat.deny_skills.join(", ");
+                    energy_limit_str = seat.energy_limit.map(|n| n.to_string()).unwrap_or_default();
                     // The provider's required secret vars (catalogue SSOT) plus any the
                     // seat already declares decide whether to show the field and what to
                     // name it — never the value, only ever the NAME (see `secret_status`).
@@ -114,6 +116,7 @@ impl Chamber {
                 mod_cfg.unwrap_or_default(),
                 roles_str,
                 deny_skills_str,
+                energy_limit_str,
                 var,
                 is_set,
                 needs_secret,
@@ -135,6 +138,8 @@ impl Chamber {
             .update(cx, |s, cx| s.set_value(String::new(), window, cx));
         self.settings_deny_skills
             .update(cx, |s, cx| s.set_value(deny_skills, window, cx));
+        self.settings_energy_limit
+            .update(cx, |s, cx| s.set_value(energy_limit_str, window, cx));
         self.settings_secret_var
             .update(cx, |s, cx| s.set_value(secret_var, window, cx));
         // Never populated from the store — write-only, always blank on (re)load.
@@ -171,6 +176,9 @@ impl Chamber {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
+
+        let energy_limit_val = self.settings_energy_limit.read(cx).value().trim().to_string();
+        let new_energy_limit: Option<u32> = energy_limit_val.parse::<u32>().ok();
 
         // Team-wide "Max exchanges" (Providers panel) — gated on the Providers target,
         // like the per-quark model/effort/mode fields below are gated on `key`. This
@@ -242,7 +250,8 @@ impl Chamber {
                     || base.effort != new_effort
                     || base.mode_config != new_mode
                     || base.roles != new_roles
-                    || base.deny_skills != new_deny_skills;
+                    || base.deny_skills != new_deny_skills
+                    || base.energy_limit != new_energy_limit;
                 if knobs_changed {
                     if let Some(existing) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
                         // Self-contained legacy seat — pin the values on it directly.
@@ -251,6 +260,7 @@ impl Chamber {
                         existing.mode_config = new_mode;
                         existing.roles = new_roles;
                         existing.deny_skills = new_deny_skills;
+                        existing.energy_limit = new_energy_limit;
                         self.save_repo_team(cx);
                     } else if let Some(def) = def {
                         // Adopted via the catalogue — write a delta override (only what
@@ -264,6 +274,7 @@ impl Chamber {
                             mode_config: new_mode,
                             roles: new_roles,
                             deny_skills: new_deny_skills,
+                            energy_limit: new_energy_limit,
                             // display_name inherits `def` (via the spread) — names are global.
                             ..base.clone()
                         };
