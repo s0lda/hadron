@@ -29,6 +29,7 @@ These are verified facts that shape the plan; do not let a task quietly over-pro
 2. **codex/copilot native-edit *deny* is unconfirmed.** `mcp` attach is confirmed for both; the exact flag that removes their native edit tool is not. Phase 3 Task for each starts by confirming the deny flag from `--help`, and falls back to "provide + prefer" (soft) if none exists.
 3. **The already-merged merge-gate "block guard" (`9b260f8`) is a no-op stub.** `merge.rs:114` calls `check_forge_block_conflicts` as `let _ = …` (result discarded); the fn walks only the worktree *top level* (non-recursive → misses `src/**`), parses each `.rs` into `let _blocks` and **throws it away**, always returning `Ok(())`. It detects nothing and blocks nothing. Phase 4 replaces it with a real base-vs-branch block-hash conflict check. Until then, do not describe it as working.
 4. **"Preferred" is soft; "enforced" needs the deny flag.** Providing our tools + prompting yields high but not 100% adherence (models fall back to native on edge cases). Only native-tool *removal* guarantees ours-only, and only on providers that support removal (claude ✓, copilot likely ✓, codex ~, agy-CLI ✗).
+5. **No built-in Claude CLI seat exists.** `CliSpec::preset` (`transport.rs:223`) knows **only `"agy"`**; a user-added `"claude"` custom CLI resolves to `CliSpec::generic` → `PostureMap::default()`, which injects **no flags for any mode**. So mediation on a CLI seat requires either a new preset (Task 3.1 adds `claude`/`copilot`) or the user putting the flags in the seat's `command.args` by hand. An arbitrary custom CLI Hadron wasn't taught is best-effort only.
 
 ---
 
@@ -263,17 +264,22 @@ fn create_refuses_existing() {
 
 > Each task ends by launching the real seat and confirming, from a live turn or `--help`, that the tool is present. "Implemented, unwired" is a failure here.
 
-### Task 3.1: Claude CLI seat — attach MCP + disallow native
+### Task 3.1: Claude CLI seat — add a real preset (there is none today) + document custom-CLI usage
 
-**Files:** Modify `crates/hadron-gluon/src/adapter/cli.rs` (posture args) and the Claude seat spec in `registry/`.
+> **Verified reality (do not skip):** there is **no built-in Claude CLI seat**. Claude ships as an ACP seat (`acp-claude`). `CliSpec::preset` (`transport.rs:223`) returns a spec **only for `"agy"`** — every other vendor, including a user-added `"claude"`/`"copilot"` **custom CLI**, falls through to `CliSpec::generic`, whose `posture` is `PostureMap::default()` = **injects NO args for any mode** (`transport.rs:124`). So a custom-CLI claude gets neither `--mcp-config` nor `--disallowedTools` unless we teach it, or the user types the flags themselves. This is the gap Jake spotted.
 
-- [ ] **Step 1:** Confirm from `claude --help`: `--mcp-config <file|json>` and `--disallowedTools <names…>` (both verified present).
-- [ ] **Step 2:** Add to the Claude seat's posture: `--mcp-config` pointing at a generated config that launches `hadron-forge-mcp <worktree>`, and `--disallowedTools Edit Write MultiEdit NotebookEdit` (and prompt-directive naming `hadron_forge_*` as preferred).
-- [ ] **Step 3: Test** — a `cli.rs` unit test asserting the built invocation contains both flags (extend the existing arg-assertion tests at `cli.rs:457-493`).
-- [ ] **Step 4:** Live check: run one real edit turn on the Claude CLI seat; confirm the file changed via `hadron_forge_edit` (tool appears in the turn's tool calls), not native Edit.
-- [ ] **Step 5:** Commit.
+**Files:** Modify `crates/hadron-lattice/src/team/transport.rs` (`CliSpec::preset` + a claude/copilot `PostureMap`) and its tests; touch `cli.rs` only if the posture plumbing needs it.
 
-**Security (rule 7):** disallowing native edit tools narrows the agent's surface; the MCP server is the new surface — its jail (Phase 1) is the control.
+- [ ] **Step 1:** Confirm from `claude --help`: `--mcp-config <file|json>` and `--disallowedTools <names…>` (both verified present); from `copilot --help`: `--additional-mcp-config` + its allow/deny flags.
+- [ ] **Step 2:** Add a `claude` (and `copilot`) arm to `CliSpec::preset` whose `PostureMap` injects — for every mode — `--mcp-config <generated cfg that launches hadron-forge-mcp <worktree>>` + `--disallowedTools Edit Write MultiEdit NotebookEdit`. Now a seat with `vendor: "claude", transport: Cli` auto-mediates instead of resolving to the no-op `generic`.
+- [ ] **Step 3: Test** — a `transport.rs`/`cli.rs` unit test asserting `CliSpec::preset("claude")` is `Some` and the built invocation contains both flags (extend the arg-assertion tests at `cli.rs:457-493`). Add a negative test: `CliSpec::generic("weird-cli", …)` still injects nothing (documents the boundary).
+- [ ] **Step 4:** Live check: run one real edit turn on a claude-CLI seat; confirm the file changed via `hadron_forge_edit` in the turn's tool calls, not native Edit.
+- [ ] **Step 5:** Commit `feat(seats): claude/copilot CLI presets that mediate edits via hadron-forge-mcp`.
+
+**Correct-usage note for CUSTOM CLIs (the "note there" Jake asked for) — add this to the chamber's custom-CLI Settings help text:**
+> A **custom CLI** seat runs a program Hadron was not taught, so it injects no flags of its own. To route its edits through Hadron's tools, the CLI must (a) support an MCP-config flag and a tool-deny flag, and (b) you must add them yourself in the seat's `command.args` — e.g. `["--mcp-config", "<hadron-forge-mcp cfg>", "--disallowedTools", "Edit", "Write", "MultiEdit"]`. If the CLI has no such flags (e.g. `agy --print`), tool mediation is not possible for it over the CLI — use its ACP seat instead. Only `claude`/`copilot`/`agy` are taught presets; anything else is best-effort and user-configured.
+
+**Security (rule 7):** disallowing native edit tools narrows the agent's surface; the MCP server is the new surface — its jail (Phase 1) is the control. A custom CLI the user mis-configures simply keeps its native tools (fails open to today's behaviour, no new risk).
 
 ### Task 3.2: ACP seats (claude-agent-acp, acp-agy) — inject MCP + reject native edits
 
