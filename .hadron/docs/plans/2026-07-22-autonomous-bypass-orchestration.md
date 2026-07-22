@@ -25,7 +25,7 @@
 - Consumes: `projection.mode: hadron_lattice::Mode`, `is_orchestrator(projection, self_id): bool`
 - Produces: Mode-specific prompt text appended to Orchestrator system prompt in `build()`.
 
-- [ ] **Step 1: Write failing unit test in `tests.rs`**
+- [x] **Step 1: Write failing unit test in `tests.rs`**
 
 Add unit test `bypass_orchestrator_gets_autonomous_loop_directives` in `crates/hadron-gluon/src/adapter/prompt/tests.rs`:
 
@@ -43,12 +43,12 @@ fn bypass_orchestrator_gets_autonomous_loop_directives() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p hadron-gluon --test prompt_tests bypass_orchestrator_gets_autonomous_loop_directives`
 Expected: FAIL with missing assertion pattern "Autonomous Bypass Execution"
 
-- [ ] **Step 3: Implement prompt mode guidance in `mod.rs`**
+- [x] **Step 3: Implement prompt mode guidance in `mod.rs`**
 
 Update `crates/hadron-gluon/src/adapter/prompt/mod.rs` in `is_orchestrator` block:
 
@@ -69,12 +69,12 @@ Update `crates/hadron-gluon/src/adapter/prompt/mod.rs` in `is_orchestrator` bloc
     }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cargo test -p hadron-gluon --test prompt_tests bypass_orchestrator_gets_autonomous_loop_directives`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -f crates/hadron-gluon/src/adapter/prompt/mod.rs crates/hadron-gluon/src/adapter/prompt/tests.rs
@@ -89,7 +89,7 @@ git commit -m "feat(prompt): add autonomous bypass directives and plan update ru
 - Modify: `crates/hadron-gluon/src/adapter/prompt/mod.rs`
 - Test: `crates/hadron-gluon/src/adapter/prompt/tests.rs`
 
-- [ ] **Step 1: Write unit test for worker active plan awareness**
+- [x] **Step 1: Write unit test for worker active plan awareness**
 
 ```rust
 #[test]
@@ -103,12 +103,13 @@ fn worker_is_instructed_on_plan_state_reporting() {
 }
 ```
 
-- [ ] **Step 2: Run workspace test suite**
+- [x] **Step 2: Run workspace test suite**
 
 Run: `cargo test --workspace`
 Expected: PASS (0 failed)
 
-- [ ] **Step 3: Commit plan and workspace verification**
+- [x] **Step 3: Commit plan and workspace verification**
+
 
 ```bash
 git add -f .hadron/docs/plans/2026-07-22-autonomous-bypass-orchestration.md
