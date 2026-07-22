@@ -234,14 +234,21 @@ fn create_refuses_existing() {
 - [ ] **Step 3:** `cargo build -p hadron-forge-mcp` → compiles.
 - [ ] **Step 4:** Commit `feat(forge-mcp): crate skeleton + stdio bootstrap`.
 
-### Task 2.2: The three tools
+### Task 2.2: The tool suite (Edit, Write, Create, Delete, Read Blocks)
 
 **Files:** Create `crates/hadron-forge-mcp/src/tools.rs`; tests inline (call the tool fns directly, not over stdio).
 
 **Tool contracts (JSON):**
-- `hadron_forge_edit { path: string, target_hash: string, new_text: string }` → `hadron_forge::file::apply_block_edit`. Result: `{ ok, blocks }` or `{ ok:false, reason }` (stale/ambiguous/not-hashable → the model re-reads and retries).
+- `hadron_forge_edit { path: string, target_hash: string, new_text: string }` → `hadron_forge::file::apply_block_edit`. Result: `{ ok, blocks }` or `{ ok:false, reason }`.
 - `hadron_forge_write_file { path: string, content: string, expected_hash?: string }` → `write_file_cas`.
 - `hadron_forge_create_file { path: string, content: string }` → `create_file`.
+- `hadron_forge_delete_file { path: string, expected_hash?: string }` → `delete_file_cas` (deletes file after verifying content hash).
+- `hadron_forge_read_blocks { path: string }` → `annotate` (returns AST block structure with `[Hash: 8hex]` annotations so the agent can read block hashes directly).
+
+### Task 2.3: Context7 & Search Integration (Multi-MCP Bundling)
+
+- In `hadron-gluon` seat registration (`session.rs`), inject `context7` alongside `hadron-forge-mcp` into `mcp_servers`.
+- Exposes `query-docs` and `resolve-library-id` tools to all quarks alongside `hadron-forge` editing tools for accurate documentation lookup.
 
 - [ ] **Step 1: Failing test** — the edit tool handler, given a temp root + a real hash, mutates the file and returns `ok:true`. (Reuse the Phase 1 pattern.)
 - [ ] **Step 2:** Run → FAIL.
