@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Hadron
+Comment=Hyper-fast, natively compiled Rust multi-agent OS
+Exec=hadron-chamber
+Icon=hadron_app_icon
+Categories=Development;IDE;
+Terminal=false
+StartupWMClass=hadron-chamber
