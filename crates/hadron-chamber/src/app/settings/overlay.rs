@@ -134,9 +134,10 @@ impl super::Chamber {
             let acp_quark = matches!(&target, SettingsTarget::Quark(id) if self.is_acp_quark(id));
             v_flex()
                 .gap_4()
-                .child(settings_field("Preview", preview_row.into_any_element()))
+                .child(settings_field("Preview", None, preview_row.into_any_element()))
                 .child(settings_field(
                     "Display name",
+                    Some("Shown in chat and the roster."),
                     Input::new(&self.settings_name).into_any_element(),
                 ))
                 // Model + Effort configure an agent's session, so they are quark-only. The
@@ -156,9 +157,14 @@ impl super::Chamber {
                     } else {
                         Input::new(&self.settings_model).into_any_element()
                     };
-                    v.child(settings_field("Model", model_field))
+                    v.child(settings_field(
+                        "Model",
+                        Some("Per-repo override; blank inherits the shared catalogue default."),
+                        model_field,
+                    ))
                     .child(settings_field(
                         "Effort",
+                        Some("How much reasoning effort this quark spends per turn."),
                         self.session_select(
                             "effort",
                             &self.settings_effort,
@@ -170,17 +176,24 @@ impl super::Chamber {
                     // this quark (Ask → Bypass). Stored on the field as a per-quark
                     // `ModeSet`, so it is live-honoured and independent of team.json. A
                     // per-quark choice persists even when the global default later changes.
-                    .child(settings_field("Permission", self.mode_select(target.key(), cx)))
+                    .child(settings_field(
+                        "Permission",
+                        Some("How much authority this quark has, from asking every time to full autonomy."),
+                        self.mode_select(target.key(), cx),
+                    ))
                     .child(settings_field(
                         "Roles",
+                        Some("Roles this quark may take on in the swarm."),
                         self.role_selector(cx),
                     ))
                     .child(settings_field(
                         "Denied skills",
+                        Some("Comma-separated skill names this quark may not invoke."),
                         Input::new(&self.settings_deny_skills).into_any_element(),
                     ))
                     .child(settings_field(
                         "Energy limit",
+                        Some("Token budget before this quark is throttled. Blank = unlimited."),
                         Input::new(&self.settings_energy_limit).into_any_element(),
                     ))
                     // The secret env-var value (e.g. `GEMINI_API_KEY`) goes to the OS
@@ -188,12 +201,17 @@ impl super::Chamber {
                     // rendered state — see `secret_field`. Shown ONLY for a quark whose
                     // provider actually needs a key (per the catalogue), not universally.
                     .when(self.settings_secret_applies, |v| {
-                        v.child(settings_field("API key", self.secret_field(cx)))
+                        v.child(settings_field(
+                            "API key",
+                            Some("Stored in the OS keychain — never written to team.json."),
+                            self.secret_field(cx),
+                        ))
                     })
                 })
-                .child(settings_field("Color", swatches.into_any_element()))
+                .child(settings_field("Color", None, swatches.into_any_element()))
                 .child(settings_field(
                     "Image",
+                    Some("Avatar shown in the roster and chat."),
                     h_flex()
                         .gap_2()
                         .items_center()

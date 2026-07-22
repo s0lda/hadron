@@ -21,43 +21,22 @@ impl super::Chamber {
             .gap_6()
             .child(settings_field(
                 "Max exchanges",
-                v_flex()
-                    .gap_1()
-                    .child(Input::new(&self.settings_max_exchanges))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme::text_muted())
-                            .child(
-                                "Caps quark\u{2194}quark exchanges before the swarm \
-                                 stops. Blank or 0 = daemon default.",
-                            ),
-                    )
-                    .into_any_element(),
+                Some(
+                    "Caps quark\u{2194}quark exchanges before the swarm stops. \
+                     Blank or 0 = daemon default.",
+                ),
+                Input::new(&self.settings_max_exchanges).into_any_element(),
             ))
             .child(settings_field(
                 "Close Gluon on Exit",
-                h_flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme::text_muted())
-                            .child(
-                                "Terminate the hadron-gluon daemon when the Chamber window closes.",
-                            ),
-                    )
-                    .child(
-                        Switch::new("close-gluon-on-exit")
-                            .checked(self.prefs.close_gluon_on_exit)
-                            .on_click(cx.listener(|this, checked, _window, cx| {
-                                this.prefs.close_gluon_on_exit = *checked;
-                                let _ = config::save(&this.prefs);
-                                cx.notify();
-                            })),
-                    )
+                Some("Terminate the hadron-gluon daemon when the Chamber window closes."),
+                Switch::new("close-gluon-on-exit")
+                    .checked(self.prefs.close_gluon_on_exit)
+                    .on_click(cx.listener(|this, checked, _window, cx| {
+                        this.prefs.close_gluon_on_exit = *checked;
+                        let _ = config::save(&this.prefs);
+                        cx.notify();
+                    }))
                     .into_any_element(),
             ))
     }
@@ -686,26 +665,29 @@ impl super::Chamber {
                             .text_color(theme::text())
                             .child("Custom CLI"),
                     )
-                    .child(settings_field(
+                    .child(settings_field_stacked(
                         "Vendor (short label, e.g. \"ollama\")",
                         Input::new(&self.custom_cli_vendor).into_any_element(),
                     ))
-                    .child(settings_field(
+                    .child(settings_field_stacked(
                         "Program (the binary to spawn)",
                         Input::new(&self.custom_cli_program).into_any_element(),
                     ))
-                    .child(settings_field(
+                    .child(settings_field_stacked(
                         "Args (space-separated, optional)",
                         Input::new(&self.custom_cli_args).into_any_element(),
                     ))
-                    .child(settings_field(
+                    .child(settings_field_stacked(
                         "Model (optional)",
                         Input::new(&self.custom_cli_model).into_any_element(),
                     ))
-                    .child(settings_field("Prompt channel", channel_toggle.into_any_element()));
+                    .child(settings_field_stacked(
+                        "Prompt channel",
+                        channel_toggle.into_any_element(),
+                    ));
 
                 if !stdin_selected {
-                    form = form.child(settings_field(
+                    form = form.child(settings_field_stacked(
                         "Flag (blank = positional argument, e.g. \"--prompt\")",
                         Input::new(&self.custom_cli_flag).into_any_element(),
                     ));
