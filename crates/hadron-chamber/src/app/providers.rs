@@ -206,9 +206,10 @@ pub(super) enum AcpModelState {
 /// declared any `secret_env` yet (the common case: Antigravity's `GEMINI_API_KEY`).
 pub(super) const DEFAULT_SECRET_VAR: &str = "GEMINI_API_KEY";
 
-/// Which identity the Settings overlay is currently editing.
+/// Which identity or setting tab the Settings overlay is currently editing.
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum SettingsTarget {
+    General,
     Providers,
     Human,
     Quark(String),
@@ -218,6 +219,7 @@ impl SettingsTarget {
     /// The actor key used for identity resolution / prefs lookup.
     pub(super) fn key(&self) -> &str {
         match self {
+            SettingsTarget::General => "general",
             SettingsTarget::Providers => "providers",
             SettingsTarget::Human => "human",
             SettingsTarget::Quark(id) => id,

@@ -15,6 +15,53 @@ pub(super) fn unique_seat_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String
 }
 
 impl super::Chamber {
+    pub(super) fn general_settings_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .gap_6()
+            .child(settings_field(
+                "Max exchanges",
+                v_flex()
+                    .gap_1()
+                    .child(Input::new(&self.settings_max_exchanges))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child(
+                                "Caps quark\u{2194}quark exchanges before the swarm \
+                                 stops. Blank or 0 = daemon default.",
+                            ),
+                    )
+                    .into_any_element(),
+            ))
+            .child(settings_field(
+                "Close Gluon on Exit",
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child(
+                                "Terminate the hadron-gluon daemon when the Chamber window closes.",
+                            ),
+                    )
+                    .child(
+                        Switch::new("close-gluon-on-exit")
+                            .checked(self.prefs.close_gluon_on_exit)
+                            .on_click(cx.listener(|this, checked, _window, cx| {
+                                this.prefs.close_gluon_on_exit = *checked;
+                                let _ = config::save(&this.prefs);
+                                cx.notify();
+                            })),
+                    )
+                    .into_any_element(),
+            ))
+    }
+
     pub(super) fn providers_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.wizard_state {
             WizardState::None => {
@@ -115,57 +162,6 @@ impl super::Chamber {
                                 },
                             ))),
                     )
-                    // Team-wide (not per-quark) policy, so it lives here rather than on any
-                    // one identity's panel — the cap on quark↔quark exchanges before the
-                    // daemon's backstop stops the swarm. Committed the same way the Model/
-                    // Effort text fields are: on nav-away or Done, via `commit_settings_inputs`.
-                    .child(settings_field(
-                        "Max exchanges",
-                        v_flex()
-                            .gap_1()
-                            .child(Input::new(&self.settings_max_exchanges))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme::text_muted())
-                                    .child(
-                                        "Caps quark\u{2194}quark exchanges before the swarm \
-                                         stops. Blank or 0 = daemon default.",
-                                    ),
-                            )
-                            .into_any_element(),
-                    ))
-                    // Also global (not per-quark): whether closing the Chamber window
-                    // kills the `hadron-gluon` daemon it auto-spawned. Defaults to false —
-                    // Gluon is a headless daemon meant to keep routing/watching/committing
-                    // even with no viewer open; this is an opt-in for users who want the
-                    // daemon's lifetime tied to the GUI's.
-                    .child(settings_field(
-                        "Close Gluon on Exit",
-                        h_flex()
-                            .items_center()
-                            .justify_between()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme::text_muted())
-                                    .child(
-                                        "Terminate the hadron-gluon daemon this Chamber \
-                                         spawned when the window closes.",
-                                    ),
-                            )
-                            .child(
-                                Switch::new("close-gluon-on-exit")
-                                    .checked(self.prefs.close_gluon_on_exit)
-                                    .on_click(cx.listener(|this, checked, _window, cx| {
-                                        this.prefs.close_gluon_on_exit = *checked;
-                                        let _ = config::save(&this.prefs);
-                                        cx.notify();
-                                    })),
-                            )
-                            .into_any_element(),
-                    ))
                     // Scroll the roster so a long provider list stays reachable while the
                     // "Configured Providers" header + Add Quark button stay pinned. Same
                     // reason as the preset list: a `size_full` wizard can't be scrolled by
