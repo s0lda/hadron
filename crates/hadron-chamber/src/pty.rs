@@ -71,13 +71,16 @@ pub struct TermLine {
 #[derive(Clone, Debug, Default)]
 pub struct TermSnapshot {
     pub lines: Vec<TermLine>,
+    #[allow(dead_code)] // snapshot dimensions, retained for renderer use
     pub cols: usize,
+    #[allow(dead_code)] // snapshot dimensions, retained for renderer use
     pub rows: usize,
 }
 
 impl TermSnapshot {
     /// The visible text with styling stripped — the anchor a headless test
     /// asserts on (proves bytes reached the grid, not just that code compiled).
+    #[allow(dead_code)] // test-only anchor for headless grid assertions
     pub fn plain_text(&self) -> String {
         let mut out = String::new();
         for line in &self.lines {

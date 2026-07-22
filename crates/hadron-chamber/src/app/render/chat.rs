@@ -535,6 +535,7 @@ impl super::Chamber {
             )
     }
 
+    #[allow(dead_code)] // superseded by chat_message_row; kept pending removal
     pub(super) fn message_row(
         &self,
         m: &MessageRow,

@@ -39,6 +39,7 @@ fn trim_unit(v: f64, suffix: char) -> String {
 /// The corners are rounded to the housing radius: GPUI's `overflow_hidden` masks to the
 /// rectangular bounds, not the rounded shape, so a full-bleed child would otherwise paint
 /// square corners that poke past the window's rounded edge.
+#[allow(dead_code)] // retained styling helper, not currently wired
 pub(super) fn glow_layer(angle: f32, hue: Rgba, top_r: Pixels, bottom_r: Pixels) -> gpui::Div {
     div()
         .absolute()
@@ -58,6 +59,7 @@ pub(super) fn glow_layer(angle: f32, hue: Rgba, top_r: Pixels, bottom_r: Pixels)
 /// origin edge to `to` at the far edge. Rounded to the housing radius for the same reason
 /// as [`glow_layer`] (GPUI's overflow mask is rectangular, so a square child would poke
 /// past the rounded corners).
+#[allow(dead_code)] // retained styling helper, not currently wired
 pub(super) fn wash_layer(angle: f32, from: Rgba, to: Rgba, top_r: Pixels, bottom_r: Pixels) -> gpui::Div {
     div()
         .absolute()
@@ -754,6 +756,7 @@ pub(super) fn stat_tile(label: &str, value: String, accent: gpui::Rgba) -> impl 
 }
 
 /// Map an event kind to a timeline step icon.
+#[allow(dead_code)] // only used by the (unwired) timeline_view
 pub(super) fn kind_icon(kind_label: &str) -> IconName {
     match kind_label {
         "status" => IconName::Info,
