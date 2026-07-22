@@ -230,7 +230,7 @@ impl super::Chamber {
     /// (`gluon_running`), made callable live each time the Process Manager opens.
     /// Any lock this acquires is released immediately; it never blocks the daemon.
     fn gluon_running(&self) -> bool {
-        let field_dir = self.path.parent().unwrap_or(std::path::Path::new("."));
+        let field_dir = hadron_lattice::hadron_dir_of(&self.path);
         let lock_path = field_dir.join("gluon.lock");
         #[cfg(unix)]
         {

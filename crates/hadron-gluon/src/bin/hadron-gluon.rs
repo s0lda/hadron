@@ -263,7 +263,9 @@ async fn main() {
         std::process::exit(2);
     };
 
-    let lock_path = args.field_path.parent().unwrap_or(std::path::Path::new(".")).join("gluon.lock");
+    let field_dir = hadron_lattice::hadron_dir_of(&args.field_path);
+    let _ = std::fs::create_dir_all(&field_dir);
+    let lock_path = field_dir.join("gluon.lock");
     let lock_file = match std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -353,7 +355,7 @@ async fn main() {
     // of `field_path` (which resides inside the repo's `.hadron/` directory in typical usage).
     // The path is derived using standard library functions to prevent traversal or access
     // to untrusted locations.
-    let ledger_path = args.field_path.parent().unwrap_or(std::path::Path::new(".")).join("ledger.db");
+    let ledger_path = field_dir.join("ledger.db");
     let ledger = match hadron_gluon::ledger::Ledger::open(&ledger_path) {
         Ok(l) => l,
         Err(e) => {
