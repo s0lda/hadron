@@ -84,36 +84,43 @@ impl super::Chamber {
             pending.risk,
         );
         Some(
-            h_flex()
+            v_flex()
                 .flex_none()
                 .mx_4()
                 .mt_2()
                 .px_3()
                 .py_2()
-                .gap_3()
-                .items_center()
+                .gap_2()
                 .rounded_lg()
                 .bg(theme::bg_surface_raised())
                 .child(
                     div()
-                        .flex_1()
                         .text_sm()
                         .text_color(theme::text())
                         .child(text),
                 )
+                // Buttons on their own row, right-aligned — the question and the
+                // choices no longer fight for the same line (Jake's request).
                 .child(
-                    text_button("perm-approve", "Approve")
-                        .on_click(cx.listener(|this, _, _, cx| this.answer_permission(true, cx))),
-                )
-                // "Always allow" remembers this (quark, op) so Auto mode won't ask again.
-                .child(
-                    text_button("perm-always", "Always allow").on_click(
-                        cx.listener(|this, _, _, cx| this.answer_permission_remember(cx)),
-                    ),
-                )
-                .child(
-                    text_button("perm-deny", "Deny")
-                        .on_click(cx.listener(|this, _, _, cx| this.answer_permission(false, cx))),
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            text_button("perm-approve", "Approve").on_click(
+                                cx.listener(|this, _, _, cx| this.answer_permission(true, cx)),
+                            ),
+                        )
+                        // "Always allow" remembers this (quark, op) so Auto mode won't ask again.
+                        .child(
+                            text_button("perm-always", "Always allow").on_click(
+                                cx.listener(|this, _, _, cx| this.answer_permission_remember(cx)),
+                            ),
+                        )
+                        .child(
+                            text_button("perm-deny", "Deny").on_click(
+                                cx.listener(|this, _, _, cx| this.answer_permission(false, cx)),
+                            ),
+                        ),
                 ),
         )
     }
