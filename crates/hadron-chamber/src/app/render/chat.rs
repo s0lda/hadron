@@ -415,7 +415,7 @@ impl super::Chamber {
         let mut cache = self.parsed_markdown.borrow_mut();
         let content = cache
             .entry(ix)
-            .or_insert_with(|| color_mentions(body, roster))
+            .or_insert_with(|| resolve_mention_names(body, roster))
             .clone();
 
         div().text_size(px(13.65)).child(
