@@ -279,6 +279,7 @@ async fn main() {
 
     #[cfg(unix)]
     {
+        use std::io::{Seek, SeekFrom, Write};
         use std::os::unix::io::AsRawFd;
         let fd = lock_file.as_raw_fd();
         let lock_res = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
@@ -286,6 +287,11 @@ async fn main() {
             eprintln!("hadron-gluon: another instance of gluon is already running.");
             std::process::exit(1);
         }
+        let mut f = &lock_file;
+        let _ = f.set_len(0);
+        let _ = f.seek(SeekFrom::Start(0));
+        let _ = writeln!(f, "{}", std::process::id());
+        let _ = f.flush();
     }
 
     // Seat the team: explicit --team, else a sibling team.json next to the field

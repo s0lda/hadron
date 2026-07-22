@@ -21,7 +21,7 @@ impl Chamber {
     /// Open the Settings overlay, editing the human's identity first.
     pub(super) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.settings_open = true;
-        self.settings_target = SettingsTarget::Human;
+        self.settings_target = SettingsTarget::General;
         self.load_settings_inputs(window, cx);
         cx.notify();
     }
@@ -40,7 +40,7 @@ impl Chamber {
         match &self.settings_target {
             SettingsTarget::Human => Some(&mut self.prefs.human),
             SettingsTarget::Quark(id) => Some(self.prefs.quarks.entry(id.clone()).or_default()),
-            SettingsTarget::Providers => None,
+            SettingsTarget::General | SettingsTarget::Providers => None,
         }
     }
 
@@ -74,6 +74,8 @@ impl Chamber {
             let mut needs_secret = false;
             let id = if key == "human" {
                 Some(&self.prefs.human)
+            } else if key == "general" || key == "providers" {
+                None
             } else {
                 // Read model/effort/mode from the RESOLVED seat, not just a legacy one — an
                 // adopted quark's definition lives in the catalogue, so a legacy-only
@@ -186,7 +188,7 @@ impl Chamber {
         // `load_settings_inputs` still re-syncs the input from `self.team` unconditionally
         // (every target, including the external-reload path via `reload_if_changed` ->
         // ... -> next `load_settings_inputs` call) — only the *write* is gated.
-        if self.settings_target == SettingsTarget::Providers {
+        if self.settings_target == SettingsTarget::General {
             let max_exchanges_val = self.settings_max_exchanges.read(cx).value().trim().to_string();
             let new_max_exchanges = parse_max_exchanges(&max_exchanges_val);
             if new_max_exchanges != self.team.max_exchanges {
@@ -196,7 +198,7 @@ impl Chamber {
         }
 
         let key = self.settings_target.key();
-        if key != "human" && key != "providers" {
+        if key != "human" && key != "providers" && key != "general" {
             let qid = QuarkId::new(key);
             // The definition knobs (model/effort/mode/display name) are **per-repo**. How
             // they persist depends on how the quark is seated here:
@@ -315,7 +317,7 @@ impl Chamber {
             SettingsTarget::Quark(id) => {
                 self.prefs.quarks.remove(&id);
             }
-            SettingsTarget::Providers => {}
+            SettingsTarget::General | SettingsTarget::Providers => {}
         }
         self.load_settings_inputs(window, cx);
         let _ = config::save(&self.prefs);
