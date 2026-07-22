@@ -225,6 +225,14 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
                 cmds.push(("deny".to_string(), head[tok_end..].trim().to_string()));
                 return (cmds, None);
             }
+            Some("limit") => {
+                cmds.push(("limit".to_string(), head[tok_end..].trim().to_string()));
+                return (cmds, None);
+            }
+            Some("reset-energy") => {
+                cmds.push(("reset-energy".to_string(), head[tok_end..].trim().to_string()));
+                return (cmds, None);
+            }
             // First non-command token: the untouched remainder is the message body.
             _ => break,
         }
