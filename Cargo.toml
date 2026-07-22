@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/hadron-lattice", "crates/hadron-gluon", "crates/hadron-chamber", "crates/hadron-forge", "crates/hadron-gatekeeper"]
+default-members = ["crates/hadron-chamber"]
 
 # Optimize *dependencies* even in a debug build, while our own crates stay at
 # opt-level 0 (fast to rebuild, still debuggable). This is the standard GPUI/Zed
