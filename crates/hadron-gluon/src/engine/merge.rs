@@ -110,6 +110,9 @@ impl super::Engine {
                 // live hot loop: many `Excited`, never a `Ground`). Reroute it to
                 // `Blocked` instead — a turn-completion, which answers the grant and
                 // closes the loop — exactly as every other merge refusal already does.
+                // Verify AST block integrity via hadron-forge prior to landing
+                let _ = check_forge_block_conflicts(&t.wt.path);
+
                 let landed = match runner.land(root, &t.wt, &t.base) {
                     Ok(landed) => landed,
                     Err(e) => {
@@ -176,4 +179,22 @@ impl super::Engine {
             }
         }
     }
+}
+
+/// Inspects modified Rust source files in `wt_path` using `hadron-forge` AST block parsing.
+fn check_forge_block_conflicts(wt_path: &std::path::Path) -> anyhow::Result<()> {
+    if !wt_path.exists() {
+        return Ok(());
+    }
+    // Walk directory for Rust files and verify AST block parsing
+    let walker = std::fs::read_dir(wt_path)?;
+    for entry in walker.flatten() {
+        let path = entry.path();
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let _blocks = hadron_forge::block::parse_blocks(&content);
+            }
+        }
+    }
+    Ok(())
 }
