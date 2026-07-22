@@ -39,6 +39,10 @@ pub struct ChamberPrefs {
     pub roster_collapsed: bool,
     #[serde(default = "default_false")]
     pub inspector_collapsed: bool,
+    /// Kill the auto-spawned `hadron-gluon` daemon when the chamber window closes.
+    /// Default `false` — the daemon is headless and normally outlives the viewer.
+    #[serde(default = "default_false")]
+    pub close_gluon_on_exit: bool,
     #[serde(default = "default_roster_width")]
     pub roster_width: f32,
     #[serde(default = "default_inspector_width")]
@@ -83,6 +87,7 @@ impl Default for ChamberPrefs {
         ChamberPrefs {
             roster_collapsed: default_false(),
             inspector_collapsed: default_false(),
+            close_gluon_on_exit: default_false(),
             roster_width: default_roster_width(),
             inspector_width: default_inspector_width(),
             window_bounds: None,
@@ -160,6 +165,7 @@ mod tests {
         let prefs = ChamberPrefs {
             roster_collapsed: true,
             inspector_collapsed: false,
+            close_gluon_on_exit: false,
             roster_width: 180.5,
             inspector_width: 320.0,
             window_bounds: None,
@@ -195,6 +201,23 @@ mod tests {
         assert_eq!(prefs.inspector_width, 333.0);
         assert_eq!(prefs.human, Identity::default());
         assert!(prefs.quarks.is_empty());
+    }
+
+    #[test]
+    fn close_gluon_on_exit_defaults_to_false_and_round_trips() {
+        let prefs = ChamberPrefs::default();
+        assert!(!prefs.close_gluon_on_exit, "default must be false");
+
+        let json = serde_json::to_string(&prefs).unwrap();
+        assert!(json.contains("\"close_gluon_on_exit\":false"));
+
+        let custom = ChamberPrefs {
+            close_gluon_on_exit: true,
+            ..Default::default()
+        };
+        let json_custom = serde_json::to_string(&custom).unwrap();
+        let back: ChamberPrefs = serde_json::from_str(&json_custom).unwrap();
+        assert!(back.close_gluon_on_exit);
     }
 
     #[test]
