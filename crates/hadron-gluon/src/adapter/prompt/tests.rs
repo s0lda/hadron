@@ -26,10 +26,10 @@ fn projection(task: &str) -> Projection {
             Kind::Message { body: "start the auth work".into() },
         )],
         field_truncated: false,
-        memory: String::new(),
-        memory_path: std::path::PathBuf::new(),
-        memory_truncated: false,
-        memory_notes_dir: std::path::PathBuf::new(),
+        nucleus_index: String::new(),
+        nucleus_index_path: std::path::PathBuf::new(),
+        nucleus_index_truncated: false,
+        nucleus_notes_dir: std::path::PathBuf::new(),
         git_diff: String::new(),
         isolated: true,
         cwd: std::path::PathBuf::from("/repo/.hadron/trees/agy"),
@@ -365,50 +365,51 @@ fn the_orchestrator_must_verify_a_workers_claim_before_relaying_it() {
 
 /// The asymmetry Jake named: one quark arrives with weeks of accumulated context,
 /// another with nothing, and we mistake persistence for intelligence. A quark must
-/// be shown the memory AND told where to write it — "remember this" without a path
-/// is an instruction it cannot obey. It must also be told where the NOTES are, or
-/// the index's `→ path` lines point at something it was never told it may open.
+/// be shown the nucleus index AND told where to write it — "remember this" without
+/// a path is an instruction it cannot obey. It must also be told where the NOTES
+/// are, or the index's `→ path` lines point at something it was never told it may
+/// open.
 #[test]
-fn a_quark_is_shown_the_memory_index_and_told_where_to_write_it() {
+fn a_quark_is_shown_the_nucleus_index_and_told_where_to_write_it() {
     let mut proj = projection("x");
-    proj.memory_path = std::path::PathBuf::from("/repo/.hadron/memory/index.md");
-    proj.memory_notes_dir = std::path::PathBuf::from("/repo/.hadron/memory/notes");
+    proj.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
+    proj.nucleus_notes_dir = std::path::PathBuf::from("/repo/.hadron/nucleus/notes");
 
-    // Empty memory still emits the section — otherwise the quark never learns it HAS one.
+    // Empty index still emits the section — otherwise the quark never learns it HAS one.
     let empty = build(&proj, &QuarkId::new("agy"));
-    assert!(empty.contains("# What the swarm has learned (memory index)"));
+    assert!(empty.contains("# What the swarm has learned (nucleus index)"));
     assert!(empty.contains("nothing has been recorded here yet"));
-    assert!(empty.contains("/repo/.hadron/memory/index.md"), "it must know the path");
-    assert!(empty.contains("/repo/.hadron/memory/notes"), "and where notes live");
+    assert!(empty.contains("/repo/.hadron/nucleus/index.md"), "it must know the path");
+    assert!(empty.contains("/repo/.hadron/nucleus/notes"), "and where notes live");
     assert!(empty.contains("shared by every quark"), "and that it is not private");
     assert!(empty.contains("append to it"), "and that writing is its job");
 
     // A populated index comes back verbatim.
-    proj.memory = "- **forge-unwired** — the forge has zero consumers.".into();
+    proj.nucleus_index = "- **forge-unwired** — the forge has zero consumers.".into();
     let carried = build(&proj, &QuarkId::new("agy"));
     assert!(carried.contains("- **forge-unwired** — the forge has zero consumers."));
     assert!(!carried.contains("nothing has been recorded here yet"));
     assert!(!carried.contains("index above is CUT"), "it was not truncated");
 }
 
-/// A memory cut for size must SAY it was cut. Silent truncation is the failure we
-/// killed in the field window: the quark cannot tell "never learned" from "not shown"
-/// and treats the last line it can see as the end of what is known.
+/// A nucleus index cut for size must SAY it was cut. Silent truncation is the
+/// failure we killed in the field window: the quark cannot tell "never learned"
+/// from "not shown" and treats the last line it can see as the end of what is known.
 #[test]
-fn a_truncated_memory_index_says_so() {
+fn a_truncated_nucleus_index_says_so() {
     let mut proj = projection("x");
-    proj.memory_path = std::path::PathBuf::from("/repo/.hadron/memory/index.md");
-    proj.memory = "- **a** — a lesson.".into();
-    proj.memory_truncated = true;
+    proj.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
+    proj.nucleus_index = "- **a** — a lesson.".into();
+    proj.nucleus_index_truncated = true;
 
     let p = build(&proj, &QuarkId::new("agy"));
     assert!(p.contains("index above is CUT"));
 }
 
-/// No memory path (a mock adapter, an old snapshot) → no section, rather than a
-/// section telling the quark to write to nowhere.
+/// No nucleus index path (a mock adapter, an old snapshot) → no section, rather
+/// than a section telling the quark to write to nowhere.
 #[test]
-fn no_memory_section_without_a_path() {
+fn no_nucleus_index_section_without_a_path() {
     let p = build(&projection("x"), &QuarkId::new("agy"));
     assert!(!p.contains("your memory"));
 }

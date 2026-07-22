@@ -12,7 +12,7 @@ use crate::field::append_event;
 use crate::personas::{self, Persona};
 use crate::quark::Quark;
 
-mod memory;
+mod nucleus;
 mod routing;
 mod turn;
 mod merge;

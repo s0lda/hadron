@@ -17,8 +17,8 @@ pub struct Projection {
     pub available_invariants: Vec<String>,
     /// Relevant slice of the project SSOT (nucleus). v1: may be empty.
     pub nucleus_digest: String,
-    /// **What the swarm has learned**, carried across turns and sessions — the memory
-    /// INDEX, and the only part of memory that is loaded every turn.
+    /// **What the swarm has learned**, carried across turns and sessions — the
+    /// nucleus lessons INDEX, and the only part of it loaded every turn.
     ///
     /// The difference between a quark that repeats yesterday's mistake and one that
     /// doesn't is not the model — it is whether anything persisted. A quark with no
@@ -31,21 +31,21 @@ pub struct Projection {
     /// small; the notes are read on demand, by the quark, only when the line it just
     /// read turns out to matter.
     #[serde(default)]
-    pub memory: String,
-    /// Whether the index was cut to fit the budget. A memory silently dropped for size
+    pub nucleus_index: String,
+    /// Whether the index was cut to fit the budget. A lesson silently dropped for size
     /// is the failure mode we keep killing everywhere else: the quark cannot tell
     /// "never learned" from "not shown".
     #[serde(default)]
-    pub memory_truncated: bool,
+    pub nucleus_index_truncated: bool,
     /// Where to WRITE the index. Non-optional and always populated: telling a quark to
     /// "remember this" without telling it the path is an instruction it cannot obey,
     /// and it will either invent a path or silently do nothing.
     #[serde(default)]
-    pub memory_path: std::path::PathBuf,
+    pub nucleus_index_path: std::path::PathBuf,
     /// Where the long-form notes live. The index points into this directory; the quark
     /// opens a note with its own tools when it needs the detail.
     #[serde(default)]
-    pub memory_notes_dir: std::path::PathBuf,
+    pub nucleus_notes_dir: std::path::PathBuf,
     /// Who exists, their flavor and energy — enables orchestration.
     pub roster: Vec<QuarkCard>,
     /// What other quarks are doing right now, if they are currently mid-turn.
@@ -150,10 +150,10 @@ mod tests {
                 Kind::Message { body: "go".into() },
             )],
             field_truncated: false,
-            memory: String::new(),
-            memory_path: std::path::PathBuf::new(),
-            memory_truncated: false,
-            memory_notes_dir: std::path::PathBuf::new(),
+            nucleus_index: String::new(),
+            nucleus_index_path: std::path::PathBuf::new(),
+            nucleus_index_truncated: false,
+            nucleus_notes_dir: std::path::PathBuf::new(),
             live_activities: vec![],
             git_diff: String::new(),
             isolated: true,

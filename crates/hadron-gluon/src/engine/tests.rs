@@ -1,7 +1,7 @@
 use super::*;
-use super::memory::{
-    build_invariants, event_cost, memory_index_path, memory_notes_dir, read_memory_index,
-    read_memory_index_with_fallback, FIELD_WINDOW_BUDGET_BYTES, MEMORY_INDEX_BUDGET,
+use super::nucleus::{
+    build_invariants, event_cost, nucleus_index_path, nucleus_notes_dir, read_nucleus_index,
+    read_nucleus_index_with_fallback, FIELD_WINDOW_BUDGET_BYTES, NUCLEUS_INDEX_BUDGET,
 };
 use crate::field::{append_event, read_events};
 use crate::mock::MockQuark;
@@ -1710,7 +1710,7 @@ fn an_over_budget_index_drops_the_oldest_lessons_and_keeps_the_newest() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.md");
 
-    let mut raw = String::from("# Memory index\n\nFormat: `- **<slug>** — <lesson>`\n\n");
+    let mut raw = String::from("# Nucleus index\n\nFormat: `- **<slug>** — <lesson>`\n\n");
     // Enough padded lessons to blow the budget several times over.
     for i in 0..400 {
         raw.push_str(&format!(
@@ -1719,19 +1719,19 @@ fn an_over_budget_index_drops_the_oldest_lessons_and_keeps_the_newest() {
         ));
     }
     raw.push_str("- **the-newest-lesson** — the one just paid for\n");
-    assert!(raw.len() > MEMORY_INDEX_BUDGET, "the fixture must overflow");
+    assert!(raw.len() > NUCLEUS_INDEX_BUDGET, "the fixture must overflow");
     fs::write(&path, &raw).unwrap();
 
-    let (out, truncated) = read_memory_index(&path);
+    let (out, truncated) = read_nucleus_index(&path);
     assert!(truncated, "an over-budget index must report that it was cut");
-    assert!(out.len() <= MEMORY_INDEX_BUDGET);
+    assert!(out.len() <= NUCLEUS_INDEX_BUDGET);
 
     assert!(
         out.contains("the-newest-lesson"),
         "the newest lesson is the one just paid for — it must survive the cut"
     );
     assert!(
-        out.contains("# Memory index") && out.contains("Format:"),
+        out.contains("# Nucleus index") && out.contains("Format:"),
         "the header defines the format a quark must write back in; it must survive"
     );
     assert!(
@@ -1745,23 +1745,24 @@ fn an_over_budget_index_drops_the_oldest_lessons_and_keeps_the_newest() {
 fn an_index_within_budget_is_untouched() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.md");
-    let raw = "# Memory index\n\n- **a** — one\n- **b** — two\n";
+    let raw = "# Nucleus index\n\n- **a** — one\n- **b** — two\n";
     fs::write(&path, raw).unwrap();
 
-    let (out, truncated) = read_memory_index(&path);
+    let (out, truncated) = read_nucleus_index(&path);
     assert_eq!(out, raw);
     assert!(!truncated);
 }
 
-/// The prompt tests prove `prompt.rs` *renders* memory. They prove nothing about
-/// whether the engine ever *reads* it — which is the exact gap ("correct" vs "runs")
-/// that cost us a whole session. This is the caller test: put a real file on disk at
-/// the real path, drive a real turn, and assert the quark received it.
+/// The prompt tests prove `prompt.rs` *renders* the nucleus index. They prove
+/// nothing about whether the engine ever *reads* it — which is the exact gap
+/// ("correct" vs "runs") that cost us a whole session. This is the caller test:
+/// put a real file on disk at the real path, drive a real turn, and assert the
+/// quark received it.
 ///
 /// The index is SHARED: the file is `index.md`, not `worker.md`. A lesson one quark
 /// paid for has to reach the others, or the swarm learns nothing as a swarm.
 #[tokio::test]
-async fn the_shared_memory_index_actually_reaches_a_quarks_projection() {
+async fn the_shared_nucleus_index_actually_reaches_a_quarks_projection() {
     use std::fs;
     let ws = tempdir().unwrap();
     let nucleus_dir = ws.path().join(".hadron").join("nucleus");
@@ -1794,21 +1795,21 @@ async fn the_shared_memory_index_actually_reaches_a_quarks_projection() {
         }
         async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
             assert_eq!(
-                turn.memory.trim(),
+                turn.nucleus_index.trim(),
                 "The forge crate is unwired.",
-                "the engine must load the shared memory index from disk"
+                "the engine must load the shared nucleus index from disk"
             );
             assert!(
-                turn.memory_path.ends_with("nucleus/index.md"),
+                turn.nucleus_index_path.ends_with("nucleus/index.md"),
                 "one index for the whole swarm, not one file per quark, got {:?}",
-                turn.memory_path
+                turn.nucleus_index_path
             );
             assert!(
-                turn.memory_notes_dir.ends_with("nucleus/notes"),
+                turn.nucleus_notes_dir.ends_with("nucleus/notes"),
                 "and it must know where the long-form notes live, got {:?}",
-                turn.memory_notes_dir
+                turn.nucleus_notes_dir
             );
-            assert!(!turn.memory_truncated, "this index is two lines long");
+            assert!(!turn.nucleus_index_truncated, "this index is two lines long");
             Ok(TurnOutcome {
                 message: Some("done".into()),
                 permission: None,
@@ -1825,40 +1826,40 @@ async fn the_shared_memory_index_actually_reaches_a_quarks_projection() {
 /// grows forever. Cap it — but never silently: a lesson dropped for size that nobody
 /// is told about is indistinguishable from a lesson never learned.
 #[test]
-fn an_oversized_memory_index_is_cut_and_says_so() {
+fn an_oversized_nucleus_index_is_cut_and_says_so() {
     use std::fs;
     let ws = tempdir().unwrap();
-    let path = memory_index_path(ws.path());
+    let path = nucleus_index_path(ws.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
 
     // Multi-byte on purpose: cutting a UTF-8 file at a fixed byte offset is a panic
     // unless the cut walks back to a char boundary. Same crash family as the emoji bug.
-    let fat = "é".repeat(MEMORY_INDEX_BUDGET);
+    let fat = "é".repeat(NUCLEUS_INDEX_BUDGET);
     fs::write(&path, &fat).unwrap();
 
-    let (text, truncated) = read_memory_index(&path);
+    let (text, truncated) = read_nucleus_index(&path);
     assert!(truncated, "an index over budget must report that it was cut");
-    assert!(text.len() <= MEMORY_INDEX_BUDGET);
+    assert!(text.len() <= NUCLEUS_INDEX_BUDGET);
     assert!(!text.is_empty(), "cut, not discarded");
 
     // A small index is passed through whole and NOT flagged.
     fs::write(&path, "- **a** — a lesson.").unwrap();
-    let (text, truncated) = read_memory_index(&path);
+    let (text, truncated) = read_nucleus_index(&path);
     assert_eq!(text, "- **a** — a lesson.");
     assert!(!truncated);
 
     // A missing index is the first-run case, not an error.
     let empty = tempdir().unwrap();
-    assert_eq!(read_memory_index(&memory_index_path(empty.path())), (String::new(), false));
+    assert_eq!(read_nucleus_index(&nucleus_index_path(empty.path())), (String::new(), false));
 }
 
 /// Nucleus is the single knowledge root now — lessons live there, not in the
 /// old `.hadron/memory/`.
 #[test]
-fn memory_paths_now_live_under_nucleus() {
+fn nucleus_index_paths_live_under_nucleus_dir() {
     let root = std::path::Path::new("/repo");
-    assert_eq!(memory_index_path(root), std::path::PathBuf::from("/repo/.hadron/nucleus/index.md"));
-    assert_eq!(memory_notes_dir(root), std::path::PathBuf::from("/repo/.hadron/nucleus/notes"));
+    assert_eq!(nucleus_index_path(root), std::path::PathBuf::from("/repo/.hadron/nucleus/index.md"));
+    assert_eq!(nucleus_notes_dir(root), std::path::PathBuf::from("/repo/.hadron/nucleus/notes"));
 }
 
 /// Until a project's legacy `.hadron/memory/` has been migrated (daemon
@@ -1871,7 +1872,7 @@ fn fallback_reads_legacy_memory_when_nucleus_is_empty() {
     std::fs::create_dir_all(&legacy).unwrap();
     std::fs::write(legacy.join("index.md"), "- **old-lesson** — from before the move\n").unwrap();
 
-    let (text, truncated) = read_memory_index_with_fallback(dir.path());
+    let (text, truncated) = read_nucleus_index_with_fallback(dir.path());
     assert!(text.contains("old-lesson"));
     assert!(!truncated);
 }
@@ -1888,7 +1889,7 @@ fn fallback_prefers_nucleus_once_it_has_content() {
     std::fs::create_dir_all(&legacy).unwrap();
     std::fs::write(legacy.join("index.md"), "- **old-lesson** — should not appear\n").unwrap();
 
-    let (text, _) = read_memory_index_with_fallback(dir.path());
+    let (text, _) = read_nucleus_index_with_fallback(dir.path());
     assert!(text.contains("new-lesson"));
     assert!(!text.contains("old-lesson"));
 }

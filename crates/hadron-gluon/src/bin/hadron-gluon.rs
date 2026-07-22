@@ -11,11 +11,11 @@
 //!
 //! ## Not yet here (deliberately)
 //! Real-adapter mode — `adapter::registry::build` per configured quark over a
-//! `ProcessRunner`, `nucleus::load`/`digest`, `Engine::with_git(repo)` — is the
-//! glue described in Plan 3's notes. It invokes real CLIs (real budget), so it
-//! is held for a human-present session (Plan 3 Task 6). One open decision when
-//! it lands: whether an excite error aborts the human turn or appends a gluon
-//! error message and quiesces (see the plan's watch-items).
+//! `ProcessRunner`, `Engine::with_git(repo)` — is the glue described in Plan
+//! 3's notes. It invokes real CLIs (real budget), so it is held for a
+//! human-present session (Plan 3 Task 6). One open decision when it lands:
+//! whether an excite error aborts the human turn or appends a gluon error
+//! message and quiesces (see the plan's watch-items).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -342,7 +342,7 @@ async fn main() {
 
     // Self-healing: move the legacy `.hadron/memory/` lessons ledger into
     // `.hadron/nucleus/` before anything else reads either. Non-fatal — the
-    // reader's own fallback (`read_memory_index_with_fallback`) covers a
+    // reader's own fallback (`read_nucleus_index_with_fallback`) covers a
     // failed or skipped migration.
     if let Err(e) = hadron_gluon::engine::migrate_legacy_memory(&repo_root) {
         eprintln!("hadron-gluon: memory→nucleus migration failed (non-fatal): {e:#}");

@@ -3,6 +3,8 @@ author: acp-claude-2
 status: draft
 ---
 
+**Unit B (deferred above, since ratified by Jake — "we remove memory, we stick to nucleus") is now DONE:** every `memory`-named Rust symbol renamed (`Projection.memory_path`→`nucleus_index_path`, `.memory`→`nucleus_index`, `.memory_truncated`→`nucleus_index_truncated`, `.memory_notes_dir`→`nucleus_notes_dir`, `read_memory_index`→`read_nucleus_index` (+`_with_fallback`), `MEMORY_INDEX_BUDGET`→`NUCLEUS_INDEX_BUDGET`, `memory_index_path`→`nucleus_index_path`, `memory_notes_dir`→`nucleus_notes_dir`, the `engine::memory` module → `engine::nucleus`, the prompt header `"(memory index)"`→`"(nucleus index)"`), except `legacy_memory_dir`/`migrate_legacy_memory` and the literal `.hadron/memory/` path — which correctly keep the word, since they name the pre-migration legacy location. The dead `hadron-gluon::nucleus::load`/`digest` module AND its `hadron-lattice::NucleusIndex` type (its only consumer) are deleted — both were provably unreferenced anywhere else. Full `cargo test --workspace` green before/after (details in the turn report).
+
 # Nucleus as the Real, Single Knowledge Store — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
