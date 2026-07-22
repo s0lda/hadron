@@ -91,7 +91,7 @@ impl super::Engine {
                 // The depletion gate reads this ledger (`is_depleted`). It is fed the
                 // cache-excluded figure on purpose: the old cross-provider sum would
                 // have tripped an ACP quark ~200x early on cache reads it never paid
-                // for. See `the-depletion-gate-is-a-loaded-gun` in the shared memory.
+                // for. See `the-depletion-gate-is-a-loaded-gun` in the shared nucleus index.
                 if let Some(t) = fresh.filter(|t| *t > 0) {
                     ledger.record_usage(target, t)?;
                 }

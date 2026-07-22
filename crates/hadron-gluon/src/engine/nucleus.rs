@@ -7,16 +7,16 @@ use std::fs;
 
 use super::*;
 
-/// The swarm's memory INDEX for this project — one file, shared by every quark.
+/// The swarm's lessons INDEX for this project — one file, shared by every quark.
 ///
 /// It was one file *per quark*, which meant a lesson agy paid for in blood was one
 /// opus would pay for again. Shared, so the swarm learns once.
 ///
 /// Lives under `.hadron/nucleus/` — the single knowledge root, alongside
 /// `invariants/` — not the old `.hadron/memory/`. See
-/// [`read_memory_index_with_fallback`] for what covers the window before a
+/// [`read_nucleus_index_with_fallback`] for what covers the window before a
 /// project's legacy `memory/` has been migrated.
-pub(super) fn memory_index_path(workspace_root: &std::path::Path) -> std::path::PathBuf {
+pub(super) fn nucleus_index_path(workspace_root: &std::path::Path) -> std::path::PathBuf {
     nucleus_lessons_dir(workspace_root).join("index.md")
 }
 
@@ -24,7 +24,7 @@ pub(super) fn memory_index_path(workspace_root: &std::path::Path) -> std::path::
 /// them; the engine never loads them. That is the whole token argument — an index of
 /// one-liners stays cheap forever, and the detail is paid for only on the turn a quark
 /// actually opens it.
-pub(super) fn memory_notes_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
+pub(super) fn nucleus_notes_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
     nucleus_lessons_dir(workspace_root).join("notes")
 }
 
@@ -42,9 +42,9 @@ fn legacy_memory_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
 /// not spending on the task. It is also the wrong thing to grow: the index is a
 /// routing table (one line per lesson) and the detail belongs in `notes/`, which the
 /// engine never loads. A file that outgrows this has stopped being an index.
-pub(super) const MEMORY_INDEX_BUDGET: usize = 32 * 1024;
+pub(super) const NUCLEUS_INDEX_BUDGET: usize = 32 * 1024;
 
-/// Read the memory index, capped. A missing file is the normal first-run case, not an
+/// Read the lessons index, capped. A missing file is the normal first-run case, not an
 /// error — it simply means the swarm has learned nothing here yet.
 ///
 /// Returns the text and whether it was cut. Cutting silently is the one thing we do
@@ -56,9 +56,9 @@ pub(super) const MEMORY_INDEX_BUDGET: usize = 32 * 1024;
 /// appended to and the freshest lesson is the one just paid for. So we keep the header
 /// (it defines the format a quark must write back in) and then the most recent lines
 /// that fit, dropping the middle.
-pub(super) fn read_memory_index(path: &std::path::Path) -> (String, bool) {
+pub(super) fn read_nucleus_index(path: &std::path::Path) -> (String, bool) {
     let raw = fs::read_to_string(path).unwrap_or_default();
-    if raw.len() <= MEMORY_INDEX_BUDGET {
+    if raw.len() <= NUCLEUS_INDEX_BUDGET {
         return (raw, false);
     }
 
@@ -73,8 +73,8 @@ pub(super) fn read_memory_index(path: &std::path::Path) -> (String, bool) {
     let header_text = header.join("\n");
     // Reserve room for the header; if the header alone blows the budget the file is
     // not an index at all, and the old head-slice is the only honest thing left.
-    if header_text.len() >= MEMORY_INDEX_BUDGET {
-        let mut end = MEMORY_INDEX_BUDGET;
+    if header_text.len() >= NUCLEUS_INDEX_BUDGET {
+        let mut end = NUCLEUS_INDEX_BUDGET;
         while end > 0 && !raw.is_char_boundary(end) {
             end -= 1;
         }
@@ -86,7 +86,7 @@ pub(super) fn read_memory_index(path: &std::path::Path) -> (String, bool) {
     let mut used = header_text.len();
     for line in lessons.iter().rev() {
         let cost = line.len() + 1; // +1 for the newline
-        if used + cost > MEMORY_INDEX_BUDGET {
+        if used + cost > NUCLEUS_INDEX_BUDGET {
             break;
         }
         used += cost;
@@ -104,14 +104,14 @@ pub(super) fn read_memory_index(path: &std::path::Path) -> (String, bool) {
 /// Read the lessons index from its home (`.hadron/nucleus/index.md`),
 /// falling back to the pre-migration legacy location
 /// (`.hadron/memory/index.md`) if nucleus is empty — so a quark is never
-/// shown an empty memory in the window before `Engine::migrate_legacy_memory`
+/// shown an empty index in the window before `Engine::migrate_legacy_memory`
 /// has run at daemon boot.
-pub(super) fn read_memory_index_with_fallback(workspace_root: &std::path::Path) -> (String, bool) {
-    let (text, truncated) = read_memory_index(&memory_index_path(workspace_root));
+pub(super) fn read_nucleus_index_with_fallback(workspace_root: &std::path::Path) -> (String, bool) {
+    let (text, truncated) = read_nucleus_index(&nucleus_index_path(workspace_root));
     if !text.trim().is_empty() {
         return (text, truncated);
     }
-    read_memory_index(&legacy_memory_dir(workspace_root).join("index.md"))
+    read_nucleus_index(&legacy_memory_dir(workspace_root).join("index.md"))
 }
 
 /// Where a user's own always-on rules live, under their home directory. Their
