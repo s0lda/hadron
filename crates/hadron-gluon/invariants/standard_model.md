@@ -81,7 +81,7 @@ later, in production, without a stack trace.
 
 ## 9. Maintain the memory: Index, Features, and Invariants.
 
-At the start of every turn, you are handed the memory **index** — the only thing carrying state between sessions. Keep the memory ecosystem clean and compact. The memory is **shared**: a lesson one quark pays for is a lesson none of you pays for twice.
+At the start of every turn, you are handed the memory **index** — the only thing carrying state between sessions. Keep the memory ecosystem clean and compact. The memory is **shared**: a lesson one quark pays for is a lesson none of you pays for twice. All three live under `.hadron/nucleus/` — the swarm's single knowledge root: `index.md`/`notes/` (lessons), `invariants/` (already there), and `features.md` (read automatically into every prompt's nucleus digest).
 1. **Lessons Index (`index.md`)**: A curated ledger of active engineering mistakes, pitfalls, and post-mortems. One short line per lesson: `- [<slug>](notes/<slug>.md) — <the lesson, in one sentence>`. Notes go in `notes/`. 
    - **Strict Post-Mortem Only**: Do NOT record normal feature implementations, requirements changes, or what the code already says.
    - **Pruning Allowed**: Curation is active: when a lesson becomes obsolete due to structural code changes or is replaced, delete the deprecated lines and their notes to prevent prompt token bloat.
