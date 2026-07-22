@@ -886,6 +886,16 @@ mod tests {
         assert_eq!(cmds, vec![("deny".to_string(), "@acp-claude".to_string())]);
         assert_eq!(body, None);
 
+        // limit swallows the rest of the line as its argument.
+        let (cmds, body) = split_leading_commands("/limit @acp-claude 1000000");
+        assert_eq!(cmds, vec![("limit".to_string(), "@acp-claude 1000000".to_string())]);
+        assert_eq!(body, None);
+
+        // reset-energy swallows the rest of the line as its argument.
+        let (cmds, body) = split_leading_commands("/reset-energy @Claude");
+        assert_eq!(cmds, vec![("reset-energy".to_string(), "@Claude".to_string())]);
+        assert_eq!(body, None);
+
         // A "/command" that is NOT leading stays literal text in the message body.
         let (cmds, body) = split_leading_commands("please run /clear later");
         assert!(cmds.is_empty());
