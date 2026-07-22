@@ -46,7 +46,13 @@ pub fn extract_completion_query(text: &str, offset: usize) -> Option<(char, Stri
 
     let before_cursor = &text[..safe_offset];
     for (idx, c) in before_cursor.char_indices().rev() {
-        if c == '@' || c == ':' || (c == '/' && idx == 0) {
+        let is_slash_cmd = c == '/'
+            && (idx == 0
+                || before_cursor[..idx]
+                    .chars()
+                    .next_back()
+                    .map_or(false, |ch| ch.is_whitespace() || ch == '\n'));
+        if c == '@' || c == ':' || is_slash_cmd {
             let query = before_cursor[idx + c.len_utf8()..].to_string();
             return Some((c, query, idx));
         }
@@ -55,6 +61,7 @@ pub fn extract_completion_query(text: &str, offset: usize) -> Option<(char, Stri
         }
     }
     None
+
 }
 
 /// The label and filter text of one completion-menu row, built so the menu cannot
@@ -407,9 +414,12 @@ mod tests {
         let labels_deny: Vec<&str> = c_deny.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels_deny.contains(&"/deny"), "matched deny offered: {labels_deny:?}");
         
-        // Mid-line `/` is not a trigger (see extract_completion_query).
-        assert!(completion_candidates("hi /goa", 8, &[], &[]).is_none());
+        // Mid-line `/` at a word boundary IS a trigger.
+        assert!(completion_candidates("hi /goa", 7, &[], &[]).is_some());
+        // Path slashes are not triggers.
+        assert!(completion_candidates("src/app.rs", 10, &[], &[]).is_none());
     }
+
 
     #[test]
     fn no_trigger_yields_no_card() {
@@ -547,4 +557,24 @@ mod tests {
         assert_eq!(idx, 0);
         assert_eq!(query, "ab", "the partial emoji is dropped, not sliced");
     }
+
+    #[test]
+    fn a_slash_command_is_offered_at_word_boundaries_mid_text() {
+        let text = "hello /plan";
+        assert_eq!(
+            extract_completion_query(text, text.len()),
+            Some(('/', "plan".to_string(), 6))
+        );
+
+        let multi_line = "first line\n/reboot";
+        assert_eq!(
+            extract_completion_query(multi_line, multi_line.len()),
+            Some(('/', "reboot".to_string(), 11))
+        );
+
+        // Path slashes must NOT trigger completions.
+        let path = "src/app.rs";
+        assert_eq!(extract_completion_query(path, path.len()), None);
+    }
 }
+
