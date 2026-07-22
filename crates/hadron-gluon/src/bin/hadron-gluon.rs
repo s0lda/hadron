@@ -339,9 +339,19 @@ async fn main() {
     let max_exchanges = team.max_exchanges.unwrap_or(12);
     let repo_root = std::fs::canonicalize(hadron_lattice::repo_root_of(&args.field_path))
         .unwrap_or_else(|_| hadron_lattice::repo_root_of(&args.field_path).to_path_buf());
+
+    // Self-healing: move the legacy `.hadron/memory/` lessons ledger into
+    // `.hadron/nucleus/` before anything else reads either. Non-fatal — the
+    // reader's own fallback (`read_memory_index_with_fallback`) covers a
+    // failed or skipped migration.
+    if let Err(e) = hadron_gluon::engine::migrate_legacy_memory(&repo_root) {
+        eprintln!("hadron-gluon: memory→nucleus migration failed (non-fatal): {e:#}");
+    }
+
     let engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
-        .with_git(repo_root)
+        .with_git(repo_root.clone())
         .with_merge_gate(std::sync::Arc::new(hadron_gluon::merge::CargoMergeRunner))
+        .with_nucleus(hadron_gluon::engine::build_nucleus_digest(&repo_root))
         // `Engine::new` defaults this to `None` (hermetic — see the field doc), so the
         // real daemon must opt in explicitly or custom global skills under
         // `~/.hadron/skills` would silently never load in production.
