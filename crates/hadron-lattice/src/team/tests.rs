@@ -1062,9 +1062,53 @@ mod cli_spec_tests {
     }
 
     #[test]
-    fn preset_resolves_agy_and_none_for_unknown() {
+    fn preset_resolves_agy_claude_copilot_and_none_for_unknown() {
         assert_eq!(CliSpec::preset("agy"), Some(CliSpec::agy()));
+        assert_eq!(CliSpec::preset("claude"), Some(CliSpec::claude()));
+        assert_eq!(CliSpec::preset("copilot"), Some(CliSpec::copilot()));
         assert_eq!(CliSpec::preset("nonexistent-vendor"), None);
+    }
+
+    #[test]
+    fn claude_preset_carries_mediation_flags() {
+        let spec = CliSpec::claude();
+        assert_eq!(spec.program, "claude");
+        assert_eq!(spec.prompt, PromptChannel::Stdin);
+        assert_eq!(spec.model_flag, Some("--model".into()));
+        let expected_posture = vec![
+            "--mcp-config".to_string(),
+            "<hadron-forge-mcp>".to_string(),
+            "--disallowedTools".to_string(),
+            "Edit".to_string(),
+            "Write".to_string(),
+            "MultiEdit".to_string(),
+            "NotebookEdit".to_string(),
+        ];
+        assert_eq!(spec.posture.ask, expected_posture);
+        assert_eq!(spec.posture.write, expected_posture);
+        assert_eq!(spec.posture.auto, expected_posture);
+        assert_eq!(spec.posture.bypass, expected_posture);
+    }
+
+    #[test]
+    fn copilot_preset_carries_mediation_flags() {
+        let spec = CliSpec::copilot();
+        assert_eq!(spec.program, "copilot");
+        assert_eq!(spec.prompt, PromptChannel::Stdin);
+        assert_eq!(spec.model_flag, Some("--model".into()));
+        let expected_posture = vec![
+            "--additional-mcp-config".to_string(),
+            "<hadron-forge-mcp>".to_string(),
+            "--disallowedTools".to_string(),
+            "Edit".to_string(),
+            "Write".to_string(),
+            "MultiEdit".to_string(),
+            "NotebookEdit".to_string(),
+        ];
+        assert_eq!(spec.posture.ask, expected_posture);
+        assert_eq!(spec.posture.write, expected_posture);
+        assert_eq!(spec.posture.auto, expected_posture);
+        assert_eq!(spec.posture.bypass, expected_posture);
     }
 
     #[test]
@@ -1078,6 +1122,12 @@ mod cli_spec_tests {
         assert_eq!(spec.timeout, None);
         assert_eq!(spec.posture, PostureMap::default());
         assert!(!spec.argv_guard);
+
+        // Negative test documenting boundary: generic injects NO posture args for any mode
+        assert!(spec.posture.for_mode(crate::Mode::Ask).is_empty());
+        assert!(spec.posture.for_mode(crate::Mode::Write).is_empty());
+        assert!(spec.posture.for_mode(crate::Mode::Auto).is_empty());
+        assert!(spec.posture.for_mode(crate::Mode::Bypass).is_empty());
     }
 
     #[test]

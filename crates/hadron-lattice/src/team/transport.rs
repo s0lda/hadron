@@ -216,6 +216,62 @@ impl CliSpec {
         }
     }
 
+    /// The built-in `claude` preset. Drives `claude` CLI with tool mediation posture flags.
+    pub fn claude() -> CliSpec {
+        let mediation_args = vec![
+            "--mcp-config".to_string(),
+            "<hadron-forge-mcp>".to_string(),
+            "--disallowedTools".to_string(),
+            "Edit".to_string(),
+            "Write".to_string(),
+            "MultiEdit".to_string(),
+            "NotebookEdit".to_string(),
+        ];
+        CliSpec {
+            program: "claude".to_string(),
+            args: Vec::new(),
+            prompt: PromptChannel::Stdin,
+            model_flag: Some("--model".to_string()),
+            resume: ResumeMode::None,
+            timeout: None,
+            posture: PostureMap {
+                ask: mediation_args.clone(),
+                write: mediation_args.clone(),
+                auto: mediation_args.clone(),
+                bypass: mediation_args,
+            },
+            argv_guard: false,
+        }
+    }
+
+    /// The built-in `copilot` preset. Drives `copilot` CLI with tool mediation posture flags.
+    pub fn copilot() -> CliSpec {
+        let mediation_args = vec![
+            "--additional-mcp-config".to_string(),
+            "<hadron-forge-mcp>".to_string(),
+            "--disallowedTools".to_string(),
+            "Edit".to_string(),
+            "Write".to_string(),
+            "MultiEdit".to_string(),
+            "NotebookEdit".to_string(),
+        ];
+        CliSpec {
+            program: "copilot".to_string(),
+            args: Vec::new(),
+            prompt: PromptChannel::Stdin,
+            model_flag: Some("--model".to_string()),
+            resume: ResumeMode::None,
+            timeout: None,
+            posture: PostureMap {
+                ask: mediation_args.clone(),
+                write: mediation_args.clone(),
+                auto: mediation_args.clone(),
+                bypass: mediation_args,
+            },
+            argv_guard: false,
+        }
+    }
+
     /// Resolve a built-in preset by vendor name, e.g. `"agy"` → [`CliSpec::agy`].
     /// `None` for any vendor with no built-in preset — the seat then needs an
     /// explicit `cli` spec or a bare `command` (see the design doc's resolution
@@ -223,6 +279,8 @@ impl CliSpec {
     pub fn preset(vendor: &str) -> Option<CliSpec> {
         match vendor {
             "agy" => Some(CliSpec::agy()),
+            "claude" => Some(CliSpec::claude()),
+            "copilot" => Some(CliSpec::copilot()),
             _ => None,
         }
     }
