@@ -282,11 +282,11 @@ impl super::Chamber {
         let mut list = v_flex().gap_1p5();
         for row in rows {
             // Determine dot color & presence label using Hadron SSOT theme presence logic
-            let (dot, status_label) = if row.id == "hadron-gluon" {
+            let (dot, status_label) = if row.id == "gluon" {
                 if row.status == "Running" {
                     (theme::presence(hadron_lattice::QuarkState::Ground), "Running".to_string())
                 } else {
-                    (theme::presence_disabled(), "Stopped".to_string())
+                    (theme::presence(hadron_lattice::QuarkState::Error), "Stopped".to_string())
                 }
             } else if let Some(roster_row) = self.view.roster.iter().find(|r| r.id == row.id) {
                 let activity = hadron_lattice::live::read(
@@ -314,7 +314,7 @@ impl super::Chamber {
                 (theme::presence_disabled(), row.status.clone())
             };
 
-            let avatar_or_icon = if row.id == "hadron-gluon" {
+            let avatar_or_icon = if row.id == "gluon" {
                 div()
                     .flex()
                     .items_center()
