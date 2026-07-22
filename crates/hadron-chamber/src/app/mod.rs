@@ -232,6 +232,7 @@ struct Chamber {
     settings_roles: Entity<InputState>,
     settings_new_role: Entity<InputState>,
     settings_deny_skills: Entity<InputState>,
+    settings_energy_limit: Entity<InputState>,
     /// The team-wide "Max exchanges" field on the Providers panel (not per-identity, so
     /// it's loaded/committed unconditionally in `load_settings_inputs`/
     /// `commit_settings_inputs` rather than keyed off `settings_target`). Blank = clear
@@ -382,6 +383,7 @@ impl Chamber {
         let settings_roles = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. architect, reviewer"));
         let settings_new_role = cx.new(|cx| InputState::new(window, cx).placeholder("Add custom role..."));
         let settings_deny_skills = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. writing-plans, brainstorming"));
+        let settings_energy_limit = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. 500000 (blank = default)"));
         let settings_max_exchanges = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. 50 (blank = daemon default)"));
         let settings_secret_var = cx.new(|cx| InputState::new(window, cx).placeholder(DEFAULT_SECRET_VAR));
         // `.masked(true)`: a password field — the stored value is never rendered back
@@ -557,6 +559,7 @@ impl Chamber {
             settings_roles,
             settings_new_role,
             settings_deny_skills,
+            settings_energy_limit,
             settings_max_exchanges,
             settings_secret_var,
             settings_secret_value,

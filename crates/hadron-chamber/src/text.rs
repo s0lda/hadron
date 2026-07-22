@@ -290,6 +290,8 @@ pub fn completion_candidates(
                 ("grill-me", "Start an interactive plan alignment interview"),
                 ("teamwork-preview", "Preview a team of autonomous agents working"),
                 ("learn", "Persist a corrected behavior or setup"),
+                ("limit", "Set custom energy token limit for a seat (e.g. /limit @acp-claude 1000000)"),
+                ("reset-energy", "Reset used token ledger for a seat or all (e.g. /reset-energy @acp-claude or /reset-energy all)"),
             ];
             for (cmd, detail) in cmds {
                 if query_lower.is_empty() || cmd.contains(&query_lower) {

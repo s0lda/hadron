@@ -179,6 +179,10 @@ impl super::Chamber {
                         "Denied skills",
                         Input::new(&self.settings_deny_skills).into_any_element(),
                     ))
+                    .child(settings_field(
+                        "Energy limit",
+                        Input::new(&self.settings_energy_limit).into_any_element(),
+                    ))
                     // The secret env-var value (e.g. `GEMINI_API_KEY`) goes to the OS
                     // keychain via `SecretStore`, never into team.json or this panel's
                     // rendered state — see `secret_field`. Shown ONLY for a quark whose
