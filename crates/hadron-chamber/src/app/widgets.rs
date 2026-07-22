@@ -7,18 +7,23 @@
 
 use super::*;
 
+/// Human-readable token count: `50.6k`, `1.2m`, `2m`. One decimal, with a trailing
+/// `.0` trimmed so a round value reads `2m`, not `2.0m`. This is the single formatter
+/// for every token figure in the UI (roster + stats) — do not re-inline the k/m logic.
 pub(super) fn format_num(n: u32) -> String {
-    if n >= 10_000 {
-        format!("{:.1}k", n as f64 / 1000.0)
+    if n >= 1_000_000 {
+        trim_unit(n as f64 / 1_000_000.0, 'm')
+    } else if n >= 1_000 {
+        trim_unit(n as f64 / 1_000.0, 'k')
     } else {
-        let s = n.to_string();
-        if s.len() > 3 {
-            let (head, tail) = s.split_at(s.len() - 3);
-            format!("{},{}", head, tail)
-        } else {
-            s
-        }
+        n.to_string()
     }
+}
+
+fn trim_unit(v: f64, suffix: char) -> String {
+    let s = format!("{v:.1}");
+    let s = s.strip_suffix(".0").unwrap_or(&s);
+    format!("{s}{suffix}")
 }
 
 /// Corner radii for the full-height content container, matching the client
@@ -262,14 +267,7 @@ pub(super) fn roster_row(
     };
     let transport_label = r.transport.code();
 
-    let tokens = r.tokens;
-    let tokens_str = if tokens >= 1_000_000 {
-        format!("{:.1}m", tokens as f64 / 1_000_000.0)
-    } else if tokens >= 1_000 {
-        format!("{}k", tokens / 1_000)
-    } else {
-        format!("{}", tokens)
-    };
+    let tokens_str = format_num(r.tokens);
 
     let flavor_str = match &r.flavor {
         Some(hadron_lattice::Flavor::Orchestrator) => "Orchestrator",
@@ -790,6 +788,17 @@ pub(super) fn markdown_style() -> gpui_component::text::TextViewStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_num_is_human_readable_with_trimmed_units() {
+        assert_eq!(format_num(0), "0");
+        assert_eq!(format_num(999), "999");
+        assert_eq!(format_num(50_558), "50.6k");
+        assert_eq!(format_num(1_000), "1k"); // trailing .0 trimmed
+        assert_eq!(format_num(1_200_000), "1.2m");
+        assert_eq!(format_num(2_000_000), "2m"); // not "2.0m"
+        assert_eq!(format_num(503_937), "503.9k");
+    }
 
     /// `mode_tag` used to early-return an empty element for any quark running the
     /// global-default mode (`is_override == false`), so "a mode tag next to each
