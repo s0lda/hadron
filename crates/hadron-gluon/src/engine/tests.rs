@@ -2534,7 +2534,7 @@ async fn multiple_mentions_in_quark_reply_results_in_unaddressed_event() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("field.jsonl");
 
-    let mut engine = Engine::new(
+    let engine = Engine::new(
         path.clone(),
         vec![
             Box::new(MockQuark::repeating(QuarkId::new("a"), Flavor::Worker, "ok")),

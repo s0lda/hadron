@@ -135,7 +135,7 @@ impl super::Chamber {
                                     .child("Configured Providers"),
                             )
                             .child(text_button("add-quark", "Add Quark").on_click(cx.listener(
-                                |this, _, window, cx| {
+                                |this, _, _window, cx| {
                                     this.wizard_state = WizardState::PickPreset;
                                     cx.notify();
                                 },
@@ -222,7 +222,7 @@ impl super::Chamber {
                                     .text_color(theme::text_muted())
                                     .child("Configure →"),
                             )
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                            .on_click(cx.listener(move |this, _, _window, cx| {
                                 this.wizard_state = WizardState::Connecting(
                                     preset_clone.clone(),
                                     ProviderState::NotConnected,
@@ -291,7 +291,7 @@ impl super::Chamber {
                     .size_full()
                     .gap_4()
                     .child(text_button("back-wizard", "← Back").on_click(cx.listener(
-                        |this, _, window, cx| {
+                        |this, _, _window, cx| {
                             this.wizard_state = WizardState::None;
                             cx.notify();
                         },
@@ -336,7 +336,7 @@ impl super::Chamber {
                         v_flex()
                             .gap_4()
                             .child(text_button("connect-btn", "Connect").on_click(cx.listener(
-                                move |this, _, window, cx| {
+                                move |this, _, _window, cx| {
                                     this.wizard_state = WizardState::Connecting(
                                         desc_clone.clone(),
                                         ProviderState::Connecting,
@@ -391,7 +391,6 @@ impl super::Chamber {
                     ProviderState::NeedsAuth(methods) => {
                         let mut auth_list = v_flex().gap_2();
                         for method in methods {
-                            let method_clone = method.clone();
                             let desc_inner = desc.clone();
                             auth_list = auth_list.child(
                                 v_flex()
@@ -474,7 +473,7 @@ impl super::Chamber {
                                     .child(format!("Ready! Model available: {}", model)),
                             )
                             .child(text_button("save-provider", "Save Provider").on_click(
-                                cx.listener(move |this, _, window, cx| {
+                                cx.listener(move |this, _, _window, cx| {
                                     // `desc_inner.id` is the PURE vendor now (Task 3 re-keyed
                                     // `available_presets()`/`AgentDescriptor` off `AcpAgentSpec.vendor`,
                                     // e.g. "claude" — it no longer carries the old smeared "acp-claude"
@@ -564,7 +563,7 @@ impl super::Chamber {
                     .size_full()
                     .gap_4()
                     .child(text_button("back-presets", "← Back").on_click(cx.listener(
-                        |this, _, window, cx| {
+                        |this, _, _window, cx| {
                             this.wizard_state = WizardState::PickPreset;
                             cx.notify();
                         },
@@ -654,7 +653,7 @@ impl super::Chamber {
                     .size_full()
                     .gap_4()
                     .child(text_button("back-custom-cli", "← Back").on_click(cx.listener(
-                        |this, _, window, cx| {
+                        |this, _, _window, cx| {
                             this.wizard_state = WizardState::PickPreset;
                             cx.notify();
                         },
@@ -705,7 +704,7 @@ impl super::Chamber {
 
                 form.child(
                     text_button("save-custom-cli", "Save Custom CLI").when(can_save, |b| {
-                        b.on_click(cx.listener(|this, _, window, cx| {
+                        b.on_click(cx.listener(|this, _, _window, cx| {
                             let vendor =
                                 this.custom_cli_vendor.read(cx).value().trim().to_string();
                             let program =

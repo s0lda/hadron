@@ -66,7 +66,7 @@ use providers::{
 mod widgets;
 use widgets::{
     active_quarks, control_button, drag_region, effective_presence_state, effort_tag, empty_hint,
-    fallback_pick_image, format_num, frame_corner_radii, glow_layer, kind_icon, kv_row, log_row,
+    fallback_pick_image, format_num, frame_corner_radii, kind_icon, kv_row, log_row,
     markdown_style, menu_button, mode_color, mode_hint, mode_label, mode_tag, next_mode,
     panel_eyebrow, progress_meter, roster_row, session_card, settings_field,
     settings_field_stacked, stat_tile, text_button,
@@ -207,6 +207,7 @@ struct Chamber {
     log_list_state: gpui::ListState,
     /// Log rows (by message index) the user has clicked to expand to their full body.
     log_expanded: std::collections::HashSet<usize>,
+    #[allow(dead_code)] // only read by the superseded message_row
     log_expanded_ixs: std::collections::HashSet<usize>,
     /// Maps a virtual list item index to the message's true index in `view.messages`.
     chat_message_ixs: Vec<usize>,
