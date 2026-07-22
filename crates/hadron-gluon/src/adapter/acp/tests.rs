@@ -763,6 +763,42 @@ fn tool_call_detail_enriches_the_bare_title() {
     assert_eq!(session::tool_call_detail(&other), "Do a thing");
 }
 
+/// A running tool's own output — a shell command's stdout, a file diff — beats
+/// the static verb published when the call started, so the live card can show
+/// the actual stream instead of a fixed "Running `cmd`" for the whole call.
+#[test]
+fn tool_call_update_detail_prefers_streamed_content_over_the_title() {
+    let update = |json: &str| -> agent_client_protocol::schema::v1::ToolCallUpdate {
+        serde_json::from_str(json).expect("test ToolCallUpdate")
+    };
+
+    // Streamed stdout content beats a title that didn't change.
+    let stdout = update(
+        r#"{"toolCallId":"1","title":"Terminal",
+            "content":[{"type":"content","content":{"type":"text","text":"Compiling hadron-gluon..."}}]}"#,
+    );
+    assert_eq!(
+        session::tool_call_update_detail(&stdout).as_deref(),
+        Some("Compiling hadron-gluon...")
+    );
+
+    // A diff names the file it touched, not the raw before/after text.
+    let diff = update(
+        r#"{"toolCallId":"2",
+            "content":[{"type":"diff","path":"/repo/src/lib.rs","newText":"fn main() {}"}]}"#,
+    );
+    assert_eq!(session::tool_call_update_detail(&diff).as_deref(), Some("Edited lib.rs"));
+
+    // No content → fall back to a title update, if any.
+    let title_only = update(r#"{"toolCallId":"3","title":"Completed"}"#);
+    assert_eq!(session::tool_call_update_detail(&title_only).as_deref(), Some("Completed"));
+
+    // A bare status flip with neither content nor title has nothing to show —
+    // the caller must leave the previous detail alone rather than blank it.
+    let status_only = update(r#"{"toolCallId":"4","status":"completed"}"#);
+    assert_eq!(session::tool_call_update_detail(&status_only), None);
+}
+
 /// The regression this exists for: a worker's final `@orchestrator` report
 /// arrived as a separate `AgentMessageChunk` notification right after a
 /// narration sentence, with no whitespace of its own. Glued with a bare

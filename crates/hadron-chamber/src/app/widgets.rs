@@ -198,22 +198,30 @@ pub(super) fn needs_activity_placeholder(
 }
 
 /// Every mid-turn quark, not just the first: an adopted, enabled seat with fresh
-/// live detail (an ACP seat), or one whose field state says a turn is in flight but
-/// which has published no detail (a CLI seat, or the gap between publishes) gets a
-/// `(id, label, detail)` row — `detail` is the placeholder text for the latter case.
-/// `live` is injected so this stays a pure function testable without touching disk.
+/// live detail (an ACP seat) gets its raw stream text — the thought, tool title, or
+/// plan step, with no "working"/"thinking" label glued in front, since that text
+/// already says what is happening. A seat whose field state says a turn is in
+/// flight but which has published no detail (a CLI seat — it does not stream to
+/// us — or the gap between two ACP publishes) gets the `"working…"` placeholder
+/// instead, since there is no stream to show. `live` is injected so this stays a
+/// pure function testable without touching disk.
 pub(super) fn active_quarks(
     roster: &[RosterRow],
     live: impl Fn(&str) -> Option<hadron_lattice::live::Activity>,
-) -> Vec<(String, &'static str, String)> {
+) -> Vec<(String, String)> {
     roster
         .iter()
         .filter(|r| r.adopted && r.enabled)
         .filter_map(|r| {
             if let Some(act) = live(&r.id) {
-                Some((act.quark.as_str().to_string(), act.doing.label(), act.detail))
+                let text = if act.detail.is_empty() {
+                    act.doing.label().to_string()
+                } else {
+                    act.detail
+                };
+                Some((act.quark.as_str().to_string(), text))
             } else if matches!(r.state, QuarkState::Excited | QuarkState::Thinking) {
-                Some((r.id.clone(), "working", "taking a turn…".to_string()))
+                Some((r.id.clone(), "working…".to_string()))
             } else {
                 None
             }
@@ -887,8 +895,8 @@ mod tests {
         assert_eq!(
             active,
             vec![
-                ("acp-claude".to_string(), "working", "Terminal".to_string()),
-                ("cli-agy".to_string(), "working", "taking a turn…".to_string()),
+                ("acp-claude".to_string(), "Terminal".to_string()),
+                ("cli-agy".to_string(), "working…".to_string()),
             ]
         );
     }

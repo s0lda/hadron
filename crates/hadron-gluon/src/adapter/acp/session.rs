@@ -11,7 +11,7 @@ use agent_client_protocol::schema::v1::{
     ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionKind, PlanEntryStatus,
     PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SelectedPermissionOutcome, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
-    StopReason, TextContent, ToolCall, ToolKind, Usage as AcpUsage,
+    StopReason, TextContent, ToolCall, ToolCallContent, ToolCallUpdate, ToolKind, Usage as AcpUsage,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, ConnectionTo};
@@ -82,6 +82,35 @@ pub(super) fn tool_call_detail(call: &ToolCall) -> String {
         (Some(verb), None, Some(command)) => format!("{verb} `{command}`"),
         _ => call.title.clone(),
     }
+}
+
+/// What a tool-call **update** adds beyond its opening title: the actual output
+/// as it streams in (a shell command's stdout, a file diff) beats a static verb
+/// that was already published when the call started. `None` means this update
+/// carries nothing new to show (a bare status flip with no content or title) —
+/// the caller should leave the previous detail on screen rather than blank it.
+pub(super) fn tool_call_update_detail(update: &ToolCallUpdate) -> Option<String> {
+    if let Some(last) = update.fields.content.as_ref().and_then(|c| c.last()) {
+        match last {
+            ToolCallContent::Content(c) => {
+                if let ContentBlock::Text(t) = &c.content {
+                    return Some(t.text.clone());
+                }
+            }
+            ToolCallContent::Diff(d) => {
+                let name = d
+                    .path
+                    .file_name()
+                    .map(|f| f.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| d.path.display().to_string());
+                return Some(format!("Edited {name}"));
+            }
+            // `Terminal` (an embedded terminal reference) and any future
+            // variant carry nothing renderable here without a further lookup.
+            _ => {}
+        }
+    }
+    update.fields.title.clone()
 }
 
 /// First line only, cut at 80 **chars** (never bytes — a mid-character byte cut
@@ -302,6 +331,16 @@ impl super::AcpQuark {
                                         SessionUpdate::ToolCall(call) => {
                                             if let Some(feed) = &live {
                                                 feed.publish(Doing::Working, &tool_call_detail(&call));
+                                            }
+                                        }
+                                        // A tool call's own output as it runs — the tail of a
+                                        // shell command's stdout, a diff summary — is richer
+                                        // than the static title `ToolCall` published at start.
+                                        SessionUpdate::ToolCallUpdate(update) => {
+                                            if let (Some(feed), Some(detail)) =
+                                                (&live, tool_call_update_detail(&update))
+                                            {
+                                                feed.publish(Doing::Working, &detail);
                                             }
                                         }
                                         SessionUpdate::Plan(plan) => {
