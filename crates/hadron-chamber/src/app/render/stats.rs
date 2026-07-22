@@ -1,6 +1,16 @@
 use super::*;
 
 impl super::Chamber {
+    /// The most recent context reading published by `qid` in the live field: the last
+    /// message that actually carries `usage.context`, not merely the last message. A
+    /// quark's trailing rows are usually turn-less status pings with no usage, so a plain
+    /// `rfind(last row)` lands on one of those and reports "no context" even when a
+    /// reading exists earlier this window — which is why the Current gauge showed for
+    /// some quarks and not others.
+    fn latest_context(&self, qid: &str) -> Option<&hadron_lattice::ContextUsage> {
+        latest_context(&self.view.messages, qid)
+    }
+
     pub(super) fn info_panel_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let qid = self.info_panel.as_ref().unwrap().clone();
         let roster_row = self.view.roster.iter().find(|r| r.id == qid).unwrap();
@@ -253,13 +263,7 @@ impl super::Chamber {
             .child(kv_row("Last active", last_active_str));
 
         if self.stats_window == StatsWindow::Current {
-            let live_context = self.view.messages
-                .iter()
-                .rfind(|m| m.from == qid)
-                .and_then(|m| m.usage.as_ref())
-                .and_then(|u| u.context.as_ref());
-
-            if let Some(ctx) = live_context {
+            if let Some(ctx) = self.latest_context(&qid) {
                 stats_block = stats_block.child(kv_row(
                     "Context",
                     format!(
@@ -588,13 +592,7 @@ impl super::Chamber {
             );
 
             if self.stats_window == StatsWindow::Current {
-                let live_context = self.view.messages
-                    .iter()
-                    .rfind(|m| m.from == *q)
-                    .and_then(|m| m.usage.as_ref())
-                    .and_then(|u| u.context.as_ref());
-
-                if let Some(ctx) = live_context {
+                if let Some(ctx) = self.latest_context(q) {
                     let frac = (ctx.used_percentage as f32 / 100.0).clamp(0.0, 1.0);
                     block = block
                         .child(
@@ -622,5 +620,67 @@ impl super::Chamber {
             col = col.child(block);
         }
         col
+    }
+}
+
+/// The most recent context reading published by `qid`: the last message that actually
+/// carries `usage.context`, not merely the last message from that quark. Context is
+/// attached to a turn's rows, but a quark's trailing rows are usually turn-less status
+/// pings with no usage — so scanning for the last *row* (rather than the last row with
+/// context) reports "no context" whenever a status ping trails the turn, which is why
+/// the Current gauge appeared for some quarks and not others.
+fn latest_context<'a>(
+    messages: &'a [super::super::MessageRow],
+    qid: &str,
+) -> Option<&'a hadron_lattice::ContextUsage> {
+    messages
+        .iter()
+        .rev()
+        .filter(|m| m.from == qid)
+        .find_map(|m| m.usage.as_ref()?.context.as_ref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::latest_context;
+    use crate::model::MessageRow;
+    use hadron_lattice::{ContextUsage, Usage};
+
+    fn row(from: &str, ctx: Option<u32>) -> MessageRow {
+        MessageRow {
+            from: from.into(),
+            to: None,
+            body: String::new(),
+            kind_label: "status",
+            usage: ctx.map(|pct| Usage {
+                context: Some(ContextUsage {
+                    used_tokens: pct * 100,
+                    context_window_size: 200_000,
+                    used_percentage: pct as f64,
+                }),
+                ..Default::default()
+            }),
+            ts: chrono::DateTime::from_timestamp(0, 0).unwrap(),
+            legacy_used_tokens: None,
+            turn: None,
+        }
+    }
+
+    #[test]
+    fn latest_context_skips_trailing_statusless_rows() {
+        // A context-bearing turn row, then trailing status pings with no usage — the
+        // exact real-field shape that hid Claude's gauge. The gauge must still find the
+        // earlier reading rather than the last (context-less) row.
+        let msgs = vec![
+            row("acp-claude", Some(16)),
+            row("acp-claude", None),
+            row("acp-claude", None),
+        ];
+        assert_eq!(latest_context(&msgs, "acp-claude").map(|c| c.used_percentage), Some(16.0));
+        // Most-recent reading wins when several exist.
+        let msgs = vec![row("acp-claude", Some(9)), row("acp-claude", Some(16))];
+        assert_eq!(latest_context(&msgs, "acp-claude").map(|c| c.used_percentage), Some(16.0));
+        // A quark that never reported context has no gauge.
+        assert!(latest_context(&[row("acp-claude", None)], "acp-claude").is_none());
     }
 }
