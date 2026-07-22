@@ -5,13 +5,17 @@
 A single Quark cannot build complex software in isolation. It requires an environment to bind it to tools, files, and other agents. Hadron is that environment.
 
 <div align="center">
-    <img src="assets/hadron_full_size.jpg" alt="Hadron" width="800" />
+    <img src="assets/hadron_full_size.jpg" alt="Hadron" width="900" />
 </div>
 
 # 🔭 The Vision
 
 `The ultimate endgame of this project is the integration of Quark, your custom, highly-specialized AI model.
 To prepare for Quark, we are building Hadron—a hyper-fast, natively compiled Rust multi-agent operating system. Until Quark is ready, Hadron will securely orchestrate existing models (Claude, Llama, OpenAI) using a zero-CPU filesystem bus. The day your model is ready, it will slot perfectly into the "Orchestrator" seat.
+
+<div align="center">
+    <img src="assets/demo.png" alt="Hadron" width="900" />
+</div>
 
 # 🏛️ The Architecture: Decoupled Workspace
 
@@ -21,9 +25,12 @@ The system is a two-tier architecture communicating strictly through the field.j
 hadron/
 ├── Cargo.toml
 ├── crates/
-│   ├── hadron-lattice/   (The Shared Protocol: Structs, Intents, & Edit-by-Hash schemas)
-│   ├── hadron-gluon/     (The Headless Daemon: Watches files, routes tasks, runs Git)
-│   └── hadron-chamber/   (The GPUI Glass: The 120 FPS Native Visualizer)
+│   ├── hadron-lattice/   	  (The Shared Protocol: Structs, Intents, & Edit-by-Hash schemas)
+│   ├── hadron-gluon/     	  (The Headless Daemon: Watches files, routes tasks, runs Git)
+│   ├── hadron-chamber/   	  (The GPUI Glass: The 120 FPS Native Visualizer)
+│	├── hadron-forge/
+│	├── hadron-gaetekeeper/
+│	└── gpui-component/
 ```
 
 ## The Vocabulary
@@ -100,13 +107,13 @@ Every dependency above is used under its own licence.
 
 ## Keyboard Shortcuts
 
-| Shortcut                | Action                                    |
-| ------------------------ | ------------------------------------------ |
-| `Ctrl+Tab` / `Ctrl+\``    | Toggle focus between the chat input and the terminal |
-| `Alt+Left` / `Alt+Right`  | Switch chat column tabs                    |
-| `Alt+PageUp` / `Alt+PageDown` | Switch right-rail (inspector) tabs    |
-| `Alt+Up` / `Alt+Down`     | Switch Stats time window                   |
-| `F6`                     | Cycle the global permission mode           |
+| Shortcut                      | Action                                               |
+| ----------------------------- | ---------------------------------------------------- |
+| `Ctrl+Tab` / `Ctrl+\``        | Toggle focus between the chat input and the terminal |
+| `Alt+Left` / `Alt+Right`      | Switch chat column tabs                              |
+| `Alt+PageUp` / `Alt+PageDown` | Switch right-rail (inspector) tabs                   |
+| `Alt+Up` / `Alt+Down`         | Switch Stats time window                             |
+| `F6`                          | Cycle the global permission mode                     |
 
 ## Licence
 

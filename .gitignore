@@ -7,6 +7,8 @@ gpui-component
 # Session-local hook scratch (remember plugin); not project state.
 .remember/
 
+.docs/
+
 # A project's own Hadron workspace: the user's team, their field, their
 # repo-specific rules. This one (ours) is a live workspace, not source we ship —
 # publishing it would show the world our bus, not our app.
