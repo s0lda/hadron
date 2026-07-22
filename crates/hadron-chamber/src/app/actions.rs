@@ -187,7 +187,7 @@ impl Chamber {
 
                 let target_id = target_str.and_then(|t| {
                     self.view.roster.iter()
-                        .find(|r| r.id == t || r.display_name.as_deref() == Some(t))
+                        .find(|r| r.id.eq_ignore_ascii_case(t) || r.display_name.as_deref().map_or(false, |d| d.eq_ignore_ascii_case(t)))
                         .map(|r| r.id.clone())
                 });
 
@@ -229,7 +229,7 @@ impl Chamber {
                         let _ = conn.execute("DELETE FROM usage", []);
                     } else {
                         let real_id = self.view.roster.iter()
-                            .find(|r| r.id == target || r.display_name.as_deref() == Some(target))
+                            .find(|r| r.id.eq_ignore_ascii_case(target) || r.display_name.as_deref().map_or(false, |d| d.eq_ignore_ascii_case(target)))
                             .map(|r| r.id.as_str())
                             .unwrap_or(target);
                         let _ = conn.execute("DELETE FROM usage WHERE quark_id = ?1", [real_id]);
