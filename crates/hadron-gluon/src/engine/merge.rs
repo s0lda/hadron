@@ -98,7 +98,34 @@ impl super::Engine {
                     ))
                     .await?;
                 }
-                let landed = runner.land(root, &t.wt, &t.base)?;
+                // A `land` FAILURE is a git error, not a rebase conflict (that comes
+                // back as `Landed::Conflicted`, an `Ok`). The realistic cause is the
+                // target checkout being unmergeable — e.g. an uncommitted local change
+                // to a file this branch rewrites, so `git merge --ff-only` refuses. It
+                // MUST NOT propagate: the audit `PermissionReq`/`PermissionGrant` above
+                // are already in the field, and an `Err` here returns out of
+                // `run_until_quiesce` with no terminal status for the quark — so the
+                // daemon's re-invoke loop re-reads that dangling `PermissionGrant{→quark}`
+                // as an unanswered turn-request and re-dispatches the quark forever (a
+                // live hot loop: many `Excited`, never a `Ground`). Reroute it to
+                // `Blocked` instead — a turn-completion, which answers the grant and
+                // closes the loop — exactly as every other merge refusal already does.
+                let landed = match runner.land(root, &t.wt, &t.base) {
+                    Ok(landed) => landed,
+                    Err(e) => {
+                        self.reroute_blocked(
+                            target,
+                            &format!(
+                                "⚠️ `{}` could not be merged → `{}`: {e:#}. The branch is preserved at `{}` — resolve it (e.g. commit or stash conflicting local changes in the target checkout), and it lands on this quark's next turn.",
+                                t.wt.branch,
+                                t.base,
+                                t.wt.path.display()
+                            ),
+                        )
+                        .await?;
+                        return Ok(true);
+                    }
+                };
                 let body = landed.describe(&t.wt.branch, &t.base);
                 self.append(Event::new(
                     Actor::Gluon,
