@@ -3,6 +3,7 @@ use crate::block::{annotate_lang, short_hash};
 use crate::edit::{apply_edit_lang, EditOutcome, HashedEdit};
 use crate::lang::{lang_for_path, Lang};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Root(PathBuf);
 
 impl Root {
