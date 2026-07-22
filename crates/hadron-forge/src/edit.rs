@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn rejects_stale_hash() {
         let edit = HashedEdit {
-            target_hash: "000000".into(),
+            target_hash: "00000000".into(),
             new_text: "whatever".into(),
         };
         match apply_edit(SRC, &edit) {

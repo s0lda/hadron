@@ -1,9 +1,8 @@
 use tree_sitter::{Node, Parser};
 
 /// How many hex chars of the blake3 digest identify a block.
-/// 6 hex = 24 bits — enough to disambiguate blocks within one file for v1
-/// dogfooding; a production multi-file bus should widen this (bought land).
-pub const HASH_LEN: usize = 6;
+/// 8 hex = 32 bits — enough to disambiguate blocks within files for production.
+pub const HASH_LEN: usize = 8;
 
 /// The kind of top-level Rust item a [`Block`] represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
