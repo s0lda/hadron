@@ -43,6 +43,8 @@ fn main() {
     // only daemon we may kill on exit, and only when the user opted in.
     #[cfg(feature = "gui")]
     let mut spawned_gluon: Option<std::process::Child> = None;
+    #[cfg(feature = "gui")]
+    let mut existing_gluon_pid: Option<u32> = None;
     if let Some(p) = &path {
         let field_path = std::path::Path::new(p);
         let field_dir = field_path.parent().unwrap_or(std::path::Path::new("."));
@@ -106,6 +108,14 @@ fn main() {
 
         if gluon_running {
             eprintln!("hadron-chamber: gluon is running.");
+            #[cfg(feature = "gui")]
+            {
+                if let Ok(content) = std::fs::read_to_string(&gluon_lock_path) {
+                    if let Ok(pid) = content.trim().parse::<u32>() {
+                        existing_gluon_pid = Some(pid);
+                    }
+                }
+            }
         } else {
             eprintln!("hadron-chamber: gluon is not running.");
             // Single-command launch: bring the daemon up ourselves so the user only
@@ -132,13 +142,19 @@ fn main() {
         // Blocks until the window closes.
         app::run(path, chamber_lock_file);
 
-        // On exit, honour the user's preference: kill the daemon *we* spawned only
-        // when it is set. Default is false, so gluon outlives the viewer as intended.
+        // On exit, honour the user's preference: kill the daemon when enabled.
+        // If we spawned it, kill the child process; if it was already running, terminate its PID.
         if config::load().close_gluon_on_exit {
             if let Some(mut child) = spawned_gluon {
-                eprintln!("hadron-chamber: closing hadron-gluon on exit...");
+                eprintln!("hadron-chamber: closing spawned hadron-gluon on exit...");
                 let _ = child.kill();
                 let _ = child.wait();
+            } else if let Some(pid) = existing_gluon_pid {
+                eprintln!("hadron-chamber: closing running hadron-gluon (PID {}) on exit...", pid);
+                #[cfg(unix)]
+                {
+                    unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+                }
             }
         }
     }

@@ -6,7 +6,7 @@ impl super::Chamber {
     pub(crate) fn settings_overlay(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let target = self.settings_target.clone();
 
-        // Left nav: every editable identity — the human, then each quark.
+        // Left nav: Settings (General, Providers), then Identities (Human, Quarks)
         let mut nav = v_flex()
             .gap_0p5()
             .child(
@@ -16,8 +16,9 @@ impl super::Chamber {
                     .pb_1()
                     .text_xs()
                     .text_color(theme::text_muted())
-                    .child("GLOBAL"),
+                    .child("SETTINGS"),
             )
+            .child(self.settings_nav_row(SettingsTarget::General, &target, cx))
             .child(self.settings_nav_row(SettingsTarget::Providers, &target, cx))
             .child(
                 div()
@@ -89,13 +90,6 @@ impl super::Chamber {
             .child(div().px_1().text_color(theme::text()).child("Settings"))
             .child(
                 div()
-                    .px_1()
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child("SETTINGS"),
-            )
-            .child(
-                div()
                     .id("settings-nav-scroll")
                     .flex_1()
                     .min_h_0()
@@ -110,10 +104,10 @@ impl super::Chamber {
             .items_center()
             .justify_between()
             .child(div().text_color(theme::text_secondary()).child(
-                if target == SettingsTarget::Providers {
-                    "Providers".to_string()
-                } else {
-                    format!("Editing {}", preview.name)
+                match target {
+                    SettingsTarget::General => "General Settings".to_string(),
+                    SettingsTarget::Providers => "Providers".to_string(),
+                    _ => format!("Editing {}", preview.name),
                 },
             ))
             .child(
@@ -130,9 +124,10 @@ impl super::Chamber {
                     .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx))),
             );
 
-        let fields = if target == SettingsTarget::Providers {
-            self.providers_view(cx).into_any_element()
-        } else {
+        let fields = match target {
+            SettingsTarget::General => self.general_settings_view(cx).into_any_element(),
+            SettingsTarget::Providers => self.providers_view(cx).into_any_element(),
+            _ => {
             let is_quark = matches!(target, SettingsTarget::Quark(_));
             // ACP quarks get a live model dropdown (re-probed from the agent) in place of
             // the free-text Model box; everything else keeps the text field.
@@ -210,6 +205,7 @@ impl super::Chamber {
                         .into_any_element(),
                 ))
                 .into_any_element()
+            }
         };
 
         let footer = if target == SettingsTarget::Providers {
@@ -317,17 +313,24 @@ impl super::Chamber {
                 theme::bg_base()
             })
             .hover(|s| s.bg(theme::bg_surface()))
-            .child(if who == SettingsTarget::Providers {
-                div()
+            .child(match &who {
+                SettingsTarget::General => div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.0))
+                    .text_color(theme::text_muted())
+                    .child(Icon::new(IconName::Settings).small())
+                    .into_any_element(),
+                SettingsTarget::Providers => div()
                     .flex()
                     .items_center()
                     .justify_center()
                     .size(px(24.0))
                     .text_color(theme::text_muted())
                     .child(Icon::new(IconName::Cpu).small())
-                    .into_any_element()
-            } else {
-                identity_avatar(&resolved, 24.0).into_any_element()
+                    .into_any_element(),
+                _ => identity_avatar(&resolved, 24.0).into_any_element(),
             })
             .child(
                 div()
@@ -339,10 +342,10 @@ impl super::Chamber {
                     } else {
                         theme::text_secondary()
                     })
-                    .child(if who == SettingsTarget::Providers {
-                        "Providers".to_string()
-                    } else {
-                        resolved.name.clone()
+                    .child(match &who {
+                        SettingsTarget::General => "General".to_string(),
+                        SettingsTarget::Providers => "Providers".to_string(),
+                        _ => resolved.name.clone(),
                     }),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
