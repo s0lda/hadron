@@ -2517,7 +2517,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.2"
-source = "git+file:///home/Jake/dev/hadron/crates/gpui-component?branch=main#6f5b2f1f736c670ba6e9e0654cb9095211491ece"
+source = "git+file:///home/Jake/dev/hadron/crates/gpui-component?branch=main#4eeca88055d9621fda2306f8c3350bd8beca13f9"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2600,7 +2600,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-assets"
 version = "0.5.1"
-source = "git+file:///home/Jake/dev/hadron/crates/gpui-component?branch=main#6f5b2f1f736c670ba6e9e0654cb9095211491ece"
+source = "git+file:///home/Jake/dev/hadron/crates/gpui-component?branch=main#4eeca88055d9621fda2306f8c3350bd8beca13f9"
 dependencies = [
  "anyhow",
  "gpui",
@@ -2614,7 +2614,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.5.1"
-source = "git+file:///home/Jake/dev/hadron/crates/gpui-component?branch=main#6f5b2f1f736c670ba6e9e0654cb9095211491ece"
+source = "git+file:///home/Jake/dev/hadron/crates/gpui-component?branch=main#4eeca88055d9621fda2306f8c3350bd8beca13f9"
 dependencies = [
  "proc-macro2",
  "quote",
