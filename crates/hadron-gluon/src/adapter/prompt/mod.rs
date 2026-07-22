@@ -96,22 +96,22 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         p.push_str("\n\n");
     }
 
-    // 2b. Memory — what THIS quark learned, on earlier turns and in earlier sessions.
+    // 2b. Nucleus index — what THIS quark learned, on earlier turns and in earlier sessions.
     //
     // The gap this closes is the one Jake named: one quark arrives with weeks of
     // accumulated context and another arrives with nothing, and we mistake the
     // difference for intelligence. It is not; it is persistence. Always emit the
-    // section, even when empty — a quark that is never shown its memory file does not
-    // know it HAS one, and will not write to it.
-    if !projection.memory_path.as_os_str().is_empty() {
-        p.push_str("# What the swarm has learned (memory index)\n");
-        if projection.memory.trim().is_empty() {
+    // section, even when empty — a quark that is never shown its nucleus index file
+    // does not know it HAS one, and will not write to it.
+    if !projection.nucleus_index_path.as_os_str().is_empty() {
+        p.push_str("# What the swarm has learned (nucleus index)\n");
+        if projection.nucleus_index.trim().is_empty() {
             p.push_str("_Empty — nothing has been recorded here yet._\n\n");
         } else {
-            p.push_str(projection.memory.trim());
+            p.push_str(projection.nucleus_index.trim());
             p.push_str("\n\n");
         }
-        if projection.memory_truncated {
+        if projection.nucleus_index_truncated {
             p.push_str(
                 "**The index above is CUT — it did not fit the budget, and lessons are \
                  missing from it.** Do not read the end of it as the end of what is known. \
@@ -120,7 +120,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
             );
         }
         p.push_str(&format!(
-            "This memory is **shared by every quark**, and it persists across turns and \
+            "This index is **shared by every quark**, and it persists across turns and \
              sessions. A lesson one of you paid for is a lesson none of you should pay for \
              twice, so write for the others, not just for yourself.\n\n\
              It is an **index**: one short line per lesson, because it is handed to every \
@@ -136,8 +136,8 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
              codebase that cost you effort, a rule you were given that turned out to be \
              false, a mistake worth not repeating. Do not record what the code already \
              says — it will still say it tomorrow.\n\n",
-            index = projection.memory_path.display(),
-            notes = projection.memory_notes_dir.display()
+            index = projection.nucleus_index_path.display(),
+            notes = projection.nucleus_notes_dir.display()
         ));
     }
 

@@ -10,7 +10,7 @@ use crate::skills;
 use std::fs;
 
 use super::*;
-use super::memory::{build_invariants, bounded_window, memory_index_path, memory_notes_dir, read_memory_index_with_fallback, FIELD_WINDOW_BUDGET_BYTES};
+use super::nucleus::{build_invariants, bounded_window, nucleus_index_path, nucleus_notes_dir, read_nucleus_index_with_fallback, FIELD_WINDOW_BUDGET_BYTES};
 
 impl super::Engine {
     /// Whether `id` holds the orchestrator seat — the SSOT this module uses
@@ -415,8 +415,8 @@ impl super::Engine {
         let window = bounded_window(events, FIELD_WINDOW_BUDGET_BYTES);
         let truncated = window.len() < events.len();
 
-        let memory_path = memory_index_path(&workspace_root);
-        let (memory, memory_truncated) = read_memory_index_with_fallback(&workspace_root);
+        let nucleus_index_path = nucleus_index_path(&workspace_root);
+        let (nucleus_index, nucleus_index_truncated) = read_nucleus_index_with_fallback(&workspace_root);
 
         let live_dir = hadron_lattice::live::live_dir(&self.field_path);
         let mut live_activities = Vec::new();
@@ -430,10 +430,10 @@ impl super::Engine {
         }
 
         Projection {
-            memory,
-            memory_truncated,
-            memory_path,
-            memory_notes_dir: memory_notes_dir(&workspace_root),
+            nucleus_index,
+            nucleus_index_truncated,
+            nucleus_index_path,
+            nucleus_notes_dir: nucleus_notes_dir(&workspace_root),
             task: task_desc,
             invariants: invariants_text,
             available_invariants,
