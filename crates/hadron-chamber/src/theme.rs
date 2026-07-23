@@ -141,6 +141,12 @@ pub fn text_muted() -> Rgba {
 pub fn accent() -> Rgba {
     rgb(0xec4899) // pink — active / addressed
 }
+/// A muted, low-alpha pink for chrome that should whisper rather than shout —
+/// the focused chat-input border. Full-strength `accent()` reads as a hot
+/// highlight; this keeps the same hue as a subtle tint instead.
+pub fn accent_soft() -> Rgba {
+    rgba(0xec489966) // ~0.40 alpha pink
+}
 pub fn accent_secondary() -> Rgba {
     rgb(0xa855f7) // purple — thinking
 }
