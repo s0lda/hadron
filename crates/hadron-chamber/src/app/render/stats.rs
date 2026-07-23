@@ -273,10 +273,34 @@ impl super::Chamber {
                         format_num(ctx.context_window_size)
                     ),
                 ));
-                // Context occupancy is a proportion, not a series — a progress bar reads it
-                // better than a two-bar chart. Fill in the quark's colour.
-                let frac = (ctx.used_percentage as f32 / 100.0).clamp(0.0, 1.0);
-                stats_block = stats_block.child(div().mt_1().child(progress_meter(frac, q_color)));
+                // Context occupancy is NOT a fixed proportion — it rises and falls as the
+                // window fills and then compacts, so its trajectory (the "back and forth")
+                // is the interesting part, which a single round meter can't show. Draw the
+                // history as a line when we have one; fall back to a meter for a lone reading.
+                let history = context_history(&self.view.messages, &qid);
+                if history.len() >= 2 {
+                    let points: Vec<(usize, f64)> = history.into_iter().enumerate().collect();
+                    stats_block = stats_block.child(
+                        div().h(px(96.0)).w_full().mt_1().child(
+                            AreaChart::new(points)
+                                .id(format!("info-context-chart-{qid}"))
+                                .name("Context %")
+                                .x(|d| format!("{}", d.0))
+                                .y(|d| d.1)
+                                .stroke(q_color)
+                                .fill(linear_gradient(
+                                    0.0,
+                                    linear_color_stop(q_color.opacity(0.35), 1.0),
+                                    linear_color_stop(q_color.opacity(0.02), 0.0),
+                                ))
+                                .linear(),
+                        ),
+                    );
+                } else {
+                    let frac = (ctx.used_percentage as f32 / 100.0).clamp(0.0, 1.0);
+                    stats_block =
+                        stats_block.child(div().mt_1().child(progress_meter(frac, q_color)));
+                }
             }
         }
         if !q_stats.spend_history.is_empty() {
@@ -298,7 +322,9 @@ impl super::Chamber {
                             linear_color_stop(q_color.opacity(0.35), 1.0),
                             linear_color_stop(q_color.opacity(0.02), 0.0),
                         ))
-                        .natural(),
+                        // Straight segments between turns — the natural spline rounded the
+                        // real values into blobs ("why is it round?"). Show the true shape.
+                        .linear(),
                 ),
             );
         }
@@ -641,6 +667,17 @@ fn latest_context<'a>(
         .find_map(|m| m.usage.as_ref()?.context.as_ref())
 }
 
+/// Every context-occupancy reading `qid` published this field, oldest first — the series
+/// behind the "back and forth". Same row filter as [`latest_context`]: only rows from
+/// `qid` that actually carry `usage.context` (turn-less status pings are skipped).
+fn context_history(messages: &[super::super::MessageRow], qid: &str) -> Vec<f64> {
+    messages
+        .iter()
+        .filter(|m| m.from == qid)
+        .filter_map(|m| Some(m.usage.as_ref()?.context.as_ref()?.used_percentage))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::latest_context;
@@ -683,5 +720,22 @@ mod tests {
         assert_eq!(latest_context(&msgs, "acp-claude").map(|c| c.used_percentage), Some(16.0));
         // A quark that never reported context has no gauge.
         assert!(latest_context(&[row("acp-claude", None)], "acp-claude").is_none());
+    }
+
+    #[test]
+    fn context_history_collects_the_oscillating_series_in_order() {
+        use super::context_history;
+        // Real shape: context rises and falls, interleaved with status-less pings and
+        // another quark's rows. Only this quark's context-bearing rows, oldest first.
+        let msgs = vec![
+            row("acp-claude", Some(5)),
+            row("acp-agy", Some(40)),
+            row("acp-claude", None),
+            row("acp-claude", Some(8)),
+            row("acp-claude", Some(5)),
+        ];
+        assert_eq!(context_history(&msgs, "acp-claude"), vec![5.0, 8.0, 5.0]);
+        // Fewer than two points cannot draw a line (caller falls back to the meter).
+        assert_eq!(context_history(&[row("acp-claude", Some(7))], "acp-claude"), vec![7.0]);
     }
 }
