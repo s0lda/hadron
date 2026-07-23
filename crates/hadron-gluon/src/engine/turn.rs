@@ -71,11 +71,12 @@ impl super::Engine {
             .chars()
             .take(72)
             .collect::<String>();
-        let handed_back = outcome
+        // Who this reply addresses (its single line-leading `@mention`), if anyone —
+        // `None` means it hands back to the human. Drives the merge gate below.
+        let addressee = outcome
             .message
             .as_deref()
-            .map(|body| parse_addressee(body, &self.roster, Some(target), &personas).is_none())
-            .unwrap_or(true);
+            .and_then(|body| parse_addressee(body, &self.roster, Some(target), &personas));
 
         // THE ONE TOTALLER. No adapter computes this; they report components and
         // `TokenSpend::fresh` sums the comparable ones (input + output, cache
@@ -299,10 +300,17 @@ impl super::Engine {
                 .await?;
             }
 
-            // The assignment is COMPLETE when the quark hands control back (its reply
-            // carries no `@mention`). That is when the merge gate fires — mid-chain
-            // hand-offs keep working on the same branch and are not gated.
-            if handed_back && self.merge.is_some() && self.merge_gate(target, t).await? {
+            // The assignment is COMPLETE — so its branch is gated for landing — when the
+            // reply hands back to the human (no `@mention`) OR a worker reports up to the
+            // orchestrator. A worker handing to a peer, or the orchestrator dispatching
+            // down to a worker, is a mid-chain hand-off: the branch stays open, no gate.
+            // Keying on this rather than mention-absence alone is Task 6: before it, a
+            // worker's `@orchestrator`-addressed completion never gated, so its branch
+            // stranded every turn while the swarm believed it had landed.
+            if self.assignment_complete(target, addressee.as_ref())
+                && self.merge.is_some()
+                && self.merge_gate(target, t).await?
+            {
                 return Ok(()); // the gate parked the quark (Waiting / Blocked)
             }
         }

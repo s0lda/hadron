@@ -27,6 +27,21 @@ impl super::Engine {
         self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator).map(|c| c.id.clone())
     }
 
+    /// Whether a finished turn's reply ENDS `target`'s assignment — the signal the merge
+    /// gate keys on (`engine/turn.rs`). Complete = handed back to the human (`addressee`
+    /// `None`) OR a worker reporting up to the orchestrator. A worker handing to a peer,
+    /// or the orchestrator dispatching down to a worker, is a mid-chain hand-off: NOT
+    /// complete, so the branch stays open. Before this, the gate fired only on the
+    /// no-`@mention` hand-back, so a worker's `@orchestrator`-addressed completion never
+    /// landed and its branch stranded every turn
+    /// (`merge-gate-fires-only-on-no-mention-handback`).
+    pub(super) fn assignment_complete(&self, target: &QuarkId, addressee: Option<&QuarkId>) -> bool {
+        match addressee {
+            None => true,
+            Some(a) => !self.is_orchestrator(target) && self.orchestrator_id().as_ref() == Some(a),
+        }
+    }
+
     /// The command allow/deny lists carried on `id`'s roster card, if seated —
     /// the SSOT `decide()`'s three call sites fold into their `AllowRules`/
     /// `DenyRules` under No-Human-Mode. Mirrors `is_orchestrator`/`orchestrator_id`'s
