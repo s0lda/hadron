@@ -21,7 +21,7 @@ const NEUTRAL_COLOR: u32 = 0x94a3b8;
 const ADD_COLOR: u32 = 0x34d399;
 const DEL_COLOR: u32 = 0xfb7185;
 /// One graph rail column width in px when painting vector lanes.
-const LANE_W: f32 = 14.0;
+const LANE_W: f32 = 16.0;
 /// Cap for a `--decorate` ref chip so it cannot squeeze the subject out.
 const DECO_CHIP_MAX_W: f32 = 190.0;
 
@@ -481,14 +481,14 @@ impl super::Chamber {
                 let mut list = v_flex().w_full().text_sm();
                 for (ix, row) in rows.into_iter().enumerate() {
                     let is_connector = row.hash.is_none();
-                    let row_h = if is_connector { 10.0 } else { 24.0 };
+                    let row_h = if is_connector { 12.0 } else { 24.0 };
 
                     let mut line = h_flex()
                         .id(("graph-row", ix))
                         .w_full()
                         .gap_2()
                         .items_center()
-                        .py_0p5()
+                        .h(px(row_h))
                         .px_1()
                         .rounded_md()
                         .overflow_hidden()
@@ -611,14 +611,14 @@ impl super::Chamber {
                         let color = gpui::rgb(LANE_COLORS[lane.from_col % LANE_COLORS.len()]);
 
                         if lane.from_col == lane.to_col {
-                            let line_w = px(1.5);
+                            let line_w = px(2.0);
                             let line_bounds = gpui::Bounds {
                                 origin: gpui::point(x1 - line_w / 2.0, y1),
                                 size: gpui::size(line_w, h),
                             };
                             window.paint_quad(gpui::fill(line_bounds, color));
                         } else {
-                            let mut builder = gpui::PathBuilder::stroke(px(1.5));
+                            let mut builder = gpui::PathBuilder::stroke(px(2.0));
                             builder.move_to(gpui::point(x1, y1));
                             builder.curve_to(
                                 gpui::point(x2, y2),
@@ -636,7 +636,7 @@ impl super::Chamber {
                         let node_color = gpui::rgb(LANE_COLORS[col % LANE_COLORS.len()]);
 
                         // Outer ring (background field color)
-                        let ring_r = px(5.0);
+                        let ring_r = px(5.5);
                         let ring_bounds = gpui::Bounds {
                             origin: gpui::point(nx - ring_r, ny - ring_r),
                             size: gpui::size(ring_r * 2.0, ring_r * 2.0),
@@ -644,7 +644,7 @@ impl super::Chamber {
                         window.paint_quad(gpui::fill(ring_bounds, theme::field_base()).corner_radii(ring_r));
 
                         // Inner filled node dot
-                        let dot_r = px(3.5);
+                        let dot_r = px(4.0);
                         let dot_bounds = gpui::Bounds {
                             origin: gpui::point(nx - dot_r, ny - dot_r),
                             size: gpui::size(dot_r * 2.0, dot_r * 2.0),
