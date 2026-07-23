@@ -29,6 +29,12 @@ impl super::Chamber {
                     let root = crate::vcs::repo_root_of(&this.path);
                     this.working_diff = crate::vcs::working_diff(root);
                 }
+                if this.right_rail_tab == RightRailTab::Git {
+                    let root = crate::vcs::repo_root_of(&this.path);
+                    this.git_branches = Some(crate::vcs::list_branches(root, "main"));
+                    this.git_worktrees = Some(crate::vcs::list_worktrees(root));
+                    this.git_log_graph = crate::vcs::commit_graph(root, 50);
+                }
                 cx.notify();
             }));
 
@@ -523,6 +529,7 @@ impl super::Chamber {
                         .into_any_element()
                 }
             }
+            RightRailTab::Git => self.git_tab_content().into_any_element(),
             RightRailTab::Changes => {
                 let diff_content = if let Some(diffs) = &self.working_diff {
                     if diffs.is_empty() {

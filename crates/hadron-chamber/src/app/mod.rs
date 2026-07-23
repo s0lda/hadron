@@ -197,6 +197,12 @@ struct Chamber {
     working_diff: Option<Vec<crate::vcs::FileDiff>>,
     changes_open_ixs: std::collections::HashSet<usize>,
     changes_scroll: ScrollHandle,
+    /// Cached branches/worktrees/log-graph for the Git rail, refreshed on tab entry
+    /// (like `working_diff`) rather than every render — each is its own git subprocess.
+    git_branches: Option<Vec<crate::vcs::BranchInfo>>,
+    git_worktrees: Option<Vec<crate::vcs::WorktreeInfo>>,
+    git_log_graph: Option<String>,
+    git_scroll: ScrollHandle,
     /// Scroll position of the Plan tracker pane.
     plan_scroll: ScrollHandle,
     pub(super) plan_collapsed_tasks: std::collections::HashSet<String>,
@@ -537,6 +543,10 @@ impl Chamber {
             working_diff: None,
             changes_open_ixs: std::collections::HashSet::new(),
             changes_scroll: ScrollHandle::new(),
+            git_branches: None,
+            git_worktrees: None,
+            git_log_graph: None,
+            git_scroll: ScrollHandle::new(),
             plan_scroll: ScrollHandle::new(),
             plan_collapsed_tasks: std::collections::HashSet::new(),
             last_plan_path: None,
