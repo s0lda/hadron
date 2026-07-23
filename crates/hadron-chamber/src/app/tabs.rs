@@ -88,6 +88,40 @@ impl InfoTab {
     }
 }
 
+/// The sub-tabs of the Git rail — kept independent of [`RightRailTab`] so switching
+/// between Terminal/File Tree/Git doesn't disturb which Git section was open.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum GitSubtab {
+    Branches,
+    Worktrees,
+    Graph,
+}
+
+impl GitSubtab {
+    pub(super) const ALL: [GitSubtab; 3] =
+        [GitSubtab::Branches, GitSubtab::Worktrees, GitSubtab::Graph];
+
+    pub(super) fn index(self) -> usize {
+        match self {
+            GitSubtab::Branches => 0,
+            GitSubtab::Worktrees => 1,
+            GitSubtab::Graph => 2,
+        }
+    }
+
+    pub(super) fn from_index(ix: usize) -> Self {
+        Self::ALL.get(ix).copied().unwrap_or(GitSubtab::Branches)
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            GitSubtab::Branches => "Branches",
+            GitSubtab::Worktrees => "Worktrees",
+            GitSubtab::Graph => "Graph",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum RightRailTab {
     Terminal,

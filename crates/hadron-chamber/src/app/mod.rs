@@ -53,7 +53,7 @@ use identity::{
 };
 
 mod tabs;
-use tabs::{ChatTab, InfoTab, Rail, RightRailTab};
+use tabs::{ChatTab, GitSubtab, InfoTab, Rail, RightRailTab};
 
 mod providers;
 use providers::{
@@ -203,6 +203,7 @@ struct Chamber {
     git_worktrees: Option<Vec<crate::vcs::WorktreeInfo>>,
     git_log_graph: Option<String>,
     git_scroll: ScrollHandle,
+    git_subtab: GitSubtab,
     /// Scroll position of the Plan tracker pane.
     plan_scroll: ScrollHandle,
     pub(super) plan_collapsed_tasks: std::collections::HashSet<String>,
@@ -547,6 +548,7 @@ impl Chamber {
             git_worktrees: None,
             git_log_graph: None,
             git_scroll: ScrollHandle::new(),
+            git_subtab: GitSubtab::Branches,
             plan_scroll: ScrollHandle::new(),
             plan_collapsed_tasks: std::collections::HashSet::new(),
             last_plan_path: None,

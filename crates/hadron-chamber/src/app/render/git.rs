@@ -4,37 +4,67 @@ impl super::Chamber {
     /// The Git rail: local branches (with merged-into-`main` status), every worktree
     /// of this repo, and a short `git log --graph` — so "is it merged?" and "who else
     /// has a checkout" are answerable without leaving the chamber.
-    pub(super) fn git_tab_content(&self) -> impl IntoElement {
-        let branches_section = self.git_branches_section();
-        let worktrees_section = self.git_worktrees_section();
-        let graph_section = self.git_graph_section();
+    pub(super) fn git_tab_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = self.git_subtab;
+        let subtabs = TabBar::new("git-subtabs")
+            .segmented()
+            .bg(theme::field_base())
+            .selected_index(selected.index())
+            .children(GitSubtab::ALL.map(|t| {
+                if t.index() == selected.index() {
+                    Tab::new().child(
+                        div()
+                            .text_color(theme::accent())
+                            .child(t.label().to_string()),
+                    )
+                } else {
+                    Tab::new().label(t.label())
+                }
+            }))
+            .on_click(cx.listener(|this, ix: &usize, _window, cx| {
+                this.git_subtab = GitSubtab::from_index(*ix);
+                cx.notify();
+            }));
 
-        let body = v_flex()
-            .w_full()
-            .gap_4()
-            .child(branches_section)
-            .child(worktrees_section)
-            .child(graph_section);
+        let body = match selected {
+            GitSubtab::Branches => self.git_branches_section().into_any_element(),
+            GitSubtab::Worktrees => self.git_worktrees_section().into_any_element(),
+            GitSubtab::Graph => self.git_graph_section().into_any_element(),
+        };
 
-        div()
+        v_flex()
             .flex_1()
             .min_h_0()
-            .relative()
             .child(
-                div()
-                    .id("git-scroll")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.git_scroll)
-                    .p_3()
-                    .text_sm()
-                    .text_color(theme::text())
-                    .child(body),
+                h_flex()
+                    .flex_none()
+                    .px_3()
+                    .py_2()
+                    .child(subtabs),
             )
             .child(
-                div().absolute().top_0().bottom_0().right_0().child(
-                    Scrollbar::vertical(&self.git_scroll).scrollbar_show(ScrollbarShow::Hover),
-                ),
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .child(
+                        div()
+                            .id("git-scroll")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.git_scroll)
+                            .px_3()
+                            .pb_3()
+                            .text_sm()
+                            .text_color(theme::text())
+                            .child(body),
+                    )
+                    .child(
+                        div().absolute().top_0().bottom_0().right_0().child(
+                            Scrollbar::vertical(&self.git_scroll)
+                                .scrollbar_show(ScrollbarShow::Hover),
+                        ),
+                    ),
             )
     }
 
@@ -58,11 +88,12 @@ impl super::Chamber {
             Some(branches) => {
                 let mut list = v_flex().w_full();
                 for branch in branches {
-                    let (badge_text, badge_color) = if branch.merged {
-                        ("merged", gpui::rgb(0x34d399))
+                    let hash_color = if branch.merged {
+                        gpui::rgb(0x34d399)
                     } else {
-                        ("unmerged", gpui::rgb(0xfb7185))
+                        gpui::rgb(0xfb7185)
                     };
+                    let short_hash: String = branch.head.chars().take(7).collect();
                     let row = h_flex()
                         .w_full()
                         .gap_2()
@@ -70,16 +101,15 @@ impl super::Chamber {
                         .py_1()
                         .child(
                             div()
-                                .when(branch.is_current, |d| d.text_color(theme::accent()))
-                                .child(branch.name.clone()),
+                                .font_family("Cascadia Code")
+                                .text_color(hash_color)
+                                .child(short_hash),
                         )
                         .child(
                             div()
-                                .text_color(theme::text_muted())
-                                .font_family("Cascadia Code")
-                                .child(branch.head.clone()),
-                        )
-                        .child(div().text_color(badge_color).child(badge_text));
+                                .when(branch.is_current, |d| d.text_color(theme::accent()))
+                                .child(branch.name.clone()),
+                        );
                     list = list.child(row.border_b_1().border_color(theme::border()));
                 }
                 list.into_any_element()
