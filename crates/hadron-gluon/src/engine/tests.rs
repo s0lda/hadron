@@ -2977,6 +2977,112 @@ async fn a_failing_merge_land_blocks_the_quark_instead_of_looping() {
     );
 }
 
+/// A worker that WRITES a file (so there is a commit to land) and reports completion
+/// with a configurable reply — used to prove a worker's `@orchestrator`-addressed
+/// completion gates and lands, not only a no-mention hand-back.
+struct ReportingWriter {
+    id: QuarkId,
+    file: &'static str,
+    reply: &'static str,
+}
+
+#[async_trait::async_trait]
+impl crate::quark::Quark for ReportingWriter {
+    fn id(&self) -> QuarkId {
+        self.id.clone()
+    }
+    fn flavor(&self) -> Flavor {
+        Flavor::Worker
+    }
+    fn energy(&self) -> EnergyState {
+        EnergyState::Available
+    }
+    async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+        std::fs::write(turn.cwd.join(self.file), format!("from {}\n", self.id.as_str()))?;
+        Ok(TurnOutcome {
+            message: Some(self.reply.to_string()),
+            permission: None,
+            usage: Default::default(),
+        })
+    }
+}
+
+/// Green tests + a REAL `git merge --ff-only` land — the success path `FailingLandRunner`
+/// never exercises. Proves the branch actually reaches `base`.
+struct GreenLandingRunner;
+
+#[async_trait::async_trait]
+impl crate::merge::MergeRunner for GreenLandingRunner {
+    async fn tests(&self, _wt: &crate::worktree::Worktree) -> anyhow::Result<(bool, String)> {
+        Ok((true, String::new()))
+    }
+    fn land(
+        &self,
+        repo_root: &std::path::Path,
+        wt: &crate::worktree::Worktree,
+        base: &str,
+    ) -> anyhow::Result<crate::merge::Landed> {
+        crate::merge::land(repo_root, wt, base)
+    }
+}
+
+/// **TASK 6.** A worker that reports completion to the orchestrator (`@orchestrator done`)
+/// must have its branch GATED and LANDED — not stranded because the reply carries a
+/// mention. Before the fix the gate fired only on a no-`@mention` hand-back, so a worker
+/// completion (which always addresses `@orchestrator`) never landed and the swarm believed
+/// work had merged when it had not (cost ~5 turns live). RED before the fix: the worker's
+/// commit never reaches `base`.
+#[tokio::test]
+async fn a_worker_reporting_to_the_orchestrator_lands_its_branch() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    // Bypass ⇒ the merge is delegated (auto-approved) without a human grant.
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w write w.txt".into() }),
+    )
+    .unwrap();
+
+    let base_before = crate::snapshot::git(&root, &["rev-parse", "HEAD"]).unwrap();
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("orch"), Flavor::Orchestrator, "ok")),
+            Box::new(ReportingWriter {
+                id: QuarkId::new("w"),
+                file: "w.txt",
+                reply: "@orchestrator done",
+            }),
+        ],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(GreenLandingRunner));
+
+    engine.run_until_quiesce().await.unwrap();
+
+    // The worker's branch LANDED: base HEAD advanced and now carries w.txt.
+    let base_after = crate::snapshot::git(&root, &["rev-parse", "HEAD"]).unwrap();
+    assert_ne!(
+        base_before, base_after,
+        "the worker's completion-to-orchestrator did not land — its branch stranded (Task 6 regression)"
+    );
+    assert!(root.join("w.txt").exists(), "the landed base is missing the worker's file");
+
+    // The land was reported (not silent).
+    let events = read_events(&field).unwrap();
+    assert!(
+        events.iter().any(|e| e.from == Actor::Gluon
+            && matches!(&e.kind, Kind::Message { body }
+                if body.contains("merged") || body.to_lowercase().contains("fast-forward"))),
+        "the land was not reported"
+    );
+}
+
 /// The other half of the truth, and the reason the daemon attributes nothing today:
 /// **without `with_git`, `TurnTree` is never constructed** (l. 1186), so the whole
 /// `if let Some(t) = tree` block — `head_before`, `commit_turn`, `Kind::Edit` — is
