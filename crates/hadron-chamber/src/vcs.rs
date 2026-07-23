@@ -151,6 +151,144 @@ pub enum GitStatus {
     Deleted,
 }
 
+/// A local branch and whether it has landed in the target branch (`main`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchInfo {
+    pub name: String,
+    pub head: String,
+    pub is_current: bool,
+    pub merged: bool,
+}
+
+/// Parse `git for-each-ref --format='%(refname:short) %(objectname:short)' refs/heads/`
+/// output against a precomputed set of names already merged into the target branch
+/// (one `git branch --merged` call covers every branch, instead of a
+/// `merge-base --is-ancestor` subprocess per branch).
+pub fn parse_branches(
+    raw: &str,
+    current: &str,
+    merged: &std::collections::HashSet<String>,
+) -> Vec<BranchInfo> {
+    raw.lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(2, ' ');
+            let name = parts.next()?.to_string();
+            if name.is_empty() {
+                return None;
+            }
+            let head = parts.next().unwrap_or("").trim().to_string();
+            Some(BranchInfo {
+                is_current: name == current,
+                merged: merged.contains(&name),
+                name,
+                head,
+            })
+        })
+        .collect()
+}
+
+/// Every local branch, with `merged` set against `target` (e.g. `"main"`).
+pub fn list_branches(repo_root: &Path, target: &str) -> Vec<BranchInfo> {
+    let current = run_git(
+        repo_root,
+        &["rev-parse", "--abbrev-ref", "HEAD"],
+    )
+    .trim()
+    .to_string();
+    let refs = run_git(
+        repo_root,
+        &["for-each-ref", "--format=%(refname:short) %(objectname:short)", "refs/heads/"],
+    );
+    let merged_raw = run_git(
+        repo_root,
+        &["branch", "--merged", target, "--format=%(refname:short)"],
+    );
+    let merged: std::collections::HashSet<String> =
+        merged_raw.lines().map(|s| s.trim().to_string()).collect();
+    parse_branches(&refs, &current, &merged)
+}
+
+/// One `git worktree list --porcelain` entry — a checkout of this repo living
+/// somewhere on disk, e.g. a quark's isolated `.hadron/trees/<id>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeInfo {
+    pub path: String,
+    pub head: String,
+    /// `None` for a detached-HEAD worktree.
+    pub branch: Option<String>,
+}
+
+/// Parse `git worktree list --porcelain` output — blank-line-separated blocks of
+/// `worktree <path>` / `HEAD <sha>` / `branch refs/heads/<name>` (or `detached`).
+pub fn parse_worktrees(raw: &str) -> Vec<WorktreeInfo> {
+    let mut out = Vec::new();
+    let mut current: Option<WorktreeInfo> = None;
+
+    for line in raw.lines() {
+        if line.is_empty() {
+            out.extend(current.take());
+            continue;
+        }
+        if let Some(p) = line.strip_prefix("worktree ") {
+            out.extend(current.take());
+            current = Some(WorktreeInfo { path: p.to_string(), head: String::new(), branch: None });
+        } else if let Some(h) = line.strip_prefix("HEAD ") {
+            if let Some(entry) = current.as_mut() {
+                entry.head = h.chars().take(8).collect();
+            }
+        } else if let Some(b) = line.strip_prefix("branch refs/heads/") {
+            if let Some(entry) = current.as_mut() {
+                entry.branch = Some(b.to_string());
+            }
+        }
+        // "detached" / "bare" / "locked" lines carry no data we render — skipped.
+    }
+    out.extend(current.take());
+    out
+}
+
+/// Every worktree of this repo (the human's checkout plus every quark's).
+pub fn list_worktrees(repo_root: &Path) -> Vec<WorktreeInfo> {
+    let raw = run_git(repo_root, &["worktree", "list", "--porcelain"]);
+    parse_worktrees(&raw)
+}
+
+/// A short ASCII commit graph (`git log --graph --oneline --decorate`) — rendered
+/// verbatim in a monospace font rather than parsed, since git already draws the
+/// graph characters and decorations (branch/tag labels) correctly.
+pub fn commit_graph(repo_root: &Path, limit: usize) -> Option<String> {
+    let out = Command::new("git")
+        .current_dir(repo_root)
+        .args([
+            "log",
+            "--graph",
+            "--oneline",
+            "--decorate",
+            "--all",
+            &format!("-n{limit}"),
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Run a git subcommand in `repo_root`, returning stdout (empty on any failure —
+/// callers treat "nothing" the same as "git couldn't answer", never an error to
+/// surface, matching [`get_git_statuses`]'s existing best-effort convention).
+fn run_git(repo_root: &Path, args: &[&str]) -> String {
+    Command::new("git")
+        .current_dir(repo_root)
+        .args(args)
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+        .unwrap_or_default()
+}
+
 pub fn get_git_statuses(repo_root: &Path) -> std::collections::HashMap<String, GitStatus> {
     let mut statuses = std::collections::HashMap::new();
     let out = Command::new("git")
@@ -207,6 +345,65 @@ mod tests {
     fn a_field_outside_a_hadron_dir_is_already_in_the_root() {
         let field = PathBuf::from("/tmp/scratch/field.jsonl");
         assert_eq!(repo_root_of(&field), Path::new("/tmp/scratch"));
+    }
+
+    #[test]
+    fn parse_branches_flags_current_and_merged() {
+        let raw = "\
+main abc1234
+quark/acp-claude-2/01K feed00d
+quark/acp-agy/01K dead000";
+        let merged: std::collections::HashSet<String> =
+            ["main".to_string(), "quark/acp-agy/01K".to_string()].into_iter().collect();
+        let branches = parse_branches(raw, "quark/acp-claude-2/01K", &merged);
+
+        assert_eq!(branches.len(), 3);
+        assert_eq!(branches[0], BranchInfo {
+            name: "main".into(), head: "abc1234".into(), is_current: false, merged: true,
+        });
+        assert_eq!(branches[1], BranchInfo {
+            name: "quark/acp-claude-2/01K".into(), head: "feed00d".into(), is_current: true, merged: false,
+        });
+        assert_eq!(branches[2], BranchInfo {
+            name: "quark/acp-agy/01K".into(), head: "dead000".into(), is_current: false, merged: true,
+        });
+    }
+
+    #[test]
+    fn parse_worktrees_splits_blank_line_separated_blocks() {
+        let raw = "\
+worktree /home/jake/dev/hadron
+HEAD f33de6e1234567890
+branch refs/heads/main
+
+worktree /home/jake/dev/hadron/.hadron/trees/acp-claude-2
+HEAD abcdef0123456789
+branch refs/heads/quark/acp-claude-2/01K
+
+worktree /home/jake/dev/hadron/.hadron/trees/detached-scratch
+HEAD 0011223344556677
+detached
+";
+        let worktrees = parse_worktrees(raw);
+        assert_eq!(worktrees.len(), 3);
+        assert_eq!(worktrees[0], WorktreeInfo {
+            path: "/home/jake/dev/hadron".into(), head: "f33de6e1".into(), branch: Some("main".into()),
+        });
+        assert_eq!(worktrees[1], WorktreeInfo {
+            path: "/home/jake/dev/hadron/.hadron/trees/acp-claude-2".into(),
+            head: "abcdef01".into(),
+            branch: Some("quark/acp-claude-2/01K".into()),
+        });
+        assert_eq!(worktrees[2], WorktreeInfo {
+            path: "/home/jake/dev/hadron/.hadron/trees/detached-scratch".into(),
+            head: "00112233".into(),
+            branch: None,
+        });
+    }
+
+    #[test]
+    fn parse_worktrees_of_empty_input_is_empty() {
+        assert_eq!(parse_worktrees(""), Vec::new());
     }
 
     #[test]

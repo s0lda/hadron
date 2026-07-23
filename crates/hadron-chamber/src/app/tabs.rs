@@ -92,14 +92,16 @@ impl InfoTab {
 pub(super) enum RightRailTab {
     Terminal,
     FileTree,
+    Git,
     Changes,
     Plan,
 }
 
 impl RightRailTab {
-    pub(super) const ALL: [RightRailTab; 4] = [
+    pub(super) const ALL: [RightRailTab; 5] = [
         RightRailTab::Terminal,
         RightRailTab::FileTree,
+        RightRailTab::Git,
         RightRailTab::Changes,
         RightRailTab::Plan,
     ];
@@ -108,8 +110,9 @@ impl RightRailTab {
         match self {
             RightRailTab::Terminal => 0,
             RightRailTab::FileTree => 1,
-            RightRailTab::Changes => 2,
-            RightRailTab::Plan => 3,
+            RightRailTab::Git => 2,
+            RightRailTab::Changes => 3,
+            RightRailTab::Plan => 4,
         }
     }
 
@@ -121,6 +124,7 @@ impl RightRailTab {
         match self {
             RightRailTab::Terminal => "Terminal",
             RightRailTab::FileTree => "File Tree",
+            RightRailTab::Git => "Git",
             RightRailTab::Changes => "Changes",
             RightRailTab::Plan => "Plan",
         }
