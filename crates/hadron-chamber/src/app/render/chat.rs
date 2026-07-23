@@ -164,9 +164,9 @@ impl super::Chamber {
                             // — the modern outlined-input look, using the shared token.
                             .border_1()
                             .border_color(if is_focused {
-                                cx.theme().ring
+                                theme::accent()
                             } else {
-                                theme::border().into()
+                                theme::border()
                             })
                             .child(Input::new(&self.input).bordered(false).focus_bordered(false))
                     })
