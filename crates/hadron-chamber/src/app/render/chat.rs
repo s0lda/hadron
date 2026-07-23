@@ -164,11 +164,16 @@ impl super::Chamber {
                             // — the modern outlined-input look, using the shared token.
                             .border_1()
                             .border_color(if is_focused {
-                                theme::accent()
+                                theme::accent_soft()
                             } else {
                                 theme::border()
                             })
-                            .child(Input::new(&self.input).bordered(false).focus_bordered(false))
+                            .child(
+                                Input::new(&self.input)
+                                    .appearance(false)
+                                    .bordered(false)
+                                    .focus_bordered(false),
+                            )
                     })
                     .child(
                         h_flex()
