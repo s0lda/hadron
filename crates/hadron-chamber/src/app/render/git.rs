@@ -20,9 +20,8 @@ const UNMERGED_COLOR: u32 = 0xfb7185;
 const NEUTRAL_COLOR: u32 = 0x94a3b8;
 const ADD_COLOR: u32 = 0x34d399;
 const DEL_COLOR: u32 = 0xfb7185;
-/// One graph rail column, in px — a fixed cell keeps lanes in column regardless of
-/// the glyph's own advance width.
-const RAIL_CELL_W: f32 = 9.0;
+/// One graph rail column width in px when painting vector lanes.
+const LANE_W: f32 = 14.0;
 /// Cap for a `--decorate` ref chip so it cannot squeeze the subject out.
 const DECO_CHIP_MAX_W: f32 = 190.0;
 
@@ -427,18 +426,63 @@ impl super::Chamber {
     // ── Graph ────────────────────────────────────────────────────────────────────
 
     fn git_graph_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let show_snapshots = self.git_show_snapshots;
+        let header = h_flex()
+            .w_full()
+            .justify_between()
+            .items_center()
+            .child(Self::git_section_title("Commit graph"))
+            .child(
+                h_flex()
+                    .id("snapshot-toggle")
+                    .gap_1p5()
+                    .items_center()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.git_show_snapshots = !this.git_show_snapshots;
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(if show_snapshots { theme::accent() } else { theme::text_muted() })
+                            .child(if show_snapshots { "✓ Swarm snapshots" } else { "Swarm snapshots" }),
+                    ),
+            );
+
         let body: gpui::AnyElement = match &self.git_log_graph {
             None => Self::muted("Failed to load commit graph.").into_any_element(),
             Some(graph) if graph.trim().is_empty() => {
                 Self::muted("No commits.").into_any_element()
             }
             Some(graph) => {
-                let rows = crate::vcs::parse_graph(graph);
+                let all_rows = crate::vcs::parse_graph(graph);
+                let rows: Vec<crate::vcs::GraphRow> = all_rows
+                    .into_iter()
+                    .filter(|r| {
+                        if show_snapshots {
+                            return true;
+                        }
+                        if let (Some(author), subject) = (r.author.as_deref(), r.subject.as_str()) {
+                            if author == "hadron" && subject.starts_with("before ") {
+                                return false;
+                            }
+                        }
+                        true
+                    })
+                    .collect();
+
+                let max_lanes = rows
+                    .iter()
+                    .flat_map(|r| r.lanes.iter().map(|l| l.from_col.max(l.to_col)))
+                    .max()
+                    .map_or(1, |m| m + 1);
+
                 let mut list = v_flex().w_full().text_sm();
                 for (ix, row) in rows.into_iter().enumerate() {
-                    // One row = one line, always. Without the clip a long ref chip
-                    // (`quark/acp-claude/01KY…`) forces the subject into a ~100px
-                    // column that wraps character-by-character.
+                    let is_connector = row.hash.is_none();
+                    let row_h = if is_connector { 10.0 } else { 24.0 };
+
                     let mut line = h_flex()
                         .id(("graph-row", ix))
                         .w_full()
@@ -448,16 +492,14 @@ impl super::Chamber {
                         .px_1()
                         .rounded_md()
                         .overflow_hidden()
-                        .child(Self::render_rail(&row.rail));
+                        .child(Self::render_rail_canvas(&row, max_lanes, row_h));
 
                     if let Some(hash) = &row.hash {
                         let full_hash = row.full_hash.clone().unwrap_or_else(|| hash.clone());
                         let is_selected =
                             self.git_selected_commit.as_deref() == Some(full_hash.as_str());
 
-                        // The commit's own lane is the column of its `*` marker, so its
-                        // hash matches that lane's colour (the rail can run past it).
-                        let lane = row.rail.chars().position(|c| c == '*').unwrap_or(0);
+                        let lane = row.node_col.unwrap_or(0);
                         let lane_color = LANE_COLORS[lane % LANE_COLORS.len()];
                         line = line.child(
                             div()
@@ -466,9 +508,30 @@ impl super::Chamber {
                                 .text_color(gpui::rgb(lane_color))
                                 .child(hash.clone()),
                         );
-                        for dec in &row.decorations {
+
+                        // Cap displayed ref pills to max 2 + overflow count chip
+                        let (display_decos, overflow_count) = if row.decorations.len() > 2 {
+                            (&row.decorations[..2], row.decorations.len() - 2)
+                        } else {
+                            (&row.decorations[..], 0)
+                        };
+                        for dec in display_decos {
                             line = line.child(Self::ref_pill(dec));
                         }
+                        if overflow_count > 0 {
+                            line = line.child(
+                                div()
+                                    .flex_none()
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .text_xs()
+                                    .bg(gpui::rgba(0x94a3b822))
+                                    .text_color(gpui::rgb(0x94a3b8))
+                                    .child(format!("+{}", overflow_count)),
+                            );
+                        }
+
                         line = line.child(
                             div()
                                 .flex_1()
@@ -522,28 +585,84 @@ impl super::Chamber {
         v_flex()
             .w_full()
             .gap_1()
-            .child(Self::git_section_title("Commit graph"))
+            .child(header)
             .child(body)
     }
 
-    /// The graph rail for one row: one span per column so each lane keeps its colour,
-    /// with git's `*` commit marker drawn as a filled dot.
-    fn render_rail(rail: &str) -> impl IntoElement {
-        let mut h = h_flex().font_family("Cascadia Code").flex_none();
-        for (col, ch) in rail.chars().enumerate() {
-            let color = LANE_COLORS[col % LANE_COLORS.len()];
-            let glyph = if ch == '*' { "●".to_string() } else { ch.to_string() };
-            // Fixed cell width: `●` is not a Cascadia glyph, so on fallback it is
-            // wider than a cell and the lanes drift out of column.
-            h = h.child(
-                div()
-                    .w(px(RAIL_CELL_W))
-                    .flex_none()
-                    .text_color(gpui::rgb(color))
-                    .child(glyph),
-            );
+    /// Render graph lanes and commit dot on a GPUI canvas.
+    fn render_rail_canvas(row: &crate::vcs::GraphRow, max_lanes: usize, row_h: f32) -> impl IntoElement {
+        let lanes = row.lanes.clone();
+        let node_col = row.node_col;
+        let gutter_w = (max_lanes.max(1) as f32) * LANE_W;
+
+        div()
+            .w(px(gutter_w))
+            .h(px(row_h))
+            .flex_none()
+            .child(gpui::canvas(
+                move |bounds, _, _| bounds,
+                move |bounds, _, window, _cx| {
+                    let h = bounds.size.height;
+                    for lane in &lanes {
+                        let x1 = bounds.origin.x + px((lane.from_col as f32) * LANE_W + LANE_W / 2.0);
+                        let y1 = bounds.origin.y;
+                        let x2 = bounds.origin.x + px((lane.to_col as f32) * LANE_W + LANE_W / 2.0);
+                        let y2 = bounds.origin.y + h;
+                        let color = gpui::rgb(LANE_COLORS[lane.from_col % LANE_COLORS.len()]);
+
+                        if lane.from_col == lane.to_col {
+                            let line_w = px(1.5);
+                            let line_bounds = gpui::Bounds {
+                                origin: gpui::point(x1 - line_w / 2.0, y1),
+                                size: gpui::size(line_w, h),
+                            };
+                            window.paint_quad(gpui::fill(line_bounds, color));
+                        } else {
+                            let mut builder = gpui::PathBuilder::stroke(px(1.5));
+                            builder.move_to(gpui::point(x1, y1));
+                            builder.curve_to(
+                                gpui::point(x2, y2),
+                                gpui::point(x1, y1 + (y2 - y1) / 2.0),
+                            );
+                            if let Ok(path) = builder.build() {
+                                window.paint_path(path, color);
+                            }
+                        }
+                    }
+
+                    if let Some(col) = node_col {
+                        let nx = bounds.origin.x + px((col as f32) * LANE_W + LANE_W / 2.0);
+                        let ny = bounds.origin.y + h / 2.0;
+                        let node_color = gpui::rgb(LANE_COLORS[col % LANE_COLORS.len()]);
+
+                        // Outer ring (background field color)
+                        let ring_r = px(5.0);
+                        let ring_bounds = gpui::Bounds {
+                            origin: gpui::point(nx - ring_r, ny - ring_r),
+                            size: gpui::size(ring_r * 2.0, ring_r * 2.0),
+                        };
+                        window.paint_quad(gpui::fill(ring_bounds, theme::field_base()).corner_radii(ring_r));
+
+                        // Inner filled node dot
+                        let dot_r = px(3.5);
+                        let dot_bounds = gpui::Bounds {
+                            origin: gpui::point(nx - dot_r, ny - dot_r),
+                            size: gpui::size(dot_r * 2.0, dot_r * 2.0),
+                        };
+                        window.paint_quad(gpui::fill(dot_bounds, node_color).corner_radii(dot_r));
+                    }
+                },
+            ))
+    }
+
+    /// Elide long branch names like `quark/cli-agy/01KY8CNJT01HHWB...` -> `cli-agy`.
+    fn elide_ref_name(name: &str) -> String {
+        let clean = name.strip_prefix("quark/").unwrap_or(name);
+        if let Some((seat, _ulid)) = clean.split_once('/') {
+            seat.to_string()
+        } else {
+            clean.to_string()
         }
-        h
     }
 
     /// A styled ref pill badge depending on decoration kind (HEAD, Local, Remote, Tag).
@@ -555,17 +674,21 @@ impl super::Chamber {
             crate::vcs::RefKind::Tag => (gpui::rgba(0xfbbf2422), gpui::rgb(0xfbbf24)),
         };
 
+        let short_name = Self::elide_ref_name(&dec.name);
+        let full_name = dec.name.clone();
+
         let label_element = if dec.kind == crate::vcs::RefKind::Head {
             h_flex()
                 .gap_1()
                 .items_center()
                 .child(div().child("●"))
-                .child(div().child(dec.name.clone()))
+                .child(div().child(short_name))
         } else {
-            h_flex().child(dec.name.clone())
+            h_flex().child(short_name)
         };
 
         div()
+            .id(SharedString::from(format!("ref-pill-{}", dec.name)))
             .flex_none()
             .max_w(px(DECO_CHIP_MAX_W))
             .truncate()
@@ -575,6 +698,7 @@ impl super::Chamber {
             .text_xs()
             .bg(bg)
             .text_color(text_color)
+            .tooltip(move |window, cx| Tooltip::new(full_name.clone()).build(window, cx))
             .child(label_element)
     }
 
