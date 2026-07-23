@@ -47,6 +47,22 @@ pub fn working_diff(repo_root: &Path) -> Option<Vec<FileDiff>> {
     Some(parse_diff(&raw))
 }
 
+/// What a branch adds over its merge-base with `base` (`git diff base...branch`,
+/// three-dot) — the "what would land if this merged" view, not the raw two-endpoint
+/// delta. A branch already merged (or `base` itself) yields no files, which the panel
+/// renders as "no changes relative to <base>" rather than an error.
+pub fn branch_diff(repo_root: &Path, base: &str, branch: &str) -> Option<Vec<FileDiff>> {
+    let out = Command::new("git")
+        .current_dir(repo_root)
+        .args(["diff", &format!("{base}...{branch}")])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(parse_diff(&String::from_utf8_lossy(&out.stdout)))
+}
+
 pub fn parse_diff(raw: &str) -> Vec<FileDiff> {
     let mut files = Vec::new();
     let mut current_file: Option<FileDiff> = None;
@@ -275,6 +291,62 @@ pub fn commit_graph(repo_root: &Path, limit: usize) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// One rendered line of `git log --graph`. Git already computes the lane layout and
+/// draws the ASCII rails; we only re-style it. A *commit* row carries a `hash`,
+/// `decorations` (branch/tag labels) and a `subject`; a *connector* row (`|/`, `| |`)
+/// carries only `rail` and joins commits across lanes.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GraphRow {
+    /// The leading graph-character prefix, up to and including this row's `*` marker
+    /// on a commit row (e.g. `"* "`, `"| * "`), or the whole run on a connector row.
+    pub rail: String,
+    /// 7-char abbreviated sha — `None` on a connector row.
+    pub hash: Option<String>,
+    /// Ref labels from `--decorate`, split out of the `(…)` group (e.g. `HEAD -> main`).
+    pub decorations: Vec<String>,
+    pub subject: String,
+}
+
+/// Parse `git log --graph --oneline --decorate` output into structured rows so the
+/// chamber can style the rails, dots, hashes and decorations instead of dumping the
+/// raw monospace text. The `*` marker is the commit; everything before it is rail in
+/// other lanes; the token after it is the sha, an optional `(…)` decoration group, and
+/// the subject. Lines with no `*` are pure connectors and keep only their rail.
+pub fn parse_graph(raw: &str) -> Vec<GraphRow> {
+    raw.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|line| {
+            let Some(star) = line.find('*') else {
+                return GraphRow { rail: line.trim_end().to_string(), ..Default::default() };
+            };
+            let rail = line[..=star].to_string();
+            let rest = line[star + 1..].trim_start();
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let hash = parts.next().unwrap_or("").to_string();
+            let mut tail = parts.next().unwrap_or("").trim_start();
+
+            let mut decorations = Vec::new();
+            if let Some(stripped) = tail.strip_prefix('(') {
+                if let Some(close) = stripped.find(')') {
+                    decorations = stripped[..close]
+                        .split(", ")
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    tail = stripped[close + 1..].trim_start();
+                }
+            }
+
+            GraphRow {
+                rail,
+                hash: (!hash.is_empty()).then_some(hash),
+                decorations,
+                subject: tail.to_string(),
+            }
+        })
+        .collect()
+}
+
 /// Run a git subcommand in `repo_root`, returning stdout (empty on any failure —
 /// callers treat "nothing" the same as "git couldn't answer", never an error to
 /// surface, matching [`get_git_statuses`]'s existing best-effort convention).
@@ -404,6 +476,36 @@ detached
     #[test]
     fn parse_worktrees_of_empty_input_is_empty() {
         assert_eq!(parse_worktrees(""), Vec::new());
+    }
+
+    #[test]
+    fn parse_graph_reads_commit_and_connector_rows() {
+        let raw = "\
+* 3aee5bb (HEAD -> main, origin/main) fix the gate
+| * abc1234 (quark/acp-claude/01K) wip on branch
+|/
+* def5678 earlier commit";
+        let rows = parse_graph(raw);
+        assert_eq!(rows.len(), 4);
+
+        assert_eq!(rows[0], GraphRow {
+            rail: "*".into(),
+            hash: Some("3aee5bb".into()),
+            decorations: vec!["HEAD -> main".into(), "origin/main".into()],
+            subject: "fix the gate".into(),
+        });
+        // Commit in a non-first lane: rail keeps the leading connectors up to the `*`.
+        assert_eq!(rows[1], GraphRow {
+            rail: "| *".into(),
+            hash: Some("abc1234".into()),
+            decorations: vec!["quark/acp-claude/01K".into()],
+            subject: "wip on branch".into(),
+        });
+        // Pure connector row — rail only, no commit.
+        assert_eq!(rows[2], GraphRow { rail: "|/".into(), ..Default::default() });
+        assert_eq!(rows[3].hash.as_deref(), Some("def5678"));
+        assert!(rows[3].decorations.is_empty());
+        assert_eq!(rows[3].subject, "earlier commit");
     }
 
     #[test]
