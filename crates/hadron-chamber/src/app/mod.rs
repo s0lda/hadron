@@ -212,6 +212,7 @@ struct Chamber {
     pub git_selected_commit: Option<String>,
     pub git_commit_diff: Option<Vec<crate::vcs::FileDiff>>,
     pub git_commit_open_ixs: std::collections::HashSet<usize>,
+    pub git_show_snapshots: bool,
     /// Scroll position of the Plan tracker pane.
     plan_scroll: ScrollHandle,
     pub(super) plan_collapsed_tasks: std::collections::HashSet<String>,
@@ -563,6 +564,7 @@ impl Chamber {
             git_selected_commit: None,
             git_commit_diff: None,
             git_commit_open_ixs: std::collections::HashSet::new(),
+            git_show_snapshots: false,
             plan_scroll: ScrollHandle::new(),
             plan_collapsed_tasks: std::collections::HashSet::new(),
             last_plan_path: None,
