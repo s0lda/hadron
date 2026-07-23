@@ -893,6 +893,78 @@ fn the_python_adapters_usage_update_deserializes() {
     }
 }
 
+/// **Option C, verified against the exact wire shape.** `claude-agent-acp`'s
+/// `rate_limit_event` arm sends this precise `_meta` object (see
+/// `.hadron/docs/plans/2026-07-24-claude-plan-limits-in-stats.md`) — assert on that
+/// JSON, not on our own structs (the `acp-agy-wire-contract-mismatch` lesson).
+#[test]
+fn a_claude_rate_limit_meta_deserializes_and_maps_to_a_quota_bucket() {
+    let update: SessionUpdate = serde_json::from_value(serde_json::json!({
+        "sessionUpdate": "usage_update",
+        "used": 13570,
+        "size": 2000000,
+        "_meta": {
+            "_claude/rateLimit": {
+                "status": "allowed",
+                "rateLimitType": "five_hour",
+                "utilization": 0.42,
+                "resetsAt": 1_800_000_000i64
+            }
+        }
+    }))
+    .expect("the agent's usage_update + _meta must deserialize");
+
+    let meta = match update {
+        SessionUpdate::UsageUpdate(u) => u.meta.expect("_meta must be present"),
+        other => panic!("expected UsageUpdate, got {other:?}"),
+    };
+
+    let bucket = super::session::parse_claude_rate_limit(&meta)
+        .expect("a well-formed _claude/rateLimit must yield a bucket");
+    assert_eq!(bucket.key, "claude-five_hour");
+    assert!((bucket.remaining_fraction - 0.58).abs() < 1e-9);
+    assert_eq!(
+        bucket.reset_time.expect("resetsAt must map to a timestamp").timestamp(),
+        1_800_000_000
+    );
+}
+
+/// No `_meta` at all (every non-Claude ACP agent, and Claude before its first
+/// `rate_limit_event`) must yield no bucket — absent is not zero.
+#[test]
+fn no_meta_yields_no_claude_quota_bucket() {
+    let update: SessionUpdate = serde_json::from_value(serde_json::json!({
+        "sessionUpdate": "usage_update",
+        "used": 13570,
+        "size": 2000000
+    }))
+    .expect("a bare usage_update must still deserialize");
+
+    match update {
+        SessionUpdate::UsageUpdate(u) => assert!(u.meta.is_none()),
+        other => panic!("expected UsageUpdate, got {other:?}"),
+    }
+}
+
+/// A `_meta` block present but missing the Claude key (another vendor's extension,
+/// or a malformed payload) must also yield no bucket rather than a garbage one.
+#[test]
+fn a_meta_without_the_claude_key_yields_no_bucket() {
+    let update: SessionUpdate = serde_json::from_value(serde_json::json!({
+        "sessionUpdate": "usage_update",
+        "used": 1,
+        "size": 2,
+        "_meta": { "someOtherVendor/thing": {"foo": "bar"} }
+    }))
+    .expect("must deserialize");
+
+    let meta = match update {
+        SessionUpdate::UsageUpdate(u) => u.meta.expect("_meta must be present"),
+        other => panic!("expected UsageUpdate, got {other:?}"),
+    };
+    assert!(super::session::parse_claude_rate_limit(&meta).is_none());
+}
+
 /// **The Settings model probe's boundary.** `agy_acp.py` now answers `session/new`
 /// with its static model list and WITHOUT booting the SDK — so model detection no
 /// longer needs the API key or a live Google connection (that dependency is why the
