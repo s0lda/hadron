@@ -914,17 +914,17 @@ fn the_python_adapters_session_new_response_yields_the_model_selector() {
             "name": "Model",
             "type": "select",
             "category": "model",
-            "currentValue": "gemini-3.5-flash",
-            "options": [{"value": "gemini-3.5-flash", "name": "gemini-3.5-flash"}]
+            "currentValue": "gemini-3.6-flash",
+            "options": [{"value": "gemini-3.6-flash", "name": "gemini-3.6-flash"}]
         }]
     }))
     .expect("the adapter's session/new response must deserialize to NewSessionResponse");
 
     let opts = resp.config_options.unwrap_or_default();
     let selector = model_selector(&opts).expect("the model selector must be found by category");
-    assert_eq!(selector.current, "gemini-3.5-flash");
+    assert_eq!(selector.current, "gemini-3.6-flash");
     assert_eq!(selector.available.len(), 1);
-    assert_eq!(selector.available[0].value, "gemini-3.5-flash");
+    assert_eq!(selector.available[0].value, "gemini-3.6-flash");
 }
 
 #[test]

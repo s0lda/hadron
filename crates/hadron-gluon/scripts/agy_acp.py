@@ -17,8 +17,15 @@ from typing import Any, Dict
 import os
 
 from google.antigravity import Agent, LocalAgentConfig
-from google.antigravity.models import DEFAULT_MODEL
 from google.antigravity.types import Text, Thought
+
+# The model this seat runs. The SDK's own DEFAULT_MODEL is gemini-3.5-flash, which
+# has been returning 503 "high demand" errors; gemini-3.6-flash is its current
+# sibling (same SDK naming scheme — the thinking level is a separate SDK param, so
+# there is no `-high/-low` suffix here, unlike the agy CLI's model ids). Pinned in
+# ONE place and used for BOTH what we pass to the Agent and what session/new
+# advertises, so the picker can never advertise a model we don't actually run.
+SEAT_MODEL = "gemini-3.6-flash"
 
 # stdout is the protocol. Anything that prints to it — a stray `print`, a chatty
 # dependency — corrupts the JSON-RPC stream and takes the seat down with no clue
@@ -169,11 +176,11 @@ def session_config_response(session_id):
                 # Without `category`, the client does not recognise this as
                 # the model selector at all.
                 "category": "model",
-                # Advertise the model we ACTUALLY run — the SDK's own default,
-                # imported rather than copied. Offering a model we never pass
-                # to the SDK is a picker that lies.
-                "currentValue": DEFAULT_MODEL,
-                "options": [{"value": DEFAULT_MODEL, "name": DEFAULT_MODEL}]
+                # Advertise the model we ACTUALLY run (SEAT_MODEL, passed to the
+                # Agent in ensure_agent). Offering a model we never pass to the
+                # SDK is a picker that lies.
+                "currentValue": SEAT_MODEL,
+                "options": [{"value": SEAT_MODEL, "name": SEAT_MODEL}]
             }
         ]
     }
@@ -192,6 +199,7 @@ async def ensure_agent(session_data):
     agent = Agent(
         config=LocalAgentConfig(
             api_key=api_key,
+            model=SEAT_MODEL,
             workspaces=[cwd] if cwd else None
         )
     )
@@ -231,7 +239,7 @@ async def main():
             session_id = str(uuid.uuid4())
             sessions[session_id] = {
                 "agent": None,
-                "model": DEFAULT_MODEL,
+                "model": SEAT_MODEL,
                 "cwd": params.get("cwd", ""),
             }
             send_response(msg_id, session_config_response(session_id))
@@ -242,10 +250,10 @@ async def main():
             value = str(params.get("value"))
             if session_id not in sessions:
                 send_error(msg_id, f"unknown session {session_id!r}")
-            elif config_id == "model" and value != DEFAULT_MODEL:
-                # We only ever run DEFAULT_MODEL. Refusing loudly is honest; the
-                # client logs the refusal and stays on the default.
-                send_error(msg_id, f"this seat runs {DEFAULT_MODEL} and cannot switch to {value!r}")
+            elif config_id == "model" and value != SEAT_MODEL:
+                # We only ever run SEAT_MODEL. Refusing loudly is honest; the
+                # client logs the refusal and stays on the pinned model.
+                send_error(msg_id, f"this seat runs {SEAT_MODEL} and cannot switch to {value!r}")
             else:
                 send_response(msg_id, {})
 
