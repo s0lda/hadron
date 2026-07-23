@@ -138,7 +138,7 @@ impl super::Chamber {
                 .child(settings_field(
                     "Display name",
                     Some("Shown in chat and the roster."),
-                    Input::new(&self.settings_name).into_any_element(),
+                    Input::new(&self.settings_name).w_full().into_any_element(),
                 ))
                 // Model + Effort configure an agent's session, so they are quark-only. The
                 // human has no such controls. Model here is a **per-repo** override: blank
@@ -155,7 +155,7 @@ impl super::Chamber {
                     let model_field = if acp_quark {
                         self.acp_model_select(cx)
                     } else {
-                        Input::new(&self.settings_model).into_any_element()
+                        Input::new(&self.settings_model).w_full().into_any_element()
                     };
                     v.child(settings_field(
                         "Model",
@@ -189,12 +189,12 @@ impl super::Chamber {
                     .child(settings_field(
                         "Denied skills",
                         Some("Comma-separated skill names this quark may not invoke."),
-                        Input::new(&self.settings_deny_skills).into_any_element(),
+                        Input::new(&self.settings_deny_skills).w_full().into_any_element(),
                     ))
                     .child(settings_field(
                         "Energy limit",
                         Some("Token budget before this quark is throttled. Blank = unlimited."),
-                        Input::new(&self.settings_energy_limit).into_any_element(),
+                        Input::new(&self.settings_energy_limit).w_full().into_any_element(),
                     ))
                     // The secret env-var value (e.g. `GEMINI_API_KEY`) goes to the OS
                     // keychain via `SecretStore`, never into team.json or this panel's

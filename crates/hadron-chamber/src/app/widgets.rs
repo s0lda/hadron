@@ -408,7 +408,7 @@ pub(super) fn settings_field(
                         .text_color(theme::text())
                         .child(label),
                 )
-                .child(div().flex_none().max_w(px(300.0)).min_w_0().child(content)),
+                .child(div().flex_1().max_w(px(460.0)).child(content)),
         )
         .when_some(description, |v, desc| {
             v.child(div().text_xs().text_color(theme::text_secondary()).child(desc))

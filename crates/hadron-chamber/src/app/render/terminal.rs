@@ -529,7 +529,7 @@ impl super::Chamber {
                         .into_any_element()
                 }
             }
-            RightRailTab::Git => self.git_tab_content().into_any_element(),
+            RightRailTab::Git => self.git_tab_content(cx).into_any_element(),
             RightRailTab::Changes => {
                 let diff_content = if let Some(diffs) = &self.working_diff {
                     if diffs.is_empty() {
