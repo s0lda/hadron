@@ -9,6 +9,7 @@ mod titlebar;
 mod roster;
 mod chat;
 mod terminal;
+mod git;
 mod stats;
 mod overlays;
 
