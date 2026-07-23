@@ -25,7 +25,7 @@ impl super::Chamber {
                     "Caps quark\u{2194}quark exchanges before the swarm stops. \
                      Blank or 0 = daemon default.",
                 ),
-                Input::new(&self.settings_max_exchanges).into_any_element(),
+                Input::new(&self.settings_max_exchanges).w_full().into_any_element(),
             ))
             .child(settings_field(
                 "Close Gluon on Exit",
