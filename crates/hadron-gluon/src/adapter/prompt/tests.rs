@@ -288,6 +288,34 @@ fn bypass_orchestrator_gets_autonomous_loop_directives() {
     assert!(prompt.contains("dispatch the next unchecked task"));
 }
 
+/// Task 5: in Bypass the orchestrator must recover worktree-fixable blockers
+/// itself and never hand the human a menu of options. The escalation exception
+/// is narrowed to "only the human can unblock", closing the loophole that turned
+/// a stranded merge (recoverable) into an option-menu handback.
+#[test]
+fn bypass_completion_gate_forbids_menus() {
+    let mut proj = projection("x");
+    proj.mode = hadron_lattice::Mode::Bypass;
+    proj.roster.push(QuarkCard {
+        id: QuarkId::new("opus"),
+        display_name: None,
+        flavor: Flavor::Orchestrator,
+        energy: EnergyState::Available,
+        provider: String::new(),
+        model: String::new(),
+        roles: vec![],
+        exclusive: false,
+        commands: Default::default(),
+        energy_limit: None,
+        deny_skills: vec![],
+    });
+
+    let prompt = build(&proj, &QuarkId::new("opus"));
+    assert!(prompt.contains("NEVER hand the human a menu"));
+    assert!(prompt.contains("carry the commit forward onto THIS turn's branch"));
+    assert!(prompt.contains("\"Unrecoverable\" means the human is the sole unblocker"));
+}
+
 
 /// No orchestrator on the roster → don't point the worker at a target that
 /// cannot be reached.
