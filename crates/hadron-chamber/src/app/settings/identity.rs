@@ -30,11 +30,11 @@ impl super::Chamber {
             row = row.child(
                 div()
                     .id(SharedString::from(format!("sel-{key}-{label}")))
-                    .px_2p5()
-                    .py_1()
+                    .px_2()
+                    .py_0p5()
                     .rounded_md()
                     .border_1()
-                    .text_sm()
+                    .text_xs()
                     .cursor_pointer()
                     .when(selected, |d| {
                         d.bg(theme::accent())
@@ -186,11 +186,11 @@ impl super::Chamber {
             row = row.child(
                 div()
                     .id(SharedString::from(format!("role-chip-{}", role)))
-                    .px_2p5()
-                    .py_1()
+                    .px_2()
+                    .py_0p5()
                     .rounded_md()
                     .border_1()
-                    .text_sm()
+                    .text_xs()
                     .cursor_pointer()
                     .when(selected, |d| {
                         d.bg(theme::accent())

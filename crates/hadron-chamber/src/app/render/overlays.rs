@@ -485,11 +485,11 @@ impl super::Chamber {
             row = row.child(
                 div()
                     .id(SharedString::from(format!("mode-{id}-default")))
-                    .px_2p5()
-                    .py_1()
+                    .px_2()
+                    .py_0p5()
                     .rounded_md()
                     .border_1()
-                    .text_sm()
+                    .text_xs()
                     .cursor_pointer()
                     .when(selected, |d| {
                         d.bg(theme::bg_surface_raised())
@@ -515,11 +515,11 @@ impl super::Chamber {
             row = row.child(
                 div()
                     .id(SharedString::from(format!("mode-{id}-{}", mode_label(m))))
-                    .px_2p5()
-                    .py_1()
+                    .px_2()
+                    .py_0p5()
                     .rounded_md()
                     .border_1()
-                    .text_sm()
+                    .text_xs()
                     .cursor_pointer()
                     .when(selected, |d| {
                         d.bg(mode_color(m)).border_color(mode_color(m)).text_color(theme::text())
