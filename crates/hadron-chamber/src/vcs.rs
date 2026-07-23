@@ -63,6 +63,20 @@ pub fn branch_diff(repo_root: &Path, base: &str, branch: &str) -> Option<Vec<Fil
     Some(parse_diff(&String::from_utf8_lossy(&out.stdout)))
 }
 
+/// The patch diff for a single commit (`git show --patch <commit>`).
+pub fn commit_diff(repo_root: &Path, commit: &str) -> Option<Vec<FileDiff>> {
+    let out = Command::new("git")
+        .current_dir(repo_root)
+        .args(["show", "--patch", commit])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(parse_diff(&String::from_utf8_lossy(&out.stdout)))
+}
+
+
 pub fn parse_diff(raw: &str) -> Vec<FileDiff> {
     let mut files = Vec::new();
     let mut current_file: Option<FileDiff> = None;
@@ -685,4 +699,31 @@ index a1b2c3d..e4f5g6h 100644
             DiffLine::Added("    println!(\"added\");".to_string())
         );
     }
+
+    #[test]
+    fn commit_diff_parses_patch() {
+        let raw_patch = "\
+commit 3aee5bb1234567890abcdef1234567890abcdef
+Author: Jake <jake@example.com>
+Date:   Thu Jul 23 22:00:00 2026 -0400
+
+    feat: example commit
+
+diff --git a/src/lib.rs b/src/lib.rs
+index a1b2c3d..e4f5g6h 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,2 +1,3 @@
+ context
+-old
++new
+";
+        let parsed = parse_diff(raw_patch);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].path, "src/lib.rs");
+
+        let diffs = commit_diff(Path::new("."), "HEAD");
+        assert!(diffs.is_some());
+    }
 }
+
