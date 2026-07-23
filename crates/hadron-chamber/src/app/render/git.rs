@@ -359,9 +359,9 @@ impl super::Chamber {
                         .child(Self::render_rail(&row.rail));
 
                     if let Some(hash) = &row.hash {
-                        // The commit's own lane is the column of its `*` marker (the
-                        // last rail char), so its hash matches that lane's colour.
-                        let lane = row.rail.chars().count().saturating_sub(1);
+                        // The commit's own lane is the column of its `*` marker, so its
+                        // hash matches that lane's colour (the rail can run past it).
+                        let lane = row.rail.chars().position(|c| c == '*').unwrap_or(0);
                         let lane_color = LANE_COLORS[lane % LANE_COLORS.len()];
                         line = line.child(
                             div()
