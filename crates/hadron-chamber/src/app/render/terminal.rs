@@ -531,123 +531,23 @@ impl super::Chamber {
             }
             RightRailTab::Git => self.git_tab_content(cx).into_any_element(),
             RightRailTab::Changes => {
-                let diff_content = if let Some(diffs) = &self.working_diff {
-                    if diffs.is_empty() {
-                        div()
-                            .p_4()
-                            .text_color(theme::text_muted())
-                            .child("No changes in working tree.")
-                            .into_any_element()
-                    } else {
-                        let mut list = v_flex().w_full();
-                        for (ix, file) in diffs.iter().enumerate() {
-                            let title = h_flex()
-                                .gap_2()
-                                .items_center()
-                                .child(div().child(file.path.clone()))
-                                .child(
-                                    div()
-                                        .text_color(gpui::rgb(0x34d399))
-                                        .child(format!("+{}", file.added)),
-                                )
-                                .child(
-                                    div()
-                                        .text_color(gpui::rgb(0xfb7185))
-                                        .child(format!("-{}", file.removed)),
-                                );
-
-                            let is_open = self.changes_open_ixs.contains(&ix);
-
-                            let header = h_flex()
-                                .id(ix)
-                                .w_full()
-                                .justify_between()
-                                .items_center()
-                                .py_1()
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    if this.changes_open_ixs.contains(&ix) {
-                                        this.changes_open_ixs.remove(&ix);
-                                    } else {
-                                        this.changes_open_ixs.insert(ix);
-                                    }
-                                    cx.notify();
-                                }))
-                                .child(title)
-                                .child(
-                                    Icon::new(if is_open {
-                                        IconName::ChevronUp
-                                    } else {
-                                        IconName::ChevronDown
-                                    })
-                                    .small()
-                                    .text_color(theme::text_muted()),
-                                );
-
-                            let mut row = v_flex().w_full().child(header);
-
-                            if is_open {
-                                let mut lines_list = v_flex()
-                                    .w_full()
-                                    .text_sm()
-                                    .pt_2()
-                                    .font_family("Cascadia Code");
-                                for (_, hunk) in file.hunks.iter().enumerate() {
-                                    lines_list = lines_list.child(
-                                        div()
-                                            .w_full()
-                                            .px_2()
-                                            .py_1()
-                                            .text_color(theme::text_muted())
-                                            .child(hunk.header.clone()),
-                                    );
-                                    for line in &hunk.lines {
-                                        match line {
-                                            crate::vcs::DiffLine::Context(c) => {
-                                                lines_list = lines_list.child(
-                                                    div()
-                                                        .w_full()
-                                                        .px_2()
-                                                        .text_color(theme::text())
-                                                        .child(format!(" {}", c)),
-                                                );
-                                            }
-                                            crate::vcs::DiffLine::Added(a) => {
-                                                lines_list = lines_list.child(
-                                                    div()
-                                                        .w_full()
-                                                        .px_2()
-                                                        .bg(gpui::rgba(0x34d39922))
-                                                        .text_color(gpui::rgb(0x34d399))
-                                                        .child(format!("+{}", a)),
-                                                );
-                                            }
-                                            crate::vcs::DiffLine::Removed(r) => {
-                                                lines_list = lines_list.child(
-                                                    div()
-                                                        .w_full()
-                                                        .px_2()
-                                                        .bg(gpui::rgba(0xfb718522))
-                                                        .text_color(gpui::rgb(0xfb7185))
-                                                        .child(format!("-{}", r)),
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                                row = row.child(lines_list);
-                            }
-
-                            list = list.child(row.border_b_1().border_color(theme::border()));
-                        }
-                        list.into_any_element()
-                    }
-                } else {
-                    div()
+                let diff_content = match &self.working_diff {
+                    Some(diffs) if diffs.is_empty() => div()
+                        .p_4()
+                        .text_color(theme::text_muted())
+                        .child("No changes in working tree.")
+                        .into_any_element(),
+                    Some(diffs) => self.file_diff_rows(
+                        diffs,
+                        &self.changes_open_ixs,
+                        super::git::DiffPanel::Changes,
+                        cx,
+                    ),
+                    None => div()
                         .p_4()
                         .text_color(theme::text_muted())
                         .child("Failed to load diff.")
-                        .into_any_element()
+                        .into_any_element(),
                 };
 
                 div()
