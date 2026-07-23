@@ -319,8 +319,13 @@ pub fn parse_graph(raw: &str) -> Vec<GraphRow> {
             let Some(star) = line.find('*') else {
                 return GraphRow { rail: line.trim_end().to_string(), ..Default::default() };
             };
-            let rail = line[..=star].to_string();
-            let rest = line[star + 1..].trim_start();
+            // The rail runs past the `*` whenever other lanes continue to its right
+            // (`* | | abc1234 …`); cutting at the `*` would read the next `|` as the sha.
+            let end = line[star..]
+                .find(|c: char| !matches!(c, '*' | '|' | '/' | '\\' | '_' | ' '))
+                .map_or(line.len(), |off| star + off);
+            let rail = line[..end].trim_end().to_string();
+            let rest = line[end..].trim_start();
             let mut parts = rest.splitn(2, char::is_whitespace);
             let hash = parts.next().unwrap_or("").to_string();
             let mut tail = parts.next().unwrap_or("").trim_start();
@@ -506,6 +511,18 @@ detached
         assert_eq!(rows[3].hash.as_deref(), Some("def5678"));
         assert!(rows[3].decorations.is_empty());
         assert_eq!(rows[3].subject, "earlier commit");
+    }
+
+    #[test]
+    fn parse_graph_keeps_the_lanes_that_continue_past_the_commit() {
+        // `* | |` — cutting the rail at the `*` would read the next `|` as the sha.
+        let rows = parse_graph("* | | 1234abc a merge point");
+        assert_eq!(rows[0], GraphRow {
+            rail: "* | |".into(),
+            hash: Some("1234abc".into()),
+            decorations: vec![],
+            subject: "a merge point".into(),
+        });
     }
 
     #[test]
