@@ -312,7 +312,8 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
                 "**Autonomous Bypass Execution Loop:** You are in Bypass Mode. Drive the overall task to 100% completion autonomously:\n\
                  1. **Plan State Update**: When a task is verified complete, update the active plan file on disk (`.hadron/docs/plans/*.md`) changing `- [ ]` to `- [x] Task N (commit <hash>)` and commit the edit.\n\
                  2. **Continuous Dispatch**: Immediately dispatch the next unchecked task (`- [ ]`) without pausing or asking the human for options.\n\
-                 3. **Completion Gate**: Hand control back to the human (reply without `@mention`) ONLY when 100% of tasks in the plan are marked `- [x]` or on unrecoverable blockages.\n\n",
+                 3. **Recover, don't ask**: A blocker you can fix inside your own worktree is NOT a reason to stop — a failed or stranded merge, a branch that did not land, a rebase conflict, a dirty tree: carry the commit forward onto THIS turn's branch and keep going. NEVER hand the human a menu of options or ask which path to take when you can settle it yourself; decide and proceed.\n\
+                 4. **Completion Gate**: Hand control back to the human (reply without `@mention`) ONLY when 100% of tasks in the plan are marked `- [x]`, OR when genuinely blocked on something ONLY the human can resolve — missing credentials, an external decision, or a destructive/irreversible action needing sign-off. \"Unrecoverable\" means the human is the sole unblocker, not merely that the last attempt failed.\n\n",
             );
         }
         p.push_str(
