@@ -204,6 +204,11 @@ struct Chamber {
     git_log_graph: Option<String>,
     git_scroll: ScrollHandle,
     git_subtab: GitSubtab,
+    /// The branch whose diff-against-`main` is expanded in the Branches subtab, with
+    /// its cached diff and per-file open set (like `changes_open_ixs`).
+    git_selected_branch: Option<String>,
+    git_branch_diff: Option<Vec<crate::vcs::FileDiff>>,
+    git_branch_open_ixs: std::collections::HashSet<usize>,
     /// Scroll position of the Plan tracker pane.
     plan_scroll: ScrollHandle,
     pub(super) plan_collapsed_tasks: std::collections::HashSet<String>,
@@ -549,6 +554,9 @@ impl Chamber {
             git_log_graph: None,
             git_scroll: ScrollHandle::new(),
             git_subtab: GitSubtab::Branches,
+            git_selected_branch: None,
+            git_branch_diff: None,
+            git_branch_open_ixs: Default::default(),
             plan_scroll: ScrollHandle::new(),
             plan_collapsed_tasks: std::collections::HashSet::new(),
             last_plan_path: None,
