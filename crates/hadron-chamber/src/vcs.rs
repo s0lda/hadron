@@ -306,6 +306,12 @@ pub fn commit_graph(repo_root: &Path, limit: usize) -> Option<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaneSeg {
+    pub from_col: usize,
+    pub to_col: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefKind {
     Head,
     LocalBranch,
@@ -336,6 +342,44 @@ pub struct GraphRow {
     pub relative_date: Option<String>,
     pub subject: String,
     pub decorations: Vec<RefDecoration>,
+    pub lanes: Vec<LaneSeg>,
+    pub node_col: Option<usize>,
+}
+
+/// Parse a rail string into lane segment connections and commit node column.
+pub fn parse_rail_lanes(rail: &str) -> (Vec<LaneSeg>, Option<usize>) {
+    let mut lanes = Vec::new();
+    let mut node_col = None;
+    for (i, ch) in rail.chars().enumerate() {
+        match ch {
+            '*' | 'o' => {
+                let col = i / 2;
+                node_col = Some(col);
+                lanes.push(LaneSeg { from_col: col, to_col: col });
+            }
+            '|' => {
+                let col = i / 2;
+                lanes.push(LaneSeg { from_col: col, to_col: col });
+            }
+            '/' => {
+                let from_col = (i + 1) / 2;
+                let to_col = from_col.saturating_sub(1);
+                lanes.push(LaneSeg { from_col, to_col });
+            }
+            '\\' => {
+                let from_col = i / 2;
+                let to_col = from_col + 1;
+                lanes.push(LaneSeg { from_col, to_col });
+            }
+            '_' | '-' => {
+                let from_col = i / 2;
+                let to_col = from_col;
+                lanes.push(LaneSeg { from_col, to_col });
+            }
+            _ => {}
+        }
+    }
+    (lanes, node_col)
 }
 
 /// Parse `git log --graph --pretty=format:%h|%H|%p|%an|%ar|%D|%s` output into structured
@@ -345,7 +389,14 @@ pub fn parse_graph(raw: &str) -> Vec<GraphRow> {
         .filter(|l| !l.trim().is_empty())
         .map(|line| {
             let Some(star) = line.find('*') else {
-                return GraphRow { rail: line.trim_end().to_string(), ..Default::default() };
+                let rail = line.trim_end().to_string();
+                let (lanes, node_col) = parse_rail_lanes(&rail);
+                return GraphRow {
+                    rail,
+                    lanes,
+                    node_col,
+                    ..Default::default()
+                };
             };
             // The rail runs past the `*` whenever other lanes continue to its right
             // (`* | | abc1234 …`); cutting at the `*` would read the next `|` as the sha.
@@ -353,6 +404,7 @@ pub fn parse_graph(raw: &str) -> Vec<GraphRow> {
                 .find(|c: char| !matches!(c, '*' | '|' | '/' | '\\' | '_' | ' '))
                 .map_or(line.len(), |off| star + off);
             let rail = line[..end].trim_end().to_string();
+            let (lanes, node_col) = parse_rail_lanes(&rail);
             let rest = line[end..].trim_start();
 
             let parts: Vec<&str> = rest.splitn(7, '|').collect();
@@ -397,6 +449,8 @@ pub fn parse_graph(raw: &str) -> Vec<GraphRow> {
                 relative_date,
                 subject,
                 decorations,
+                lanes,
+                node_col,
             }
         })
         .collect()
@@ -534,6 +588,17 @@ detached
     }
 
     #[test]
+    fn parse_rail_lanes_extracts_segments_and_nodes() {
+        let (lanes, node_col) = parse_rail_lanes("* | |");
+        assert_eq!(node_col, Some(0));
+        assert_eq!(lanes, vec![LaneSeg { from_col: 0, to_col: 0 }, LaneSeg { from_col: 1, to_col: 1 }, LaneSeg { from_col: 2, to_col: 2 }]);
+
+        let (lanes_conn, node_col_conn) = parse_rail_lanes("|/");
+        assert_eq!(node_col_conn, None);
+        assert_eq!(lanes_conn, vec![LaneSeg { from_col: 0, to_col: 0 }, LaneSeg { from_col: 1, to_col: 0 }]);
+    }
+
+    #[test]
     fn parse_graph_reads_commit_and_connector_rows() {
         let raw = "\
 * 3aee5bb|3aee5bb1234567890abcdef1234567890abcdef|p1|Jake|2 hours ago|HEAD -> main, origin/main|fix the gate
@@ -555,6 +620,8 @@ detached
                 RefDecoration { name: "origin/main".into(), kind: RefKind::RemoteBranch },
             ],
             subject: "fix the gate".into(),
+            lanes: vec![LaneSeg { from_col: 0, to_col: 0 }],
+            node_col: Some(0),
         });
         // Commit in a non-first lane: rail keeps the leading connectors up to the `*`.
         assert_eq!(rows[1], GraphRow {
@@ -566,12 +633,20 @@ detached
             relative_date: Some("1 hour ago".into()),
             decorations: vec![RefDecoration { name: "quark/acp-claude/01K".into(), kind: RefKind::LocalBranch }],
             subject: "wip on branch".into(),
+            lanes: vec![LaneSeg { from_col: 0, to_col: 0 }, LaneSeg { from_col: 1, to_col: 1 }],
+            node_col: Some(1),
         });
         // Pure connector row — rail only, no commit.
-        assert_eq!(rows[2], GraphRow { rail: "|/".into(), ..Default::default() });
+        assert_eq!(rows[2], GraphRow {
+            rail: "|/".into(),
+            lanes: vec![LaneSeg { from_col: 0, to_col: 0 }, LaneSeg { from_col: 1, to_col: 0 }],
+            node_col: None,
+            ..Default::default()
+        });
         assert_eq!(rows[3].hash.as_deref(), Some("def5678"));
         assert!(rows[3].decorations.is_empty());
         assert_eq!(rows[3].subject, "earlier commit");
+        assert_eq!(rows[3].node_col, Some(0));
     }
 
     #[test]
@@ -587,6 +662,8 @@ detached
             relative_date: Some("1 hour ago".into()),
             decorations: vec![],
             subject: "a merge point".into(),
+            lanes: vec![LaneSeg { from_col: 0, to_col: 0 }, LaneSeg { from_col: 1, to_col: 1 }, LaneSeg { from_col: 2, to_col: 2 }],
+            node_col: Some(0),
         });
     }
 
