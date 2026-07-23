@@ -7,6 +7,7 @@ use super::*;
 pub(super) enum DiffPanel {
     Changes,
     Branch,
+    Commit,
 }
 
 /// Lane colours, cycled by rail column, so the commit graph reads as coloured lanes
@@ -55,7 +56,7 @@ impl super::Chamber {
         let body = match selected {
             GitSubtab::Branches => self.git_branches_section(cx).into_any_element(),
             GitSubtab::Worktrees => self.git_worktrees_section().into_any_element(),
-            GitSubtab::Graph => self.git_graph_section().into_any_element(),
+            GitSubtab::Graph => self.git_graph_section(cx).into_any_element(),
         };
 
         v_flex()
@@ -259,6 +260,94 @@ impl super::Chamber {
             .child(body)
     }
 
+    /// Compute (or toggle off) the patch diff of a commit. Clicking the
+    /// already-selected commit clears the panel.
+    fn select_commit(&mut self, hash: String) {
+        if self.git_selected_commit.as_deref() == Some(hash.as_str()) {
+            self.git_selected_commit = None;
+            self.git_commit_diff = None;
+            return;
+        }
+        let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        self.git_commit_diff = crate::vcs::commit_diff(&root, &hash);
+        self.git_commit_open_ixs.clear();
+        self.git_selected_commit = Some(hash);
+    }
+
+    /// The changed-files panel for the selected commit: a `N files  +A −R` header over
+    /// the shared collapsible file-diff list.
+    fn commit_diff_panel(&self, commit_hash: &str, cx: &mut Context<Self>) -> impl IntoElement {
+        let body: gpui::AnyElement = match &self.git_commit_diff {
+            None => Self::muted("Could not load diff for this commit.").into_any_element(),
+            Some(files) if files.is_empty() => {
+                Self::muted("No changes in this commit.").into_any_element()
+            }
+            Some(files) => {
+                let added: usize = files.iter().map(|f| f.added).sum();
+                let removed: usize = files.iter().map(|f| f.removed).sum();
+                let n = files.len();
+                let stats = h_flex()
+                    .gap_2()
+                    .items_center()
+                    .text_xs()
+                    .child(
+                        div()
+                            .text_color(theme::text_muted())
+                            .child(format!("{n} file{}", if n == 1 { "" } else { "s" })),
+                    )
+                    .child(div().text_color(gpui::rgb(ADD_COLOR)).child(format!("+{added}")))
+                    .child(div().text_color(gpui::rgb(DEL_COLOR)).child(format!("−{removed}")));
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(stats)
+                    .child(self.file_diff_rows(files, &self.git_commit_open_ixs, DiffPanel::Commit, cx))
+                    .into_any_element()
+            }
+        };
+
+        let short_hash: String = commit_hash.chars().take(7).collect();
+        v_flex()
+            .w_full()
+            .gap_2()
+            .mb_2()
+            .ml_2()
+            .pl_3()
+            .py_2()
+            .border_l_2()
+            .border_color(theme::border())
+            .child(
+                h_flex()
+                    .id("commit-diff-close")
+                    .w_full()
+                    .gap_2()
+                    .justify_between()
+                    .items_center()
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.git_selected_commit = None;
+                        this.git_commit_diff = None;
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(theme::accent())
+                            .child(format!("Changes in commit {short_hash}")),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child("close ×"),
+                    ),
+            )
+            .child(body)
+    }
+
     // ── Worktrees ────────────────────────────────────────────────────────────────
 
     fn git_worktrees_section(&self) -> impl IntoElement {
@@ -337,7 +426,7 @@ impl super::Chamber {
 
     // ── Graph ────────────────────────────────────────────────────────────────────
 
-    fn git_graph_section(&self) -> impl IntoElement {
+    fn git_graph_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let body: gpui::AnyElement = match &self.git_log_graph {
             None => Self::muted("Failed to load commit graph.").into_any_element(),
             Some(graph) if graph.trim().is_empty() => {
@@ -346,19 +435,26 @@ impl super::Chamber {
             Some(graph) => {
                 let rows = crate::vcs::parse_graph(graph);
                 let mut list = v_flex().w_full().text_sm();
-                for row in rows {
+                for (ix, row) in rows.into_iter().enumerate() {
                     // One row = one line, always. Without the clip a long ref chip
                     // (`quark/acp-claude/01KY…`) forces the subject into a ~100px
                     // column that wraps character-by-character.
                     let mut line = h_flex()
+                        .id(("graph-row", ix))
                         .w_full()
                         .gap_2()
                         .items_center()
                         .py_0p5()
+                        .px_1()
+                        .rounded_md()
                         .overflow_hidden()
                         .child(Self::render_rail(&row.rail));
 
                     if let Some(hash) = &row.hash {
+                        let full_hash = row.full_hash.clone().unwrap_or_else(|| hash.clone());
+                        let is_selected =
+                            self.git_selected_commit.as_deref() == Some(full_hash.as_str());
+
                         // The commit's own lane is the column of its `*` marker, so its
                         // hash matches that lane's colour (the rail can run past it).
                         let lane = row.rail.chars().position(|c| c == '*').unwrap_or(0);
@@ -399,8 +495,25 @@ impl super::Chamber {
                                     .child(date.clone()),
                             );
                         }
+
+                        let click_hash = full_hash.clone();
+                        line = line
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::border()))
+                            .when(is_selected, |d| d.bg(theme::border()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.select_commit(click_hash.clone());
+                                cx.notify();
+                            }));
+
+                        let mut entry = v_flex().w_full().child(line);
+                        if is_selected {
+                            entry = entry.child(self.commit_diff_panel(&full_hash, cx));
+                        }
+                        list = list.child(entry);
+                    } else {
+                        list = list.child(line);
                     }
-                    list = list.child(line);
                 }
                 list.into_any_element()
             }
@@ -501,6 +614,7 @@ impl super::Chamber {
                     let set = match panel {
                         DiffPanel::Changes => &mut this.changes_open_ixs,
                         DiffPanel::Branch => &mut this.git_branch_open_ixs,
+                        DiffPanel::Commit => &mut this.git_commit_open_ixs,
                     };
                     if set.contains(&ix) {
                         set.remove(&ix);
