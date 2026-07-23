@@ -159,7 +159,7 @@ impl super::Chamber {
                         h_flex()
                             .px_1()
                             .rounded_lg()
-                            .bg(theme::input_bg())
+                            .bg(theme::field_base())
                             // A hairline border lifts the field off the card behind it
                             // — the modern outlined-input look, using the shared token.
                             .border_1()
