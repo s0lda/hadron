@@ -371,7 +371,7 @@ impl super::Chamber {
                                 .child(hash.clone()),
                         );
                         for dec in &row.decorations {
-                            line = line.child(Self::deco_chip(&dec.name));
+                            line = line.child(Self::ref_pill(dec));
                         }
                         line = line.child(
                             div()
@@ -381,6 +381,24 @@ impl super::Chamber {
                                 .text_color(theme::text())
                                 .child(row.subject.clone()),
                         );
+                        if let Some(author) = &row.author {
+                            line = line.child(
+                                div()
+                                    .flex_none()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(author.clone()),
+                            );
+                        }
+                        if let Some(date) = &row.relative_date {
+                            line = line.child(
+                                div()
+                                    .flex_none()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(date.clone()),
+                            );
+                        }
                     }
                     list = list.child(line);
                 }
@@ -415,20 +433,36 @@ impl super::Chamber {
         h
     }
 
-    /// A ref-label chip (branch/tag) from `--decorate`, e.g. `HEAD -> main`.
-    /// Width-capped: a full `quark/<seat>/<ulid>` branch name is ~40 chars with no
-    /// break opportunity, so an uncapped chip claims the whole row.
-    fn deco_chip(label: &str) -> impl IntoElement {
+    /// A styled ref pill badge depending on decoration kind (HEAD, Local, Remote, Tag).
+    fn ref_pill(dec: &crate::vcs::RefDecoration) -> impl IntoElement {
+        let (bg, text_color) = match dec.kind {
+            crate::vcs::RefKind::Head => (gpui::rgba(0x34d39922), gpui::rgb(0x34d399)),
+            crate::vcs::RefKind::LocalBranch => (gpui::rgba(0xa78bfa22), gpui::rgb(0xa78bfa)),
+            crate::vcs::RefKind::RemoteBranch => (gpui::rgba(0x38bdf822), gpui::rgb(0x38bdf8)),
+            crate::vcs::RefKind::Tag => (gpui::rgba(0xfbbf2422), gpui::rgb(0xfbbf24)),
+        };
+
+        let label_element = if dec.kind == crate::vcs::RefKind::Head {
+            h_flex()
+                .gap_1()
+                .items_center()
+                .child(div().child("●"))
+                .child(div().child(dec.name.clone()))
+        } else {
+            h_flex().child(dec.name.clone())
+        };
+
         div()
             .flex_none()
             .max_w(px(DECO_CHIP_MAX_W))
             .truncate()
-            .px_1()
-            .rounded_sm()
+            .px_1p5()
+            .py_0p5()
+            .rounded_md()
             .text_xs()
-            .bg(gpui::rgba(0x38bdf822))
-            .text_color(gpui::rgb(0x38bdf8))
-            .child(label.to_string())
+            .bg(bg)
+            .text_color(text_color)
+            .child(label_element)
     }
 
     // ── Shared collapsible file-diff list (Changes + branch panel, SSOT) ──────────
