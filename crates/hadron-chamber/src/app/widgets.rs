@@ -399,16 +399,16 @@ pub(super) fn settings_field(
             h_flex()
                 .w_full()
                 .items_center()
+                .justify_between()
                 .gap_4()
                 .child(
                     div()
                         .flex_none()
-                        .w(px(140.0))
                         .text_sm()
                         .text_color(theme::text())
                         .child(label),
                 )
-                .child(div().flex_1().min_w_0().child(content)),
+                .child(div().flex_none().max_w(px(300.0)).min_w_0().child(content)),
         )
         .when_some(description, |v, desc| {
             v.child(div().text_xs().text_color(theme::text_secondary()).child(desc))
