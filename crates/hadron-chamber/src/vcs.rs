@@ -293,7 +293,8 @@ pub fn commit_graph(repo_root: &Path, limit: usize) -> Option<String> {
         .args([
             "log",
             "--graph",
-            "--pretty=format:%h|%H|%p|%an|%ar|%s%d",
+            "--all",
+            "--pretty=format:%h|%H|%p|%an|%ar|%D|%s",
             &format!("-n{limit}"),
         ])
         .output()
@@ -337,7 +338,7 @@ pub struct GraphRow {
     pub decorations: Vec<RefDecoration>,
 }
 
-/// Parse `git log --graph --pretty=format:%h|%H|%p|%an|%ar|%s%d` output into structured
+/// Parse `git log --graph --pretty=format:%h|%H|%p|%an|%ar|%D|%s` output into structured
 /// rows so the chamber can style the rails, dots, hashes, metadata and ref decorations.
 pub fn parse_graph(raw: &str) -> Vec<GraphRow> {
     raw.lines()
@@ -354,7 +355,7 @@ pub fn parse_graph(raw: &str) -> Vec<GraphRow> {
             let rail = line[..end].trim_end().to_string();
             let rest = line[end..].trim_start();
 
-            let parts: Vec<&str> = rest.splitn(6, '|').collect();
+            let parts: Vec<&str> = rest.splitn(7, '|').collect();
             let hash = parts.first().copied().filter(|s| !s.is_empty()).map(|s| s.to_string());
             let full_hash = parts.get(1).copied().filter(|s| !s.is_empty()).map(|s| s.to_string());
             let parents = parts
@@ -362,34 +363,28 @@ pub fn parse_graph(raw: &str) -> Vec<GraphRow> {
                 .map_or(Vec::new(), |s| s.split_whitespace().map(|p| p.to_string()).collect());
             let author = parts.get(3).copied().filter(|s| !s.is_empty()).map(|s| s.to_string());
             let relative_date = parts.get(4).copied().filter(|s| !s.is_empty()).map(|s| s.to_string());
-            let subject_and_decorations = parts.get(5).copied().unwrap_or("");
+            let raw_decorations = parts.get(5).copied().unwrap_or("");
+            let subject = parts.get(6).copied().unwrap_or("").to_string();
 
-            let mut subject = subject_and_decorations.to_string();
             let mut decorations = Vec::new();
-
-            if subject_and_decorations.ends_with(')') {
-                if let Some(open_idx) = subject_and_decorations.rfind('(') {
-                    let dec_str = &subject_and_decorations[open_idx + 1..subject_and_decorations.len() - 1];
-                    subject = subject_and_decorations[..open_idx].trim_end().to_string();
-                    for item in dec_str.split(", ") {
-                        let item = item.trim();
-                        if item.is_empty() {
-                            continue;
-                        }
-                        let kind = if item.starts_with("HEAD -> ") || item == "HEAD" {
-                            RefKind::Head
-                        } else if item.starts_with("tag: ") {
-                            RefKind::Tag
-                        } else if item.contains('/') {
-                            RefKind::RemoteBranch
-                        } else {
-                            RefKind::LocalBranch
-                        };
-                        decorations.push(RefDecoration {
-                            name: item.to_string(),
-                            kind,
-                        });
+            if !raw_decorations.trim().is_empty() {
+                for item in raw_decorations.split(", ") {
+                    let item = item.trim();
+                    if item.is_empty() {
+                        continue;
                     }
+                    let (kind, name) = if let Some(target) = item.strip_prefix("HEAD -> ") {
+                        (RefKind::Head, target.to_string())
+                    } else if item == "HEAD" {
+                        (RefKind::Head, "HEAD".to_string())
+                    } else if let Some(tag_name) = item.strip_prefix("tag: ") {
+                        (RefKind::Tag, tag_name.to_string())
+                    } else if item.starts_with("origin/") || item.starts_with("upstream/") {
+                        (RefKind::RemoteBranch, item.to_string())
+                    } else {
+                        (RefKind::LocalBranch, item.to_string())
+                    };
+                    decorations.push(RefDecoration { name, kind });
                 }
             }
 
@@ -541,10 +536,10 @@ detached
     #[test]
     fn parse_graph_reads_commit_and_connector_rows() {
         let raw = "\
-* 3aee5bb|3aee5bb1234567890abcdef1234567890abcdef|p1|Jake|2 hours ago|fix the gate (HEAD -> main, origin/main)
-| * abc1234|abc1234567890abcdef1234567890abcdef1234|p2|Alice|1 hour ago|wip on branch (quark/acp-claude/01K)
+* 3aee5bb|3aee5bb1234567890abcdef1234567890abcdef|p1|Jake|2 hours ago|HEAD -> main, origin/main|fix the gate
+| * abc1234|abc1234567890abcdef1234567890abcdef1234|p2|Alice|1 hour ago|quark/acp-claude/01K|wip on branch
 |/
-* def5678|def5678567890abcdef1234567890abcdef1234|p3|Bob|3 hours ago|earlier commit";
+* def5678|def5678567890abcdef1234567890abcdef1234|p3|Bob|3 hours ago||earlier commit";
         let rows = parse_graph(raw);
         assert_eq!(rows.len(), 4);
 
@@ -556,7 +551,7 @@ detached
             author: Some("Jake".into()),
             relative_date: Some("2 hours ago".into()),
             decorations: vec![
-                RefDecoration { name: "HEAD -> main".into(), kind: RefKind::Head },
+                RefDecoration { name: "main".into(), kind: RefKind::Head },
                 RefDecoration { name: "origin/main".into(), kind: RefKind::RemoteBranch },
             ],
             subject: "fix the gate".into(),
@@ -569,7 +564,7 @@ detached
             parents: vec!["p2".into()],
             author: Some("Alice".into()),
             relative_date: Some("1 hour ago".into()),
-            decorations: vec![RefDecoration { name: "quark/acp-claude/01K".into(), kind: RefKind::RemoteBranch }],
+            decorations: vec![RefDecoration { name: "quark/acp-claude/01K".into(), kind: RefKind::LocalBranch }],
             subject: "wip on branch".into(),
         });
         // Pure connector row — rail only, no commit.
@@ -582,7 +577,7 @@ detached
     #[test]
     fn parse_graph_keeps_the_lanes_that_continue_past_the_commit() {
         // `* | |` — cutting the rail at the `*` would read the next `|` as the sha.
-        let rows = parse_graph("* | | 1234abc|1234abc1234567890abcdef1234567890abcdef|p1 p2|Jake|1 hour ago|a merge point");
+        let rows = parse_graph("* | | 1234abc|1234abc1234567890abcdef1234567890abcdef|p1 p2|Jake|1 hour ago||a merge point");
         assert_eq!(rows[0], GraphRow {
             rail: "* | |".into(),
             hash: Some("1234abc".into()),
@@ -598,8 +593,8 @@ detached
     #[test]
     fn parse_graph_rich_metadata() {
         let raw = "\
-* 3aee5bb|3aee5bb1234567890abcdef1234567890abcdef|abc1234 def5678|Jane Doe|2 hours ago|feat: rich graph (HEAD -> main, tag: v1.0.0, origin/main, local-branch)
-| * c1d2e3f|c1d2e3f4567890abcdef1234567890abcdef12|parent1|John Smith|3 days ago|fix: bug
+* 3aee5bb|3aee5bb1234567890abcdef1234567890abcdef|abc1234 def5678|Jane Doe|2 hours ago|HEAD -> main, tag: v1.0.0, origin/main, quark/cli-agy/01KY8CCE|feat: rich graph
+| * c1d2e3f|c1d2e3f4567890abcdef1234567890abcdef12|parent1|John Smith|3 days ago||fix: bug (Task 3)
 |/";
         let rows = parse_graph(raw);
         assert_eq!(rows.len(), 3);
@@ -619,11 +614,11 @@ detached
             r0.decorations,
             vec![
                 RefDecoration {
-                    name: "HEAD -> main".into(),
+                    name: "main".into(),
                     kind: RefKind::Head,
                 },
                 RefDecoration {
-                    name: "tag: v1.0.0".into(),
+                    name: "v1.0.0".into(),
                     kind: RefKind::Tag,
                 },
                 RefDecoration {
@@ -631,7 +626,7 @@ detached
                     kind: RefKind::RemoteBranch,
                 },
                 RefDecoration {
-                    name: "local-branch".into(),
+                    name: "quark/cli-agy/01KY8CCE".into(),
                     kind: RefKind::LocalBranch,
                 },
             ]
@@ -647,7 +642,7 @@ detached
         assert_eq!(r1.parents, vec!["parent1"]);
         assert_eq!(r1.author.as_deref(), Some("John Smith"));
         assert_eq!(r1.relative_date.as_deref(), Some("3 days ago"));
-        assert_eq!(r1.subject, "fix: bug");
+        assert_eq!(r1.subject, "fix: bug (Task 3)");
         assert!(r1.decorations.is_empty());
 
         let r2 = &rows[2];
