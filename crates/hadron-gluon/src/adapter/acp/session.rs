@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use hadron_lattice::{
-    live, Activity, ContextUsage, Doing, Mode, Projection, QuarkId, TurnOutcome, Usage,
+    live, Activity, ContextUsage, Doing, Mode, Projection, QuarkId, QuotaBucket, TurnOutcome, Usage,
 };
 
 use agent_client_protocol::schema::v1::{
@@ -45,6 +45,29 @@ pub(super) fn acp_stdio_descriptor(program: &str, args: &[String], env: &[(Strin
         "env": env_json,
     })
     .to_string()
+}
+
+/// Parse the vendor-namespaced Claude rate-limit payload `claude-agent-acp` attaches
+/// to a `usage_update`'s `_meta` (`_claude/rateLimit`), mapped straight from Claude
+/// Code's own `rate_limit_event`. `utilization` is the provider's **own** figure —
+/// exactly the number Option A (recomputing locally from `ledger.db`) could never
+/// match, since server-side limits move with load
+/// (`.hadron/docs/plans/2026-07-24-claude-plan-limits-in-stats.md`). Absent or
+/// malformed `_meta` returns `None` — absent is not zero (see `Usage::quota`'s
+/// honesty rule: empty means the provider reported nothing, not that it is full).
+pub(super) fn parse_claude_rate_limit(meta: &serde_json::Map<String, serde_json::Value>) -> Option<QuotaBucket> {
+    let rl = meta.get("_claude/rateLimit")?.as_object()?;
+    let rate_limit_type = rl.get("rateLimitType")?.as_str()?;
+    let utilization = rl.get("utilization")?.as_f64()?;
+    let reset_time = rl
+        .get("resetsAt")
+        .and_then(|v| v.as_i64())
+        .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0));
+    Some(QuotaBucket {
+        key: format!("claude-{rate_limit_type}"),
+        remaining_fraction: (1.0 - utilization).clamp(0.0, 1.0),
+        reset_time,
+    })
 }
 
 /// The one-line "what is it doing" a human reads mid-turn. An agent's bare
@@ -163,6 +186,10 @@ pub(super) struct TurnReply {
     usage: Option<AcpUsage>,
     /// The last `usage_update` seen during the turn: context used / window size.
     context: Option<(u64, u64)>,
+    /// Every Claude rate-limit bucket seen during the turn (vendor `_meta`, keyed by
+    /// `rateLimitType` so a later `usage_update` refines its own bucket rather than
+    /// appending a duplicate). Empty for every non-Claude ACP agent.
+    quota: Vec<QuotaBucket>,
     stop: StopReason,
 }
 
@@ -269,8 +296,10 @@ impl super::AcpQuark {
         // the turn pump. Hence the Arcs.
         let transcript = Arc::new(Mutex::new(String::new()));
         let context = Arc::new(Mutex::new(None::<(u64, u64)>));
+        let quota = Arc::new(Mutex::new(Vec::<QuotaBucket>::new()));
         let pump_transcript = Arc::clone(&transcript);
         let pump_context = Arc::clone(&context);
+        let pump_quota = Arc::clone(&quota);
 
         // One handle for the happy path (moved into the pump, fired once the session
         // opens) and one for the failure path (kept out here, fired if the pump dies
@@ -314,6 +343,15 @@ impl super::AcpQuark {
                                         // — which the claude CLI never reports.
                                         SessionUpdate::UsageUpdate(u) => {
                                             *context.lock().unwrap() = Some((u.used, u.size));
+                                            if let Some(bucket) =
+                                                u.meta.as_ref().and_then(parse_claude_rate_limit)
+                                            {
+                                                let mut q = quota.lock().unwrap();
+                                                match q.iter_mut().find(|b| b.key == bucket.key) {
+                                                    Some(existing) => *existing = bucket,
+                                                    None => q.push(bucket),
+                                                }
+                                            }
                                         }
                                         // The agent's reasoning, streamed. Volatile: it
                                         // is published for the chamber to render live and
@@ -536,6 +574,7 @@ impl super::AcpQuark {
                             while let Some(turn) = turns_rx.recv().await {
                                 pump_transcript.lock().unwrap().clear();
                                 *pump_context.lock().unwrap() = None;
+                                pump_quota.lock().unwrap().clear();
                                 pump_in_turn.store(true, std::sync::atomic::Ordering::Relaxed);
 
                                 let sent = cx
@@ -553,6 +592,7 @@ impl super::AcpQuark {
                                         text: pump_transcript.lock().unwrap().clone(),
                                         usage: resp.usage.clone(),
                                         context: *pump_context.lock().unwrap(),
+                                        quota: pump_quota.lock().unwrap().clone(),
                                         stop: resp.stop_reason,
                                     }),
                                     Err(e) => Err(anyhow::anyhow!("session/prompt failed: {e}")),
@@ -649,10 +689,13 @@ impl super::AcpQuark {
         self.last_spend = new_watermark;
 
         // Context, when the agent sent a `usage_update`. NOTE the honesty rule this
-        // codebase already enforces (see `telemetry.rs`): ACP has **no quota concept
-        // at all**, so `quota` stays empty rather than claiming a full budget. And
-        // `used_percentage` is computed here only because ACP — unlike agy — does not
-        // send one; `size` is the agent's own reported window, never invented.
+        // codebase already enforces (see `telemetry.rs`): most ACP agents have **no
+        // quota concept at all**, so `quota` stays empty rather than claiming a full
+        // budget. Claude's is the one exception — `reply.quota` carries whatever
+        // vendor `_meta` buckets `parse_claude_rate_limit` found this turn, still
+        // empty for every other agent. `used_percentage` is computed here only
+        // because ACP — unlike agy — does not send one; `size` is the agent's own
+        // reported window, never invented.
         let usage = Usage {
             spend,
             context: reply.context.map(|(used, size)| ContextUsage {
@@ -661,7 +704,7 @@ impl super::AcpQuark {
                 used_percentage: if size > 0 { (used as f64 / size as f64) * 100.0 } else { 0.0 },
             }),
             model: self.session.as_ref().and_then(|s| s.model.lock().unwrap().clone()),
-            quota: vec![],
+            quota: reply.quota,
         };
 
         // A refusal or a token wall is a real thing the field should see; a plain
