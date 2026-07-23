@@ -230,31 +230,20 @@ impl super::Chamber {
             }
         };
 
+        // Settings auto-saves on every change (chip clicks commit immediately; free-text
+        // fields commit on nav-away or on close via ✕/backdrop — see
+        // `commit_settings_inputs`), so there is nothing left for a "Done" button to do
+        // that closing the panel any other way doesn't already do.
         let footer = if target == SettingsTarget::Providers {
             div().into_any_element()
         } else {
             h_flex()
                 .flex_none()
-                .justify_between()
+                .justify_end()
                 .pt_1()
                 .child(text_button("settings-reset", "Reset to default").on_click(
                     cx.listener(|this, _, window, cx| this.reset_settings_target(window, cx)),
                 ))
-                .child(
-                    div()
-                        .id("settings-done")
-                        .px_3()
-                        .py_1p5()
-                        .rounded_md()
-                        .bg(theme::accent())
-                        .text_color(theme::text())
-                        .hover(|s| s.opacity(0.9))
-                        .active(|s| s.opacity(0.8))
-                        .child("Done")
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.close_settings(window, cx)),
-                        ),
-                )
                 .into_any_element()
         };
         let panel = v_flex()

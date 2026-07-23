@@ -708,12 +708,27 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             // `colors.popover` above — so without this line they stay the stock-dark theme
             // colour (near-black) instead of our surface. Same gotcha as `tokens.title_bar`.
             t.tokens.popover = gpui::Hsla::from(theme::popover()).into();
-            // now a bright field, so a dark line stood out between the chat and the right
-            // pane — make the idle border fully transparent so the handle vanishes at rest.
-            // Dragging still paints `drag_border` (on-brand pink) for feedback. This also
-            // drops gpui-component's own idle hairlines, which suits the glass surfaces.
-            t.border = gpui::rgba(0x00000000).into();
+            // `border` is ONE shared token: every popup menu, dialog, tab, table and
+            // input outline reads it, not just the chat/right-rail resize handle. It was
+            // previously zeroed out here to hide that one handle at rest, which silently
+            // killed borders everywhere else too — including context-menu edges, which
+            // is why they read as bleeding into the field with no outline. Fixed at the
+            // source instead: `resize_handle.rs` (the fork) now paints its own idle
+            // handle transparent directly rather than reading this token, so `border`
+            // can go back to a real, visible value for everyone else.
+            t.border = theme::border().into();
             t.drag_border = rgb(0xec4899).into();
+            // Stock dark theme's `input`/`selection`/`list_active` are deep blues
+            // (`#1d4ed8`-family) that never got re-themed, which is the "blue tint" in
+            // the Settings/Processes/File-Tree surfaces — `input` in particular sat only
+            // two hex steps from `modal_surface()`, so a Settings text field was nearly
+            // invisible against its own card. Re-anchor all three to the chamber's own
+            // neutral/pink ramp so nothing on these panels still carries the fork's
+            // stock accent.
+            t.input = theme::border().into();
+            t.selection = gpui::rgba(0xec489966).into();
+            t.list_active = gpui::rgba(0xec489933).into();
+            t.list_active_border = theme::accent().into();
             // Markdown inline code blocks use `accent` for background in gpui-component.
             // Override it to a very soft white overlay so it's slightly brighter than the background.
             t.accent = gpui::rgba(0xffffff20).into();
