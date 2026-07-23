@@ -19,6 +19,11 @@ const UNMERGED_COLOR: u32 = 0xfb7185;
 const NEUTRAL_COLOR: u32 = 0x94a3b8;
 const ADD_COLOR: u32 = 0x34d399;
 const DEL_COLOR: u32 = 0xfb7185;
+/// One graph rail column, in px — a fixed cell keeps lanes in column regardless of
+/// the glyph's own advance width.
+const RAIL_CELL_W: f32 = 9.0;
+/// Cap for a `--decorate` ref chip so it cannot squeeze the subject out.
+const DECO_CHIP_MAX_W: f32 = 190.0;
 
 impl super::Chamber {
     /// The Git rail: local branches (with merged-into-`main` status and click-to-diff),
@@ -142,26 +147,28 @@ impl super::Chamber {
                             div()
                                 .flex_1()
                                 .min_w_0()
+                                .truncate()
                                 .when(branch.is_current, |d| d.text_color(theme::accent()))
                                 .child(branch.name.clone()),
                         );
-                    list = list.child(row);
+                    // The diff panel is an accordion under the row that was clicked.
+                    // Appending it after the whole list instead put it thousands of
+                    // pixels below the fold with 126 branches — the click looked dead.
+                    let mut entry = v_flex().w_full().child(row);
+                    if is_selected {
+                        entry = entry.child(self.branch_diff_panel(&branch.name, cx));
+                    }
+                    list = list.child(entry);
                 }
                 list.into_any_element()
             }
         };
-
-        let panel = self
-            .git_selected_branch
-            .as_ref()
-            .map(|name| self.branch_diff_panel(name, cx));
 
         v_flex()
             .w_full()
             .gap_1()
             .child(Self::git_section_title("Branches"))
             .child(rows)
-            .when_some(panel, |d, p| d.child(p))
     }
 
     /// Compute (or toggle off) the diff of a branch against `main`. Clicking the
@@ -214,14 +221,17 @@ impl super::Chamber {
         v_flex()
             .w_full()
             .gap_2()
-            .mt_2()
-            .pt_2()
-            .border_t_1()
+            .mb_2()
+            .ml_2()
+            .pl_3()
+            .py_2()
+            .border_l_2()
             .border_color(theme::border())
             .child(
                 h_flex()
                     .id("branch-diff-close")
                     .w_full()
+                    .gap_2()
                     .justify_between()
                     .items_center()
                     .cursor_pointer()
@@ -232,10 +242,19 @@ impl super::Chamber {
                     }))
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
                             .text_color(theme::accent())
                             .child(format!("Changes in {title}")),
                     )
-                    .child(div().text_xs().text_color(theme::text_muted()).child("close ×")),
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child("close ×"),
+                    ),
             )
             .child(body)
     }
@@ -276,7 +295,10 @@ impl super::Chamber {
                                 .child(Self::commit_token(&wt.head, color))
                                 .child(
                                     div()
+                                        .flex_1()
                                         .min_w_0()
+                                        .truncate()
+                                        .text_right()
                                         .text_color(theme::text_muted())
                                         .child(branch_label),
                                 ),
@@ -325,11 +347,15 @@ impl super::Chamber {
                 let rows = crate::vcs::parse_graph(graph);
                 let mut list = v_flex().w_full().text_sm();
                 for row in rows {
+                    // One row = one line, always. Without the clip a long ref chip
+                    // (`quark/acp-claude/01KY…`) forces the subject into a ~100px
+                    // column that wraps character-by-character.
                     let mut line = h_flex()
                         .w_full()
                         .gap_2()
                         .items_center()
                         .py_0p5()
+                        .overflow_hidden()
                         .child(Self::render_rail(&row.rail));
 
                     if let Some(hash) = &row.hash {
@@ -351,6 +377,7 @@ impl super::Chamber {
                             div()
                                 .flex_1()
                                 .min_w_0()
+                                .truncate()
                                 .text_color(theme::text())
                                 .child(row.subject.clone()),
                         );
@@ -375,14 +402,27 @@ impl super::Chamber {
         for (col, ch) in rail.chars().enumerate() {
             let color = LANE_COLORS[col % LANE_COLORS.len()];
             let glyph = if ch == '*' { "●".to_string() } else { ch.to_string() };
-            h = h.child(div().text_color(gpui::rgb(color)).child(glyph));
+            // Fixed cell width: `●` is not a Cascadia glyph, so on fallback it is
+            // wider than a cell and the lanes drift out of column.
+            h = h.child(
+                div()
+                    .w(px(RAIL_CELL_W))
+                    .flex_none()
+                    .text_color(gpui::rgb(color))
+                    .child(glyph),
+            );
         }
         h
     }
 
     /// A ref-label chip (branch/tag) from `--decorate`, e.g. `HEAD -> main`.
+    /// Width-capped: a full `quark/<seat>/<ulid>` branch name is ~40 chars with no
+    /// break opportunity, so an uncapped chip claims the whole row.
     fn deco_chip(label: &str) -> impl IntoElement {
         div()
+            .flex_none()
+            .max_w(px(DECO_CHIP_MAX_W))
+            .truncate()
             .px_1()
             .rounded_sm()
             .text_xs()
