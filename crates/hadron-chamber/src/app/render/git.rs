@@ -371,7 +371,7 @@ impl super::Chamber {
                                 .child(hash.clone()),
                         );
                         for dec in &row.decorations {
-                            line = line.child(Self::deco_chip(dec));
+                            line = line.child(Self::deco_chip(&dec.name));
                         }
                         line = line.child(
                             div()
