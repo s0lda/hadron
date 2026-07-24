@@ -11,6 +11,16 @@ impl super::Chamber {
         latest_context(&self.view.messages, qid)
     }
 
+    /// The most recent quota buckets `qid` published in the live field. Like
+    /// [`Self::latest_context`], this is a live gauge, not a window-summed quantity —
+    /// a bucket only changes when the provider sends a fresh reading, which may predate
+    /// the window's cutoff (in particular [`StatsWindow::Current`]'s "since the last
+    /// human message" truncation), so it reads identically regardless of which stats
+    /// window tab is selected rather than going missing on some of them.
+    fn latest_quota(&self, qid: &str) -> Vec<hadron_lattice::QuotaBucket> {
+        latest_quota(&self.view.messages, qid)
+    }
+
     pub(super) fn info_panel_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let qid = self.info_panel.as_ref().unwrap().clone();
         let roster_row = self.view.roster.iter().find(|r| r.id == qid).unwrap();
@@ -328,7 +338,7 @@ impl super::Chamber {
                 ),
             );
         }
-        for bucket in q_stats.quota {
+        for bucket in self.latest_quota(&qid) {
             stats_block = stats_block.child(kv_row(
                 "Quota",
                 format!("{}: {:.0}% left", bucket.key, bucket.remaining_fraction * 100.0),
@@ -585,17 +595,29 @@ impl super::Chamber {
 
         for (q, s) in &stats.per_quark {
             let q_color = self.color_for(q);
+            let resolved = self.resolve_identity(q);
             let mut block = session_card().child(
                 h_flex()
                     .w_full()
                     .items_center()
                     .justify_between()
                     .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(q_color)
-                            .child(q.clone()),
+                        h_flex()
+                            .gap_1p5()
+                            .items_baseline()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(q_color)
+                                    .child(resolved.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(format!("({q})")),
+                            ),
                     )
                     .child(
                         div()
@@ -634,8 +656,11 @@ impl super::Chamber {
                 }
             }
             // An empty quota list means the provider has no quota concept — not that the
-            // quota is spent. Say nothing rather than render a zero.
-            for bucket in &s.quota {
+            // quota is spent. Say nothing rather than render a zero. Read live (unwindowed,
+            // like `latest_context`) rather than off the windowed fold `s.quota`, so it
+            // does not go missing on windows whose cutoff excludes the last quota report
+            // (Current's "since the last human message" truncation, in particular).
+            for bucket in self.latest_quota(q) {
                 block = block.child(div().text_xs().text_color(theme::text_muted()).child(
                     format!(
                         "Quota [{}]: {:.0}% left",
@@ -665,6 +690,21 @@ fn latest_context<'a>(
         .rev()
         .filter(|m| m.from == qid)
         .find_map(|m| m.usage.as_ref()?.context.as_ref())
+}
+
+/// The most recent quota buckets `qid` published: the last message from `qid` that
+/// actually carries `usage.quota`, mirroring [`latest_context`]'s "skip the trailing
+/// status-less rows" search. Empty when the quark never reported quota this field.
+fn latest_quota(messages: &[super::super::MessageRow], qid: &str) -> Vec<hadron_lattice::QuotaBucket> {
+    messages
+        .iter()
+        .rev()
+        .filter(|m| m.from == qid)
+        .find_map(|m| {
+            let quota = &m.usage.as_ref()?.quota;
+            (!quota.is_empty()).then(|| quota.clone())
+        })
+        .unwrap_or_default()
 }
 
 /// Every context-occupancy reading `qid` published this field, oldest first — the series
