@@ -40,7 +40,10 @@ pub struct ChamberPrefs {
     #[serde(default = "default_false")]
     pub inspector_collapsed: bool,
     /// Kill the auto-spawned `hadron-gluon` daemon when the chamber window closes.
-    /// Default `true` — kill daemon when chamber window closes.
+    /// Default `true` — the chamber spawns the daemon for you, so closing the window
+    /// is the natural end of the swarm; a daemon left running after its only viewer
+    /// is gone keeps burning tokens with nobody reading them. Turn it off in Settings
+    /// to keep a headless swarm alive across chamber restarts.
     #[serde(default = "default_true")]
     pub close_gluon_on_exit: bool,
     #[serde(default = "default_roster_width")]
@@ -214,6 +217,8 @@ mod tests {
         let json = serde_json::to_string(&prefs).unwrap();
         assert!(json.contains("\"close_gluon_on_exit\":true"));
 
+        // The opposite value must still survive a round trip — the default is a
+        // starting point, not a forced value.
         let custom = ChamberPrefs {
             close_gluon_on_exit: false,
             ..Default::default()
@@ -221,6 +226,23 @@ mod tests {
         let json_custom = serde_json::to_string(&custom).unwrap();
         let back: ChamberPrefs = serde_json::from_str(&json_custom).unwrap();
         assert!(!back.close_gluon_on_exit);
+    }
+
+    /// A config written before the key existed gets the NEW default, but a config
+    /// that says `false` on purpose keeps saying `false`. Changing a default must
+    /// never overwrite a deliberate choice (unlike `roster_width`, which migrates
+    /// a *stale default* — not a user's own value).
+    #[test]
+    fn an_explicit_close_gluon_on_exit_false_survives_the_default_flip() {
+        let dir = tempdir().unwrap();
+
+        let absent = dir.path().join("absent.json");
+        std::fs::write(&absent, r#"{"roster_collapsed":false}"#).unwrap();
+        assert!(load_from(&absent).close_gluon_on_exit, "absent key → new default");
+
+        let explicit = dir.path().join("explicit.json");
+        std::fs::write(&explicit, r#"{"close_gluon_on_exit":false}"#).unwrap();
+        assert!(!load_from(&explicit).close_gluon_on_exit, "an explicit false is kept");
     }
 
     #[test]
