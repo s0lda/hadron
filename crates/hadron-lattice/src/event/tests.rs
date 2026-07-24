@@ -47,6 +47,22 @@ mod event_tests {
         // envelope keys present, kind flattened
         assert!(line.contains(r#""kind":"message""#));
         assert!(line.contains(r##""body":"# Build auth""##));
+        assert_eq!(ev.severity, None);
+    }
+
+    #[test]
+    fn severity_round_trips() {
+        for sev in [Severity::Info, Severity::Warning, Severity::Error] {
+            let ev = Event::new(
+                Actor::Gluon,
+                None,
+                Kind::Message { body: "alert".into() },
+            ).with_severity(sev);
+            let line = serde_json::to_string(&ev).unwrap();
+            assert!(line.contains(&format!(r#""severity":{:?}"#, serde_json::to_string(&sev).unwrap().trim_matches('"'))));
+            let back: Event = serde_json::from_str(&line).unwrap();
+            assert_eq!(back.severity, Some(sev));
+        }
     }
 
     #[test]
