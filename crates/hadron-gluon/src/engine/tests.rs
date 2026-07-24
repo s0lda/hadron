@@ -3083,6 +3083,62 @@ async fn a_worker_reporting_to_the_orchestrator_lands_its_branch() {
     );
 }
 
+/// **Branch cleanup rides every job, not just daemon startup.** Before this fix,
+/// `prune_merged_branches` only ran once at `bin/hadron-gluon.rs` startup, so a
+/// long-running daemon accumulated one `quark/*` branch per turn — the disk
+/// complaint that triggered this task. Simulate a branch from an EARLIER turn that
+/// is already merged into `base` but was never swept (exactly what startup-only
+/// pruning leaves behind), then land a fresh turn and prove the stale branch is
+/// gone afterward — with no daemon restart in between.
+#[tokio::test]
+async fn a_successful_land_sweeps_other_already_merged_quark_branches() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+
+    // A stale branch from a PRIOR turn: merged into main, never deleted (the gap
+    // startup-only pruning leaves between restarts).
+    crate::snapshot::git(&root, &["checkout", "-q", "-b", "quark/old/01OLD"]).unwrap();
+    std::fs::write(root.join("old.txt"), "old work\n").unwrap();
+    crate::snapshot::git(&root, &["add", "-A"]).unwrap();
+    crate::snapshot::git(&root, &["commit", "-q", "-m", "old: work"]).unwrap();
+    crate::snapshot::git(&root, &["checkout", "-q", "main"]).unwrap();
+    crate::snapshot::git(&root, &["merge", "-q", "--ff-only", "quark/old/01OLD"]).unwrap();
+    assert!(
+        crate::snapshot::git(&root, &["branch", "--list", "quark/old/01OLD"])
+            .unwrap()
+            .contains("quark/old/01OLD"),
+        "the stale branch must exist before the fix kicks in, to prove it gets swept"
+    );
+
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w write w.txt".into() }),
+    )
+    .unwrap();
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(ReportingWriter { id: QuarkId::new("w"), file: "w.txt", reply: "done" })],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(GreenLandingRunner));
+
+    engine.run_until_quiesce().await.unwrap();
+
+    // The new turn landed...
+    assert!(root.join("w.txt").exists(), "the new turn's work did not land");
+    // ...and landing it swept the OTHER quark's already-merged, long-stale branch.
+    let remaining = crate::snapshot::git(&root, &["branch", "--list", "quark/old/*"]).unwrap();
+    assert!(
+        remaining.trim().is_empty(),
+        "a successful land must prune other merged quark branches too, still found: {remaining}"
+    );
+}
+
 /// The other half of the truth, and the reason the daemon attributes nothing today:
 /// **without `with_git`, `TurnTree` is never constructed** (l. 1186), so the whole
 /// `if let Some(t) = tree` block — `head_before`, `commit_turn`, `Kind::Edit` — is

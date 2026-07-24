@@ -153,6 +153,19 @@ impl super::Engine {
                     Kind::Message { body },
                 ))
                 .await?;
+
+                // Ride cleanup on every successful land, not just daemon startup — a
+                // long-running daemon otherwise accumulates one `quark/*` branch per
+                // turn between restarts. Non-fatal, same as the startup sweep in
+                // `bin/hadron-gluon.rs`: a land that succeeded must not be undone by a
+                // prune failure. The branch just landed is still checked out in `t.wt`
+                // (a new assignment only moves it off at the next `ensure`), so `-d`
+                // will safely refuse to delete it and this pass sweeps everyone ELSE's
+                // already-landed, now-idle branches instead.
+                if let Err(e) = crate::worktree::prune_merged_branches(root, &t.base) {
+                    eprintln!("hadron-gluon: branch prune after land failed (non-fatal): {e:#}");
+                }
+
                 Ok(false) // landed → the quark grounds normally
             }
             MergeVerdict::Block(BlockReason::NotApproved) => {
