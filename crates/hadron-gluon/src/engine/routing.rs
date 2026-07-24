@@ -330,6 +330,18 @@ impl super::Engine {
         let task_desc = driver.map(|d| d.task.clone()).unwrap_or_default();
         let requested_invariants = driver.map(|d| d.invariants.clone()).unwrap_or_default();
 
+        // Whether the task names THIS quark specifically (by `@id`, display name, or
+        // role) rather than reaching it only via a `@team` broadcast — deliberately
+        // reusing `task_names_card_specifically`, the exact predicate the exclusive-seat
+        // filter already relies on to exclude `@team`, rather than writing a second
+        // matcher that could drift from it.
+        let personas = self.loaded_personas();
+        let named_specifically = self
+            .roster
+            .iter()
+            .find(|c| &c.id == target)
+            .is_some_and(|card| crate::router::task_names_card_specifically(&task_desc, card, &personas));
+
         // Resolved against the daemon's cwd: a *relative* field path (`.hadron/field.jsonl`,
         // exactly how the daemon is launched) used to bottom out on the empty ancestor —
         // `"".join(".hadron")` exists, so the search "succeeded" with a root of "". That
@@ -468,6 +480,7 @@ impl super::Engine {
             cwd: cwd.unwrap_or(workspace_root),
             mode: turn_mode,
             role_body,
+            named_specifically,
         }
     }
 }

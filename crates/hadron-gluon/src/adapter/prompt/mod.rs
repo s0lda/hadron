@@ -146,6 +146,26 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     p.push_str(projection.task.trim());
     p.push_str("\n\n");
 
+    // 3a. Broadcast scope. `@team` fans out to the whole roster (Jake's ruling:
+    // "ask all to think about something, then you drop your thoughts to
+    // orchestrator" — non-negotiable, the fan-out itself does not change). But a
+    // worker reached ONLY that way used to get the identical "go implement this"
+    // prompt as one directly assigned, so a `@team` brainstorm read as a work
+    // order and every worker independently implemented the same thing (observed
+    // live: three quarks landed competing diagnoses of one broadcast). The
+    // orchestrator is exempt — an unaddressed message already defaults to it
+    // (`routing.rs::human_addressees`), so it is never "broadcast-only".
+    if is_worker(projection, self_id) && !projection.named_specifically {
+        p.push_str(
+            "# This is a broadcast, not an assignment\n\
+             You were reached via `@team` or an unaddressed message, not named specifically by \
+             `@id`, display name, or role. **Think about this task and report your analysis to \
+             `@orchestrator` — do not implement it.** Do not edit files, run state-changing \
+             commands, commit, or open a branch this turn. If the orchestrator delegates this \
+             work to you specifically afterward, treat that as a new, separate assignment.\n\n",
+        );
+    }
+
     // 3b. Authority this turn — what the current mode actually permits, so the
     // model narrates honestly instead of confabulating actions it cannot take.
     p.push_str("# Your authority this turn\n");
@@ -325,7 +345,10 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
              worker quarks over your own sub-agents.** When a plan has independent tasks and more \
              than one worker is free, fan them out — put each task on its own line addressed to a \
              different available quark (`@<quark-id> <task>`) so they run as parallel turns across \
-             the swarm. Your own sub-agents run serially inside this single turn and die with it, \
+             the swarm. **Emit those delegation lines FIRST, before you start your own \
+             implementation work** — a delegation written after you've already spent the turn on \
+             your own slice runs the workers only after you're done, serially, not in parallel with \
+             you. Your own sub-agents run serially inside this single turn and die with it, \
              so reserve them for local sub-steps or for work only you can do. Doing a whole \
              multi-task plan yourself while other quarks sit idle wastes the swarm.\n\n\
              **But do not bounce trivial work.** If a task is one or two steps — a small edit, \

@@ -3714,6 +3714,60 @@ async fn non_exclusive_role_seat_always_eligible() {
     );
 }
 
+// ---- broadcast scope (Projection.named_specifically) -----------------------
+
+/// A worker directly named — by `@id` or display name — is `named_specifically`,
+/// regardless of whether anyone else was also addressed. Reuses
+/// `router::task_names_card_specifically` (the exact predicate the exclusive-seat
+/// filter already relies on), not a second matcher.
+#[tokio::test]
+async fn projection_marks_a_specifically_named_worker() {
+    let dir = tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+    let engine = Engine::new(
+        field.clone(),
+        vec![Box::new(roled_quark_named("sonnet", "Sonnet", &[], false, "reply"))],
+        12,
+    );
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@Sonnet please do X".into() }),
+    )
+    .unwrap();
+    let events = read_events(&field).unwrap();
+    let driver = engine.driver_for(&events, &QuarkId::new("sonnet"), None);
+    let proj = engine.projection_for(&events, &QuarkId::new("sonnet"), driver.as_ref(), String::new(), None);
+    assert!(proj.named_specifically, "a direct @Sonnet mention must be named specifically");
+}
+
+/// The gap this closes: `@team` expands to the whole roster (Jake's ruling — the
+/// fan-out itself is non-negotiable), so a worker reached ONLY that way used to
+/// get the identical "go implement this" prompt as one directly assigned, and a
+/// `@team` brainstorm read as a work order. `named_specifically` is what the
+/// prompt now keys the think-vs-do directive on.
+#[tokio::test]
+async fn projection_does_not_mark_a_team_broadcast_as_specifically_named() {
+    let dir = tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+    let engine = Engine::new(
+        field.clone(),
+        vec![Box::new(roled_quark_named("sonnet", "Sonnet", &[], false, "reply"))],
+        12,
+    );
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@team let's brainstorm this".into() }),
+    )
+    .unwrap();
+    let events = read_events(&field).unwrap();
+    let driver = engine.driver_for(&events, &QuarkId::new("sonnet"), None);
+    let proj = engine.projection_for(&events, &QuarkId::new("sonnet"), driver.as_ref(), String::new(), None);
+    assert!(
+        !proj.named_specifically,
+        "a @team broadcast must not read as specifically naming this worker"
+    );
+}
+
 /// **The deny_skills property.** A card carrying `deny_skills: vec!["writing-plans".into()]`
 /// must never receive a task whose starting skill is `writing-plans`.
 #[tokio::test]

@@ -85,6 +85,16 @@ pub struct Projection {
     /// Matched role body if this turn matched a role (spec §3.3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role_body: Option<String>,
+    /// Whether the driving task names THIS quark specifically — by `@id`,
+    /// display name, or role (`router::task_names_card_specifically`, which
+    /// deliberately does not count a `@team` broadcast). A worker reached only
+    /// by broadcast was handed the identical "go implement this" prompt as one
+    /// explicitly assigned, so a `@team` brainstorm read as a work order and
+    /// every worker independently implemented the same thing. `false` means
+    /// "reached by broadcast" — the prompt turns that into a think-and-report
+    /// directive instead of a work directive.
+    #[serde(default)]
+    pub named_specifically: bool,
 }
 
 /// What an adapter returns after a turn. File mutations are NOT reported here —
@@ -160,6 +170,7 @@ mod tests {
             cwd: std::path::PathBuf::from("/tmp/wt"),
             mode: Mode::Bypass,
             role_body: None,
+            named_specifically: true,
         };
         assert_eq!(proj.cwd, std::path::Path::new("/tmp/wt"));
         assert_eq!(proj.roster.len(), 1);
@@ -177,6 +188,19 @@ mod tests {
         }"#;
         let proj: Projection = serde_json::from_str(json).unwrap();
         assert_eq!(proj.mode, Mode::Ask);
+    }
+
+    #[test]
+    fn named_specifically_defaults_to_false_when_absent() {
+        // A pre-broadcast-scope field snapshot (no `named_specifically` key)
+        // must default to "not named" — the safe reading is "reached by
+        // broadcast", never an accidental "go implement this."
+        let json = r#"{
+            "task":"x","invariants":"","available_invariants":[],
+            "nucleus_digest":"","roster":[],"field_window":[],"git_diff":""
+        }"#;
+        let proj: Projection = serde_json::from_str(json).unwrap();
+        assert!(!proj.named_specifically);
     }
 
     #[test]

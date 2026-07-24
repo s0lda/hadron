@@ -35,6 +35,7 @@ fn projection(task: &str) -> Projection {
         cwd: std::path::PathBuf::from("/repo/.hadron/trees/agy"),
         mode: hadron_lattice::Mode::default(),
         role_body: None,
+        named_specifically: true,
     }
 }
 
@@ -262,6 +263,96 @@ fn only_the_orchestrator_is_told_to_stay_available() {
 
     let worker_prompt = build(&proj, &QuarkId::new("agy"));
     assert!(!worker_prompt.contains("You are the **orchestrator**"));
+}
+
+/// **The "deploy first" property.** On a multi-task request the orchestrator's
+/// own guidance must tell it to emit `@worker <task>` delegation lines BEFORE
+/// starting its own implementation, so workers run in parallel instead of
+/// picking up sub-tasks only after the orchestrator has already spent the turn
+/// on its own slice.
+#[test]
+fn orchestrator_is_told_to_delegate_before_implementing() {
+    let mut proj = projection("x");
+    proj.roster.push(QuarkCard {
+        id: QuarkId::new("opus"),
+        display_name: None,
+        flavor: Flavor::Orchestrator,
+        energy: EnergyState::Available,
+        provider: String::new(),
+        model: String::new(),
+        roles: vec![],
+        exclusive: false,
+        commands: Default::default(),
+        energy_limit: None,
+        deny_skills: vec![],
+    });
+
+    let prompt = build(&proj, &QuarkId::new("opus"));
+    assert!(
+        prompt.contains("before you start your own implementation work"),
+        "the orchestrator must be told to fan out delegations first:\n{prompt}"
+    );
+}
+
+/// **Broadcast means think, not do.** A worker reached only via `@team` (or any
+/// unaddressed message) — `named_specifically == false` — must be told to
+/// analyse and report to the orchestrator, not to implement, edit files, or
+/// commit. This is what stopped every worker independently implementing the
+/// same `@team` brainstorm ask.
+#[test]
+fn a_broadcast_reached_worker_is_told_to_think_not_do() {
+    let mut proj = projection("x");
+    proj.named_specifically = false;
+    proj.roster.push(QuarkCard {
+        id: QuarkId::new("opus"),
+        display_name: None,
+        flavor: Flavor::Orchestrator,
+        energy: EnergyState::Available,
+        provider: String::new(),
+        model: String::new(),
+        roles: vec![],
+        exclusive: false,
+        commands: Default::default(),
+        energy_limit: None,
+        deny_skills: vec![],
+    });
+
+    let worker_prompt = build(&proj, &QuarkId::new("agy"));
+    assert!(
+        worker_prompt.contains("do not implement it"),
+        "a broadcast-reached worker must be told to think, not do:\n{worker_prompt}"
+    );
+    assert!(worker_prompt.contains("Do not edit files"));
+    assert!(worker_prompt.contains("commit, or open a branch"));
+
+    // The orchestrator is never "broadcast-only" — an unaddressed message
+    // defaults to it — so it must never get this clause regardless of the flag.
+    let orch_prompt = build(&proj, &QuarkId::new("opus"));
+    assert!(!orch_prompt.contains("do not implement it"));
+}
+
+/// A worker specifically named — by `@id`, display name, or role — gets the
+/// ordinary work directive; the broadcast-only clause is absent.
+#[test]
+fn a_specifically_named_worker_gets_no_broadcast_clause() {
+    let mut proj = projection("x");
+    proj.named_specifically = true;
+    proj.roster.push(QuarkCard {
+        id: QuarkId::new("opus"),
+        display_name: None,
+        flavor: Flavor::Orchestrator,
+        energy: EnergyState::Available,
+        provider: String::new(),
+        model: String::new(),
+        roles: vec![],
+        exclusive: false,
+        commands: Default::default(),
+        energy_limit: None,
+        deny_skills: vec![],
+    });
+
+    let worker_prompt = build(&proj, &QuarkId::new("agy"));
+    assert!(!worker_prompt.contains("do not implement it"));
 }
 
 #[test]
