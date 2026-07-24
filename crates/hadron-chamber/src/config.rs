@@ -40,8 +40,11 @@ pub struct ChamberPrefs {
     #[serde(default = "default_false")]
     pub inspector_collapsed: bool,
     /// Kill the auto-spawned `hadron-gluon` daemon when the chamber window closes.
-    /// Default `false` — the daemon is headless and normally outlives the viewer.
-    #[serde(default = "default_false")]
+    /// Default `true` — the chamber spawns the daemon for you, so closing the window
+    /// is the natural end of the swarm; a daemon left running after its only viewer
+    /// is gone keeps burning tokens with nobody reading them. Turn it off in Settings
+    /// to keep a headless swarm alive across chamber restarts.
+    #[serde(default = "default_true")]
     pub close_gluon_on_exit: bool,
     #[serde(default = "default_roster_width")]
     pub roster_width: f32,
@@ -59,6 +62,9 @@ pub struct ChamberPrefs {
 
 fn default_false() -> bool {
     false
+}
+fn default_true() -> bool {
+    true
 }
 fn default_roster_width() -> f32 {
     // Wide enough for effort + mode tags beside the name/model column, trimmed
@@ -87,7 +93,7 @@ impl Default for ChamberPrefs {
         ChamberPrefs {
             roster_collapsed: default_false(),
             inspector_collapsed: default_false(),
-            close_gluon_on_exit: default_false(),
+            close_gluon_on_exit: default_true(),
             roster_width: default_roster_width(),
             inspector_width: default_inspector_width(),
             window_bounds: None,
@@ -204,20 +210,39 @@ mod tests {
     }
 
     #[test]
-    fn close_gluon_on_exit_defaults_to_false_and_round_trips() {
+    fn close_gluon_on_exit_defaults_to_true_and_round_trips() {
         let prefs = ChamberPrefs::default();
-        assert!(!prefs.close_gluon_on_exit, "default must be false");
+        assert!(prefs.close_gluon_on_exit, "default must be true");
 
         let json = serde_json::to_string(&prefs).unwrap();
-        assert!(json.contains("\"close_gluon_on_exit\":false"));
+        assert!(json.contains("\"close_gluon_on_exit\":true"));
 
+        // The opposite value must still survive a round trip — the default is a
+        // starting point, not a forced value.
         let custom = ChamberPrefs {
-            close_gluon_on_exit: true,
+            close_gluon_on_exit: false,
             ..Default::default()
         };
         let json_custom = serde_json::to_string(&custom).unwrap();
         let back: ChamberPrefs = serde_json::from_str(&json_custom).unwrap();
-        assert!(back.close_gluon_on_exit);
+        assert!(!back.close_gluon_on_exit);
+    }
+
+    /// A config written before the key existed gets the NEW default, but a config
+    /// that says `false` on purpose keeps saying `false`. Changing a default must
+    /// never overwrite a deliberate choice (unlike `roster_width`, which migrates
+    /// a *stale default* — not a user's own value).
+    #[test]
+    fn an_explicit_close_gluon_on_exit_false_survives_the_default_flip() {
+        let dir = tempdir().unwrap();
+
+        let absent = dir.path().join("absent.json");
+        std::fs::write(&absent, r#"{"roster_collapsed":false}"#).unwrap();
+        assert!(load_from(&absent).close_gluon_on_exit, "absent key → new default");
+
+        let explicit = dir.path().join("explicit.json");
+        std::fs::write(&explicit, r#"{"close_gluon_on_exit":false}"#).unwrap();
+        assert!(!load_from(&explicit).close_gluon_on_exit, "an explicit false is kept");
     }
 
     #[test]

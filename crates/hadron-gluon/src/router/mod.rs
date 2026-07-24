@@ -4,21 +4,40 @@ use crate::personas::Persona;
 
 /// Which quark should be excited next.
 ///
-/// v1 rule (stateless, reconstructed from the field): find the most recent event
-/// that addresses a quark (`to = Some(q)`). If `q` has authored any event since
-/// that represents a reply (a message) or a terminal/pause status (ground, error, blocked, waiting),
-/// that turn is already handled → quiesce (`None`). Otherwise `q` is pending.
+/// v1 rule (stateless, reconstructed from the field): walk the field newest-first for
+/// events that address a quark (`to = Some(q)`) and request a turn, and return the
+/// first one the addressee has **not** answered — answered meaning `q` authored a reply
+/// or a terminal/pause status after it ([`is_turn_completion`]). Nothing unanswered →
+/// quiesce (`None`).
+///
+/// **The walk is the whole point.** This used to stop at the single newest addressed
+/// request and return `None` if it was answered, which let one answered request MASK an
+/// older unanswered one behind it. Live: a worker reports up to the orchestrator
+/// (`Message → orch`), then the merge gate appends its own audit `PermissionReq` +
+/// `PermissionGrant{→worker}` — an addressed turn-request — and the worker's `Ground`
+/// answers that grant a moment later. The orchestrator's message was then never even
+/// examined, so it was never excited and the human's chat sat silent until they typed
+/// again (the retype works because it goes through `unaddressed_message_targets`, a
+/// different path). See `an_answered_merge_grant_does_not_mask_an_older_unanswered_handoff`,
+/// replayed from a real `field.jsonl`.
+///
+/// Walking back is safe because every path that addresses a quark also guarantees it a
+/// terminal status: a disabled/exclusive/depleted seat gets `reroute_blocked`
+/// (`Status{Blocked}`), a failed turn gets `Status{Error}`, and a merge gate whose
+/// `land()` errors reroutes to `Blocked` rather than propagating (`engine/merge.rs`) —
+/// which is what stops an unanswerable grant from being rediscovered forever.
+///
+/// Only the newest unanswered request is returned. Two quarks masked at once therefore
+/// resolve one per dispatch pass, which the engine's re-read loop already does.
 pub fn next_pending(events: &[Event]) -> Option<QuarkId> {
-    let idx = events
+    events
         .iter()
-        .rposition(|e| e.to.is_some() && is_turn_request(e))?;
-    let target = events[idx].to.clone().unwrap();
-    let answered = events[idx + 1..].iter().any(|e| is_turn_completion(e, &target));
-    if answered {
-        None
-    } else {
-        Some(target)
-    }
+        .enumerate()
+        .rev()
+        .filter(|(_, e)| e.to.is_some() && is_turn_request(e))
+        .map(|(idx, e)| (idx, e.to.clone().unwrap()))
+        .find(|(idx, target)| !events[idx + 1..].iter().any(|e| is_turn_completion(e, target)))
+        .map(|(_, target)| target)
 }
 
 /// Does event `e` **request or resume** a turn from the quark it addresses (`to =
