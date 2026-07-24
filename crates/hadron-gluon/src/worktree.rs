@@ -47,9 +47,10 @@ pub struct Reclaimed {
 }
 
 /// `.hadron/trees` — inside the repo, but gitignored, so a worktree checked out
+/// `.hadron/trees` — inside the repo, but gitignored, so a worktree checked out
 /// here contains no `.hadron/` of its own (the dir is in no commit) and cannot
 /// recurse.
-fn trees_dir(repo_root: &Path) -> PathBuf {
+pub fn trees_dir(repo_root: &Path) -> PathBuf {
     repo_root.join(".hadron").join("trees")
 }
 
@@ -84,13 +85,23 @@ pub fn branch_name(quark: &QuarkId, assignment: &str) -> String {
     format!("quark/{}/{}", quark.as_str(), assignment)
 }
 
+/// Parse assignment ULID from a branch name (`quark/<id>/<ulid>`).
+pub fn parse_assignment_from_branch(branch: &str) -> Option<ulid::Ulid> {
+    let parts: Vec<&str> = branch.split('/').collect();
+    if parts.len() >= 3 {
+        ulid::Ulid::from_string(parts[parts.len() - 1]).ok()
+    } else {
+        None
+    }
+}
+
 /// Uncommitted changes (tracked or not) in a worktree.
 pub fn is_dirty(path: &Path) -> anyhow::Result<bool> {
     Ok(!git(path, &["status", "--porcelain"])?.trim().is_empty())
 }
 
 /// The branch HEAD points at, or `None` when HEAD is detached.
-fn current_branch(path: &Path) -> Option<String> {
+pub fn current_branch(path: &Path) -> Option<String> {
     git_ok(path, &["symbolic-ref", "--short", "HEAD"])
         .ok()
         .flatten()

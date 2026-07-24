@@ -191,6 +191,37 @@ impl super::Engine {
                             continue;
                         };
 
+                        // Gate a superseded assignment branch: if this quark's worktree is sitting
+                        // on a branch from a PREVIOUS assignment that has unlanded commits, gate and
+                        // land that previous branch before cutting the new assignment branch.
+                        let wt_dir = crate::worktree::trees_dir(&root).join(target.as_str());
+                        if wt_dir.exists() {
+                            if let Some(old_branch) = crate::worktree::current_branch(&wt_dir) {
+                                let new_branch = crate::worktree::branch_name(&target, &driver.assignment.to_string());
+                                if old_branch != new_branch {
+                                    let base = crate::worktree::default_branch(&root);
+                                    let old_wt = crate::worktree::Worktree {
+                                        quark: target.clone(),
+                                        path: wt_dir.clone(),
+                                        branch: old_branch.clone(),
+                                    };
+                                    if crate::worktree::commits_ahead(&old_wt, &base).unwrap_or(0) > 0 {
+                                        let old_assignment = crate::worktree::parse_assignment_from_branch(&old_branch)
+                                            .unwrap_or(driver.assignment);
+                                        let old_turn_tree = TurnTree {
+                                            head_before: crate::worktree::head(&wt_dir),
+                                            wt: old_wt,
+                                            base,
+                                            assignment: old_assignment,
+                                        };
+                                        if self.merge.is_some() && self.merge_gate(&target, &old_turn_tree).await? {
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         let wt = match crate::worktree::ensure(
                             &root,
                             &target,
