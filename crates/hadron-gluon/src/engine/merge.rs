@@ -147,11 +147,10 @@ impl super::Engine {
                     }
                 };
                 let body = landed.describe(&t.wt.branch, &t.base);
-                self.append(Event::new(
-                    Actor::Gluon,
-                    None,
-                    Kind::Message { body },
-                ))
+                self.append(
+                    Event::new(Actor::Gluon, None, Kind::Message { body })
+                        .with_severity(hadron_lattice::Severity::Info),
+                )
                 .await?;
 
                 // Ride cleanup on every successful land, not just daemon startup — a
