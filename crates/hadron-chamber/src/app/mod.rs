@@ -475,14 +475,39 @@ impl Chamber {
             cx.background_executor()
                 .timer(Duration::from_millis(400))
                 .await;
+
+            let state = match this.update(cx, |chamber, _| {
+                (
+                    chamber.path.clone(),
+                    chamber.file_tree_expanded.clone(),
+                    chamber.right_rail_tab,
+                )
+            }) {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+
+            let scan = cx
+                .background_executor()
+                .spawn(async move {
+                    let root = crate::vcs::repo_root_of(&state.0);
+                    reload::WorkspaceScan::gather(
+                        root,
+                        &state.1,
+                        state.2 == RightRailTab::Changes,
+                    )
+                })
+                .await;
+
             if this
-                .update(cx, |chamber, cx| chamber.reload_if_changed(cx))
+                .update(cx, |chamber, cx| chamber.reload_if_changed(scan, cx))
                 .is_err()
             {
                 break;
             }
         })
         .detach();
+
 
         // Terminal pump: while the Terminal tab holds a live PTY, size it to the
         // measured screen and repaint when new output arrives. Capped at ~10fps: a
