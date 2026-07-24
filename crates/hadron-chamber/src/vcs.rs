@@ -287,6 +287,13 @@ pub fn list_worktrees(repo_root: &Path) -> Vec<WorktreeInfo> {
 /// verbatim in a monospace font rather than parsed, since git already draws the
 /// graph characters and decorations (branch/tag labels) correctly.
 /// A short ASCII commit graph — rendered verbatim or parsed for UI representation.
+///
+/// How many commits the Graph tab walks. The limit is applied by `git log` *before*
+/// the chamber hides swarm-snapshot commits, and on this repo ~60% of commits are
+/// `hadron`-authored `before <seat>` snapshots — so the visible list is roughly a
+/// third of this number.
+pub const GRAPH_COMMIT_LIMIT: usize = 200;
+
 pub fn commit_graph(repo_root: &Path, limit: usize) -> Option<String> {
     let out = Command::new("git")
         .current_dir(repo_root)
