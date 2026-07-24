@@ -526,8 +526,13 @@ impl Chamber {
 
         // The commit graph reads newest-first, so it anchors at the top — unlike the
         // chat/log lists, which follow the newest message at the bottom.
-        let git_graph_list =
-            gpui::ListState::new(0, gpui::ListAlignment::Top, px(400.));
+        // `measure_all` so the scrollbar thumb is honest: `ListState`'s content height
+        // is the sum over *measured* items, and unmeasured ones count as zero — with
+        // 2000+ rows and ~40 on screen the thumb would claim the list barely scrolls.
+        // It measures once per `reset` (i.e. per `rebuild_graph_rows`), not per splice
+        // or per frame, so the cost lands on Git-tab entry and nowhere else.
+        let git_graph_list = gpui::ListState::new(0, gpui::ListAlignment::Top, px(400.))
+            .measure_all();
 
         // Open showing the newest message: honoured on the first paint, once the
         // content is laid out.
