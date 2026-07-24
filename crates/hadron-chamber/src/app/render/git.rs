@@ -471,6 +471,7 @@ impl super::Chamber {
                         true
                     })
                     .collect();
+                let rows = Self::collapse_connectors(rows);
 
                 let max_lanes = rows
                     .iter()
@@ -510,10 +511,11 @@ impl super::Chamber {
                         );
 
                         // Cap displayed ref pills to max 2 + overflow count chip
-                        let (display_decos, overflow_count) = if row.decorations.len() > 2 {
-                            (&row.decorations[..2], row.decorations.len() - 2)
+                        let refs = Self::distinct_refs(&row.decorations);
+                        let (display_decos, overflow_count) = if refs.len() > 2 {
+                            (&refs[..2], refs.len() - 2)
                         } else {
-                            (&row.decorations[..], 0)
+                            (&refs[..], 0)
                         };
                         for dec in display_decos {
                             line = line.child(Self::ref_pill(dec));
@@ -599,9 +601,10 @@ impl super::Chamber {
             .w(px(gutter_w))
             .h(px(row_h))
             .flex_none()
-            .child(gpui::canvas(
-                move |bounds, _, _| bounds,
-                move |bounds, _, window, _cx| {
+            .child(
+                gpui::canvas(
+                    move |bounds, _, _| bounds,
+                    move |bounds, _, window, _cx| {
                     let h = bounds.size.height;
                     for lane in &lanes {
                         let x1 = bounds.origin.x + px((lane.from_col as f32) * LANE_W + LANE_W / 2.0);
@@ -651,8 +654,61 @@ impl super::Chamber {
                         };
                         window.paint_quad(gpui::fill(dot_bounds, node_color).corner_radii(dot_r));
                     }
-                },
-            ))
+                    },
+                )
+                // A `canvas` styles itself: its default size is `auto`, which resolves to
+                // ZERO height inside this fixed-height parent (measured: `32px × 0px`).
+                // Every vertical lane quad then had height 0 and vanished, every diagonal
+                // flattened to a horizontal dash, and each node dot centred on the row's
+                // top edge and got clipped to a semicircle — the "graph is still dashes"
+                // Jake kept reporting. The canvas must carry the row's size itself.
+                .w(px(gutter_w))
+                .h(px(row_h)),
+            )
+    }
+
+    /// Collapse each run of consecutive connector rows into a single strip carrying the
+    /// union of the run's lane segments. Hiding the swarm-snapshot commits leaves their
+    /// connector rows behind, so a merge drew the same `|/` hook once per orphaned row —
+    /// a ladder of repeated curves separated by blank strips. One strip per run draws one
+    /// curve per merge. Approximate by construction: a lane that travels several columns
+    /// across several rows is flattened into one row's worth of segments.
+    fn collapse_connectors(rows: Vec<crate::vcs::GraphRow>) -> Vec<crate::vcs::GraphRow> {
+        let mut out: Vec<crate::vcs::GraphRow> = Vec::with_capacity(rows.len());
+        let mut pending: Option<crate::vcs::GraphRow> = None;
+        for row in rows {
+            if row.hash.is_none() {
+                match &mut pending {
+                    Some(acc) => {
+                        for seg in row.lanes {
+                            if !acc.lanes.contains(&seg) {
+                                acc.lanes.push(seg);
+                            }
+                        }
+                    }
+                    None => pending = Some(row),
+                }
+            } else {
+                out.extend(pending.take());
+                out.push(row);
+            }
+        }
+        out.extend(pending);
+        out
+    }
+
+    /// The ref pills to render for one commit, deduplicated by the *elided* label.
+    /// Eliding `quark/<seat>/<ulid>` down to `<seat>` makes two different branches of
+    /// the same seat render as the same chip, so a commit carrying two `acp-claude-2`
+    /// branches showed `acp-claude-2  acp-claude-2`. Keep the first of each label (git
+    /// lists HEAD and local branches first) so the `+N` chip counts only what is hidden.
+    fn distinct_refs(decos: &[crate::vcs::RefDecoration]) -> Vec<crate::vcs::RefDecoration> {
+        let mut seen = std::collections::HashSet::new();
+        decos
+            .iter()
+            .filter(|d| seen.insert(Self::elide_ref_name(&d.name)))
+            .cloned()
+            .collect()
     }
 
     /// Elide long branch names like `quark/cli-agy/01KY8CNJT01HHWB...` -> `cli-agy`.
@@ -801,5 +857,80 @@ impl super::Chamber {
             list = list.child(row.border_b_1().border_color(theme::border()));
         }
         list.into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Chamber;
+    use crate::vcs::{RefDecoration, RefKind};
+
+    fn deco(name: &str, kind: RefKind) -> RefDecoration {
+        RefDecoration { name: name.into(), kind }
+    }
+
+    /// Two branches of the same seat elide to the same label; the pill row must not
+    /// render that label twice (`acp-claude-2  acp-claude-2` in the Graph tab).
+    #[test]
+    fn distinct_refs_collapses_same_seat_branches() {
+        let decos = vec![
+            deco("quark/acp-claude-2/01KY8GB52K8CY8YGE8N2TYPNBD", RefKind::LocalBranch),
+            deco("quark/acp-claude-2/01KY8GPXR6JG18VZCQWRNPTN62", RefKind::LocalBranch),
+        ];
+        let out = Chamber::distinct_refs(&decos);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].name, "quark/acp-claude-2/01KY8GB52K8CY8YGE8N2TYPNBD");
+    }
+
+    /// Distinct refs survive: HEAD, another seat, and a tag are three different pills.
+    #[test]
+    fn distinct_refs_keeps_different_labels() {
+        let decos = vec![
+            deco("main", RefKind::Head),
+            deco("quark/cli-agy/01KY8CCE0YZV5X8NXMYNNNJMHF", RefKind::LocalBranch),
+            deco("v1.0.0", RefKind::Tag),
+        ];
+        assert_eq!(Chamber::distinct_refs(&decos).len(), 3);
+    }
+
+    fn connector(lanes: Vec<crate::vcs::LaneSeg>) -> crate::vcs::GraphRow {
+        crate::vcs::GraphRow { lanes, ..Default::default() }
+    }
+
+    fn commit(hash: &str) -> crate::vcs::GraphRow {
+        crate::vcs::GraphRow { hash: Some(hash.into()), ..Default::default() }
+    }
+
+    /// A run of orphaned connector rows (left behind when snapshot commits are hidden)
+    /// collapses to one strip, so a merge draws one curve instead of a ladder of them.
+    #[test]
+    fn collapse_connectors_folds_a_run_into_one_strip() {
+        let seg = crate::vcs::LaneSeg { from_col: 1, to_col: 0 };
+        let trunk = crate::vcs::LaneSeg { from_col: 0, to_col: 0 };
+        let rows = vec![
+            commit("aaa1111"),
+            connector(vec![trunk.clone(), seg.clone()]),
+            connector(vec![trunk.clone(), seg.clone()]),
+            connector(vec![trunk.clone()]),
+            commit("bbb2222"),
+        ];
+        let out = Chamber::collapse_connectors(rows);
+        assert_eq!(out.len(), 3, "one strip between the two commits");
+        assert_eq!(out[1].lanes, vec![trunk, seg]);
+    }
+
+    /// Commit rows are never merged, and a trailing run still renders.
+    #[test]
+    fn collapse_connectors_keeps_commits_and_a_trailing_run() {
+        let trunk = crate::vcs::LaneSeg { from_col: 0, to_col: 0 };
+        let rows = vec![
+            commit("aaa1111"),
+            commit("bbb2222"),
+            connector(vec![trunk.clone()]),
+            connector(vec![trunk.clone()]),
+        ];
+        let out = Chamber::collapse_connectors(rows);
+        assert_eq!(out.len(), 3);
+        assert!(out[2].hash.is_none());
     }
 }
