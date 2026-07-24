@@ -74,6 +74,37 @@ pub(super) fn parse_claude_rate_limit(meta: &serde_json::Map<String, serde_json:
     })
 }
 
+/// What a fresh session's quota accumulator starts from: whatever was last
+/// persisted for this quark (see `hadron_lattice::quota`), so a resident agent
+/// that re-boots — or a `/clear`, which drops the session outright — does not
+/// start blind to a still-valid window. `dir` is `None` for a caller with no
+/// field on disk (tests, and any quark this daemon is not watching), matching
+/// `LiveFeed`'s existing convention; that yields an empty accumulator, same as
+/// a quark that has never reported quota.
+pub(super) fn seed_quota(dir: Option<&std::path::Path>, quark: &QuarkId) -> Vec<QuotaBucket> {
+    dir.map(|d| hadron_lattice::quota::load(d, quark)).unwrap_or_default()
+}
+
+/// Merge a freshly-seen bucket into the accumulator — refining an existing
+/// bucket of the same key rather than duplicating it, same rule the pump
+/// already followed — and persist the result so the *next* boot can see it.
+/// Best-effort: a failed write must never fail a turn, which is why this
+/// returns nothing to check.
+pub(super) fn merge_and_persist_bucket(
+    quota: &mut Vec<QuotaBucket>,
+    bucket: QuotaBucket,
+    dir: Option<&std::path::Path>,
+    quark: &QuarkId,
+) {
+    match quota.iter_mut().find(|b| b.key == bucket.key) {
+        Some(existing) => *existing = bucket,
+        None => quota.push(bucket),
+    }
+    if let Some(d) = dir {
+        let _ = hadron_lattice::quota::save(d, quark, quota);
+    }
+}
+
 /// The one-line "what is it doing" a human reads mid-turn. An agent's bare
 /// `title` is often just the tool's name ("Terminal", "Write"), so enrich it:
 /// the kind's verb plus the file being touched, or the actual command line for
@@ -268,12 +299,14 @@ impl super::AcpQuark {
     /// `session/new` takes a required `cwd`, so hadron's existing cwd chain lands on
     /// the protocol with no adaptation.
     pub(super) fn boot(
+        quark: QuarkId,
         target: &AcpTarget,
         cwd: PathBuf,
         want_model: String,
         want_effort: Option<String>,
         want_mode: Option<String>,
         live: Option<LiveFeed>,
+        quota_dir: Option<PathBuf>,
         env: Vec<(String, String)>,
     ) -> anyhow::Result<AcpSession> {
         let (turns_tx, mut turns_rx) = tokio::sync::mpsc::unbounded_channel::<TurnRequest>();
@@ -306,7 +339,7 @@ impl super::AcpQuark {
         // the turn pump. Hence the Arcs.
         let transcript = Arc::new(Mutex::new(String::new()));
         let context = Arc::new(Mutex::new(None::<(u64, u64)>));
-        let quota = Arc::new(Mutex::new(Vec::<QuotaBucket>::new()));
+        let quota = Arc::new(Mutex::new(seed_quota(quota_dir.as_deref(), &quark)));
         let pump_transcript = Arc::clone(&transcript);
         let pump_context = Arc::clone(&context);
         let pump_quota = Arc::clone(&quota);
@@ -356,11 +389,12 @@ impl super::AcpQuark {
                                             if let Some(bucket) =
                                                 u.meta.as_ref().and_then(parse_claude_rate_limit)
                                             {
-                                                let mut q = quota.lock().unwrap();
-                                                match q.iter_mut().find(|b| b.key == bucket.key) {
-                                                    Some(existing) => *existing = bucket,
-                                                    None => q.push(bucket),
-                                                }
+                                                merge_and_persist_bucket(
+                                                    &mut quota.lock().unwrap(),
+                                                    bucket,
+                                                    quota_dir.as_deref(),
+                                                    &quark,
+                                                );
                                             }
                                         }
                                         // The agent's reasoning, streamed. Volatile: it
@@ -650,12 +684,14 @@ impl super::AcpQuark {
         // Boot on the first turn, in the quark's own worktree, and keep it.
         if self.session.is_none() {
             self.session = Some(Self::boot(
+                self.id.clone(),
                 &self.target,
                 turn.cwd.clone(),
                 self.model.clone(),
                 self.effort.clone(),
                 self.mode_config.clone(),
                 self.live.clone(),
+                self.quota_dir.clone(),
                 self.env.0.clone(),
             )?);
         }

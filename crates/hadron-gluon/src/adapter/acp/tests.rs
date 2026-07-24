@@ -1063,6 +1063,67 @@ fn quota_buckets_persist_and_accumulate_across_turns() {
     assert!(keys.contains(&"claude-seven_day"));
 }
 
+fn quota_tmp_dir() -> std::path::PathBuf {
+    let p = std::env::temp_dir().join(format!("hadron-acp-quota-{}", ulid::Ulid::new()));
+    std::fs::create_dir_all(&p).unwrap();
+    p
+}
+
+/// **The gap this closes.** Before this, the accumulator in `AcpSession::boot`
+/// lived only in an `Arc<Mutex<..>>` that died with the session — a resident
+/// agent re-booting (or a `/clear`, which drops the session outright) started
+/// blind to a still-valid window. `seed_quota` + `merge_and_persist_bucket` are
+/// what `boot` and the `UsageUpdate` handler actually call; this proves the round
+/// trip through the real production path, not just the lattice store underneath it.
+#[test]
+fn a_bucket_written_by_one_session_is_visible_to_a_fresh_one() {
+    let dir = quota_tmp_dir();
+    let quark = QuarkId::new("acp-claude");
+    let bucket = hadron_lattice::QuotaBucket {
+        key: "claude-five_hour".to_string(),
+        remaining_fraction: 0.42,
+        reset_time: None,
+    };
+
+    // "session 1" boots with nothing, sees a bucket, persists it.
+    let mut session1 = super::session::seed_quota(Some(&dir), &quark);
+    assert!(session1.is_empty(), "nothing persisted yet");
+    super::session::merge_and_persist_bucket(&mut session1, bucket.clone(), Some(&dir), &quark);
+
+    // "session 2" is a fresh boot — a new Mutex, seeded from what session 1 left.
+    let session2 = super::session::seed_quota(Some(&dir), &quark);
+    assert_eq!(session2, vec![bucket]);
+}
+
+/// **The store must not filter.** `render/stats.rs`'s `quota_is_live` is what
+/// hides an expired bucket; the persistence layer's job is only to remember what
+/// was last seen, so a lapsed window still comes back on a fresh seed exactly as
+/// it was written.
+#[test]
+fn an_expired_persisted_bucket_still_round_trips() {
+    let dir = quota_tmp_dir();
+    let quark = QuarkId::new("acp-claude");
+    let expired = hadron_lattice::QuotaBucket {
+        key: "claude-five_hour".to_string(),
+        remaining_fraction: 0.06,
+        reset_time: Some(Utc::now() - chrono::Duration::hours(6)),
+    };
+
+    let mut quota = Vec::new();
+    super::session::merge_and_persist_bucket(&mut quota, expired.clone(), Some(&dir), &quark);
+
+    let reloaded = super::session::seed_quota(Some(&dir), &quark);
+    assert_eq!(reloaded, vec![expired], "the renderer decides what to show, not the store");
+}
+
+/// A quark with no field on disk (tests, and any caller not watching) must not
+/// be blocked by persistence — same convention as `LiveFeed`'s `Option`.
+#[test]
+fn seeding_with_no_dir_yields_an_empty_accumulator() {
+    let quark = QuarkId::new("acp-claude");
+    assert!(super::session::seed_quota(None, &quark).is_empty());
+}
+
 /// **The Settings model probe's boundary.** `agy_acp.py` now answers `session/new`
 /// with its static model list and WITHOUT booting the SDK — so model detection no
 /// longer needs the API key or a live Google connection (that dependency is why the
