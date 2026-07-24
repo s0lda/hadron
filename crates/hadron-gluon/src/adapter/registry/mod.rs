@@ -14,6 +14,24 @@ pub use loader::{
 
 use presets::ACP_AGENTS;
 
+/// One row of the add-quark catalogue the chamber renders, from whichever source knows
+/// the agent best.
+///
+/// Owned, unlike [`QuarkKind::available_presets`]'s `&'static str` tuples, because half
+/// these rows are parsed from JSON at runtime. This is the catalogue view to build a
+/// wizard on; `available_presets` is the compiled-only view it supersedes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogueEntry {
+    pub vendor: String,
+    pub name: String,
+    pub description: String,
+    /// The boot command, or `None` for a registry `binary` entry — which the wizard must
+    /// show as "needs a manual command" rather than offer as one click.
+    pub command: Option<(String, Vec<String>)>,
+    /// Whether Hadron has driven a real turn through this agent.
+    pub proven: bool,
+}
+
 mod presets;
 #[cfg(test)]
 mod tests;
@@ -125,16 +143,84 @@ impl QuarkKind {
         ACP_AGENTS
             .iter()
             .map(|a| {
-                let description = match a.vendor {
-                    "claude" => "Anthropic Claude Code, over ACP",
-                    "codex" => "OpenAI Codex CLI, over ACP",
-                    "gemini" => "Google Gemini CLI, over ACP",
-                    "agy" => "Google Antigravity (Gemini), via the bundled ACP bridge",
-                    _ => "",
-                };
-                (a.vendor, a.name, description, a.program, a.args.to_vec())
+                (a.vendor, a.name, Self::preset_description(a.vendor), a.program, a.args.to_vec())
             })
             .collect()
+    }
+
+    /// The short human blurb for a first-class preset. Best-effort presets have none and
+    /// fall back to their command line — or, once merged below, to the registry's own
+    /// description.
+    fn preset_description(vendor: &str) -> &'static str {
+        match vendor {
+            "claude" => "Anthropic Claude Code, over ACP",
+            "codex" => "OpenAI Codex CLI, over ACP",
+            "gemini" => "Google Gemini CLI, over ACP",
+            "agy" => "Google Antigravity (Gemini), via the bundled ACP bridge",
+            _ => "",
+        }
+    }
+
+    /// The full add-quark catalogue: the compiled presets **merged with** the published
+    /// ACP registry ([`loader`]). This is what a "seat an agent from the registry"
+    /// wizard renders; [`Self::available_presets`] cannot see the registry at all.
+    ///
+    /// The merge rule, keyed on vendor:
+    ///
+    /// * A **proven** preset wins — we have driven a real turn through that exact command
+    ///   line, and no registry row outranks that.
+    /// * Otherwise the **registry** wins. Its command comes from the agent's own
+    ///   publisher, while the unproven presets are bare binary names guessed from a
+    ///   package name (`goose`, `cline`, `cursor`) — precisely the "install the CLI
+    ///   first" wall. A real `npx`/`uvx` command beats our guess every time.
+    /// * A preset with no registry counterpart still shows, so nothing disappears.
+    ///
+    /// A `binary` agent lands with `command: None`: it is a real agent worth listing, but
+    /// booting one means downloading and executing a third-party archive, which Hadron
+    /// does not do. `None` is the honest answer and what the wizard greys out.
+    pub fn available_agents() -> Vec<CatalogueEntry> {
+        let mut out: Vec<CatalogueEntry> = ACP_AGENTS
+            .iter()
+            .map(|a| CatalogueEntry {
+                vendor: a.vendor.to_string(),
+                name: a.name.to_string(),
+                description: Self::preset_description(a.vendor).to_string(),
+                command: Some((
+                    a.program.to_string(),
+                    a.args.iter().map(|s| s.to_string()).collect(),
+                )),
+                proven: a.proven,
+            })
+            .collect();
+        let Some(registry) = loader::load_cached_registry() else {
+            return out;
+        };
+        for agent in &registry.agents {
+            let vendor = agent.id.strip_suffix("-acp").unwrap_or(&agent.id);
+            let blurb = agent.description.clone().unwrap_or_default();
+            let command = loader::resolve_agent_command(agent)
+                .ok()
+                .map(|target| (target.program, target.args));
+            match out.iter_mut().find(|e| e.vendor == vendor) {
+                // A proven preset outranks the registry; leave ours alone.
+                Some(existing) if existing.proven => {}
+                // Ours was a guess — take the publisher's command and blurb.
+                Some(existing) => {
+                    existing.command = command;
+                    if !blurb.is_empty() {
+                        existing.description = blurb;
+                    }
+                }
+                None => out.push(CatalogueEntry {
+                    vendor: vendor.to_string(),
+                    name: agent.name.clone(),
+                    description: blurb,
+                    command,
+                    proven: false,
+                }),
+            }
+        }
+        out
     }
 
     /// The secret env-var NAMES a vendor needs supplied (via the OS keychain — see

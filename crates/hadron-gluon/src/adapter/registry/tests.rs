@@ -505,3 +505,64 @@ fn test_registry_loader_resolution_fixture() {
     assert_eq!(err_binary, loader::RegistryError::BinaryNotSupported);
 }
 
+
+/// The merge rule's point: a **proven** preset outranks the registry. We have driven a
+/// real turn through `@latest`; the registry pins a version. Ours wins.
+#[test]
+fn a_proven_preset_outranks_the_registry() {
+    let claude = QuarkKind::available_agents()
+        .into_iter()
+        .find(|e| e.vendor == "claude")
+        .expect("claude is in the catalogue");
+    assert!(claude.proven);
+    let (program, args) = claude.command.expect("claude has a boot command");
+    assert_eq!(program, "npx");
+    assert!(
+        args.iter().any(|a| a.ends_with("claude-agent-acp@latest")),
+        "the proven preset's own args should survive the merge: {args:?}"
+    );
+}
+
+/// An unproven preset is a bare binary name guessed from a package name — exactly the
+/// "install the CLI first" wall. Where the registry knows better it wins: `fast-agent`
+/// becomes a real `uvx` command instead of `fast-agent` on `PATH`.
+#[test]
+fn the_registry_replaces_an_unproven_bare_name_guess() {
+    let entry = QuarkKind::available_agents()
+        .into_iter()
+        .find(|e| e.vendor == "fast-agent")
+        .expect("fast-agent is in the catalogue");
+    assert!(!entry.proven);
+    let (program, _) = entry.command.expect("fast-agent has a boot command");
+    assert_eq!(program, "uvx", "the bare-name guess should have been replaced");
+}
+
+/// A `binary` agent has no command Hadron will synthesise, so the merge must *clear* our
+/// bare-name guess rather than leave one that cannot work. `None` is the honest answer,
+/// and what the wizard greys out.
+#[test]
+fn a_binary_registry_agent_clears_the_guessed_command() {
+    let goose = QuarkKind::available_agents()
+        .into_iter()
+        .find(|e| e.vendor == "goose")
+        .expect("goose is in the catalogue");
+    assert_eq!(goose.command, None, "a binary-distribution agent must offer no command");
+}
+
+/// Nothing the presets knew about may vanish in the merge.
+#[test]
+fn every_preset_vendor_survives_the_merge() {
+    let merged = QuarkKind::available_agents();
+    for (vendor, ..) in QuarkKind::available_presets() {
+        assert!(merged.iter().any(|e| e.vendor == vendor), "{vendor} vanished from the catalogue");
+    }
+}
+
+/// The bundled snapshot is why the catalogue is non-empty on a box with no fetched cache
+/// and no Zed — without it the wizard falls back to the guesses this module replaces.
+#[test]
+fn the_bundled_snapshot_parses_and_carries_claude() {
+    let data = super::loader::bundled_registry().expect("the bundled snapshot must parse");
+    assert!(data.agents.len() > 30, "bundled registry has {} agents", data.agents.len());
+    assert!(data.agents.iter().any(|a| a.id == "claude-acp"));
+}
