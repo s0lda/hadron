@@ -1,5 +1,34 @@
 use super::*;
 
+#[derive(Debug, Clone)]
+pub(super) struct WorkspaceScan {
+    pub(super) files: Vec<(String, bool)>,
+    pub(super) git_statuses: std::collections::HashMap<String, crate::vcs::GitStatus>,
+    pub(super) working_diff: Option<Vec<crate::vcs::FileDiff>>,
+}
+
+impl WorkspaceScan {
+    pub(super) fn gather(
+        repo_root: &std::path::Path,
+        file_tree_expanded: &std::collections::HashSet<String>,
+        scan_diff: bool,
+    ) -> Option<Self> {
+        let files = crate::sys::list_workspace_files(repo_root, file_tree_expanded);
+        let git_statuses = crate::vcs::get_git_statuses(repo_root);
+        let working_diff = if scan_diff {
+            crate::vcs::working_diff(repo_root)
+        } else {
+            None
+        };
+        Some(Self {
+            files,
+            git_statuses,
+            working_diff,
+        })
+    }
+}
+
+
 impl super::Chamber {
     /// Re-project the field into the roster/log/session view, resolving the repo team
     /// against the global catalogue first so adopted quarks carry their full defs and
@@ -223,11 +252,9 @@ impl super::Chamber {
                 // Not-scanned is "the Changes pane wasn't on screen", not "there is no
                 // diff" — leave the stored diff alone then, exactly as the old inline
                 // `if tab == Changes` guard did.
-                if let Some(diff) = scan.working_diff {
-                    if diff != self.working_diff {
-                        self.working_diff = diff;
-                        changed = true;
-                    }
+                if scan.working_diff.is_some() && scan.working_diff != self.working_diff {
+                    self.working_diff = scan.working_diff;
+                    changed = true;
                 }
             }
 

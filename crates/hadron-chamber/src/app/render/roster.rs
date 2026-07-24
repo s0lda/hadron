@@ -203,7 +203,7 @@ impl super::Chamber {
                     .child(rows),
             )
             // Processes pinned directly above Settings at the bottom of the rail.
-            .child(self.processes_button(cx))
+            .child(self.processes_button(cx, false))
             // Settings pinned to the bottom of the rail.
             .child(self.settings_button(cx, false));
 
@@ -212,7 +212,7 @@ impl super::Chamber {
 
     /// The Process Manager entry pinned directly above [`Self::settings_button`] at
     /// the foot of the Quarks rail — opens the process control overlay.
-    pub(super) fn processes_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn processes_button(&self, cx: &mut Context<Self>, icon_only: bool) -> impl IntoElement {
         div()
             .id("processes")
             .flex()
@@ -226,7 +226,7 @@ impl super::Chamber {
             .hover(|s| s.bg(theme::bg_surface()))
             .active(|s| s.opacity(0.7))
             .child(Icon::new(IconName::Cpu).small())
-            .child("Processes")
+            .when(!icon_only, |this| this.child("Processes"))
             .on_click(cx.listener(|this, _, _, cx| this.toggle_process_manager(cx)))
     }
 }
