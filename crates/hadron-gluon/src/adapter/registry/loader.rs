@@ -7,6 +7,20 @@ use crate::adapter::registry::AcpTarget;
 
 const REGISTRY_URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 
+/// A snapshot of [`REGISTRY_URL`] compiled into the binary.
+///
+/// Without it the catalogue is empty on any machine that has neither a fetched cache
+/// nor Zed installed — a fresh clone, a CI box, an offline laptop — and the wizard
+/// falls back to the bare-binary-name guesses this whole module exists to replace.
+/// Same trick every other must-survive-a-clone asset here uses. Refresh with:
+/// `curl -sSL <REGISTRY_URL> > crates/hadron-gluon/src/adapter/registry/acp_registry.json`
+const BUNDLED_REGISTRY: &str = include_str!("acp_registry.json");
+
+/// The bundled snapshot, parsed. The last resort behind the fetched cache and Zed's copy.
+pub fn bundled_registry() -> Option<AcpRegistryData> {
+    parse_registry_json(BUNDLED_REGISTRY).ok()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcpRegistryData {
     pub version: String,
@@ -176,7 +190,9 @@ pub fn load_cached_registry() -> Option<AcpRegistryData> {
             }
         }
     }
-    None
+    // Zed's copy is a convenience, not a dependency — a box without it still has a
+    // catalogue.
+    bundled_registry()
 }
 
 /// Save registry data to `~/.hadron/acp_registry.json`.
