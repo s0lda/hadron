@@ -136,6 +136,7 @@ impl super::Chamber {
                         .overflow_y_scroll()
                         .child(avatars),
                 )
+                .child(self.processes_button(cx, true))
                 .child(self.settings_button(cx, true));
         }
         // The p_2 gutter: same inset as the expanded panels, so collapsing a rail keeps the
