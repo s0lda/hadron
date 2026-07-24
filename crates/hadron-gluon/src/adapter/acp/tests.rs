@@ -404,6 +404,7 @@ fn projection() -> Projection {
         isolated: false,
         mode: Mode::Ask,
         role_body: None,
+        named_specifically: true,
     }
 }
 

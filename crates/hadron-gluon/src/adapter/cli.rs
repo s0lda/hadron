@@ -329,6 +329,7 @@ mod tests {
             cwd,
             mode,
             role_body: None,
+            named_specifically: true,
         }
     }
 
