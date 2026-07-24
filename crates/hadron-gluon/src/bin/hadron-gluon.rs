@@ -369,6 +369,41 @@ async fn main() {
         Err(e) => eprintln!("hadron-gluon: worktree reclamation failed (non-fatal): {e:#}"),
     }
     let base = hadron_gluon::worktree::default_branch(&repo_root);
+    // Then the disk bound. A worktree is stable per quark and nothing ever removed
+    // one, so every seat the human switches off — or deletes from the roster — keeps a
+    // full checkout of the repo forever. At twenty seats in a monorepo that is the
+    // whole budget. Reap the trees of quarks not taking turns, but ONLY when the tree
+    // holds nothing `base` already has; anything dirty or unlanded is spared and named.
+    // Runs BEFORE the branch sweep on purpose: removing a tree un-holds its branch, so
+    // the existing `-d` sweep below is what actually deletes the ref.
+    //
+    // Skipped entirely on an empty roster: `load_resolved_team` degrades a missing or
+    // malformed team.json to empty, and that must not read as "no quark is seated".
+    if team.quarks.is_empty() {
+        eprintln!("hadron-gluon: roster is empty — skipping the idle-worktree reap");
+    } else {
+        let keep: Vec<_> =
+            team.quarks.iter().filter(|s| s.enabled).map(|s| s.id.clone()).collect();
+        match hadron_gluon::worktree::reap_idle_worktrees(&repo_root, &keep, &base) {
+            Ok(reaped) => {
+                for r in &reaped {
+                    match r {
+                        hadron_gluon::worktree::Reap::Removed { quark, .. } => eprintln!(
+                            "hadron-gluon: reclaimed {}'s worktree — it takes no turns and held \
+                             nothing that is not on {base} (recreated on its next turn)",
+                            quark.as_str(),
+                        ),
+                        hadron_gluon::worktree::Reap::Spared { quark, path, why } => eprintln!(
+                            "hadron-gluon: keeping {}'s worktree at {} — {why}",
+                            quark.as_str(),
+                            path.display(),
+                        ),
+                    }
+                }
+            }
+            Err(e) => eprintln!("hadron-gluon: idle-worktree reap failed (non-fatal): {e:#}"),
+        }
+    }
     match hadron_gluon::worktree::prune_merged_branches(&repo_root, &base) {
         Ok(pruned) if !pruned.is_empty() => {
             eprintln!("hadron-gluon: pruned {} merged quark branches", pruned.len());

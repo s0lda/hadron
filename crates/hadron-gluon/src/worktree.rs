@@ -279,6 +279,73 @@ pub fn prune_merged_branches(repo_root: &Path, base: &str) -> anyhow::Result<Vec
     Ok(pruned)
 }
 
+/// What a reap did with one worktree whose quark is no longer taking turns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reap {
+    /// The directory is gone. Its branch held nothing the default branch does not
+    /// already have, and no worktree holds the ref any more, so the merged-branch
+    /// sweep that runs next deletes it too.
+    Removed { quark: QuarkId, path: PathBuf },
+    /// Left exactly where it is, with the reason — always because it holds something
+    /// the default branch does not.
+    Spared { quark: QuarkId, path: PathBuf, why: String },
+}
+
+/// Remove the worktrees of quarks that are not taking turns — **only** when the tree
+/// holds nothing `base` does not already have.
+///
+/// This is the disk story at scale. A worktree is stable per quark, so N seats cost N
+/// checkouts of the repo, and until this existed *nothing ever removed one*: [`ensure`]
+/// creates, [`reclaim`] prunes only what git had already lost. Switch a seat off, or
+/// delete it from the roster, and its checkout stays forever. Twenty seats in a
+/// monorepo is twenty working trees, most of them for quarks nobody is using.
+///
+/// **Losslessness is the whole contract**, and it is two checks: a dirty tree is a
+/// crashed quark's evidence, and a branch ahead of `base` is work the merge gate never
+/// landed. Either one and the tree is SPARED and reported — this never trades work for
+/// disk. What it removes is by construction recoverable: `ensure` recreates the tree on
+/// the quark's next turn, and every commit in it is already on `base`.
+pub fn reap_idle_worktrees(
+    repo_root: &Path,
+    keep: &[QuarkId],
+    base: &str,
+) -> anyhow::Result<Vec<Reap>> {
+    let mut out = Vec::new();
+    for wt in list(repo_root)? {
+        if keep.contains(&wt.quark) {
+            continue;
+        }
+        // Nothing here is swallowed: a check that cannot be answered spares the tree
+        // and says why, because "I could not tell" must never read as "safe to delete".
+        let why = match is_dirty(&wt.path) {
+            Err(e) => Some(format!("cannot read its status: {e:#}")),
+            Ok(true) => Some("uncommitted work".to_string()),
+            // POSITIVE proof, and deliberately not `commits_ahead`: that one is built on
+            // `git_ok`, which maps a nonzero exit onto `Ok(None)` → `0` → "nothing to
+            // land", so a git failure would read as permission to delete. `merge-base
+            // --is-ancestor` succeeds only when HEAD is genuinely contained in `base`;
+            // "not an ancestor" and "git broke" both land in the Err arm and both spare.
+            // It reads HEAD, not the branch name, so a detached tree is measured too.
+            Ok(false) => match git(&wt.path, &["merge-base", "--is-ancestor", "HEAD", base]) {
+                Ok(_) => None,
+                Err(_) => Some(format!("cannot prove its HEAD is already on {base}")),
+            },
+        };
+        let why = match why {
+            Some(why) => Some(why),
+            None => match git(repo_root, &["worktree", "remove", &wt.path.to_string_lossy()]) {
+                Ok(_) => None,
+                Err(e) => Some(format!("git refused to remove it: {e:#}")),
+            },
+        };
+        out.push(match why {
+            Some(why) => Reap::Spared { quark: wt.quark, path: wt.path, why },
+            None => Reap::Removed { quark: wt.quark, path: wt.path },
+        });
+    }
+    Ok(out)
+}
+
 /// Startup reclamation. Prunes worktrees git has lost track of (the dir was deleted
 /// behind its back), then REPORTS what survives — including any dirty tree left by
 /// a crashed quark or a killed daemon.
@@ -445,6 +512,107 @@ pub(crate) mod tests {
 
         assert!(pruned.is_empty(), "git refuses a checked-out branch; the sweep reports none");
         assert_eq!(current_branch(&wt.path).as_deref(), Some("quark/opus/01LIVE"));
+    }
+
+    /// The disk story at scale: a quark that is no longer taking turns keeps a full
+    /// checkout of the repo forever. Reaping it also un-holds its branch, so the
+    /// merged-branch sweep that runs next can finally delete the ref — one mechanism,
+    /// not two.
+    #[test]
+    fn reap_removes_an_idle_tree_and_the_sweep_then_takes_its_branch() {
+        let repo = git_repo();
+        let root = repo.path();
+        let live = ensure(root, &q("opus"), "01LIVE").unwrap();
+        let idle = ensure(root, &q("codex"), "01IDLE").unwrap();
+
+        let reaped = reap_idle_worktrees(root, &[q("opus")], "main").unwrap();
+
+        assert_eq!(reaped, vec![Reap::Removed { quark: q("codex"), path: idle.path.clone() }]);
+        assert!(!idle.path.exists(), "the idle tree is gone from disk");
+        assert!(live.path.is_dir(), "a quark still taking turns keeps its tree");
+
+        let pruned = prune_merged_branches(root, "main").unwrap();
+        assert_eq!(
+            pruned,
+            vec!["quark/codex/01IDLE".to_string()],
+            "no worktree holds the branch now, so the existing sweep takes it",
+        );
+    }
+
+    /// Losslessness, half one: a crashed quark's uncommitted edits are evidence. The
+    /// tree is spared and named, never removed to save disk.
+    #[test]
+    fn reap_spares_an_idle_tree_with_uncommitted_work() {
+        let repo = git_repo();
+        let idle = ensure(repo.path(), &q("codex"), "01IDLE").unwrap();
+        std::fs::write(idle.path.join("half-done.txt"), "mid-turn\n").unwrap();
+
+        let reaped = reap_idle_worktrees(repo.path(), &[], "main").unwrap();
+
+        assert!(idle.path.is_dir(), "uncommitted work is never destroyed to reclaim disk");
+        assert!(
+            matches!(reaped.as_slice(), [Reap::Spared { why, .. }] if why.contains("uncommitted")),
+            "expected a spared-with-reason, got {reaped:?}",
+        );
+    }
+
+    /// Losslessness, half two: a branch ahead of the default branch is work the merge
+    /// gate never landed. Removing the tree would un-hold the ref, and `-d` would then
+    /// be the only thing standing between that work and the next sweep.
+    #[test]
+    fn reap_spares_an_idle_tree_whose_branch_has_not_landed() {
+        let repo = git_repo();
+        let idle = ensure(repo.path(), &q("codex"), "01IDLE").unwrap();
+        std::fs::write(idle.path.join("work.txt"), "never landed\n").unwrap();
+        commit_turn(&idle, "codex: work the gate never saw").unwrap().unwrap();
+
+        let reaped = reap_idle_worktrees(repo.path(), &[], "main").unwrap();
+
+        assert!(idle.path.is_dir(), "unlanded commits keep their tree");
+        assert!(
+            matches!(reaped.as_slice(), [Reap::Spared { why, .. }] if why.contains("not")),
+            "expected a spared-with-reason, got {reaped:?}",
+        );
+    }
+
+    /// The one that discriminates. `commits_ahead` is built on `git_ok`, which maps a
+    /// nonzero exit onto `Ok(None)` → `0` → "nothing to land" — so a measurement that
+    /// FAILS reads as permission to delete. Give it a base no git command can resolve:
+    /// the positive `merge-base --is-ancestor` proof spares the tree, the counting one
+    /// removes it. Same family as `git_ok-makes-is_ok-always-true`.
+    #[test]
+    fn reap_spares_a_tree_it_cannot_measure_against_base() {
+        let repo = git_repo();
+        let idle = ensure(repo.path(), &q("codex"), "01IDLE").unwrap();
+
+        let reaped = reap_idle_worktrees(repo.path(), &[], "no-such-base").unwrap();
+
+        assert!(idle.path.is_dir(), "a tree nobody could measure is never removed");
+        assert!(
+            matches!(reaped.as_slice(), [Reap::Spared { .. }]),
+            "expected a spared tree, got {reaped:?}",
+        );
+    }
+
+    /// The measurement reads HEAD, not the branch name. A detached tree reports an
+    /// empty branch from [`list`], so anything keyed on the branch would measure
+    /// nothing and read it as landed — and a commit on a detached HEAD is precisely
+    /// the work nothing else can find.
+    #[test]
+    fn reap_spares_an_idle_tree_holding_a_commit_on_a_detached_head() {
+        let repo = git_repo();
+        let idle = ensure(repo.path(), &q("codex"), "01IDLE").unwrap();
+        std::fs::write(idle.path.join("work.txt"), "unreachable\n").unwrap();
+        commit_turn(&idle, "codex: work on a branch it is about to leave").unwrap().unwrap();
+        git(&idle.path, &["checkout", "-q", "--detach"]).unwrap();
+
+        let reaped = reap_idle_worktrees(repo.path(), &[], "main").unwrap();
+
+        assert!(idle.path.is_dir(), "a detached HEAD's commit is still work");
+        assert!(
+            matches!(reaped.as_slice(), [Reap::Spared { .. }]),
+            "expected a spared tree, got {reaped:?}",
+        );
     }
 
     #[test]
