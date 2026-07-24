@@ -154,15 +154,21 @@ impl super::Engine {
                         }
                     }
 
+                    // The depletion gate is opt-in. A seat is only cut off by a limit
+                    // somebody set — its own `energy_limit` from Settings, or an
+                    // explicit swarm-wide default. With neither, the ledger still
+                    // records the spend; it just does not stop the turn.
                     if let Some(ledger) = &self.ledger {
                         let limit = self.roster.iter()
                             .find(|c| c.id == target)
                             .and_then(|c| c.energy_limit)
-                            .unwrap_or(self.energy_limit);
-                        if ledger.is_depleted(&target, limit)? {
-                            let msg = format!("Quark {} is depleted (exceeded {} tokens).", target.as_str(), limit);
-                            self.reroute_blocked(&target, &msg).await?;
-                            continue;
+                            .or(self.default_energy_limit);
+                        if let Some(limit) = limit {
+                            if ledger.is_depleted(&target, limit)? {
+                                let msg = format!("Quark {} is depleted (exceeded {} tokens).", target.as_str(), limit);
+                                self.reroute_blocked(&target, &msg).await?;
+                                continue;
+                            }
                         }
                     }
 

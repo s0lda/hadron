@@ -219,7 +219,11 @@ pub struct Engine {
     /// Opt-in nucleus context: pre-rendered digest injected into projections.
     nucleus_digest: String,
     ledger: Option<crate::ledger::Ledger>,
-    energy_limit: u32,
+    /// Swarm-wide fallback ceiling for the depletion gate. `None` = **no gate**,
+    /// and that is the default: a seat is only cut off when the human set a
+    /// limit on it. `Option` rather than `0`-means-off because `is_depleted`
+    /// reads `used >= limit`, so a `0` ceiling depletes every quark instantly.
+    default_energy_limit: Option<u32>,
     /// Opt-in merge gate. `None` = off, and off is the default *on purpose*: the
     /// production runner shells out to `cargo test --workspace`, which a unit test
     /// must never reach (it would recurse into this very suite). Engine tests inject
@@ -354,7 +358,7 @@ impl Engine {
             repo_root: None,
             nucleus_digest: String::new(),
             ledger: None,
-            energy_limit: 0,
+            default_energy_limit: None,
             merge: None,
             field_lock: Arc::new(AsyncMutex::new(())),
             turn_deadline: TURN_DEADLINE,
@@ -567,9 +571,12 @@ impl Engine {
         self
     }
 
-    pub fn with_ledger(mut self, ledger: crate::ledger::Ledger, limit: u32) -> Self {
+    /// Opt in to the energy ledger. `limit` is the swarm-wide fallback ceiling;
+    /// pass `None` to record spend without ever gating on it (see
+    /// [`Engine::default_energy_limit`]).
+    pub fn with_ledger(mut self, ledger: crate::ledger::Ledger, limit: Option<u32>) -> Self {
         self.ledger = Some(ledger);
-        self.energy_limit = limit;
+        self.default_energy_limit = limit;
         self
     }
 

@@ -402,8 +402,10 @@ async fn main() {
             std::process::exit(2);
         }
     };
-    let global_limit = 500_000u32;
-    let mut engine = engine.with_ledger(ledger, global_limit);
+    // No swarm-wide ceiling. The ledger meters every seat, but only a seat the
+    // human gave an `energy_limit` in Settings can be stopped by it — a quark
+    // must not be cut off mid-plan by a number nobody chose.
+    let mut engine = engine.with_ledger(ledger, None);
     // A seat can boot switched OFF. It is still seated (still addressable, still owns
     // its instance) — it just does not take turns until the human enables it.
     for seat in &team.quarks {

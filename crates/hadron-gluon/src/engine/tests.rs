@@ -1661,7 +1661,7 @@ async fn engine_blocks_depleted_quarks_and_records_usage() {
 
     let ledger = Ledger::open_in_memory().unwrap();
     let mut engine = Engine::new(path.clone(), vec![Box::new(HeavyQuark)], 5)
-        .with_ledger(ledger, 150);
+        .with_ledger(ledger, Some(150));
 
     // Turn 1: 0 used. Executes, uses 100. Total: 100.
     seed_human_message(&path, "worker", "do heavy work 1");
@@ -1682,6 +1682,67 @@ async fn engine_blocks_depleted_quarks_and_records_usage() {
     
     let blocks = events.iter().filter(|e| matches!(e.kind, Kind::Status { state: QuarkState::Blocked })).count();
     assert_eq!(blocks, 1, "Quark should be blocked on the 3rd attempt");
+}
+
+/// A quark that burns 100 tokens a turn and optionally carries its own limit.
+struct SpenderQuark(Option<u32>);
+
+#[async_trait::async_trait]
+impl Quark for SpenderQuark {
+    fn id(&self) -> QuarkId { QuarkId::new("worker") }
+    fn flavor(&self) -> Flavor { Flavor::Worker }
+    fn energy(&self) -> hadron_lattice::EnergyState { hadron_lattice::EnergyState::Available }
+    fn energy_limit(&self) -> Option<u32> { self.0 }
+    async fn excite(&mut self, _turn: Projection) -> anyhow::Result<hadron_lattice::TurnOutcome> {
+        Ok(hadron_lattice::TurnOutcome {
+            message: None,
+            permission: None,
+            usage: hadron_lattice::Usage {
+                spend: hadron_lattice::TokenSpend { input: Some(60), output: Some(40), ..Default::default() },
+                ..Default::default()
+            },
+        })
+    }
+}
+
+/// Runs three 100-token turns and reports `(energy_reports, blocks)`.
+async fn three_spending_turns(seat_limit: Option<u32>, default_limit: Option<u32>) -> (usize, usize) {
+    use crate::ledger::Ledger;
+    let fdir = tempdir().unwrap();
+    let path = fdir.path().join("field.jsonl");
+    let ledger = Ledger::open_in_memory().unwrap();
+    let mut engine = Engine::new(path.clone(), vec![Box::new(SpenderQuark(seat_limit))], 5)
+        .with_ledger(ledger, default_limit);
+    for n in 1..=3 {
+        seed_human_message(&path, "worker", &format!("do heavy work {n}"));
+        engine.run_until_quiesce().await.unwrap();
+    }
+    let events = read_events(&path).unwrap();
+    (
+        events.iter().filter(|e| matches!(e.kind, Kind::EnergyReport { .. })).count(),
+        events.iter().filter(|e| matches!(e.kind, Kind::Status { state: QuarkState::Blocked })).count(),
+    )
+}
+
+/// The depletion gate is **off** unless somebody asked for it.
+///
+/// It used to be armed unconditionally: the daemon handed every seat a
+/// hard-coded 500k ceiling, so a quark could be cut off mid-plan by a number
+/// nobody chose. The ledger still records every token — spend is telemetry, and
+/// telemetry is not a gate.
+#[tokio::test]
+async fn a_ledger_with_no_limit_records_usage_but_never_blocks() {
+    let (reports, blocks) = three_spending_turns(None, None).await;
+    assert_eq!(reports, 3, "every turn should run and be metered");
+    assert_eq!(blocks, 0, "no limit was set, so nothing may be blocked");
+}
+
+/// …and it is still a real gate for the seat the human armed.
+#[tokio::test]
+async fn a_per_seat_limit_gates_even_with_no_swarm_wide_default() {
+    let (reports, blocks) = three_spending_turns(Some(150), None).await;
+    assert_eq!(reports, 2, "two turns fit under the seat's own 150-token limit");
+    assert_eq!(blocks, 1, "the third is refused");
 }
 
 /// The reason the Standard Model is `include_str!`d rather than read from disk.
