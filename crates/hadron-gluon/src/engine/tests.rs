@@ -3394,6 +3394,11 @@ async fn a_disabled_quark_does_not_take_a_turn() {
 /// And the mention must not vanish. A message that goes nowhere, with no trace, is
 /// the failure mode this codebase keeps rediscovering — the human would be left
 /// staring at a chat that simply never answered.
+///
+/// The trace is the `Status{Blocked}`, NOT a chat message: a disabled seat is a
+/// switch the human flipped themselves, and restating it once per disabled seat on
+/// every `@team` broadcast is noise they asked us to drop. The status still reaches
+/// the field and the roster, and the daemon log still names it.
 #[tokio::test]
 async fn a_mention_of_a_disabled_quark_is_answered_in_the_field_not_dropped() {
     let dir = tempdir().unwrap();
@@ -3413,8 +3418,14 @@ async fn a_mention_of_a_disabled_quark_is_answered_in_the_field_not_dropped() {
 
     let events = read_events(&field).unwrap();
     assert!(
-        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("disabled"))),
-        "the field must SAY the quark is disabled, not silently swallow the mention"
+        events.iter().any(|e| e.from == Actor::Quark(QuarkId::new("agy"))
+            && matches!(e.kind, Kind::Status { state: QuarkState::Blocked })),
+        "the field must RECORD the refusal (Blocked), not silently swallow the mention"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("disabled"))),
+        "…but it must not post a chat message: the human flipped that switch themselves, \
+         and it fires once per disabled seat on every @team broadcast"
     );
 }
 
@@ -3846,9 +3857,11 @@ async fn routing_gap_is_reported_not_stalled() {
         !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
         "a disabled exclusive seat must never take the turn"
     );
+    // The `is_enabled` gate fires before the exclusive gate, so this lands on the
+    // quiet path: the refusal is the `Blocked` status, not a chat message.
     assert!(
-        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("disabled"))),
-        "the routing gap must be reported in the field, not silently dropped"
+        events.iter().any(|e| matches!(e.kind, Kind::Status { state: QuarkState::Blocked })),
+        "the routing gap must be recorded in the field, not silently dropped"
     );
 }
 

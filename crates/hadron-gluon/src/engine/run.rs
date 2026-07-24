@@ -101,18 +101,23 @@ impl super::Engine {
                         break;
                     }
 
-                    // Switched off by the human. The quark is still seated and still
-                    // resolves, so we SAY SO in the field rather than dropping the
-                    // mention: a message that goes nowhere with no trace is the failure
-                    // mode this codebase keeps rediscovering. `reroute_blocked` is the
-                    // existing mechanism for exactly this (it also marks the quark
-                    // Blocked, so the roster does not show it as forever-Excited).
+                    // Switched off by the human — the ONE refusal that gets no chat
+                    // message. Every other reroute tells the human something they did
+                    // not already know; this one restates a switch they flipped
+                    // themselves, and it fires once per disabled seat on every `@team`
+                    // broadcast, which is pure noise (Jake's ask).
+                    //
+                    // It is NOT a silent drop, which is the failure mode this codebase
+                    // keeps rediscovering: `park_blocked` still writes `Status{Blocked}`,
+                    // so the field records the refusal and the roster shows the seat
+                    // blocked rather than forever-Excited — and the daemon log still
+                    // names it, exactly like the "seated but DISABLED" line at startup.
                     if !self.is_enabled(&target) {
-                        let msg = format!(
-                            "@{} is disabled and will not take this turn. Enable it in the roster to reach it.",
+                        eprintln!(
+                            "  {} is disabled — skipping the turn addressed to it",
                             target.as_str()
                         );
-                        self.reroute_blocked(&target, &msg).await?;
+                        self.park_blocked(&target).await?;
                         continue;
                     }
 
@@ -363,7 +368,10 @@ impl super::Engine {
                     abort_handles.remove(&target);
                     let err_msg = self.format_error_message(&target, &err);
                     let _ = self
-                        .append(Event::new(Actor::Gluon, None, Kind::Message { body: err_msg }))
+                        .append(
+                            Event::new(Actor::Gluon, None, Kind::Message { body: err_msg })
+                                .with_severity(hadron_lattice::Severity::Error),
+                        )
                         .await;
                     let grounded = self
                         .append(Event::new(

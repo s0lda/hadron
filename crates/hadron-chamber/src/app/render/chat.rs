@@ -436,6 +436,38 @@ impl super::Chamber {
         )
     }
 
+    /// A gluon message rendered inside a severity card — the SINGLE place the
+    /// accent colours live. Both the chat bubble and the Log row call this; before
+    /// it, each carried its own copy of the match, which is the shape that already
+    /// cost us `presence-dot-was-computed-in-three-places`.
+    ///
+    /// **The hue values are normalised 0..1, not degrees.** `gpui::hsla` does
+    /// `h.clamp(0., 1.)` (`gpui-0.2.2/src/color.rs:338`), so the previous
+    /// `hsla(40.0, …)` "amber" clamped to `1.0` — 360°, i.e. the *same red* as
+    /// Error. Warning and Error were visually identical. Passing degrees here
+    /// silently yields red for anything ≥ 1.
+    fn severity_card(
+        &self,
+        severity: Option<hadron_lattice::Severity>,
+        view: &'static str,
+        ix: usize,
+        body: &str,
+        roster: &[crate::model::RosterRow],
+        pad: gpui::Pixels,
+    ) -> gpui::AnyElement {
+        let Some((hue, fill_sat, border_sat)) = severity_accent(severity) else {
+            return self.markdown_body(view, ix, body, roster).into_any_element();
+        };
+        div()
+            .p(pad)
+            .rounded_md()
+            .bg(gpui::hsla(hue, fill_sat, 0.50, 0.10))
+            .border_l(gpui::px(3.0))
+            .border_color(gpui::hsla(hue, border_sat, 0.50, 1.0))
+            .child(self.markdown_body(view, ix, body, roster))
+            .into_any_element()
+    }
+
     pub(super) fn chat_message_row(
         &self,
         id: &ResolvedIdentity,
@@ -537,25 +569,14 @@ impl super::Chamber {
                             }),
                     )
                     .when_some(summary_chip, |this, chip| this.child(chip))
-                    .child(match m.severity {
-                        Some(hadron_lattice::Severity::Error) => div()
-                            .p_3()
-                            .rounded_md()
-                            .bg(gpui::hsla(0.0, 0.70, 0.50, 0.10))
-                            .border_l(gpui::px(3.0))
-                            .border_color(gpui::hsla(0.0, 0.85, 0.50, 1.0))
-                            .child(self.markdown_body("chat-md", ix, &m.body, roster))
-                            .into_any_element(),
-                        Some(hadron_lattice::Severity::Warning) => div()
-                            .p_3()
-                            .rounded_md()
-                            .bg(gpui::hsla(40.0, 0.90, 0.50, 0.10))
-                            .border_l(gpui::px(3.0))
-                            .border_color(gpui::hsla(40.0, 0.95, 0.50, 1.0))
-                            .child(self.markdown_body("chat-md", ix, &m.body, roster))
-                            .into_any_element(),
-                        _ => self.markdown_body("chat-md", ix, &m.body, roster).into_any_element(),
-                    }),
+                    .child(self.severity_card(
+                        m.severity,
+                        "chat-md",
+                        ix,
+                        &m.body,
+                        roster,
+                        gpui::px(12.0),
+                    )),
             )
     }
 
@@ -641,25 +662,14 @@ impl super::Chamber {
         let mut row = v_flex().gap_1().child(header_row);
         
         if is_expanded {
-            row = row.child(match m.severity {
-                Some(hadron_lattice::Severity::Error) => div()
-                    .p_2()
-                    .rounded_md()
-                    .bg(gpui::hsla(0.0, 0.70, 0.50, 0.10))
-                    .border_l(gpui::px(3.0))
-                    .border_color(gpui::hsla(0.0, 0.85, 0.50, 1.0))
-                    .child(self.markdown_body("log-md", ix, &m.body, roster))
-                    .into_any_element(),
-                Some(hadron_lattice::Severity::Warning) => div()
-                    .p_2()
-                    .rounded_md()
-                    .bg(gpui::hsla(40.0, 0.90, 0.50, 0.10))
-                    .border_l(gpui::px(3.0))
-                    .border_color(gpui::hsla(40.0, 0.95, 0.50, 1.0))
-                    .child(self.markdown_body("log-md", ix, &m.body, roster))
-                    .into_any_element(),
-                _ => self.markdown_body("log-md", ix, &m.body, roster).into_any_element(),
-            });
+            row = row.child(self.severity_card(
+                m.severity,
+                "log-md",
+                ix,
+                &m.body,
+                roster,
+                gpui::px(8.0),
+            ));
         } else {
             let snippet = m.body.lines().next().unwrap_or("").chars().take(80).collect::<String>();
             let suffix = if m.body.len() > snippet.len() { "..." } else { "" };
@@ -670,7 +680,62 @@ impl super::Chamber {
                     .child(format!("{}{}", snippet, suffix))
             );
         }
-        
+
         row
+    }
+}
+
+/// The accent for a gluon message's severity card: `(hue, fill_saturation,
+/// border_saturation)`, or `None` for an unlabelled message (no card).
+///
+/// Pure and free-standing so the one thing that actually went wrong here is
+/// testable: **`gpui::hsla` clamps hue to `0..=1`** (`gpui-0.2.2/src/color.rs:338`),
+/// it does NOT take degrees. The original cards passed `40.0` for "amber", which
+/// clamped to `1.0` — 360°, the same red as Error — so Warning and Error rendered
+/// identically and nobody could tell. Every hue here is `degrees / 360.0`.
+fn severity_accent(severity: Option<hadron_lattice::Severity>) -> Option<(f32, f32, f32)> {
+    match severity? {
+        hadron_lattice::Severity::Error => Some((0.0, 0.70, 0.85)), // red 0°
+        hadron_lattice::Severity::Warning => Some((40.0 / 360.0, 0.90, 0.95)), // amber 40°
+        hadron_lattice::Severity::Info => Some((210.0 / 360.0, 0.55, 0.70)), // blue 210°
+    }
+}
+
+#[cfg(test)]
+mod severity_tests {
+    use super::severity_accent;
+    use hadron_lattice::Severity;
+
+    /// An unlabelled message renders bare — a card round every ordinary chat
+    /// message would drown the ones that matter.
+    #[test]
+    fn no_severity_means_no_card() {
+        assert_eq!(severity_accent(None), None);
+    }
+
+    /// The regression that motivated extracting this: hue must be normalised, so
+    /// every accent has to survive `hsla`'s `clamp(0., 1.)` unchanged. A value ≥ 1
+    /// silently becomes red.
+    #[test]
+    fn every_hue_is_normalised_not_degrees() {
+        for sev in [Severity::Info, Severity::Warning, Severity::Error] {
+            let (h, ..) = severity_accent(Some(sev)).unwrap();
+            assert_eq!(h, h.clamp(0.0, 1.0), "{sev:?} hue {h} is not in 0..=1 — gpui would clamp it to red");
+        }
+    }
+
+    /// …and the three must be visually distinct. Before the fix, Warning and Error
+    /// both landed on red and the card told the human nothing.
+    #[test]
+    fn the_three_severities_are_different_colours() {
+        let hues: Vec<f32> = [Severity::Info, Severity::Warning, Severity::Error]
+            .into_iter()
+            .map(|s| severity_accent(Some(s)).unwrap().0)
+            .collect();
+        for (i, a) in hues.iter().enumerate() {
+            for b in &hues[i + 1..] {
+                assert!((a - b).abs() > 0.02, "two severities share hue {a}");
+            }
+        }
     }
 }
