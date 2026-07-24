@@ -55,9 +55,13 @@ pub(super) fn acp_stdio_descriptor(program: &str, args: &[String], env: &[(Strin
 /// (`.hadron/docs/plans/2026-07-24-claude-plan-limits-in-stats.md`). Absent or
 /// malformed `_meta` returns `None` — absent is not zero (see `Usage::quota`'s
 /// honesty rule: empty means the provider reported nothing, not that it is full).
+///
+/// `rateLimitType` is optional in the schema; when absent, key falls back to
+/// `claude-limit`. `utilization` is strictly required: a bucket with no fraction has
+/// no "% left" to show, and inventing one breaks `Usage::quota`'s honesty rule.
 pub(super) fn parse_claude_rate_limit(meta: &serde_json::Map<String, serde_json::Value>) -> Option<QuotaBucket> {
     let rl = meta.get("_claude/rateLimit")?.as_object()?;
-    let rate_limit_type = rl.get("rateLimitType")?.as_str()?;
+    let rate_limit_type = rl.get("rateLimitType").and_then(|v| v.as_str()).unwrap_or("limit");
     let utilization = rl.get("utilization")?.as_f64()?;
     let reset_time = rl
         .get("resetsAt")
@@ -574,7 +578,6 @@ impl super::AcpQuark {
                             while let Some(turn) = turns_rx.recv().await {
                                 pump_transcript.lock().unwrap().clear();
                                 *pump_context.lock().unwrap() = None;
-                                pump_quota.lock().unwrap().clear();
                                 pump_in_turn.store(true, std::sync::atomic::Ordering::Relaxed);
 
                                 let sent = cx
