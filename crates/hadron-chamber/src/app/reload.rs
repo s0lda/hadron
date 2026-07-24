@@ -89,7 +89,16 @@ impl super::Chamber {
     /// Re-read the field; if it grew, re-project and repaint. Comparing event
     /// count to the current row count is a cheap change check (projection emits
     /// exactly one row per event), so an unchanged field costs only a read.
-    pub(super) fn reload_if_changed(&mut self, cx: &mut Context<Self>) {
+    ///
+    /// `scan` carries the workspace state the tick gathered **off** the render
+    /// thread ([`WorkspaceScan::gather`]). It is `Option` because the scan can
+    /// fail to be produced (the entity went away mid-tick); `None` leaves the
+    /// file tree / git statuses exactly as they are rather than blanking them.
+    pub(super) fn reload_if_changed(
+        &mut self,
+        scan: Option<WorkspaceScan>,
+        cx: &mut Context<Self>,
+    ) {
         // Only reproject on a successful read — a transient read error must not
         // blank the current view (which would flash to empty, then repopulate).
         if let Ok(events) = io::read_events(&self.path) {
@@ -187,36 +196,39 @@ impl super::Chamber {
                 // message-count change, so the virtualized chat/log lists need no splice.
                 self.reproject(&events);
             }
-            if self.right_rail_tab == RightRailTab::Changes {
-                let root = crate::vcs::repo_root_of(&self.path);
-                let diff = crate::vcs::working_diff(root);
-                if diff != self.working_diff {
-                    self.working_diff = diff;
+            // The file tree is a live view of the disk, not a boot-time snapshot, and
+            // autocomplete mentions must stay live regardless of which rail tab is up —
+            // so the scan runs every tick. It just no longer runs *here*: it is three
+            // `git` subprocesses plus a `stat` per tracked file, and on the render
+            // thread that blocked mouse/keyboard dispatch for the whole scan.
+            if let Some(scan) = scan {
+                if scan.files != self.file_tree_paths {
+                    // Autocomplete offers only real, editable files — never muted gitignored
+                    // entries — mirroring the filter in `new`.
+                    *self.completion_files.borrow_mut() = scan
+                        .files
+                        .iter()
+                        .filter(|(_, ignored)| !ignored)
+                        .map(|(p, _)| p.clone())
+                        .collect();
+                    self.file_tree_paths = scan.files;
                     changed = true;
                 }
-            }
-            // The file tree is a live view of the disk, not a boot-time snapshot:
-            // rescan while it is on screen, exactly as the Changes pane does.
-            // Rescan files unconditionally so autocomplete mentions are always live,
-            // regardless of which right rail tab is active.
-            let root = crate::vcs::repo_root_of(&self.path);
-            let files = crate::sys::list_workspace_files(root, &self.file_tree_expanded);
-            if files != self.file_tree_paths {
-                // Autocomplete offers only real, editable files — never muted gitignored
-                // entries — mirroring the filter in `new`.
-                *self.completion_files.borrow_mut() = files
-                    .iter()
-                    .filter(|(_, ignored)| !ignored)
-                    .map(|(p, _)| p.clone())
-                    .collect();
-                self.file_tree_paths = files;
-                changed = true;
-            }
 
-            let git_statuses = crate::vcs::get_git_statuses(root);
-            if git_statuses != self.git_statuses {
-                self.git_statuses = git_statuses;
-                changed = true;
+                if scan.git_statuses != self.git_statuses {
+                    self.git_statuses = scan.git_statuses;
+                    changed = true;
+                }
+
+                // Not-scanned is "the Changes pane wasn't on screen", not "there is no
+                // diff" — leave the stored diff alone then, exactly as the old inline
+                // `if tab == Changes` guard did.
+                if let Some(diff) = scan.working_diff {
+                    if diff != self.working_diff {
+                        self.working_diff = diff;
+                        changed = true;
+                    }
+                }
             }
 
             let live_dir = hadron_lattice::live::live_dir(&self.path);
