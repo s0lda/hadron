@@ -732,6 +732,38 @@ impl Chamber {
 
 }
 
+/// Every chord the chamber binds at startup. A free function (not an inline
+/// array inside `run`) so a test can assert a chord is actually bound without
+/// opening a window.
+fn default_key_bindings() -> Vec<KeyBinding> {
+    vec![
+        // Verified-free (was shift-tab, dead while typing — see above).
+        KeyBinding::new("f6", CycleMode, Some(KEY_CONTEXT)),
+        // Chat column tabs (Chat / Log / Stats).
+        KeyBinding::new("alt-right", NextChatTab, None),
+        KeyBinding::new("alt-left", PrevChatTab, None),
+        // Right rail tabs (Terminal / Files / Changes / Plan).
+        KeyBinding::new("alt-pagedown", NextInspectorTab, None),
+        KeyBinding::new("alt-pageup", PrevInspectorTab, None),
+        // Stats time window (Session / Week / Month / All time).
+        KeyBinding::new("alt-down", NextStatsSubTab, None),
+        KeyBinding::new("alt-up", PrevStatsSubTab, None),
+        // Roster cursor (vim-style j/k) and open-selected.
+        KeyBinding::new("ctrl-j", NextQuark, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-k", PrevQuark, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-alt-enter", ToggleSelectedQuark, Some(KEY_CONTEXT)),
+        // App menu overlay — F10 (the conventional "focus the menu" key) plus
+        // `ctrl-m` as a chord that reaches the menu without leaving the home row.
+        // Both are scoped: the text input's key context claims neither.
+        KeyBinding::new("f10", OpenMenu, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-m", OpenMenu, Some(KEY_CONTEXT)),
+        // Chat input <-> terminal focus toggle (`ctrl-tab` / `ctrl-``).
+        // Global so it fires from either side.
+        KeyBinding::new("ctrl-tab", ToggleFocus, None),
+        KeyBinding::new("ctrl-`", ToggleFocus, None),
+    ]
+}
+
 /// Launch the chamber window against a field file path.
 pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>) {
     let Some(path) = field_path else {
@@ -853,29 +885,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
         //   alt-left/right     chat column tabs   (Chat / Log / Stats)
         //   alt-pageup/pagedn  right-rail tabs     (Terminal / Files / Changes / Plan)
         //   alt-up/down        Stats time window
-        cx.bind_keys([
-            // Verified-free (was shift-tab, dead while typing — see above).
-            KeyBinding::new("f6", CycleMode, Some(KEY_CONTEXT)),
-            // Chat column tabs (Chat / Log / Stats).
-            KeyBinding::new("alt-right", NextChatTab, None),
-            KeyBinding::new("alt-left", PrevChatTab, None),
-            // Right rail tabs (Terminal / Files / Changes / Plan).
-            KeyBinding::new("alt-pagedown", NextInspectorTab, None),
-            KeyBinding::new("alt-pageup", PrevInspectorTab, None),
-            // Stats time window (Session / Week / Month / All time).
-            KeyBinding::new("alt-down", NextStatsSubTab, None),
-            KeyBinding::new("alt-up", PrevStatsSubTab, None),
-            // Roster cursor (vim-style j/k) and open-selected.
-            KeyBinding::new("ctrl-j", NextQuark, Some(KEY_CONTEXT)),
-            KeyBinding::new("ctrl-k", PrevQuark, Some(KEY_CONTEXT)),
-            KeyBinding::new("ctrl-alt-enter", ToggleSelectedQuark, Some(KEY_CONTEXT)),
-            // App menu overlay — F10, the conventional "focus the menu" key.
-            KeyBinding::new("f10", OpenMenu, Some(KEY_CONTEXT)),
-            // Chat input <-> terminal focus toggle (`ctrl-tab` / `ctrl-``).
-            // Global so it fires from either side.
-            KeyBinding::new("ctrl-tab", ToggleFocus, None),
-            KeyBinding::new("ctrl-`", ToggleFocus, None),
-        ]);
+        cx.bind_keys(default_key_bindings());
 
         // Build window options here (needs `&App`, not the async cx below).
         //
@@ -1018,5 +1028,30 @@ mod tests {
         let (cmds, body) = split_leading_commands("/ and /clear");
         assert!(cmds.is_empty());
         assert_eq!(body.as_deref(), Some("/ and /clear"));
+    }
+
+    #[test]
+    fn the_app_menu_answers_to_both_f10_and_ctrl_m() {
+        // `KeyBinding` exposes neither its keystrokes nor its action, so Debug is
+        // the only handle a headless test has on what was actually bound.
+        let bound: Vec<String> = super::default_key_bindings()
+            .iter()
+            .map(|b| format!("{:?}", b))
+            .filter(|b| b.contains("OpenMenu"))
+            .collect();
+        // Debug prints the *parsed* keystroke (`control: true`, `key: "m"`), never
+        // the source string "ctrl-m" — asserting on the literal chord passes only
+        // by accident of it never running.
+        assert_eq!(bound.len(), 2, "expected exactly two OpenMenu chords: {bound:?}");
+        assert!(
+            bound.iter().any(|b| b.contains(r#"key: "f10""#)),
+            "f10 lost: {bound:?}"
+        );
+        assert!(
+            bound
+                .iter()
+                .any(|b| b.contains("control: true") && b.contains(r#"key: "m""#)),
+            "ctrl-m missing: {bound:?}"
+        );
     }
 }
