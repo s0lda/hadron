@@ -202,6 +202,54 @@ fn a_reboot_is_not_a_pending_turn() {
     assert_eq!(next_pending(&answered_then_rebooted), None);
 }
 
+/// **The masked-orchestrator bug, replayed from `.hadron/field.jsonl`.**
+///
+/// A worker reports up (`Message → orch`), and the merge gate then appends its own
+/// audit `PermissionReq` + `PermissionGrant{→worker}` before landing the branch. The
+/// grant is ADDRESSED and `is_turn_request` counts it, so it became the newest
+/// addressed request — and the worker's own `Ground` immediately answered it. The old
+/// single-`rposition` scan therefore stopped at the grant, saw it answered, and
+/// returned `None`: the orchestrator's still-unanswered message was never even looked
+/// at. Live symptom — "Sonnet reported to @orchestrator and Claude never got excited";
+/// Claude only woke when Jake typed again (that path is `unaddressed_message_targets`,
+/// which is unaffected).
+#[test]
+fn an_answered_merge_grant_does_not_mask_an_older_unanswered_handoff() {
+    let worker = QuarkId::new("worker");
+    let events = vec![
+        msg(Actor::Quark(worker.clone()), Some("orch"), "@orchestrator task complete"),
+        Event::new(
+            Actor::Quark(worker.clone()),
+            None,
+            Kind::PermissionReq {
+                risk: hadron_gatekeeper::Risk::BashExec,
+                description: "merge".into(),
+            },
+        ),
+        Event::new(
+            Actor::Gluon,
+            Some(worker.clone()),
+            Kind::PermissionGrant { approved: true, remember: false },
+        ),
+        msg(Actor::Gluon, None, "merged `quark/worker/01ABC` → `main`."),
+        Event::new(Actor::Quark(worker), None, Kind::Status { state: QuarkState::Ground }),
+    ];
+    assert_eq!(next_pending(&events), Some(QuarkId::new("orch")));
+}
+
+/// The walk past an answered request must not resurrect an already-served one:
+/// two addressed requests, both answered, is still a quiesce.
+#[test]
+fn walking_past_an_answered_request_still_quiesces_when_all_are_answered() {
+    let events = vec![
+        msg(Actor::Human, Some("orch"), "go"),
+        msg(Actor::Quark(QuarkId::new("orch")), None, "done"),
+        msg(Actor::Human, Some("worker"), "you too"),
+        msg(Actor::Quark(QuarkId::new("worker")), None, "also done"),
+    ];
+    assert_eq!(next_pending(&events), None);
+}
+
 /// A per-quark `ModeSet` also carries a `to`, but changing a quark's permission
 /// posture must never start a turn.
 #[test]
