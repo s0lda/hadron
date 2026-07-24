@@ -98,6 +98,37 @@ impl Chamber {
                 }
                 true
             }
+            // Park an expensive seat without unseating it: the seat, its config and its
+            // resident session survive, the daemon just refuses to excite it (and says
+            // so when a mention reaches it). Same flip the roster context menu does —
+            // `toggle_quark_enabled` — reached by name from the chat box.
+            "toggle" => {
+                let target = args.trim();
+                let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) else {
+                    eprintln!(
+                        "chamber: `/toggle` needs a quark (e.g. `/toggle @Sonnet`); no roster seat matches {target:?}"
+                    );
+                    return true;
+                };
+                // A not-adopted catalogue row has no seat to flip — `toggle_quark_enabled`
+                // returns silently there, which would read as "nothing happened". Say why.
+                if !row.adopted {
+                    eprintln!(
+                        "chamber: {} is not adopted by this repo — adopt it from the roster first, \
+                         then `/toggle` can park it",
+                        row.id,
+                    );
+                    return true;
+                }
+                let (id, was) = (row.id.clone(), row.enabled);
+                self.toggle_quark_enabled(&id, cx);
+                eprintln!(
+                    "chamber: {id} is now {}",
+                    if was { "disabled — it will not take a turn" } else { "enabled" },
+                );
+                cx.notify();
+                true
+            }
             "reboot" => {
                 let target = args.trim().trim_start_matches('@');
                 if target.is_empty() {
@@ -108,19 +139,17 @@ impl Chamber {
                 let reboots = if target == "all" {
                     crate::model::post_clear_reboots(&self.view.roster)
                 } else {
-                    let matches_target = self.view.roster.iter().any(|r| {
-                        (r.id == target || r.display_name.as_deref() == Some(target))
-                            && matches!(r.transport, hadron_lattice::Transport::Acp)
-                    });
-                    if matches_target {
-                        let real_id = self.view.roster.iter()
-                            .find(|r| r.id == target || r.display_name.as_deref() == Some(target))
-                            .map(|r| &r.id)
-                            .unwrap();
-                        vec![Event::new(Actor::Human, Some(QuarkId::new(real_id)), Kind::Reboot)]
-                    } else {
-                        eprintln!("chamber: `/reboot` target not found or not a resident quark: {target}");
-                        vec![]
+                    // One resolution, shared with `/toggle` (`seat_by_mention`): the old
+                    // `.any()`-then-`.find()`-then-`.unwrap()` pair here restated the same
+                    // match twice and could only stay correct by accident.
+                    match super::mentions::seat_by_mention(&self.view.roster, target) {
+                        Some(row) if matches!(row.transport, hadron_lattice::Transport::Acp) => {
+                            vec![Event::new(Actor::Human, Some(QuarkId::new(&row.id)), Kind::Reboot)]
+                        }
+                        _ => {
+                            eprintln!("chamber: `/reboot` target not found or not a resident quark: {target}");
+                            vec![]
+                        }
                     }
                 };
 
