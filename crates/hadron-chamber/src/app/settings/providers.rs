@@ -155,81 +155,107 @@ impl super::Chamber {
                     )
             }
             WizardState::PickPreset => {
-                let presets = hadron_gluon::adapter::registry::QuarkKind::available_presets()
-                    .into_iter()
-                    .map(|(id, name, description, cmd, args)| AgentDescriptor {
-                        id: id.into(),
-                        name: name.into(),
-                        description: description.into(),
-                        command: cmd.into(),
-                        args: args.into_iter().map(String::from).collect(),
-                    })
-                    .collect::<Vec<_>>();
+                // The merged catalogue: compiled presets + the published ACP registry,
+                // so "seat an agent" can offer any registry agent with no CLI install —
+                // not just the ones we've hand-written a preset for. `available_presets`
+                // only ever saw the compiled list; extending that one view rather than
+                // keeping a second is the point (see `available_agents`'s doc comment).
+                let entries = hadron_gluon::adapter::registry::QuarkKind::available_agents();
 
                 // Case-insensitive substring match on name + command. Empty filter shows
                 // all. (A custom provider is added via the "Custom CLI…" option, which
                 // has its own working wizard — the old empty-command "Custom command…"
                 // escape hatch was a dead end and has been removed.)
                 let filter = self.preset_filter.read(cx).value().trim().to_lowercase();
-                let presets: Vec<_> = presets
+                let entries: Vec<_> = entries
                     .into_iter()
-                    .filter(|p| {
+                    .filter(|e| {
+                        let command_line = e
+                            .command
+                            .as_ref()
+                            .map(|(program, args)| format!("{program} {}", args.join(" ")))
+                            .unwrap_or_default();
                         filter.is_empty()
-                            || p.name.to_lowercase().contains(&filter)
-                            || p.command.to_lowercase().contains(&filter)
+                            || e.name.to_lowercase().contains(&filter)
+                            || command_line.to_lowercase().contains(&filter)
                     })
                     .collect();
 
                 let mut list = v_flex().gap_2();
-                for preset in presets {
-                    let preset_clone = preset.clone();
-                    list = list.child(
-                        h_flex()
-                            .id(SharedString::from(format!("preset-{}", preset.id)))
-                            .items_center()
-                            .justify_between()
-                            .px_3()
-                            .py_2()
-                            .rounded_lg()
-                            .bg(theme::bg_surface())
-                            .border_1()
-                            .border_color(theme::border())
-                            .hover(|s| s.bg(theme::bg_surface_raised()))
-                            .cursor_pointer()
-                            .child(
-                                v_flex()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .text_base()
-                                            .text_color(theme::text())
-                                            .child(preset.name.clone()),
-                                    )
-                                    .child(div().text_xs().text_color(theme::text_muted()).child(
-                                        // A human blurb for first-class agents; the raw
-                                        // command line for best-effort presets (which have
-                                        // no description) so they're still identifiable.
-                                        if preset.description.is_empty() {
-                                            format!("{} {}", preset.command, preset.args.join(" "))
-                                        } else {
-                                            preset.description.clone()
-                                        },
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme::text_muted())
-                                    .child("Configure →"),
-                            )
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.wizard_state = WizardState::Connecting(
-                                    preset_clone.clone(),
-                                    ProviderState::NotConnected,
-                                );
-                                cx.notify();
-                            })),
-                    );
+                for entry in entries {
+                    let command_line = entry
+                        .command
+                        .as_ref()
+                        .map(|(program, args)| format!("{program} {}", args.join(" ")))
+                        .unwrap_or_default();
+                    // A human blurb for first-class agents; the raw command line for
+                    // best-effort presets and registry rows with none, so they're still
+                    // identifiable.
+                    let subtitle = if entry.description.is_empty() {
+                        command_line
+                    } else {
+                        entry.description.clone()
+                    };
+
+                    let row = h_flex()
+                        .id(SharedString::from(format!("preset-{}", entry.vendor)))
+                        .items_center()
+                        .justify_between()
+                        .px_3()
+                        .py_2()
+                        .rounded_lg()
+                        .bg(theme::bg_surface())
+                        .border_1()
+                        .border_color(theme::border())
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_base()
+                                        .text_color(theme::text())
+                                        .child(entry.name.clone()),
+                                )
+                                .child(div().text_xs().text_color(theme::text_muted()).child(subtitle)),
+                        );
+
+                    // A registry `binary` entry has no resolvable command — Hadron does
+                    // not download and execute a third-party archive, so this row is a
+                    // real agent worth listing but stays greyed and unclickable rather
+                    // than offering a command that cannot work.
+                    let row = match entry.command {
+                        Some((program, args)) => {
+                            let preset = AgentDescriptor {
+                                id: entry.vendor.clone(),
+                                name: entry.name.clone(),
+                                description: entry.description.clone(),
+                                command: program,
+                                args,
+                            };
+                            row.hover(|s| s.bg(theme::bg_surface_raised()))
+                                .cursor_pointer()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme::text_muted())
+                                        .child("Configure →"),
+                                )
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.wizard_state = WizardState::Connecting(
+                                        preset.clone(),
+                                        ProviderState::NotConnected,
+                                    );
+                                    cx.notify();
+                                }))
+                        }
+                        None => row.opacity(0.6).child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text_muted())
+                                .child("Needs a manual command"),
+                        ),
+                    };
+                    list = list.child(row);
                 }
 
 
