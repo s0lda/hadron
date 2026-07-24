@@ -80,6 +80,15 @@ pub enum Mode {
     Bypass,
 }
 
+/// Message severity for system/gluon/quark notifications.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Severity {
+    Info,
+    Warning,
+    Error,
+}
+
 /// The payload of an event. Known variants flatten into the envelope under a
 /// `"kind"` tag. Unknown kinds are preserved verbatim for forward-compat.
 ///
@@ -126,67 +135,12 @@ pub struct Event {
     pub from: Actor,
     pub to: Option<QuarkId>,
     pub kind: Kind,
-    /// What the turn cost and what budget is left — context usage and quota buckets.
-    /// In practice only ever set on an `energy_report`; `None` everywhere else.
-    ///
-    /// WHY THE ENVELOPE AND NOT A NEW `Kind`: `Kind` is matched **exhaustively, with
-    /// no wildcard arm, by a crate this one does not own** (the chamber's
-    /// `model.rs`). Adding a variant to `Kind` — or a field to `Kind::EnergyReport` —
-    /// is therefore a *breaking* change that fails the workspace build until every
-    /// downstream reader is edited in lockstep. An additive `Option` field on the
-    /// envelope is source-compatible for every reader (nothing destructures `Event`;
-    /// they all go through [`Event::new`] and field access), so the schema can grow
-    /// without the lattice reaching into a UI it does not own. The tradeoff is that
-    /// telemetry is envelope-shaped rather than payload-shaped; if `Kind` ever gains
-    /// a wildcard arm downstream, this is the first thing that should move into it.
     pub usage: Option<crate::Usage>,
-    /// **Which turn produced this event.** Every event one turn emits — its reply, its
-    /// energy report, its edits — carries the same id.
-    ///
-    /// WHY IT EXISTS: telemetry rides on the `energy_report` and the reply rides on a
-    /// *separate* `message`. Without this, a reader wanting to say "this reply cost X"
-    /// has nothing to join on but **adjacency** — and adjacency is a guess that breaks
-    /// the first time two quarks answer at once, which is the normal case here (turns
-    /// run in parallel, and the field is a single interleaved log). A number that is
-    /// right most of the time is the exact class of quiet lie this codebase keeps
-    /// finding, so the link is made explicit on the wire instead of inferred in the UI.
-    ///
-    /// WHY A TURN ID AND NOT A COPY OF `Usage` ON THE MESSAGE: that would give one fact
-    /// two homes, which is the SSOT violation `TokenSpend` was just built to end. It
-    /// also only links those two events, where an id groups the whole turn.
-    ///
-    /// `None` for every event written before this existed, and for events the engine
-    /// emits outside a turn (a human message, a mode set).
     pub turn: Option<Ulid>,
-    /// **Which message this event is an answer to** — the id of the *assignment* that
-    /// drove the turn that emitted it.
-    ///
-    /// WHY IT EXISTS: without it, "has this quark answered the human yet?" can only be
-    /// asked as *"has it authored anything since?"* — and that is **wrong whenever the
-    /// human speaks while the quark is already working.** The quark finishes the turn it
-    /// was on, its reply lands after the newer message, and the newer message is marked
-    /// answered by a reply that could not possibly have seen it. The human's message is
-    /// then dropped, silently, forever. That is not a hypothetical: it is what happens
-    /// every time Jake types a second time while the orchestrator is mid-turn.
-    ///
-    /// So the link is made explicit on the wire rather than inferred from order. An
-    /// event that answers assignment `A` says so; a message nobody has answered stays
-    /// pending, however many other replies have flown past it.
-    ///
-    /// `None` for events written before this existed (they keep the old, order-based
-    /// reading — see `human_message_targets`) and for events emitted outside a turn.
     pub answers: Option<Ulid>,
-    /// **The reply as the quark actually wrote it, when the engine trimmed it.**
-    ///
-    /// The engine caps how long a reply may be (`gluon::brevity`) because asking a model
-    /// to be brief is prompt text, and prompt text does not enforce. The cap changes what
-    /// the human and the other quarks are made to *read* — it must not change what the
-    /// swarm can still recover, or a trim would be a quiet deletion of evidence.
-    ///
-    /// So `body` carries the capped text and this carries the original. `None` is the
-    /// normal case and means exactly "nothing was cut" — absent is not "the same as
-    /// `body`", and a reader must not synthesise one from the other.
     pub full: Option<String>,
+    /// Optional notification classification (Info, Warning, Error) for system/gluon events.
+    pub severity: Option<Severity>,
 }
 
 impl Event {
@@ -203,7 +157,14 @@ impl Event {
             turn: None,
             answers: None,
             full: None,
+            severity: None,
         }
+    }
+
+    /// Attach a severity rating (Info, Warning, Error) to the event.
+    pub fn with_severity(mut self, severity: Severity) -> Self {
+        self.severity = Some(severity);
+        self
     }
 
     /// Keep the untrimmed reply alongside the trimmed one. Called by the engine when —
@@ -267,6 +228,9 @@ impl Serialize for Event {
         }
         if let Some(full) = &self.full {
             m.serialize_entry("full", full)?;
+        }
+        if let Some(severity) = &self.severity {
+            m.serialize_entry("severity", severity)?;
         }
         match &self.kind {
             Kind::Message { body } => {
@@ -384,6 +348,10 @@ impl<'de> Deserialize<'de> for Event {
             None | Some(Value::Null) => None,
             Some(val) => Some(serde_json::from_value(val).map_err(D::Error::custom)?),
         };
+        let severity: Option<Severity> = match map.remove("severity") {
+            None | Some(Value::Null) => None,
+            Some(val) => Some(serde_json::from_value(val).map_err(D::Error::custom)?),
+        };
         let kind_tag: String = take_field(&mut map, "kind")?;
         let kind = match kind_tag.as_str() {
             "message" => Kind::Message {
@@ -435,7 +403,7 @@ impl<'de> Deserialize<'de> for Event {
                 raw: Value::Object(map.clone()),
             },
         };
-        Ok(Event { v, id, ts, from, to, kind, usage, turn, answers, full })
+        Ok(Event { v, id, ts, from, to, kind, usage, turn, answers, full, severity })
     }
 }
 

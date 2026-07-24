@@ -423,12 +423,12 @@ async fn main() {
                 let orch_exists =
                     engine.roster().iter().any(|c| c.flavor == Flavor::Orchestrator);
                 let body = if orch_exists {
-                    format!("@{} ⚠️ Gluon excite error: {e:#}", hadron_gluon::router::ORCHESTRATOR_ALIAS)
+                    format!("@{} Gluon excite error: {e:#}", hadron_gluon::router::ORCHESTRATOR_ALIAS)
                 } else {
-                    format!("⚠️ Gluon excite error: {e:#}")
+                    format!("Gluon excite error: {e:#}")
                 };
                 let _ = engine
-                    .append(Event::new(Actor::Gluon, None, Kind::Message { body }))
+                    .append(Event::new(Actor::Gluon, None, Kind::Message { body }).with_severity(hadron_lattice::Severity::Error))
                     .await;
             }
         }

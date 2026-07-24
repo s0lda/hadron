@@ -35,13 +35,13 @@ pub enum Landed {
 impl Landed {
     pub fn describe(&self, branch: &str, base: &str) -> String {
         match self {
-            Landed::FastForward => format!("✅ merged `{branch}` → `{base}` (fast-forward)."),
+            Landed::FastForward => format!("merged `{branch}` → `{base}` (fast-forward)."),
             Landed::RebasedThenFastForward => format!(
-                "✅ merged `{branch}` → `{base}` (`{base}` had moved, so the branch was rebased \
+                "merged `{branch}` → `{base}` (`{base}` had moved, so the branch was rebased \
                  onto it and re-tested first)."
             ),
             Landed::Conflicted(err) => format!(
-                "⚠️ could not merge `{branch}` → `{base}`: rebasing onto `{base}` conflicts, and \
+                "could not merge `{branch}` → `{base}`: rebasing onto `{base}` conflicts, and \
                  a machine must not guess at a resolution. The branch is untouched.\n\n{err}"
             ),
         }
