@@ -5,6 +5,13 @@ use crate::adapter::cli::CliQuark;
 use crate::adapter::runner::{ProcessRunner, RedactedEnv};
 use crate::quark::Quark;
 
+pub mod loader;
+
+pub use loader::{
+    parse_registry_json, resolve_agent_command, resolve_from_registry_data, AcpRegistryAgent,
+    AcpRegistryData, AcpRegistryDistribution, RegistryError,
+};
+
 use presets::ACP_AGENTS;
 
 mod presets;
@@ -53,11 +60,19 @@ impl AcpTarget {
     /// The built-in boot command for a catalogued vendor, or `None` for a
     /// vendor Hadron has never heard of (which must name its own command).
     pub fn for_vendor(vendor: &str) -> Option<AcpTarget> {
-        ACP_AGENTS.iter().find(|a| a.vendor == vendor).map(|a| AcpTarget {
+        if let Some(target) = ACP_AGENTS.iter().find(|a| a.vendor == vendor).map(|a| AcpTarget {
             program: a.program.to_string(),
             args: a.args.iter().map(|s| s.to_string()).collect(),
             env: Vec::new(),
-        })
+        }) {
+            return Some(target);
+        }
+        if let Some(reg) = loader::load_cached_registry() {
+            if let Ok(target) = loader::resolve_from_registry_data(&reg, vendor) {
+                return Some(target);
+            }
+        }
+        None
     }
 
     /// The boot target for a seat: its explicit `command`, else the vendor's
