@@ -232,6 +232,17 @@ impl super::Chamber {
                 changed = true;
             }
 
+            // Critical, must-notice event: gluon holds the daemon lock exclusively, so
+            // a stopped daemon means no quark in the swarm can take a turn until it's
+            // restarted. Fire the banner only on the running→stopped edge (not every
+            // tick it stays down) and clear it on stopped→running.
+            let gluon_now_running = self.gluon_running();
+            if let Some(went_running) = gluon_running_edge(self.last_gluon_running, gluon_now_running) {
+                self.last_gluon_running = gluon_now_running;
+                self.gluon_stopped_notice = !went_running;
+                changed = true;
+            }
+
             if changed {
                 cx.notify();
             }
@@ -239,9 +250,24 @@ impl super::Chamber {
     }
 }
 
+/// Whether `last → now` crosses a gluon running/stopped edge: `Some(now)` on a
+/// transition (so the caller re-toasts once, not every poll it stays down),
+/// `None` on steady state.
+fn gluon_running_edge(last: bool, now: bool) -> Option<bool> {
+    (last != now).then_some(now)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gluon_running_edge_fires_only_on_transitions() {
+        assert_eq!(gluon_running_edge(true, false), Some(false)); // running → stopped
+        assert_eq!(gluon_running_edge(false, true), Some(true)); // stopped → running
+        assert_eq!(gluon_running_edge(true, true), None); // steady running, no re-toast
+        assert_eq!(gluon_running_edge(false, false), None); // steady stopped, no re-toast
+    }
 
     #[test]
     fn test_calculate_collapsed_tasks_path_changed() {
