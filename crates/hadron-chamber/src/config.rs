@@ -40,8 +40,8 @@ pub struct ChamberPrefs {
     #[serde(default = "default_false")]
     pub inspector_collapsed: bool,
     /// Kill the auto-spawned `hadron-gluon` daemon when the chamber window closes.
-    /// Default `false` — the daemon is headless and normally outlives the viewer.
-    #[serde(default = "default_false")]
+    /// Default `true` — kill daemon when chamber window closes.
+    #[serde(default = "default_true")]
     pub close_gluon_on_exit: bool,
     #[serde(default = "default_roster_width")]
     pub roster_width: f32,
@@ -57,6 +57,9 @@ pub struct ChamberPrefs {
     pub quarks: BTreeMap<String, Identity>,
 }
 
+fn default_true() -> bool {
+    true
+}
 fn default_false() -> bool {
     false
 }
@@ -87,7 +90,7 @@ impl Default for ChamberPrefs {
         ChamberPrefs {
             roster_collapsed: default_false(),
             inspector_collapsed: default_false(),
-            close_gluon_on_exit: default_false(),
+            close_gluon_on_exit: default_true(),
             roster_width: default_roster_width(),
             inspector_width: default_inspector_width(),
             window_bounds: None,
@@ -204,20 +207,20 @@ mod tests {
     }
 
     #[test]
-    fn close_gluon_on_exit_defaults_to_false_and_round_trips() {
+    fn close_gluon_on_exit_defaults_to_true_and_round_trips() {
         let prefs = ChamberPrefs::default();
-        assert!(!prefs.close_gluon_on_exit, "default must be false");
+        assert!(prefs.close_gluon_on_exit, "default must be true");
 
         let json = serde_json::to_string(&prefs).unwrap();
-        assert!(json.contains("\"close_gluon_on_exit\":false"));
+        assert!(json.contains("\"close_gluon_on_exit\":true"));
 
         let custom = ChamberPrefs {
-            close_gluon_on_exit: true,
+            close_gluon_on_exit: false,
             ..Default::default()
         };
         let json_custom = serde_json::to_string(&custom).unwrap();
         let back: ChamberPrefs = serde_json::from_str(&json_custom).unwrap();
-        assert!(back.close_gluon_on_exit);
+        assert!(!back.close_gluon_on_exit);
     }
 
     #[test]
