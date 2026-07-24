@@ -11,14 +11,44 @@ impl super::Chamber {
         latest_context(&self.view.messages, qid)
     }
 
-    /// The most recent quota buckets `qid` published in the live field. Like
+    /// The most recent *live* quota buckets `qid` published in the live field. Like
     /// [`Self::latest_context`], this is a live gauge, not a window-summed quantity —
     /// a bucket only changes when the provider sends a fresh reading, which may predate
     /// the window's cutoff (in particular [`StatsWindow::Current`]'s "since the last
     /// human message" truncation), so it reads identically regardless of which stats
-    /// window tab is selected rather than going missing on some of them.
+    /// window tab is selected rather than going missing on some of them. A bucket whose
+    /// `reset_time` has already passed is spent history, not current state, and is
+    /// dropped — see [`quota_is_live`].
     fn latest_quota(&self, qid: &str) -> Vec<hadron_lattice::QuotaBucket> {
-        latest_quota(&self.view.messages, qid)
+        latest_quota(&self.view.messages, qid, chrono::Utc::now())
+    }
+
+    /// [`Self::latest_quota`], but when `qid` has none of its own, falls back to the
+    /// newest live reading from a same-`vendor` peer: a subscription quota is billed
+    /// per account, not per seat (`acp-claude` and `acp-claude-2` both draw on one
+    /// claude.ai plan), so a seat that never reported quota itself can still show the
+    /// account's real number instead of nothing. The returned `bool` marks a fallback
+    /// reading so the renderer can label it "account-shared" rather than implying
+    /// `qid` reported it. **Must run after `latest_quota`'s staleness filter** — a peer
+    /// fallback shipped before that filter would copy a stale reading onto every seat.
+    fn quota_for_display(&self, qid: &str) -> (Vec<hadron_lattice::QuotaBucket>, bool) {
+        let vendor = self
+            .view
+            .roster
+            .iter()
+            .find(|r| r.id == qid)
+            .map(|r| r.vendor.clone())
+            .filter(|v| !v.is_empty());
+        let Some(vendor) = vendor else {
+            return (self.latest_quota(qid), false);
+        };
+        let roster = &self.view.roster;
+        quota_with_fallback(
+            &self.view.messages,
+            |from| roster.iter().any(|r| r.id == from && r.vendor == vendor),
+            qid,
+            chrono::Utc::now(),
+        )
     }
 
     pub(super) fn info_panel_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -338,10 +368,17 @@ impl super::Chamber {
                 ),
             );
         }
-        for bucket in self.latest_quota(&qid) {
+        let (quota, quota_shared) = self.quota_for_display(&qid);
+        let now = chrono::Utc::now();
+        for bucket in quota {
             stats_block = stats_block.child(kv_row(
                 "Quota",
-                format!("{}: {:.0}% left", bucket.key, bucket.remaining_fraction * 100.0),
+                format!(
+                    "{}: {:.0}% left{}",
+                    quota_tag(&bucket.key, quota_shared),
+                    bucket.remaining_fraction * 100.0,
+                    quota_countdown_suffix(&bucket, now),
+                ),
             ));
         }
 
@@ -659,13 +696,17 @@ impl super::Chamber {
             // quota is spent. Say nothing rather than render a zero. Read live (unwindowed,
             // like `latest_context`) rather than off the windowed fold `s.quota`, so it
             // does not go missing on windows whose cutoff excludes the last quota report
-            // (Current's "since the last human message" truncation, in particular).
-            for bucket in self.latest_quota(q) {
+            // (Current's "since the last human message" truncation, in particular). Falls
+            // back to a same-vendor peer's reading when `q` has none of its own.
+            let (quota, quota_shared) = self.quota_for_display(q);
+            let now = chrono::Utc::now();
+            for bucket in quota {
                 block = block.child(div().text_xs().text_color(theme::text_muted()).child(
                     format!(
-                        "Quota [{}]: {:.0}% left",
-                        bucket.key,
-                        bucket.remaining_fraction * 100.0
+                        "Quota [{}]: {:.0}% left{}",
+                        quota_tag(&bucket.key, quota_shared),
+                        bucket.remaining_fraction * 100.0,
+                        quota_countdown_suffix(&bucket, now),
                     ),
                 ));
             }
@@ -694,8 +735,13 @@ fn latest_context<'a>(
 
 /// The most recent quota buckets `qid` published: the last message from `qid` that
 /// actually carries `usage.quota`, mirroring [`latest_context`]'s "skip the trailing
-/// status-less rows" search. Empty when the quark never reported quota this field.
-fn latest_quota(messages: &[super::super::MessageRow], qid: &str) -> Vec<hadron_lattice::QuotaBucket> {
+/// status-less rows" search, with any bucket whose `reset_time` has already passed
+/// dropped (see [`quota_is_live`]). Empty when the quark never reported live quota.
+fn latest_quota(
+    messages: &[super::super::MessageRow],
+    qid: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Vec<hadron_lattice::QuotaBucket> {
     messages
         .iter()
         .rev()
@@ -705,6 +751,82 @@ fn latest_quota(messages: &[super::super::MessageRow], qid: &str) -> Vec<hadron_
             (!quota.is_empty()).then(|| quota.clone())
         })
         .unwrap_or_default()
+        .into_iter()
+        .filter(|b| quota_is_live(b, now))
+        .collect()
+}
+
+/// [`latest_quota`], but when `qid` has no live buckets of its own, falls back to the
+/// newest live reading from a peer for which `same_vendor_peer` returns `true` — a
+/// subscription quota is billed per account, not per seat, so a seat with no reading
+/// of its own can still show the account's real number. Returns `true` in the second
+/// slot when the reading is such a fallback (the caller labels it "account-shared").
+/// Pure over `(messages, same_vendor_peer, qid, now)`: membership in the vendor group
+/// is the caller's job ([`Chamber::quota_for_display`] builds it from the roster),
+/// which keeps this testable without a roster fixture.
+fn quota_with_fallback(
+    messages: &[super::super::MessageRow],
+    same_vendor_peer: impl Fn(&str) -> bool,
+    qid: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> (Vec<hadron_lattice::QuotaBucket>, bool) {
+    let own = latest_quota(messages, qid, now);
+    if !own.is_empty() {
+        return (own, false);
+    }
+    let peer_bucket = messages
+        .iter()
+        .rev()
+        .filter(|m| m.from != qid && same_vendor_peer(&m.from))
+        .find_map(|m| {
+            let quota = &m.usage.as_ref()?.quota;
+            (!quota.is_empty()).then(|| quota.clone())
+        })
+        .map(|bucket| bucket.into_iter().filter(|b| quota_is_live(b, now)).collect::<Vec<_>>())
+        .filter(|b| !b.is_empty())
+        .unwrap_or_default();
+    let shared = !peer_bucket.is_empty();
+    (peer_bucket, shared)
+}
+
+/// Whether `bucket` still describes current state at `now`. A bucket with no
+/// `reset_time` (the provider didn't say) is treated as live — there's nothing to
+/// compare against. A bucket whose reset has already passed is spent history: the
+/// window it described is over, so its old percentage would misrepresent a stale
+/// reading as current (the "6% left" fossil from a session-limit error, read the next
+/// day as if it were today's number).
+fn quota_is_live(bucket: &hadron_lattice::QuotaBucket, now: chrono::DateTime<chrono::Utc>) -> bool {
+    bucket.reset_time.is_none_or(|reset| reset > now)
+}
+
+/// The bucket key, tagged `", account"` when this reading is a same-vendor peer's
+/// fallback rather than `qid`'s own — see [`Chamber::quota_for_display`].
+fn quota_tag(key: &str, shared: bool) -> String {
+    if shared {
+        format!("{key}, account")
+    } else {
+        key.to_string()
+    }
+}
+
+/// `" (resets in 2h 14m)"`, or empty when the provider gave no `reset_time`. Callers
+/// only ever see live buckets ([`quota_is_live`] already dropped expired ones), so the
+/// countdown here is always non-negative.
+fn quota_countdown_suffix(bucket: &hadron_lattice::QuotaBucket, now: chrono::DateTime<chrono::Utc>) -> String {
+    match bucket.reset_time {
+        Some(reset) => format!(" (resets in {})", quota_countdown(reset, now)),
+        None => String::new(),
+    }
+}
+
+/// `"2h 14m"` / `"38m"` countdown from `now` to `reset_time`.
+fn quota_countdown(reset_time: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<chrono::Utc>) -> String {
+    let mins = (reset_time - now).num_minutes().max(0);
+    if mins >= 60 {
+        format!("{}h {}m", mins / 60, mins % 60)
+    } else {
+        format!("{mins}m")
+    }
 }
 
 /// Every context-occupancy reading `qid` published this field, oldest first — the series
@@ -722,7 +844,7 @@ fn context_history(messages: &[super::super::MessageRow], qid: &str) -> Vec<f64>
 mod tests {
     use super::latest_context;
     use crate::model::MessageRow;
-    use hadron_lattice::{ContextUsage, Usage};
+    use hadron_lattice::{ContextUsage, QuotaBucket, Usage};
 
     fn row(from: &str, ctx: Option<u32>) -> MessageRow {
         MessageRow {
@@ -738,6 +860,23 @@ mod tests {
                 }),
                 ..Default::default()
             }),
+            ts: chrono::DateTime::from_timestamp(0, 0).unwrap(),
+            legacy_used_tokens: None,
+            turn: None,
+        }
+    }
+
+    fn bucket(key: &str, remaining_fraction: f64, reset_time: Option<chrono::DateTime<chrono::Utc>>) -> QuotaBucket {
+        QuotaBucket { key: key.into(), remaining_fraction, reset_time }
+    }
+
+    fn quota_row(from: &str, buckets: Vec<QuotaBucket>) -> MessageRow {
+        MessageRow {
+            from: from.into(),
+            to: None,
+            body: String::new(),
+            kind_label: "status",
+            usage: Some(Usage { quota: buckets, ..Default::default() }),
             ts: chrono::DateTime::from_timestamp(0, 0).unwrap(),
             legacy_used_tokens: None,
             turn: None,
@@ -777,5 +916,88 @@ mod tests {
         assert_eq!(context_history(&msgs, "acp-claude"), vec![5.0, 8.0, 5.0]);
         // Fewer than two points cannot draw a line (caller falls back to the meter).
         assert_eq!(context_history(&[row("acp-claude", Some(7))], "acp-claude"), vec![7.0]);
+    }
+
+    #[test]
+    fn quota_is_live_drops_expired_buckets_only() {
+        use super::quota_is_live;
+        let now = chrono::DateTime::from_timestamp(1000, 0).unwrap();
+        assert!(quota_is_live(&bucket("claude-five_hour", 0.06, Some(now + chrono::Duration::hours(1))), now));
+        assert!(!quota_is_live(&bucket("claude-five_hour", 0.06, Some(now - chrono::Duration::hours(1))), now));
+        // No reset_time at all: the provider didn't say, so there's nothing to have expired.
+        assert!(quota_is_live(&bucket("claude-five_hour", 0.06, None), now));
+    }
+
+    #[test]
+    fn quota_countdown_formats_hours_and_minutes() {
+        use super::quota_countdown;
+        let now = chrono::DateTime::from_timestamp(0, 0).unwrap();
+        assert_eq!(quota_countdown(now + chrono::Duration::minutes(134), now), "2h 14m");
+        assert_eq!(quota_countdown(now + chrono::Duration::minutes(38), now), "38m");
+        // A reset time in the past never renders a negative countdown (defensive floor;
+        // `latest_quota`/`quota_with_fallback` already filter these out beforehand).
+        assert_eq!(quota_countdown(now - chrono::Duration::minutes(5), now), "0m");
+    }
+
+    #[test]
+    fn latest_quota_drops_a_reading_whose_reset_time_has_passed() {
+        use super::latest_quota;
+        let now = chrono::DateTime::from_timestamp(10_000, 0).unwrap();
+        // The fossil: yesterday's reset_time, asserted as current the next day.
+        let msgs = vec![quota_row(
+            "acp-claude-2",
+            vec![bucket("claude-five_hour", 0.06, Some(now - chrono::Duration::hours(1)))],
+        )];
+        assert_eq!(latest_quota(&msgs, "acp-claude-2", now), Vec::<QuotaBucket>::new());
+        // A live bucket survives.
+        let msgs = vec![quota_row(
+            "acp-claude-2",
+            vec![bucket("claude-five_hour", 0.06, Some(now + chrono::Duration::hours(1)))],
+        )];
+        assert_eq!(latest_quota(&msgs, "acp-claude-2", now).len(), 1);
+    }
+
+    #[test]
+    fn quota_with_fallback_prefers_own_reading_over_a_peers() {
+        use super::quota_with_fallback;
+        let now = chrono::DateTime::from_timestamp(10_000, 0).unwrap();
+        let live = Some(now + chrono::Duration::hours(1));
+        let msgs = vec![
+            quota_row("acp-claude", vec![bucket("claude-five_hour", 0.40, live)]),
+            quota_row("acp-claude-2", vec![bucket("claude-five_hour", 0.06, live)]),
+        ];
+        let same_vendor = |id: &str| id == "acp-claude" || id == "acp-claude-2";
+        let (own, shared) = quota_with_fallback(&msgs, same_vendor, "acp-claude-2", now);
+        assert_eq!(own.first().map(|b| b.remaining_fraction), Some(0.06));
+        assert!(!shared);
+    }
+
+    #[test]
+    fn quota_with_fallback_uses_a_same_vendor_peer_when_qid_has_none() {
+        use super::quota_with_fallback;
+        let now = chrono::DateTime::from_timestamp(10_000, 0).unwrap();
+        let live = Some(now + chrono::Duration::hours(1));
+        // Only "acp-claude" ever reported quota; "acp-claude-2" never has.
+        let msgs = vec![quota_row("acp-claude", vec![bucket("claude-five_hour", 0.40, live)])];
+        let same_vendor = |id: &str| id == "acp-claude" || id == "acp-claude-2";
+        let (fallback, shared) = quota_with_fallback(&msgs, same_vendor, "acp-claude-2", now);
+        assert_eq!(fallback.first().map(|b| b.remaining_fraction), Some(0.40));
+        assert!(shared);
+        // A quark with no same-vendor peers at all gets nothing, not a crash.
+        let (none, shared) = quota_with_fallback(&msgs, |_| false, "acp-agy", now);
+        assert!(none.is_empty());
+        assert!(!shared);
+    }
+
+    #[test]
+    fn quota_with_fallback_never_surfaces_a_peers_stale_reading() {
+        use super::quota_with_fallback;
+        let now = chrono::DateTime::from_timestamp(10_000, 0).unwrap();
+        let expired = Some(now - chrono::Duration::hours(1));
+        let msgs = vec![quota_row("acp-claude", vec![bucket("claude-five_hour", 0.40, expired)])];
+        let same_vendor = |id: &str| id == "acp-claude" || id == "acp-claude-2";
+        let (fallback, shared) = quota_with_fallback(&msgs, same_vendor, "acp-claude-2", now);
+        assert!(fallback.is_empty());
+        assert!(!shared);
     }
 }
