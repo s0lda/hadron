@@ -288,13 +288,13 @@ pub fn list_worktrees(repo_root: &Path) -> Vec<WorktreeInfo> {
 /// graph characters and decorations (branch/tag labels) correctly.
 /// A short ASCII commit graph — rendered verbatim or parsed for UI representation.
 ///
-/// How many commits the Graph tab walks. The limit is applied by `git log` *before*
-/// the chamber hides swarm-snapshot commits, and on this repo ~60% of commits are
-/// `hadron`-authored `before <seat>` snapshots — so the visible list is roughly a
-/// third of this number.
-pub const GRAPH_COMMIT_LIMIT: usize = 200;
-
-pub fn commit_graph(repo_root: &Path, limit: usize) -> Option<String> {
+/// **No `-n` cap**: the Graph tab walks every commit on every ref. That is only
+/// affordable because the tab parses this string *once* (on load / on the snapshot
+/// toggle) and renders the rows through a virtualized `gpui::list`, so the cost is
+/// one subprocess plus one parse — not one element per commit. Re-introducing a
+/// limit here would silently hide history again; cap what is *rendered*, never what
+/// is walked.
+pub fn commit_graph(repo_root: &Path) -> Option<String> {
     let out = Command::new("git")
         .current_dir(repo_root)
         .args([
@@ -302,7 +302,6 @@ pub fn commit_graph(repo_root: &Path, limit: usize) -> Option<String> {
             "--graph",
             "--all",
             "--pretty=format:%h|%H|%p|%an|%ar|%D|%s",
-            &format!("-n{limit}"),
         ])
         .output()
         .ok()?;

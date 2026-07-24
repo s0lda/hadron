@@ -213,6 +213,16 @@ struct Chamber {
     pub git_commit_diff: Option<Vec<crate::vcs::FileDiff>>,
     pub git_commit_open_ixs: std::collections::HashSet<usize>,
     pub git_show_snapshots: bool,
+    /// The Graph subtab's rows, already parsed, snapshot-filtered and connector-collapsed,
+    /// plus the lane count their rail gutter is sized from. Derived state, rebuilt by
+    /// [`Chamber::rebuild_graph_rows`] only when `git_log_graph` or `git_show_snapshots`
+    /// changes — GPUI re-renders on every hover, and re-parsing the whole `git log` there
+    /// is what made the tab lag.
+    pub(super) git_graph_rows: Vec<crate::vcs::GraphRow>,
+    pub(super) git_graph_max_lanes: usize,
+    /// Virtual list state for the Graph subtab: without it every commit builds an element
+    /// and a lane `canvas` on every frame, so an uncapped walk would be unaffordable.
+    pub(super) git_graph_list: gpui::ListState,
     /// Scroll position of the Plan tracker pane.
     plan_scroll: ScrollHandle,
     pub(super) plan_collapsed_tasks: std::collections::HashSet<String>,
@@ -514,6 +524,11 @@ impl Chamber {
             px(1000.),
         );
 
+        // The commit graph reads newest-first, so it anchors at the top — unlike the
+        // chat/log lists, which follow the newest message at the bottom.
+        let git_graph_list =
+            gpui::ListState::new(0, gpui::ListAlignment::Top, px(400.));
+
         // Open showing the newest message: honoured on the first paint, once the
         // content is laid out.
         let chat_scrolls = [
@@ -573,6 +588,9 @@ impl Chamber {
             git_commit_diff: None,
             git_commit_open_ixs: std::collections::HashSet::new(),
             git_show_snapshots: false,
+            git_graph_rows: Vec::new(),
+            git_graph_max_lanes: 1,
+            git_graph_list,
             plan_scroll: ScrollHandle::new(),
             plan_collapsed_tasks: std::collections::HashSet::new(),
             last_plan_path: None,
