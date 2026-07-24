@@ -40,6 +40,16 @@ impl super::Engine {
         };
         self.append(Event::new(Actor::Gluon, None, Kind::Message { body: msg }).with_severity(severity))
             .await?;
+        self.park_blocked(target).await
+    }
+
+    /// Mark `target` `Blocked` with **no** chat message — the reroute property
+    /// (siblings keep running, the quark is not left forever-Excited) without the
+    /// noise, for a refusal the human has already chosen and does not need told
+    /// about again. The SSOT for the status half of a reroute:
+    /// [`reroute_blocked_with_severity`] appends the message and then calls this,
+    /// so the two can never disagree about what "blocked" writes to the field.
+    pub(super) async fn park_blocked(&self, target: &QuarkId) -> anyhow::Result<()> {
         self.append(Event::new(
             Actor::Quark(target.clone()),
             None,
@@ -423,6 +433,10 @@ impl super::Engine {
                     quark = quark.as_str(),
                 ),
             },
-        ))
+        )
+        // A worker is parked until this is answered — it needs attention, not a
+        // neutral notice, so it carries the same amber the other "you must act"
+        // reroutes do.
+        .with_severity(hadron_lattice::Severity::Warning))
     }
 }
