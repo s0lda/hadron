@@ -61,6 +61,8 @@ impl super::Chamber {
                 .size_full()
                 .overflow_y_scroll()
                 .track_scroll(&self.git_scroll)
+                .px_3()
+                .pb_3()
                 .child(self.git_branches_section(cx))
                 .into_any_element(),
             GitSubtab::Worktrees => div()
@@ -68,10 +70,14 @@ impl super::Chamber {
                 .size_full()
                 .overflow_y_scroll()
                 .track_scroll(&self.git_scroll)
+                .px_3()
+                .pb_3()
                 .child(self.git_worktrees_section())
                 .into_any_element(),
             GitSubtab::Graph => div()
                 .size_full()
+                .px_3()
+                .pb_3()
                 .child(self.git_graph_section(cx))
                 .into_any_element(),
         };
@@ -93,8 +99,6 @@ impl super::Chamber {
                     .flex_1()
                     .min_h_0()
                     .relative()
-                    .px_3()
-                    .pb_3()
                     .text_sm()
                     .text_color(theme::text())
                     .child(body)
