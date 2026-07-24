@@ -2,6 +2,32 @@
 //! (the colouring itself is done natively by the forked markdown renderer) and the
 //! plan-checklist progress parser behind the Plan rail. Pure string work — no GPUI.
 
+/// Resolve what the human typed after a `/command` — `@Sonnet`, `Sonnet`, or the bare
+/// seat id `acp-claude-2` — to the roster row it names.
+///
+/// The chamber renders a quark by its **display name** while the field keys everything
+/// on the **seat id**, so a command that only matched ids would reject the very name it
+/// just printed. Matching is case-insensitive and accepts either key; a leading `@` is
+/// optional because a human who just typed a mention will include it and one answering
+/// a prompt often will not.
+///
+/// Returns the row, not the id, so the caller can also see `enabled`/`adopted` without a
+/// second lookup — which is the difference between "toggled" and "there is nothing here
+/// to toggle yet".
+pub(super) fn seat_by_mention<'a>(
+    roster: &'a [crate::model::RosterRow],
+    target: &str,
+) -> Option<&'a crate::model::RosterRow> {
+    let want = target.trim().trim_start_matches('@').trim();
+    if want.is_empty() {
+        return None;
+    }
+    roster.iter().find(|r| {
+        r.id.eq_ignore_ascii_case(want)
+            || r.display_name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(want))
+    })
+}
+
 /// Parse a plan's markdown checklist into `(total, completed, items)`. Any line whose
 /// trimmed form starts with `- [ ]` / `- [x]` (case-insensitive) is a checkbox; the
 /// nearest preceding `## Task` / `### Task` heading is prefixed so the tracker shows
@@ -252,6 +278,34 @@ mod tests {
             tokens: 0,
             unknown_turns: 0,
         }]
+    }
+
+    /// `/toggle @Sonnet` must find the seat the human NAMED, not only the id the field
+    /// keys on — the chamber shows `@Sonnet` and never `@acp-claude-2`, so an id-only
+    /// match would reject the one spelling the UI ever displays.
+    #[test]
+    fn a_seat_resolves_by_display_name_by_id_and_with_or_without_the_sigil() {
+        let mut roster = opus_roster();
+        roster[0].id = "acp-claude-2".to_string();
+        roster[0].display_name = Some("Sonnet".to_string());
+
+        for typed in ["@Sonnet", "Sonnet", "@sonnet", "@acp-claude-2", "acp-claude-2", " @Sonnet "] {
+            assert_eq!(
+                seat_by_mention(&roster, typed).map(|r| r.id.as_str()),
+                Some("acp-claude-2"),
+                "{typed:?} names this seat",
+            );
+        }
+    }
+
+    /// An empty or unmatched target must be `None`, not the first row: `/toggle` with a
+    /// typo would otherwise silently park whichever quark happens to sort first.
+    #[test]
+    fn an_unknown_or_empty_target_resolves_to_nothing() {
+        let roster = opus_roster();
+        for typed in ["", "@", "   ", "@nobody", "opu"] {
+            assert!(seat_by_mention(&roster, typed).is_none(), "{typed:?} names no seat");
+        }
     }
 
     /// The renderer, not this pass, colours `@mention`s and `/command`s now. Text with no

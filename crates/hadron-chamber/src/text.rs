@@ -291,6 +291,7 @@ pub fn completion_candidates(
                 ("reboot", "Force-restart a resident quark (e.g. /reboot @acp-claude or /reboot all)"),
                 ("approve", "Approve a pending permission request (e.g. /approve @worker or /approve @worker remember)"),
                 ("deny", "Deny a pending permission request (e.g. /deny @worker)"),
+                ("toggle", "Park or unpark a quark — keeps the seat, skips its turns (e.g. /toggle @Sonnet)"),
                 ("toggle-roster", "Toggle the Roster sidebar"),
                 ("toggle-inspector", "Toggle the Inspector sidebar"),
                 ("goal", "Run a long-running task thoroughly"),

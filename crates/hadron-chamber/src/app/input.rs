@@ -188,13 +188,24 @@ impl super::Chamber {
 ///
 /// Only *leading* commands are recognised: the first token that is not a known command
 /// ends parsing, and everything from there is the message (so a body can contain a
-/// literal "/foo"). Zero-arg commands (`toggle-roster` / `toggle-inspector` / `clear`)
-/// chain; `/team-brainstorm` takes the rest of the line as its argument. The body is a
-/// slice of the ORIGINAL input, so internal newlines survive — it is never rebuilt from
-/// whitespace-split tokens. `body` is `None` only when at least one command ran and no
-/// message text remains, which is how the caller knows to clear the box and post nothing.
+/// literal "/foo"). [`ZERO_ARG_CMDS`] chain with each other and with a message;
+/// [`LINE_ARG_CMDS`] take the rest of the line as their argument and leave nothing to
+/// post. The body is a slice of the ORIGINAL input, so internal newlines survive — it is
+/// never rebuilt from whitespace-split tokens. `body` is `None` only when at least one
+/// command ran and no message text remains, which is how the caller knows to clear the
+/// box and post nothing.
+///
+/// **A command missing from these two lists is not "unhandled" — it is posted as chat.**
+/// That is the whole failure mode: `handle_chat_command` can have a perfectly good arm
+/// for a command that never reaches it, because parsing stopped at an unknown token and
+/// swept the line into the message body. Adding a `/command` means touching three places:
+/// here, `text::completion_candidates`, and `handle_chat_command`.
 pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Option<String>) {
+    /// Take no argument, so several can chain ahead of a message.
     const ZERO_ARG_CMDS: [&str; 3] = ["toggle-roster", "toggle-inspector", "clear"];
+    /// Consume the rest of the line as their argument.
+    const LINE_ARG_CMDS: [&str; 7] =
+        ["team-brainstorm", "reboot", "approve", "deny", "limit", "reset-energy", "toggle"];
     let mut cmds = Vec::new();
     let mut rest = full;
 
@@ -207,30 +218,8 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
                 cmds.push((cmd.to_string(), String::new()));
                 rest = &head[tok_end..];
             }
-            Some("team-brainstorm") => {
-                cmds.push(("team-brainstorm".to_string(), head[tok_end..].trim().to_string()));
-                // team-brainstorm consumes the rest of the line, so nothing is left to post.
-                return (cmds, None);
-            }
-            Some("reboot") => {
-                cmds.push(("reboot".to_string(), head[tok_end..].trim().to_string()));
-                // reboot consumes the rest of the line, so nothing is left to post.
-                return (cmds, None);
-            }
-            Some("approve") => {
-                cmds.push(("approve".to_string(), head[tok_end..].trim().to_string()));
-                return (cmds, None);
-            }
-            Some("deny") => {
-                cmds.push(("deny".to_string(), head[tok_end..].trim().to_string()));
-                return (cmds, None);
-            }
-            Some("limit") => {
-                cmds.push(("limit".to_string(), head[tok_end..].trim().to_string()));
-                return (cmds, None);
-            }
-            Some("reset-energy") => {
-                cmds.push(("reset-energy".to_string(), head[tok_end..].trim().to_string()));
+            Some(cmd) if LINE_ARG_CMDS.contains(&cmd) => {
+                cmds.push((cmd.to_string(), head[tok_end..].trim().to_string()));
                 return (cmds, None);
             }
             // First non-command token: the untouched remainder is the message body.
