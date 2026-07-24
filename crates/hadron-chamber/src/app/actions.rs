@@ -15,6 +15,10 @@ impl Chamber {
         cx: &mut Context<Self>,
     ) -> bool {
         match cmd {
+            "exit" | "quit" => {
+                cx.quit();
+                true
+            }
             "toggle-roster" => {
                 self.toggle_rail(Rail::Roster, _window, cx);
                 true

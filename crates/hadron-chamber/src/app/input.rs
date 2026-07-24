@@ -202,7 +202,7 @@ impl super::Chamber {
 /// here, `text::completion_candidates`, and `handle_chat_command`.
 pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Option<String>) {
     /// Take no argument, so several can chain ahead of a message.
-    const ZERO_ARG_CMDS: [&str; 3] = ["toggle-roster", "toggle-inspector", "clear"];
+    const ZERO_ARG_CMDS: [&str; 5] = ["toggle-roster", "toggle-inspector", "clear", "exit", "quit"];
     /// Consume the rest of the line as their argument.
     const LINE_ARG_CMDS: [&str; 7] =
         ["team-brainstorm", "reboot", "approve", "deny", "limit", "reset-energy", "toggle"];
@@ -230,4 +230,20 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
     let remaining = rest.trim();
     let body = (!remaining.is_empty()).then(|| remaining.to_string());
     (cmds, body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_split_leading_commands_exit() {
+        let (cmds, body) = split_leading_commands("/exit");
+        assert_eq!(cmds, vec![("exit".to_string(), "".to_string())]);
+        assert_eq!(body, None);
+
+        let (cmds, body) = split_leading_commands("/quit");
+        assert_eq!(cmds, vec![("quit".to_string(), "".to_string())]);
+        assert_eq!(body, None);
+    }
 }

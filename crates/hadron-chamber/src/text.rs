@@ -287,6 +287,8 @@ pub fn completion_candidates(
         '/' => {
             let cmds = [
                 ("clear", "Archive and clear the current chat history"),
+                ("exit", "Exit Hadron Chamber"),
+                ("quit", "Exit Hadron Chamber"),
                 ("team-brainstorm", "Kick off brainstorming with the team"),
                 ("reboot", "Force-restart a resident quark (e.g. /reboot @acp-claude or /reboot all)"),
                 ("approve", "Approve a pending permission request (e.g. /approve @worker or /approve @worker remember)"),
@@ -578,6 +580,12 @@ mod tests {
         // Path slashes must NOT trigger completions.
         let path = "src/app.rs";
         assert_eq!(extract_completion_query(path, path.len()), None);
+    }
+
+    #[test]
+    fn exit_command_completion_candidates() {
+        let completions = completion_candidates("/ex", 3, &[], &[]).unwrap();
+        assert!(completions.candidates.iter().any(|c| c.label == "/exit"));
     }
 }
 
