@@ -92,6 +92,10 @@ pub struct AcpQuark {
     /// Where to publish mid-turn activity. `None` = nobody is watching (tests, and
     /// any caller that has no field on disk), and the stream is simply dropped.
     live: Option<LiveFeed>,
+    /// Where this quark's last-known quota buckets are persisted (see
+    /// `hadron_lattice::quota`). `None` for the same reason `live` is: no field on
+    /// disk, so quota lives in memory for the session and nowhere else.
+    quota_dir: Option<PathBuf>,
     energy_limit: Option<u32>,
     deny_skills: Vec<String>,
 }
@@ -113,6 +117,7 @@ impl AcpQuark {
             session: None,
             last_spend: SpendWatermark::default(),
             live: None,
+            quota_dir: None,
             energy_limit: None,
             deny_skills: Vec::new(),
         }
@@ -130,10 +135,14 @@ impl AcpQuark {
         self
     }
 
-    /// Stream this quark's mid-turn activity into `dir` (see `hadron_lattice::live`).
-    /// The daemon calls this; a test that has no field does not, and the quark then
-    /// publishes nothing.
+    /// Stream this quark's mid-turn activity into `dir` (see `hadron_lattice::live`),
+    /// and persist its quota buckets into the sibling `quota/` directory (see
+    /// `hadron_lattice::quota`) — `dir` is always `<hadron-dir>/live`, so `quota/` is
+    /// a plain sibling, not a second setting to thread through. The daemon calls
+    /// this; a test that has no field does not, and the quark then publishes and
+    /// persists nothing.
     pub fn watching(mut self, dir: PathBuf) -> Self {
+        self.quota_dir = dir.parent().map(|p| p.join("quota"));
         self.live = Some(LiveFeed {
             dir,
             quark: self.id.clone(),

@@ -2,6 +2,7 @@ mod event;
 pub mod live;
 mod projection;
 mod quark;
+pub mod quota;
 pub mod secrets;
 mod snapshot;
 mod team;
