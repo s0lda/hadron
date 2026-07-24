@@ -33,8 +33,8 @@ impl super::Chamber {
                     let root = crate::vcs::repo_root_of(&this.path);
                     this.git_branches = Some(crate::vcs::list_branches(root, "main"));
                     this.git_worktrees = Some(crate::vcs::list_worktrees(root));
-                    this.git_log_graph =
-                        crate::vcs::commit_graph(root, crate::vcs::GRAPH_COMMIT_LIMIT);
+                    this.git_log_graph = crate::vcs::commit_graph(root);
+                    this.rebuild_graph_rows();
                 }
                 cx.notify();
             }));

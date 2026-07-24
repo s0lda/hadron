@@ -52,10 +52,36 @@ impl super::Chamber {
                 cx.notify();
             }));
 
+        // The Graph subtab virtualizes its own rows, so it owns its scrolling: a
+        // `gpui::list` inside an `overflow_y_scroll` parent is unbounded in height and
+        // would lay out every commit — exactly what the virtual list exists to avoid.
         let body = match selected {
-            GitSubtab::Branches => self.git_branches_section(cx).into_any_element(),
-            GitSubtab::Worktrees => self.git_worktrees_section().into_any_element(),
-            GitSubtab::Graph => self.git_graph_section(cx).into_any_element(),
+            GitSubtab::Branches => div()
+                .id("git-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.git_scroll)
+                .child(self.git_branches_section(cx))
+                .into_any_element(),
+            GitSubtab::Worktrees => div()
+                .id("git-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.git_scroll)
+                .child(self.git_worktrees_section())
+                .into_any_element(),
+            GitSubtab::Graph => div()
+                .size_full()
+                .child(self.git_graph_section(cx))
+                .into_any_element(),
+        };
+        let scrollbar: gpui::AnyElement = match selected {
+            GitSubtab::Graph => Scrollbar::vertical(&self.git_graph_list)
+                .scrollbar_show(ScrollbarShow::Hover)
+                .into_any_element(),
+            _ => Scrollbar::vertical(&self.git_scroll)
+                .scrollbar_show(ScrollbarShow::Hover)
+                .into_any_element(),
         };
 
         v_flex()
@@ -67,23 +93,18 @@ impl super::Chamber {
                     .flex_1()
                     .min_h_0()
                     .relative()
+                    .px_3()
+                    .pb_3()
+                    .text_sm()
+                    .text_color(theme::text())
+                    .child(body)
                     .child(
                         div()
-                            .id("git-scroll")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.git_scroll)
-                            .px_3()
-                            .pb_3()
-                            .text_sm()
-                            .text_color(theme::text())
-                            .child(body),
-                    )
-                    .child(
-                        div().absolute().top_0().bottom_0().right_0().child(
-                            Scrollbar::vertical(&self.git_scroll)
-                                .scrollbar_show(ScrollbarShow::Hover),
-                        ),
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .right_0()
+                            .child(scrollbar),
                     ),
             )
     }
@@ -262,15 +283,41 @@ impl super::Chamber {
     /// Compute (or toggle off) the patch diff of a commit. Clicking the
     /// already-selected commit clears the panel.
     fn select_commit(&mut self, hash: String) {
-        if self.git_selected_commit.as_deref() == Some(hash.as_str()) {
-            self.git_selected_commit = None;
+        let previous = self.git_selected_commit.take();
+        let toggled_off = previous.as_deref() == Some(hash.as_str());
+        if toggled_off {
             self.git_commit_diff = None;
-            return;
+        } else {
+            let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+            self.git_commit_diff = crate::vcs::commit_diff(&root, &hash);
+            self.git_commit_open_ixs.clear();
+            self.git_selected_commit = Some(hash.clone());
         }
-        let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        self.git_commit_diff = crate::vcs::commit_diff(&root, &hash);
-        self.git_commit_open_ixs.clear();
-        self.git_selected_commit = Some(hash);
+        // Both the row that just closed and the one that just opened changed height.
+        let changed: Vec<&str> = previous
+            .as_deref()
+            .into_iter()
+            .chain((!toggled_off).then_some(hash.as_str()))
+            .collect();
+        for h in changed {
+            self.invalidate_graph_row(h);
+        }
+    }
+
+    /// Tell the Graph subtab's virtual list that one row's height changed.
+    ///
+    /// `gpui::list` caches the height it measured for each item and only re-measures
+    /// what it is told about — a selected row grows by its diff panel, so without this
+    /// the list keeps the old height and the rows below it overlap. `splice` (rather
+    /// than `reset`) invalidates the single row and leaves the scroll position alone.
+    fn invalidate_graph_row(&mut self, full_hash: &str) {
+        if let Some(ix) = self
+            .git_graph_rows
+            .iter()
+            .position(|r| r.full_hash.as_deref() == Some(full_hash))
+        {
+            self.git_graph_list.splice(ix..ix + 1, 1);
+        }
     }
 
     /// The changed-files panel for the selected commit: a `N files  +A −R` header over
@@ -425,6 +472,42 @@ impl super::Chamber {
 
     // ── Graph ────────────────────────────────────────────────────────────────────
 
+    /// Recompute the Graph subtab's rows from the raw `git log --graph` string: parse,
+    /// drop swarm snapshots unless the toggle is on, collapse orphaned connector runs,
+    /// and size the rail gutter from the widest lane.
+    ///
+    /// Derived state on purpose. GPUI re-renders the whole window on every hover
+    /// transition, and doing this work *in* the render was what made the tab lag: an
+    /// uncapped `git log` re-parsed per mouse-move. Call this wherever an input changes
+    /// — the graph string or the snapshot toggle — and never from a render path.
+    pub(super) fn rebuild_graph_rows(&mut self) {
+        let show_snapshots = self.git_show_snapshots;
+        let rows = match self.git_log_graph.as_deref() {
+            Some(graph) if !graph.trim().is_empty() => {
+                let kept: Vec<crate::vcs::GraphRow> = crate::vcs::parse_graph(graph)
+                    .into_iter()
+                    .filter(|r| show_snapshots || !Self::is_swarm_snapshot(r))
+                    .collect();
+                Self::collapse_connectors(kept)
+            }
+            _ => Vec::new(),
+        };
+        self.git_graph_max_lanes = rows
+            .iter()
+            .flat_map(|r| r.lanes.iter().map(|l| l.from_col.max(l.to_col)))
+            .max()
+            .map_or(1, |m| m + 1);
+        self.git_graph_rows = rows;
+        // Every cached item height belongs to the old row set.
+        self.git_graph_list.reset(self.git_graph_rows.len());
+    }
+
+    /// A `hadron`-authored `before <seat>` commit — the daemon's own pre-turn snapshot.
+    /// Roughly 60% of this repo's history, and never what a human came to the graph for.
+    pub(super) fn is_swarm_snapshot(row: &crate::vcs::GraphRow) -> bool {
+        row.author.as_deref() == Some("hadron") && row.subject.starts_with("before ")
+    }
+
     fn git_graph_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let show_snapshots = self.git_show_snapshots;
         let header = h_flex()
@@ -440,6 +523,7 @@ impl super::Chamber {
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.git_show_snapshots = !this.git_show_snapshots;
+                        this.rebuild_graph_rows();
                         cx.notify();
                     }))
                     .child(
@@ -450,145 +534,140 @@ impl super::Chamber {
                     ),
             );
 
-        let body: gpui::AnyElement = match &self.git_log_graph {
-            None => Self::muted("Failed to load commit graph.").into_any_element(),
-            Some(graph) if graph.trim().is_empty() => {
-                Self::muted("No commits.").into_any_element()
-            }
-            Some(graph) => {
-                let all_rows = crate::vcs::parse_graph(graph);
-                let rows: Vec<crate::vcs::GraphRow> = all_rows
-                    .into_iter()
-                    .filter(|r| {
-                        if show_snapshots {
-                            return true;
+        // Rows come from `git_graph_rows` (rebuilt on load and on the snapshot toggle),
+        // never re-parsed here: this function runs on every hover transition.
+        let body: gpui::AnyElement = if self.git_log_graph.is_none() {
+            Self::muted("Failed to load commit graph.").into_any_element()
+        } else if self.git_graph_rows.is_empty() {
+            Self::muted("No commits.").into_any_element()
+        } else {
+            let weak_view = cx.entity().downgrade();
+            div()
+                .flex_1()
+                .min_h_0()
+                .child(
+                    gpui::list(self.git_graph_list.clone(), move |ix, _window, cx| {
+                        match weak_view.upgrade() {
+                            Some(view) => view.update(cx, |this, cx| this.graph_row(ix, cx)),
+                            None => div().into_any_element(),
                         }
-                        if let (Some(author), subject) = (r.author.as_deref(), r.subject.as_str()) {
-                            if author == "hadron" && subject.starts_with("before ") {
-                                return false;
-                            }
-                        }
-                        true
                     })
-                    .collect();
-                let rows = Self::collapse_connectors(rows);
-
-                let max_lanes = rows
-                    .iter()
-                    .flat_map(|r| r.lanes.iter().map(|l| l.from_col.max(l.to_col)))
-                    .max()
-                    .map_or(1, |m| m + 1);
-
-                let mut list = v_flex().w_full().text_sm();
-                for (ix, row) in rows.into_iter().enumerate() {
-                    let is_connector = row.hash.is_none();
-                    let row_h = if is_connector { 12.0 } else { 24.0 };
-
-                    let mut line = h_flex()
-                        .id(("graph-row", ix))
-                        .w_full()
-                        .gap_2()
-                        .items_center()
-                        .h(px(row_h))
-                        .px_1()
-                        .rounded_md()
-                        .overflow_hidden()
-                        .child(Self::render_rail_canvas(&row, max_lanes, row_h));
-
-                    if let Some(hash) = &row.hash {
-                        let full_hash = row.full_hash.clone().unwrap_or_else(|| hash.clone());
-                        let is_selected =
-                            self.git_selected_commit.as_deref() == Some(full_hash.as_str());
-
-                        let lane = row.node_col.unwrap_or(0);
-                        let lane_color = LANE_COLORS[lane % LANE_COLORS.len()];
-                        line = line.child(
-                            div()
-                                .flex_none()
-                                .font_family("Cascadia Code")
-                                .text_color(gpui::rgb(lane_color))
-                                .child(hash.clone()),
-                        );
-
-                        // Cap displayed ref pills to max 2 + overflow count chip
-                        let refs = Self::distinct_refs(&row.decorations);
-                        let (display_decos, overflow_count) = if refs.len() > 2 {
-                            (&refs[..2], refs.len() - 2)
-                        } else {
-                            (&refs[..], 0)
-                        };
-                        for dec in display_decos {
-                            line = line.child(Self::ref_pill(dec));
-                        }
-                        if overflow_count > 0 {
-                            line = line.child(
-                                div()
-                                    .flex_none()
-                                    .px_1p5()
-                                    .py_0p5()
-                                    .rounded_md()
-                                    .text_xs()
-                                    .bg(gpui::rgba(0x94a3b822))
-                                    .text_color(gpui::rgb(0x94a3b8))
-                                    .child(format!("+{}", overflow_count)),
-                            );
-                        }
-
-                        line = line.child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(theme::text())
-                                .child(row.subject.clone()),
-                        );
-                        if let Some(author) = &row.author {
-                            line = line.child(
-                                div()
-                                    .flex_none()
-                                    .text_xs()
-                                    .text_color(theme::text_muted())
-                                    .child(author.clone()),
-                            );
-                        }
-                        if let Some(date) = &row.relative_date {
-                            line = line.child(
-                                div()
-                                    .flex_none()
-                                    .text_xs()
-                                    .text_color(theme::text_muted())
-                                    .child(date.clone()),
-                            );
-                        }
-
-                        let click_hash = full_hash.clone();
-                        line = line
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme::border()))
-                            .when(is_selected, |d| d.bg(theme::border()))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.select_commit(click_hash.clone());
-                                cx.notify();
-                            }));
-
-                        let mut entry = v_flex().w_full().child(line);
-                        if is_selected {
-                            entry = entry.child(self.commit_diff_panel(&full_hash, cx));
-                        }
-                        list = list.child(entry);
-                    } else {
-                        list = list.child(line);
-                    }
-                }
-                list.into_any_element()
-            }
+                    .size_full(),
+                )
+                .into_any_element()
         };
 
         v_flex()
-            .w_full()
+            .size_full()
             .gap_1()
-            .child(header)
+            .text_sm()
+            .child(header.flex_none())
             .child(body)
+    }
+
+    /// One row of the commit graph, built on demand by the virtual list — so only the
+    /// rows on screen (plus overdraw) ever construct elements or paint a lane canvas.
+    fn graph_row(&self, ix: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let Some(row) = self.git_graph_rows.get(ix) else {
+            return div().into_any_element();
+        };
+        let max_lanes = self.git_graph_max_lanes;
+        let row_h = if row.hash.is_none() { 12.0 } else { 24.0 };
+
+        let mut line = h_flex()
+            .id(("graph-row", ix))
+            .w_full()
+            .gap_2()
+            .items_center()
+            .h(px(row_h))
+            .px_1()
+            .rounded_md()
+            .overflow_hidden()
+            .child(Self::render_rail_canvas(row, max_lanes, row_h));
+
+        let Some(hash) = &row.hash else {
+            return line.into_any_element();
+        };
+
+        let full_hash = row.full_hash.clone().unwrap_or_else(|| hash.clone());
+        let is_selected = self.git_selected_commit.as_deref() == Some(full_hash.as_str());
+
+        let lane = row.node_col.unwrap_or(0);
+        let lane_color = LANE_COLORS[lane % LANE_COLORS.len()];
+        line = line.child(
+            div()
+                .flex_none()
+                .font_family("Cascadia Code")
+                .text_color(gpui::rgb(lane_color))
+                .child(hash.clone()),
+        );
+
+        // Cap displayed ref pills to max 2 + overflow count chip
+        let refs = Self::distinct_refs(&row.decorations);
+        let (display_decos, overflow_count) = if refs.len() > 2 {
+            (&refs[..2], refs.len() - 2)
+        } else {
+            (&refs[..], 0)
+        };
+        for dec in display_decos {
+            line = line.child(Self::ref_pill(dec));
+        }
+        if overflow_count > 0 {
+            line = line.child(
+                div()
+                    .flex_none()
+                    .px_1p5()
+                    .py_0p5()
+                    .rounded_md()
+                    .text_xs()
+                    .bg(gpui::rgba(0x94a3b822))
+                    .text_color(gpui::rgb(0x94a3b8))
+                    .child(format!("+{}", overflow_count)),
+            );
+        }
+
+        line = line.child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_color(theme::text())
+                .child(row.subject.clone()),
+        );
+        if let Some(author) = &row.author {
+            line = line.child(
+                div()
+                    .flex_none()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(author.clone()),
+            );
+        }
+        if let Some(date) = &row.relative_date {
+            line = line.child(
+                div()
+                    .flex_none()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(date.clone()),
+            );
+        }
+
+        let click_hash = full_hash.clone();
+        line = line
+            .cursor_pointer()
+            .hover(|s| s.bg(theme::border()))
+            .when(is_selected, |d| d.bg(theme::border()))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.select_commit(click_hash.clone());
+                cx.notify();
+            }));
+
+        let mut entry = v_flex().w_full().child(line);
+        if is_selected {
+            entry = entry.child(self.commit_diff_panel(&full_hash, cx));
+        }
+        entry.into_any_element()
     }
 
     /// Render graph lanes and commit dot on a GPUI canvas.
@@ -801,6 +880,13 @@ impl super::Chamber {
                     } else {
                         set.insert(ix);
                     }
+                    // This panel is nested inside the selected commit's virtual-list
+                    // row, so opening a file grows that row too.
+                    if panel == DiffPanel::Commit {
+                        if let Some(hash) = this.git_selected_commit.clone() {
+                            this.invalidate_graph_row(&hash);
+                        }
+                    }
                     cx.notify();
                 }))
                 .child(title)
@@ -891,6 +977,31 @@ mod tests {
             deco("v1.0.0", RefKind::Tag),
         ];
         assert_eq!(Chamber::distinct_refs(&decos).len(), 3);
+    }
+
+    fn authored(author: &str, subject: &str) -> crate::vcs::GraphRow {
+        crate::vcs::GraphRow {
+            hash: Some("aaa1111".into()),
+            author: Some(author.into()),
+            subject: subject.into(),
+            ..Default::default()
+        }
+    }
+
+    /// The daemon's pre-turn snapshots are hidden by default — they are ~60% of this
+    /// repo's history and nothing a human came to the graph to read.
+    #[test]
+    fn a_hadron_before_commit_is_a_swarm_snapshot() {
+        assert!(Chamber::is_swarm_snapshot(&authored("hadron", "before acp-claude")));
+    }
+
+    /// Both halves of the rule matter: a human's commit that happens to start with
+    /// "before", and a `hadron`-authored commit that is real work, must both survive.
+    #[test]
+    fn only_hadron_authored_before_commits_are_snapshots() {
+        assert!(!Chamber::is_swarm_snapshot(&authored("Jake", "before we ship, fix this")));
+        assert!(!Chamber::is_swarm_snapshot(&authored("hadron", "feat(chamber): real work")));
+        assert!(!Chamber::is_swarm_snapshot(&crate::vcs::GraphRow::default()));
     }
 
     fn connector(lanes: Vec<crate::vcs::LaneSeg>) -> crate::vcs::GraphRow {
