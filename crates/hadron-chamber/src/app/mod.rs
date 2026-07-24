@@ -401,7 +401,7 @@ impl Chamber {
         // own card instead (`completion_card_overlay`), driven from `InputEvent`.
         let input = cx.new(|cx| {
             InputState::new(window, cx)
-                .auto_grow(1, 4)
+                .auto_grow(1, 12)
                 .submit_on_enter(true)
                 .placeholder("Type @quark a message…  (Enter to send · Shift+Enter for newline)")
         });
