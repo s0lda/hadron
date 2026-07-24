@@ -553,8 +553,8 @@ fn a_binary_registry_agent_clears_the_guessed_command() {
 #[test]
 fn every_preset_vendor_survives_the_merge() {
     let merged = QuarkKind::available_agents();
-    for (vendor, ..) in QuarkKind::available_presets() {
-        assert!(merged.iter().any(|e| e.vendor == vendor), "{vendor} vanished from the catalogue");
+    for a in ACP_AGENTS {
+        assert!(merged.iter().any(|e| e.vendor == a.vendor), "{} vanished from the catalogue", a.vendor);
     }
 }
 

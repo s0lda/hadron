@@ -17,9 +17,9 @@ use presets::ACP_AGENTS;
 /// One row of the add-quark catalogue the chamber renders, from whichever source knows
 /// the agent best.
 ///
-/// Owned, unlike [`QuarkKind::available_presets`]'s `&'static str` tuples, because half
-/// these rows are parsed from JSON at runtime. This is the catalogue view to build a
-/// wizard on; `available_presets` is the compiled-only view it supersedes.
+/// Owned, unlike the compiled preset list's `&'static str` tuples, because half these
+/// rows are parsed from JSON at runtime. This is the only catalogue view the chamber
+/// builds its wizard on — see [`QuarkKind::available_agents`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogueEntry {
     pub vendor: String,
@@ -126,28 +126,6 @@ impl AcpTarget {
 }
 
 impl QuarkKind {
-    /// The provider list the chamber renders: `(vendor, display name, program, args)`.
-    ///
-    /// A *view* of [`ACP_AGENTS`], not a list of its own — so the wizard can only
-    /// offer an agent the daemon can actually boot. The previous version of this
-    /// function kept its own literals and offered `agy acp`, which does not speak
-    /// ACP at all: a provider list that drifts from the registry is a list of
-    /// promises nothing keeps.
-    /// The add-quark preset catalogue as `(vendor, name, description, program, args)`.
-    /// `description` is a short human blurb for the first-class agents so the wizard
-    /// row reads consistently (Antigravity otherwise shows a raw local python path
-    /// next to the others' clean `npx` package specs); best-effort presets have `""`,
-    /// and the UI falls back to showing their command line.
-    pub fn available_presets(
-    ) -> Vec<(&'static str, &'static str, &'static str, &'static str, Vec<&'static str>)> {
-        ACP_AGENTS
-            .iter()
-            .map(|a| {
-                (a.vendor, a.name, Self::preset_description(a.vendor), a.program, a.args.to_vec())
-            })
-            .collect()
-    }
-
     /// The short human blurb for a first-class preset. Best-effort presets have none and
     /// fall back to their command line — or, once merged below, to the registry's own
     /// description.
@@ -162,8 +140,8 @@ impl QuarkKind {
     }
 
     /// The full add-quark catalogue: the compiled presets **merged with** the published
-    /// ACP registry ([`loader`]). This is what a "seat an agent from the registry"
-    /// wizard renders; [`Self::available_presets`] cannot see the registry at all.
+    /// ACP registry ([`loader`]). This is the only view the chamber's "seat an agent"
+    /// wizard renders from.
     ///
     /// The merge rule, keyed on vendor:
     ///
