@@ -965,6 +965,103 @@ fn a_meta_without_the_claude_key_yields_no_bucket() {
     assert!(super::session::parse_claude_rate_limit(&meta).is_none());
 }
 
+#[test]
+fn a_claude_rate_limit_without_rate_limit_type_falls_back_to_claude_limit_key() {
+    let update: SessionUpdate = serde_json::from_value(serde_json::json!({
+        "sessionUpdate": "usage_update",
+        "used": 100,
+        "size": 1000,
+        "_meta": {
+            "_claude/rateLimit": {
+                "status": "allowed",
+                "utilization": 0.25
+            }
+        }
+    }))
+    .expect("deserializes");
+
+    let meta = match update {
+        SessionUpdate::UsageUpdate(u) => u.meta.expect("_meta present"),
+        other => panic!("expected UsageUpdate, got {other:?}"),
+    };
+
+    let bucket = super::session::parse_claude_rate_limit(&meta)
+        .expect("missing rateLimitType must fall back to key claude-limit");
+    assert_eq!(bucket.key, "claude-limit");
+    assert!((bucket.remaining_fraction - 0.75).abs() < 1e-9);
+}
+
+#[test]
+fn a_claude_rate_limit_without_utilization_returns_none() {
+    let update: SessionUpdate = serde_json::from_value(serde_json::json!({
+        "sessionUpdate": "usage_update",
+        "used": 100,
+        "size": 1000,
+        "_meta": {
+            "_claude/rateLimit": {
+                "status": "allowed",
+                "rateLimitType": "five_hour"
+            }
+        }
+    }))
+    .expect("deserializes");
+
+    let meta = match update {
+        SessionUpdate::UsageUpdate(u) => u.meta.expect("_meta present"),
+        other => panic!("expected UsageUpdate, got {other:?}"),
+    };
+
+    assert!(super::session::parse_claude_rate_limit(&meta).is_none());
+}
+
+#[test]
+fn quota_buckets_persist_and_accumulate_across_turns() {
+    use std::sync::{Arc, Mutex};
+    use hadron_lattice::QuotaBucket;
+
+    let quota = Arc::new(Mutex::new(Vec::<QuotaBucket>::new()));
+
+    // Turn 1 receives five_hour bucket
+    let meta1: serde_json::Map<String, serde_json::Value> = serde_json::from_value(serde_json::json!({
+        "_claude/rateLimit": {
+            "rateLimitType": "five_hour",
+            "utilization": 0.10
+        }
+    })).unwrap();
+
+    let bucket1 = super::session::parse_claude_rate_limit(&meta1).unwrap();
+    {
+        let mut q = quota.lock().unwrap();
+        match q.iter_mut().find(|b| b.key == bucket1.key) {
+            Some(existing) => *existing = bucket1,
+            None => q.push(bucket1),
+        }
+    }
+
+    // Turn 2 receives seven_day bucket (and turn start does NOT clear quota)
+    let meta2: serde_json::Map<String, serde_json::Value> = serde_json::from_value(serde_json::json!({
+        "_claude/rateLimit": {
+            "rateLimitType": "seven_day",
+            "utilization": 0.30
+        }
+    })).unwrap();
+
+    let bucket2 = super::session::parse_claude_rate_limit(&meta2).unwrap();
+    {
+        let mut q = quota.lock().unwrap();
+        match q.iter_mut().find(|b| b.key == bucket2.key) {
+            Some(existing) => *existing = bucket2,
+            None => q.push(bucket2),
+        }
+    }
+
+    let snapshot = quota.lock().unwrap().clone();
+    assert_eq!(snapshot.len(), 2);
+    let keys: Vec<&str> = snapshot.iter().map(|b| b.key.as_str()).collect();
+    assert!(keys.contains(&"claude-five_hour"));
+    assert!(keys.contains(&"claude-seven_day"));
+}
+
 /// **The Settings model probe's boundary.** `agy_acp.py` now answers `session/new`
 /// with its static model list and WITHOUT booting the SDK — so model detection no
 /// longer needs the API key or a live Google connection (that dependency is why the
