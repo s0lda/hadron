@@ -348,6 +348,35 @@ async fn main() {
         eprintln!("hadron-gluon: memory→nucleus migration failed (non-fatal): {e:#}");
     }
 
+    // Startup reclamation. `worktree::reclaim` has existed (and been tested) since
+    // the worktree module landed but had **no caller at all** — so a dirty tree left
+    // by a crashed quark was only ever discovered when the next `ensure` refused it,
+    // by which point the human is reading a routing warning instead of a diagnosis.
+    // Report it up front, and sweep the merged `quark/*` branches that accumulate one
+    // per turn forever (178 of them here, 156 already merged). Both are non-fatal:
+    // a repo that cannot be swept is still a repo the daemon can serve.
+    match hadron_gluon::worktree::reclaim(&repo_root) {
+        Ok(found) => {
+            for wt in found.iter().filter(|w| w.dirty) {
+                eprintln!(
+                    "hadron-gluon: {} left uncommitted work in {} (on {}) — inspect it before its next turn",
+                    wt.quark.as_str(),
+                    wt.path.display(),
+                    wt.branch,
+                );
+            }
+        }
+        Err(e) => eprintln!("hadron-gluon: worktree reclamation failed (non-fatal): {e:#}"),
+    }
+    let base = hadron_gluon::worktree::default_branch(&repo_root);
+    match hadron_gluon::worktree::prune_merged_branches(&repo_root, &base) {
+        Ok(pruned) if !pruned.is_empty() => {
+            eprintln!("hadron-gluon: pruned {} merged quark branches", pruned.len());
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("hadron-gluon: branch prune failed (non-fatal): {e:#}"),
+    }
+
     let engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
         .with_git(repo_root.clone())
         .with_merge_gate(std::sync::Arc::new(hadron_gluon::merge::CargoMergeRunner))

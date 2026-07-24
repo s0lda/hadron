@@ -106,19 +106,10 @@ pub async fn run_tests_with(
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args).current_dir(&wt.path);
 
-    // **The gate's cost lives or dies on this line.** A quark's worktree is a *fresh*
-    // checkout with no `target/` of its own, so an unqualified `cargo test` there is a
-    // full cold build of the workspace — minutes, and a duplicate artifact tree per
-    // quark (this workspace's `target/` is 41 GB). Pointing every worktree at the main
-    // checkout's `target/` makes the gate reuse the warm cache instead: measured at
-    // **13s in a fresh worktree, against a cold build's minutes**.
-    //
-    // Safe under concurrency: cargo takes a file lock on the target dir, so two gate
-    // runs queue rather than corrupt each other. Best-effort — if git cannot name the
-    // root (not a repo), we simply do not set it and cargo behaves as before.
-    if let Ok(root) = crate::snapshot::main_repo_root(&wt.path) {
-        cmd.env("CARGO_TARGET_DIR", root.join("target"));
-    }
+    // **The gate's cost lives or dies on this line** — and so does the disk. See
+    // `worktree::shared_build_env` for why; the quark's own subprocess gets the very
+    // same env, which is the point of it living in one place.
+    cmd.envs(crate::worktree::shared_build_env(&wt.path));
 
     let out = cmd
         .output()

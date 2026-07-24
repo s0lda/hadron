@@ -213,6 +213,61 @@ pub fn list(repo_root: &Path) -> anyhow::Result<Vec<Worktree>> {
     Ok(found)
 }
 
+/// The build environment every quark subprocess and the merge gate share.
+///
+/// **This is the whole disk story.** A worktree is a fresh checkout with no
+/// `target/` of its own, so an unqualified `cargo` there does a cold build *and*
+/// grows a duplicate artifact tree per quark. Measured on this repo before the fix:
+/// the main checkout's `target/` was 105 GB and three worktrees had grown 32–37 GB
+/// each — 210 GB total, none of it ever pruned. Pointing every worktree at the main
+/// checkout's `target/` makes them share one warm cache instead (the gate measured
+/// 13s in a fresh worktree against a cold build's minutes).
+///
+/// `CARGO_INCREMENTAL=0` rides along because a quark gets a *fresh branch every
+/// turn*, so incremental state is rebuilt more often than it is reused — and it was
+/// 40 GB of the 105. The human's own interactive builds are untouched: this is a
+/// spawn-time env, not a checked-in `.cargo/config.toml`.
+///
+/// Safe under concurrency: cargo takes a file lock on the target dir, so two quarks
+/// queue rather than corrupt each other. Best-effort — if git cannot name the main
+/// root (not a repo), the target dir is simply left to cargo's default.
+pub fn shared_build_env(cwd: &Path) -> Vec<(String, String)> {
+    let mut env = vec![("CARGO_INCREMENTAL".to_string(), "0".to_string())];
+    if let Ok(root) = crate::snapshot::main_repo_root(cwd) {
+        env.push((
+            "CARGO_TARGET_DIR".to_string(),
+            root.join("target").to_string_lossy().to_string(),
+        ));
+    }
+    env
+}
+
+/// Delete every `quark/*` branch already merged into `base`, and report the names.
+///
+/// **`-d`, never `-D`.** Lowercase refuses a branch whose commits are not in `base`,
+/// which is exactly the guard we want: an errored turn's branch never reaches the
+/// merge gate, and deleting it would silently destroy the only copy of that work.
+/// Git also refuses a branch a worktree currently has checked out, so a live quark's
+/// branch is safe by construction — which is why this runs at startup, not at land
+/// time. Errors are swallowed per branch: a refusal is the guard doing its job, not
+/// a failure of the sweep.
+pub fn prune_merged_branches(repo_root: &Path, base: &str) -> anyhow::Result<Vec<String>> {
+    let listed = git(
+        repo_root,
+        &["branch", "--list", "quark/*", "--merged", base, "--format=%(refname:short)"],
+    )?;
+    let mut pruned = Vec::new();
+    for name in listed.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        // `git`, NOT `git_ok`: the latter maps a nonzero exit onto `Ok(None)`, so
+        // `.is_ok()` on it is always true and this reported every refusal as a
+        // deletion. Caught by `the_prune_skips_a_branch_a_worktree_has_checked_out`.
+        if git(repo_root, &["branch", "-d", name]).is_ok() {
+            pruned.push(name.to_string());
+        }
+    }
+    Ok(pruned)
+}
+
 /// Startup reclamation. Prunes worktrees git has lost track of (the dir was deleted
 /// behind its back), then REPORTS what survives — including any dirty tree left by
 /// a crashed quark or a killed daemon.
@@ -296,6 +351,89 @@ pub(crate) mod tests {
 
     fn q(id: &str) -> QuarkId {
         QuarkId::new(id)
+    }
+
+    /// The disk fix: a worktree's build env points at the MAIN checkout's `target/`,
+    /// not at one of its own. Without this every quark grows a duplicate artifact
+    /// tree (measured: 32–37 GB each, three of them).
+    #[test]
+    fn a_worktree_builds_into_the_main_checkouts_target() {
+        let repo = git_repo();
+        let wt = ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+        let env = shared_build_env(&wt.path);
+
+        let target = env.iter().find(|(k, _)| k == "CARGO_TARGET_DIR").expect("target dir is set");
+        // The main root is what git reports, so compare against the canonicalized
+        // repo dir — `git_repo` lives under a temp dir that is a symlink on some boxes.
+        let expected = std::fs::canonicalize(repo.path()).unwrap().join("target");
+        assert_eq!(
+            PathBuf::from(&target.1),
+            expected,
+            "the worktree must build into the main checkout's target, not {:?}",
+            wt.path.join("target"),
+        );
+        assert!(
+            !target.1.contains(".hadron/trees"),
+            "a target under the worktree is exactly the 37 GB duplicate this prevents",
+        );
+        assert_eq!(
+            env.iter().find(|(k, _)| k == "CARGO_INCREMENTAL").map(|(_, v)| v.as_str()),
+            Some("0"),
+            "a fresh branch per turn rebuilds incremental state more often than it reuses it",
+        );
+    }
+
+    /// Outside a repo there is no main root to name, so we set no target dir at all
+    /// and let cargo do what it always did — rather than inventing a path.
+    #[test]
+    fn shared_build_env_names_no_target_outside_a_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = shared_build_env(dir.path());
+        assert!(env.iter().all(|(k, _)| k != "CARGO_TARGET_DIR"));
+    }
+
+    /// A merged branch is swept; an unmerged one SURVIVES. The second half is the
+    /// point: an errored turn never reaches the merge gate, and `-d` refusing it is
+    /// the only thing standing between that work and deletion.
+    #[test]
+    fn the_prune_takes_merged_branches_and_spares_unmerged_work() {
+        let repo = git_repo();
+        let root = repo.path();
+
+        // A merged branch: branch, then fast-forward main onto it.
+        git(root, &["checkout", "-q", "-b", "quark/opus/01MERGED"]).unwrap();
+        std::fs::write(root.join("merged.txt"), "landed\n").unwrap();
+        git(root, &["add", "."]).unwrap();
+        git(root, &["commit", "-q", "-m", "landed work"]).unwrap();
+        git(root, &["checkout", "-q", "main"]).unwrap();
+        git(root, &["merge", "-q", "--ff-only", "quark/opus/01MERGED"]).unwrap();
+
+        // An unmerged branch: a turn that errored before the gate ever saw it.
+        git(root, &["checkout", "-q", "-b", "quark/agy/01STRANDED"]).unwrap();
+        std::fs::write(root.join("stranded.txt"), "never landed\n").unwrap();
+        git(root, &["add", "."]).unwrap();
+        git(root, &["commit", "-q", "-m", "work the gate never saw"]).unwrap();
+        git(root, &["checkout", "-q", "main"]).unwrap();
+
+        let pruned = prune_merged_branches(root, "main").unwrap();
+
+        assert_eq!(pruned, vec!["quark/opus/01MERGED".to_string()]);
+        let left = git(root, &["branch", "--list", "quark/*", "--format=%(refname:short)"]).unwrap();
+        assert!(left.contains("quark/agy/01STRANDED"), "unmerged work must survive the sweep");
+        assert!(!left.contains("quark/opus/01MERGED"));
+    }
+
+    /// A live quark's branch is checked out in its worktree, so git refuses to delete
+    /// it even once it has landed — the sweep must survive that refusal, not abort on it.
+    #[test]
+    fn the_prune_skips_a_branch_a_worktree_has_checked_out() {
+        let repo = git_repo();
+        let wt = ensure(repo.path(), &q("opus"), "01LIVE").unwrap();
+        // Branched from main with no commits of its own, so it counts as merged.
+        let pruned = prune_merged_branches(repo.path(), "main").unwrap();
+
+        assert!(pruned.is_empty(), "git refuses a checked-out branch; the sweep reports none");
+        assert_eq!(current_branch(&wt.path).as_deref(), Some("quark/opus/01LIVE"));
     }
 
     #[test]
