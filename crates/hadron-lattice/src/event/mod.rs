@@ -119,6 +119,11 @@ pub enum Kind {
     /// in-flight turn if one is running). A no-op for a quark that holds nothing resident
     /// (the CLI transports spawn per turn).
     Reboot,
+    /// Name the current session. Appended to the LIVE field by `/rename` (`to: None` —
+    /// a session has no per-quark target); because `/clear` archives by copying the
+    /// live field before truncating it, this event rides along into the archive for
+    /// free. The latest one in a field wins, so renaming twice is not an error.
+    SessionName { name: String },
     /// Any kind this version does not understand. `raw` holds the full set of
     /// non-envelope fields so the event can be re-serialized and displayed.
     Unknown { kind: String, raw: Value },
@@ -287,6 +292,10 @@ impl Serialize for Event {
             Kind::Reboot => {
                 m.serialize_entry("kind", "reboot")?;
             }
+            Kind::SessionName { name } => {
+                m.serialize_entry("kind", "session_name")?;
+                m.serialize_entry("name", name)?;
+            }
             Kind::Unknown { kind, raw } => {
                 m.serialize_entry("kind", kind)?;
                 if let Value::Object(obj) = raw {
@@ -398,6 +407,9 @@ impl<'de> Deserialize<'de> for Event {
             },
             "mode_clear" => Kind::ModeClear,
             "reboot" => Kind::Reboot,
+            "session_name" => Kind::SessionName {
+                name: take_field(&mut map, "name")?,
+            },
             other => Kind::Unknown {
                 kind: other.to_string(),
                 raw: Value::Object(map.clone()),

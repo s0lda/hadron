@@ -294,6 +294,8 @@ pub fn completion_candidates(
                 ("approve", "Approve a pending permission request (e.g. /approve @worker or /approve @worker remember)"),
                 ("deny", "Deny a pending permission request (e.g. /deny @worker)"),
                 ("toggle", "Park or unpark a quark — keeps the seat, skips its turns (e.g. /toggle @Sonnet)"),
+                ("rename", "Name the current session (e.g. /rename bugfix-router)"),
+                ("resume", "Reopen an archived session as the live one (e.g. /resume bugfix-router)"),
                 ("toggle-roster", "Toggle the Roster sidebar"),
                 ("toggle-inspector", "Toggle the Inspector sidebar"),
                 ("goal", "Run a long-running task thoroughly"),
@@ -586,6 +588,15 @@ mod tests {
     fn exit_command_completion_candidates() {
         let completions = completion_candidates("/ex", 3, &[], &[]).unwrap();
         assert!(completions.candidates.iter().any(|c| c.label == "/exit"));
+    }
+
+    #[test]
+    fn rename_and_resume_command_completion_candidates() {
+        let completions = completion_candidates("/ren", 4, &[], &[]).unwrap();
+        assert!(completions.candidates.iter().any(|c| c.label == "/rename"));
+
+        let completions = completion_candidates("/res", 4, &[], &[]).unwrap();
+        assert!(completions.candidates.iter().any(|c| c.label == "/resume"));
     }
 }
 
