@@ -125,6 +125,51 @@ impl super::Chamber {
         )
     }
 
+    /// The "gluon stopped" banner: the swarm daemon holds `gluon.lock` exclusively,
+    /// so no quark can take a turn while it's down — a critical, easy-to-miss event
+    /// (a human staring at an idle chat has no other signal). Set on the
+    /// running→stopped edge by the 400ms reload tick (`app::reload::reload_if_changed`),
+    /// cleared on stopped→running or manual dismiss. Same non-blocking toast pattern
+    /// as [`Self::permission_toast`], just a distinct (red) severity color.
+    pub(super) fn gluon_stopped_toast(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if !self.gluon_stopped_notice {
+            return None;
+        }
+        Some(
+            v_flex()
+                .flex_none()
+                .mx_4()
+                .mt_2()
+                .px_3()
+                .py_2()
+                .gap_2()
+                .rounded_lg()
+                .bg(theme::bg_surface_raised())
+                .border_1()
+                .border_color(rgb(0xef4444))
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text())
+                                .child("⚠️ Gluon stopped — no quark can take a turn until it's restarted."),
+                        )
+                        .child(
+                            text_button("gluon-stopped-dismiss", "Dismiss").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.gluon_stopped_notice = false;
+                                    cx.notify();
+                                }),
+                            ),
+                        ),
+                ),
+        )
+    }
+
     /// The About dialog. Every value here is read from the build, not typed in: the
     /// version comes from the crate's own manifest, so it cannot drift from what
     /// shipped.
@@ -236,7 +281,10 @@ impl super::Chamber {
     /// `gluon.lock` — the same flock check `main.rs` runs once at chamber startup
     /// (`gluon_running`), made callable live each time the Process Manager opens.
     /// Any lock this acquires is released immediately; it never blocks the daemon.
-    fn gluon_running(&self) -> bool {
+    /// `pub(in crate::app)` (not private) so the 400ms reload tick (`app::reload`,
+    /// a sibling of `app::render`, not a descendant) can poll it for the "gluon
+    /// stopped" banner, not just this module.
+    pub(in crate::app) fn gluon_running(&self) -> bool {
         let field_dir = hadron_lattice::hadron_dir_of(&self.path);
         let lock_path = field_dir.join("gluon.lock");
         #[cfg(unix)]

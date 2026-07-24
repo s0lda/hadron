@@ -233,6 +233,7 @@ impl super::Chamber {
             .border_1()
             .border_color(theme::glass_highlight())
             .child(header)
+            .children(self.gluon_stopped_toast(cx))
             .children(self.permission_toast(cx))
             .child(body)
             .children(input);

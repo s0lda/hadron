@@ -335,6 +335,14 @@ struct Chamber {
     file_tree_open_scroll: ScrollHandle,
     completion_scroll: ScrollHandle,
     pub(super) last_live_activities: std::collections::HashMap<String, Option<hadron_lattice::live::Activity>>,
+    /// The `gluon.lock` flock reading from the previous poll — compared against the
+    /// fresh reading each tick so a toast fires only on the running→stopped edge,
+    /// not on every tick gluon happens to still be down. Starts optimistic (running)
+    /// since the chamber normally auto-spawns the daemon on launch.
+    pub(super) last_gluon_running: bool,
+    /// Whether the "gluon stopped" banner is currently shown. Set on the
+    /// running→stopped edge, cleared on stopped→running or manual dismiss.
+    pub(super) gluon_stopped_notice: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -624,6 +632,8 @@ impl Chamber {
             file_tree_open_scroll: ScrollHandle::new(),
             completion_scroll: ScrollHandle::new(),
             last_live_activities: std::collections::HashMap::new(),
+            last_gluon_running: true,
+            gluon_stopped_notice: false,
         };
         chamber.update_active_plan();
         chamber
