@@ -10,6 +10,7 @@ notify = "8"
 hadron-lattice = { path = "../hadron-lattice" }
 hadron-gatekeeper = { path = "../hadron-gatekeeper" }
 hadron-forge = { path = "../hadron-forge" }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 async-trait = "0.1"

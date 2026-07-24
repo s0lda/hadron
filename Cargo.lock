@@ -2959,6 +2959,7 @@ dependencies = [
  "libc",
  "notify 8.2.0",
  "rusqlite",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

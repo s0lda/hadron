@@ -443,3 +443,65 @@ fn resolved_env_is_not_in_debug_output() {
     assert!(!debug.contains(secret_value), "the secret VALUE leaked into Debug: {debug}");
     assert!(debug.contains("GEMINI_API_KEY"), "the var NAME should still be visible: {debug}");
 }
+
+#[test]
+fn test_registry_loader_resolution_fixture() {
+    let fixture = r#"{
+        "version": "1.0.0",
+        "agents": [
+            {
+                "id": "agent-npx",
+                "name": "NPX Agent",
+                "distribution": {
+                    "npx": {
+                        "package": "@test/agent-npx@1.0.0",
+                        "args": ["--acp"]
+                    }
+                }
+            },
+            {
+                "id": "agent-uvx",
+                "name": "UVX Agent",
+                "distribution": {
+                    "uvx": {
+                        "package": "agent-uvx==2.0.0",
+                        "args": ["-x"]
+                    }
+                }
+            },
+            {
+                "id": "agent-binary",
+                "name": "Binary Agent",
+                "distribution": {
+                    "binary": {
+                        "linux-x86_64": {
+                            "archive": "https://example.com/agent.tar.gz",
+                            "cmd": "./agent"
+                        }
+                    }
+                }
+            }
+        ]
+    }"#;
+
+    let data = loader::parse_registry_json(fixture).expect("fixture should parse");
+    assert_eq!(data.agents.len(), 3);
+
+    // 1. npx resolution
+    let target_npx =
+        loader::resolve_from_registry_data(&data, "agent-npx").expect("npx agent should resolve");
+    assert_eq!(target_npx.program, "npx");
+    assert_eq!(target_npx.args, vec!["-y", "@test/agent-npx@1.0.0", "--acp"]);
+
+    // 2. uvx resolution
+    let target_uvx =
+        loader::resolve_from_registry_data(&data, "agent-uvx").expect("uvx agent should resolve");
+    assert_eq!(target_uvx.program, "uvx");
+    assert_eq!(target_uvx.args, vec!["agent-uvx==2.0.0", "-x"]);
+
+    // 3. binary resolution (typed error)
+    let err_binary = loader::resolve_from_registry_data(&data, "agent-binary")
+        .expect_err("binary agent must be rejected");
+    assert_eq!(err_binary, loader::RegistryError::BinaryNotSupported);
+}
+
