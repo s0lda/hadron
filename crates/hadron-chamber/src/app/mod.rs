@@ -983,6 +983,17 @@ mod tests {
         assert_eq!(cmds, vec![("approve".to_string(), "@acp-claude remember".to_string())]);
         assert_eq!(body, None);
 
+        // toggle swallows the rest of the line as its argument — and must NOT be
+        // shadowed by `/toggle-roster`, which shares its prefix. A `/toggle` that the
+        // parser did not know would be swept into `body` and POSTED as a chat message,
+        // silently, however good the handler arm is.
+        let (cmds, body) = split_leading_commands("/toggle @Sonnet");
+        assert_eq!(cmds, vec![("toggle".to_string(), "@Sonnet".to_string())]);
+        assert_eq!(body, None);
+        let (cmds, body) = split_leading_commands("/toggle-roster hello");
+        assert_eq!(cmds, vec![("toggle-roster".to_string(), String::new())]);
+        assert_eq!(body.as_deref(), Some("hello"), "the longer name still wins its own arm");
+
         // deny swallows the rest of the line as its argument.
         let (cmds, body) = split_leading_commands("/deny @acp-claude");
         assert_eq!(cmds, vec![("deny".to_string(), "@acp-claude".to_string())]);
