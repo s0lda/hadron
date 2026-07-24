@@ -178,6 +178,18 @@ mod event_tests {
     }
 
     #[test]
+    fn session_name_round_trips() {
+        // `/rename` on the live session: `to: None`, same shape as a global `ModeSet`.
+        let ev = Event::new(Actor::Human, None, Kind::SessionName { name: "bugfix-router".into() });
+        let line = serde_json::to_string(&ev).unwrap();
+        assert!(line.contains(r#""kind":"session_name""#));
+        assert!(line.contains(r#""name":"bugfix-router""#));
+        let back: Event = serde_json::from_str(&line).unwrap();
+        assert_eq!(back, ev);
+        assert_eq!(back.kind, Kind::SessionName { name: "bugfix-router".into() });
+    }
+
+    #[test]
     fn null_to_deserializes_as_none() {
         let line = r#"{"v":1,"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","ts":"2026-07-10T14:00:00Z","from":"claude","to":null,"kind":"status","state":"ground"}"#;
         let ev: Event = serde_json::from_str(line).unwrap();

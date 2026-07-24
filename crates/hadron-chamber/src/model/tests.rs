@@ -165,6 +165,85 @@
         assert_eq!(last.team, 190.0);
     }
 
+    /// `list_sessions` reads each archived session's directory-name id and the last
+    /// `Kind::SessionName` event in its field, if any — `/rename` can run more than
+    /// once, and the latest one is what the sessions menu/`/resume` should show.
+    #[test]
+    fn list_sessions_reads_the_latest_session_name_event_per_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = dir.path().join("sessions");
+
+        assert!(list_sessions(&sessions).is_empty(), "missing dir → no rows, no panic");
+
+        let unnamed = sessions.join("20260101_000000");
+        std::fs::create_dir_all(&unnamed).unwrap();
+        hadron_lattice::io::append_event(
+            &unnamed.join("field.jsonl"),
+            &ev(Actor::Human, None, Kind::Message { body: "hi".into() }),
+        )
+        .unwrap();
+
+        let named = sessions.join("20260201_000000");
+        std::fs::create_dir_all(&named).unwrap();
+        let field = named.join("field.jsonl");
+        hadron_lattice::io::append_event(
+            &field,
+            &ev(Actor::Human, None, Kind::SessionName { name: "first".into() }),
+        )
+        .unwrap();
+        hadron_lattice::io::append_event(
+            &field,
+            &ev(Actor::Human, None, Kind::SessionName { name: "bugfix-router".into() }),
+        )
+        .unwrap();
+
+        let rows = list_sessions(&sessions);
+        assert_eq!(
+            rows,
+            vec![
+                SessionInfo { id: "20260101_000000".into(), name: None },
+                SessionInfo { id: "20260201_000000".into(), name: Some("bugfix-router".into()) },
+            ]
+        );
+    }
+
+    /// `/resume <target>` accepts either the session id (the timestamp dir name,
+    /// always unique) or the name set by `/rename` (case-insensitive — a human
+    /// typing it back should not have to match case exactly). Id wins on a collision.
+    #[test]
+    fn find_session_matches_id_then_case_insensitive_name() {
+        let sessions = vec![
+            SessionInfo { id: "20260101_000000".into(), name: Some("Router Fix".into()) },
+            SessionInfo { id: "20260201_000000".into(), name: None },
+        ];
+        assert_eq!(
+            find_session(&sessions, "20260201_000000").map(|s| s.id.as_str()),
+            Some("20260201_000000")
+        );
+        assert_eq!(
+            find_session(&sessions, "router fix").map(|s| s.id.as_str()),
+            Some("20260101_000000")
+        );
+        assert!(find_session(&sessions, "nope").is_none());
+    }
+
+    /// `/resume` swaps out the live field a running daemon appends to — refuse while
+    /// any quark is Excited/Thinking, not just Ground/Blocked/Error.
+    #[test]
+    fn any_quark_mid_turn_true_only_for_excited_or_thinking() {
+        use hadron_lattice::Transport;
+        let mut r = roster_entry("acp-claude", Transport::Acp);
+        assert!(!any_quark_mid_turn(&[r.clone()]));
+        for busy in [QuarkState::Excited, QuarkState::Thinking] {
+            r.state = busy;
+            assert!(any_quark_mid_turn(&[r.clone()]), "{busy:?} should count as mid-turn");
+        }
+        for idle in [QuarkState::Ground, QuarkState::Blocked, QuarkState::Error, QuarkState::Waiting] {
+            r.state = idle;
+            assert!(!any_quark_mid_turn(&[r.clone()]), "{idle:?} should not count as mid-turn");
+        }
+    }
+
     /// `load_archived_messages` reads every `sessions/*/field.jsonl` and concatenates
     /// their projected rows; a missing directory yields no rows and no error.
     #[test]

@@ -133,6 +133,93 @@ impl Chamber {
                 cx.notify();
                 true
             }
+            // Name the current (live) session. Appended to the live field, not a
+            // sidecar — because `/clear` archives by copying the live field before
+            // truncating it, this rides into the archive for free.
+            "rename" => {
+                let name = args.trim();
+                if name.is_empty() {
+                    eprintln!("chamber: `/rename` needs a name (e.g. `/rename bugfix-router`)");
+                    return true;
+                }
+                let ev = Event::new(Actor::Human, None, Kind::SessionName { name: name.to_string() });
+                if let Err(e) = io::append_event(&self.path, &ev) {
+                    eprintln!("chamber: failed to append session name: {e}");
+                }
+                let events = io::read_events(&self.path).unwrap_or_default();
+                self.reproject(&events);
+                cx.notify();
+                true
+            }
+            // `/clear` run backwards: archive the current live field, then reopen the
+            // chosen session as the new live one (not a read-only viewer — new
+            // messages append to it, same as any other live session).
+            "resume" => {
+                let target = args.trim();
+                if target.is_empty() {
+                    eprintln!("chamber: `/resume` needs a session name or id (e.g. `/resume bugfix-router`)");
+                    return true;
+                }
+                if crate::model::any_quark_mid_turn(&self.view.roster) {
+                    eprintln!(
+                        "chamber: `/resume` refused — a quark is mid-turn; wait for it to finish first"
+                    );
+                    return true;
+                }
+                let hadron_dir = match self.path.parent() {
+                    Some(p) => p.to_path_buf(),
+                    None => std::path::PathBuf::from(".hadron"),
+                };
+                let sessions_dir = hadron_dir.join("sessions");
+                let sessions = crate::model::list_sessions(&sessions_dir);
+                let Some(session) = crate::model::find_session(&sessions, target) else {
+                    eprintln!("chamber: no session matches {target:?}");
+                    return true;
+                };
+                let chosen_dir = sessions_dir.join(&session.id);
+                let chosen_field = chosen_dir.join("field.jsonl");
+
+                // Archive the current live field first — same shape `/clear` uses.
+                let archive_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+                let archive_dir = sessions_dir.join(&archive_id);
+                if let Err(e) = std::fs::create_dir_all(&archive_dir) {
+                    eprintln!("chamber: failed to create session archive directory: {e}");
+                    return true;
+                }
+                if let Err(e) = std::fs::copy(&self.path, archive_dir.join("field.jsonl")) {
+                    eprintln!("chamber: failed to archive field.jsonl: {e}");
+                    return true;
+                }
+                // Reopen the chosen session as live, then drop its archive directory —
+                // it is no longer an archived session, it IS the live one, and must not
+                // be double-counted by `load_archived_messages`.
+                if let Err(e) = std::fs::copy(&chosen_field, &self.path) {
+                    eprintln!("chamber: failed to resume session {}: {e}", session.id);
+                    return true;
+                }
+                if let Err(e) = std::fs::remove_dir_all(&chosen_dir) {
+                    eprintln!("chamber: resumed session {} but failed to drop its archive dir: {e}", session.id);
+                }
+
+                // The resumed history's residents still hold whatever ACP context they
+                // carried before the swap — restart them into the reopened field, same
+                // rule `/clear` follows (see `post_clear_reboots`).
+                for ev in crate::model::post_clear_reboots(&self.view.roster) {
+                    if let Err(e) = io::append_event(&self.path, &ev) {
+                        eprintln!("chamber: failed to append post-resume reboot: {e}");
+                    }
+                }
+                let events = io::read_events(&self.path).unwrap_or_default();
+                self.reproject(&events);
+                self.archived_messages = crate::model::load_archived_messages(&sessions_dir);
+                self.chat_message_ixs.clear();
+                self.chat_list_state.reset(0);
+                for scroll in &self.chat_scrolls {
+                    scroll.scroll_to_bottom();
+                }
+                cx.notify();
+                true
+            }
             "reboot" => {
                 let target = args.trim().trim_start_matches('@');
                 if target.is_empty() {
