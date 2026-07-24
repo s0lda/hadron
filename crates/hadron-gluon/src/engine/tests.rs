@@ -3179,6 +3179,141 @@ async fn without_worktree_isolation_the_engine_attributes_no_commit() {
     assert_eq!(edits, 0, "the engine attributed a commit without owning the tree to prove it");
 }
 
+struct OrchestratorDelegatingWriter {
+    id: QuarkId,
+    file: &'static str,
+    delegate_to: &'static str,
+}
+
+#[async_trait::async_trait]
+impl Quark for OrchestratorDelegatingWriter {
+    fn id(&self) -> QuarkId {
+        self.id.clone()
+    }
+    fn flavor(&self) -> Flavor {
+        Flavor::Worker
+    }
+    fn energy(&self) -> EnergyState {
+        EnergyState::Available
+    }
+    async fn excite(&mut self, projection: Projection) -> anyhow::Result<TurnOutcome> {
+        std::fs::write(projection.cwd.join(self.file), "orch content\n")?;
+        Ok(TurnOutcome {
+            message: Some(format!("@{} please work on this", self.delegate_to)),
+            permission: None,
+            usage: Default::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn orchestrator_delegating_turn_does_not_land_immediately() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+
+    seed_mode(&field, Some("orch"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@orch delegate task".into() }),
+    )
+    .unwrap();
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![
+            Box::new(OrchestratorDelegatingWriter {
+                id: QuarkId::new("orch"),
+                file: "orch1.txt",
+                delegate_to: "worker",
+            }),
+            Box::new(WriterQuark {
+                id: QuarkId::new("worker"),
+                file: "w.txt",
+                cwds: Arc::new(Mutex::new(vec![])),
+            }),
+        ],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(GreenLandingRunner));
+
+    engine.run_until_quiesce().await.unwrap();
+
+    // The orchestrator delegated to worker, so orchestrator's branch is NOT gated immediately.
+    assert!(
+        !root.join("orch1.txt").exists(),
+        "orchestrator turn that delegated should not land immediately (Task 6 property)"
+    );
+}
+
+#[tokio::test]
+async fn superseded_assignment_branch_is_gated_and_lands_on_new_assignment() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+
+    seed_mode(&field, Some("orch"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@orch first task".into() }),
+    )
+    .unwrap();
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![
+            Box::new(OrchestratorDelegatingWriter {
+                id: QuarkId::new("orch"),
+                file: "orch1.txt",
+                delegate_to: "worker",
+            }),
+            Box::new(WriterQuark {
+                id: QuarkId::new("worker"),
+                file: "w.txt",
+                cwds: Arc::new(Mutex::new(vec![])),
+            }),
+        ],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(GreenLandingRunner));
+
+    engine.run_until_quiesce().await.unwrap();
+
+    // 1st assignment completed, orch1.txt not landed yet.
+    assert!(!root.join("orch1.txt").exists());
+
+    // 2nd assignment for orch.
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@orch second task".into() }),
+    )
+    .unwrap();
+
+    let mut engine2 = Engine::new(
+        field.clone(),
+        vec![Box::new(ReportingWriter {
+            id: QuarkId::new("orch"),
+            file: "orch2.txt",
+            reply: "all done",
+        })],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(GreenLandingRunner));
+
+    engine2.run_until_quiesce().await.unwrap();
+
+    // The superseded assignment 1 branch was gated when assignment 2 started, landing orch1.txt!
+    assert!(
+        root.join("orch1.txt").exists(),
+        "superseded assignment branch should be gated and land when a new assignment starts"
+    );
+}
+
 /// **The E2BIG regression test.** `field_window` used to be `events.to_vec()` —
 /// the *entire* field, unbounded. A long-running swarm's field renders to
 /// hundreds of KB, and `agy` takes its prompt as a single argv element, whose
