@@ -24,12 +24,21 @@ impl super::Engine {
     /// One shape for every refusal (energy depletion, an unusable worktree, a turn
     /// with no assignment) rather than a new mechanism per reason.
     pub(super) async fn reroute_blocked(&self, target: &QuarkId, why: &str) -> anyhow::Result<()> {
+        self.reroute_blocked_with_severity(target, why, hadron_lattice::Severity::Warning).await
+    }
+
+    pub(super) async fn reroute_blocked_with_severity(
+        &self,
+        target: &QuarkId,
+        why: &str,
+        severity: hadron_lattice::Severity,
+    ) -> anyhow::Result<()> {
         let msg = if self.roster.iter().any(|c| c.flavor == Flavor::Orchestrator) && !why.starts_with('@') {
             format!("@{} {why}", crate::router::ORCHESTRATOR_ALIAS)
         } else {
             why.to_string()
         };
-        self.append(Event::new(Actor::Gluon, None, Kind::Message { body: msg }))
+        self.append(Event::new(Actor::Gluon, None, Kind::Message { body: msg }).with_severity(severity))
             .await?;
         self.append(Event::new(
             Actor::Quark(target.clone()),

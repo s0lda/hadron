@@ -365,7 +365,7 @@ async fn failing_quark_turn_sends_error_message_to_orchestrator() {
         _ => unreachable!(),
     };
     assert!(
-        body.starts_with("@orchestrator ⚠️ Quark `agy` turn errored: cli blew up"),
+        body.starts_with("@orchestrator Quark `agy` turn errored: cli blew up"),
         "error message must address orchestrator when one exists: got {body}"
     );
 }
@@ -2588,7 +2588,7 @@ fn gluon_messages_addressed_to_a_quark_are_routed_to_target() {
         Actor::Gluon,
         None,
         Kind::Message {
-            body: "@orch ⚠️ Quark `acp-agy` turn errored: API key missing".into(),
+            body: "@orch Quark `acp-agy` turn errored: API key missing".into(),
         },
     );
     append_event(&path, &gluon_msg).unwrap();
@@ -4257,7 +4257,7 @@ async fn gluon_notification_to_orchestrator_resolves_gluon_driver_and_does_not_l
     // 2. Worker fails and Gluon posts error message to @orchestrator
     append_event(
         &path,
-        &Event::new(Actor::Gluon, None, Kind::Message { body: "@orchestrator ⚠️ Quark worker turn errored: timeout".into() }),
+        &Event::new(Actor::Gluon, None, Kind::Message { body: "@orchestrator Quark worker turn errored: timeout".into() }),
     )
     .unwrap();
 

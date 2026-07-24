@@ -47,6 +47,7 @@ pub struct MessageRow {
     pub ts: chrono::DateTime<chrono::Utc>,
     pub legacy_used_tokens: Option<u32>,
     pub turn: Option<String>,
+    pub severity: Option<hadron_lattice::Severity>,
 }
 
 fn resolve_fresh(
@@ -349,7 +350,7 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
             "assign",
         ),
         Kind::PermissionReq { risk, description } => (
-            format!("⚠️ permission requested ({risk:?}): {description}"),
+            format!("permission requested ({risk:?}): {description}"),
             "permission_req",
         ),
         Kind::PermissionGrant { approved, remember } => (
@@ -365,6 +366,13 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
         Kind::Reboot => ("force-restart requested".to_string(), "reboot"),
         Kind::Unknown { kind, .. } => (format!("unrecognized event: {kind}"), "unrecognized"),
     };
+    let severity = e.severity.or_else(|| {
+        if matches!(e.kind, Kind::PermissionReq { .. }) {
+            Some(hadron_lattice::Severity::Warning)
+        } else {
+            None
+        }
+    });
     MessageRow {
         from,
         to,
@@ -377,6 +385,7 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
         ts: e.ts,
         legacy_used_tokens,
         turn: e.turn.map(|t| t.to_string()),
+        severity,
     }
 }
 

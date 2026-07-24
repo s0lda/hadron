@@ -537,7 +537,25 @@ impl super::Chamber {
                             }),
                     )
                     .when_some(summary_chip, |this, chip| this.child(chip))
-                    .child(self.markdown_body("chat-md", ix, &m.body, roster)),
+                    .child(match m.severity {
+                        Some(hadron_lattice::Severity::Error) => div()
+                            .p_3()
+                            .rounded_md()
+                            .bg(gpui::hsla(0.0, 0.70, 0.50, 0.10))
+                            .border_l(gpui::px(3.0))
+                            .border_color(gpui::hsla(0.0, 0.85, 0.50, 1.0))
+                            .child(self.markdown_body("chat-md", ix, &m.body, roster))
+                            .into_any_element(),
+                        Some(hadron_lattice::Severity::Warning) => div()
+                            .p_3()
+                            .rounded_md()
+                            .bg(gpui::hsla(40.0, 0.90, 0.50, 0.10))
+                            .border_l(gpui::px(3.0))
+                            .border_color(gpui::hsla(40.0, 0.95, 0.50, 1.0))
+                            .child(self.markdown_body("chat-md", ix, &m.body, roster))
+                            .into_any_element(),
+                        _ => self.markdown_body("chat-md", ix, &m.body, roster).into_any_element(),
+                    }),
             )
     }
 
@@ -623,7 +641,25 @@ impl super::Chamber {
         let mut row = v_flex().gap_1().child(header_row);
         
         if is_expanded {
-            row = row.child(self.markdown_body("log-md", ix, &m.body, roster));
+            row = row.child(match m.severity {
+                Some(hadron_lattice::Severity::Error) => div()
+                    .p_2()
+                    .rounded_md()
+                    .bg(gpui::hsla(0.0, 0.70, 0.50, 0.10))
+                    .border_l(gpui::px(3.0))
+                    .border_color(gpui::hsla(0.0, 0.85, 0.50, 1.0))
+                    .child(self.markdown_body("log-md", ix, &m.body, roster))
+                    .into_any_element(),
+                Some(hadron_lattice::Severity::Warning) => div()
+                    .p_2()
+                    .rounded_md()
+                    .bg(gpui::hsla(40.0, 0.90, 0.50, 0.10))
+                    .border_l(gpui::px(3.0))
+                    .border_color(gpui::hsla(40.0, 0.95, 0.50, 1.0))
+                    .child(self.markdown_body("log-md", ix, &m.body, roster))
+                    .into_any_element(),
+                _ => self.markdown_body("log-md", ix, &m.body, roster).into_any_element(),
+            });
         } else {
             let snippet = m.body.lines().next().unwrap_or("").chars().take(80).collect::<String>();
             let suffix = if m.body.len() > snippet.len() { "..." } else { "" };

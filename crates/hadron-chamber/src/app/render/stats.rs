@@ -863,6 +863,7 @@ mod tests {
             ts: chrono::DateTime::from_timestamp(0, 0).unwrap(),
             legacy_used_tokens: None,
             turn: None,
+            severity: None,
         }
     }
 
@@ -880,6 +881,7 @@ mod tests {
             ts: chrono::DateTime::from_timestamp(0, 0).unwrap(),
             legacy_used_tokens: None,
             turn: None,
+            severity: None,
         }
     }
 

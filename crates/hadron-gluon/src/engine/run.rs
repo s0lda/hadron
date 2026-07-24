@@ -16,13 +16,13 @@ impl super::Engine {
         if let Some(orch) = orchestrator {
             if &orch.id != quark_id {
                 return format!(
-                    "@{} ⚠️ Quark `{}` turn errored: {err:#}",
+                    "@{} Quark `{}` turn errored: {err:#}",
                     crate::router::ORCHESTRATOR_ALIAS,
                     quark_id.as_str()
                 );
             }
         }
-        format!("⚠️ Quark `{}` turn errored: {err:#}", quark_id.as_str())
+        format!("Quark `{}` turn errored: {err:#}", quark_id.as_str())
     }
 
     /// Dispatch every pending quark turn CONCURRENTLY until the field has no pending
@@ -109,34 +109,19 @@ impl super::Engine {
                     // Blocked, so the roster does not show it as forever-Excited).
                     if !self.is_enabled(&target) {
                         let msg = format!(
-                            "⚠️ @{} is disabled and will not take this turn. Enable it in the roster to reach it.",
+                            "@{} is disabled and will not take this turn. Enable it in the roster to reach it.",
                             target.as_str()
                         );
                         self.reroute_blocked(&target, &msg).await?;
                         continue;
                     }
 
-                    // Exclusivity filter (WS4 §4 Phase 2): an `exclusive` card must
-                    // never take a turn it isn't scoped for. `to == target` alone is
-                    // NOT proof of that — a directly-addressed event (a hand-off, or a
-                    // `Kind::Assign` written straight to this quark's id) can name any
-                    // id in `to` with task text that never mentions it at all, which is
-                    // exactly the "picked as a general fallback worker" case the spec
-                    // warns against. So the check re-derives eligibility from the task
-                    // TEXT, via `task_names_card_specifically` — the router's own
-                    // char-boundary-safe mention scan, narrowed to "does this task name
-                    // THIS card's own role/id" rather than `human_mentions`' broadcast
-                    // semantics (a `@team` mention there expands to the whole roster,
-                    // which would silently admit an exclusive card into any broadcast).
-                    //
-                    // A card that never opted into `exclusive` skips this entirely and
-                    // stays in general dispatch, same as before this filter existed.
                     if let Some(card) = self.roster.iter().find(|c| c.id == target) {
                         if card.exclusive
                             && !self.exclusive_task_names_target(&events, &target, fallback_task.as_deref())
                         {
                             let msg = format!(
-                                "⚠️ @{} is exclusive to role(s) [{}] and this task did not address it by role or @id; skipping.",
+                                "@{} is exclusive to role(s) [{}] and this task did not address it by role or @id; skipping.",
                                 target.as_str(),
                                 card.roles.join(", ")
                             );
@@ -144,9 +129,6 @@ impl super::Engine {
                             continue;
                         }
 
-                        // Hard lock (spec 2026-07-20 §3.4): a seat that denies this task's starting
-                        // skill never receives the turn. Same reporting discipline as `exclusive`:
-                        // say so in the field, never drop silently.
                         let task_text = self.driver_for(&events, &target, fallback_task.as_deref())
                             .map(|d| d.task)
                             .unwrap_or_else(|| fallback_task.clone().unwrap_or_default());
@@ -157,7 +139,7 @@ impl super::Engine {
                         if let Some(m) = crate::skills::select(&task_text, &skill_corpus) {
                             if card.deny_skills.iter().any(|d| d.eq_ignore_ascii_case(&m.id)) {
                                 let msg = format!(
-                                    "⚠️ @{} locks out '{}' tasks (deny_skills); skipping.",
+                                    "@{} locks out '{}' tasks (deny_skills); skipping.",
                                     target.as_str(),
                                     m.id
                                 );
@@ -168,13 +150,12 @@ impl super::Engine {
                     }
 
                     if let Some(ledger) = &self.ledger {
-                        // Find the limit on the seat (if custom defined), otherwise fall back to self.energy_limit
                         let limit = self.roster.iter()
                             .find(|c| c.id == target)
                             .and_then(|c| c.energy_limit)
                             .unwrap_or(self.energy_limit);
                         if ledger.is_depleted(&target, limit)? {
-                            let msg = format!("⚠️ Quark {} is depleted (exceeded {} tokens).", target.as_str(), limit);
+                            let msg = format!("Quark {} is depleted (exceeded {} tokens).", target.as_str(), limit);
                             self.reroute_blocked(&target, &msg).await?;
                             continue;
                         }
@@ -198,22 +179,18 @@ impl super::Engine {
                         // No task-bearing driver ⇒ no assignment ⇒ no branch to cut.
                         // Refuse rather than commit a quark's work to an unnamed branch.
                         let Some(driver) = driver.as_ref() else {
-                            self.reroute_blocked(
+                            self.reroute_blocked_with_severity(
                                 &target,
                                 &format!(
-                                    "⚠️ {} has no assignment to work on (no task-bearing event drives this turn); refusing to excite it.",
+                                    "{} has no assignment to work on (no task-bearing event drives this turn); refusing to excite it.",
                                     target.as_str()
                                 ),
+                                hadron_lattice::Severity::Error,
                             )
                             .await?;
                             continue;
                         };
 
-                        // THE RULE, in the engine and not in a prompt: `ensure` refuses
-                        // any tree whose HEAD is the default branch (or detached) as a
-                        // post-condition, and refuses to cut a new branch from a dirty
-                        // tree. A refusal blocks THIS quark and reroutes — its siblings
-                        // still run — reusing the exact shape of the depletion branch.
                         let wt = match crate::worktree::ensure(
                             &root,
                             &target,
@@ -221,12 +198,13 @@ impl super::Engine {
                         ) {
                             Ok(wt) => wt,
                             Err(e) => {
-                                self.reroute_blocked(
+                                self.reroute_blocked_with_severity(
                                     &target,
                                     &format!(
-                                        "⚠️ refusing to excite {}: its worktree is not usable — {e:#}",
+                                        "refusing to excite {}: its worktree is not usable — {e:#}",
                                         target.as_str()
                                     ),
+                                    hadron_lattice::Severity::Error,
                                 )
                                 .await?;
                                 continue;
@@ -424,17 +402,16 @@ impl super::Engine {
                             ))
                             .await;
                     }
-                    turns.abort_all();
                     let orchestrator = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator);
                     let panic_msg = match orchestrator {
                         Some(_orch) => format!(
-                            "@{} ⚠️ A quark turn panicked: {join_err}",
+                            "@{} A quark turn panicked: {join_err}",
                             crate::router::ORCHESTRATOR_ALIAS
                         ),
-                        None => format!("⚠️ A quark turn panicked: {join_err}"),
+                        None => format!("A quark turn panicked: {join_err}"),
                     };
                     let _ = self
-                        .append(Event::new(Actor::Gluon, None, Kind::Message { body: panic_msg }))
+                        .append(Event::new(Actor::Gluon, None, Kind::Message { body: panic_msg }).with_severity(hadron_lattice::Severity::Error))
                         .await;
                     if first_err.is_none() {
                         first_err = Some(anyhow::anyhow!("a quark turn panicked: {join_err}"));
@@ -453,11 +430,11 @@ impl super::Engine {
                 None,
                 Kind::Message {
                     body: format!(
-                        "⚠️ backstop reached ({} exchanges); returning control to the human.",
+                        "backstop reached ({} exchanges); returning control to the human.",
                         self.max_exchanges
                     ),
                 },
-            ))
+            ).with_severity(hadron_lattice::Severity::Warning))
             .await?;
         }
 

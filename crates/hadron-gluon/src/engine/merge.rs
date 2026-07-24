@@ -117,12 +117,13 @@ impl super::Engine {
                         .map(|c| format!("- `{}` block `{}` [hash: {}]", c.file, c.block_name, c.base_hash))
                         .collect::<Vec<_>>()
                         .join("\n");
-                    self.reroute_blocked(
+                    self.reroute_blocked_with_severity(
                         target,
                         &format!(
-                            "⚠️ AST block conflict detected landing `{}` onto `{}`:\n{}\n\nResolve block conflicts before merging.",
+                            "AST block conflict detected landing `{}` onto `{}`:\n{}\n\nResolve block conflicts before merging.",
                             t.wt.branch, t.base, details
                         ),
+                        hadron_lattice::Severity::Error,
                     )
                     .await?;
                     return Ok(true);
@@ -131,14 +132,15 @@ impl super::Engine {
                 let landed = match runner.land(root, &t.wt, &t.base) {
                     Ok(landed) => landed,
                     Err(e) => {
-                        self.reroute_blocked(
+                        self.reroute_blocked_with_severity(
                             target,
                             &format!(
-                                "⚠️ `{}` could not be merged → `{}`: {e:#}. The branch is preserved at `{}` — resolve it (e.g. commit or stash conflicting local changes in the target checkout), and it lands on this quark's next turn.",
+                                "`{}` could not be merged → `{}`: {e:#}. The branch is preserved at `{}` — resolve it (e.g. commit or stash conflicting local changes in the target checkout), and it lands on this quark's next turn.",
                                 t.wt.branch,
                                 t.base,
                                 t.wt.path.display()
                             ),
+                            hadron_lattice::Severity::Error,
                         )
                         .await?;
                         return Ok(true);
@@ -180,14 +182,15 @@ impl super::Engine {
             MergeVerdict::Block(reason) => {
                 // Red tests / a dirty tree / a branch that is somehow the default one.
                 // The branch STAYS. Nothing is deleted — the work is evidence.
-                self.reroute_blocked(
+                self.reroute_blocked_with_severity(
                     target,
                     &format!(
-                        "⚠️ merge of `{}` blocked: {}. The branch is preserved at `{}`.\n\n{tail}",
+                        "merge of `{}` blocked: {}. The branch is preserved at `{}`.\n\n{tail}",
                         t.wt.branch,
                         reason.describe(),
                         t.wt.path.display()
                     ),
+                    hadron_lattice::Severity::Error,
                 )
                 .await?;
                 Ok(true)
