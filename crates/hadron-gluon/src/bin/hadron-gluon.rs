@@ -388,11 +388,18 @@ async fn main() {
             Ok(reaped) => {
                 for r in &reaped {
                     match r {
-                        hadron_gluon::worktree::Reap::Removed { quark, .. } => eprintln!(
-                            "hadron-gluon: reclaimed {}'s worktree — it takes no turns and held \
-                             nothing that is not on {base} (recreated on its next turn)",
-                            quark.as_str(),
-                        ),
+                        hadron_gluon::worktree::Reap::Removed { quark, preserved, .. } => {
+                            eprintln!(
+                                "hadron-gluon: reclaimed {}'s worktree — it takes no turns and \
+                                 held nothing that is not on {base} (recreated on its next turn)",
+                                quark.as_str(),
+                            );
+                            // Never silent: anything moved or pinned out of the tree is
+                            // named, or the human cannot find it again.
+                            for note in preserved {
+                                eprintln!("hadron-gluon:   {note}");
+                            }
+                        }
                         hadron_gluon::worktree::Reap::Spared { quark, path, why } => eprintln!(
                             "hadron-gluon: keeping {}'s worktree at {} — {why}",
                             quark.as_str(),

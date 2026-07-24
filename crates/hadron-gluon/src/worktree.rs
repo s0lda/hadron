@@ -279,13 +279,79 @@ pub fn prune_merged_branches(repo_root: &Path, base: &str) -> anyhow::Result<Vec
     Ok(pruned)
 }
 
+/// Where a reap parks anything it had to move out of a tree before removing it.
+/// Gitignored like the rest of `.hadron/`, so it never dirties the human's status.
+pub fn reaped_dir(repo_root: &Path) -> PathBuf {
+    repo_root.join(".hadron").join("reaped")
+}
+
+/// Ignored files `git worktree remove` would silently destroy, moved out to
+/// [`reaped_dir`] first. Returns one note per rescued path.
+///
+/// `status --porcelain` — what [`is_dirty`] runs — EXCLUDES ignored paths, and
+/// `worktree remove` does not check them either: an ignored file in a tree with an
+/// empty porcelain status is simply gone, exit 0. **Untracked** files are already
+/// safe (git refuses to remove a tree holding them), so ignored files are exactly
+/// the gap. Sparing on their presence instead would make the reap a permanent no-op
+/// — every live tree holds some, and among the junk are plan documents a quark wrote
+/// into its own tree by mistake. Moving is a rename on the same filesystem, so a
+/// large ignored directory costs nothing.
+fn preserve_ignored(repo_root: &Path, wt: &Worktree) -> anyhow::Result<Vec<String>> {
+    let listed = git(&wt.path, &["status", "--porcelain", "--ignored"])?;
+    let mut moved = Vec::new();
+    for rel in listed.lines().filter_map(|l| l.strip_prefix("!! ")).map(str::trim) {
+        if rel.is_empty() {
+            continue;
+        }
+        let to = reaped_dir(repo_root).join(wt.quark.as_str()).join(rel);
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(wt.path.join(rel), &to)
+            .with_context(|| format!("rescuing ignored {rel} to {}", to.display()))?;
+        moved.push(format!("kept ignored {rel} in {}", to.display()));
+    }
+    Ok(moved)
+}
+
+/// Commits the tree's own reflog can still reach that `base` cannot, pinned under
+/// `refs/reaped/<quark>/` so gc cannot take them. Returns one note per archived commit.
+///
+/// The containment guard proves the CURRENT head is safe and says nothing about a
+/// commit orphaned by `--amend` or `reset` *inside* the tree. Its only holder is
+/// `.git/worktrees/<id>/logs/HEAD`, which is per-worktree and which `worktree remove`
+/// deletes — after which `gc` destroys the object. A Bypass quark drives git directly,
+/// so this is reachable in normal operation, not a contrivance.
+fn archive_orphans(repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Vec<String>> {
+    let Ok(log) = git(&wt.path, &["reflog", "show", "HEAD", "--format=%H"]) else {
+        // No reflog to read is not proof of safety, but it is also not something we
+        // can act on; the containment guard has already passed for HEAD.
+        return Ok(Vec::new());
+    };
+    let mut archived: Vec<String> = Vec::new();
+    for sha in log.lines().map(str::trim).filter(|s| !s.is_empty()) {
+        if archived.iter().any(|note| note.contains(sha)) {
+            continue;
+        }
+        if git(&wt.path, &["merge-base", "--is-ancestor", sha, base]).is_ok() {
+            continue;
+        }
+        let refname = format!("refs/reaped/{}/{sha}", wt.quark.as_str());
+        git(repo_root, &["update-ref", &refname, sha])
+            .with_context(|| format!("archiving orphaned commit {sha} as {refname}"))?;
+        archived.push(format!("archived orphaned commit {sha} as {refname}"));
+    }
+    Ok(archived)
+}
+
 /// What a reap did with one worktree whose quark is no longer taking turns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reap {
     /// The directory is gone. Its branch held nothing the default branch does not
     /// already have, and no worktree holds the ref any more, so the merged-branch
-    /// sweep that runs next deletes it too.
-    Removed { quark: QuarkId, path: PathBuf },
+    /// sweep that runs next deletes it too. `preserved` names everything that had to
+    /// be moved or pinned first — empty for a tree that held only tracked, landed work.
+    Removed { quark: QuarkId, path: PathBuf, preserved: Vec<String> },
     /// Left exactly where it is, with the reason — always because it holds something
     /// the default branch does not.
     Spared { quark: QuarkId, path: PathBuf, why: String },
@@ -331,16 +397,27 @@ pub fn reap_idle_worktrees(
                 Err(_) => Some(format!("cannot prove its HEAD is already on {base}")),
             },
         };
+        // Rescue what `worktree remove` would take with it — ignored files it deletes
+        // in silence, and commits held only by the per-worktree reflog it unlinks.
+        // Both run BEFORE the removal, and a failure in either spares the tree.
+        let mut preserved = Vec::new();
         let why = match why {
             Some(why) => Some(why),
-            None => match git(repo_root, &["worktree", "remove", &wt.path.to_string_lossy()]) {
-                Ok(_) => None,
-                Err(e) => Some(format!("git refused to remove it: {e:#}")),
-            },
+            None => archive_orphans(repo_root, &wt, base)
+                .and_then(|notes| {
+                    preserved.extend(notes);
+                    preserve_ignored(repo_root, &wt)
+                })
+                .and_then(|notes| {
+                    preserved.extend(notes);
+                    git(repo_root, &["worktree", "remove", &wt.path.to_string_lossy()])
+                })
+                .err()
+                .map(|e| format!("nothing was removed — {e:#}")),
         };
         out.push(match why {
             Some(why) => Reap::Spared { quark: wt.quark, path: wt.path, why },
-            None => Reap::Removed { quark: wt.quark, path: wt.path },
+            None => Reap::Removed { quark: wt.quark, path: wt.path, preserved },
         });
     }
     Ok(out)
@@ -527,7 +604,15 @@ pub(crate) mod tests {
 
         let reaped = reap_idle_worktrees(root, &[q("opus")], "main").unwrap();
 
-        assert_eq!(reaped, vec![Reap::Removed { quark: q("codex"), path: idle.path.clone() }]);
+        assert_eq!(
+            reaped,
+            vec![Reap::Removed {
+                quark: q("codex"),
+                path: idle.path.clone(),
+                preserved: Vec::new(),
+            }],
+            "a tree holding only tracked, landed work needs nothing rescued",
+        );
         assert!(!idle.path.exists(), "the idle tree is gone from disk");
         assert!(live.path.is_dir(), "a quark still taking turns keeps its tree");
 
@@ -572,6 +657,64 @@ pub(crate) mod tests {
         assert!(
             matches!(reaped.as_slice(), [Reap::Spared { why, .. }] if why.contains("not")),
             "expected a spared-with-reason, got {reaped:?}",
+        );
+    }
+
+    /// `status --porcelain` — what `is_dirty` runs — EXCLUDES ignored paths, and
+    /// `git worktree remove` deletes them without a word. Proven in a scratch repo: an
+    /// ignored `secret.log` in a tree whose porcelain status is empty is gone after a
+    /// clean `worktree remove`, exit 0. Sparing on ignored files instead would make the
+    /// reap a permanent no-op — every live tree here holds some (`.hadron/*.lock`,
+    /// `.remember/`, and plan docs a quark wrote into its own tree by mistake).
+    #[test]
+    fn reap_preserves_ignored_files_before_removing_the_tree() {
+        let repo = git_repo();
+        let root = repo.path();
+        std::fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+        git(root, &["add", "."]).unwrap();
+        git(root, &["commit", "-q", "-m", "ignore logs"]).unwrap();
+        let idle = ensure(root, &q("codex"), "01IDLE").unwrap();
+        std::fs::write(idle.path.join("secret.log"), "irreplaceable\n").unwrap();
+
+        let reaped = reap_idle_worktrees(root, &[], "main").unwrap();
+
+        assert!(!idle.path.exists(), "the tree is still reaped");
+        let kept = reaped_dir(root).join("codex").join("secret.log");
+        assert_eq!(
+            std::fs::read_to_string(&kept).ok().as_deref(),
+            Some("irreplaceable\n"),
+            "the ignored file must survive at {}, got {reaped:?}",
+            kept.display(),
+        );
+    }
+
+    /// `merge-base --is-ancestor HEAD base` proves the CURRENT head is safe and says
+    /// nothing about a commit orphaned by `--amend`/`reset` inside the tree. Its only
+    /// holder is `.git/worktrees/<id>/logs/HEAD`, which is per-worktree and which
+    /// `git worktree remove` deletes — proven end-to-end in a scratch repo: amend, land
+    /// the new HEAD, remove the tree, `gc --prune=now`, and `cat-file -e <orphan>` fails.
+    #[test]
+    fn reap_archives_a_commit_orphaned_inside_the_tree() {
+        let repo = git_repo();
+        let root = repo.path();
+        let idle = ensure(root, &q("codex"), "01IDLE").unwrap();
+        std::fs::write(idle.path.join("w.txt"), "v1\n").unwrap();
+        commit_turn(&idle, "codex: v1").unwrap().unwrap();
+        let orphan = git(&idle.path, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        std::fs::write(idle.path.join("w.txt"), "v2\n").unwrap();
+        git(&idle.path, &["add", "."]).unwrap();
+        git(&idle.path, &["commit", "-q", "--amend", "-m", "codex: v2"]).unwrap();
+        // The amended HEAD lands, so the reap's containment guard passes.
+        git(root, &["merge", "-q", "--no-ff", "-m", "merge", &idle.branch]).unwrap();
+
+        let reaped = reap_idle_worktrees(root, &[], "main").unwrap();
+
+        assert!(!idle.path.exists(), "the tree is still reaped, got {reaped:?}");
+        git(root, &["reflog", "expire", "--expire=now", "--all"]).unwrap();
+        let _ = git(root, &["gc", "--prune=now"]);
+        assert!(
+            git(root, &["cat-file", "-e", &orphan]).is_ok(),
+            "the orphaned commit {orphan} must survive gc via an archive ref",
         );
     }
 
