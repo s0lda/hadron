@@ -230,7 +230,14 @@ impl<R: CliRunner> CliQuark<R> {
         }
         args.extend(self.spec.posture.for_mode(mode).iter().cloned());
 
-        CliInvocation { program: self.spec.program.clone(), args, stdin, cwd, env: self.env.clone() }
+        // The seat's resolved secrets, plus the shared build env so a `cargo` the
+        // quark runs itself lands in the main checkout's warm `target/` instead of
+        // growing a 37 GB one per worktree (`worktree::shared_build_env`). Seat env
+        // is applied last: a seat that deliberately sets one of these wins.
+        let mut env = crate::worktree::shared_build_env(&cwd);
+        env.extend(self.env.iter().cloned());
+
+        CliInvocation { program: self.spec.program.clone(), args, stdin, cwd, env: env.into() }
     }
 }
 
@@ -554,10 +561,19 @@ mod tests {
         q.excite(projection("go")).await.unwrap();
 
         let recorded = q.runner.recorded.lock().unwrap();
-        assert_eq!(
-            recorded[0].env.0,
-            vec![("GEMINI_API_KEY".to_string(), "k".to_string())],
-            "the resolved secret must reach CliInvocation.env"
+        // Containment, not equality: the invocation also carries the shared build env
+        // (`worktree::shared_build_env`). What this test guards is that the *secret*
+        // reaches `env` and nothing else — so assert on the secret, and separately
+        // that no other secret-shaped value snuck in.
+        assert!(
+            recorded[0].env.0.contains(&("GEMINI_API_KEY".to_string(), "k".to_string())),
+            "the resolved secret must reach CliInvocation.env, got {:?}",
+            recorded[0].env,
+        );
+        assert!(
+            recorded[0].env.0.iter().all(|(k, _)| k == "GEMINI_API_KEY" || k.starts_with("CARGO_")),
+            "only the seat's secret and the shared build env belong here, got {:?}",
+            recorded[0].env,
         );
     }
 

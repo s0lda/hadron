@@ -294,7 +294,13 @@ impl super::AcpQuark {
         // `{"env": []}` descriptor, which `AcpAgent`'s stdio spawn treats identically
         // to the old bare-command path (see `acp_stdio_descriptor_no_env_matches_bare_command`).
         let display_command = target.command_line();
-        let agent_source = acp_stdio_descriptor(&target.program, &target.args, &env);
+        // The shared build env goes in ahead of the seat's own: an ACP agent runs
+        // `cargo` in its worktree exactly like a CLI quark does, and without this it
+        // grows a duplicate 37 GB `target/` there (`worktree::shared_build_env`).
+        // Seat env last, so a seat that sets one of these deliberately still wins.
+        let mut spawn_env = crate::worktree::shared_build_env(&cwd);
+        spawn_env.extend(env.iter().cloned());
+        let agent_source = acp_stdio_descriptor(&target.program, &target.args, &spawn_env);
         // The reply accumulator and the context watermark are written by the
         // notification handler (which the SDK drives on the connection) and read by
         // the turn pump. Hence the Arcs.
