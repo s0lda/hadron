@@ -132,6 +132,63 @@ pub fn post_clear_reboots(roster: &[RosterRow]) -> Vec<Event> {
         .collect()
 }
 
+/// Metadata about one archived session: its directory id (the sortable
+/// `YYYYMMDD_HHMMSS` timestamp `/clear` names it with) and, if `/rename` was ever
+/// run in it, the name it was given.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionInfo {
+    pub id: String,
+    pub name: Option<String>,
+}
+
+/// List archived sessions under `sessions_dir`, oldest first (directory names are
+/// timestamp-sortable, same order `load_archived_messages` folds them in). A
+/// session's name is the LAST `Kind::SessionName` event in its field — `/rename`
+/// can run more than once, and the latest one is what a human should see, the same
+/// "latest wins" rule `project_with_team` already applies to status/mode. A missing
+/// directory or an unreadable session field yields no rows, not an error.
+pub fn list_sessions(sessions_dir: &std::path::Path) -> Vec<SessionInfo> {
+    let mut dirs: Vec<std::path::PathBuf> = match std::fs::read_dir(sessions_dir) {
+        Ok(rd) => rd
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect(),
+        Err(_) => return Vec::new(),
+    };
+    dirs.sort();
+
+    dirs.into_iter()
+        .map(|dir| {
+            let id = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let events = hadron_lattice::io::read_events(&dir.join("field.jsonl")).unwrap_or_default();
+            let name = events.iter().rev().find_map(|e| match &e.kind {
+                Kind::SessionName { name } => Some(name.clone()),
+                _ => None,
+            });
+            SessionInfo { id, name }
+        })
+        .collect()
+}
+
+/// Resolve a `/resume` target against the session list: the id (the timestamp
+/// directory name, always unique) matches first, then a case-insensitive match on
+/// the name set by `/rename` — a human retyping a name they saw on screen should
+/// not have to match its case exactly.
+pub fn find_session<'a>(sessions: &'a [SessionInfo], target: &str) -> Option<&'a SessionInfo> {
+    sessions
+        .iter()
+        .find(|s| s.id == target)
+        .or_else(|| sessions.iter().find(|s| s.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(target))))
+}
+
+/// Whether any roster quark is mid-turn right now. `/resume` swaps out
+/// `.hadron/field.jsonl` — the live bus a running daemon appends to — so it must
+/// refuse while a quark could still be writing to it.
+pub fn any_quark_mid_turn(roster: &[RosterRow]) -> bool {
+    roster.iter().any(|r| matches!(r.state, QuarkState::Excited | QuarkState::Thinking))
+}
+
 /// One row in the Process Manager overlay: the daemon, or one adopted quark seat,
 /// with a human status line and which of the codebase's *existing* control
 /// mechanisms apply (`Kind::Reboot` for a resident ACP seat, the `Seat.enabled`
@@ -364,6 +421,7 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
         Kind::ModeSet { mode } => (format!("mode → {mode:?}").to_lowercase(), "mode_set"),
         Kind::ModeClear => ("mode → default (inherit global)".to_string(), "mode_clear"),
         Kind::Reboot => ("force-restart requested".to_string(), "reboot"),
+        Kind::SessionName { name } => (format!("session renamed to \"{name}\""), "session_name"),
         Kind::Unknown { kind, .. } => (format!("unrecognized event: {kind}"), "unrecognized"),
     };
     let severity = e.severity.or_else(|| {

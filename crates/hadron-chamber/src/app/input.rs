@@ -204,8 +204,17 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
     /// Take no argument, so several can chain ahead of a message.
     const ZERO_ARG_CMDS: [&str; 5] = ["toggle-roster", "toggle-inspector", "clear", "exit", "quit"];
     /// Consume the rest of the line as their argument.
-    const LINE_ARG_CMDS: [&str; 7] =
-        ["team-brainstorm", "reboot", "approve", "deny", "limit", "reset-energy", "toggle"];
+    const LINE_ARG_CMDS: [&str; 9] = [
+        "team-brainstorm",
+        "reboot",
+        "approve",
+        "deny",
+        "limit",
+        "reset-energy",
+        "toggle",
+        "rename",
+        "resume",
+    ];
     let mut cmds = Vec::new();
     let mut rest = full;
 
@@ -244,6 +253,17 @@ mod tests {
 
         let (cmds, body) = split_leading_commands("/quit");
         assert_eq!(cmds, vec![("quit".to_string(), "".to_string())]);
+        assert_eq!(body, None);
+    }
+
+    #[test]
+    fn test_split_leading_commands_rename_and_resume() {
+        let (cmds, body) = split_leading_commands("/rename bugfix-router");
+        assert_eq!(cmds, vec![("rename".to_string(), "bugfix-router".to_string())]);
+        assert_eq!(body, None);
+
+        let (cmds, body) = split_leading_commands("/resume 20260201_000000");
+        assert_eq!(cmds, vec![("resume".to_string(), "20260201_000000".to_string())]);
         assert_eq!(body, None);
     }
 }
