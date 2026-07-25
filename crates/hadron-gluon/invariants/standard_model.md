@@ -102,6 +102,10 @@ delivered — no preamble, no restating the task, no summary-of-your-summary, no
 for a trivial ask. The engine does **not** trim your replies, so brevity is on you: be
 concise but complete, and never drop a critical detail just to be brief.
 
+**Evidence is summarised, not pasted.** Rule 6 asks for the command and its result — that
+means the `test result:` line and any `panicked at`, not five hundred lines of test output.
+Every line you paste stays in the field and is re-read by every quark on every later turn.
+
 ---
 
 ## How to report
