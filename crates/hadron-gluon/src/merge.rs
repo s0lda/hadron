@@ -212,10 +212,17 @@ pub async fn run_tests_within(
         .map_err(|e| anyhow::anyhow!("failed to run the gate's tests ({program}): {e}"))?;
     // Read before the handle is consumed by `wait_with_output`.
     let pid = child.id();
+    if let Some(pid) = pid {
+        crate::proc::register(pid);
+    }
 
     let out = match tokio::time::timeout(deadline, child.wait_with_output()).await {
-        Ok(out) => out
-            .map_err(|e| anyhow::anyhow!("failed to run the gate's tests ({program}): {e}"))?,
+        Ok(out) => {
+            if let Some(pid) = pid {
+                crate::proc::unregister(pid);
+            }
+            out.map_err(|e| anyhow::anyhow!("failed to run the gate's tests ({program}): {e}"))?
+        }
         // **Red, not `Err`.** An `Err` propagates out of `merge_gate` through
         // `run_until_quiesce`'s `?` into the daemon's "excite error (continuing)" arm,
         // which loops straight back onto the same branch and hangs again — a wedge
@@ -223,6 +230,7 @@ pub async fn run_tests_within(
         // `Status{Blocked}` with a reason, the branch untouched, the quark excitable.
         Err(_) => {
             if let Some(pid) = pid {
+                crate::proc::unregister(pid);
                 kill_process_group(pid);
             }
             return Ok((
@@ -245,7 +253,7 @@ pub async fn run_tests_within(
 /// SIGKILL the whole process group led by `pid` — the launcher *and* everything it
 /// spawned. Best-effort: a group that has already exited is not an error.
 #[cfg(unix)]
-fn kill_process_group(pid: u32) {
+pub(crate) fn kill_process_group(pid: u32) {
     // Safety: `kill(2)` with a negative pid signals the process group. `pid` came
     // from a child we spawned with `process_group(0)`, so it leads its own group and
     // the signal cannot reach the daemon or anything else.
@@ -253,7 +261,7 @@ fn kill_process_group(pid: u32) {
 }
 
 #[cfg(not(unix))]
-fn kill_process_group(_pid: u32) {}
+pub(crate) fn kill_process_group(_pid: u32) {}
 
 /// Land `wt.branch` on `base` in the parent repo.
 ///
