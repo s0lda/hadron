@@ -217,6 +217,14 @@ pub fn parse_branches(
         .collect()
 }
 
+/// Raw ref fingerprint for branch heads to detect changes cheaply.
+pub fn branch_fingerprint(repo_root: &Path) -> String {
+    run_git(
+        repo_root,
+        &["for-each-ref", "--format=%(refname:short) %(objectname:short)", "refs/heads/"],
+    )
+}
+
 /// Every local branch, with `merged` set against `target` (e.g. `"main"`).
 pub fn list_branches(repo_root: &Path, target: &str) -> Vec<BranchInfo> {
     let current = run_git(

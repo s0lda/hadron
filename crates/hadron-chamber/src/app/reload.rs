@@ -5,6 +5,7 @@ pub(super) struct WorkspaceScan {
     pub(super) files: Vec<(String, bool)>,
     pub(super) git_statuses: std::collections::HashMap<String, crate::vcs::GitStatus>,
     pub(super) working_diff: Option<Vec<crate::vcs::FileDiff>>,
+    pub(super) git_branch_fingerprint: Option<String>,
 }
 
 impl WorkspaceScan {
@@ -12,6 +13,7 @@ impl WorkspaceScan {
         repo_root: &std::path::Path,
         file_tree_expanded: &std::collections::HashSet<String>,
         scan_diff: bool,
+        scan_git: bool,
     ) -> Option<Self> {
         let files = crate::sys::list_workspace_files(repo_root, file_tree_expanded);
         let git_statuses = crate::vcs::get_git_statuses(repo_root);
@@ -20,10 +22,16 @@ impl WorkspaceScan {
         } else {
             None
         };
+        let git_branch_fingerprint = if scan_git {
+            Some(crate::vcs::branch_fingerprint(repo_root))
+        } else {
+            None
+        };
         Some(Self {
             files,
             git_statuses,
             working_diff,
+            git_branch_fingerprint,
         })
     }
 }
@@ -254,6 +262,16 @@ impl super::Chamber {
                 // `if tab == Changes` guard did.
                 if scan.working_diff.is_some() && scan.working_diff != self.working_diff {
                     self.working_diff = scan.working_diff;
+                    changed = true;
+                }
+
+                if scan.git_branch_fingerprint.is_some() && scan.git_branch_fingerprint != self.git_branch_fingerprint {
+                    self.git_branch_fingerprint = scan.git_branch_fingerprint;
+                    let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                    self.git_branches = Some(crate::vcs::list_branches(&repo, "main"));
+                    self.git_worktrees = Some(crate::vcs::list_worktrees(&repo));
+                    self.git_log_graph = crate::vcs::commit_graph(&repo);
+                    self.rebuild_graph_rows();
                     changed = true;
                 }
             }
