@@ -425,10 +425,11 @@ pub fn abandon_branch(repo_root: &Path, wt_path: &Path, branch: &str, force: boo
     }
 
     if !force {
+        let reattach_note = reattach(wt_path, branch);
         return format!(
             "`{branch}` has unmerged commits — tagged `{tag}` ({sha}) but NOT deleted. Re-run \
              `/abandon @<quark> confirm` to force it (`-D`); restore any time with \
-             `git branch {branch} {tag}`."
+             `git branch {branch} {tag}`.{reattach_note}"
         );
     }
 
@@ -443,7 +444,35 @@ pub fn abandon_branch(repo_root: &Path, wt_path: &Path, branch: &str, force: boo
              Restore any time with `git branch {branch} {tag}`."
         )
     } else {
-        format!("`{branch}` — tagged `{tag}` ({sha}), but `-D` still failed; branch left in place.")
+        let reattach_note = reattach(wt_path, branch);
+        format!("`{branch}` — tagged `{tag}` ({sha}), but `-D` still failed; branch left in place.{reattach_note}")
+    }
+}
+
+/// Put the worktree back on `branch` after a refused delete — every path that
+/// leaves the branch alive must also leave the worktree exactly where it found
+/// it, or the daemon refuses to dispatch that quark at all (a detached HEAD is
+/// treated as an unusable worktree — see `worktree::assert_not_default_branch`
+/// in `hadron-gluon`). This was the actual cause of a live "all quarks stuck"
+/// incident: `abandon_branch` detached first, `-d` correctly refused the
+/// unmerged branch, and nothing ever re-attached it.
+///
+/// Returns a trailing note ONLY on failure (empty string on success), so callers
+/// can append it to their message without adding noise to the common case.
+fn reattach(wt_path: &Path, branch: &str) -> String {
+    let ok = Command::new("git")
+        .current_dir(wt_path)
+        .args(["checkout", branch, "-q"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if ok {
+        String::new()
+    } else {
+        format!(
+            " Its worktree could not be re-attached to `{branch}` — it is left on a detached \
+             HEAD; re-attach manually with `git -C {} checkout {branch}`.",
+            wt_path.display()
+        )
     }
 }
 
@@ -826,6 +855,25 @@ detached
             assert!(tags.contains("archive/testq-01ABC"), "tag not created: {tags:?}");
             let branches = run_git(&root, &["branch", "--list", &branch]);
             assert!(branches.contains("testq"), "branch was deleted without confirm: {branches:?}");
+        }
+
+        /// The live incident this guards: `abandon_branch` used to detach the
+        /// worktree and never re-attach it when `-d` was refused, so the daemon
+        /// permanently refused to dispatch that quark — "all quarks stuck" from a
+        /// single unconfirmed `/abandon` on an unmerged branch.
+        #[test]
+        fn a_refused_delete_reattaches_the_worktree_to_the_branch() {
+            let (_dir, root, wt, branch) = repo_with_unmerged_quark_branch();
+            let msg = abandon_branch(&root, &wt, &branch, false);
+            assert!(
+                !msg.contains("could not be re-attached"),
+                "reattach itself should not fail here: {msg}"
+            );
+            assert_eq!(
+                hadron_gluon::worktree::current_branch(&wt),
+                Some(branch),
+                "worktree must end back on the branch it started on, not detached"
+            );
         }
 
         #[test]
