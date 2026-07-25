@@ -95,13 +95,7 @@ impl super::Chamber {
         self.reproject(&events);
 
         let old_chat_count = self.chat_message_ixs.len();
-        self.chat_message_ixs = self
-            .view
-            .messages
-            .iter()
-            .enumerate()
-            .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
-            .collect();
+        self.chat_message_ixs = crate::model::chat_message_indices(&self.view.messages);
         let new_chat_count = self.chat_message_ixs.len();
         let new_log_count = self.view.messages.len();
         

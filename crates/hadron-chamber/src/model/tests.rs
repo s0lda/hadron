@@ -260,6 +260,29 @@
         }
     }
 
+    /// The chat list renders a SUBSET of the projected rows, addressed by index into
+    /// `view.messages` — so the index list and the projection must be rebuilt together
+    /// or the chat renders rows that are not there. `/resume` rebuilt the projection and
+    /// left the index list empty, which is why a resumed session showed an empty chat
+    /// until the next message arrived. This is the one definition of "which rows are
+    /// chat rows".
+    #[test]
+    fn chat_message_indices_picks_exactly_the_message_rows() {
+        let team = Team { quarks: vec![], ..Default::default() };
+        let evs = vec![
+            ev(Actor::Human, None, Kind::Message { body: "one".into() }),
+            ev(Actor::Gluon, None, Kind::Status { state: QuarkState::Excited }),
+            ev(Actor::Human, None, Kind::Message { body: "two".into() }),
+        ];
+        let view = project_with_team(&evs, &team, &Team::default());
+
+        let ixs = chat_message_indices(&view.messages);
+        assert_eq!(ixs, vec![0, 2], "only the two messages are chat rows");
+        assert!(ixs.iter().all(|&i| view.messages[i].is_chat()));
+        assert!(!view.messages[1].is_chat(), "a status row is log-only");
+        assert!(chat_message_indices(&[]).is_empty());
+    }
+
     /// `load_archived_messages` reads every `sessions/*/field.jsonl` and concatenates
     /// their projected rows; a missing directory yields no rows and no error.
     #[test]

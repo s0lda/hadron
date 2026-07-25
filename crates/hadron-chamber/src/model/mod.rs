@@ -50,6 +50,30 @@ pub struct MessageRow {
     pub severity: Option<hadron_lattice::Severity>,
 }
 
+impl MessageRow {
+    /// Does the Chat tab show this row? The Log tab shows every projected row; Chat
+    /// shows only the ones a human wrote or read. The single definition of that split —
+    /// it used to be the literal `m.kind_label == "message"` copied into five places.
+    pub fn is_chat(&self) -> bool {
+        self.kind_label == "message"
+    }
+}
+
+/// The indices into `messages` that the virtualized chat list addresses.
+///
+/// The chat is a `gpui::list` over a SUBSET of the projected rows, so it carries this
+/// index list plus a `ListState` whose count must equal its length. Both are caches of
+/// `view.messages` and every rebuild of the projection has to rebuild them too — the
+/// `/resume` handler reprojected a whole archived session and left the index list
+/// cleared, so the chat stayed empty until the next message rebuilt it.
+pub fn chat_message_indices(messages: &[MessageRow]) -> Vec<usize> {
+    messages
+        .iter()
+        .enumerate()
+        .filter_map(|(ix, m)| m.is_chat().then_some(ix))
+        .collect()
+}
+
 fn resolve_fresh(
     usage: Option<&hadron_lattice::Usage>,
     legacy_used_tokens: u32,

@@ -539,12 +539,7 @@ impl Chamber {
         .detach();
 
         // Precompute the message indices for the virtualized chat.
-        let chat_message_ixs: Vec<usize> = view
-            .messages
-            .iter()
-            .enumerate()
-            .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
-            .collect();
+        let chat_message_ixs = model::chat_message_indices(&view.messages);
 
         let chat_list_state = gpui::ListState::new(
             chat_message_ixs.len(),
