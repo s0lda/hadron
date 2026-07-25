@@ -254,10 +254,24 @@ pub fn shared_build_env(cwd: &Path) -> Vec<(String, String)> {
 }
 
 /// How long a build artifact must sit unused before [`reap_build_artifacts`]
-/// reclaims it. 7 days is the conservative end: it costs one cold rebuild for
-/// whoever's build cache the sweep actually clears — mostly the human's, per
-/// [`reap_build_artifacts`]'s doc — if they return to a branch untouched that long.
-pub const ARTIFACT_REAP_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+/// reclaims it.
+///
+/// **3 days, chosen from the measured distribution — 7 days reclaimed literally
+/// nothing.** Measured 2026-07-25 on the live 107G `target/debug`, counting the
+/// file atimes the sweep actually reads:
+///
+/// | | >1d | >3d | >5d | >7d |
+/// |---|---|---|---|---|
+/// | `deps/` | 44G | 35G | 22G | **0** |
+/// | `incremental/` | 41G | 28G | 17G | **0** |
+///
+/// Nothing in the tree is older than ~6 days, because this box rebuilds
+/// constantly — so any threshold at or above 6 days is a sweep that never fires.
+/// 3 days reclaims ~64G today and costs one cold rebuild only for someone
+/// returning to a branch they have not built in three days. A wrongly-deleted
+/// artifact is never lost work, only a slower next build, which is what lets the
+/// threshold be this aggressive.
+pub const ARTIFACT_REAP_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(3 * 24 * 60 * 60);
 
 /// What one artifact sweep reclaimed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -383,11 +397,22 @@ fn sweep_stale_entries(dir: &Path, cutoff: std::time::SystemTime, reap: &mut Art
 /// enough to keep the whole directory looking used.
 fn newest_atime(path: &Path) -> anyhow::Result<std::time::SystemTime> {
     let meta = std::fs::symlink_metadata(path).with_context(|| format!("stat-ing {}", path.display()))?;
-    let mut newest = meta.accessed().with_context(|| format!("reading atime of {}", path.display()))?;
-    if meta.is_dir() {
-        for entry in std::fs::read_dir(path).with_context(|| format!("reading {}", path.display()))? {
-            newest = newest.max(newest_atime(&entry?.path())?);
-        }
+    if !meta.is_dir() {
+        return meta.accessed().with_context(|| format!("reading atime of {}", path.display()));
+    }
+    // A DIRECTORY'S OWN ATIME IS MEANINGLESS HERE and must not be part of the max.
+    // Merely listing a directory bumps its atime — proven on this box: `touch -a -d
+    // "8 days ago" dir; ls dir` moved the directory eight days forward while the
+    // file inside stayed stale. `read_dir` below does exactly that, so seeding from
+    // the directory made the sweep refresh the very timestamps it was about to
+    // judge, and `.fingerprint/`, `incremental/` and `build/` became permanently
+    // un-collectable — three of four categories, 41G of the 107G, measured.
+    //
+    // An empty directory therefore reports the epoch, i.e. maximally stale. That is
+    // the right answer: a unit directory with no files left in it is dead.
+    let mut newest = std::time::SystemTime::UNIX_EPOCH;
+    for entry in std::fs::read_dir(path).with_context(|| format!("reading {}", path.display()))? {
+        newest = newest.max(newest_atime(&entry?.path())?);
     }
     Ok(newest)
 }
@@ -1172,6 +1197,42 @@ pub(crate) mod tests {
     /// build against this box's actual target dir. A sweep keyed on the
     /// directory's own atime would therefore delete a fingerprint a crate is
     /// being rebuilt against every day, forcing a full rebuild it never needed.
+    /// The mirror of the test below, and the one that was missing: a directory
+    /// whose OWN atime is fresh but whose every file is stale must still be swept.
+    ///
+    /// A directory's atime is bumped by merely listing it — proven on this box:
+    /// `touch -a -d "8 days ago" dir; ls dir` moved the directory's atime eight
+    /// days forward while the file inside stayed stale. `read_dir` does the same,
+    /// so **the sweep's own walk refreshes every directory it inspects**, as does
+    /// any `ls`, `du`, or backup. Seeding the staleness check with the directory's
+    /// own atime therefore made `.fingerprint/`, `incremental/` and `build/`
+    /// permanently un-collectable — three of the four categories, and 41G of the
+    /// 107G. Only the atimes of FILES mean anything here.
+    #[test]
+    fn a_directory_touched_by_a_mere_listing_is_still_swept_if_its_contents_are_stale() {
+        let repo = tempfile::tempdir().unwrap();
+        let debug = repo.path().join("target").join("debug");
+        let unit = debug.join("incremental").join("hadron_lattice-abcd1234");
+        write_aged(&unit.join("dep-graph.bin"), b"stale", Duration::from_secs(10 * 86400));
+        write_aged(&unit.join("query-cache.bin"), b"stale", Duration::from_secs(10 * 86400));
+        // The directory itself looks brand new — exactly what a `read_dir`/`ls` leaves behind.
+        let now = SystemTime::now();
+        File::open(&unit)
+            .unwrap()
+            .set_times(FileTimes::new().set_accessed(now).set_modified(now))
+            .unwrap();
+
+        let reap = reap_build_artifacts(repo.path(), Duration::from_secs(3 * 86400))
+            .unwrap()
+            .unwrap();
+        assert!(
+            reap.files_removed > 0,
+            "a dir whose files are all stale must be swept even though listing it \
+             refreshed the dir's own atime; reclaimed {reap:?}"
+        );
+        assert!(!unit.exists(), "the stale unit should be gone");
+    }
+
     #[test]
     fn a_fingerprint_directory_with_one_fresh_file_inside_is_not_swept() {
         let repo = tempfile::tempdir().unwrap();
