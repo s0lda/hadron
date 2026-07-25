@@ -16,6 +16,25 @@ fn append_line(path: &std::path::Path, line: &str) -> std::io::Result<()> {
 }
 
 impl Chamber {
+    /// Where `/clear` and `/resume` park archived sessions. Derived from the field path
+    /// so nothing has to be told twice.
+    pub(super) fn sessions_dir(&self) -> std::path::PathBuf {
+        self.path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new(".hadron"))
+            .join("sessions")
+    }
+
+    /// Re-read the session archive into both caches that derive from it. They are always
+    /// rebuilt together — a new archive is simultaneously new Stats history and a new
+    /// Sessions-submenu row — so they get one rebuild path rather than two that can drift.
+    /// Called after `/clear` and `/resume`, the only two writers of an archive.
+    pub(super) fn reload_archives(&mut self) {
+        let dir = self.sessions_dir();
+        self.archived_messages = crate::model::load_archived_messages(&dir);
+        self.sessions = crate::model::list_sessions(&dir);
+    }
+
     /// Pick a folder and open it as a workspace **in a second chamber**, leaving this
     /// one running.
     ///
@@ -139,11 +158,7 @@ impl Chamber {
             }
             "clear" => {
                 let session_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-                let hadron_dir = match self.path.parent() {
-                    Some(p) => p.to_path_buf(),
-                    None => std::path::PathBuf::from(".hadron"),
-                };
-                let session_dir = hadron_dir.join("sessions").join(&session_id);
+                let session_dir = self.sessions_dir().join(&session_id);
                 if let Err(e) = std::fs::create_dir_all(&session_dir) {
                     eprintln!("chamber: failed to create session archive directory: {e}");
                 } else {
@@ -166,10 +181,8 @@ impl Chamber {
                         let events = io::read_events(&self.path).unwrap_or_default();
                         self.reproject(&events);
                         // The just-archived field is now part of history: fold it into the
-                        // wider Stats windows. `/clear` is the only writer of a new archive
-                        // in this process, so this is the one place the cache must rebuild.
-                        self.archived_messages =
-                            crate::model::load_archived_messages(&hadron_dir.join("sessions"));
+                        // wider Stats windows and offer it in the Sessions submenu.
+                        self.reload_archives();
                         self.chat_message_ixs.clear();
                         self.chat_list_state.reset(0);
                         for scroll in &self.chat_scrolls {
@@ -322,11 +335,9 @@ impl Chamber {
                     );
                     return true;
                 }
-                let hadron_dir = match self.path.parent() {
-                    Some(p) => p.to_path_buf(),
-                    None => std::path::PathBuf::from(".hadron"),
-                };
-                let sessions_dir = hadron_dir.join("sessions");
+                let sessions_dir = self.sessions_dir();
+                // Listed fresh, not from `self.sessions`: `/resume` may be typed against an
+                // archive another process wrote since this chamber last rebuilt its cache.
                 let sessions = crate::model::list_sessions(&sessions_dir);
                 let Some(session) = crate::model::find_session(&sessions, target) else {
                     eprintln!("chamber: no session matches {target:?}");
@@ -367,7 +378,7 @@ impl Chamber {
                 }
                 let events = io::read_events(&self.path).unwrap_or_default();
                 self.reproject(&events);
-                self.archived_messages = crate::model::load_archived_messages(&sessions_dir);
+                self.reload_archives();
                 self.chat_message_ixs.clear();
                 self.chat_list_state.reset(0);
                 for scroll in &self.chat_scrolls {

@@ -96,15 +96,16 @@ pub(super) fn frame_corner_radii(window: &Window) -> (Pixels, Pixels) {
 /// boot, so an item that swapped the folder under a running swarm would be a lie with a
 /// file dialog attached. See `Chamber::open_workspace`.
 ///
-/// "New Session" and "Rename" are wrappers, not new behaviour: they drive the existing
-/// `/clear` and `/rename` rows of [`crate::text::COMMANDS`], because that table is the
-/// one place a command may be defined.
+/// "New Session", "Rename" and every row under "Sessions" are wrappers, not new
+/// behaviour: they drive the existing `/clear`, `/rename` and `/resume` rows of
+/// [`crate::text::COMMANDS`], because that table is the one place a command may be
+/// defined.
 pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
     let view = chamber.clone();
     Button::new("app-menu")
         .ghost()
         .icon(Icon::new(IconName::Menu).small())
-        .dropdown_menu(move |menu, _, _| {
+        .dropdown_menu(move |menu, window, cx| {
             let open_workspace = view.clone();
             let folder = view.clone();
             let new_session = view.clone();
@@ -146,6 +147,44 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
                     });
                 }),
             )
+            // The archived sessions, newest first, each row driving `/resume`.
+            // `Chamber::sessions` is a cache: listing them here would re-read every
+            // archive's whole `field.jsonl` on the frame that paints the menu.
+            .submenu("Sessions", window, cx, {
+                let view = view.clone();
+                move |menu, _, cx| {
+                    let chamber = view.read(cx);
+                    // `/resume` swaps the live field out from under a running daemon, so
+                    // it refuses mid-turn — and it refuses to `eprintln!`, which nobody
+                    // sees. Say so here instead of offering rows that do nothing.
+                    if crate::model::any_quark_mid_turn(&chamber.view.roster) {
+                        return menu.item(
+                            PopupMenuItem::new("A quark is mid-turn — finish it first")
+                                .disabled(true),
+                        );
+                    }
+                    // `list_sessions` is oldest-first (it folds history in that order);
+                    // a menu wants the most recent at the top.
+                    let rows: Vec<(String, String)> = chamber
+                        .sessions
+                        .iter()
+                        .rev()
+                        .map(|s| (s.id.clone(), s.label()))
+                        .collect();
+                    if rows.is_empty() {
+                        return menu
+                            .item(PopupMenuItem::new("No archived sessions").disabled(true));
+                    }
+                    rows.into_iter().fold(menu, |menu, (id, label)| {
+                        let resume = view.clone();
+                        menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                            resume.update(cx, |this, cx| {
+                                this.handle_chat_command("resume", &id, window, cx);
+                            });
+                        }))
+                    })
+                }
+            })
             .separator()
             .item(
                 PopupMenuItem::new("Settings…").on_click(move |_, window, cx| {
