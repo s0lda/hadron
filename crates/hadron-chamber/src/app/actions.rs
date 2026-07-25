@@ -7,24 +7,24 @@
 use super::*;
 
 impl Chamber {
-    /// Append `body` to the field as a human message and re-project, exactly as if
-    /// the human had typed it. The shared tail of every command that *speaks* —
-    /// four of them now — so the splice/scroll/notify bookkeeping has one home
-    /// rather than one copy per command.
+    /// Post a chat message from `from` and reveal it. The shared tail of every
+    /// command that *speaks*, so the chat-list bookkeeping has one home rather than
+    /// one copy per command.
     ///
-    /// A failure to append is reported, not swallowed: the message simply did not
-    /// happen, and silently doing nothing would read as the command being another
-    /// dead menu entry.
-    pub(super) fn post_human_message(&mut self, body: String, cx: &mut Context<Self>) {
-        let ev = Event::new(Actor::Human, None, Kind::Message { body });
-        if let Err(e) = io::append_event(&self.path, &ev) {
-            eprintln!("chamber: failed to append command message: {e}");
-            return;
-        }
-        let events = io::read_events(&self.path).unwrap_or_default();
-        self.reproject(&events);
-
+    /// **`from` is the whole safety story.** `Actor::Human` requests turns:
+    /// `router::next_pending` skips `to: None` events, so an unaddressed human
+    /// message reaches quarks only through `engine::unaddressed_message_targets`,
+    /// which resolves `@mentions` in the body — which is exactly what the skill
+    /// commands want. `Actor::Gluon` with no `@mention` in the body reaches nobody
+    /// at all, and that is the channel `/help` and `/skills` print on: visible in
+    /// the chat, no seat woken, no tokens spent.
+    ///
+    /// The append itself goes through [`Self::append_and_reload`] rather than
+    /// calling `io::append_event` again here — one write path into the field.
+    pub(super) fn post_chat_message(&mut self, from: Actor, body: String, cx: &mut Context<Self>) {
         let old_chat_count = self.chat_message_ixs.len();
+        self.append_and_reload(Event::new(from, None, Kind::Message { body }), cx);
+
         self.chat_message_ixs = self
             .view
             .messages
@@ -33,6 +33,8 @@ impl Chamber {
             .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
             .collect();
         let new_chat_count = self.chat_message_ixs.len();
+        // A failed append leaves the count unchanged, so this splices nothing —
+        // the error is already reported by `append_and_reload`.
         if new_chat_count > old_chat_count {
             self.chat_list_state
                 .splice(old_chat_count..old_chat_count, new_chat_count - old_chat_count);
@@ -43,6 +45,21 @@ impl Chamber {
         self.chat_list_state
             .scroll_to_reveal_item(new_chat_count.saturating_sub(1));
         cx.notify();
+    }
+
+    /// The skill corpus the engine would load for this workspace: built-ins, then
+    /// `~/.hadron/skills`, then `<repo>/.hadron/skills`, last wins by id.
+    ///
+    /// Deliberately the **same pair of directories** the daemon passes
+    /// (`hadron-gluon.rs:429` for the global, `engine/routing.rs:71` for the repo).
+    /// A `/skills` listing that read a different pair would be a confident lie about
+    /// what the quarks actually have.
+    fn skill_corpus(&self) -> Vec<hadron_gluon::skills::ResolvedSkill> {
+        let repo_dir = crate::vcs::repo_root_of(&self.path)
+            .join(".hadron")
+            .join("skills");
+        let global_dir = hadron_lattice::user_hadron_dir().map(|d| d.join("skills"));
+        hadron_gluon::skills::load_skills(global_dir.as_deref(), Some(&repo_dir))
     }
 
     pub(super) fn handle_chat_command(
@@ -135,7 +152,41 @@ impl Chamber {
                     let (named, task) = crate::text::split_target(args);
                     (named.unwrap_or(hadron_gluon::router::ORCHESTRATOR_ALIAS), task)
                 };
-                self.post_human_message(crate::text::skill_command_body(trigger, target, task), cx);
+                self.post_chat_message(
+                    Actor::Human,
+                    crate::text::skill_command_body(trigger, target, task),
+                    cx,
+                );
+                true
+            }
+            // Discovery. Both print from `Actor::Gluon` with no `@mention`, which
+            // reaches no seat: `next_pending` skips `to: None` (`router/mod.rs:37`)
+            // and `unaddressed_message_targets` resolves mentions in the body, of
+            // which there are none. Answering "what can I type" must not cost a turn.
+            "help" => {
+                self.post_chat_message(Actor::Gluon, crate::text::help_body(), cx);
+                true
+            }
+            "skills" => {
+                let corpus = self.skill_corpus();
+                let mut body = format!("**Skills** — {} loaded\n\n", corpus.len());
+                for s in &corpus {
+                    body.push_str(&format!(
+                        "- **{}** — {}\n  triggers: {}\n",
+                        s.id,
+                        s.description.as_deref().unwrap_or("(no description)"),
+                        s.triggers
+                            .iter()
+                            .map(|t| format!("`{t}`"))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ));
+                }
+                body.push_str(
+                    "\nThe engine picks the skill from your task text — any trigger \
+                     above, matched case-insensitively, selects that procedure.\n",
+                );
+                self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
             // Park an expensive seat without unseating it: the seat, its config and its

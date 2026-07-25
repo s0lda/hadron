@@ -67,13 +67,9 @@ pub struct Command {
 /// Now the menu and the parser both read this table, so "offered but unparsed"
 /// cannot be written. The `match` arm still cannot be checked by the compiler —
 /// `every_listed_command_is_handled` in `app::input` is the guard that closes it.
-///
-/// `/help` and `/skills` are deliberately **absent** for now. Both want to print
-/// into the chat without waking the swarm, and every write path the chamber has
-/// today appends an `Actor::Human` message — which is exactly what excites a quark.
-/// A row here with no arm is the bug this table exists to prevent, so they land
-/// with their notice channel, not before it.
 pub const COMMANDS: &[Command] = &[
+    Command { name: "help", detail: "List every chat command", arity: Arity::None, listed: true },
+    Command { name: "skills", detail: "List the skills the engine can hand a quark, and their triggers", arity: Arity::None, listed: true },
     Command { name: "clear", detail: "Archive and clear the current chat history", arity: Arity::None, listed: true },
     Command { name: "exit", detail: "Exit Hadron Chamber", arity: Arity::None, listed: true },
     // A working alias of `/exit`, kept so existing muscle memory does not break,
@@ -100,6 +96,30 @@ pub const COMMANDS: &[Command] = &[
 /// Look a command up by the name typed after the slash.
 pub fn command(name: &str) -> Option<&'static Command> {
     COMMANDS.iter().find(|c| c.name == name)
+}
+
+/// The markdown `/help` prints.
+///
+/// Pure and here rather than in the handler so the property that makes it safe to
+/// print is testable: it must contain **no line beginning with `@`**. `/help` is
+/// posted by `Actor::Gluon`, and the only way such an event reaches a seat is an
+/// addressee parsed out of the body — so a stray leading mention would turn the
+/// help text into a dispatch.
+pub fn help_body() -> String {
+    let mut out = String::from("**Chat commands**\n\n");
+    for c in COMMANDS.iter().filter(|c| c.listed) {
+        let arg = match c.arity {
+            Arity::None => "",
+            Arity::Line => " <…>",
+        };
+        out.push_str(&format!("- `/{}{}` — {}\n", c.name, arg, c.detail));
+    }
+    out.push_str(
+        "\nA command may start any line, not just the first — so you can write a \
+         paragraph and put the command underneath it. Inside a ``` fence it stays \
+         plain text.\n",
+    );
+    out
 }
 
 /// Split an optional leading `@target` off a skill command's argument.
@@ -488,6 +508,33 @@ mod tests {
         assert_eq!(c.candidates.len(), 50);
         let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels[0].starts_with(":rofl"), "first emoji should be rofl: {:?}", labels[0]);
+    }
+
+    /// `/help` is posted by `Actor::Gluon`, which reaches a seat ONLY through an
+    /// addressee parsed out of the body. A line beginning with `@` would therefore
+    /// turn the help text into a dispatch — and answering "what can I type" must
+    /// never cost a turn.
+    #[test]
+    fn the_help_text_addresses_nobody() {
+        let body = help_body();
+        for line in body.lines() {
+            assert!(
+                !line.trim_start().starts_with('@'),
+                "help text would route to a seat: {line:?}"
+            );
+        }
+        // And it really does describe the live table, not a frozen copy.
+        for c in COMMANDS.iter().filter(|c| c.listed) {
+            assert!(
+                body.contains(&format!("`/{}", c.name)),
+                "/{} is offered by the menu but missing from /help",
+                c.name
+            );
+        }
+        assert!(
+            !body.contains("`/quit"),
+            "unlisted aliases stay out of the help text"
+        );
     }
 
     #[test]
