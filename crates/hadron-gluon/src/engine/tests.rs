@@ -4640,3 +4640,16 @@ async fn gluon_notification_to_orchestrator_resolves_gluon_driver_and_does_not_l
     assert_eq!(turns.lock().unwrap().len(), 1, "orchestrator must not loop on handled Gluon notification");
 }
 
+
+/// The turn-end `/learn` nudge fires off this heuristic. It is a substring check on the
+/// turn's own transcript, so the markers must be the ones a red run actually prints —
+/// and a green run must not trip it, or the reminder becomes noise nobody reads.
+#[tokio::test]
+async fn looks_like_a_debugging_turn_catches_the_known_failure_markers() {
+    use super::merge::looks_like_a_debugging_turn as debugged;
+    assert!(debugged("thread 'main' panicked at foo.rs:10"));
+    assert!(debugged("test worktree::tests::a_held_lock ... FAILED"));
+    assert!(debugged("error[E0599]: no method named `foo`"));
+    assert!(!debugged("test result: ok. 40 passed; 0 failed"));
+    assert!(!debugged("merged `quark/acp-claude/01K` → `main` (fast-forward)."));
+}
