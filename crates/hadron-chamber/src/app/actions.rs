@@ -400,20 +400,12 @@ impl Chamber {
 
                 if let Some(real_id) = target_id {
                     let qid = QuarkId::new(&real_id);
-                    if let Some(existing) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
-                        existing.energy_limit = Some(limit_val);
-                    } else if let Some(def) = self.global.get(&qid).cloned() {
-                        let resolved = resolve_team(&self.team, &self.global);
-                        if let Some(base) = resolved.get(&qid) {
-                            let mut desired = base.clone();
-                            desired.energy_limit = Some(limit_val);
-                            let prev = self.team.roster.iter().find(|o| o.id == qid).cloned();
-                            let ov = hadron_lattice::seat_override_delta(qid.clone(), &def, &desired, prev.as_ref());
-                            self.team.roster.retain(|o| o.id != qid);
-                            self.team.roster.push(ov);
-                        }
+                    let resolved = resolve_team(&self.team, &self.global);
+                    if let Some(base) = resolved.get(&qid) {
+                        let mut desired = base.clone();
+                        desired.energy_limit = Some(limit_val);
+                        self.update_seat_config(&qid, &desired, cx);
                     }
-                    self.save_repo_team(cx);
                 } else {
                     self.team.max_exchanges = Some(limit_val as usize);
                     self.save_repo_team(cx);
