@@ -656,7 +656,7 @@ git commit -m "feat(nucleus): nudge toward /learn after a turn that visibly debu
 
 ---
 
-### Task 7: Titlebar menu — reorder, New Session, Rename
+### Task 7: Titlebar menu — reorder, New Session, Rename  — **DONE** (commit `14306ee`)
 
 **Files:**
 
@@ -670,13 +670,13 @@ git commit -m "feat(nucleus): nudge toward /learn after a turn that visibly debu
 
 **Why wrappers, not new commands:** per the one-command-table invariant, "New Session" and "Rename" must invoke the existing `COMMANDS` rows rather than grow a second implementation. `/clear`'s detail text ("Archive and clear the current chat history") already matches "New Session" semantically — if the human wants the row itself renamed for consistency, that is a one-line `detail`/label change, not a new command.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 No new pure logic is introduced, so there is no red-test step here — this task is UI wiring. Verify manually per the Superpowers UI guidance: run the chamber (`cargo run -p hadron-chamber`), open the titlebar menu, confirm all eight rows and three dividers render in the spec's order, and that New Session / Rename actually invoke `/clear` / `/rename`'s existing behavior (chat clears; a rename prompt appears).
 
-- [ ] **Step 2: N/A — no test to fail first for a pure UI reorder**
+- [x] **Step 2: N/A — no test to fail first for a pure UI reorder**
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```rust
 // crates/hadron-chamber/src/app/widgets.rs, replacing menu_button's body
@@ -744,13 +744,13 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
 
 `open_rename_prompt` is a new small method following whatever text-input-modal pattern the chamber already uses elsewhere (check `app/render/overlay.rs` for an existing single-line prompt before writing a new one — rule 2). If none exists, the minimal alternative is to focus the chat input pre-filled with `/rename ` and let the human type the name and press enter, which needs no new modal at all — prefer this if a modal pattern is not already present, since it is strictly less code.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `cargo build -p hadron-chamber --features gui` (or the project's real GUI build command — check the build manifest, not this guess)
 Run: `cargo test -p hadron-chamber --lib` (regression: nothing else should move)
 Manual: run the chamber, exercise all eight menu rows once each.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/hadron-chamber/src/app/widgets.rs
