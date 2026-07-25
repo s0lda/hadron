@@ -130,7 +130,7 @@ impl super::ChamberView {
             }
             s.last_active = Some(m.ts);
 
-            if m.kind_label == "message" {
+            if m.is_chat() {
                 s.turns += 1;
                 out.total_turns += 1;
             }

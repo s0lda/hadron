@@ -35,6 +35,27 @@ impl Chamber {
         self.sessions = crate::model::list_sessions(&dir);
     }
 
+    /// Resync every list cache to the current projection after the field was **replaced
+    /// wholesale** (`/clear`, `/resume`) rather than appended to.
+    ///
+    /// The chat and log are virtualized `gpui::list`s: each holds a `ListState` whose
+    /// item count is a cache of `self.view`, and the chat additionally holds
+    /// `chat_message_ixs`. The incremental paths (`post_chat_message`, the reload tick)
+    /// keep them in step with a `splice`, which only ever describes rows *appended* — a
+    /// swap invalidates all of it, so those caches have to be rebuilt outright.
+    ///
+    /// `/resume` did not: it reprojected a whole archived session and then `clear()`ed
+    /// the index list and `reset(0)`d the chat state, so the chat rendered empty while
+    /// the Log tab (which indexes `view.messages` directly) was correct. It did not
+    /// self-heal either — the reload tick only rebuilds when `events.len()` disagrees
+    /// with `view.messages.len()`, and after a reproject they agree. It took the next
+    /// message to rebuild the index, which is when the whole history appeared at once.
+    pub(super) fn resync_lists_to_projection(&mut self) {
+        self.chat_message_ixs = crate::model::chat_message_indices(&self.view.messages);
+        self.chat_list_state.reset(self.chat_message_ixs.len());
+        self.log_list_state.reset(self.view.messages.len());
+    }
+
     /// Pick a folder and open it as a workspace **in a second chamber**, leaving this
     /// one running.
     ///
@@ -99,13 +120,7 @@ impl Chamber {
         let old_chat_count = self.chat_message_ixs.len();
         self.append_and_reload(Event::new(from, None, Kind::Message { body }), cx);
 
-        self.chat_message_ixs = self
-            .view
-            .messages
-            .iter()
-            .enumerate()
-            .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
-            .collect();
+        self.chat_message_ixs = crate::model::chat_message_indices(&self.view.messages);
         let new_chat_count = self.chat_message_ixs.len();
         // A failed append leaves the count unchanged, so this splices nothing —
         // the error is already reported by `append_and_reload`.
@@ -183,8 +198,7 @@ impl Chamber {
                         // The just-archived field is now part of history: fold it into the
                         // wider Stats windows and offer it in the Sessions submenu.
                         self.reload_archives();
-                        self.chat_message_ixs.clear();
-                        self.chat_list_state.reset(0);
+                        self.resync_lists_to_projection();
                         for scroll in &self.chat_scrolls {
                             scroll.scroll_to_bottom();
                         }
@@ -379,8 +393,7 @@ impl Chamber {
                 let events = io::read_events(&self.path).unwrap_or_default();
                 self.reproject(&events);
                 self.reload_archives();
-                self.chat_message_ixs.clear();
-                self.chat_list_state.reset(0);
+                self.resync_lists_to_projection();
                 for scroll in &self.chat_scrolls {
                     scroll.scroll_to_bottom();
                 }
