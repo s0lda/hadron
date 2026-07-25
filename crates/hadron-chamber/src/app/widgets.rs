@@ -91,10 +91,10 @@ pub(super) fn frame_corner_radii(window: &Window) -> (Pixels, Pixels) {
 /// so a press here can't start a window move.
 /// The app menu behind the 3-line icon.
 ///
-/// Every item here does something real. "Open Workspace" is deliberately absent: the
-/// daemon is bound to one workspace at boot, so the chamber alone cannot repoint the
-/// swarm at another one — an item that opened a folder the quarks could not see would
-/// be a lie with a file dialog attached. Its design is its own task.
+/// Every item here does something real. "Open Workspace" opens the chosen folder in a
+/// SECOND chamber rather than repointing this one: a daemon binds to one workspace at
+/// boot, so an item that swapped the folder under a running swarm would be a lie with a
+/// file dialog attached. See `Chamber::open_workspace`.
 ///
 /// "New Session" and "Rename" are wrappers, not new behaviour: they drive the existing
 /// `/clear` and `/rename` rows of [`crate::text::COMMANDS`], because that table is the
@@ -105,12 +105,18 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
         .ghost()
         .icon(Icon::new(IconName::Menu).small())
         .dropdown_menu(move |menu, _, _| {
+            let open_workspace = view.clone();
             let folder = view.clone();
             let new_session = view.clone();
             let rename = view.clone();
             let settings = view.clone();
             let about = view.clone();
             menu.item(
+                PopupMenuItem::new("Open Workspace").on_click(move |_, _, cx| {
+                    open_workspace.update(cx, |this, cx| this.open_workspace(cx));
+                }),
+            )
+            .item(
                 PopupMenuItem::new("Reveal Workspace in File Manager").on_click(
                     move |_, _, cx| {
                         folder.update(cx, |this, cx| {
@@ -540,8 +546,46 @@ pub(super) fn fallback_pick_image() -> Option<String> {
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())?;
-    // C:\… → /mnt/c/… ; if the translation fails, hand back the raw path rather than lose it.
-    let translated = Command::new("wslpath")
+    wsl_to_linux(win)
+}
+
+/// A directory picker with the same two fallbacks as [`fallback_pick_image`], for the
+/// titlebar's "Open Workspace". Kept separate rather than parameterised because the two
+/// dialogs differ in more than a flag — a Windows folder browser is a different class
+/// (`FolderBrowserDialog`) than a file dialog, not the same one with another filter.
+///
+/// **Blocking** — must be called on a background thread.
+pub(super) fn fallback_pick_directory() -> Option<String> {
+    use std::process::Command;
+
+    match Command::new("zenity")
+        .args(["--file-selection", "--directory", "--title=Open workspace"])
+        .output()
+    {
+        Ok(out) => {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            return (out.status.success() && !path.is_empty()).then_some(path);
+        }
+        Err(_) => { /* zenity not installed — try the Windows dialog below */ }
+    }
+
+    let script = "Add-Type -AssemblyName System.Windows.Forms; \
+         $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
+         if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }";
+    let win = Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", script])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())?;
+    wsl_to_linux(win)
+}
+
+/// `C:\…` → `/mnt/c/…`. If the translation fails, hand back the raw path rather than
+/// lose it — a path we cannot translate is still better than silently nothing.
+fn wsl_to_linux(win: String) -> Option<String> {
+    let translated = std::process::Command::new("wslpath")
         .arg("-u")
         .arg(&win)
         .output()
