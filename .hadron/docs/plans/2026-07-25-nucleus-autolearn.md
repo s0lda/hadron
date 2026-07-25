@@ -23,7 +23,7 @@ status: draft
 
 ---
 
-### Task 1: Manifest-detected merge runner
+### Task 1: Manifest-detected merge runner  — **DONE** (commits `8794946`, order fix `b4afd9c`)
 
 **Files:**
 
@@ -37,7 +37,7 @@ status: draft
 
 **Why first:** `merge.rs:78` today is a literal `run_tests_with(wt, "cargo", &["test", "--workspace"])`. In an npm/pytest/go repo the gate hard-fails (`ENOENT` propagates through `merge.rs:117`'s `?`) rather than falsely reporting green — but every worker turn still ends in error. This blocks everything else in the spec for a non-Rust repo, so it lands first.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```rust
 // in crates/hadron-gluon/src/merge.rs, inside mod tests
@@ -76,12 +76,12 @@ fn detect_runner_defaults_to_cargo_when_no_manifest_is_recognised() {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cargo test -p hadron-gluon --lib merge::tests::detect_runner -- --nocapture`
 Expected: FAIL with "cannot find function `detect_runner`"
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```rust
 // crates/hadron-gluon/src/merge.rs, above CargoMergeRunner
@@ -114,12 +114,12 @@ async fn tests(&self, wt: &Worktree) -> anyhow::Result<(bool, String)> {
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `cargo test -p hadron-gluon --lib merge::tests::detect_runner`
 Expected: 5 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/hadron-gluon/src/merge.rs
