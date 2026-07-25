@@ -51,6 +51,35 @@ impl super::Engine {
             return Ok(false);
         }
 
+        // **Rebase BEFORE testing, not after.** See `merge::sync` for the two live
+        // failures this order fixes; the short version is that a branch cut before a
+        // fix landed on `base` was tested without that fix and reported red forever.
+        // A conflict is reported here rather than after a full test run: a branch that
+        // cannot replay onto `base` cannot land whatever the tests say.
+        let state = match runner.sync(&t.wt, &t.base) {
+            crate::merge::Synced::Conflicted(err) => {
+                self.reroute_blocked_with_severity(
+                    target,
+                    &crate::merge::Landed::Conflicted(err).describe(&t.wt.branch, &t.base),
+                    hadron_lattice::Severity::Error,
+                )
+                .await?;
+                return Ok(true);
+            }
+            crate::merge::Synced::AlreadyCurrent => state,
+            crate::merge::Synced::Rebased => {
+                BranchState { commits: crate::worktree::commits_ahead(&t.wt, &t.base)?, ..state }
+            }
+        };
+        // The rebase emptied the branch: every commit was already on `base` by another
+        // route (a cherry-pick, a sibling branch). There is nothing to test and nothing
+        // to land — quiesce silently, exactly like a pure-conversation turn. Falling
+        // through here is what made an already-landed branch fail the gate on every
+        // single retry.
+        if state.commits == 0 {
+            return Ok(false);
+        }
+
         let events = read_events(&self.field_path)?;
         let op = hadron_gatekeeper::merge_op(&t.wt.branch, &t.base);
 

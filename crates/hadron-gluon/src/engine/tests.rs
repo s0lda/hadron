@@ -3179,6 +3179,73 @@ async fn a_worker_reporting_to_the_orchestrator_lands_its_branch() {
     );
 }
 
+/// Records the order the gate calls the runner's steps in, and otherwise behaves
+/// exactly like `GreenLandingRunner` (real `sync`, real `land`).
+struct OrderRecordingRunner(Arc<Mutex<Vec<&'static str>>>);
+
+#[async_trait::async_trait]
+impl crate::merge::MergeRunner for OrderRecordingRunner {
+    async fn tests(&self, _wt: &crate::worktree::Worktree) -> anyhow::Result<(bool, String)> {
+        self.0.lock().unwrap().push("tests");
+        Ok((true, String::new()))
+    }
+    fn sync(&self, wt: &crate::worktree::Worktree, base: &str) -> crate::merge::Synced {
+        self.0.lock().unwrap().push("sync");
+        crate::merge::sync(wt, base)
+    }
+    fn land(
+        &self,
+        repo_root: &std::path::Path,
+        wt: &crate::worktree::Worktree,
+        base: &str,
+    ) -> anyhow::Result<crate::merge::Landed> {
+        self.0.lock().unwrap().push("land");
+        crate::merge::land(repo_root, wt, base)
+    }
+}
+
+/// **The gate must rebase BEFORE it tests.** The gate used to test the branch exactly
+/// as the quark left it and rebase only inside `land`, after the tests had passed. Two
+/// live failures came out of that order: a branch cut before a fix landed on `base` was
+/// tested WITHOUT that fix, reported red, and could never heal itself (it burned two
+/// identical gate cycles on `quark/acp-agy/01KYC48…`); and the rebase inside `land`
+/// produced a tree nobody had run while the message claimed it was "re-tested first".
+/// Nothing in the type system pins the order, so this is the guard.
+#[tokio::test]
+async fn the_gate_syncs_the_branch_before_it_runs_the_tests() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w write w.txt".into() }),
+    )
+    .unwrap();
+
+    let order = Arc::new(Mutex::new(vec![]));
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(ReportingWriter {
+            id: QuarkId::new("w"),
+            file: "w.txt",
+            reply: "done",
+        })],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(OrderRecordingRunner(order.clone())));
+
+    engine.run_until_quiesce().await.unwrap();
+
+    assert_eq!(
+        *order.lock().unwrap(),
+        vec!["sync", "tests", "land"],
+        "the tests must see the tree that is about to land, not the one before the rebase"
+    );
+}
+
 /// **Branch cleanup rides every job, not just daemon startup.** Before this fix,
 /// `prune_merged_branches` only ran once at `bin/hadron-gluon.rs` startup, so a
 /// long-running daemon accumulated one `quark/*` branch per turn — the disk

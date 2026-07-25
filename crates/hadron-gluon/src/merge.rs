@@ -18,9 +18,27 @@ use async_trait::async_trait;
 use crate::snapshot::{git, git_ok};
 use crate::worktree::Worktree;
 
+/// How a branch was brought up to date with `base` **before** the gate tested it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Synced {
+    /// `base` had not moved since the branch was cut — nothing to replay.
+    AlreadyCurrent,
+    /// `base` moved; the branch was replayed on top of it. It may now be EMPTY —
+    /// every commit already applied upstream by another route — which is a no-op
+    /// land, not a failure.
+    Rebased,
+    /// The rebase hit conflicts a machine must not resolve. It was aborted; the
+    /// branch is exactly where the quark left it.
+    Conflicted(String),
+}
+
 /// How a branch reached the default branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Landed {
+    /// Every commit was already on `base` — the work arrived by another route (a
+    /// cherry-pick, a sibling branch), so nothing was merged. Reporting this as a
+    /// fast-forward would tell the human a merge happened that did not.
+    AlreadyLanded,
     /// The clean case: the default branch had not moved, so history stays linear.
     FastForward,
     /// The default branch moved while the quark worked (another quark landed
@@ -35,6 +53,9 @@ pub enum Landed {
 impl Landed {
     pub fn describe(&self, branch: &str, base: &str) -> String {
         match self {
+            Landed::AlreadyLanded => format!(
+                "nothing to merge: every commit on `{branch}` is already on `{base}`."
+            ),
             Landed::FastForward => format!("merged `{branch}` → `{base}` (fast-forward)."),
             Landed::RebasedThenFastForward => format!(
                 "merged `{branch}` → `{base}` (`{base}` had moved, so the branch was rebased \
@@ -55,6 +76,13 @@ pub trait MergeRunner: Send + Sync {
     /// Run the workspace tests **in the quark's worktree**, on the branch as it now
     /// stands. Returns (passed, a tail of the output for the human).
     async fn tests(&self, wt: &Worktree) -> anyhow::Result<(bool, String)>;
+
+    /// Replay the branch on top of `base`, **before** `tests` runs. Defaults to the
+    /// real git rebase: a fake runner exists to stub the expensive `tests`, and a
+    /// fake that also skipped the rebase would stop testing the thing that lands.
+    fn sync(&self, wt: &Worktree, base: &str) -> Synced {
+        sync(wt, base)
+    }
 
     /// Land the branch on `base`, in `repo_root`.
     fn land(&self, repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Landed>;
@@ -155,6 +183,13 @@ pub async fn run_tests_with(
 /// A conflicting rebase is aborted and reported. Nothing is deleted: the branch
 /// still points at exactly the commits the quark made.
 pub fn land(repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Landed> {
+    // Every commit already on `base`. `--ff-only` succeeds here ("Already up to
+    // date") and would report a merge that never happened — the case a branch is in
+    // after `sync` replayed it onto a `base` that had already absorbed its work.
+    if git(repo_root, &["merge-base", "--is-ancestor", &wt.branch, base]).is_ok() {
+        return Ok(Landed::AlreadyLanded);
+    }
+
     if let Ok(()) = ff_only(repo_root, &wt.branch) {
         return Ok(Landed::FastForward);
     }
@@ -168,6 +203,35 @@ pub fn land(repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Lande
 
     ff_only(repo_root, &wt.branch)?;
     Ok(Landed::RebasedThenFastForward)
+}
+
+/// Bring `wt`'s branch up to date with `base` **before** the gate tests it.
+///
+/// **Why before, and not only inside [`land`].** The gate used to test the branch
+/// exactly as the quark left it and rebase only after the tests passed. Two things
+/// fell out of that order, both observed live:
+///
+/// - A branch cut *before* a fix landed on `base` was tested WITHOUT that fix, so it
+///   was reported red on every retry and could never heal: the fix was on `base` and
+///   the branch was never shown it. (`quark/acp-agy/01KYC48…` burned two identical
+///   gate cycles on a `mod nucleus is private` error already fixed on `main`.)
+/// - The reverse: a rebase inside `land` produced a tree nobody had run, while
+///   `Landed::RebasedThenFastForward`'s message told the human it had been
+///   "re-tested first". Rebasing first is what makes that sentence true.
+///
+/// A conflict is aborted and reported — a machine must not guess at a resolution —
+/// and nothing is ever deleted: the branch still points at the quark's own commits.
+pub fn sync(wt: &Worktree, base: &str) -> Synced {
+    // `base` is already an ancestor of the branch ⇒ it has not moved under us.
+    if git(&wt.path, &["merge-base", "--is-ancestor", base, "HEAD"]).is_ok() {
+        return Synced::AlreadyCurrent;
+    }
+    if let Err(e) = git(&wt.path, &["rebase", base]) {
+        // Leave no half-rebase behind for the next turn to trip over.
+        let _ = git(&wt.path, &["rebase", "--abort"]);
+        return Synced::Conflicted(format!("{e:#}"));
+    }
+    Synced::Rebased
 }
 
 fn ff_only(repo_root: &Path, branch: &str) -> anyhow::Result<()> {
@@ -234,6 +298,92 @@ mod tests {
         assert!(repo.path().join("a.txt").exists());
         assert!(repo.path().join("sibling.txt").exists());
         assert!(git(repo.path(), &["log", "--merges", "--oneline"]).unwrap().is_empty());
+    }
+
+    /// **The reason `sync` exists.** A branch cut before a fix landed on `base` must
+    /// be shown that fix BEFORE the gate tests it — otherwise it is tested against a
+    /// tree that no longer exists, reported red, and can never heal itself: the fix is
+    /// on `base` and the branch is never given it. Live cost: two identical gate cycles
+    /// on `quark/acp-agy/01KYC48…` for an error `main` had already fixed.
+    #[test]
+    fn sync_replays_the_branch_onto_a_base_that_moved_so_the_tests_see_the_fix() {
+        let repo = git_repo();
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+        std::fs::write(wt.path.join("a.txt"), "opus work\n").unwrap();
+        worktree::commit_turn(&wt, "opus: work").unwrap().unwrap();
+
+        // The fix lands on main AFTER the branch was cut.
+        std::fs::write(repo.path().join("fix.txt"), "the fix\n").unwrap();
+        git(repo.path(), &["add", "-A"]).unwrap();
+        git(repo.path(), &["commit", "-q", "-m", "the fix"]).unwrap();
+        assert!(!wt.path.join("fix.txt").exists(), "the branch cannot see it yet");
+
+        assert_eq!(sync(&wt, "main"), Synced::Rebased);
+        assert!(wt.path.join("fix.txt").exists(), "the gate now tests the fixed tree");
+        assert!(wt.path.join("a.txt").exists(), "and the quark's own work survives");
+    }
+
+    /// `base` has not moved: no rebase, no churn, and the branch is left alone.
+    #[test]
+    fn sync_is_a_no_op_when_the_base_has_not_moved() {
+        let repo = git_repo();
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+        std::fs::write(wt.path.join("a.txt"), "opus work\n").unwrap();
+        let sha = worktree::commit_turn(&wt, "opus: work").unwrap().unwrap();
+
+        assert_eq!(sync(&wt, "main"), Synced::AlreadyCurrent);
+        assert_eq!(worktree::head(&wt.path).unwrap(), sha, "no commits were rewritten");
+    }
+
+    /// The work reached `base` by another route (someone cherry-picked it forward).
+    /// The rebase empties the branch, and `land` must say so instead of reporting a
+    /// fast-forward that never happened — `--ff-only` succeeds here ("Already up to
+    /// date"), so without this the gate reports a merge it did not perform.
+    #[test]
+    fn a_branch_whose_work_already_landed_syncs_empty_and_lands_as_a_no_op() {
+        let repo = git_repo();
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+        std::fs::write(wt.path.join("a.txt"), "opus work\n").unwrap();
+        let sha = worktree::commit_turn(&wt, "opus: work").unwrap().unwrap();
+
+        // main moves on its own AND absorbs the same patch by cherry-pick, so the
+        // copy on main is a different commit carrying an identical diff.
+        std::fs::write(repo.path().join("other.txt"), "meanwhile\n").unwrap();
+        git(repo.path(), &["add", "-A"]).unwrap();
+        git(repo.path(), &["commit", "-q", "-m", "meanwhile, on main"]).unwrap();
+        git(repo.path(), &["cherry-pick", &sha]).unwrap();
+        assert_ne!(
+            git(repo.path(), &["rev-parse", "main"]).unwrap(),
+            sha,
+            "the copy on main must be a DIFFERENT commit, or this proves nothing"
+        );
+
+        assert_eq!(sync(&wt, "main"), Synced::Rebased);
+        assert_eq!(
+            worktree::commits_ahead(&wt, "main").unwrap(),
+            0,
+            "the rebase drops a patch already upstream"
+        );
+        assert_eq!(land(repo.path(), &wt, "main").unwrap(), Landed::AlreadyLanded);
+    }
+
+    /// A rebase a machine must not resolve. Report it; preserve the branch.
+    #[test]
+    fn sync_reports_a_conflict_and_leaves_no_half_rebase() {
+        let repo = git_repo();
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+        std::fs::write(wt.path.join("f.txt"), "opus version\n").unwrap();
+        let sha = worktree::commit_turn(&wt, "opus: edit f").unwrap().unwrap();
+
+        std::fs::write(repo.path().join("f.txt"), "human version\n").unwrap();
+        git(repo.path(), &["add", "-A"]).unwrap();
+        git(repo.path(), &["commit", "-q", "-m", "human: edit f"]).unwrap();
+
+        assert!(matches!(sync(&wt, "main"), Synced::Conflicted(_)));
+        assert_eq!(worktree::head(&wt.path).unwrap(), sha, "the branch is untouched");
+        let gitdir = crate::snapshot::git_dir(&wt.path).unwrap();
+        assert!(!gitdir.join("rebase-merge").exists(), "no half-rebase left behind");
+        assert!(!gitdir.join("rebase-apply").exists(), "no half-rebase left behind");
     }
 
     /// A rebase a machine must not resolve. Report it; preserve the branch.
