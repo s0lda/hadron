@@ -352,7 +352,7 @@ impl super::AcpQuark {
         std::thread::Builder::new()
             .name("hadron-acp".to_string())
             .spawn(move || {
-                let outcome: anyhow::Result<()> = futures::executor::block_on(async move {
+                let outcome: anyhow::Result<()> = async_io::block_on(async move {
                     // NEVER format `agent_source` into an error: it carries the
                     // resolved secret values. `display_command` is the safe stand-in.
                     let agent = AcpAgent::from_str(&agent_source)
