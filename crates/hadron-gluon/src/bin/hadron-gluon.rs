@@ -418,6 +418,24 @@ async fn main() {
         Ok(_) => {}
         Err(e) => eprintln!("hadron-gluon: branch prune failed (non-fatal): {e:#}"),
     }
+    // The shared build dir (`worktree::shared_build_env`) is a landfill: nothing has
+    // ever swept it, and cargo has no target-dir GC of its own. Measured on this box
+    // before this existed: target/debug was 107G, 22G of it untouched for >7 days.
+    // Skips (not waits) if cargo already holds the target dir's lock — a build is in
+    // flight, and deleting artifacts out from under it could remove a file mid-link.
+    match hadron_gluon::worktree::reap_build_artifacts(
+        &repo_root,
+        hadron_gluon::worktree::ARTIFACT_REAP_MIN_AGE,
+    ) {
+        Ok(Some(reap)) if reap.files_removed > 0 => eprintln!(
+            "hadron-gluon: swept {} stale build artifacts ({:.1} GB)",
+            reap.files_removed,
+            reap.bytes_removed as f64 / 1e9,
+        ),
+        Ok(Some(_)) => {}
+        Ok(None) => eprintln!("hadron-gluon: build artifact sweep skipped — cargo is building right now"),
+        Err(e) => eprintln!("hadron-gluon: build artifact sweep failed (non-fatal): {e:#}"),
+    }
 
     let engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
         .with_git(repo_root.clone())
