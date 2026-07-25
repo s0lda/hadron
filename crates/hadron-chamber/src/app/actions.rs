@@ -56,6 +56,42 @@ impl Chamber {
         self.log_list_state.reset(self.view.messages.len());
     }
 
+    /// Re-project the field and bring `chat_list_state`/`log_list_state`/
+    /// `chat_message_ixs` back into agreement with the new `view.messages` — the one
+    /// path every mutation that reprojects must call, so those three caches cannot
+    /// drift the way `/rename`'s `reproject()`-only call left `log_list_state`
+    /// under-counting (`sync-view-log-list-state-ssot`).
+    ///
+    /// A pure append (the common case: a command or the reload tick appending N
+    /// events) is spliced — cheap, and keeps scroll position. Anything else — a
+    /// wholesale field swap (`/clear`, `/resume`, or a swap this window only
+    /// observes through the reload tick) or a shrink — falls back to an
+    /// unconditional [`Self::resync_lists_to_projection`]. See [`is_pure_append`]
+    /// for why row count alone cannot tell "grew" from "replaced".
+    pub(super) fn sync_view(&mut self, events: &[Event]) {
+        let old_first_ts = self.view.messages.first().map(|m| m.ts);
+        let old_chat_count = self.chat_message_ixs.len();
+        let old_log_count = self.view.messages.len();
+
+        self.reproject(events);
+
+        if is_pure_append(old_first_ts, old_log_count, &self.view.messages) {
+            self.chat_message_ixs = crate::model::chat_message_indices(&self.view.messages);
+            let new_chat_count = self.chat_message_ixs.len();
+            if new_chat_count > old_chat_count {
+                self.chat_list_state
+                    .splice(old_chat_count..old_chat_count, new_chat_count - old_chat_count);
+            }
+            let new_log_count = self.view.messages.len();
+            if new_log_count > old_log_count {
+                self.log_list_state
+                    .splice(old_log_count..old_log_count, new_log_count - old_log_count);
+            }
+        } else {
+            self.resync_lists_to_projection();
+        }
+    }
+
     /// Pick a folder and open it as a workspace **in a second chamber**, leaving this
     /// one running.
     ///
@@ -115,24 +151,16 @@ impl Chamber {
     /// the chat, no seat woken, no tokens spent.
     ///
     /// The append itself goes through [`Self::append_and_reload`] rather than
-    /// calling `io::append_event` again here — one write path into the field.
+    /// calling `io::append_event` again here — one write path into the field, which
+    /// (via [`Self::sync_view`]) is also the one place that keeps
+    /// `chat_message_ixs`/`chat_list_state` in step with it.
     pub(super) fn post_chat_message(&mut self, from: Actor, body: String, cx: &mut Context<Self>) {
-        let old_chat_count = self.chat_message_ixs.len();
         self.append_and_reload(Event::new(from, None, Kind::Message { body }), cx);
-
-        self.chat_message_ixs = crate::model::chat_message_indices(&self.view.messages);
-        let new_chat_count = self.chat_message_ixs.len();
-        // A failed append leaves the count unchanged, so this splices nothing —
-        // the error is already reported by `append_and_reload`.
-        if new_chat_count > old_chat_count {
-            self.chat_list_state
-                .splice(old_chat_count..old_chat_count, new_chat_count - old_chat_count);
-        }
         for scroll in &self.chat_scrolls {
             scroll.scroll_to_bottom();
         }
         self.chat_list_state
-            .scroll_to_reveal_item(new_chat_count.saturating_sub(1));
+            .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
         cx.notify();
     }
 
@@ -194,11 +222,16 @@ impl Chamber {
                             }
                         }
                         let events = io::read_events(&self.path).unwrap_or_default();
-                        self.reproject(&events);
+                        self.sync_view(&events);
+                        // `/clear` is a KNOWN wholesale swap, not a guess `sync_view`'s
+                        // append-heuristic should make: force the unconditional resync the
+                        // `A Field Swap Resets Every List Cache` invariant requires, rather
+                        // than trust `is_pure_append` (a short/empty pre-clear field can look
+                        // like pure growth to that heuristic).
+                        self.resync_lists_to_projection();
                         // The just-archived field is now part of history: fold it into the
                         // wider Stats windows and offer it in the Sessions submenu.
                         self.reload_archives();
-                        self.resync_lists_to_projection();
                         for scroll in &self.chat_scrolls {
                             scroll.scroll_to_bottom();
                         }
@@ -338,7 +371,7 @@ impl Chamber {
                     eprintln!("chamber: failed to append session name: {e}");
                 }
                 let events = io::read_events(&self.path).unwrap_or_default();
-                self.reproject(&events);
+                self.sync_view(&events);
                 cx.notify();
                 true
             }
@@ -399,9 +432,11 @@ impl Chamber {
                     }
                 }
                 let events = io::read_events(&self.path).unwrap_or_default();
-                self.reproject(&events);
-                self.reload_archives();
+                self.sync_view(&events);
+                // `/resume` is a KNOWN wholesale swap — same reasoning as `/clear` above,
+                // force the unconditional resync rather than trust the append heuristic.
                 self.resync_lists_to_projection();
+                self.reload_archives();
                 for scroll in &self.chat_scrolls {
                     scroll.scroll_to_bottom();
                 }
@@ -438,7 +473,7 @@ impl Chamber {
                     }
                 }
                 let events = io::read_events(&self.path).unwrap_or_default();
-                self.reproject(&events);
+                self.sync_view(&events);
                 cx.notify();
                 true
             }
@@ -526,7 +561,7 @@ impl Chamber {
                     eprintln!("chamber: target worker not found on roster: {worker_name}");
                 }
                 let events = io::read_events(&self.path).unwrap_or_default();
-                self.reproject(&events);
+                self.sync_view(&events);
                 cx.notify();
                 true
             }
@@ -569,7 +604,7 @@ impl Chamber {
                 }
 
                 let events = io::read_events(&self.path).unwrap_or_default();
-                self.reproject(&events);
+                self.sync_view(&events);
                 cx.notify();
                 true
             }
@@ -592,7 +627,7 @@ impl Chamber {
                     }
                 }
                 let events = io::read_events(&self.path).unwrap_or_default();
-                self.reproject(&events);
+                self.sync_view(&events);
                 cx.notify();
                 true
             }
@@ -859,7 +894,7 @@ impl Chamber {
             return;
         }
         let events = io::read_events(&self.path).unwrap_or_default();
-        self.reproject(&events);
+        self.sync_view(&events);
         for scroll in &self.chat_scrolls {
             scroll.scroll_to_bottom();
         }
@@ -967,7 +1002,7 @@ impl Chamber {
         }
         self.providers = configured_providers(&resolve_team(&self.team, &self.global));
         let events = io::read_events(&self.path).unwrap_or_default();
-        self.reproject(&events);
+        self.sync_view(&events);
         cx.notify();
     }
 
@@ -986,7 +1021,7 @@ impl Chamber {
         }
         self.providers = configured_providers(&resolve_team(&self.team, &self.global));
         let events = io::read_events(&self.path).unwrap_or_default();
-        self.reproject(&events);
+        self.sync_view(&events);
         cx.notify();
     }
 
@@ -1014,15 +1049,16 @@ impl Chamber {
         self.save_repo_team(cx);
     }
 
-    /// Append an event to the field and re-project the view (the shared write
-    /// path for permission grants and mode changes — the same bus the quarks use).
+    /// Append an event to the field and sync every view cache to it (the shared
+    /// write path for chat messages, permission grants and mode changes — the same
+    /// bus the quarks use).
     pub(super) fn append_and_reload(&mut self, ev: Event, cx: &mut Context<Self>) {
         if let Err(e) = io::append_event(&self.path, &ev) {
             eprintln!("chamber: failed to append event: {e}");
             return;
         }
         let events = io::read_events(&self.path).unwrap_or_default();
-        self.reproject(&events);
+        self.sync_view(&events);
         cx.notify();
     }
 
@@ -1125,6 +1161,28 @@ impl Chamber {
 /// [`toggle_focus_target`] below).
 pub(super) fn toggle_process_manager_open(current: bool) -> bool {
     !current
+}
+
+/// Pure decision half of [`Chamber::sync_view`]: whether reprojecting into
+/// `new_messages` is a pure append — safe to splice — rather than a wholesale field
+/// swap or a shrink, which must fall back to a full resync.
+///
+/// Row count alone cannot tell "grew" from "replaced": a same-length swap (two
+/// sessions with the same message count) looks like zero growth, and even a
+/// larger swap can look like ordinary growth by coincidence. Comparing the
+/// *leading* row's timestamp catches "the front of the list moved out from under
+/// us" in both cases — a real append never changes what event ended up first.
+pub(super) fn is_pure_append(
+    old_first_ts: Option<chrono::DateTime<chrono::Utc>>,
+    old_len: usize,
+    new_messages: &[MessageRow],
+) -> bool {
+    // Nothing existed before, so there is no leading row to contradict — growing
+    // from empty is unambiguously an append, not a swap.
+    if old_len == 0 {
+        return true;
+    }
+    new_messages.len() >= old_len && new_messages.first().map(|m| m.ts) == old_first_ts
 }
 
 pub(super) fn apply_orchestrator_exclusivity(
@@ -1246,5 +1304,59 @@ mod tests {
         assert_eq!(team.quarks[1].flavor, Flavor::Worker);
         // override-two resolved to Orchestrator by default, should be overridden to Worker
         assert_eq!(team.roster[1].flavor, Some(Flavor::Worker));
+    }
+
+    fn row_at(ts_secs: i64, from: &str) -> MessageRow {
+        use chrono::TimeZone;
+        MessageRow {
+            from: from.to_string(),
+            to: None,
+            body: String::new(),
+            kind_label: "message",
+            usage: None,
+            ts: chrono::Utc.timestamp_opt(ts_secs, 0).unwrap(),
+            legacy_used_tokens: None,
+            turn: None,
+            severity: None,
+        }
+    }
+
+    // Test 2 (spec): a pure append — same leading row, strictly more rows — is safe
+    // to splice.
+    #[test]
+    fn sync_view_splices_on_pure_append() {
+        let old = [row_at(1, "Human"), row_at(2, "Sonnet"), row_at(3, "Human")];
+        let old_first_ts = old.first().map(|m| m.ts);
+        let grown = [old[0].clone(), old[1].clone(), old[2].clone(), row_at(4, "Sonnet")];
+        assert!(is_pure_append(old_first_ts, old.len(), &grown));
+    }
+
+    // Test 1 (spec): a wholesale field swap that happens to keep the SAME row count
+    // must NOT be read as a pure append — it needs a full resync, or row 0 renders
+    // under the old field's author while `chat_message_ixs`/`view.messages` have
+    // already moved on to the new one (the "your message came as mine" shape).
+    #[test]
+    fn sync_view_resyncs_when_the_field_is_swapped_at_equal_length() {
+        let old = [row_at(1, "Human"), row_at(2, "Sonnet"), row_at(3, "Human")];
+        let old_first_ts = old.first().map(|m| m.ts);
+        let swapped = [row_at(10, "Human"), row_at(11, "Antigravity"), row_at(12, "Human")];
+        assert_eq!(swapped.len(), old.len(), "must be equal-length to reproduce the bug");
+        assert!(!is_pure_append(old_first_ts, old.len(), &swapped));
+    }
+
+    #[test]
+    fn sync_view_resyncs_on_shrink() {
+        let old = [row_at(1, "Human"), row_at(2, "Sonnet"), row_at(3, "Human")];
+        let old_first_ts = old.first().map(|m| m.ts);
+        let cleared: [crate::model::MessageRow; 0] = [];
+        assert!(!is_pure_append(old_first_ts, old.len(), &cleared));
+    }
+
+    #[test]
+    fn sync_view_treats_first_population_as_append() {
+        // Empty → non-empty: no prior row to disagree with, so the growth branch is
+        // fine (it degenerates to the same splice-from-0 a resync would do).
+        let grown = [row_at(1, "Human")];
+        assert!(is_pure_append(None, 0, &grown));
     }
 }
