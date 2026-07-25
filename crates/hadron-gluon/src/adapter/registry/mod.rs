@@ -14,6 +14,16 @@ pub use loader::{
 
 use presets::ACP_AGENTS;
 
+/// The token a boot command uses for "the main checkout's root", resolved by
+/// [`AcpTarget::resolved`] just before spawn.
+///
+/// It exists because a boot command may name a path inside this repo (the `agy`
+/// bridge does), and there is no other honest way to write one: the catalogue is
+/// compiled, the ACP registry is parsed from JSON, and a seat may supply its own
+/// `command` in `team.json` — all three flow into the same [`AcpTarget`], so the
+/// substitution has one home and covers all three.
+pub const REPO_ROOT_TOKEN: &str = "{repo}";
+
 /// One row of the add-quark catalogue the chamber renders, from whichever source knows
 /// the agent best.
 ///
@@ -114,6 +124,57 @@ impl AcpTarget {
         let mut target = Self::for_seat(seat)?;
         target.env = seat.resolve_env(store);
         Some(target)
+    }
+
+    /// Whether any part of this boot command names [`REPO_ROOT_TOKEN`].
+    pub fn needs_repo_root(&self) -> bool {
+        std::iter::once(&self.program)
+            .chain(self.args.iter())
+            .any(|s| s.contains(REPO_ROOT_TOKEN))
+    }
+
+    /// This target with [`REPO_ROOT_TOKEN`] replaced by the main checkout's root —
+    /// **the only form that may be spawned.**
+    ///
+    /// A boot command that names a path in this repo cannot be written relative: the
+    /// ACP transport spawns it with `Command::new(program)` and never sets
+    /// `current_dir` (`agent-client-protocol`'s `AcpAgent::spawn_process`), so a
+    /// relative program is resolved against whatever cwd the spawning process happens
+    /// to have — the daemon inherits the chamber's, and the chamber's is wherever the
+    /// human launched it from. Reproduced: launching the chamber from `target/release`
+    /// made the `agy` seat's interpreter miss and every turn died with a bare
+    /// `No such file or directory (os error 2)` that named nothing.
+    ///
+    /// The root is found from **`current_exe`**, not from the cwd (which is the bug) and
+    /// not from `CARGO_MANIFEST_DIR` (which bakes in whichever checkout compiled the
+    /// binary — a quark's worktree builds into the main checkout's shared `target/`, and
+    /// the worktree has no `scripts/venv` because it is gitignored). `main_repo_root`
+    /// asks git via `--git-common-dir`, so it answers the MAIN checkout's root even when
+    /// asked from a linked worktree — which is exactly where the venv lives.
+    ///
+    /// Errs rather than passing an unresolved `{repo}` through to `spawn`: that would be
+    /// a worse version of the same ENOENT, naming a path no human ever wrote.
+    pub fn resolved(&self) -> anyhow::Result<AcpTarget> {
+        if !self.needs_repo_root() {
+            return Ok(self.clone());
+        }
+        let exe = std::env::current_exe()?;
+        let near = exe.parent().unwrap_or(&exe);
+        let root = crate::snapshot::main_repo_root(near).map_err(|e| {
+            anyhow::anyhow!(
+                "boot command {:?} names {REPO_ROOT_TOKEN}, but the main checkout root could \
+                 not be found from {}: {e}",
+                self.command_line(),
+                near.display()
+            )
+        })?;
+        let root = root.to_string_lossy();
+        let sub = |s: &String| s.replace(REPO_ROOT_TOKEN, &root);
+        Ok(AcpTarget {
+            program: sub(&self.program),
+            args: self.args.iter().map(sub).collect(),
+            env: self.env.clone(),
+        })
     }
 
     /// The shell-ish command line, for `AcpAgent::from_str` and for diagnostics.

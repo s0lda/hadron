@@ -566,3 +566,85 @@ fn the_bundled_snapshot_parses_and_carries_claude() {
     assert!(data.agents.len() > 30, "bundled registry has {} agents", data.agents.len());
     assert!(data.agents.iter().any(|a| a.id == "claude-acp"));
 }
+
+/// **A catalogue boot command may never be cwd-relative.** The ACP transport spawns it
+/// with `Command::new(program)` and never sets `current_dir`, so a relative path is
+/// resolved against whatever directory the human launched the chamber from. Launching
+/// from `target/release` made the `agy` seat's interpreter miss and every turn died with
+/// a bare `No such file or directory (os error 2)`. A path in this repo is written
+/// `{repo}`-anchored; anything else must be a bare program name found on `PATH`.
+#[test]
+fn no_preset_boot_command_is_cwd_relative() {
+    for a in ACP_AGENTS {
+        for part in std::iter::once(a.program).chain(a.args.iter().copied()) {
+            if !part.contains('/') {
+                continue; // a bare program name, resolved via PATH
+            }
+            if part.starts_with('@') {
+                continue; // an npm scoped package (`@scope/pkg`), never opened as a path
+            }
+            assert!(
+                part.starts_with(REPO_ROOT_TOKEN) || part.starts_with('/'),
+                "{}'s boot command names the relative path {part:?} — anchor it with \
+                 {REPO_ROOT_TOKEN} or it resolves against the spawning process's cwd",
+                a.vendor
+            );
+        }
+    }
+}
+
+/// `resolved` substitutes in the program AND every arg (the `agy` bridge puts its script
+/// in an arg, so a program-only substitution would fix half the command), leaves the
+/// resolved secret env untouched, and yields absolute paths.
+#[test]
+fn resolved_expands_the_repo_token_across_program_and_args() {
+    let t = AcpTarget {
+        program: format!("{REPO_ROOT_TOKEN}/scripts/venv/bin/python"),
+        args: vec!["--flag".to_string(), format!("{REPO_ROOT_TOKEN}/scripts/agy_acp.py")],
+        env: vec![("GEMINI_API_KEY".to_string(), "sekrit".to_string())],
+    };
+    assert!(t.needs_repo_root());
+
+    let r = t.resolved().expect("the test binary lives inside this repo's target/");
+    assert!(!r.command_line().contains(REPO_ROOT_TOKEN), "left a token in {:?}", r.command_line());
+    assert!(std::path::Path::new(&r.program).is_absolute(), "{:?} is not absolute", r.program);
+    assert!(r.program.ends_with("/scripts/venv/bin/python"));
+    assert_eq!(r.args[0], "--flag", "a non-path arg must pass through untouched");
+    assert!(std::path::Path::new(&r.args[1]).is_absolute());
+    assert_eq!(r.env, t.env, "resolution must not disturb the resolved secret env");
+}
+
+/// A command with no token is spawned exactly as written — `npx`, `gemini`, a seat's own
+/// `command` — so resolution must be a no-op there and must NOT need a git repo at all.
+#[test]
+fn resolved_is_a_no_op_without_the_token() {
+    let t = AcpTarget {
+        program: "npx".to_string(),
+        args: vec!["-y".to_string(), "@agentclientprotocol/claude-agent-acp@latest".to_string()],
+        env: Vec::new(),
+    };
+    assert!(!t.needs_repo_root());
+    assert_eq!(t.resolved().unwrap(), t);
+}
+
+/// The one preset this all exists for: it must resolve to the real interpreter and the
+/// real script. Guards the whole chain — token, substitution, and the paths landing where
+/// the preset says they are.
+///
+/// The script is tracked, so its absence is always a failure. The **venv is gitignored**,
+/// so a checkout that has never run the bootstrap legitimately has none — asserting it
+/// exists unconditionally would encode this machine's state in a gate that every quark
+/// must pass. Checked when it is there, skipped with a reason when it is not.
+#[test]
+fn the_agy_preset_resolves_to_files_that_exist() {
+    let t = AcpTarget::for_vendor("agy").expect("agy is in the catalogue");
+    let r = t.resolved().expect("resolvable from the test binary");
+    assert!(std::path::Path::new(&r.args[0]).exists(), "no bridge script at {:?}", r.args[0]);
+
+    let python = std::path::Path::new(&r.program);
+    let venv = python.parent().and_then(|p| p.parent());
+    match venv {
+        Some(v) if v.exists() => assert!(python.exists(), "venv {v:?} exists but has no {python:?}"),
+        _ => eprintln!("skipped: no agy venv at {venv:?} — run the bootstrap to cover this"),
+    }
+}

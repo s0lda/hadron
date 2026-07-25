@@ -326,6 +326,9 @@ impl super::AcpQuark {
         // anything else that could surface them. An empty `env` produces a
         // `{"env": []}` descriptor, which `AcpAgent`'s stdio spawn treats identically
         // to the old bare-command path (see `acp_stdio_descriptor_no_env_matches_bare_command`).
+        // `{repo}`-anchored before anything else reads the command: `display_command`
+        // feeds every diagnostic below, so it must show the path we will actually spawn.
+        let target = target.resolved()?;
         let display_command = target.command_line();
         // The shared build env goes in ahead of the seat's own: an ACP agent runs
         // `cargo` in its worktree exactly like a CLI quark does, and without this it

@@ -189,7 +189,10 @@ fn probe_session(target: &AcpTarget) -> anyhow::Result<(Option<String>, Vec<Sess
     type Probed = (Option<String>, Vec<SessionConfigOption>);
     let (tx, rx) = std::sync::mpsc::channel::<anyhow::Result<Probed>>();
 
-    let target_clone = target.clone();
+    // The chamber's Settings probe spawns the same command the daemon does, from a
+    // different process with a different cwd — so it needs the same `{repo}` resolution
+    // or a fixed seat would still read "couldn't detect models" in the UI.
+    let target_clone = target.resolved()?;
     // Same shape as `boot`: the SDK's connection API is scoped to its closure and
     // wants its own executor, so it gets its own thread.
     std::thread::Builder::new()
