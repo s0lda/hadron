@@ -183,61 +183,88 @@ impl super::Chamber {
 }
 
 /// Launch the chamber window against a field file path.
-/// Peel the leading `/command` tokens off a submitted chat line. Returns the commands
-/// to run in order — each as `(name, args)` — and the leftover message body.
+/// Peel the `/command` lines out of a submitted chat message. Returns the commands to
+/// run in order — each as `(name, args)` — and the leftover message body.
 ///
-/// Only *leading* commands are recognised: the first token that is not a known command
-/// ends parsing, and everything from there is the message (so a body can contain a
-/// literal "/foo"). [`ZERO_ARG_CMDS`] chain with each other and with a message;
-/// [`LINE_ARG_CMDS`] take the rest of the line as their argument and leave nothing to
-/// post. The body is a slice of the ORIGINAL input, so internal newlines survive — it is
-/// never rebuilt from whitespace-split tokens. `body` is `None` only when at least one
-/// command ran and no message text remains, which is how the caller knows to clear the
+/// A command is recognised at the start of **any line**, not only the first. It used to
+/// be leading-only, which meant typing a paragraph and then `/team-brainstorm …` on its
+/// own line silently posted the whole thing as chat and excited nobody. Two guards keep
+/// that permissiveness honest:
+///
+/// - the token after the slash must be a name in [`crate::text::COMMANDS`], so a path
+///   (`/usr/bin/foo`) or a stray slash stays ordinary text; and
+/// - a line inside a ``` fence is never a command, because the human wrote it literally.
+///   (The mention pass follows the same rule — see `color-mentions-ignores-code-blocks`.)
+///
+/// [`Arity::None`] commands chain with each other and with text on the same line;
+/// [`Arity::Line`] commands take the rest of *their own line*, and following lines are
+/// still scanned. Body lines are kept verbatim, so internal newlines, indentation and
+/// markdown survive — the body is never rebuilt from whitespace-split tokens. `body` is
+/// `None` when nothing but commands remain, which is how the caller knows to clear the
 /// box and post nothing.
 ///
-/// **A command missing from these two lists is not "unhandled" — it is posted as chat.**
-/// That is the whole failure mode: `handle_chat_command` can have a perfectly good arm
-/// for a command that never reaches it, because parsing stopped at an unknown token and
-/// swept the line into the message body. Adding a `/command` means touching three places:
-/// here, `text::completion_candidates`, and `handle_chat_command`.
+/// **A command absent from [`crate::text::COMMANDS`] is not "unhandled" — it is posted
+/// as chat.** That was the whole failure mode when the parser kept its own lists:
+/// `handle_chat_command` could have a perfectly good arm for a command that never
+/// reached it. The table is now the single source of truth for the menu and for this
+/// parser both; the remaining un-checkable link is the `match` in `handle_chat_command`,
+/// which `every_listed_command_is_handled` guards.
 pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Option<String>) {
-    /// Take no argument, so several can chain ahead of a message.
-    const ZERO_ARG_CMDS: [&str; 5] = ["toggle-roster", "toggle-inspector", "clear", "exit", "quit"];
-    /// Consume the rest of the line as their argument.
-    const LINE_ARG_CMDS: [&str; 9] = [
-        "team-brainstorm",
-        "reboot",
-        "approve",
-        "deny",
-        "limit",
-        "reset-energy",
-        "toggle",
-        "rename",
-        "resume",
-    ];
     let mut cmds = Vec::new();
-    let mut rest = full;
+    let mut body_lines: Vec<&str> = Vec::new();
+    let mut in_fence = false;
 
-    loop {
-        let head = rest.trim_start();
-        let tok_end = head.find(char::is_whitespace).unwrap_or(head.len());
-        let token = &head[..tok_end];
-        match token.strip_prefix('/').filter(|c| !c.is_empty()) {
-            Some(cmd) if ZERO_ARG_CMDS.contains(&cmd) => {
-                cmds.push((cmd.to_string(), String::new()));
-                rest = &head[tok_end..];
+    for line in full.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            body_lines.push(line);
+            continue;
+        }
+        if in_fence {
+            body_lines.push(line);
+            continue;
+        }
+
+        // Peel every command at the head of this line. `consumed` distinguishes
+        // "this line began with a command" from "this line is plain text": only in
+        // the first case may we push the trimmed remainder, since trimming a plain
+        // line would eat markdown indentation.
+        let mut rest = line;
+        let mut consumed = false;
+        loop {
+            let head = rest.trim_start();
+            let tok_end = head.find(char::is_whitespace).unwrap_or(head.len());
+            let Some(cmd) = head[..tok_end]
+                .strip_prefix('/')
+                .filter(|c| !c.is_empty())
+                .and_then(crate::text::command)
+            else {
+                break;
+            };
+            consumed = true;
+            match cmd.arity {
+                crate::text::Arity::None => {
+                    cmds.push((cmd.name.to_string(), String::new()));
+                    rest = &head[tok_end..];
+                }
+                crate::text::Arity::Line => {
+                    cmds.push((cmd.name.to_string(), head[tok_end..].trim().to_string()));
+                    rest = "";
+                    break;
+                }
             }
-            Some(cmd) if LINE_ARG_CMDS.contains(&cmd) => {
-                cmds.push((cmd.to_string(), head[tok_end..].trim().to_string()));
-                return (cmds, None);
-            }
-            // First non-command token: the untouched remainder is the message body.
-            _ => break,
+        }
+
+        match (consumed, rest.trim().is_empty()) {
+            (_, true) => {}
+            (true, false) => body_lines.push(rest.trim()),
+            (false, false) => body_lines.push(line),
         }
     }
 
-    let remaining = rest.trim();
-    let body = (!remaining.is_empty()).then(|| remaining.to_string());
+    let body = body_lines.join("\n");
+    let body = body.trim();
+    let body = (!body.is_empty()).then(|| body.to_string());
     (cmds, body)
 }
 
@@ -265,5 +292,139 @@ mod tests {
         let (cmds, body) = split_leading_commands("/resume 20260201_000000");
         assert_eq!(cmds, vec![("resume".to_string(), "20260201_000000".to_string())]);
         assert_eq!(body, None);
+    }
+
+    /// The reported bug: a command typed on its own line *after* some prose was
+    /// swept into the message body and excited nobody.
+    #[test]
+    fn a_command_on_a_later_line_runs_and_the_prose_still_posts() {
+        let (cmds, body) = split_leading_commands(
+            "here are my thoughts\n/team-brainstorm commands, suggest improvements\nand a closing line",
+        );
+        assert_eq!(
+            cmds,
+            vec![(
+                "team-brainstorm".to_string(),
+                "commands, suggest improvements".to_string()
+            )]
+        );
+        assert_eq!(
+            body.as_deref(),
+            Some("here are my thoughts\nand a closing line"),
+            "the surrounding prose is still posted, and keeps its line structure"
+        );
+    }
+
+    /// A human quoting a command in a fence wrote it literally; running it would be
+    /// the same class of bug as substituting an `@mention` inside backticks.
+    #[test]
+    fn a_command_inside_a_fence_stays_text() {
+        let (cmds, body) = split_leading_commands("look:\n```\n/clear\n```\ndone");
+        assert!(cmds.is_empty(), "fenced command must not run: {cmds:?}");
+        assert_eq!(body.as_deref(), Some("look:\n```\n/clear\n```\ndone"));
+    }
+
+    /// Only names in the table are commands, so a path is not one.
+    #[test]
+    fn a_slash_that_is_not_a_command_stays_text() {
+        let (cmds, body) = split_leading_commands("/usr/bin/env is where it lives");
+        assert!(cmds.is_empty(), "a path must not parse as a command: {cmds:?}");
+        assert_eq!(body.as_deref(), Some("/usr/bin/env is where it lives"));
+
+        let (cmds, _) = split_leading_commands("/teamwork-preview how does this work?");
+        assert!(
+            cmds.is_empty(),
+            "a retired command is text again, not a silent no-op: {cmds:?}"
+        );
+    }
+
+    /// Zero-arg commands chained on one line, ahead of a message — the behaviour the
+    /// original parser had, kept.
+    #[test]
+    fn zero_arg_commands_chain_ahead_of_a_message() {
+        let (cmds, body) = split_leading_commands("/toggle-roster /clear ping the team");
+        assert_eq!(
+            cmds,
+            vec![
+                ("toggle-roster".to_string(), String::new()),
+                ("clear".to_string(), String::new()),
+            ]
+        );
+        assert_eq!(body.as_deref(), Some("ping the team"));
+    }
+
+    /// Plain prose keeps its indentation — the body is never rebuilt from tokens.
+    #[test]
+    fn an_indented_body_line_keeps_its_indentation() {
+        let (_, body) = split_leading_commands("/clear\n- one\n    - nested");
+        assert_eq!(body.as_deref(), Some("- one\n    - nested"));
+    }
+
+    /// **The guard that closes the loop the compiler cannot.** `COMMANDS` is the
+    /// source of truth for the menu and this parser, but `handle_chat_command`'s
+    /// `match` is plain control flow — nothing makes a table entry have an arm. This
+    /// restates the handled set as a literal so that adding a row to `COMMANDS`
+    /// without an arm fails the gate instead of shipping another silent no-op.
+    ///
+    /// Keep this list in sync with the `match` in `app::actions`, and nowhere else:
+    /// it is a guard, not a second source.
+    #[test]
+    fn every_listed_command_is_handled() {
+        const HANDLED: &[&str] = &[
+            "exit",
+            "quit",
+            "toggle-roster",
+            "toggle-inspector",
+            "clear",
+            "team-brainstorm",
+            "brainstorm",
+            "writing-plans",
+            "executing-plans",
+            "toggle",
+            "rename",
+            "resume",
+            "reboot",
+            "approve",
+            "deny",
+            "limit",
+            "reset-energy",
+        ];
+        for cmd in crate::text::COMMANDS {
+            assert!(
+                HANDLED.contains(&cmd.name),
+                "/{} is in COMMANDS but has no arm in handle_chat_command — \
+                 it would be offered by the menu and silently do nothing",
+                cmd.name
+            );
+        }
+        for name in HANDLED {
+            assert!(
+                crate::text::command(name).is_some(),
+                "handle_chat_command has an arm for /{name}, which is not in COMMANDS — \
+                 the arm is unreachable"
+            );
+        }
+    }
+
+    /// Every command in the table round-trips through the parser with its declared
+    /// arity. Proves the parser reads the table rather than a copy of it.
+    #[test]
+    fn every_command_in_the_table_parses() {
+        for cmd in crate::text::COMMANDS {
+            let line = format!("/{} some argument", cmd.name);
+            let (cmds, body) = split_leading_commands(&line);
+            assert_eq!(cmds.len(), 1, "/{} did not parse", cmd.name);
+            assert_eq!(cmds[0].0, cmd.name);
+            match cmd.arity {
+                crate::text::Arity::Line => {
+                    assert_eq!(cmds[0].1, "some argument", "/{} lost its argument", cmd.name);
+                    assert_eq!(body, None);
+                }
+                crate::text::Arity::None => {
+                    assert_eq!(cmds[0].1, "", "/{} must take no argument", cmd.name);
+                    assert_eq!(body.as_deref(), Some("some argument"));
+                }
+            }
+        }
     }
 }

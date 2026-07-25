@@ -7,6 +7,44 @@
 use super::*;
 
 impl Chamber {
+    /// Append `body` to the field as a human message and re-project, exactly as if
+    /// the human had typed it. The shared tail of every command that *speaks* —
+    /// four of them now — so the splice/scroll/notify bookkeeping has one home
+    /// rather than one copy per command.
+    ///
+    /// A failure to append is reported, not swallowed: the message simply did not
+    /// happen, and silently doing nothing would read as the command being another
+    /// dead menu entry.
+    pub(super) fn post_human_message(&mut self, body: String, cx: &mut Context<Self>) {
+        let ev = Event::new(Actor::Human, None, Kind::Message { body });
+        if let Err(e) = io::append_event(&self.path, &ev) {
+            eprintln!("chamber: failed to append command message: {e}");
+            return;
+        }
+        let events = io::read_events(&self.path).unwrap_or_default();
+        self.reproject(&events);
+
+        let old_chat_count = self.chat_message_ixs.len();
+        self.chat_message_ixs = self
+            .view
+            .messages
+            .iter()
+            .enumerate()
+            .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
+            .collect();
+        let new_chat_count = self.chat_message_ixs.len();
+        if new_chat_count > old_chat_count {
+            self.chat_list_state
+                .splice(old_chat_count..old_chat_count, new_chat_count - old_chat_count);
+        }
+        for scroll in &self.chat_scrolls {
+            scroll.scroll_to_bottom();
+        }
+        self.chat_list_state
+            .scroll_to_reveal_item(new_chat_count.saturating_sub(1));
+        cx.notify();
+    }
+
     pub(super) fn handle_chat_command(
         &mut self,
         cmd: &str,
@@ -70,36 +108,34 @@ impl Chamber {
                 }
                 true
             }
-            "team-brainstorm" => {
-                let body = format!("@team Let's brainstorm. {args}").trim().to_string();
-                let ev = Event::new(Actor::Human, None, Kind::Message { body });
-                if let Err(e) = io::append_event(&self.path, &ev) {
-                    eprintln!("chamber: failed to append team-brainstorm message: {e}");
+            // The skill commands. Each posts an ordinary human message whose text
+            // carries the skill's own canonical trigger, because the engine selects
+            // the procedure by matching that text (`skills::select` is a pure
+            // function of the task text) — there is no separate "load a skill"
+            // channel to use. `/team-brainstorm` addresses the whole roster; the
+            // other three address the named quark, or the orchestrator when the
+            // human names nobody.
+            "team-brainstorm" | "brainstorm" | "writing-plans" | "executing-plans" => {
+                let skill_id = match cmd {
+                    "team-brainstorm" | "brainstorm" => "brainstorming",
+                    "writing-plans" => "writing-plans",
+                    _ => "executing-plans",
+                };
+                let Some(trigger) = hadron_gluon::skills::canonical_trigger(skill_id) else {
+                    // Unreachable unless someone removes a skill from the engine's
+                    // corpus. Say so rather than post a message that selects nothing.
+                    eprintln!(
+                        "chamber: `/{cmd}` found no skill `{skill_id}` in the engine — not posting"
+                    );
+                    return true;
+                };
+                let (target, task) = if cmd == "team-brainstorm" {
+                    (hadron_gluon::router::TEAM_ALIAS, args.trim())
                 } else {
-                    let events = io::read_events(&self.path).unwrap_or_default();
-                    self.reproject(&events);
-                    
-                    let old_chat_count = self.chat_message_ixs.len();
-                    self.chat_message_ixs = self
-                        .view
-                        .messages
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(ix, m)| (m.kind_label == "message").then_some(ix))
-                        .collect();
-                    let new_chat_count = self.chat_message_ixs.len();
-                    if new_chat_count > old_chat_count {
-                        self.chat_list_state.splice(
-                            old_chat_count..old_chat_count,
-                            new_chat_count - old_chat_count,
-                        );
-                    }
-                    for scroll in &self.chat_scrolls {
-                        scroll.scroll_to_bottom();
-                    }
-                    self.chat_list_state.scroll_to_reveal_item(new_chat_count.saturating_sub(1));
-                    cx.notify();
-                }
+                    let (named, task) = crate::text::split_target(args);
+                    (named.unwrap_or(hadron_gluon::router::ORCHESTRATOR_ALIAS), task)
+                };
+                self.post_human_message(crate::text::skill_command_body(trigger, target, task), cx);
                 true
             }
             // Park an expensive seat without unseating it: the seat, its config and its
