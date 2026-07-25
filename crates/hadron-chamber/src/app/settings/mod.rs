@@ -246,51 +246,24 @@ impl Chamber {
                     }
                 }
 
-                let knobs_changed = base.model != new_model
-                    || base.effort != new_effort
-                    || base.mode_config != new_mode
-                    || base.roles != new_roles
-                    || base.deny_skills != new_deny_skills
-                    || base.energy_limit != new_energy_limit;
+                let desired = hadron_lattice::Seat {
+                    model: new_model,
+                    effort: new_effort,
+                    mode_config: new_mode,
+                    roles: new_roles,
+                    deny_skills: new_deny_skills,
+                    energy_limit: new_energy_limit,
+                    ..base.clone()
+                };
+
+                let knobs_changed = base.model != desired.model
+                    || base.effort != desired.effort
+                    || base.mode_config != desired.mode_config
+                    || base.roles != desired.roles
+                    || base.deny_skills != desired.deny_skills
+                    || base.energy_limit != desired.energy_limit;
                 if knobs_changed {
-                    if let Some(existing) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
-                        // Self-contained legacy seat — pin the values on it directly.
-                        existing.model = new_model;
-                        existing.effort = new_effort;
-                        existing.mode_config = new_mode;
-                        existing.roles = new_roles;
-                        existing.deny_skills = new_deny_skills;
-                        existing.energy_limit = new_energy_limit;
-                        self.save_repo_team(cx);
-                    } else if let Some(def) = def {
-                        // Adopted via the catalogue — write a delta override (only what
-                        // differs from the shared default), preserving any existing
-                        // role/participation override. `seat_override_delta` is the tested
-                        // inverse of resolve_team's def-layering. `display_name` inherits the
-                        // def, so the name never becomes a per-repo override.
-                        let desired = hadron_lattice::Seat {
-                            model: new_model,
-                            effort: new_effort,
-                            mode_config: new_mode,
-                            roles: new_roles,
-                            deny_skills: new_deny_skills,
-                            energy_limit: new_energy_limit,
-                            // display_name inherits `def` (via the spread) — names are global.
-                            ..base.clone()
-                        };
-                        let prev = self.team.roster.iter().find(|o| o.id == qid).cloned();
-                        let ov = hadron_lattice::seat_override_delta(
-                            qid.clone(),
-                            &def,
-                            &desired,
-                            prev.as_ref(),
-                        );
-                        self.team.roster.retain(|o| o.id != qid);
-                        self.team.roster.push(ov);
-                        self.save_repo_team(cx);
-                    }
-                    // else: an event-only quark with no seatable definition — nothing to
-                    // persist a per-repo knob against.
+                    self.update_seat_config(&qid, &desired, cx);
                 }
             }
         }
@@ -300,6 +273,44 @@ impl Chamber {
             id.image_path = (!path.is_empty()).then_some(path);
             let _ = config::save(&self.prefs);
         }
+    }
+
+    /// Persist updated configuration knobs (model, effort, mode, roles, deny_skills, energy_limit)
+    /// for a seat, handling both self-contained legacy seats and catalogue-adopted seats.
+    pub(super) fn update_seat_config(
+        &mut self,
+        qid: &QuarkId,
+        desired: &Seat,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(existing) = self.team.quarks.iter_mut().find(|s| s.id == *qid) {
+            // Self-contained legacy seat — pin the values on it directly.
+            existing.model = desired.model.clone();
+            existing.effort = desired.effort.clone();
+            existing.mode_config = desired.mode_config.clone();
+            existing.roles = desired.roles.clone();
+            existing.deny_skills = desired.deny_skills.clone();
+            existing.energy_limit = desired.energy_limit;
+            self.save_repo_team(cx);
+        } else if let Some(def) = self.global.get(qid).cloned() {
+            // Adopted via the catalogue — write a delta override (only what
+            // differs from the shared default), preserving any existing
+            // role/participation override. `seat_override_delta` is the tested
+            // inverse of resolve_team's def-layering. `display_name` inherits the
+            // def, so the name never becomes a per-repo override.
+            let prev = self.team.roster.iter().find(|o| o.id == *qid).cloned();
+            let ov = hadron_lattice::seat_override_delta(
+                qid.clone(),
+                &def,
+                desired,
+                prev.as_ref(),
+            );
+            self.team.roster.retain(|o| o.id != *qid);
+            self.team.roster.push(ov);
+            self.save_repo_team(cx);
+        }
+        // else: an event-only quark with no seatable definition — nothing to
+        // persist a per-repo knob against.
     }
 
     /// Switch which identity the overlay edits (committing the current one).
