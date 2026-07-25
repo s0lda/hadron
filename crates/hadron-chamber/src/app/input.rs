@@ -91,35 +91,16 @@ impl super::Chamber {
 
         input.update(cx, |state, cx| state.set_value("", window, cx));
         let events = io::read_events(&self.path).unwrap_or_default();
-        let old_log_count = self.view.messages.len();
-        self.reproject(&events);
-
-        let old_chat_count = self.chat_message_ixs.len();
-        self.chat_message_ixs = crate::model::chat_message_indices(&self.view.messages);
-        let new_chat_count = self.chat_message_ixs.len();
-        let new_log_count = self.view.messages.len();
-        
-        if new_chat_count > old_chat_count {
-            self.chat_list_state.splice(
-                old_chat_count..old_chat_count,
-                new_chat_count - old_chat_count,
-            );
-        }
-        if new_log_count > old_log_count {
-            self.log_list_state.splice(
-                old_log_count..old_log_count,
-                new_log_count - old_log_count,
-            );
-        }
+        self.sync_view(&events);
 
         // The human just spoke — always snap to their new message.
         for scroll in &self.chat_scrolls {
             scroll.scroll_to_bottom();
         }
         self.chat_list_state
-            .scroll_to_reveal_item(new_chat_count.saturating_sub(1));
+            .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
         self.log_list_state
-            .scroll_to_reveal_item(new_log_count.saturating_sub(1));
+            .scroll_to_reveal_item(self.view.messages.len().saturating_sub(1));
         cx.notify();
     }
     /// Rebuild the completion card from the input's current text and cursor.

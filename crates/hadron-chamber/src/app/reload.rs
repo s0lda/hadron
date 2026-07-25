@@ -187,52 +187,30 @@ impl super::Chamber {
             }
 
             if events.len() != self.view.messages.len() {
-                // Decide *before* the content grows: if the user is parked at the
-                // bottom, keep them there as the new message lands; if they've
-                // scrolled up to read history, leave their position alone.
+                // Decide *before* the content changes: if the user is parked at the
+                // bottom, keep them there as new messages land; if they've scrolled up
+                // to read history, leave their position alone. `sync_view` splices on a
+                // pure append and falls back to a full resync otherwise — e.g. a swap
+                // this window only observes here, through the tick, rather than through
+                // `/clear`/`/resume`'s own explicit call.
                 let follow = self.chat_at_bottom();
-                let old_log_count = self.view.messages.len();
-                self.reproject(&events);
-
-                let old_chat_count = self.chat_message_ixs.len();
-                self.chat_message_ixs = crate::model::chat_message_indices(&self.view.messages);
-                let new_chat_count = self.chat_message_ixs.len();
-                let new_log_count = self.view.messages.len();
-
-                if new_chat_count > old_chat_count {
-                    self.chat_list_state.splice(
-                        old_chat_count..old_chat_count,
-                        new_chat_count - old_chat_count,
-                    );
-                } else if new_chat_count < old_chat_count {
-                    // Should not happen since field is append-only, but just in case
-                    self.chat_list_state.reset(new_chat_count);
-                }
-
-                if new_log_count > old_log_count {
-                    self.log_list_state.splice(
-                        old_log_count..old_log_count,
-                        new_log_count - old_log_count,
-                    );
-                } else if new_log_count < old_log_count {
-                    self.log_list_state.reset(new_log_count);
-                }
+                self.sync_view(&events);
 
                 if follow {
                     for scroll in &self.chat_scrolls {
                         scroll.scroll_to_bottom();
                     }
                     self.chat_list_state
-                        .scroll_to_reveal_item(new_chat_count.saturating_sub(1));
+                        .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
                     self.log_list_state
-                        .scroll_to_reveal_item(new_log_count.saturating_sub(1));
+                        .scroll_to_reveal_item(self.view.messages.len().saturating_sub(1));
                 }
                 changed = true;
             } else if team_changed {
                 // The message list is unchanged (same events) but the resolved team is
                 // not — refresh the view so the new roster/Settings render. No
-                // message-count change, so the virtualized chat/log lists need no splice.
-                self.reproject(&events);
+                // message-count change, so `sync_view` degenerates to a zero-delta splice.
+                self.sync_view(&events);
             }
             // The file tree is a live view of the disk, not a boot-time snapshot, and
             // autocomplete mentions must stay live regardless of which rail tab is up —

@@ -1010,6 +1010,32 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
 mod tests {
     use super::*;
 
+    /// `self.reproject(` is the raw, un-resynced path: it leaves `chat_list_state`,
+    /// `log_list_state` and `chat_message_ixs` exactly as they were, which is what let
+    /// `/rename`/`/reboot`/`/approve`/`/deny`/`answer_permission` under-count the Log tab
+    /// (see `sync-view-log-list-state-ssot`). `Chamber::sync_view` is the one place
+    /// allowed to call it; everything else must call `sync_view` instead. A hand-written
+    /// allowlist of "already fixed" call sites would not catch a *new* one added later —
+    /// exactly the class of bug this guards — so this scans the real source text of
+    /// every file that used to hold a bare call, via `include_str!` (this file, `mod.rs`,
+    /// is deliberately NOT one of them, so the search needle below can't match itself).
+    #[test]
+    fn every_reproject_call_goes_through_sync_view() {
+        let files: &[(&str, &str)] = &[
+            ("actions.rs", include_str!("actions.rs")),
+            ("reload.rs", include_str!("reload.rs")),
+            ("input.rs", include_str!("input.rs")),
+        ];
+        let needle = ["self", ".reproject("].concat();
+        let total: usize = files.iter().map(|(_, text)| text.matches(&needle).count()).sum();
+        assert_eq!(
+            total, 1,
+            "expected exactly one `self.reproject(` call (inside Chamber::sync_view) \
+             across actions.rs/reload.rs/input.rs, found {total} — a new or migrated call \
+             site must go through `sync_view` instead"
+        );
+    }
+
     #[test]
     fn leading_commands_peel_and_preserve_message_newlines() {
         // No command: the whole body is returned verbatim, newlines intact.
