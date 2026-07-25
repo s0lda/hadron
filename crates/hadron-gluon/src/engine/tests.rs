@@ -3246,6 +3246,80 @@ async fn the_gate_syncs_the_branch_before_it_runs_the_tests() {
     );
 }
 
+/// A runner whose `sync` empties the branch — the outcome git really produces when
+/// every commit is already upstream (proved against real git in
+/// `merge::tests::a_branch_whose_work_already_landed_syncs_empty_and_lands_as_a_no_op`;
+/// here the branch is moved to `base` directly so the engine path can be exercised
+/// without staging a second turn's worth of history).
+struct EmptyingSyncRunner(Arc<Mutex<Vec<&'static str>>>);
+
+#[async_trait::async_trait]
+impl crate::merge::MergeRunner for EmptyingSyncRunner {
+    async fn tests(&self, _wt: &crate::worktree::Worktree) -> anyhow::Result<(bool, String)> {
+        self.0.lock().unwrap().push("tests");
+        Ok((true, String::new()))
+    }
+    fn sync(&self, wt: &crate::worktree::Worktree, base: &str) -> crate::merge::Synced {
+        self.0.lock().unwrap().push("sync");
+        crate::snapshot::git(&wt.path, &["reset", "--hard", base]).unwrap();
+        crate::merge::Synced::Rebased
+    }
+    fn land(
+        &self,
+        _repo_root: &std::path::Path,
+        _wt: &crate::worktree::Worktree,
+        _base: &str,
+    ) -> anyhow::Result<crate::merge::Landed> {
+        self.0.lock().unwrap().push("land");
+        Ok(crate::merge::Landed::FastForward)
+    }
+}
+
+/// A branch whose work already reached `base` by another route (someone cherry-picked
+/// it forward) must land as a NO-OP and say so — not run the suite, not "merge", and
+/// above all not fail the gate on every retry, which is what it did live. The notice
+/// matters as much as the skip: this branch had been visibly erroring, and going silent
+/// reads as the gate breaking.
+#[tokio::test]
+async fn a_branch_emptied_by_the_sync_is_reported_as_nothing_to_merge() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w write w.txt".into() }),
+    )
+    .unwrap();
+
+    let calls = Arc::new(Mutex::new(vec![]));
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(ReportingWriter { id: QuarkId::new("w"), file: "w.txt", reply: "done" })],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(EmptyingSyncRunner(calls.clone())));
+
+    engine.run_until_quiesce().await.unwrap();
+
+    assert_eq!(*calls.lock().unwrap(), vec!["sync"], "nothing left to test or land");
+
+    let events = read_events(&field).unwrap();
+    assert!(
+        events.iter().any(|e| e.from == Actor::Gluon
+            && matches!(&e.kind, Kind::Message { body } if body.contains("nothing to merge"))),
+        "an emptied branch must be reported, not silently dropped"
+    );
+    // And the quark grounds: an already-landed branch is a completed turn, not a block.
+    assert!(
+        events.iter().any(|e| e.from == Actor::Quark(QuarkId::new("w"))
+            && matches!(e.kind, Kind::Status { state: QuarkState::Ground })),
+        "a no-op land must not park the quark"
+    );
+}
+
 /// **Branch cleanup rides every job, not just daemon startup.** Before this fix,
 /// `prune_merged_branches` only ran once at `bin/hadron-gluon.rs` startup, so a
 /// long-running daemon accumulated one `quark/*` branch per turn — the disk

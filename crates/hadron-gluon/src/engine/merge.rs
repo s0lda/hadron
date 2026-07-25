@@ -82,10 +82,24 @@ impl super::Engine {
         };
         // The rebase emptied the branch: every commit was already on `base` by another
         // route (a cherry-pick, a sibling branch). There is nothing to test and nothing
-        // to land — quiesce silently, exactly like a pure-conversation turn. Falling
-        // through here is what made an already-landed branch fail the gate on every
-        // single retry.
+        // to land — falling through here is what made an already-landed branch fail the
+        // gate on every single retry. It is NOT silent, unlike the pure-conversation
+        // early-out above: this branch has been visibly failing, and going quiet is
+        // indistinguishable from the gate breaking. `Actor::Gluon` + `to: None` + no
+        // line starting with `@` prints without waking a seat.
         if state.commits == 0 {
+            self.append(
+                Event::new(
+                    Actor::Gluon,
+                    None,
+                    Kind::Message {
+                        body: crate::merge::Landed::AlreadyLanded
+                            .describe(&t.wt.branch, &t.base),
+                    },
+                )
+                .with_severity(hadron_lattice::Severity::Info),
+            )
+            .await?;
             return Ok(false);
         }
 
