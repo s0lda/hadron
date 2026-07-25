@@ -338,22 +338,12 @@ pub fn reap_build_artifacts_maybe_dry(
         return Ok(Some(ArtifactReap::default()));
     }
 
-    // Same lock file cargo itself takes around the target dir. A second `File::open`
-    // on it gets its own open file description, so `try_lock` here genuinely
-    // contends with a live cargo process rather than always succeeding.
     let lock_path = debug_dir.join(".cargo-lock");
-    let lock_file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .open(&lock_path)
-        .with_context(|| format!("opening {}", lock_path.display()))?;
-    match lock_file.try_lock() {
-        Ok(()) => {}
-        Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
-        Err(std::fs::TryLockError::Error(e)) => {
-            return Err(e).with_context(|| format!("locking {}", lock_path.display()))
-        }
-    }
+    // Held for the whole sweep; dropped at the end of this function.
+    let _lock_file = match hold_target_lock(&lock_path)? {
+        Some(held) => held,
+        None => return Ok(None),
+    };
 
     let cutoff = std::time::SystemTime::now()
         .checked_sub(min_age)
@@ -364,6 +354,49 @@ pub fn reap_build_artifacts_maybe_dry(
     }
     // `lock_file` drops here, releasing the advisory lock.
     Ok(Some(reap))
+}
+
+/// How long the sweep keeps asking for `target/debug/.cargo-lock` before it
+/// accepts that a build really is in flight: `LOCK_ATTEMPTS × LOCK_RETRY_PAUSE`.
+///
+/// **A single `try_lock` is not a reliable answer to "is cargo building?"** —
+/// measured on this box, it reports `WouldBlock` with no holder at all. Reproduced
+/// 2 runs in 12 of `cargo test -p hadron-gluon --lib`, 0 in 30 runs of the same
+/// test alone and 0 in 8 single-threaded suite runs, so it needs concurrent load;
+/// at the moment of failure `/proc/self/fd` held exactly ONE descriptor on that
+/// inode — the one we had just opened ourselves. Root cause not established; what
+/// is established is that one attempt is not enough. Waiting turns a false
+/// "cargo is building" (which silently skips the whole sweep until the next
+/// daemon start) into a real answer, and costs at most this long, once, at startup.
+const LOCK_ATTEMPTS: u32 = 10;
+const LOCK_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// Take the same lock file cargo itself holds around the target dir, retrying for
+/// up to [`LOCK_ATTEMPTS`] × [`LOCK_RETRY_PAUSE`]. `Ok(None)` means a build really
+/// does hold it and the caller must not touch the directory.
+///
+/// Each attempt re-opens the path so it gets its own open file description —
+/// otherwise `try_lock` would be asking about a lock this process already owns.
+fn hold_target_lock(lock_path: &Path) -> anyhow::Result<Option<std::fs::File>> {
+    for attempt in 0..LOCK_ATTEMPTS {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(lock_path)
+            .with_context(|| format!("opening {}", lock_path.display()))?;
+        match file.try_lock() {
+            Ok(()) => return Ok(Some(file)),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if attempt + 1 < LOCK_ATTEMPTS {
+                    std::thread::sleep(LOCK_RETRY_PAUSE);
+                }
+            }
+            Err(std::fs::TryLockError::Error(e)) => {
+                return Err(e).with_context(|| format!("locking {}", lock_path.display()))
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Where [`record_artifact_sweep`] appends, relative to the `.hadron/` dir.
@@ -1402,6 +1435,36 @@ pub(crate) mod tests {
             .unwrap();
         let real = reap_build_artifacts(repo.path(), Duration::from_secs(7 * 86400)).unwrap().unwrap();
         assert_eq!(dry, real, "a dry run must predict exactly what the real run reclaims");
+    }
+
+    /// A lock held only briefly must NOT skip the sweep: one `try_lock` reported
+    /// `WouldBlock` with no holder under concurrent load, which silently skipped
+    /// the entire sweep until the next daemon start. The retry has to outlast a
+    /// short hold, or it buys nothing.
+    #[test]
+    fn a_briefly_held_lock_is_waited_out_rather_than_skipping_the_sweep() {
+        let repo = tempfile::tempdir().unwrap();
+        let debug = repo.path().join("target").join("debug");
+        write_aged(&debug.join("deps").join("stale.rlib"), b"0123456789", Duration::from_secs(10 * 86400));
+        let lock_path = debug.join(".cargo-lock");
+
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let f = File::options().create(true).write(true).open(&lock_path).unwrap();
+            f.lock().unwrap();
+            locked_tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(60));
+            // `f` drops here, releasing well inside LOCK_ATTEMPTS * LOCK_RETRY_PAUSE.
+        });
+        locked_rx.recv().unwrap();
+
+        let reap = reap_build_artifacts(repo.path(), Duration::from_secs(7 * 86400)).unwrap();
+        holder.join().unwrap();
+        assert_eq!(
+            reap,
+            Some(ArtifactReap { files_removed: 1, bytes_removed: 10 }),
+            "a lock released mid-retry must not read as \"cargo is building\""
+        );
     }
 
     /// The sweep's only report was an `eprintln!` to the daemon's terminal, so an
