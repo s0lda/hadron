@@ -3,6 +3,23 @@ resolver = "2"
 members = ["crates/hadron-lattice", "crates/hadron-gluon", "crates/hadron-chamber", "crates/hadron-forge", "crates/hadron-forge-mcp", "crates/hadron-gatekeeper"]
 default-members = ["crates/hadron-chamber"]
 
+# Every member declared the same four fields independently, which is six copies of
+# one fact — a version bump had to be made in six files and could be made in five.
+# Inherited with `<field>.workspace = true`; only `description` stays per-crate,
+# because it is the one thing that genuinely differs.
+#
+# `repository` and `homepage` are deliberately ABSENT rather than placeholders: a
+# published manifest is effectively permanent, and a broken URL is worse than a
+# missing field (neither is required by `cargo publish`).
+#
+# No `rust-version`. It is the field people actually hit, so it has to be MEASURED
+# against older toolchains rather than guessed — this box builds on 1.96.0 and that
+# is evidence of nothing about the floor.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
 # Optimize *dependencies* even in a debug build, while our own crates stay at
 # opt-level 0 (fast to rebuild, still debuggable). This is the standard GPUI/Zed
 # posture and it is not cosmetic: the chamber's per-frame cost lives almost

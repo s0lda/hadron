@@ -1,8 +1,12 @@
 [package]
 name = "hadron-forge-mcp"
-version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0"
+description = "An MCP stdio server exposing hadron-forge's hash-checked edit, write, create, delete and read-blocks tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# Flip to publish. Blocked today regardless: the workspace patches
+# gpui-component from a `file:///` path, which crates.io rejects.
+publish = false
 
 [dependencies]
 hadron-forge = { path = "../hadron-forge" }

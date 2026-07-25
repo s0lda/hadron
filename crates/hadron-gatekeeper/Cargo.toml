@@ -1,8 +1,12 @@
 [package]
 name = "hadron-gatekeeper"
-version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0"
+description = "Permission-mode policy for a Hadron swarm: the ask/write/auto/bypass ladder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# Flip to publish. Blocked today regardless: the workspace patches
+# gpui-component from a `file:///` path, which crates.io rejects.
+publish = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
