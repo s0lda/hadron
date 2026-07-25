@@ -100,7 +100,7 @@ pub(super) fn parse_skill_file(text: &str) -> Option<ResolvedSkill> {
 /// `(front_matter_lines, body)`; `front_matter_lines` is `None` when the text does
 /// not open with a front-matter block, and `body` is then the whole input
 /// unchanged. This is the one place the `---` fence is parsed — [`description`],
-/// [`plan_author`], and [`crate::personas::load_personas`] all go through it
+/// [`plan_author`], and [`crate::preons::load_preons`] all go through it
 /// rather than re-splitting themselves.
 pub(crate) fn split_front_matter(markdown: &str) -> (Option<&str>, &str) {
     match markdown.strip_prefix("---").and_then(|rest| rest.split_once("\n---")) {
