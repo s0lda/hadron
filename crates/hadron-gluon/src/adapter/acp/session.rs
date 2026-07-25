@@ -16,7 +16,7 @@ use agent_client_protocol::schema::v1::{
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, ConnectionTo};
 
-use crate::adapter::registry::AcpTarget;
+use crate::adapter::registry::{AcpTarget, ResolvedAcpTarget};
 
 use super::model::{effort_selector, mode_selector, model_selector, permission_choice, resolve_model};
 use super::spend::turn_spend;
@@ -30,7 +30,8 @@ use super::spend::turn_spend;
 ///
 /// Pure and side-effect-free on purpose: no process is spawned here, so it is
 /// unit-testable without touching a real agent.
-pub(super) fn acp_stdio_descriptor(program: &str, args: &[String], env: &[(String, String)]) -> String {
+pub(super) fn acp_stdio_descriptor(target: &ResolvedAcpTarget, env: &[(String, String)]) -> String {
+    let (program, args) = (target.program(), target.args());
     let env_json: Vec<serde_json::Value> = env
         .iter()
         .map(|(name, value)| serde_json::json!({ "name": name, "value": value }))
@@ -336,7 +337,7 @@ impl super::AcpQuark {
         // Seat env last, so a seat that sets one of these deliberately still wins.
         let mut spawn_env = crate::worktree::shared_build_env(&cwd);
         spawn_env.extend(env.iter().cloned());
-        let agent_source = acp_stdio_descriptor(&target.program, &target.args, &spawn_env);
+        let agent_source = acp_stdio_descriptor(&target, &spawn_env);
         // The reply accumulator and the context watermark are written by the
         // notification handler (which the SDK drives on the connection) and read by
         // the turn pump. Hence the Arcs.

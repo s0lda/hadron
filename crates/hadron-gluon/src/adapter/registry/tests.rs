@@ -607,11 +607,11 @@ fn resolved_expands_the_repo_token_across_program_and_args() {
 
     let r = t.resolved().expect("the test binary lives inside this repo's target/");
     assert!(!r.command_line().contains(REPO_ROOT_TOKEN), "left a token in {:?}", r.command_line());
-    assert!(std::path::Path::new(&r.program).is_absolute(), "{:?} is not absolute", r.program);
-    assert!(r.program.ends_with("/scripts/venv/bin/python"));
-    assert_eq!(r.args[0], "--flag", "a non-path arg must pass through untouched");
-    assert!(std::path::Path::new(&r.args[1]).is_absolute());
-    assert_eq!(r.env, t.env, "resolution must not disturb the resolved secret env");
+    assert!(std::path::Path::new(r.program()).is_absolute(), "{:?} is not absolute", r.program());
+    assert!(r.program().ends_with("/scripts/venv/bin/python"));
+    assert_eq!(r.args()[0], "--flag", "a non-path arg must pass through untouched");
+    assert!(std::path::Path::new(&r.args()[1]).is_absolute());
+    assert_eq!(r.env(), t.env.as_slice(), "resolution must not disturb the resolved secret env");
 }
 
 /// A command with no token is spawned exactly as written — `npx`, `gemini`, a seat's own
@@ -624,7 +624,48 @@ fn resolved_is_a_no_op_without_the_token() {
         env: Vec::new(),
     };
     assert!(!t.needs_repo_root());
-    assert_eq!(t.resolved().unwrap(), t);
+    assert_eq!(t.resolved().unwrap().command_line(), t.command_line());
+    assert!(t.resolved().unwrap().env().is_empty());
+}
+
+/// **The live bug.** `~/.hadron/team.json` carried the `acp-agy` seat's own `command`
+/// with both parts written relative to the checkout — no `{repo}` token, because nothing
+/// in the Settings UI or in hand-editing teaches anyone about one. `for_seat` returns a
+/// stored command verbatim, so the token-only check passed it straight to `spawn`, which
+/// resolved it against the daemon's cwd: `target/release` under a release chamber, and
+/// every `acp-agy` turn died with a bare `No such file or directory (os error 2)`.
+/// Anchoring is therefore driven by the path's SHAPE, not by the presence of a token.
+#[test]
+fn a_seat_command_written_relative_is_anchored_to_the_repo_root() {
+    let seat = Seat {
+        command: Some(hadron_lattice::AcpCommand {
+            program: "crates/hadron-gluon/scripts/venv/bin/python".to_string(),
+            args: vec!["crates/hadron-gluon/scripts/agy_acp.py".to_string()],
+        }),
+        ..acp_seat("acp-agy", "agy")
+    };
+
+    let t = AcpTarget::for_seat(&seat).expect("an ACP seat with a command");
+    assert!(!t.needs_repo_root(), "the stored command names no token — that was the trap");
+
+    let r = t.resolved().expect("the test binary lives inside this repo");
+    assert!(std::path::Path::new(r.program()).is_absolute(), "{:?} is still relative", r.program());
+    assert!(r.program().ends_with("/crates/hadron-gluon/scripts/venv/bin/python"));
+    assert!(std::path::Path::new(&r.args()[0]).exists(), "{:?} does not exist", r.args()[0]);
+}
+
+/// The other half of the shape rule: an arg with a slash is not automatically a path.
+/// `npx -y @agentclientprotocol/claude-agent-acp@latest` is how every Claude seat boots,
+/// and anchoring that package spec to the checkout would break all of them.
+#[test]
+fn an_npm_package_spec_is_never_anchored() {
+    let r = AcpTarget::claude_adapter().resolved().expect("resolvable");
+    assert!(
+        r.args().iter().any(|a| a.contains("@agentclientprotocol/")),
+        "the package spec was rewritten: {:?}",
+        r.args()
+    );
+    assert!(!r.command_line().contains("/crates/"), "anchored a package spec: {:?}", r.command_line());
 }
 
 /// The one preset this all exists for: it must resolve to the real interpreter and the
@@ -639,9 +680,9 @@ fn resolved_is_a_no_op_without_the_token() {
 fn the_agy_preset_resolves_to_files_that_exist() {
     let t = AcpTarget::for_vendor("agy").expect("agy is in the catalogue");
     let r = t.resolved().expect("resolvable from the test binary");
-    assert!(std::path::Path::new(&r.args[0]).exists(), "no bridge script at {:?}", r.args[0]);
+    assert!(std::path::Path::new(&r.args()[0]).exists(), "no bridge script at {:?}", r.args()[0]);
 
-    let python = std::path::Path::new(&r.program);
+    let python = std::path::Path::new(r.program());
     let venv = python.parent().and_then(|p| p.parent());
     match venv {
         Some(v) if v.exists() => assert!(python.exists(), "venv {v:?} exists but has no {python:?}"),
