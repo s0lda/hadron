@@ -36,17 +36,15 @@ impl Chamber {
         });
         cx.spawn(async move |_this, cx| {
             // Same two-step as `pick_avatar_image`: gpui's portal-backed picker first,
-            // then a subprocess dialog for WSL, where there is usually no portal.
-            let native = rx
-                .await
-                .ok()
-                .and_then(|r| r.ok())
-                .flatten()
-                .and_then(|v| v.into_iter().next())
-                .map(|p| p.to_string_lossy().into_owned());
-            let picked = match native {
-                Some(p) => Some(p),
-                None => cx.background_spawn(async { widgets::fallback_pick_directory() }).await,
+            // then a subprocess dialog for WSL, where there is usually no portal. Only
+            // `NoPicker` earns that second dialog — treating a cancel as "no picker" is
+            // what made Cancel pop a second folder browser.
+            let picked = match widgets::classify_pick(rx.await.ok().and_then(|r| r.ok())) {
+                widgets::Picked::Path(p) => Some(p),
+                widgets::Picked::Cancelled => return,
+                widgets::Picked::NoPicker => {
+                    cx.background_spawn(async { widgets::fallback_pick_directory() }).await
+                }
             };
             let Some(dir) = picked else {
                 eprintln!("chamber: no folder chosen (or no picker available)");
