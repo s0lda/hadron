@@ -366,6 +366,38 @@ pub fn reap_build_artifacts_maybe_dry(
     Ok(Some(reap))
 }
 
+/// Where [`record_artifact_sweep`] appends, relative to the `.hadron/` dir.
+pub const ARTIFACT_SWEEP_LOG: &str = "artifact-sweeps.log";
+
+/// Append one line describing what a sweep reclaimed to
+/// `<hadron_dir>/`[`ARTIFACT_SWEEP_LOG`].
+///
+/// The sweep deletes tens of GB, runs unattended on every daemon start, and its
+/// only report was an `eprintln!` to whatever terminal launched the daemon —
+/// `/dev/pts/0` on this box. So an hour after the first real run took
+/// `target/debug` from 107G to 48G, the figure it printed was unrecoverable and
+/// the run had to be reconstructed from surviving-sibling forensics. A run that
+/// reclaimed nothing is recorded too: "it swept and found nothing" and "it never
+/// ran" were indistinguishable, and telling them apart is half the value.
+///
+/// Append-only, and never read back by the daemon — this is an audit trail for
+/// the human, not state.
+pub fn record_artifact_sweep(hadron_dir: &Path, reap: &ArtifactReap) -> std::io::Result<()> {
+    use std::io::Write;
+    std::fs::create_dir_all(hadron_dir)?;
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(hadron_dir.join(ARTIFACT_SWEEP_LOG))?;
+    writeln!(
+        log,
+        "{} swept files={} bytes={}",
+        chrono::Utc::now().to_rfc3339(),
+        reap.files_removed,
+        reap.bytes_removed,
+    )
+}
+
 /// Remove every immediate child of `dir` whose **newest atime anywhere inside
 /// it** is older than `cutoff` — a file is removed directly, a directory (e.g.
 /// one `.fingerprint/<crate>-<hash>/` entry) is removed with everything inside
@@ -1370,5 +1402,30 @@ pub(crate) mod tests {
             .unwrap();
         let real = reap_build_artifacts(repo.path(), Duration::from_secs(7 * 86400)).unwrap().unwrap();
         assert_eq!(dry, real, "a dry run must predict exactly what the real run reclaims");
+    }
+
+    /// The sweep's only report was an `eprintln!` to the daemon's terminal, so an
+    /// hour after it deleted 59G nobody could say what it had taken. Every run
+    /// must leave one auditable line behind, including a run that took nothing —
+    /// "it swept and found nothing" and "it never ran" were indistinguishable.
+    #[test]
+    fn every_sweep_appends_one_auditable_line() {
+        let dir = tempfile::tempdir().unwrap();
+        record_artifact_sweep(
+            dir.path(),
+            &ArtifactReap { files_removed: 6366, bytes_removed: 69_635_695_497 },
+        )
+        .unwrap();
+        record_artifact_sweep(dir.path(), &ArtifactReap::default()).unwrap();
+
+        let log = std::fs::read_to_string(dir.path().join(ARTIFACT_SWEEP_LOG)).unwrap();
+        let lines: Vec<&str> = log.lines().collect();
+        assert_eq!(lines.len(), 2, "one line per run, appended not overwritten: {log}");
+        assert!(
+            lines[0].contains("files=6366") && lines[0].contains("bytes=69635695497"),
+            "the exact figures are the whole point: {}",
+            lines[0]
+        );
+        assert!(lines[1].contains("files=0"), "a zero sweep is still recorded: {}", lines[1]);
     }
 }
