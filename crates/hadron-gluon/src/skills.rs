@@ -187,6 +187,24 @@ pub const SKILLS: &[Skill] = &[
     },
 ];
 
+/// The canonical trigger phrase for a built-in skill id, or `None` if no such id.
+///
+/// The **first** trigger is canonical by construction: [`select`] matches any of a
+/// skill's triggers, so a caller that needs to *produce* text which will select this
+/// skill needs exactly one of them, and the first is the one written to read naturally
+/// in a sentence.
+///
+/// This exists so the chamber's `/brainstorm`, `/writing-plans` and `/executing-plans`
+/// commands can build their message from the engine's own trigger instead of retyping
+/// the phrase. A copy in the chamber would keep compiling and silently stop selecting
+/// the skill the day someone edited [`SKILLS`] — the drift rule 3 exists to prevent.
+pub fn canonical_trigger(id: &str) -> Option<&'static str> {
+    SKILLS
+        .iter()
+        .find(|s| s.id == id)
+        .and_then(|s| s.triggers.first().copied())
+}
+
 /// An owned skill — the same shape as [`Skill`], but with `String`/`Vec<String>`
 /// instead of `&'static` slices so a skill parsed off disk at runtime (which has no
 /// `'static` backing) can sit in the same corpus as the compiled-in set.
