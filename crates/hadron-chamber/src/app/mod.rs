@@ -199,6 +199,7 @@ struct Chamber {
     changes_scroll: ScrollHandle,
     /// Cached branches/worktrees/log-graph for the Git rail, refreshed on tab entry
     /// (like `working_diff`) rather than every render — each is its own git subprocess.
+    git_branch_fingerprint: Option<String>,
     git_branches: Option<Vec<crate::vcs::BranchInfo>>,
     git_worktrees: Option<Vec<crate::vcs::WorktreeInfo>>,
     git_log_graph: Option<String>,
@@ -495,6 +496,7 @@ impl Chamber {
                         root,
                         &state.1,
                         state.2 == RightRailTab::Changes,
+                        state.2 == RightRailTab::Git,
                     )
                 })
                 .await;
@@ -606,6 +608,7 @@ impl Chamber {
             working_diff: None,
             changes_open_ixs: std::collections::HashSet::new(),
             changes_scroll: ScrollHandle::new(),
+            git_branch_fingerprint: None,
             git_branches: None,
             git_worktrees: None,
             git_log_graph: None,

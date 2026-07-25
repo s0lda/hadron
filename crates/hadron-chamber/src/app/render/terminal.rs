@@ -31,6 +31,7 @@ impl super::Chamber {
                 }
                 if this.right_rail_tab == RightRailTab::Git {
                     let root = crate::vcs::repo_root_of(&this.path);
+                    this.git_branch_fingerprint = Some(crate::vcs::branch_fingerprint(root));
                     this.git_branches = Some(crate::vcs::list_branches(root, "main"));
                     this.git_worktrees = Some(crate::vcs::list_worktrees(root));
                     this.git_log_graph = crate::vcs::commit_graph(root);
