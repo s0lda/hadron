@@ -182,8 +182,13 @@ struct Chamber {
     stats_window: StatsWindow,
     /// Projected messages of every archived session (`sessions/*/field.jsonl`), the
     /// history the wider [`StatsWindow`]s fold in. Loaded once at startup and rebuilt by
-    /// the `/clear` handler (the only thing that writes a new archive in this process).
+    /// [`Self::reload_archives`].
     archived_messages: Vec<MessageRow>,
+    /// The archived sessions the app menu's `Sessions` submenu offers to `/resume`,
+    /// newest first. Cached rather than listed on menu-open: [`crate::model::list_sessions`]
+    /// reads every archive's whole `field.jsonl`, which is not something to do on the
+    /// frame that paints a menu. Rebuilt alongside `archived_messages`.
+    sessions: Vec<crate::model::SessionInfo>,
     /// Which view the right rail's segmented tabs are showing. The right rail is
     /// independent of the chat column: changing the chat tab must not move it.
     right_rail_tab: RightRailTab,
@@ -583,12 +588,12 @@ impl Chamber {
         let secret_store: Box<dyn hadron_lattice::secrets::SecretStore> =
             Box::new(hadron_gluon::KeyringStore::new());
 
-        // Load the archived sessions once — the history the wider Stats windows fold in.
-        // Rebuilt only by `/clear` (the sole writer of a new archive in this process).
-        let archived_messages = path
-            .parent()
-            .map(|p| crate::model::load_archived_messages(&p.join("sessions")))
-            .unwrap_or_default();
+        // Load the archived sessions once — the history the wider Stats windows fold in,
+        // and the rows the app menu's `Sessions` submenu offers. Rebuilt by
+        // `Self::reload_archives` after `/clear` or `/resume` writes a new archive.
+        let sessions_dir = path.parent().map(|p| p.join("sessions")).unwrap_or_default();
+        let archived_messages = crate::model::load_archived_messages(&sessions_dir);
+        let sessions = crate::model::list_sessions(&sessions_dir);
 
         let mut chamber = Chamber {
             view,
@@ -604,6 +609,7 @@ impl Chamber {
             info_tab: InfoTab::Identity,
             stats_window: StatsWindow::Current,
             archived_messages,
+            sessions,
             right_rail_tab: RightRailTab::Terminal,
             selected_quark_ix: None,
             app_menu_open: false,
@@ -770,6 +776,51 @@ fn default_key_bindings() -> Vec<KeyBinding> {
     ]
 }
 
+/// The first UI font family whose **bold actually renders**.
+///
+/// GPUI has no CSS font-stack parsing. `Theme::font_family` is ONE literal family name,
+/// matched exactly against the platform font database (`cosmic_text_system.rs`'s
+/// `load_family` compares `*name == family.0`), so gpui-component's non-macOS default —
+/// `"Inter, Segoe UI, DejaVu Sans, Liberation Sans, sans-serif"` — matches nothing at all.
+///
+/// The miss is **silent, and it eats bold specifically**: `TextSystem::resolve_font` falls
+/// through to its own hardcoded fallback stack, and every entry in that stack is built with
+/// `font(family)`, i.e. `FontWeight::default()`. Bold and regular then resolve to the SAME
+/// regular face, so `**bold**` renders flat while everything else looks fine. Three fixes
+/// were shipped against this symptom (`3001c67`, `59479e8`) by swapping one unresolvable
+/// name for another — `.SystemUIFont` maps to "IBM Plex Sans" on Linux, which is not
+/// installed on this box either.
+///
+/// `TextSystem::font_id` — the one that reports the miss — is private, so the probe uses
+/// the observable consequence instead: resolve the family at bold and at regular and
+/// compare the two `FontId`s. Different ids mean the family resolved AND has a real bold
+/// face. Equal ids mean either the family missed (both landed on the same fallback) or it
+/// has no bold face — both render flat, so both are rejected. This is the property we
+/// actually care about, which is why it is checked rather than "is the name installed".
+fn font_family_with_a_real_bold(cx: &App) -> SharedString {
+    // Platform-typical UI faces first, then the ones a Linux desktop nearly always ships.
+    const CANDIDATES: [&str; 7] = [
+        ".SystemUIFont", // the real system face on macOS/Windows; "IBM Plex Sans" on Linux
+        "Inter",
+        "Segoe UI",
+        "Ubuntu",
+        "Cantarell",
+        "Noto Sans",
+        "DejaVu Sans",
+    ];
+    let text_system = cx.text_system();
+    CANDIDATES
+        .into_iter()
+        .find(|name| {
+            let regular = gpui::font(*name);
+            text_system.resolve_font(&regular.clone().bold()) != text_system.resolve_font(&regular)
+        })
+        .map(SharedString::from)
+        // Nothing here has a distinguishable bold. Leave gpui to its own fallback rather
+        // than pinning a family we just proved does not work.
+        .unwrap_or_else(|| ".SystemUIFont".into())
+}
+
 /// Launch the chamber window against a field file path.
 pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>) {
     let Some(path) = field_path else {
@@ -812,6 +863,10 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
     app.run(move |cx: &mut App| {
         gpui_component::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
+        // Probed before the theme block below, which holds `cx` mutably. Logged because
+        // this bug is invisible from inside the app — the only symptom is flat bold.
+        let ui_font = font_family_with_a_real_bold(cx);
+        eprintln!("chamber: UI font family {ui_font} (bold verified)");
         // Align gpui-component's own component colors (titlebar, inputs, window
         // controls) to Jake's palette so they blend with our hand-drawn surfaces.
         {
@@ -871,8 +926,8 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             // window frame (crate::window_frame) shows the shadow through the
             // corners instead of a square fill.
             t.tokens.background = gpui::hsla(0.0, 0.0, 0.0, 0.0).into();
-            t.font_family =
-                "Inter, Segoe UI, DejaVu Sans, Liberation Sans, sans-serif, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
+            // ONE family, never a comma list — see `font_family_with_a_real_bold`.
+            t.font_family = ui_font;
         }
         // Keyboard navigation. The chords still scoped to `KEY_CONTEXT` are ones
         // the text input's own key context (`gpui_component::input::state::CONTEXT`)
