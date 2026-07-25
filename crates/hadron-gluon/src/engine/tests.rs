@@ -3071,6 +3071,369 @@ async fn a_failing_merge_land_blocks_the_quark_instead_of_looping() {
             && matches!(&e.kind, Kind::Message { body } if body.contains("could not be merged") || body.contains("merge"))),
         "the failure is reported, not silent"
     );
+    // And it is NOT handed back to the quark. This failure is in the TARGET checkout —
+    // the human's own tree, carrying uncommitted work — which the quark cannot fix from
+    // its worktree and must not try to: quarks run git in that very checkout, so one
+    // told "fix the merge" would stash or commit work the human never committed.
+    assert!(
+        !events.iter().any(|e| e.from == Actor::Gluon
+            && e.to.as_ref() == Some(&w)
+            && matches!(&e.kind, Kind::Message { body } if body.contains(crate::engine::merge::GATE_HANDBACK_MARKER))),
+        "a dirty TARGET checkout is a human's problem — the quark must not be sent to fix it"
+    );
+}
+
+/// Records the worktree and the task of every turn it is given, and writes a fresh file
+/// each turn so its branch always has something the gate could try to land.
+struct RecordingWriter {
+    id: QuarkId,
+    turns: Arc<Mutex<Vec<(PathBuf, String)>>>,
+    /// Reply for the FIRST turn only, when that turn must NOT complete the assignment —
+    /// a hand-off to a peer leaves the branch unlanded and ungated, which is the only way
+    /// to set up the superseded-branch case.
+    handoff: Option<&'static str>,
+}
+
+#[async_trait::async_trait]
+impl crate::quark::Quark for RecordingWriter {
+    fn id(&self) -> QuarkId {
+        self.id.clone()
+    }
+    fn flavor(&self) -> Flavor {
+        Flavor::Worker
+    }
+    fn energy(&self) -> EnergyState {
+        EnergyState::Available
+    }
+    async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+        let n = {
+            let mut t = self.turns.lock().unwrap();
+            t.push((turn.cwd.clone(), turn.task.clone()));
+            t.len()
+        };
+        std::fs::write(turn.cwd.join(format!("w{n}.txt")), format!("turn {n}\n"))?;
+        let reply = match self.handoff.filter(|_| n == 1) {
+            Some(h) => h.to_string(),
+            None => format!("wrote w{n}.txt"),
+        };
+        Ok(TurnOutcome {
+            message: Some(reply),
+            permission: None,
+            usage: Default::default(),
+        })
+    }
+}
+
+/// A runner whose tests are permanently RED — the commonest quark-fixable merge refusal.
+/// `land` is unreachable by construction: a red branch never reaches it.
+struct RedTestRunner;
+
+#[async_trait::async_trait]
+impl crate::merge::MergeRunner for RedTestRunner {
+    async fn tests(&self, _wt: &crate::worktree::Worktree) -> anyhow::Result<(bool, String)> {
+        Ok((false, "test tests::it_works ... FAILED".to_string()))
+    }
+    fn land(
+        &self,
+        _repo_root: &std::path::Path,
+        _wt: &crate::worktree::Worktree,
+        _base: &str,
+    ) -> anyhow::Result<crate::merge::Landed> {
+        panic!("a branch with red tests must never reach land()")
+    }
+}
+
+/// **THE PROPERTY THE WHOLE DESIGN TURNS ON.** A merge refusal the quark can actually
+/// fix must hand the branch back to that quark — on the SAME branch, in the SAME
+/// worktree — instead of parking it `Blocked` and telling only the orchestrator.
+///
+/// Before this, a gate refusal ended the quark's life on that assignment: it went
+/// `Blocked`, the only message went to `@orchestrator`, and the next time anything
+/// addressed the quark it resolved a NEW assignment ULID → a new branch name → the
+/// superseded-branch check in `run.rs` re-gated the old branch, re-failed identically,
+/// and `continue`d. Every later dispatch was consumed by that, so the quark never got
+/// another turn: frozen, with the fix sitting in a tree it was never sent back to.
+#[tokio::test]
+async fn a_quark_fixable_merge_refusal_is_handed_back_on_the_same_branch() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w do the work".into() }),
+    )
+    .unwrap();
+
+    let turns = Arc::new(Mutex::new(vec![]));
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(RecordingWriter { id: QuarkId::new("w"), turns: turns.clone(), handoff: None })],
+        20,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(RedTestRunner));
+
+    engine.run_until_quiesce().await.unwrap();
+
+    let turns = turns.lock().unwrap().clone();
+    assert!(
+        turns.len() > 1,
+        "the quark got no repair turn — it was frozen by the refusal (got {} turn(s))",
+        turns.len()
+    );
+
+    // Same worktree every turn: it is standing in the tree that needs fixing.
+    let first_cwd = &turns[0].0;
+    assert!(
+        turns.iter().all(|(cwd, _)| cwd == first_cwd),
+        "a repair turn ran somewhere other than the failing worktree: {turns:#?}"
+    );
+
+    // Same BRANCH every turn — the load-bearing half. A repair turn on a fresh branch
+    // would be cut off from the very commits it was asked to fix.
+    let branches = crate::snapshot::git(&root, &["branch", "--list", "quark/w/*"]).unwrap();
+    assert_eq!(
+        branches.lines().count(),
+        1,
+        "the hand-back cut a second branch instead of continuing the failing one:\n{branches}"
+    );
+
+    // And the repair turn was TOLD what to fix — the failure is its task, not a notice
+    // it has to go digging for.
+    let repair_task = &turns[1].1;
+    assert!(
+        repair_task.contains(crate::engine::merge::GATE_HANDBACK_MARKER),
+        "the repair turn's task does not carry the gate's hand-back: {repair_task}"
+    );
+    assert!(
+        repair_task.contains("FAILED"),
+        "the repair turn was not shown the test output it must fix: {repair_task}"
+    );
+}
+
+/// The gate has a SECOND entry point: `run.rs`'s superseded-branch check, which fires
+/// when a quark is handed a new assignment while its previous branch still has unlanded
+/// commits. A hand-back from there must continue the **old** assignment — the branch that
+/// actually failed — not the new one it is about to be given.
+///
+/// It works because that call site builds its `TurnTree` with
+/// `parse_assignment_from_branch(&old_branch)`, so `t.assignment` is already the old
+/// ULID and the hand-back stamps it. That is a quiet dependency between two files, and
+/// getting it wrong would send the repair turn to a fresh branch cut off from the very
+/// commits it was asked to fix — so it is pinned here rather than left to inspection.
+#[tokio::test]
+async fn a_handback_from_the_superseded_branch_gate_continues_the_old_assignment() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    // `w` hands off to a PEER, not the orchestrator: a peer hand-off is a mid-chain
+    // step, so the assignment does not complete, the gate never fires, and `w`'s branch
+    // is left with unlanded commits — the precondition the superseded check looks for.
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w do the work".into() }),
+    )
+    .unwrap();
+
+    let turns = Arc::new(Mutex::new(vec![]));
+    let quarks: Vec<Box<dyn crate::quark::Quark>> = vec![
+        Box::new(RecordingWriter {
+            id: QuarkId::new("w"),
+            turns: turns.clone(),
+            handoff: Some("@p over to you"),
+        }),
+        Box::new(MockQuark::repeating(QuarkId::new("p"), Flavor::Worker, "done")),
+    ];
+    let mut engine = Engine::new(field.clone(), quarks, 20)
+        .with_git(root.clone())
+        .with_merge_gate(Arc::new(RedTestRunner));
+    engine.run_until_quiesce().await.unwrap();
+
+    // The branch `w` left behind, unlanded and ungated.
+    let stale_branch = crate::worktree::current_branch(&crate::worktree::trees_dir(&root).join("w"))
+        .expect("w should be sitting on its first assignment's branch");
+    let stale_assignment = crate::worktree::parse_assignment_from_branch(&stale_branch).unwrap();
+    assert_eq!(turns.lock().unwrap().len(), 1, "the gate must not have fired on a peer hand-off");
+
+    // A NEW assignment arrives while that branch is still unlanded and still red.
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w now do something else".into() }),
+    )
+    .unwrap();
+    engine.run_until_quiesce().await.unwrap();
+
+    // Every hand-back is stamped with the OLD assignment — the failing branch's — so the
+    // repair turns go back to it rather than to the new task's fresh branch.
+    let w = QuarkId::new("w");
+    let events = read_events(&field).unwrap();
+    let handbacks: Vec<_> = events
+        .iter()
+        .filter(|e| e.from == Actor::Gluon
+            && e.to.as_ref() == Some(&w)
+            && matches!(&e.kind, Kind::Message { body } if body.contains(crate::engine::merge::GATE_HANDBACK_MARKER)))
+        .collect();
+    assert!(!handbacks.is_empty(), "the superseded-branch gate froze the quark instead of handing back");
+    assert!(
+        handbacks.iter().all(|e| e.answers == Some(stale_assignment)),
+        "a hand-back named the new assignment, which would cut a branch without the failing commits"
+    );
+
+    // And the repair turns ran on that same branch — no second branch was ever cut.
+    let branches = crate::snapshot::git(&root, &["branch", "--list", "quark/w/*"]).unwrap();
+    assert_eq!(
+        branches.lines().count(),
+        1,
+        "the new assignment cut a branch while the old one was still failing:\n{branches}"
+    );
+    assert!(branches.contains(&stale_branch), "the failing branch was not the one repaired");
+    assert!(
+        turns.lock().unwrap().iter().skip(1).any(|(_, task)| task
+            .contains(crate::engine::merge::GATE_HANDBACK_MARKER)),
+        "no repair turn was actually dispatched"
+    );
+}
+
+/// A runner whose branch cannot even be replayed onto `base`. Tests and `land` are
+/// unreachable by construction: a branch that will not rebase is never tested and never
+/// landed. This is the hand-back site that fires EARLIEST in the gate — before the field
+/// is read, before the mode ladder — and the one that invites the quark into rebase
+/// surgery, so it gets its own coverage rather than riding on the red-tests path.
+struct ConflictingSyncRunner;
+
+#[async_trait::async_trait]
+impl crate::merge::MergeRunner for ConflictingSyncRunner {
+    async fn tests(&self, _wt: &crate::worktree::Worktree) -> anyhow::Result<(bool, String)> {
+        panic!("a branch that cannot rebase onto base must never be tested")
+    }
+    fn sync(&self, _wt: &crate::worktree::Worktree, _base: &str) -> crate::merge::Synced {
+        crate::merge::Synced::Conflicted("CONFLICT (content): Merge conflict in f.txt".to_string())
+    }
+    fn land(
+        &self,
+        _repo_root: &std::path::Path,
+        _wt: &crate::worktree::Worktree,
+        _base: &str,
+    ) -> anyhow::Result<crate::merge::Landed> {
+        panic!("a branch that cannot rebase onto base must never be landed")
+    }
+}
+
+/// A rebase conflict is a machine refusing to guess — NOT a reason to freeze the one
+/// party who can actually judge the resolution. The quark goes back into its own tree,
+/// on its own branch, and is shown the conflict.
+#[tokio::test]
+async fn a_rebase_conflict_sends_the_quark_back_to_resolve_it() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w do the work".into() }),
+    )
+    .unwrap();
+
+    let turns = Arc::new(Mutex::new(vec![]));
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(RecordingWriter { id: QuarkId::new("w"), turns: turns.clone(), handoff: None })],
+        20,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(ConflictingSyncRunner));
+
+    engine.run_until_quiesce().await.unwrap();
+
+    let turns = turns.lock().unwrap().clone();
+    assert!(turns.len() > 1, "a rebase conflict froze the quark instead of handing it back");
+    assert_eq!(turns[0].0, turns[1].0, "the repair turn must run in the conflicting worktree");
+    assert!(
+        turns[1].1.contains(crate::engine::merge::GATE_HANDBACK_MARKER)
+            && turns[1].1.contains("CONFLICT (content)"),
+        "the quark was sent back without being shown the conflict: {}",
+        turns[1].1
+    );
+    // Same bound as every other hand-back — a conflict it cannot resolve still escalates.
+    assert_eq!(turns.len(), 3, "one original turn plus two repair turns — no more");
+}
+
+/// The bound. Each hand-back costs a full test run plus a model turn, so a branch that
+/// will not heal must escalate to a human rather than loop. Two repair turns, then the
+/// gate stops spending and says so — the quark is left `Blocked` with its branch intact.
+///
+/// Run **with an orchestrator seated** — Jake's live topology, and the only shape where
+/// the escalation is actually routed rather than left as a bare notice. It is also the
+/// shape with two ways to loop: the escalation body gains an `@orchestrator` prefix while
+/// still naming `@w` in its text, and the orchestrator's own turn adds a second addressed
+/// candidate for `next_pending` to consider. Quiescing here is the assertion.
+#[tokio::test]
+async fn a_branch_that_will_not_heal_escalates_instead_of_looping() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w do the work".into() }),
+    )
+    .unwrap();
+
+    let turns = Arc::new(Mutex::new(vec![]));
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("orch"), Flavor::Orchestrator, "ok")),
+            Box::new(RecordingWriter { id: QuarkId::new("w"), turns: turns.clone(), handoff: None }),
+        ],
+        20,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(RedTestRunner));
+
+    // It quiesces at all — that is half the assertion. A hand-back that never gave up
+    // would spin here until the exchange backstop, burning a test run per pass.
+    engine.run_until_quiesce().await.unwrap();
+
+    let w = QuarkId::new("w");
+    let events = read_events(&field).unwrap();
+    let handbacks = events
+        .iter()
+        .filter(|e| e.from == Actor::Gluon
+            && e.to.as_ref() == Some(&w)
+            && matches!(&e.kind, Kind::Message { body } if body.contains(crate::engine::merge::GATE_HANDBACK_MARKER)))
+        .count();
+    assert_eq!(handbacks, 2, "the gate must hand a failing branch back exactly twice");
+    assert_eq!(
+        turns.lock().unwrap().len(),
+        3,
+        "one original turn plus two repair turns — no more"
+    );
+
+    // The give-up is explicit, and the quark ends terminal rather than mid-turn.
+    assert!(
+        events.iter().any(|e| e.from == Actor::Gluon
+            && e.to.is_none()
+            && matches!(&e.kind, Kind::Message { body } if body.contains("escalating"))),
+        "the gate gave up silently — a human is never told the branch is stuck"
+    );
+    assert!(
+        events.iter().rev().any(|e| e.from == Actor::Quark(w.clone())
+            && matches!(e.kind, Kind::Status { state: QuarkState::Blocked })),
+        "the quark must end Blocked, not stranded"
+    );
+    // Nothing was landed, and the work is still there.
+    assert!(!root.join("w1.txt").exists(), "a red branch must not reach the base");
+    assert!(
+        crate::snapshot::git(&root, &["branch", "--list", "quark/w/*"]).unwrap().contains("quark/w/"),
+        "the branch must be preserved — the work is evidence"
+    );
 }
 
 /// A worker that WRITES a file (so there is a commit to land) and reports completion

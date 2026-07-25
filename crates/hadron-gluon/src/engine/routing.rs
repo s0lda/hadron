@@ -273,9 +273,10 @@ impl super::Engine {
             e.to.as_ref() == Some(target)
                 && matches!(e.kind, Kind::Assign { .. } | Kind::Message { .. })
         }) {
+            let assignment = Self::continued_assignment(trigger).unwrap_or(trigger.id);
             return Some(match &trigger.kind {
                 Kind::Assign { task, invariants } => Driver {
-                    assignment: trigger.id,
+                    assignment,
                     task: task.clone(),
                     invariants: invariants.clone(),
                 },
@@ -292,7 +293,7 @@ impl super::Engine {
                             _ => None,
                         })
                         .unwrap_or_default();
-                    Driver { assignment: trigger.id, task: body.clone(), invariants }
+                    Driver { assignment, task: body.clone(), invariants }
                 }
                 _ => unreachable!("the find matched Assign | Message"),
             });
@@ -311,6 +312,28 @@ impl super::Engine {
             return None;
         };
         Some(Driver { assignment: driving.id, task: body.clone(), invariants: vec![] })
+    }
+
+    /// The assignment a Gluon-authored trigger **continues**, if it continues one.
+    ///
+    /// `Driver::assignment` names the quark's branch, so by default a new event
+    /// addressed to a quark cuts a new branch. That is right for every task a human
+    /// or a peer hands over, and WRONG for the one case the gluon itself re-drives a
+    /// quark: the merge-gate hand-back (`engine/merge.rs`). There the whole point is
+    /// that the quark goes back into the SAME worktree, on the SAME branch, to repair
+    /// the branch that just failed to land — a fresh branch would cut it off from the
+    /// commits it was asked to fix, and (worse) leave the failed branch to be re-gated
+    /// by the superseded-branch check in `run.rs` on every later pass, which is the
+    /// frozen-quark shape this exists to prevent.
+    ///
+    /// `answers` already means exactly "this event belongs to that assignment", so the
+    /// hand-back stamps it and this reads it back. Restricted to [`Actor::Gluon`] on
+    /// purpose: a quark→quark hand-off `Message` also carries `answers` (the SENDER's
+    /// assignment, stamped in `finish_turn`), and honouring that would put the receiver
+    /// on the sender's branch. No gluon-authored event carried `answers` before the
+    /// hand-back, so this discriminator is unambiguous.
+    fn continued_assignment(trigger: &Event) -> Option<ulid::Ulid> {
+        (trigger.from == Actor::Gluon).then_some(trigger.answers).flatten()
     }
 
     /// Build the projection handed to `target` for this turn, from the field as read
