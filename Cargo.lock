@@ -2949,6 +2949,7 @@ version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
+ "async-io",
  "async-trait",
  "chrono",
  "futures",
