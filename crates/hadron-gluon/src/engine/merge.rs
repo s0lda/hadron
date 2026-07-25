@@ -56,19 +56,28 @@ impl super::Engine {
         // fix landed on `base` was tested without that fix and reported red forever.
         // A conflict is reported here rather than after a full test run: a branch that
         // cannot replay onto `base` cannot land whatever the tests say.
-        let state = match runner.sync(&t.wt, &t.base) {
-            crate::merge::Synced::Conflicted(err) => {
-                self.reroute_blocked_with_severity(
-                    target,
-                    &crate::merge::Landed::Conflicted(err).describe(&t.wt.branch, &t.base),
-                    hadron_lattice::Severity::Error,
-                )
-                .await?;
-                return Ok(true);
-            }
-            crate::merge::Synced::AlreadyCurrent => state,
-            crate::merge::Synced::Rebased => {
-                BranchState { commits: crate::worktree::commits_ahead(&t.wt, &t.base)?, ..state }
+        //
+        // A DIRTY tree is skipped, not rebased: `git rebase` would refuse and the human
+        // would be told "conflict" when the real answer is `BlockReason::DirtyTree`,
+        // which the verdict below already words correctly.
+        let state = if state.dirty {
+            state
+        } else {
+            match runner.sync(&t.wt, &t.base) {
+                crate::merge::Synced::Conflicted(err) => {
+                    self.reroute_blocked_with_severity(
+                        target,
+                        &crate::merge::Landed::Conflicted(err).describe(&t.wt.branch, &t.base),
+                        hadron_lattice::Severity::Error,
+                    )
+                    .await?;
+                    return Ok(true);
+                }
+                crate::merge::Synced::AlreadyCurrent => state,
+                crate::merge::Synced::Rebased => BranchState {
+                    commits: crate::worktree::commits_ahead(&t.wt, &t.base)?,
+                    ..state
+                },
             }
         };
         // The rebase emptied the branch: every commit was already on `base` by another
