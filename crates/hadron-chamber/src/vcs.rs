@@ -174,6 +174,36 @@ pub fn repo_root_of(field_path: &Path) -> &Path {
     }
 }
 
+/// Formats the repository working directory for display in the UI (e.g. `~/dev/hadron/`).
+pub fn format_working_dir(field_path: &Path) -> String {
+    let root = repo_root_of(field_path);
+    let abs_path = root
+        .canonicalize()
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| root.to_path_buf()));
+
+    let path_str = if let Ok(home) = std::env::var("HOME") {
+        let home_path = Path::new(&home);
+        if let Ok(rel) = abs_path.strip_prefix(home_path) {
+            if rel.as_os_str().is_empty() {
+                "~".to_string()
+            } else {
+                format!("~/{}", rel.display())
+            }
+        } else {
+            abs_path.display().to_string()
+        }
+    } else {
+        abs_path.display().to_string()
+    };
+
+    if path_str.ends_with('/') {
+        path_str
+    } else {
+        format!("{path_str}/")
+    }
+}
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitStatus {
     Modified,
@@ -541,6 +571,20 @@ mod tests {
         let field = PathBuf::from("/tmp/scratch/field.jsonl");
         assert_eq!(repo_root_of(&field), Path::new("/tmp/scratch"));
     }
+
+    #[test]
+    fn format_working_dir_formats_with_tilde_and_trailing_slash() {
+        let field = PathBuf::from(".hadron/field.jsonl");
+        let formatted = format_working_dir(&field);
+        assert!(formatted.ends_with('/'));
+        if let Ok(home) = std::env::var("HOME") {
+            let current = std::env::current_dir().unwrap();
+            if current.starts_with(&home) {
+                assert!(formatted.starts_with("~/"));
+            }
+        }
+    }
+
 
     #[test]
     fn parse_branches_flags_current_and_merged() {
