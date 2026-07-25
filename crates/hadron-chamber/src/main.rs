@@ -160,10 +160,22 @@ fn main() {
         // and drop its lock cleanly before it exits.
         if config::load().close_gluon_on_exit {
             if let Some(pid) = gluon_pid {
-                eprintln!("hadron-chamber: closing hadron-gluon (PID {}) on exit...", pid);
+                // The PID may have come out of `gluon.lock`, which outlives the daemon
+                // that wrote it — so check the kernel still calls that process a
+                // `hadron-gluon` before signalling it.
                 #[cfg(unix)]
-                unsafe {
-                    libc::kill(pid as libc::pid_t, libc::SIGTERM);
+                if pid_names_a_live_gluon(std::path::Path::new(PROC_ROOT), pid) {
+                    eprintln!("hadron-chamber: closing hadron-gluon (PID {}) on exit...", pid);
+                    unsafe {
+                        libc::kill(pid as libc::pid_t, libc::SIGTERM);
+                    }
+                } else {
+                    eprintln!(
+                        "hadron-chamber: leaving PID {} alone on exit — it is not a live \
+                         hadron-gluon, so gluon.lock is stale and that PID may now belong \
+                         to an unrelated process.",
+                        pid
+                    );
                 }
                 // Reap the child if it was ours, so it does not linger as a zombie.
                 if let Some(mut child) = spawned_gluon {
@@ -217,6 +229,36 @@ fn read_lock_pid(lock_path: &std::path::Path) -> Option<u32> {
     std::fs::read_to_string(lock_path)
         .ok()
         .and_then(|content| content.trim().parse::<u32>().ok())
+}
+
+/// The name the kernel reports for the daemon in `<proc_root>/<pid>/comm`: the basename
+/// of the binary `resolve_gluon_binary` runs, comfortably inside `comm`'s 15-char limit.
+#[cfg(all(unix, feature = "gui"))]
+const GLUON_COMM: &str = "hadron-gluon";
+
+#[cfg(all(unix, feature = "gui"))]
+const PROC_ROOT: &str = "/proc";
+
+/// Whether `pid` may be signalled as the daemon when the chamber exits.
+///
+/// `gluon.lock` outlives the daemon that wrote it, so the PID read from it may name a
+/// dead process whose number the OS has since handed to something else — and
+/// `close_gluon_on_exit` would then SIGTERM a stranger. `<proc_root>/<pid>/comm` is the
+/// kernel's own name for the process, so it settles the question. Where `/proc` is
+/// absent (a non-Linux unix) there is nothing to check against and the signal goes out
+/// exactly as it did before.
+///
+/// A `hadron-gluon` serving a DIFFERENT field still matches — `comm` carries no
+/// arguments — so this bounds the blast radius to the daemon family, not to one field.
+#[cfg(all(unix, feature = "gui"))]
+fn pid_names_a_live_gluon(proc_root: &std::path::Path, pid: u32) -> bool {
+    if !proc_root.is_dir() {
+        return true;
+    }
+    match std::fs::read_to_string(proc_root.join(pid.to_string()).join("comm")) {
+        Ok(comm) => comm.trim() == GLUON_COMM,
+        Err(_) => false,
+    }
 }
 
 #[cfg(not(feature = "gui"))]
@@ -359,5 +401,45 @@ mod tests {
 
         // A missing file is None, not a panic.
         assert_eq!(read_lock_pid(&dir.path().join("nope.lock")), None);
+    }
+
+    /// `close_gluon_on_exit` SIGTERMs a PID read out of `gluon.lock`, which outlives the
+    /// daemon that wrote it — so a stale lock plus a recycled PID means killing a
+    /// stranger. Only a process the kernel still calls `hadron-gluon` may be signalled.
+    #[cfg(unix)]
+    #[test]
+    fn only_a_live_hadron_gluon_may_be_signalled_on_exit() {
+        let proc_root = tempfile::tempdir().unwrap();
+        let comm = |pid: u32, name: &str| {
+            let dir = proc_root.path().join(pid.to_string());
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("comm"), format!("{}\n", name)).unwrap();
+        };
+
+        comm(1001, "hadron-gluon");
+        assert!(pid_names_a_live_gluon(proc_root.path(), 1001));
+
+        // The hazard: the daemon died, the OS reused its number for something else.
+        comm(1002, "sshd");
+        assert!(!pid_names_a_live_gluon(proc_root.path(), 1002));
+
+        // A PID with no process at all — the stale-lock case Jake's my-cloud hit.
+        assert!(!pid_names_a_live_gluon(proc_root.path(), 1003));
+
+        // No `/proc` to consult (non-Linux unix): behave as before and signal.
+        assert!(pid_names_a_live_gluon(
+            &proc_root.path().join("no-such-proc"),
+            1002
+        ));
+
+        // The real kernel agrees on the name this checks for.
+        if std::path::Path::new("/proc/self/comm").exists() {
+            let me = std::fs::read_to_string("/proc/self/comm").unwrap();
+            assert!(!me.trim().is_empty());
+            assert!(!pid_names_a_live_gluon(
+                std::path::Path::new(PROC_ROOT),
+                std::process::id()
+            ));
+        }
     }
 }
