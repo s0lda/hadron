@@ -62,6 +62,36 @@ fn render_event_line(
     }
 }
 
+fn line_matches_task_or_pinned(line: &str, lower_task: &str) -> bool {
+    if line.contains("[pinned]") {
+        return true;
+    }
+    if !line.trim_start().starts_with("- **") {
+        return false;
+    }
+    let lower_line = line.to_lowercase();
+    if let Some(start) = lower_line.find("[tag:") {
+        if let Some(end) = lower_line[start..].find(']') {
+            let tag = &lower_line[start + 5..start + end];
+            if !tag.is_empty() && lower_task.contains(tag) {
+                return true;
+            }
+        }
+    }
+    if let Some(start) = lower_line.find("**") {
+        if let Some(end) = lower_line[start + 2..].find("**") {
+            let slug = &lower_line[start + 2..start + 2 + end];
+            if !slug.is_empty() && lower_task.contains(slug) {
+                return true;
+            }
+        }
+    }
+    if lower_task.contains(&lower_line) {
+        return true;
+    }
+    false
+}
+
 /// Build the full Markdown prompt handed to a quark's CLI for one turn.
 /// Deterministic and side-effect-free so it can be unit-tested exactly.
 /// `self_id` is the quark's own handle — a human message can address several
@@ -111,6 +141,24 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         p.push_str("# What the swarm has learned (nucleus index)\n");
         if projection.nucleus_index.trim().is_empty() {
             p.push_str("_Empty — nothing has been recorded here yet._\n\n");
+        } else if projection.nucleus_index.len() > crate::engine::nucleus::NUCLEUS_INDEX_BUDGET {
+            let manifest = crate::engine::nucleus::tag_manifest(&projection.nucleus_index);
+            p.push_str(&manifest);
+            p.push_str("\n");
+            let lower_task = projection.task.to_lowercase();
+            let matching_lines: Vec<&str> = projection
+                .nucleus_index
+                .lines()
+                .filter(|line| line_matches_task_or_pinned(line, &lower_task))
+                .collect();
+            if !matching_lines.is_empty() {
+                p.push_str("### Relevant & Pinned Lessons\n");
+                for line in matching_lines {
+                    p.push_str(line);
+                    p.push_str("\n");
+                }
+                p.push_str("\n");
+            }
         } else {
             p.push_str(projection.nucleus_index.trim());
             p.push_str("\n\n");

@@ -42,65 +42,41 @@ fn legacy_memory_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
 /// not spending on the task. It is also the wrong thing to grow: the index is a
 /// routing table (one line per lesson) and the detail belongs in `notes/`, which the
 /// engine never loads. A file that outgrows this has stopped being an index.
-pub(super) use crate::nucleus_status::BUDGET_BYTES as NUCLEUS_INDEX_BUDGET;
+pub(crate) use crate::nucleus_status::BUDGET_BYTES as NUCLEUS_INDEX_BUDGET;
 
+/// A few hundred bytes: one heading per `## ` section in the index, with a count
+/// of lessons under it. What the quark sees instead of the full index when the
+/// index has grown past a size worth always sending in full.
+pub(crate) fn tag_manifest(index_text: &str) -> String {
+    let mut out = String::new();
+    let mut current: Option<(&str, usize)> = None;
+    for line in index_text.lines() {
+        if let Some(heading) = line.strip_prefix("## ") {
+            if let Some((h, n)) = current.take() {
+                out.push_str(&format!("- {h}: {n} lesson(s)\n"));
+            }
+            current = Some((heading, 0));
+        } else if line.trim_start().starts_with("- **") {
+            if current.is_none() {
+                current = Some(("General", 0));
+            }
+            if let Some((_, n)) = current.as_mut() {
+                *n += 1;
+            }
+        }
+    }
+    if let Some((h, n)) = current {
+        out.push_str(&format!("- {h}: {n} lesson(s)\n"));
+    }
+    out
+}
 
-/// Read the lessons index, capped. A missing file is the normal first-run case, not an
-/// error — it simply means the swarm has learned nothing here yet.
-///
-/// Returns the text and whether it was cut. Cutting silently is the one thing we do
-/// not do: a quark that cannot see a lesson, and cannot tell that it cannot see it,
-/// acts confidently on a partial picture.
-///
-/// **What we cut matters as much as that we cut.** Slicing the first N bytes keeps the
-/// OLDEST lessons and throws away the newest — exactly backwards, since the index is
-/// appended to and the freshest lesson is the one just paid for. So we keep the header
-/// (it defines the format a quark must write back in) and then the most recent lines
-/// that fit, dropping the middle.
+/// Read the lessons index. Returns full text and false (truncation removed in Task 4).
 pub(super) fn read_nucleus_index(path: &std::path::Path) -> (String, bool) {
     let raw = fs::read_to_string(path).unwrap_or_default();
-    if raw.len() <= NUCLEUS_INDEX_BUDGET {
-        return (raw, false);
-    }
-
-    let lines: Vec<&str> = raw.lines().collect();
-    // The header is everything before the first lesson line: it carries the format.
-    let first_lesson = lines
-        .iter()
-        .position(|l| l.trim_start().starts_with("- **"))
-        .unwrap_or(0);
-    let (header, lessons) = lines.split_at(first_lesson);
-
-    let header_text = header.join("\n");
-    // Reserve room for the header; if the header alone blows the budget the file is
-    // not an index at all, and the old head-slice is the only honest thing left.
-    if header_text.len() >= NUCLEUS_INDEX_BUDGET {
-        let mut end = NUCLEUS_INDEX_BUDGET;
-        while end > 0 && !raw.is_char_boundary(end) {
-            end -= 1;
-        }
-        return (raw[..end].to_string(), true);
-    }
-
-    // Take lessons from the END backwards — newest first — until the budget is spent.
-    let mut kept: Vec<&str> = Vec::new();
-    let mut used = header_text.len();
-    for line in lessons.iter().rev() {
-        let cost = line.len() + 1; // +1 for the newline
-        if used + cost > NUCLEUS_INDEX_BUDGET {
-            break;
-        }
-        used += cost;
-        kept.push(line);
-    }
-    kept.reverse();
-
-    let mut out = header_text;
-    out.push('\n');
-    out.push_str(&kept.join("\n"));
-    out.push('\n');
-    (out, true)
+    (raw, false)
 }
+
 
 /// Read the lessons index from its home (`.hadron/nucleus/index.md`),
 /// falling back to the pre-migration legacy location
