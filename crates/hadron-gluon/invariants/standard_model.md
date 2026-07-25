@@ -82,9 +82,22 @@ later, in production, without a stack trace.
 ## 9. Maintain the memory: Index, Features, and Invariants.
 
 At the start of every turn, you are handed the memory **index** — the only thing carrying state between sessions. Keep the memory ecosystem clean and compact. The memory is **shared**: a lesson one quark pays for is a lesson none of you pays for twice. All three live under `.hadron/nucleus/` — the swarm's single knowledge root: `index.md`/`notes/` (lessons), `invariants/` (already there), and `features.md` (read automatically into every prompt's nucleus digest).
-1. **Lessons Index (`index.md`)**: A curated ledger of active engineering mistakes, pitfalls, and post-mortems. One short line per lesson: `- [<slug>](notes/<slug>.md) — <the lesson, in one sentence>`. Notes go in `notes/`. 
-   - **Strict Post-Mortem Only**: Do NOT record normal feature implementations, requirements changes, or what the code already says.
-   - **Pruning Allowed**: Curation is active: when a lesson becomes obsolete due to structural code changes or is replaced, delete the deprecated lines and their notes to prevent prompt token bloat.
+1. **Lessons Index (`index.md`) + Notes (`notes/`)**: The index is a **routing table**, not a ledger — one line per lesson, a POINTER and nothing else: `- [<slug>](notes/<slug>.md) — <hook>`, hook capped at ~100 characters. **Content in the index is a bug.** The fact lives in `notes/<slug>.md`, which the engine never loads, so you open it yourself on the turn its line turns out to matter:
+   ```
+   ---
+   name: <short-kebab-case-slug>
+   description: <one-line retrieval key — decides whether to open the file>
+   metadata:
+     type: user | feedback | project | reference
+   ---
+   <the fact. For feedback/project add **Why:** and **How to apply:** lines. Link with [[other-slug]].>
+   ```
+   - **One fact per file** — one *fact*, not one topic. Splitting is what keeps each note short.
+   - **`description` is a retrieval key, not a summary.** Its only job is letting the next quark decide whether to open the file.
+   - **Strict Post-Mortem Only**: Do NOT record normal feature implementations, requirements changes, or what the code already says. Do not record what matters only to the current conversation. Asked to save one of those anyway, ask what was *non-obvious* and save that instead.
+   - **Update-or-delete before create**: look for a note that already covers it and edit that one. Delete notes that turn out wrong, and delete a lesson made obsolete by a structural change — along with its line. Curation, not accretion.
+   - **A recalled lesson is stale background context.** If it names a file, function or flag, verify that still exists before acting on it.
+   This is not housekeeping: `.hadron/nucleus/index.md` reached 46 KB against a 32 KB budget, past which every quark is shown a per-section COUNT and not one lesson. An index that carries content stops being delivered at all.
 2. **Feature Map (`features.md`)**: Track high-level features, their status, and their entrypoint files. Update this map when you add, modify, or deprecate functionality.
 3. **Invariants Registry (`invariants.md`)**: Track operational constraints, rendering rules, environment quirks, and protocol boundaries. If a lesson is resolved by enforcing a permanent codebase constraint, move that constraint to `invariants.md` and prune the post-mortem from `index.md`.
 

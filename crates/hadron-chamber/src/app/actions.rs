@@ -626,10 +626,29 @@ impl Chamber {
                         eprintln!("chamber: failed to write laws.md: {e}");
                     }
                 } else {
+                    // Two writes, in this order: the note holds the fact, the index
+                    // holds a pointer to it and nothing else. An index line whose
+                    // note does not exist is the worse failure of the two, so the
+                    // note is written first and a failure there skips the pointer.
                     let slug = crate::text::slugify(text);
-                    if let Err(e) =
-                        append_line(&nucleus.join("index.md"), &crate::text::learn_line(text, &slug))
-                    {
+                    let hook = crate::text::hook(text);
+                    let note = crate::text::note_body(
+                        &slug,
+                        &hook,
+                        // `/learn` is the human typing a fact directly — what the
+                        // old `[pinned]` marker meant, now carried by the type.
+                        crate::text::MemoryType::User,
+                        text,
+                    );
+                    let notes = nucleus.join("notes");
+                    let wrote_note = std::fs::create_dir_all(&notes)
+                        .and_then(|()| std::fs::write(notes.join(format!("{slug}.md")), note));
+                    if let Err(e) = wrote_note {
+                        eprintln!("chamber: failed to write the note for `{slug}`: {e}");
+                    } else if let Err(e) = append_line(
+                        &nucleus.join("index.md"),
+                        &crate::text::learn_line(&slug, &hook),
+                    ) {
                         eprintln!("chamber: failed to write index.md: {e}");
                     }
                 }
