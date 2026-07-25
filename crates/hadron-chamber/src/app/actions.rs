@@ -167,6 +167,25 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, crate::text::help_body(), cx);
                 true
             }
+            // Renders the nucleus file verbatim rather than a table built here.
+            // The definitions have one home; a copy in `text.rs` would be a second
+            // source that drifts the first time someone edits only one of them.
+            "vocabulary" => {
+                let path = self
+                    .path
+                    .parent()
+                    .unwrap_or(std::path::Path::new(".hadron"))
+                    .join("nucleus")
+                    .join("vocabulary.md");
+                let body = match std::fs::read_to_string(&path) {
+                    Ok(text) => text,
+                    // Say which file is missing. "no vocabulary" with no path is
+                    // indistinguishable from a broken command.
+                    Err(e) => format!("No vocabulary at `{}` — {e}", path.display()),
+                };
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
             "skills" => {
                 let corpus = self.skill_corpus();
                 let mut body = format!("**Skills** — {} loaded\n\n", corpus.len());

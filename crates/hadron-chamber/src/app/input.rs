@@ -406,6 +406,7 @@ mod tests {
         const HANDLED: &[&str] = &[
             "help",
             "skills",
+            "vocabulary",
             "exit",
             "quit",
             "toggle-roster",
