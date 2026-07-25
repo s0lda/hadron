@@ -91,26 +91,26 @@ pub(super) fn frame_corner_radii(window: &Window) -> (Pixels, Pixels) {
 /// so a press here can't start a window move.
 /// The app menu behind the 3-line icon.
 ///
-/// Every item here does something real. "Open Folder / Recent Projects" is
-/// deliberately absent: the daemon is bound to one workspace at boot, so the chamber
-/// alone cannot repoint the swarm at another one — an item that opened a folder the
-/// quarks could not see would be a lie with a file dialog attached.
+/// Every item here does something real. "Open Workspace" is deliberately absent: the
+/// daemon is bound to one workspace at boot, so the chamber alone cannot repoint the
+/// swarm at another one — an item that opened a folder the quarks could not see would
+/// be a lie with a file dialog attached. Its design is its own task.
+///
+/// "New Session" and "Rename" are wrappers, not new behaviour: they drive the existing
+/// `/clear` and `/rename` rows of [`crate::text::COMMANDS`], because that table is the
+/// one place a command may be defined.
 pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
     let view = chamber.clone();
     Button::new("app-menu")
         .ghost()
         .icon(Icon::new(IconName::Menu).small())
         .dropdown_menu(move |menu, _, _| {
-            let settings = view.clone();
             let folder = view.clone();
+            let new_session = view.clone();
+            let rename = view.clone();
+            let settings = view.clone();
             let about = view.clone();
             menu.item(
-                PopupMenuItem::new("Settings…").on_click(move |_, window, cx| {
-                    settings.update(cx, |this, cx| this.open_settings(window, cx));
-                }),
-            )
-            .separator()
-            .item(
                 PopupMenuItem::new("Reveal Workspace in File Manager").on_click(
                     move |_, _, cx| {
                         folder.update(cx, |this, cx| {
@@ -123,6 +123,29 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
                 ),
             )
             .separator()
+            .item(
+                PopupMenuItem::new("New Session").on_click(move |_, window, cx| {
+                    new_session.update(cx, |this, cx| {
+                        this.handle_chat_command("clear", "", window, cx);
+                    });
+                }),
+            )
+            .item(
+                // `/rename` needs a name, and the chamber has no single-line modal to
+                // ask for one. Prefilling the chat input is strictly less code than a
+                // new modal and leaves the human in the surface they already type in.
+                PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
+                    rename.update(cx, |this, cx| {
+                        this.prefill_chat_input("/rename ", window, cx);
+                    });
+                }),
+            )
+            .separator()
+            .item(
+                PopupMenuItem::new("Settings…").on_click(move |_, window, cx| {
+                    settings.update(cx, |this, cx| this.open_settings(window, cx));
+                }),
+            )
             .item(
                 PopupMenuItem::new("About Hadron").on_click(move |_, _, cx| {
                     about.update(cx, |this, cx| {
