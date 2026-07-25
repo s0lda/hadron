@@ -114,9 +114,66 @@ pub const STANDARD_MODEL: &str = include_str!("../invariants/standard_model.md")
 /// digest. This is the reader Standard Model rule 9 promises — a missing
 /// file is the normal first-run case (a fresh project has no feature map
 /// yet), not an error.
+///
+/// It reads the file as an **index**, not whole: see [`features_index`].
 pub fn build_nucleus_digest(workspace_root: &Path) -> String {
     let path = workspace_root.join(".hadron").join("nucleus").join("features.md");
-    std::fs::read_to_string(path).unwrap_or_default()
+    features_index(&std::fs::read_to_string(path).unwrap_or_default())
+}
+
+/// The feature map, reduced to what is worth sending on **every** turn.
+///
+/// `features.md` was force-loaded whole into every prompt of every quark, and it
+/// is a document that grows: our own is ~3,000 words of per-component prose, all
+/// of it re-read by every seat on every turn whether the turn touches a feature
+/// or not. The same argument that keeps the lessons index one line per lesson
+/// applies here — an index is force-loaded, a body is opened on demand.
+///
+/// What survives: the map **table** (name, description, status, entrypoint files —
+/// the routing information, which is the point) and one line per `###` component
+/// carrying its `Status`. What is dropped: the `Logic` prose under each component.
+/// Rule 9's text tells a quark to open the file before touching a feature, which
+/// is where that prose is paid for.
+pub fn features_index(features_md: &str) -> String {
+    let mut out = String::new();
+    // A `###` section's name is emitted immediately; its `- **Status**:` line
+    // arrives a line or two later, so the section stays "open" until the next
+    // heading and the status is appended to the line already written.
+    let mut open_section = false;
+    for line in features_md.lines() {
+        let trimmed = line.trim();
+        if let Some(name) = trimmed.strip_prefix("### ") {
+            out.push_str(&format!("- {name}"));
+            open_section = true;
+        } else if trimmed.starts_with('#') {
+            if open_section {
+                out.push('\n');
+                open_section = false;
+            }
+            out.push_str(trimmed);
+            out.push('\n');
+        } else if trimmed.starts_with('|') {
+            if open_section {
+                out.push('\n');
+                open_section = false;
+            }
+            out.push_str(trimmed);
+            out.push('\n');
+        } else if open_section {
+            if let Some(status) = trimmed
+                .strip_prefix("- **Status**:")
+                .or_else(|| trimmed.strip_prefix("**Status**:"))
+            {
+                out.push_str(&format!(" — {}", status.trim()));
+                out.push('\n');
+                open_section = false;
+            }
+        }
+    }
+    if open_section {
+        out.push('\n');
+    }
+    out
 }
 
 /// One-time, idempotent migration of the legacy `.hadron/memory/` lessons
@@ -157,6 +214,44 @@ mod nucleus_tests {
         std::fs::write(nucleus.join("features.md"), "## Widget\nstatus: shipped\n").unwrap();
         let digest = build_nucleus_digest(dir.path());
         assert!(digest.contains("Widget"));
+    }
+
+    /// The map table is the routing information — name, status and the entrypoint
+    /// files a quark needs to find the feature at all — so it survives whole. The
+    /// per-component `Logic` prose is the bulk, and it is dropped: rule 9 tells a
+    /// quark to open `features.md` before touching a feature, which is where the
+    /// detail gets paid for, on the turns that actually need it.
+    #[test]
+    fn the_features_index_keeps_the_map_and_drops_the_prose() {
+        let md = "\
+# Hadron Workspace Feature Map
+
+| Feature | Status | Entrypoint |
+|---|---|---|
+| **Chamber GUI** | Active | `app/mod.rs` |
+
+## Component Logic & Details
+
+### PTY Terminal
+- **Status**: Live
+- **Files**: `pty.rs`
+- **Logic**: a long paragraph nobody needs on a turn that does not touch the PTY.
+";
+        let index = features_index(md);
+        assert!(index.contains("| **Chamber GUI** | Active | `app/mod.rs` |"), "{index}");
+        assert!(index.contains("- PTY Terminal — Live"), "{index}");
+        assert!(!index.contains("a long paragraph"), "{index}");
+        // The property that matters is not "smaller" but "does not grow with the
+        // prose" — that is what makes it safe to force-load forever.
+        let with_more_prose = format!("{md}- **Logic**: {}\n", "more detail. ".repeat(500));
+        assert_eq!(features_index(&with_more_prose), index);
+    }
+
+    /// A section with no `Status` line still gets its name — a feature that exists
+    /// but is undocumented must not vanish from the map entirely.
+    #[test]
+    fn a_section_without_a_status_still_appears() {
+        assert_eq!(features_index("### Orphan\n- **Files**: x.rs\n"), "- Orphan\n");
     }
 
     #[test]
