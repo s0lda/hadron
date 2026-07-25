@@ -133,10 +133,16 @@ pub fn split_target(args: &str) -> (Option<&str>, &str) {
     let Some(rest) = args.strip_prefix('@') else {
         return (None, args);
     };
+    // `find` returns a char boundary by construction, so `split_at` cannot land
+    // mid-character — the crash class this file is otherwise full of.
     let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
     let (target, task) = rest.split_at(end);
     if target.is_empty() {
-        (None, args)
+        // A bare `@` with nothing attached is not a target. Return the text AFTER
+        // it, not the original argument: returning `args` leaked the stray `@`
+        // into the task, so `/brainstorm @ fix the router` posted "… Let's
+        // brainstorm: @ fix the router".
+        (None, task.trim())
     } else {
         (Some(target), task.trim())
     }
@@ -508,6 +514,20 @@ mod tests {
         assert_eq!(c.candidates.len(), 50);
         let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels[0].starts_with(":rofl"), "first emoji should be rofl: {:?}", labels[0]);
+    }
+
+    /// Found in review of `c3b978d`: a multi-byte char after `@` must not panic,
+    /// and a bare `@ ` must not leak into the task text.
+    #[test]
+    fn split_target_handles_the_awkward_at_signs() {
+        assert_eq!(split_target("@Sonnet the menu"), (Some("Sonnet"), "the menu"));
+        assert_eq!(split_target("no target here"), (None, "no target here"));
+        // Multi-byte first char: `find` returns a char boundary, so no panic.
+        assert_eq!(split_target("@😀name task"), (Some("😀name"), "task"));
+        // A bare `@` followed by space is not a target, and does not survive.
+        assert_eq!(split_target("@ fix the router"), (None, "fix the router"));
+        // A lone `@` has no text after it at all.
+        assert_eq!(split_target("@"), (None, ""));
     }
 
     /// `/help` is posted by `Actor::Gluon`, which reaches a seat ONLY through an
