@@ -47,7 +47,9 @@ impl Engine {
         // spin the loop. The safety-poll keeps the daemon live regardless.
         let mut change_open = true;
         loop {
-            self.run_until_quiesce().await?;
+            if let Err(e) = self.run_until_quiesce().await {
+                eprintln!("gluon: excite error in daemon (continuing): {e:#}");
+            }
             tokio::select! {
                 _ = shutdown.changed() => {
                     if *shutdown.borrow() {
