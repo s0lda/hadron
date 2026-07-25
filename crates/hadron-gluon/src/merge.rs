@@ -234,10 +234,34 @@ pub fn sync(wt: &Worktree, base: &str) -> Synced {
     Synced::Rebased
 }
 
+/// Discard local uncommitted changes to `Cargo.lock` in `repo_root` ONLY if
+/// `Cargo.lock` is the only modified file. `Cargo.lock` is derived from workspace
+/// `Cargo.toml`s and local rust-analyzer/cargo execution frequently mutates it in the
+/// target checkout, blocking fast-forward merges.
+pub fn discard_local_lockfile_drift(repo_root: &Path) {
+    if let Ok(Some(status)) = git_ok(repo_root, &["status", "--porcelain"]) {
+        let lines: Vec<&str> = status
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty() && !l.ends_with(".hadron") && !l.contains(".hadron/"))
+            .collect();
+        if lines.len() == 1 {
+            let path_part = lines[0].split_whitespace().last().unwrap_or("");
+            if path_part == "Cargo.lock" {
+                if git(repo_root, &["checkout", "HEAD", "--", "Cargo.lock"]).is_err() {
+                    let _ = std::fs::remove_file(repo_root.join("Cargo.lock"));
+                }
+            }
+        }
+    }
+}
+
 fn ff_only(repo_root: &Path, branch: &str) -> anyhow::Result<()> {
+    discard_local_lockfile_drift(repo_root);
     git(repo_root, &["merge", "--ff-only", branch])?;
     Ok(())
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -519,6 +543,45 @@ mod tests {
         std::fs::write(dir.path().join("Cargo.toml"), "[workspace]").unwrap();
         std::fs::write(dir.path().join("package.json"), "{}").unwrap();
         assert_eq!(detect_runner(dir.path()), ("cargo", &["test", "--workspace"][..]));
+    }
+
+    #[test]
+    fn land_discards_a_locally_regenerated_cargo_lock_before_merging() {
+        let repo = git_repo();
+        std::fs::write(repo.path().join("Cargo.lock"), "lock v1\n").unwrap();
+        git(repo.path(), &["add", "-A"]).unwrap();
+        git(repo.path(), &["commit", "-q", "-m", "init Cargo.lock"]).unwrap();
+
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+        std::fs::write(wt.path.join("Cargo.lock"), "lock v2 by opus\n").unwrap();
+        worktree::commit_turn(&wt, "opus: update Cargo.lock").unwrap().unwrap();
+
+        // Local drift in repo_root (only Cargo.lock is dirty)
+        std::fs::write(repo.path().join("Cargo.lock"), "lock v1 mutated locally\n").unwrap();
+
+        assert_eq!(land(repo.path(), &wt, "main").unwrap(), Landed::FastForward);
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("Cargo.lock")).unwrap(),
+            "lock v2 by opus\n"
+        );
+    }
+
+    #[test]
+    fn land_still_refuses_when_a_real_file_is_dirty_in_repo_root() {
+        let repo = git_repo();
+        std::fs::write(repo.path().join("Cargo.lock"), "lock v1\n").unwrap();
+        std::fs::write(repo.path().join("real.txt"), "real v1\n").unwrap();
+        git(repo.path(), &["add", "-A"]).unwrap();
+        git(repo.path(), &["commit", "-q", "-m", "init repo"]).unwrap();
+
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+        std::fs::write(wt.path.join("real.txt"), "real v2 by opus\n").unwrap();
+        worktree::commit_turn(&wt, "opus: work on real.txt").unwrap().unwrap();
+
+        // Dirty real file in repo_root
+        std::fs::write(repo.path().join("real.txt"), "real v1 dirty\n").unwrap();
+
+        assert!(land(repo.path(), &wt, "main").is_err());
     }
 }
 
