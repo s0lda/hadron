@@ -7,6 +7,22 @@ use crate::field::read_events;
 
 use super::*;
 
+/// Does this text read like a turn that had to debug something?
+///
+/// The three markers are the vocabulary the nucleus lesson
+/// `grepping-a-test-run-throws-away-the-only-diagnostic` already names: a panic line, a
+/// failed test, or a rustc error code. Deliberately a dumb substring check — deciding
+/// whether a lesson was *learned* is a model judgment, not something the engine can
+/// observe, so this only spots the evidence and leaves the judgment to whoever reads it.
+pub(super) fn looks_like_a_debugging_turn(text: &str) -> bool {
+    text.contains("panicked") || text.contains("FAILED") || text.contains("error[E")
+}
+
+/// How far back the nudge looks for that evidence. The field is one long log, so this is
+/// an approximation of "this turn" — generous enough to catch a debugging pass, short
+/// enough that yesterday's red suite does not nag forever.
+const NUDGE_LOOKBACK: usize = 20;
+
 impl super::Engine {
     /// The merge gate, fired when an assignment completes. Returns `true` if it parked
     /// the quark (Waiting on a human, or Blocked on red tests), in which case the
@@ -152,6 +168,32 @@ impl super::Engine {
                         .with_severity(hadron_lattice::Severity::Info),
                 )
                 .await?;
+
+                // A turn that visibly debugged something is the turn most likely to have
+                // learned something, and the moment it lands is the last moment anyone is
+                // still holding the context. So: a reminder, never a gate — blocking here
+                // is the shape that produced `a-failed-merge-land-hot-loops-via-the-audit-grant`.
+                // `Actor::Gluon` + `to: None` + no line starting with `@` is the one way to
+                // print without waking a seat (see the "Printing Without Waking the Swarm"
+                // invariant); an `@orchestrator` here would silently bill a turn per land.
+                if events
+                    .iter()
+                    .rev()
+                    .take(NUDGE_LOOKBACK)
+                    .any(|e| matches!(&e.kind, Kind::Message { body } if looks_like_a_debugging_turn(body)))
+                {
+                    self.append(Event::new(
+                        Actor::Gluon,
+                        None,
+                        Kind::Message {
+                            body: "This turn's transcript shows a debugging pass. If it taught \
+                                   something the swarm should not pay for twice, `/learn <lesson>` \
+                                   writes it to the nucleus without spending a turn."
+                                .to_string(),
+                        },
+                    ))
+                    .await?;
+                }
 
                 // Ride cleanup on every successful land, not just daemon startup — a
                 // long-running daemon otherwise accumulates one `quark/*` branch per
