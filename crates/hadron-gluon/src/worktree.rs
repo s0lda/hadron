@@ -375,8 +375,12 @@ const LOCK_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(2
 /// up to [`LOCK_ATTEMPTS`] × [`LOCK_RETRY_PAUSE`]. `Ok(None)` means a build really
 /// does hold it and the caller must not touch the directory.
 ///
-/// Each attempt re-opens the path so it gets its own open file description —
-/// otherwise `try_lock` would be asking about a lock this process already owns.
+/// Each attempt **re-opens** the path so it gets its own open file description.
+/// That is load-bearing, not tidiness: hoisting the `open` out of the loop and
+/// retrying `try_lock` on the same `File` fails 3 runs in 24 — and it fails
+/// `a_briefly_held_lock_is_waited_out_rather_than_skipping_the_sweep`, i.e. a
+/// description whose first `try_lock` failed does not reliably observe another
+/// holder releasing the lock. Re-opening per attempt: 0 in 24.
 fn hold_target_lock(lock_path: &Path) -> anyhow::Result<Option<std::fs::File>> {
     for attempt in 0..LOCK_ATTEMPTS {
         let file = std::fs::OpenOptions::new()
