@@ -1,6 +1,26 @@
 use super::*;
 
 impl super::Chamber {
+    /// Put `text` in the chat box, park the cursor at its end and focus it.
+    ///
+    /// The titlebar's "Rename" uses this: `/rename` takes a name, and rather than grow
+    /// a modal to ask for one, the menu hands the human a half-typed command in the
+    /// surface they already type in.
+    pub(super) fn prefill_chat_input(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let end = text.len();
+        self.input.update(cx, |state, cx| {
+            state.set_value(text, window, cx);
+            state.set_selected_range(end..end, cx);
+        });
+        window.focus(&self.input.focus_handle(cx), cx);
+        cx.notify();
+    }
+
     /// Submit the human's message on Enter (Shift+Enter inserts a newline).
     /// Appends an `Actor::Human` event to the field — the same bus the quarks
     /// use — then re-reads and re-projects so the new row appears immediately.
@@ -285,6 +305,19 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The titlebar menu's "New Session" and "Rename" are wrappers over `/clear` and
+    /// `/rename`. Nothing in the type system ties the menu to the table, so renaming
+    /// either row would leave a menu item that silently does nothing — this is the
+    /// guard for that.
+    #[test]
+    fn the_titlebar_menu_wraps_commands_that_exist() {
+        assert!(crate::text::command("clear").is_some(), "New Session drives /clear");
+        let rename = crate::text::command("rename").expect("Rename drives /rename");
+        // "Rename" prefills `/rename ` rather than running it, because the command
+        // takes an argument. If that ever stops being true, the prefill is wrong.
+        assert_eq!(rename.arity, crate::text::Arity::Line);
+    }
 
     #[test]
     fn test_split_leading_commands_exit() {
