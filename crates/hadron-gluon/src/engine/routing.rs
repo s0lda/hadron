@@ -57,8 +57,8 @@ impl super::Engine {
     /// An empty result means no one can field it (e.g. no orchestrator on the
     /// roster and no valid mention).
     pub(super) fn human_addressees(&self, body: &str) -> Vec<QuarkId> {
-        let personas = self.loaded_personas();
-        let mut addressees = human_mentions(body, &self.roster, &personas);
+        let preons = self.loaded_preons();
+        let mut addressees = human_mentions(body, &self.roster, &preons);
         if addressees.is_empty() {
             if let Some(orch) = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator) {
                 addressees.push(orch.id.clone());
@@ -106,7 +106,7 @@ impl super::Engine {
     pub(super) fn unaddressed_message_targets(&self, events: &[Event]) -> Vec<(QuarkId, String)> {
         let mut out: Vec<(QuarkId, String)> = Vec::new();
         let mut seen: HashSet<QuarkId> = HashSet::new();
-        let personas = self.loaded_personas();
+        let preons = self.loaded_preons();
         for idx in (0..events.len()).rev() {
             if seen.len() >= self.roster.len() {
                 break; // every seat already has its most-recent status; older msgs add none
@@ -120,10 +120,10 @@ impl super::Engine {
             let addressees = match &e.from {
                 Actor::Human => self.human_addressees(body),
                 Actor::Quark(sender) => {
-                    parse_all_addressees(body, &self.roster, Some(sender), &personas)
+                    parse_all_addressees(body, &self.roster, Some(sender), &preons)
                 }
                 Actor::Gluon => {
-                    parse_all_addressees(body, &self.roster, None, &personas)
+                    parse_all_addressees(body, &self.roster, None, &preons)
                 }
             };
             for addressee in addressees {
@@ -216,8 +216,8 @@ impl super::Engine {
         let task_text = fallback_task
             .map(|s| s.to_string())
             .or_else(|| self.driver_for(events, target, None).map(|d| d.task));
-        let personas = self.loaded_personas();
-        task_text.as_deref().is_some_and(|t| crate::router::task_names_card_specifically(t, card, &personas))
+        let preons = self.loaded_preons();
+        task_text.as_deref().is_some_and(|t| crate::router::task_names_card_specifically(t, card, &preons))
     }
 
     /// The event that drives this turn — the *assignment*. Its `Ulid` names the
@@ -240,7 +240,7 @@ impl super::Engine {
         //    routing): the task is that message itself — there is no `to == target`
         //    event to recover it from.
         if let Some(task) = fallback_task {
-            let personas = self.loaded_personas();
+            let preons = self.loaded_preons();
             let ev = events.iter().rev().find(|e| {
                 let Kind::Message { body } = &e.kind else { return false; };
                 if e.to.is_some() {
@@ -251,10 +251,10 @@ impl super::Engine {
                         self.human_addressees(body).contains(target)
                     }
                     Actor::Quark(sender) => {
-                        parse_all_addressees(body, &self.roster, Some(sender), &personas).contains(target)
+                        parse_all_addressees(body, &self.roster, Some(sender), &preons).contains(target)
                     }
                     Actor::Gluon => {
-                        parse_all_addressees(body, &self.roster, None, &personas).contains(target)
+                        parse_all_addressees(body, &self.roster, None, &preons).contains(target)
                     }
                 }
             })?;
@@ -335,12 +335,12 @@ impl super::Engine {
         // reusing `task_names_card_specifically`, the exact predicate the exclusive-seat
         // filter already relies on to exclude `@team`, rather than writing a second
         // matcher that could drift from it.
-        let personas = self.loaded_personas();
+        let preons = self.loaded_preons();
         let named_specifically = self
             .roster
             .iter()
             .find(|c| &c.id == target)
-            .is_some_and(|card| crate::router::task_names_card_specifically(&task_desc, card, &personas));
+            .is_some_and(|card| crate::router::task_names_card_specifically(&task_desc, card, &preons));
 
         // Resolved against the daemon's cwd: a *relative* field path (`.hadron/field.jsonl`,
         // exactly how the daemon is launched) used to bottom out on the empty ancestor —

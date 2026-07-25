@@ -2,7 +2,7 @@ pub mod adapter;
 pub mod engine;
 pub mod field;
 pub mod mock;
-pub mod personas;
+pub mod preons;
 pub mod quark;
 pub mod reseat;
 pub mod router;

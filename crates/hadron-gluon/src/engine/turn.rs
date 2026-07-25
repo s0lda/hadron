@@ -77,8 +77,8 @@ impl super::Engine {
         let turn = ulid::Ulid::new();
         // Loaded once for the whole turn-completion, not once per `parse_addressee`
         // call below — both calls resolve mentions in the SAME reply/turn, so one
-        // fresh read of the personas corpus covers both.
-        let personas = self.loaded_personas();
+        // fresh read of the preons corpus covers both.
+        let preons = self.loaded_preons();
         // Kept before the reply is moved into the field: the commit message names the
         // quark, its first line, and the assignment — greppable back to the event.
         let headline = outcome
@@ -95,7 +95,7 @@ impl super::Engine {
         let addressee = outcome
             .message
             .as_deref()
-            .and_then(|body| parse_addressee(body, &self.roster, Some(target), &personas));
+            .and_then(|body| parse_addressee(body, &self.roster, Some(target), &preons));
 
         // THE ONE TOTALLER. No adapter computes this; they report components and
         // `TokenSpend::fresh` sums the comparable ones (input + output, cache
@@ -164,7 +164,7 @@ impl super::Engine {
             // truncated report can hide the one line the human needed (a reported-but-
             // unread critical issue is worse than a long one). The addressee is parsed
             // from the reply as written, so what routes is exactly what the field carries.
-            let addressees = parse_all_addressees(&body, &self.roster, Some(target), &personas);
+            let addressees = parse_all_addressees(&body, &self.roster, Some(target), &preons);
             let to = if addressees.len() == 1 {
                 Some(addressees[0].clone())
             } else {

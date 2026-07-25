@@ -428,9 +428,9 @@ async fn main() {
         // `~/.hadron/skills` would silently never load in production.
         .with_global_skills_dir(hadron_lattice::user_hadron_dir().map(|d| d.join("skills")))
         // Same seam, same reason: without this the real daemon would never look in
-        // `~/.hadron/agents`, so `@persona-name` mentions could only ever resolve
+        // `~/.hadron/preons`, so `@preon-name` mentions could only ever resolve
         // via the repo half.
-        .with_global_agents_dir(hadron_lattice::user_hadron_dir().map(|d| d.join("agents")));
+        .with_global_preons_dir(hadron_lattice::user_hadron_dir().map(|d| d.join("preons")));
 
     // Security: We open the energy ledger database `ledger.db` under the parent directory
     // of `field_path` (which resides inside the repo's `.hadron/` directory in typical usage).
