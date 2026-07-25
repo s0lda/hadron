@@ -16,3 +16,5 @@ pub mod daemon;
 pub mod worktree;
 pub mod merge;
 pub mod statusline;
+pub mod nucleus_status;
+
