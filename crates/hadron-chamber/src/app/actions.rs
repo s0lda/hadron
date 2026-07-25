@@ -188,24 +188,19 @@ impl Chamber {
             }
             "skills" => {
                 let corpus = self.skill_corpus();
-                let mut body = format!("**Skills** — {} loaded\n\n", corpus.len());
-                for s in &corpus {
-                    body.push_str(&format!(
-                        "- **{}** — {}\n  triggers: {}\n",
-                        s.id,
-                        s.description.as_deref().unwrap_or("(no description)"),
-                        s.triggers
-                            .iter()
-                            .map(|t| format!("`{t}`"))
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                    ));
-                }
-                body.push_str(
-                    "\nThe engine picks the skill from your task text — any trigger \
-                     above, matched case-insensitively, selects that procedure.\n",
-                );
-                self.post_chat_message(Actor::Gluon, body, cx);
+                let rows: Vec<(&str, Option<&str>, Option<&str>)> = corpus
+                    .iter()
+                    .map(|s| {
+                        (
+                            s.id.as_str(),
+                            s.description.as_deref(),
+                            // The canonical trigger is the first one, and that
+                            // rule lives in the engine — not restated here.
+                            s.triggers.first().map(String::as_str),
+                        )
+                    })
+                    .collect();
+                self.post_chat_message(Actor::Gluon, crate::text::skills_body(&rows), cx);
                 true
             }
             // Park an expensive seat without unseating it: the seat, its config and its
