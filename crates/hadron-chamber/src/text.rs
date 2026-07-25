@@ -317,19 +317,45 @@ pub fn split_target(args: &str) -> (Option<&str>, &str) {
     }
 }
 
-/// The chat message a skill command posts.
+/// The chat message a skill command posts, or `None` when the human gave it no
+/// task of their own.
 ///
 /// `trigger` is the skill's own canonical trigger phrase, taken from
 /// `hadron_gluon::skills` rather than retyped here: the engine selects a skill by
 /// matching that phrase against the task text (`skills::select` is a pure function
 /// of the text), so a copy in the chamber would silently stop selecting the skill
 /// the day someone edited the trigger list.
-pub fn skill_command_body(trigger: &str, target: &str, task: &str) -> String {
+///
+/// **`None` is the whole point of the signature.** This message is posted as
+/// `Actor::Human` — it has to be, because that is the only actor whose `@mentions`
+/// wake a seat — so every word in it is attributed to the human on screen and is
+/// what the dispatched quark reads as its task. With an empty `task` the old
+/// version composed `"@team Let's brainstorm."`, a sentence the human never wrote:
+/// it hid the `/team-brainstorm` they typed, showed them prose under their own
+/// name, and — because `unaddressed_message_targets` hands each seat its most
+/// recent unserved mention — was the entire task three workers were dispatched on
+/// while the human's real question, typed next and mentioning nobody, reached only
+/// the orchestrator. Returning `None` makes "a skill message carrying no human
+/// words" a state the caller cannot post.
+pub fn skill_command_body(trigger: &str, target: &str, task: &str) -> Option<String> {
+    let task = task.trim();
     if task.is_empty() {
-        format!("@{target} Let's {trigger}.")
-    } else {
-        format!("@{target} Let's {trigger}: {task}")
+        return None;
     }
+    Some(format!("@{target} Let's {trigger}: {task}"))
+}
+
+/// What the chamber prints when a skill command was typed with no task.
+///
+/// Printed rather than swallowed to stderr: the command visibly does nothing
+/// otherwise, which is exactly how the empty `/team-brainstorm` went unnoticed.
+/// Carries no line beginning with `@`, so it reaches no seat (see the "Printing
+/// Without Waking the Swarm" invariant) — the point is that nobody was woken.
+pub fn skill_command_needs_a_task(cmd: &str) -> String {
+    format!(
+        "`/{cmd}` needs the task itself — try `/{cmd} <what you want looked at>`. \
+         Nothing was posted and no quark was woken."
+    )
 }
 
 /// Find the `@`/`:` completion trigger immediately before the cursor.
@@ -841,6 +867,37 @@ mod tests {
         assert_eq!(split_target("@ fix the router"), (None, "fix the router"));
         // A lone `@` has no text after it at all.
         assert_eq!(split_target("@"), (None, ""));
+    }
+
+    /// The message is posted as `Actor::Human`, so every word in it is attributed
+    /// to the human and is what the dispatched quark reads as its task. A skill
+    /// command with no task of its own therefore has no message to post at all —
+    /// the old version composed one ("@team Let's brainstorm."), which is how three
+    /// workers came to be dispatched on a sentence nobody typed.
+    #[test]
+    fn a_skill_command_with_no_task_composes_nothing() {
+        assert_eq!(skill_command_body("brainstorm", "team", ""), None);
+        assert_eq!(skill_command_body("brainstorm", "team", "   \n "), None);
+        assert_eq!(skill_command_body("write a plan", "Sonnet", ""), None);
+    }
+
+    /// With a task, the body carries the human's own words verbatim after the
+    /// trigger the engine matches on.
+    #[test]
+    fn a_skill_command_carries_the_humans_own_words() {
+        assert_eq!(
+            skill_command_body("brainstorm", "team", "  the session menu  ").as_deref(),
+            Some("@team Let's brainstorm: the session menu"),
+        );
+    }
+
+    /// The refusal notice prints from `Actor::Gluon`, so — like `/help` — no line
+    /// in it may begin with `@`, or declining to wake a seat would wake one.
+    #[test]
+    fn the_needs_a_task_notice_addresses_nobody() {
+        let body = skill_command_needs_a_task("team-brainstorm");
+        assert!(body.contains("team-brainstorm"));
+        assert!(!body.lines().any(|l| l.trim_start().starts_with('@')));
     }
 
     /// `/help` is posted by `Actor::Gluon`, which reaches a seat ONLY through an
