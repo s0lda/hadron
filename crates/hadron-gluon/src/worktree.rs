@@ -254,9 +254,9 @@ pub fn shared_build_env(cwd: &Path) -> Vec<(String, String)> {
 }
 
 /// How long a build artifact must sit unused before [`reap_build_artifacts`]
-/// reclaims it. Reclaims ~22G on this box today (measured 2026-07-25) — the
-/// conservative end: a quark returning to a branch it last built a few days ago
-/// still finds a warm cache.
+/// reclaims it. 7 days is the conservative end: it costs one cold rebuild for
+/// whoever's build cache the sweep actually clears — mostly the human's, per
+/// [`reap_build_artifacts`]'s doc — if they return to a branch untouched that long.
 pub const ARTIFACT_REAP_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
 
 /// What one artifact sweep reclaimed.
@@ -266,14 +266,24 @@ pub struct ArtifactReap {
     pub bytes_removed: u64,
 }
 
-/// Sweep stale entries out of `<repo_root>/target/debug/{deps,.fingerprint,
-/// incremental,build}` — the shared target dir every quark subprocess and the
-/// merge gate build into ([`shared_build_env`]). Nothing has ever swept it: cargo
-/// has no target-dir GC of its own (`-Zgc` is the `~/.cargo` *registry* cache, a
-/// different thing entirely), so with N quarks and every turn a fresh branch, the
-/// dir only grows. Measured on this box before this existed: **107G**, none of it
-/// older than 14 days, 53G untouched for >1 day, 22G for >7 days, 14,383 files in
-/// `deps/` alone.
+/// Sweep stale entries out of `<repo_root>/target/debug/{incremental,deps,
+/// .fingerprint,build}` (swept in that order — `incremental/` first, it is the
+/// single largest reclaimable slice). Nothing has ever swept this dir: cargo has
+/// no target-dir GC of its own (`-Zgc` is the `~/.cargo` *registry* cache, a
+/// different thing entirely), so it only grows. Measured on this box before this
+/// existed: **107G**, none of it older than 14 days, 22G untouched for >7 days.
+///
+/// **This is not primarily quark cleanup — it is ordinary build accumulation that
+/// nothing collects, and most of it is not the quarks' doing.** `incremental/` is
+/// 40G of the 107G and is **entirely human-origin**: [`shared_build_env`] sets
+/// `CARGO_INCREMENTAL=0` for every quark subprocess and the merge gate, so neither
+/// has ever written an incremental dir — only the human's own interactive builds
+/// have. Of the rest (`deps/`, `.fingerprint/`, `build/`), attribution by the
+/// object paths a `.d` file's dependencies name puts quark-worktree artifacts at
+/// roughly 4% of attributable bytes; the remainder is the main checkout's own
+/// accumulated builds. So the fix here is a general debug-artifact GC that cargo
+/// itself lacks, not a per-quark cleanup — worth knowing before re-diagnosing this
+/// as a quark-turn cost, which is the wrong story and cost real effort to correct.
 ///
 /// Keyed on **access time, not modification time**. A fingerprint or rlib that a
 /// build is still reusing has an old mtime (it was written once) but a fresh
@@ -322,7 +332,7 @@ pub fn reap_build_artifacts(repo_root: &Path, min_age: std::time::Duration) -> a
         .checked_sub(min_age)
         .context("min_age is larger than the current time")?;
     let mut reap = ArtifactReap::default();
-    for sub in ["deps", ".fingerprint", "incremental", "build"] {
+    for sub in ["incremental", "deps", ".fingerprint", "build"] {
         sweep_stale_entries(&debug_dir.join(sub), cutoff, &mut reap)?;
     }
     // `lock_file` drops here, releasing the advisory lock.
