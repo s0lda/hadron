@@ -218,18 +218,23 @@ pub fn gate_status_body(
     let mut out = String::from("**Merge gate status**\n\n");
     for n in active {
         let elapsed = (now - n.ts).to_std().unwrap_or_default();
-        let remaining = deadline.checked_sub(elapsed);
-        let status = match remaining {
-            Some(r) => format!("{}s left of {}s", r.as_secs(), deadline.as_secs()),
-            None => "past its deadline — should report red any moment".to_string(),
-        };
-        out.push_str(&format!(
-            "- `{}` (a previous assignment of `{}`) — running {}s, {}\n",
-            n.branch,
-            n.quark,
-            elapsed.as_secs(),
-            status
-        ));
+        if elapsed > deadline {
+            out.push_str(&format!(
+                "- `{}` (a previous assignment of `{}`) — no outcome recorded — the daemon probably restarted\n",
+                n.branch,
+                n.quark,
+            ));
+        } else {
+            let remaining = deadline - elapsed;
+            out.push_str(&format!(
+                "- `{}` (a previous assignment of `{}`) — running {}s, {}s left of {}s\n",
+                n.branch,
+                n.quark,
+                elapsed.as_secs(),
+                remaining.as_secs(),
+                deadline.as_secs(),
+            ));
+        }
     }
     out
 }
@@ -669,12 +674,18 @@ mod tests {
     }
 
     #[test]
-    fn a_gate_past_its_deadline_says_so_instead_of_underflowing() {
+    fn a_gate_past_its_deadline_is_reported_as_stale_no_outcome_recorded() {
         let now = chrono::Utc::now();
         let t0 = now - chrono::Duration::seconds(1000);
         let events = vec![gating_notice("quark/x/01K", "x", t0)];
         let body = gate_status_body(&events, now, std::time::Duration::from_secs(900));
-        assert!(body.contains("past its deadline"), "{body}");
+        assert!(
+            body.contains("no outcome recorded — the daemon probably restarted"),
+            "{body}"
+        );
+        assert!(!body.contains("running"), "{body}");
+        assert!(!body.contains("1000s"), "{body}");
+        assert!(!body.contains("past its deadline"), "{body}");
     }
 
     /// The invariant this command exists to respect: it prints as `Actor::Gluon`
