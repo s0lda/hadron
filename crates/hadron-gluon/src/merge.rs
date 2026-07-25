@@ -72,11 +72,15 @@ pub fn has_remote(repo_root: &Path) -> bool {
 
 /// Pick the test command from the worktree's own manifest. Checked in a fixed
 /// order because a repo can carry more than one manifest (a Rust workspace with
-/// a `package.json` for its docs site) — the language the gate actually tests is
-/// the one whose manifest names the build, and Cargo is Hadron's own, so it is
-/// the fallback when nothing else is recognised.
+/// a `package.json` for its docs site is the common case), and Cargo is checked
+/// FIRST: a `Cargo.toml` beside a `package.json` used to resolve to `npm test`,
+/// which would have run the wrong suite on Hadron's own repo the day anyone added
+/// a docs site. Cargo is also the fallback when no manifest is recognised at all —
+/// a wrong-but-loud `cargo` failure beats silently gating on nothing.
 pub fn detect_runner(worktree_path: &Path) -> (&'static str, &'static [&'static str]) {
-    if worktree_path.join("package.json").is_file() {
+    if worktree_path.join("Cargo.toml").is_file() {
+        ("cargo", &["test", "--workspace"])
+    } else if worktree_path.join("package.json").is_file() {
         ("npm", &["test"])
     } else if worktree_path.join("pyproject.toml").is_file()
         || worktree_path.join("setup.py").is_file()
@@ -353,6 +357,17 @@ mod tests {
     #[test]
     fn detect_runner_defaults_to_cargo_when_no_manifest_is_recognised() {
         let dir = tempfile::tempdir().unwrap();
+        assert_eq!(detect_runner(dir.path()), ("cargo", &["test", "--workspace"][..]));
+    }
+
+    /// The order matters, and it used to be wrong: `package.json` was checked before
+    /// `Cargo.toml`, so a Rust workspace that also carries a JS docs site would have
+    /// gated on `npm test` instead of its own suite.
+    #[test]
+    fn detect_runner_prefers_cargo_over_a_sibling_package_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[workspace]").unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
         assert_eq!(detect_runner(dir.path()), ("cargo", &["test", "--workspace"][..]));
     }
 }
