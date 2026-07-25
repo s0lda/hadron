@@ -253,6 +253,127 @@ pub fn shared_build_env(cwd: &Path) -> Vec<(String, String)> {
     env
 }
 
+/// How long a build artifact must sit unused before [`reap_build_artifacts`]
+/// reclaims it. Reclaims ~22G on this box today (measured 2026-07-25) — the
+/// conservative end: a quark returning to a branch it last built a few days ago
+/// still finds a warm cache.
+pub const ARTIFACT_REAP_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+
+/// What one artifact sweep reclaimed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ArtifactReap {
+    pub files_removed: u64,
+    pub bytes_removed: u64,
+}
+
+/// Sweep stale entries out of `<repo_root>/target/debug/{deps,.fingerprint,
+/// incremental,build}` — the shared target dir every quark subprocess and the
+/// merge gate build into ([`shared_build_env`]). Nothing has ever swept it: cargo
+/// has no target-dir GC of its own (`-Zgc` is the `~/.cargo` *registry* cache, a
+/// different thing entirely), so with N quarks and every turn a fresh branch, the
+/// dir only grows. Measured on this box before this existed: **107G**, none of it
+/// older than 14 days, 53G untouched for >1 day, 22G for >7 days, 14,383 files in
+/// `deps/` alone.
+///
+/// Keyed on **access time, not modification time**. A fingerprint or rlib that a
+/// build is still reusing has an old mtime (it was written once) but a fresh
+/// atime (cargo reads it on every build to decide whether to reuse it) — an
+/// mtime sweep would delete exactly the artifacts that are actively working.
+/// This assumes the filesystem updates atime at all (a `relatime` mount, verified
+/// on this box, does so at day granularity, which is the granularity this sweep
+/// needs); a `noatime` mount would make every entry look permanently stale, and
+/// this function does not defend against that.
+///
+/// **Safety here is structural, not measured**, unlike [`reap_idle_worktrees`]:
+/// a build artifact has no unique content, so the worst outcome of deleting a
+/// live one is a slower next build, not lost work. There is nothing to preserve,
+/// so this does not reuse `is_dirty`/`commits_ahead`-style guards.
+///
+/// Takes `target/debug/.cargo-lock` **non-blocking** before touching anything: if
+/// cargo already holds it, a build is in flight, and deleting artifacts out from
+/// under a live build could delete a file mid-link. Returns `Ok(None)` in that
+/// case — the whole sweep is skipped, not retried; the next daemon restart tries
+/// again. Returns `Ok(Some(ArtifactReap::default()))` when there is nothing to
+/// sweep (no `target/debug` yet, or nothing older than `min_age`).
+pub fn reap_build_artifacts(repo_root: &Path, min_age: std::time::Duration) -> anyhow::Result<Option<ArtifactReap>> {
+    let debug_dir = repo_root.join("target").join("debug");
+    if !debug_dir.is_dir() {
+        return Ok(Some(ArtifactReap::default()));
+    }
+
+    // Same lock file cargo itself takes around the target dir. A second `File::open`
+    // on it gets its own open file description, so `try_lock` here genuinely
+    // contends with a live cargo process rather than always succeeding.
+    let lock_path = debug_dir.join(".cargo-lock");
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| format!("opening {}", lock_path.display()))?;
+    match lock_file.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => {
+            return Err(e).with_context(|| format!("locking {}", lock_path.display()))
+        }
+    }
+
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(min_age)
+        .context("min_age is larger than the current time")?;
+    let mut reap = ArtifactReap::default();
+    for sub in ["deps", ".fingerprint", "incremental", "build"] {
+        sweep_stale_entries(&debug_dir.join(sub), cutoff, &mut reap)?;
+    }
+    // `lock_file` drops here, releasing the advisory lock.
+    Ok(Some(reap))
+}
+
+/// Remove every immediate child of `dir` whose own access time is older than
+/// `cutoff` — a file is removed directly, a directory (e.g. one
+/// `.fingerprint/<crate>-<hash>/` entry) is removed with everything inside it.
+/// A missing `dir` (one of the four categories simply does not exist yet) is not
+/// an error — there is nothing to sweep.
+fn sweep_stale_entries(dir: &Path, cutoff: std::time::SystemTime, reap: &mut ArtifactReap) -> anyhow::Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", dir.display())),
+    };
+    for entry in entries {
+        let entry = entry.with_context(|| format!("reading an entry of {}", dir.display()))?;
+        let path = entry.path();
+        let meta = entry.metadata().with_context(|| format!("stat-ing {}", path.display()))?;
+        let atime = meta.accessed().with_context(|| format!("reading atime of {}", path.display()))?;
+        if atime >= cutoff {
+            continue;
+        }
+        let bytes = dir_size(&path)?;
+        if meta.is_dir() {
+            std::fs::remove_dir_all(&path).with_context(|| format!("removing {}", path.display()))?;
+        } else {
+            std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+        }
+        reap.files_removed += 1;
+        reap.bytes_removed += bytes;
+    }
+    Ok(())
+}
+
+/// Total size in bytes of `path` — its own size if a file, or the recursive sum
+/// of everything under it if a directory.
+fn dir_size(path: &Path) -> anyhow::Result<u64> {
+    let meta = std::fs::symlink_metadata(path).with_context(|| format!("stat-ing {}", path.display()))?;
+    if !meta.is_dir() {
+        return Ok(meta.len());
+    }
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(path).with_context(|| format!("reading {}", path.display()))? {
+        total += dir_size(&entry?.path())?;
+    }
+    Ok(total)
+}
+
 /// Delete every `quark/*` branch already merged into `base`, and report the names.
 ///
 /// **`-d`, never `-D`.** Lowercase refuses a branch whose commits are not in `base`,
@@ -947,5 +1068,108 @@ pub(crate) mod tests {
         assert!(diff.contains("+one"));
         assert_eq!(changed_paths(&wt, "main").unwrap(), vec!["a.txt".to_string()]);
         assert_eq!(commits_ahead(&wt, "main").unwrap(), 1);
+    }
+
+    // ---- reap_build_artifacts ----
+
+    use std::fs::{File, FileTimes};
+    use std::time::{Duration, SystemTime};
+
+    /// Write `path` (creating parent dirs) with `contents`, then back-date its
+    /// access time by `age` — the only way to make a freshly-created test fixture
+    /// look like a stale build artifact.
+    fn write_aged(path: &Path, contents: &[u8], age: Duration) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+        let f = File::options().write(true).open(path).unwrap();
+        let when = SystemTime::now() - age;
+        f.set_times(FileTimes::new().set_accessed(when).set_modified(when)).unwrap();
+    }
+
+    #[test]
+    fn a_missing_target_dir_is_nothing_to_sweep() {
+        let repo = tempfile::tempdir().unwrap();
+        let reap = reap_build_artifacts(repo.path(), ARTIFACT_REAP_MIN_AGE).unwrap();
+        assert_eq!(reap, Some(ArtifactReap::default()));
+    }
+
+    #[test]
+    fn a_stale_file_is_removed_and_counted() {
+        let repo = tempfile::tempdir().unwrap();
+        let debug = repo.path().join("target").join("debug");
+        write_aged(&debug.join("deps").join("stale.rlib"), b"0123456789", Duration::from_secs(10 * 86400));
+
+        let reap = reap_build_artifacts(repo.path(), Duration::from_secs(7 * 86400)).unwrap().unwrap();
+        assert_eq!(reap, ArtifactReap { files_removed: 1, bytes_removed: 10 });
+        assert!(!debug.join("deps").join("stale.rlib").exists());
+    }
+
+    #[test]
+    fn a_fresh_file_is_spared() {
+        let repo = tempfile::tempdir().unwrap();
+        let debug = repo.path().join("target").join("debug");
+        // 1 day old, well inside the 7-day threshold — must survive.
+        write_aged(&debug.join("deps").join("fresh.rlib"), b"x", Duration::from_secs(86400));
+
+        let reap = reap_build_artifacts(repo.path(), Duration::from_secs(7 * 86400)).unwrap().unwrap();
+        assert_eq!(reap, ArtifactReap::default(), "a fresh entry must not be swept");
+        assert!(debug.join("deps").join("fresh.rlib").exists());
+    }
+
+    #[test]
+    fn a_stale_fingerprint_directory_is_removed_wholesale_and_its_bytes_summed() {
+        let repo = tempfile::tempdir().unwrap();
+        let debug = repo.path().join("target").join("debug");
+        let fp = debug.join(".fingerprint").join("hadron-gluon-abcd1234");
+        // Two files inside the directory; the directory's OWN atime is what decides,
+        // matching what cargo would touch when it reads the fingerprint as a unit.
+        write_aged(&fp.join("lib-hadron_gluon.json"), b"12345", Duration::from_secs(10 * 86400));
+        write_aged(&fp.join("invoked.timestamp"), b"12", Duration::from_secs(10 * 86400));
+        let f = File::options().write(true).open(&fp.join("invoked.timestamp")).unwrap();
+        drop(f);
+        let old = SystemTime::now() - Duration::from_secs(10 * 86400);
+        // Set the directory's own atime explicitly — writing files into it just now
+        // would otherwise leave the directory itself freshly accessed.
+        let dir_handle = File::open(&fp).unwrap();
+        dir_handle.set_times(FileTimes::new().set_accessed(old).set_modified(old)).unwrap();
+
+        let reap = reap_build_artifacts(repo.path(), Duration::from_secs(7 * 86400)).unwrap().unwrap();
+        assert_eq!(reap, ArtifactReap { files_removed: 1, bytes_removed: 7 });
+        assert!(!fp.exists());
+    }
+
+    #[test]
+    fn a_held_lock_skips_the_whole_sweep() {
+        let repo = tempfile::tempdir().unwrap();
+        let debug = repo.path().join("target").join("debug");
+        write_aged(&debug.join("deps").join("stale.rlib"), b"x", Duration::from_secs(10 * 86400));
+        std::fs::create_dir_all(&debug).unwrap();
+        let lock_path = debug.join(".cargo-lock");
+        let held = File::options().create(true).write(true).open(&lock_path).unwrap();
+        held.lock().unwrap(); // simulates a live cargo build holding the lock
+
+        let reap = reap_build_artifacts(repo.path(), Duration::from_secs(7 * 86400)).unwrap();
+        assert_eq!(reap, None, "a held lock must skip the sweep entirely, not wait for it");
+        assert!(debug.join("deps").join("stale.rlib").exists(), "nothing may be removed while the lock is held");
+    }
+
+    #[test]
+    fn all_four_categories_are_swept() {
+        let repo = tempfile::tempdir().unwrap();
+        let debug = repo.path().join("target").join("debug");
+        let old = Duration::from_secs(10 * 86400);
+        write_aged(&debug.join("deps").join("a.rlib"), b"1", old);
+        write_aged(&debug.join(".fingerprint").join("a-hash").join("f"), b"1", old);
+        write_aged(&debug.join("incremental").join("a-hash").join("f"), b"1", old);
+        write_aged(&debug.join("build").join("a-hash").join("f"), b"1", old);
+        for sub in [".fingerprint", "incremental", "build"] {
+            let d = debug.join(sub).join("a-hash");
+            let h = File::open(&d).unwrap();
+            let t = SystemTime::now() - old;
+            h.set_times(FileTimes::new().set_accessed(t).set_modified(t)).unwrap();
+        }
+
+        let reap = reap_build_artifacts(repo.path(), Duration::from_secs(7 * 86400)).unwrap().unwrap();
+        assert_eq!(reap.files_removed, 4, "one stale entry per category, all four swept");
     }
 }
