@@ -264,7 +264,12 @@ pub fn parse_addressee(
     preons: &[Preon],
 ) -> Option<QuarkId> {
     for line in body.lines() {
-        let Some(rest) = line.trim_start().strip_prefix('@') else {
+        let trimmed = line.trim_start();
+        let rest = if let Some(r) = trimmed.strip_prefix('@') {
+            r
+        } else if let Some(r) = trimmed.strip_prefix("**@") {
+            r
+        } else {
             continue;
         };
         if let Some((_, resolution)) = match_longest_mention(rest, roster, preons) {
@@ -293,7 +298,12 @@ pub fn parse_all_addressees(
 ) -> Vec<QuarkId> {
     let mut out = Vec::new();
     for line in body.lines() {
-        let Some(rest) = line.trim_start().strip_prefix('@') else {
+        let trimmed = line.trim_start();
+        let rest = if let Some(r) = trimmed.strip_prefix('@') {
+            r
+        } else if let Some(r) = trimmed.strip_prefix("**@") {
+            r
+        } else {
             continue;
         };
         if let Some((_, resolution)) = match_longest_mention(rest, roster, preons) {
@@ -331,7 +341,9 @@ pub fn human_mentions(body: &str, roster: &[QuarkCard], preons: &[Preon]) -> Vec
     let mut i = 0;
     while let Some(at_idx) = body[i..].find('@') {
         let actual_at = i + at_idx;
-        let valid_start = actual_at == 0 || body.as_bytes()[actual_at - 1].is_ascii_whitespace();
+        let valid_start = actual_at == 0
+            || body.as_bytes()[actual_at - 1].is_ascii_whitespace()
+            || (actual_at >= 2 && &body[actual_at - 2..actual_at] == "**");
 
         if valid_start {
             let rest = &body[actual_at + 1..];
@@ -396,7 +408,9 @@ pub fn task_names_card_specifically(task: &str, card: &QuarkCard, preons: &[Preo
     let mut i = 0;
     while let Some(at_idx) = task[i..].find('@') {
         let actual_at = i + at_idx;
-        let valid_start = actual_at == 0 || task.as_bytes()[actual_at - 1].is_ascii_whitespace();
+        let valid_start = actual_at == 0
+            || task.as_bytes()[actual_at - 1].is_ascii_whitespace()
+            || (actual_at >= 2 && &task[actual_at - 2..actual_at] == "**");
         if valid_start {
             let rest = &task[actual_at + 1..];
             if boundary_match(rest, card.id.as_str())
