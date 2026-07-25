@@ -1,6 +1,6 @@
 use hadron_lattice::{Actor, EnergyState, Event, Flavor, Kind, QuarkCard, QuarkId, QuarkState};
 
-use crate::personas::Persona;
+use crate::preons::Preon;
 
 /// Which quark should be excited next.
 ///
@@ -134,14 +134,14 @@ fn boundary_match(text: &str, target_name: &str) -> bool {
 /// pass below applies (a depleted seat is skipped), not the id/alias path's
 /// "resolve even a disabled seat" rule.
 ///
-/// This is the persona pass's counterpart to the role pass's fused text-match
+/// This is the preon pass's counterpart to the role pass's fused text-match
 /// loop below, not a literal extraction of it: the role pass matches TEXT
 /// against roster role strings it doesn't know in advance (so it fuses the
-/// match into `try_match`'s longest-wins scan); the persona pass already has
-/// the exact `preferred_role` string in hand from a persona that matched by
+/// match into `try_match`'s longest-wins scan); the preon pass already has
+/// the exact `preferred_role` string in hand from a preon that matched by
 /// name, so it needs only a direct roster-order lookup. Both agree on roster-
 /// order-wins-ties and skip-depleted, so a role resolved by `@role` and by
-/// `@persona-name` never disagree about which seat holds it — but the role
+/// `@preon-name` never disagree about which seat holds it — but the role
 /// pass itself is deliberately left untouched: threading every card/role pair
 /// through this instead risks shifting the existing equal-length tie order.
 pub(crate) fn card_for_role<'a>(roster: &'a [QuarkCard], role: &str) -> Option<&'a QuarkCard> {
@@ -157,15 +157,15 @@ pub(crate) fn card_for_role<'a>(roster: &'a [QuarkCard], role: &str) -> Option<&
 /// intra-word mention character (alphanumeric, '-', '_'). Note that spaces ARE
 /// allowed inside display names, but a matched name's boundary still applies.
 ///
-/// `personas` adds a fourth, LOWEST-precedence pass (after id/alias/role): a
-/// token matching a persona's `name` resolves as if it were that persona's
-/// `preferred_role` — i.e. via [`card_for_role`]. A persona with no
+/// `preons` adds a fourth, LOWEST-precedence pass (after id/alias/role): a
+/// token matching a preon's `name` resolves as if it were that preon's
+/// `preferred_role` — i.e. via [`card_for_role`]. A preon with no
 /// `preferred_role`, or whose role holds no seat, simply never matches here —
 /// no panic, no error, the same soft fall-through an unmatched `@role` gets.
 fn match_longest_mention<'a>(
     text: &str,
     roster: &'a [QuarkCard],
-    personas: &[Persona],
+    preons: &[Preon],
 ) -> Option<(usize, ResolvedMention<'a>)> {
     // A free function rather than a capturing closure: `best_match` is passed in
     // explicitly so the borrow ends when each call returns, letting the id/alias
@@ -227,18 +227,18 @@ fn match_longest_mention<'a>(
         }
     }
 
-    // Persona resolution (Phase 2, soft): only attempted when NOTHING above
-    // matched — id, alias, AND role all keep precedence over a persona name,
+    // Preon resolution (Phase 2, soft): only attempted when NOTHING above
+    // matched — id, alias, AND role all keep precedence over a preon name,
     // same "separate, later pass" reasoning the role pass's own comment gives
-    // for id/alias. A persona name resolves to whichever seat carries its
-    // `preferred_role` (`card_for_role`); a persona with no `preferred_role`,
+    // for id/alias. A preon name resolves to whichever seat carries its
+    // `preferred_role` (`card_for_role`); a preon with no `preferred_role`,
     // or whose role holds no seat, is simply skipped — soft fall-through, not
     // an error.
     if best_match.is_none() {
-        for persona in personas {
-            let Some(role) = &persona.preferred_role else { continue };
+        for preon in preons {
+            let Some(role) = &preon.preferred_role else { continue };
             let Some(card) = card_for_role(roster, role) else { continue };
-            try_match(text, persona.name.as_str(), ResolvedMention::Quark(card), &mut best_match);
+            try_match(text, preon.name.as_str(), ResolvedMention::Quark(card), &mut best_match);
         }
     }
 
@@ -261,13 +261,13 @@ pub fn parse_addressee(
     body: &str,
     roster: &[QuarkCard],
     sender: Option<&QuarkId>,
-    personas: &[Persona],
+    preons: &[Preon],
 ) -> Option<QuarkId> {
     for line in body.lines() {
         let Some(rest) = line.trim_start().strip_prefix('@') else {
             continue;
         };
-        if let Some((_, resolution)) = match_longest_mention(rest, roster, personas) {
+        if let Some((_, resolution)) = match_longest_mention(rest, roster, preons) {
             match resolution {
                 ResolvedMention::Quark(card) => {
                     // Sender-exclusion also makes `@orchestrator` a no-op for the
@@ -289,14 +289,14 @@ pub fn parse_all_addressees(
     body: &str,
     roster: &[QuarkCard],
     sender: Option<&QuarkId>,
-    personas: &[Persona],
+    preons: &[Preon],
 ) -> Vec<QuarkId> {
     let mut out = Vec::new();
     for line in body.lines() {
         let Some(rest) = line.trim_start().strip_prefix('@') else {
             continue;
         };
-        if let Some((_, resolution)) = match_longest_mention(rest, roster, personas) {
+        if let Some((_, resolution)) = match_longest_mention(rest, roster, preons) {
             match resolution {
                 ResolvedMention::Quark(card) => {
                     if Some(&card.id) != sender {
@@ -326,7 +326,7 @@ pub fn parse_all_addressees(
 /// they name — so "@opus do X and you @agy do Y" returns `[opus, agy]` and the
 /// daemon fans the turn out to each. Mentions of ids not on the roster are
 /// ignored; an `@` not starting a word (e.g. inside `email@host`) is not a mention.
-pub fn human_mentions(body: &str, roster: &[QuarkCard], personas: &[Persona]) -> Vec<QuarkId> {
+pub fn human_mentions(body: &str, roster: &[QuarkCard], preons: &[Preon]) -> Vec<QuarkId> {
     let mut out: Vec<QuarkId> = Vec::new();
     let mut i = 0;
     while let Some(at_idx) = body[i..].find('@') {
@@ -335,7 +335,7 @@ pub fn human_mentions(body: &str, roster: &[QuarkCard], personas: &[Persona]) ->
 
         if valid_start {
             let rest = &body[actual_at + 1..];
-            if let Some((match_len, resolution)) = match_longest_mention(rest, roster, personas) {
+            if let Some((match_len, resolution)) = match_longest_mention(rest, roster, preons) {
                 match resolution {
                     ResolvedMention::Team => {
                         for card in roster {
@@ -385,14 +385,14 @@ pub fn human_mentions(body: &str, roster: &[QuarkCard], personas: &[Persona]) ->
 /// and a task naming that role is a role-matching task for BOTH of them even though
 /// `@role` mention-routing only ever picks one (roster-order tie-break).
 ///
-/// `personas` extends the same reasoning one hop further: a persona names one
-/// role, and a task naming that persona is treated as naming EVERY card that
-/// carries the persona's `preferred_role` — not just the one seat `@persona-name`
-/// mention-routing would land on. A persona addresses a role, not a specific
+/// `preons` extends the same reasoning one hop further: a preon names one
+/// role, and a task naming that preon is treated as naming EVERY card that
+/// carries the preon's `preferred_role` — not just the one seat `@preon-name`
+/// mention-routing would land on. A preon addresses a role, not a specific
 /// seat, so admitting it is consistent with (not a new exception to) the
-/// shared-role rule above; a persona with no `preferred_role` never matches
+/// shared-role rule above; a preon with no `preferred_role` never matches
 /// any card here.
-pub fn task_names_card_specifically(task: &str, card: &QuarkCard, personas: &[Persona]) -> bool {
+pub fn task_names_card_specifically(task: &str, card: &QuarkCard, preons: &[Preon]) -> bool {
     let mut i = 0;
     while let Some(at_idx) = task[i..].find('@') {
         let actual_at = i + at_idx;
@@ -402,7 +402,7 @@ pub fn task_names_card_specifically(task: &str, card: &QuarkCard, personas: &[Pe
             if boundary_match(rest, card.id.as_str())
                 || card.display_name.as_deref().is_some_and(|dn| boundary_match(rest, dn))
                 || card.roles.iter().any(|role| !role.is_empty() && boundary_match(rest, role))
-                || personas.iter().any(|p| {
+                || preons.iter().any(|p| {
                     p.preferred_role.as_deref().is_some_and(|pr| {
                         card.roles.iter().any(|role| role.eq_ignore_ascii_case(pr))
                     }) && boundary_match(rest, p.name.as_str())

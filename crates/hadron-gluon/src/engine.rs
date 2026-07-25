@@ -9,7 +9,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use ulid::Ulid;
 
 use crate::field::append_event;
-use crate::personas::{self, Persona};
+use crate::preons::{self, Preon};
 use crate::quark::Quark;
 
 mod nucleus;
@@ -283,15 +283,15 @@ pub struct Engine {
     /// it is derived from `workspace_root` fresh in `projection_for`, which is already
     /// tempdir-controlled by every test that sets up a field under a `tempdir()`.
     global_skills_dir: Option<PathBuf>,
-    /// The **global** personas directory (`~/.hadron/agents` in production),
+    /// The **global** preons directory (`~/.hadron/preons` in production),
     /// injected via the identical seam as [`Engine::global_skills_dir`] just
     /// above, for the identical reason: `None` is the hermetic default, so
     /// `Engine::new` never reads the real `$HOME`, and only the daemon bin opts
-    /// a running instance in via [`Engine::with_global_agents_dir`]. The
-    /// **repo** personas dir is likewise not stored here — it is derived from
+    /// a running instance in via [`Engine::with_global_preons_dir`]. The
+    /// **repo** preons dir is likewise not stored here — it is derived from
     /// `workspace_root` fresh at each call site that needs it
-    /// ([`Engine::loaded_personas`]), same as the repo skills dir.
-    global_agents_dir: Option<PathBuf>,
+    /// ([`Engine::loaded_preons`]), same as the repo skills dir.
+    global_preons_dir: Option<PathBuf>,
 }
 
 /// Parse the DO-NOT-ACTIVATE toggle from `HADRON_NO_HUMAN_MODE`. Read ONCE, at
@@ -370,8 +370,8 @@ impl Engine {
             // `with_global_skills_dir` (called by the daemon bin) opts a running
             // instance into it. See the field doc for why this mirrors `merge`.
             global_skills_dir: None,
-            // Same hermetic default, same reason — see `global_agents_dir`'s field doc.
-            global_agents_dir: None,
+            // Same hermetic default, same reason — see `global_preons_dir`'s field doc.
+            global_preons_dir: None,
         }
     }
 
@@ -536,14 +536,14 @@ impl Engine {
         self
     }
 
-    /// Opt in to loading custom personas from a **global** directory (production:
-    /// `~/.hadron/agents`, via [`hadron_lattice::user_hadron_dir`]). The identical
+    /// Opt in to loading custom preons from a **global** directory (production:
+    /// `~/.hadron/preons`, via [`hadron_lattice::user_hadron_dir`]). The identical
     /// seam as [`Engine::with_global_skills_dir`] just above, for the identical
     /// reason: `None` — the default from [`Engine::new`] — means no global
     /// directory is consulted, so a test-constructed engine can never read the
     /// real `$HOME`. Only the daemon bin calls this, with the real path.
-    pub fn with_global_agents_dir(mut self, dir: Option<PathBuf>) -> Self {
-        self.global_agents_dir = dir;
+    pub fn with_global_preons_dir(mut self, dir: Option<PathBuf>) -> Self {
+        self.global_preons_dir = dir;
         self
     }
 
@@ -587,34 +587,34 @@ impl Engine {
         self
     }
 
-    /// The personas corpus for THIS call — global (injected, see
-    /// [`Engine::global_agents_dir`]) merged with `<workspace>/.hadron/agents`
+    /// The preons corpus for THIS call — global (injected, see
+    /// [`Engine::global_preons_dir`]) merged with `<workspace>/.hadron/preons`
     /// (repo), loaded fresh rather than cached.
     ///
     /// Unlike the skill corpus (loaded once inside `projection_for`, because
-    /// that is the one place it's used), personas are consumed at several
+    /// that is the one place it's used), preons are consumed at several
     /// distinct router call sites — [`Engine::human_addressees`],
     /// [`Engine::exclusive_task_names_target`], and `finish_turn`'s quark→quark
     /// hand-off resolution — none of which sit inside a projection. So this is
     /// called once per *site*, not once per projection; the cost is the same
     /// handful of small file reads as skills, well short of a hot loop. `Engine::new`
-    /// defaults `global_agents_dir` to `None`, so a test-constructed engine can
-    /// never read the real `~/.hadron/agents`; the repo half is derived from
+    /// defaults `global_preons_dir` to `None`, so a test-constructed engine can
+    /// never read the real `~/.hadron/preons`; the repo half is derived from
     /// `workspace_root`, which every test already controls via its own tempdir
-    /// field — a missing `.hadron/agents` directory degrades to `[]`, same as skills.
-    fn loaded_personas(&self) -> Vec<Persona> {
+    /// field — a missing `.hadron/preons` directory degrades to `[]`, same as skills.
+    fn loaded_preons(&self) -> Vec<Preon> {
         let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let workspace_root = workspace_root_of(&self.field_path, &base);
-        let repo_agents_dir = workspace_root.join(".hadron").join("agents");
-        personas::load_personas(self.global_agents_dir.as_deref(), Some(&repo_agents_dir))
+        let repo_preons_dir = workspace_root.join(".hadron").join("preons");
+        preons::load_preons(self.global_preons_dir.as_deref(), Some(&repo_preons_dir))
     }
 
-    fn loaded_roles(&self) -> Vec<Persona> {
+    fn loaded_roles(&self) -> Vec<Preon> {
         let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let workspace_root = workspace_root_of(&self.field_path, &base);
         let repo_roles_dir = workspace_root.join(".hadron").join("roles");
-        let global_roles_dir = self.global_agents_dir.as_deref().and_then(|p| p.parent()).map(|p| p.join("roles"));
-        personas::load_roles(global_roles_dir.as_deref(), Some(&repo_roles_dir))
+        let global_roles_dir = self.global_preons_dir.as_deref().and_then(|p| p.parent()).map(|p| p.join("roles"));
+        preons::load_roles(global_roles_dir.as_deref(), Some(&repo_roles_dir))
     }
 
 }

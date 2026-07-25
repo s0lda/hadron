@@ -29,11 +29,11 @@ fn card(id: &str, roles: &[&str]) -> QuarkCard {
     }
 }
 
-/// A persona named `name` preferring `role`, body empty (the router pass
+/// A preon named `name` preferring `role`, body empty (the router pass
 /// under test never reads the body — that's a separate, deferred concern,
-/// see the module doc). Mirrors `card()` for the persona-routing tests below.
-fn persona(name: &str, role: &str) -> Persona {
-    Persona { name: name.to_string(), preferred_role: Some(role.to_string()), body: String::new() }
+/// see the module doc). Mirrors `card()` for the preon-routing tests below.
+fn preon(name: &str, role: &str) -> Preon {
+    Preon { name: name.to_string(), preferred_role: Some(role.to_string()), body: String::new() }
 }
 
 /// A message whose bytes place a multi-byte char (e.g. the smart apostrophe
@@ -495,61 +495,61 @@ fn team_broadcast_does_not_name_a_card_via_its_display_name() {
     assert!(!task_names_card_specifically("@team status check", &claude, &[]));
 }
 
-// ---- persona-name routing (spec §4: `@persona-name` routes via preferred_role) --
+// ---- preon-name routing (spec §4: `@preon-name` routes via preferred_role) --
 
 /// The core case: `@security-reviewer` is neither a card id, an alias, nor a
-/// role — it's a persona whose `preferred_role` is `security`, and that role
-/// is carried by `sec`. The persona pass resolves the name to that seat.
+/// role — it's a preon whose `preferred_role` is `security`, and that role
+/// is carried by `sec`. The preon pass resolves the name to that seat.
 #[test]
-fn persona_routes_to_a_seat_with_its_preferred_role() {
+fn preon_routes_to_a_seat_with_its_preferred_role() {
     let r = vec![card("sec", &["security"])];
-    let p = vec![persona("security-reviewer", "security")];
+    let p = vec![preon("security-reviewer", "security")];
     assert_eq!(human_mentions("@security-reviewer go", &r, &p), vec![QuarkId::new("sec")]);
 }
 
-/// A persona whose `preferred_role` holds no seat on the roster falls through
+/// A preon whose `preferred_role` holds no seat on the roster falls through
 /// softly — empty result, no panic — exactly like an unmatched `@role`.
 #[test]
-fn persona_with_no_matching_seat_falls_back_softly() {
+fn preon_with_no_matching_seat_falls_back_softly() {
     let r = vec![card("sec", &["security"])];
-    let p = vec![persona("security-reviewer", "nobody-has-this-role")];
+    let p = vec![preon("security-reviewer", "nobody-has-this-role")];
     assert_eq!(human_mentions("@security-reviewer go", &r, &p), Vec::<QuarkId>::new());
     assert_eq!(parse_addressee("@security-reviewer go", &r, None, &p), None);
 }
 
-/// A card id, or a reserved alias, named the same as a persona wins — id and
-/// alias precedence over a persona name, same as over a role.
+/// A card id, or a reserved alias, named the same as a preon wins — id and
+/// alias precedence over a preon name, same as over a role.
 #[test]
-fn id_and_alias_beat_a_persona_name() {
-    // A card whose id IS the persona's name wins over the persona resolving to
+fn id_and_alias_beat_a_preon_name() {
+    // A card whose id IS the preon's name wins over the preon resolving to
     // a DIFFERENT seat via its preferred_role.
     let r = vec![card("security-reviewer", &[]), card("sec", &["security"])];
-    let p = vec![persona("security-reviewer", "security")];
+    let p = vec![preon("security-reviewer", "security")];
     assert_eq!(human_mentions("@security-reviewer go", &r, &p), vec![QuarkId::new("security-reviewer")]);
 
-    // `@team`, named the same as a persona, still broadcasts rather than
-    // resolving through the persona's preferred_role.
-    let p2 = vec![persona("team", "worker")];
+    // `@team`, named the same as a preon, still broadcasts rather than
+    // resolving through the preon's preferred_role.
+    let p2 = vec![preon("team", "worker")];
     assert_eq!(
         human_mentions("@team go", &roster(), &p2),
         vec![QuarkId::new("orch"), QuarkId::new("worker")]
     );
 }
 
-/// Persona-name matching is case-insensitive, same as id/alias/role matching.
+/// Preon-name matching is case-insensitive, same as id/alias/role matching.
 #[test]
-fn persona_match_is_case_insensitive() {
+fn preon_match_is_case_insensitive() {
     let r = vec![card("sec", &["security"])];
-    let p = vec![persona("security-reviewer", "security")];
+    let p = vec![preon("security-reviewer", "security")];
     assert_eq!(human_mentions("@Security-Reviewer go", &r, &p), vec![QuarkId::new("sec")]);
 }
 
-/// The back-compat pin: an EMPTY personas slice must route byte-for-byte the
+/// The back-compat pin: an EMPTY preons slice must route byte-for-byte the
 /// way WS4§4 did before this pass existed, across id, alias, role, and the
-/// soft-fallback cases — the persona pass runs, finds nothing, and does not
+/// soft-fallback cases — the preon pass runs, finds nothing, and does not
 /// change a single outcome.
 #[test]
-fn no_personas_is_todays_routing() {
+fn no_preons_is_todays_routing() {
     let r = vec![card("has_role", &["architect"]), card("architect", &[])];
     assert_eq!(human_mentions("@architect go", &r, &[]), vec![QuarkId::new("architect")]);
     assert_eq!(human_mentions("@team status", &roster(), &[]), vec![QuarkId::new("orch"), QuarkId::new("worker")]);
@@ -560,14 +560,14 @@ fn no_personas_is_todays_routing() {
     assert_eq!(human_mentions("@ghost @nobody nothing here", &roster(), &[]), Vec::<QuarkId>::new());
 }
 
-/// A task naming a persona is treated as naming every card that carries the
-/// persona's `preferred_role` — the same "a shared role names every card that
+/// A task naming a preon is treated as naming every card that carries the
+/// preon's `preferred_role` — the same "a shared role names every card that
 /// carries it" rule `a_shared_role_names_every_card_that_carries_it` pins for
-/// `@role`, extended to `@persona-name`.
+/// `@role`, extended to `@preon-name`.
 #[test]
-fn persona_name_in_a_task_names_the_role_holder_specifically() {
+fn preon_name_in_a_task_names_the_role_holder_specifically() {
     let sec = card("sec", &["security"]);
-    let p = vec![persona("security-reviewer", "security")];
+    let p = vec![preon("security-reviewer", "security")];
     assert!(task_names_card_specifically("@security-reviewer please look", &sec, &p));
     assert!(!task_names_card_specifically("please fix the css typo", &sec, &p));
 }
@@ -575,10 +575,10 @@ fn persona_name_in_a_task_names_the_role_holder_specifically() {
 // ---- review follow-up: role pass / card_for_role cross-checks -------------
 
 /// Direct cross-check of the drift risk `card_for_role`'s doc comment flags:
-/// the role pass (fused text-match loop) and the persona pass (`card_for_role`,
+/// the role pass (fused text-match loop) and the preon pass (`card_for_role`,
 /// a separate direct lookup) must independently agree on which seat a SHARED
 /// role resolves to. Two cards carry "security"; `@security` (role pass) and
-/// `@security-reviewer` (persona pass, `preferred_role: security`) must land
+/// `@security-reviewer` (preon pass, `preferred_role: security`) must land
 /// on the exact same first-roster-order card — this is not tautological: the
 /// two assertions exercise two genuinely different code paths
 /// (`try_match`-fused role loop vs. `card_for_role`'s `.find()`) against the
@@ -589,15 +589,15 @@ fn persona_name_in_a_task_names_the_role_holder_specifically() {
 /// *skipping* it and falling through to the second — the other half of the
 /// shared "skip-depleted, roster-order-wins" rule.
 #[test]
-fn persona_and_its_role_resolve_to_the_same_card() {
+fn preon_and_its_role_resolve_to_the_same_card() {
     let r = vec![card("sec-a", &["security"]), card("sec-b", &["security"])];
-    let p = vec![persona("security-reviewer", "security")];
+    let p = vec![preon("security-reviewer", "security")];
 
     let via_role = human_mentions("@security go", &r, &p);
-    let via_persona = human_mentions("@security-reviewer go", &r, &p);
+    let via_preon = human_mentions("@security-reviewer go", &r, &p);
     assert_eq!(via_role, vec![QuarkId::new("sec-a")], "the role pass must land on the first same-role card");
-    assert_eq!(via_persona, vec![QuarkId::new("sec-a")], "the persona pass must land on the SAME card");
-    assert_eq!(via_role, via_persona, "role pass and persona pass must never disagree about a shared role");
+    assert_eq!(via_preon, vec![QuarkId::new("sec-a")], "the preon pass must land on the SAME card");
+    assert_eq!(via_role, via_preon, "role pass and preon pass must never disagree about a shared role");
 
     // Same roster, first same-role card now Depleted — both paths must skip
     // it identically and resolve to the second.
@@ -611,41 +611,41 @@ fn persona_and_its_role_resolve_to_the_same_card() {
     assert_eq!(
         human_mentions("@security-reviewer go", &first_depleted, &p),
         vec![QuarkId::new("sec-b")],
-        "the persona pass must skip a depleted seat the same way"
+        "the preon pass must skip a depleted seat the same way"
     );
 }
 
-/// A card's OWN role beats a persona named identically: the role pass runs
-/// BEFORE the persona pass (`match_longest_mention`'s gate), so `@architect`
+/// A card's OWN role beats a preon named identically: the role pass runs
+/// BEFORE the preon pass (`match_longest_mention`'s gate), so `@architect`
 /// resolves to whichever seat carries the role `architect`, never through a
-/// persona whose `name` happens to also be `architect` — even when that
-/// persona's `preferred_role` points somewhere else entirely.
+/// preon whose `name` happens to also be `architect` — even when that
+/// preon's `preferred_role` points somewhere else entirely.
 #[test]
-fn a_cards_role_beats_a_same_named_persona() {
+fn a_cards_role_beats_a_same_named_preon() {
     let r = vec![card("qa1", &["architect"])];
-    // A persona named identically to the role, but preferring a DIFFERENT
-    // role held by no one — if the persona pass ever won here, this would
+    // A preon named identically to the role, but preferring a DIFFERENT
+    // role held by no one — if the preon pass ever won here, this would
     // resolve to nobody instead of `qa1`.
-    let p = vec![persona("architect", "some-other-role-nobody-has")];
+    let p = vec![preon("architect", "some-other-role-nobody-has")];
     assert_eq!(human_mentions("@architect go", &r, &p), vec![QuarkId::new("qa1")]);
 
-    // A same-length persona name ties with the role text under
+    // A same-length preon name ties with the role text under
     // `try_match`'s strict `len > *best_len` comparison, so the assertion
-    // above alone would still pass even if the persona pass's precedence
+    // above alone would still pass even if the preon pass's precedence
     // GATE (`if best_match.is_none()`) were deleted — the role pass simply
     // runs first in source order and the tie never overwrites it. This
-    // second case is gate-sensitive: a persona name LONGER than the role
+    // second case is gate-sensitive: a preon name LONGER than the role
     // text is a legal literal match too (spaces are valid inside a mention
     // name, per `match_longest_mention`'s own doc comment), so if the
-    // persona pass were ever allowed to run unconditionally, its strictly
+    // preon pass were ever allowed to run unconditionally, its strictly
     // LONGER match would overwrite the role pass's shorter one under plain
     // longest-match rules. Only the gate stops that.
     let r2 = vec![card("qa1", &["architect"]), card("qa3", &["support"])];
-    let p2 = vec![persona("architect team", "support")];
+    let p2 = vec![preon("architect team", "support")];
     assert_eq!(
         human_mentions("@architect team please help", &r2, &p2),
         vec![QuarkId::new("qa1")],
-        "role precedence must hold even when a persona name is a literally LONGER match"
+        "role precedence must hold even when a preon name is a literally LONGER match"
     );
 }
 

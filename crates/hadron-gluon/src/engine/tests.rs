@@ -2261,24 +2261,24 @@ async fn engine_uses_injected_global_skills_dir() {
     engine.run_until_quiesce().await.unwrap();
 }
 
-/// Task 2 (persona routing): a REPO `.hadron/agents/*.md` persona must reach
-/// actual dispatch, not just parse (`personas.rs` Task 1 proved parsing in
+/// Task 2 (preon routing): a REPO `.hadron/preons/*.md` preon must reach
+/// actual dispatch, not just parse (`preons.rs` Task 1 proved parsing in
 /// isolation). `@security-reviewer` is neither a card id, a reserved alias,
-/// nor a role — it's a persona whose `preferred_role` is `security`; the
+/// nor a role — it's a preon whose `preferred_role` is `security`; the
 /// engine must resolve it to the seat carrying that role and excite it, the
 /// same unaddressed-human-message path an `@role` mention already takes.
 ///
-/// `Engine::new` leaves `global_agents_dir` at its `None` default, so this
-/// test never touches the real `~/.hadron/agents` — only the repo (tempdir)
-/// persona is in play, mirroring `engine_loads_repo_skills`.
+/// `Engine::new` leaves `global_preons_dir` at its `None` default, so this
+/// test never touches the real `~/.hadron/preons` — only the repo (tempdir)
+/// preon is in play, mirroring `engine_loads_repo_skills`.
 #[tokio::test]
-async fn engine_routes_a_repo_persona() {
+async fn engine_routes_a_repo_preon() {
     use std::fs;
     let fdir = tempdir().unwrap();
-    let agents_dir = fdir.path().join(".hadron").join("agents");
-    fs::create_dir_all(&agents_dir).unwrap();
+    let preons_dir = fdir.path().join(".hadron").join("preons");
+    fs::create_dir_all(&preons_dir).unwrap();
     fs::write(
-        agents_dir.join("security-reviewer.md"),
+        preons_dir.join("security-reviewer.md"),
         "---\nname: security-reviewer\npreferred_role: security\n---\n\nYou review for security issues.\n",
     )
     .unwrap();
@@ -2309,7 +2309,7 @@ async fn engine_routes_a_repo_persona() {
         async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
             assert!(
                 turn.task.contains("please review this diff"),
-                "the persona-addressed message must reach the role holder's turn:\n{}",
+                "the preon-addressed message must reach the role holder's turn:\n{}",
                 turn.task
             );
             Ok(TurnOutcome { message: Some("reviewed".into()), permission: None, usage: Default::default() })
@@ -2322,7 +2322,7 @@ async fn engine_routes_a_repo_persona() {
     let events = read_events(&path).unwrap();
     assert!(
         events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body == "reviewed")),
-        "the security seat (resolved via the repo persona's preferred_role) must have actually run and replied:\n{events:#?}"
+        "the security seat (resolved via the repo preon's preferred_role) must have actually run and replied:\n{events:#?}"
     );
 }
 
