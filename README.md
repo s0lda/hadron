@@ -2,7 +2,7 @@
 
 ## Powered by **Quark**: The fundamental particle of intelligence.
 
-A single Quark cannot build complex software in isolation. It requires an environment to bind it to tools, files, and other agents. Hadron is that environment.
+A single Quark cannot build complex software in isolation. It requires an environment to bind it to tools, files, and other quarks. Hadron is that environment.
 
 <div align="center">
     <img src="assets/hadron_full_size.jpg" alt="Hadron" width="900" />
@@ -40,7 +40,8 @@ Hadron uses particle physics as a metaphor for its architecture. This creates a 
 | Term               | Meaning in Hadron                                                   | Physics Metaphor                            |
 | ------------------ | ------------------------------------------------------------------- | ------------------------------------------- |
 | **Hadron**         | The whole environment/studio                                        | A composite particle that binds quarks      |
-| **Quark**          | An agent or citizen (e.g., Claude, Antigravity)                     | The fundamental unit of intelligence        |
+| **Quark**          | A seat in the swarm — a model, its transport, its permission mode (e.g., Claude, Antigravity) | The fundamental unit of intelligence        |
+| **Preon**          | A markdown file loaded into a quark to specialise it — a named, addressable voice | Preons: proposed substructure inside a quark |
 | **Field**          | The shared append-only bus (`field.jsonl`)                          | Particles interact through fields           |
 | **Event**          | One line in the field                                               | A detected particle interaction             |
 | **Gluon**          | The headless daemon (`hadron-gluon`)                                | The force carrier that binds quarks         |
@@ -79,7 +80,7 @@ this repository — if it is named here, it is in a `Cargo.toml`.
 - **[tree-sitter](https://github.com/tree-sitter/tree-sitter)**, by Max Brunsfeld and
   contributors — incremental parsing, used for syntax highlighting in the Chamber.
 
-### The agents
+### The models
 
 Hadron orchestrates models it did not build. Credit where it is due:
 
