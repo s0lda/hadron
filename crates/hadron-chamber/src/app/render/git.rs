@@ -484,7 +484,7 @@ impl super::Chamber {
     /// transition, and doing this work *in* the render was what made the tab lag: an
     /// uncapped `git log` re-parsed per mouse-move. Call this wherever an input changes
     /// — the graph string or the snapshot toggle — and never from a render path.
-    pub(super) fn rebuild_graph_rows(&mut self) {
+    pub(in crate::app) fn rebuild_graph_rows(&mut self) {
         let show_snapshots = self.git_show_snapshots;
         let rows = match self.git_log_graph.as_deref() {
             Some(graph) if !graph.trim().is_empty() => {
