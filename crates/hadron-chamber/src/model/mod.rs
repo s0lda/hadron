@@ -141,6 +141,22 @@ pub struct SessionInfo {
     pub name: Option<String>,
 }
 
+impl SessionInfo {
+    /// What a human should see for this session: the name `/rename` gave it, or the
+    /// `YYYYMMDD_HHMMSS` directory id rewritten as a date. An id that does not have that
+    /// shape (nothing writes one today, but nothing stops a human creating one either) is
+    /// returned verbatim — a half-parsed timestamp would read as a confidently wrong date.
+    pub fn label(&self) -> String {
+        if let Some(name) = &self.name {
+            return name.clone();
+        }
+        match chrono::NaiveDateTime::parse_from_str(&self.id, "%Y%m%d_%H%M%S") {
+            Ok(ts) => ts.format("%Y-%m-%d %H:%M").to_string(),
+            Err(_) => self.id.clone(),
+        }
+    }
+}
+
 /// List archived sessions under `sessions_dir`, oldest first (directory names are
 /// timestamp-sortable, same order `load_archived_messages` folds them in). A
 /// session's name is the LAST `Kind::SessionName` event in its field — `/rename`

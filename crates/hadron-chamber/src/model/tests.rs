@@ -227,6 +227,22 @@
         assert!(find_session(&sessions, "nope").is_none());
     }
 
+    /// A session's menu label prefers the `/rename` name; without one it renders the
+    /// timestamp id as a date a human can read, and an id that is not a timestamp at
+    /// all is shown verbatim rather than mangled into a wrong date.
+    #[test]
+    fn session_label_prefers_the_name_then_a_readable_timestamp() {
+        assert_eq!(
+            SessionInfo { id: "20260725_101022".into(), name: Some("router fix".into()) }.label(),
+            "router fix"
+        );
+        assert_eq!(
+            SessionInfo { id: "20260725_101022".into(), name: None }.label(),
+            "2026-07-25 10:10"
+        );
+        assert_eq!(SessionInfo { id: "scratch".into(), name: None }.label(), "scratch");
+    }
+
     /// `/resume` swaps out the live field a running daemon appends to — refuse while
     /// any quark is Excited/Thinking, not just Ground/Blocked/Error.
     #[test]
