@@ -1,4 +1,14 @@
-use hadron_lattice::{Actor, Flavor, Kind, Mode, Projection, QuarkCard, QuarkId};
+use hadron_lattice::{prompt_cost::PromptBreakdown, Actor, Flavor, Kind, Mode, Projection, QuarkCard, QuarkId};
+
+/// The fixed directive header every prompt opens with — a `const` rather than an
+/// inline literal so [`measure`] can report its exact size without drifting from
+/// what [`build`] actually writes (rule 3: one definition, one place).
+const CRITICAL_DIRECTIVE_HEADER: &str =
+    "# CRITICAL DIRECTIVE: FOLLOW THE STANDARD MODEL AND ITS SKILLS\n\
+     You are a quark in the hadron chamber. You MUST obey the Standard Model invariants \
+     below and follow the skills they hand you — the procedures for planning, executing, \
+     debugging, and reviewing work. These are built in to this prompt; do not rely on any \
+     tooling of your own. Do NOT ignore the invariants under any circumstances.\n\n";
 
 /// How a peer is NAMED to a quark: its display name when it has one, else its raw
 /// id. Quarks addressed each other by raw id (`@acp-claude`) because the prompt only
@@ -60,13 +70,7 @@ fn render_event_line(
 pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     let mut p = String::new();
 
-    p.push_str(
-        "# CRITICAL DIRECTIVE: FOLLOW THE STANDARD MODEL AND ITS SKILLS\n\
-         You are a quark in the hadron chamber. You MUST obey the Standard Model invariants \
-         below and follow the skills they hand you — the procedures for planning, executing, \
-         debugging, and reviewing work. These are built in to this prompt; do not rely on any \
-         tooling of your own. Do NOT ignore the invariants under any circumstances.\n\n"
-    );
+    p.push_str(CRITICAL_DIRECTIVE_HEADER);
 
     // 0. Identity — which quark is being excited. A multi-addressee human
     // message hands the SAME text to each named quark, so the model must know
@@ -382,6 +386,42 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     );
 
     p
+}
+
+/// Byte size of each section [`build`] writes, in the same order. Deliberately a
+/// second pure pass rather than threading counters through `build` itself — `build`
+/// stays a single `String`-returning function any adapter can call unchanged; a
+/// caller that wants the breakdown calls this too.
+///
+/// There is no separate `skill` field: a matched skill's body is folded into
+/// `projection.invariants` before the projection is built (`engine/routing.rs`'s
+/// `invariants_text.push_str(&skills::render(...))`), so counting it again here
+/// would double-count bytes `build` only writes once — checked against the real
+/// `Projection` fields rather than the field names the plan guessed.
+pub fn measure(projection: &Projection, _self_id: &QuarkId) -> PromptBreakdown {
+    // `_self_id` mirrors `build`'s signature (same caller shape) — no measured
+    // section's size actually depends on which quark is asking.
+    PromptBreakdown {
+        standard_model: CRITICAL_DIRECTIVE_HEADER.len(),
+        invariants: projection.invariants.trim().len(),
+        nucleus_digest: projection.nucleus_digest.trim().len(),
+        nucleus_index: projection.nucleus_index.trim().len(),
+        task: projection.task.trim().len(),
+        field_window: field_window_cost(&projection.field_window, &projection.roster),
+    }
+}
+
+/// What the "Recent field" section costs: the same lines `build` renders for it
+/// (only `Kind::Message` events; each line plus its trailing newline), so `measure`
+/// and `build` cannot silently drift apart on what counts as this section.
+fn field_window_cost(field_window: &[hadron_lattice::Event], roster: &[QuarkCard]) -> usize {
+    field_window
+        .iter()
+        .filter_map(|e| match &e.kind {
+            Kind::Message { body } => Some(render_event_line(&e.from, &e.to, body, roster).len() + 1),
+            _ => None,
+        })
+        .sum()
 }
 
 /// Whether this quark holds the orchestrator role. Only it gets the stay-available
