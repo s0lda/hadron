@@ -1762,43 +1762,30 @@ fn the_standard_model_survives_a_workspace_with_no_files_at_all() {
     assert!(available.is_empty(), "no repo tier exists here, and that is fine");
 }
 
-/// An over-budget index must lose its OLDEST lessons, never its newest. The index
-/// is appended to, so a head-slice throws away the lesson a quark just paid for and
-/// keeps the one from a month ago — and it silently truncated mid-sentence, leaving
-/// a half-written lesson that reads as a whole one.
+/// An over-budget index is handed over WHOLE — this used to be the test that proved
+/// the opposite (a head-slice keeping the newest lessons), and Task 4 deliberately
+/// removed that truncation: the prompt builder now emits a tag manifest plus the
+/// task-relevant lines instead, so nothing is silently dropped on the way in.
+/// What the old test was really protecting — "the lesson a quark just paid for must
+/// survive" — is what is asserted here.
 #[test]
-fn an_over_budget_index_drops_the_oldest_lessons_and_keeps_the_newest() {
+fn an_over_budget_index_is_returned_whole_so_the_newest_lesson_survives() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.md");
 
     let mut raw = String::from("# Nucleus index\n\nFormat: `- **<slug>** — <lesson>`\n\n");
-    // Enough padded lessons to blow the budget several times over.
     for i in 0..400 {
-        raw.push_str(&format!(
-            "- **lesson-{i}** — {}\n",
-            "x".repeat(200) // padding, so the budget is exceeded by bulk
-        ));
+        raw.push_str(&format!("- **lesson-{i}** — {}\n", "x".repeat(200)));
     }
     raw.push_str("- **the-newest-lesson** — the one just paid for\n");
     assert!(raw.len() > NUCLEUS_INDEX_BUDGET, "the fixture must overflow");
     fs::write(&path, &raw).unwrap();
 
     let (out, truncated) = read_nucleus_index(&path);
-    assert!(truncated, "an over-budget index must report that it was cut");
-    assert!(out.len() <= NUCLEUS_INDEX_BUDGET);
-
-    assert!(
-        out.contains("the-newest-lesson"),
-        "the newest lesson is the one just paid for — it must survive the cut"
-    );
-    assert!(
-        out.contains("# Nucleus index") && out.contains("Format:"),
-        "the header defines the format a quark must write back in; it must survive"
-    );
-    assert!(
-        !out.contains("**lesson-0**"),
-        "the oldest lesson is what should be dropped"
-    );
+    assert!(!truncated, "Task 4 removed the read-side cut");
+    assert_eq!(out, raw, "an over-budget index must not be sliced on the way in");
+    assert!(out.contains("the-newest-lesson"));
+    assert!(out.contains("**lesson-0**"), "the oldest lesson is no longer dropped either");
 }
 
 /// An index that fits is handed over whole, and is not reported as cut.
