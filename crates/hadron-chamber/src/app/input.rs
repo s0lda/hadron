@@ -140,7 +140,13 @@ impl super::Chamber {
             .map(|q| (q.id.0.clone(), q.display_name.clone()))
             .collect();
         let files = self.completion_files.borrow();
-        let result = crate::text::completion_candidates(&text, cursor, &quarks, files.as_slice());
+        let result = crate::text::completion_candidates(
+            &text,
+            cursor,
+            &quarks,
+            files.as_slice(),
+            &self.sessions,
+        );
         drop(files);
         self.completion = result.map(|c| {
             self.completion_scroll.scroll_to_item(0);
