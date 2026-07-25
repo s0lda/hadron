@@ -70,6 +70,7 @@ pub struct Command {
 pub const COMMANDS: &[Command] = &[
     Command { name: "help", detail: "List every chat command", arity: Arity::None, listed: true },
     Command { name: "skills", detail: "List the skills the engine can hand a quark, and their triggers", arity: Arity::None, listed: true },
+    Command { name: "vocabulary", detail: "What each Hadron word means — quark, preon, field, gluon…", arity: Arity::None, listed: true },
     Command { name: "clear", detail: "Archive and clear the current chat history", arity: Arity::None, listed: true },
     Command { name: "exit", detail: "Exit Hadron Chamber", arity: Arity::None, listed: true },
     // A working alias of `/exit`, kept so existing muscle memory does not break,
