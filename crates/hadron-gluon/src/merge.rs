@@ -70,13 +70,33 @@ pub fn has_remote(repo_root: &Path) -> bool {
         .is_some_and(|out| !out.trim().is_empty())
 }
 
+/// Pick the test command from the worktree's own manifest. Checked in a fixed
+/// order because a repo can carry more than one manifest (a Rust workspace with
+/// a `package.json` for its docs site) — the language the gate actually tests is
+/// the one whose manifest names the build, and Cargo is Hadron's own, so it is
+/// the fallback when nothing else is recognised.
+pub fn detect_runner(worktree_path: &Path) -> (&'static str, &'static [&'static str]) {
+    if worktree_path.join("package.json").is_file() {
+        ("npm", &["test"])
+    } else if worktree_path.join("pyproject.toml").is_file()
+        || worktree_path.join("setup.py").is_file()
+    {
+        ("pytest", &[])
+    } else if worktree_path.join("go.mod").is_file() {
+        ("go", &["test", "./..."])
+    } else {
+        ("cargo", &["test", "--workspace"])
+    }
+}
+
 /// The production runner: `cargo test --workspace` and a local `--ff-only` merge.
 pub struct CargoMergeRunner;
 
 #[async_trait]
 impl MergeRunner for CargoMergeRunner {
     async fn tests(&self, wt: &Worktree) -> anyhow::Result<(bool, String)> {
-        run_tests_with(wt, "cargo", &["test", "--workspace"]).await
+        let (program, args) = detect_runner(&wt.path);
+        run_tests_with(wt, program, args).await
     }
 
     fn land(&self, repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Landed> {
@@ -301,4 +321,39 @@ mod tests {
         assert!(!passed, "a nonzero exit is a red suite");
         assert!(out.contains("boom"), "the human gets the output: {out}");
     }
+
+    #[test]
+    fn detect_runner_picks_cargo_for_a_rust_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname=\"x\"").unwrap();
+        assert_eq!(detect_runner(dir.path()), ("cargo", &["test", "--workspace"][..]));
+    }
+
+    #[test]
+    fn detect_runner_picks_npm_for_a_package_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        assert_eq!(detect_runner(dir.path()), ("npm", &["test"][..]));
+    }
+
+    #[test]
+    fn detect_runner_picks_pytest_for_a_pyproject() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pyproject.toml"), "").unwrap();
+        assert_eq!(detect_runner(dir.path()), ("pytest", &[][..]));
+    }
+
+    #[test]
+    fn detect_runner_picks_go_test_for_a_go_mod() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module x").unwrap();
+        assert_eq!(detect_runner(dir.path()), ("go", &["test", "./..."][..]));
+    }
+
+    #[test]
+    fn detect_runner_defaults_to_cargo_when_no_manifest_is_recognised() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(detect_runner(dir.path()), ("cargo", &["test", "--workspace"][..]));
+    }
 }
+
