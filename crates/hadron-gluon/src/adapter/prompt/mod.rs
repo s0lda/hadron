@@ -123,9 +123,12 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         p.push_str("\n\n");
     }
 
-    // 2. Nucleus digest — project SSOT context.
+    // 2. Nucleus digest — project SSOT context, as an INDEX. `build_nucleus_digest`
+    // reduces `features.md` to its map table plus one line per component; the prose
+    // is opened on demand, so the header has to say so or a quark reads the index as
+    // the whole truth about a feature.
     if !projection.nucleus_digest.trim().is_empty() {
-        p.push_str("# Project knowledge (nucleus)\n");
+        p.push_str("# Project knowledge (nucleus) — index only, open `.hadron/nucleus/features.md` before touching a feature\n");
         p.push_str(projection.nucleus_digest.trim());
         p.push_str("\n\n");
     }
