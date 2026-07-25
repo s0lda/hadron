@@ -41,6 +41,19 @@ pub enum Arity {
     Line,
 }
 
+/// Where a `/command` argument gets its autocompletions from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArgSource {
+    /// Takes no argument (or no completion for argument).
+    None,
+    /// Argument completes from roster quarks (`@name`).
+    Quark,
+    /// Argument completes from archived sessions (`name` or `id`).
+    Session,
+    /// Argument completes from project files (`@file`).
+    File,
+}
+
 /// One chat `/command`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Command {
@@ -49,6 +62,7 @@ pub struct Command {
     /// The one-line gloss shown in the completion menu.
     pub detail: &'static str,
     pub arity: Arity,
+    pub arg: ArgSource,
     /// Whether the completion menu offers it. `false` marks a working **alias**
     /// we simply do not advertise (`/quit` is `/exit`) — never an unimplemented
     /// command. Nothing may sit in this table that the handler does not handle.
@@ -68,36 +82,36 @@ pub struct Command {
 /// cannot be written. The `match` arm still cannot be checked by the compiler —
 /// `every_listed_command_is_handled` in `app::input` is the guard that closes it.
 pub const COMMANDS: &[Command] = &[
-    Command { name: "help", detail: "List every chat command", arity: Arity::None, listed: true },
-    Command { name: "skills", detail: "List the skills the engine can hand a quark, and their triggers", arity: Arity::None, listed: true },
-    Command { name: "vocabulary", detail: "What each Hadron word means — quark, preon, field, gluon…", arity: Arity::None, listed: true },
-    Command { name: "clear", detail: "Archive and clear the current chat history", arity: Arity::None, listed: true },
-    Command { name: "exit", detail: "Exit Hadron Chamber", arity: Arity::None, listed: true },
+    Command { name: "help", detail: "List every chat command", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "skills", detail: "List the skills the engine can hand a quark, and their triggers", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "vocabulary", detail: "What each Hadron word means — quark, preon, field, gluon…", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "clear", detail: "Archive and clear the current chat history", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "exit", detail: "Exit Hadron Chamber", arity: Arity::None, arg: ArgSource::None, listed: true },
     // A working alias of `/exit`, kept so existing muscle memory does not break,
     // unlisted so the menu offers one way to do it.
-    Command { name: "quit", detail: "Exit Hadron Chamber", arity: Arity::None, listed: false },
-    Command { name: "toggle-roster", detail: "Toggle the Roster sidebar", arity: Arity::None, listed: true },
-    Command { name: "toggle-inspector", detail: "Toggle the Inspector sidebar", arity: Arity::None, listed: true },
+    Command { name: "quit", detail: "Exit Hadron Chamber", arity: Arity::None, arg: ArgSource::None, listed: false },
+    Command { name: "toggle-roster", detail: "Toggle the Roster sidebar", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "toggle-inspector", detail: "Toggle the Inspector sidebar", arity: Arity::None, arg: ArgSource::None, listed: true },
     // The skill commands. Each posts a message carrying the skill's own canonical
     // trigger, so the engine selects the procedure — see `skill_command_body`.
-    Command { name: "brainstorm", detail: "Explore a design before any code (e.g. /brainstorm @Sonnet the new menu)", arity: Arity::Line, listed: true },
-    Command { name: "writing-plans", detail: "Turn a settled design into an implementation plan", arity: Arity::Line, listed: true },
-    Command { name: "executing-plans", detail: "Work through an existing plan, task by task", arity: Arity::Line, listed: true },
-    Command { name: "team-brainstorm", detail: "Kick off brainstorming with the whole team", arity: Arity::Line, listed: true },
-    Command { name: "reboot", detail: "Force-restart a resident quark (e.g. /reboot @acp-claude or /reboot all)", arity: Arity::Line, listed: true },
-    Command { name: "approve", detail: "Approve a pending permission request (e.g. /approve @worker or /approve @worker remember)", arity: Arity::Line, listed: true },
-    Command { name: "deny", detail: "Deny a pending permission request (e.g. /deny @worker)", arity: Arity::Line, listed: true },
-    Command { name: "toggle", detail: "Park or unpark a quark — keeps the seat, skips its turns (e.g. /toggle @Sonnet)", arity: Arity::Line, listed: true },
-    Command { name: "rename", detail: "Name the current session (e.g. /rename bugfix-router)", arity: Arity::Line, listed: true },
-    Command { name: "resume", detail: "Reopen an archived session as the live one (e.g. /resume bugfix-router)", arity: Arity::Line, listed: true },
-    Command { name: "limit", detail: "Set custom energy token limit for a seat (e.g. /limit @acp-claude 1000000)", arity: Arity::Line, listed: true },
-    Command { name: "reset-energy", detail: "Reset used token ledger for a seat or all (e.g. /reset-energy @acp-claude or /reset-energy all)", arity: Arity::Line, listed: true },
-    Command { name: "learn", detail: "Pin a lesson into this repo's nucleus (e.g. /learn always run cargo fmt first)", arity: Arity::Line, listed: true },
-    Command { name: "learn-global", detail: "Pin a lesson into your global nucleus, across every repo", arity: Arity::Line, listed: true },
-    Command { name: "learn-std-model", detail: "Add a standing law to this repo (appends to laws.md, never edits the Standard Model)", arity: Arity::Line, listed: true },
-    Command { name: "learn-std-model-global", detail: "Add a standing law across every repo you run Hadron in", arity: Arity::Line, listed: true },
-    Command { name: "gate-status", detail: "Show which branch the merge gate is running, since when, and time left", arity: Arity::None, listed: true },
-    Command { name: "abandon", detail: "Archive-tag then discard a quark's pending branch (e.g. /abandon @acp-claude, then /abandon @acp-claude confirm to force)", arity: Arity::Line, listed: true },
+    Command { name: "brainstorm", detail: "Explore a design before any code (e.g. /brainstorm @Sonnet the new menu)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "writing-plans", detail: "Turn a settled design into an implementation plan", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "executing-plans", detail: "Work through an existing plan, task by task", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "team-brainstorm", detail: "Kick off brainstorming with the whole team", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "reboot", detail: "Force-restart a resident quark (e.g. /reboot @acp-claude or /reboot all)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "approve", detail: "Approve a pending permission request (e.g. /approve @worker or /approve @worker remember)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "deny", detail: "Deny a pending permission request (e.g. /deny @worker)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "toggle", detail: "Park or unpark a quark — keeps the seat, skips its turns (e.g. /toggle @Sonnet)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "rename", detail: "Name the current session (e.g. /rename bugfix-router)", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "resume", detail: "Reopen an archived session as the live one (e.g. /resume bugfix-router)", arity: Arity::Line, arg: ArgSource::Session, listed: true },
+    Command { name: "limit", detail: "Set custom energy token limit for a seat (e.g. /limit @acp-claude 1000000)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "reset-energy", detail: "Reset used token ledger for a seat or all (e.g. /reset-energy @acp-claude or /reset-energy all)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "learn", detail: "Pin a lesson into this repo's nucleus (e.g. /learn always run cargo fmt first)", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "learn-global", detail: "Pin a lesson into your global nucleus, across every repo", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "learn-std-model", detail: "Add a standing law to this repo (appends to laws.md, never edits the Standard Model)", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "learn-std-model-global", detail: "Add a standing law across every repo you run Hadron in", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "gate-status", detail: "Show which branch the merge gate is running, since when, and time left", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "abandon", detail: "Archive-tag then discard a quark's pending branch (e.g. /abandon @acp-claude, then /abandon @acp-claude confirm to force)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
 ];
 
 /// A short kebab-case id for a lesson line: the first few words, lowercased,
@@ -423,22 +437,47 @@ pub fn skill_command_needs_a_task(cmd: &str) -> String {
     )
 }
 
-/// Find the `@`/`:` completion trigger immediately before the cursor.
+/// The trigger character or command argument context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionTrigger {
+    Mention,
+    Emoji,
+    Command,
+    Arg(ArgSource),
+}
+
+/// Find the `@`/`:`/`/` completion trigger immediately before the cursor or a
+/// `/command` argument context.
 ///
-/// Returns the trigger char, the query typed after it, and its byte index.
-///
-/// **`offset` is a BYTE offset from the editor and may land anywhere** — including
-/// past the end of the string, or in the middle of a multi-byte character. Slicing
-/// `&text[..offset]` on either panics, and that panic is the emoji crash: type an
-/// emoji into the chat box and the cursor sits at a byte offset that is not a char
-/// boundary. Clamp into range, then walk back to the nearest boundary.
-pub fn extract_completion_query(text: &str, offset: usize) -> Option<(char, String, usize)> {
+/// Returns the trigger type, the query typed after it, and its byte index.
+pub fn extract_completion_query(text: &str, offset: usize) -> Option<(CompletionTrigger, String, usize)> {
     let mut safe_offset = offset.min(text.len());
     while safe_offset > 0 && !text.is_char_boundary(safe_offset) {
         safe_offset -= 1;
     }
 
     let before_cursor = &text[..safe_offset];
+    let line_start = before_cursor.rfind('\n').map_or(0, |i| i + 1);
+    let current_line = &before_cursor[line_start..];
+
+    // Check if the current line starts with a command that takes arguments (e.g. `/resume bug`)
+    if current_line.starts_with('/') {
+        let after_slash = &current_line[1..];
+        if let Some(space_pos) = after_slash.find(char::is_whitespace) {
+            let cmd_name = &after_slash[..space_pos];
+            if let Some(cmd) = command(cmd_name) {
+                if cmd.arg != ArgSource::None {
+                    let arg_part = &after_slash[space_pos..];
+                    let arg_trimmed = arg_part.trim_start();
+                    let leading_spaces = arg_part.len() - arg_trimmed.len();
+                    let arg_start = line_start + 1 + space_pos + leading_spaces;
+                    let query = arg_trimmed.to_string();
+                    return Some((CompletionTrigger::Arg(cmd.arg), query, arg_start));
+                }
+            }
+        }
+    }
+
     for (idx, c) in before_cursor.char_indices().rev() {
         let is_slash_cmd = c == '/'
             && (idx == 0
@@ -446,16 +485,21 @@ pub fn extract_completion_query(text: &str, offset: usize) -> Option<(char, Stri
                     .chars()
                     .next_back()
                     .map_or(false, |ch| ch.is_whitespace() || ch == '\n'));
-        if c == '@' || c == ':' || is_slash_cmd {
+        if c == '@' {
             let query = before_cursor[idx + c.len_utf8()..].to_string();
-            return Some((c, query, idx));
+            return Some((CompletionTrigger::Mention, query, idx));
+        } else if c == ':' {
+            let query = before_cursor[idx + c.len_utf8()..].to_string();
+            return Some((CompletionTrigger::Emoji, query, idx));
+        } else if is_slash_cmd {
+            let query = before_cursor[idx + c.len_utf8()..].to_string();
+            return Some((CompletionTrigger::Command, query, idx));
         }
         if c.is_whitespace() {
             break;
         }
     }
     None
-
 }
 
 /// The label and filter text of one completion-menu row, built so the menu cannot
@@ -544,13 +588,14 @@ pub fn completion_candidates(
     cursor: usize,
     quarks: &[(String, Option<String>)],
     files: &[String],
+    sessions: &[crate::model::SessionInfo],
 ) -> Option<Completions> {
     let (trigger, query, start) = extract_completion_query(text, cursor)?;
     let query_lower = query.to_lowercase();
     let mut out: Vec<Candidate> = Vec::new();
 
     match trigger {
-        '@' => {
+        CompletionTrigger::Mention => {
             // Routing aliases first — `@team`/`@orchestrator` are what the human
             // reaches for most, and neither is a roster id.
             for (alias, detail) in MENTION_ALIASES {
@@ -590,7 +635,7 @@ pub fn completion_candidates(
                 }
             }
         }
-        ':' => {
+        CompletionTrigger::Emoji => {
             if query_lower.is_empty() {
                 const MODERN_EMOJIS: &[(&str, &str)] = &[
                     ("rofl", "🤣"),
@@ -678,7 +723,7 @@ pub fn completion_candidates(
                 }
             }
         }
-        '/' => {
+        CompletionTrigger::Command => {
             // Straight off `COMMANDS`, so the menu cannot offer a command the
             // parser does not recognise.
             for cmd in COMMANDS.iter().filter(|c| c.listed) {
@@ -691,7 +736,64 @@ pub fn completion_candidates(
                 }
             }
         }
-        _ => {}
+        CompletionTrigger::Arg(ArgSource::Session) => {
+            for session in sessions {
+                if out.len() >= MAX_CANDIDATES {
+                    break;
+                }
+                let label = session.label();
+                let name_or_id = session.name.as_deref().unwrap_or(&session.id);
+                let label_lower = label.to_lowercase();
+                let id_lower = session.id.to_lowercase();
+                if query_lower.is_empty()
+                    || label_lower.contains(&query_lower)
+                    || id_lower.contains(&query_lower)
+                {
+                    out.push(Candidate {
+                        label,
+                        detail: "Session".into(),
+                        new_text: format!("{name_or_id} "),
+                    });
+                }
+            }
+        }
+        CompletionTrigger::Arg(ArgSource::Quark) => {
+            let q_query = query_lower.strip_prefix('@').unwrap_or(&query_lower);
+            for (id, display) in quarks {
+                if out.len() >= MAX_CANDIDATES {
+                    break;
+                }
+                let name = display.as_ref().unwrap_or(id);
+                let name_l = name.to_lowercase();
+                let id_l = id.to_lowercase();
+                if q_query.is_empty()
+                    || name_l.contains(q_query)
+                    || id_l.contains(q_query)
+                {
+                    out.push(Candidate {
+                        label: format!("@{name}"),
+                        detail: "Quark".into(),
+                        new_text: format!("@{name} "),
+                    });
+                }
+            }
+        }
+        CompletionTrigger::Arg(ArgSource::File) => {
+            let f_query = query_lower.strip_prefix('@').unwrap_or(&query_lower);
+            for file in files {
+                if out.len() >= MAX_CANDIDATES {
+                    break;
+                }
+                if f_query.is_empty() || file.to_lowercase().contains(f_query) {
+                    out.push(Candidate {
+                        label: format!("@{file}"),
+                        detail: "File".into(),
+                        new_text: format!("@{file} "),
+                    });
+                }
+            }
+        }
+        CompletionTrigger::Arg(ArgSource::None) => {}
     }
 
     if out.is_empty() {
@@ -801,7 +903,7 @@ mod tests {
 
     #[test]
     fn a_mention_query_offers_matching_quarks_and_aliases() {
-        let c = completion_candidates("@ag", 3, &quarks(), &[]).expect("has rows");
+        let c = completion_candidates("@ag", 3, &quarks(), &[], &[]).expect("has rows");
         assert_eq!(c.start, 0, "replace span starts at the '@'");
         let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels.contains(&"@Agy"), "matched quark offered: {labels:?}");
@@ -812,7 +914,7 @@ mod tests {
 
     #[test]
     fn an_empty_mention_query_offers_the_routing_aliases_first() {
-        let c = completion_candidates("@", 1, &quarks(), &[]).expect("has rows");
+        let c = completion_candidates("@", 1, &quarks(), &[], &[]).expect("has rows");
         assert_eq!(
             c.candidates[0].label,
             format!("@{}", hadron_gluon::router::ORCHESTRATOR_ALIAS),
@@ -823,14 +925,14 @@ mod tests {
     #[test]
     fn a_file_query_offers_files() {
         let files = vec!["src/app.rs".to_string(), "README.md".to_string()];
-        let c = completion_candidates("@app", 4, &[], &files).expect("has rows");
+        let c = completion_candidates("@app", 4, &[], &files, &[]).expect("has rows");
         assert_eq!(c.candidates.len(), 1);
         assert_eq!(c.candidates[0].new_text, "@src/app.rs ");
     }
 
     #[test]
     fn a_bare_emoji_trigger_is_capped_not_thousands() {
-        let c = completion_candidates(":", 1, &[], &[]).expect("has rows");
+        let c = completion_candidates(":", 1, &[], &[], &[]).expect("has rows");
         assert!(
             c.candidates.len() <= MAX_CANDIDATES,
             "a bare ':' must not build thousands of rows: got {}",
@@ -840,7 +942,7 @@ mod tests {
 
     #[test]
     fn an_emoji_query_accepts_the_glyph_not_the_shortcode() {
-        let c = completion_candidates(":rofl", 5, &[], &[]).expect("has rows");
+        let c = completion_candidates(":rofl", 5, &[], &[], &[]).expect("has rows");
         let first = &c.candidates[0];
         assert!(first.label.starts_with(":rofl"));
         // Accepting inserts the glyph itself, not the `:rofl:` text.
@@ -850,18 +952,54 @@ mod tests {
     #[test]
     fn an_emoji_query_searches_the_entire_crate() {
         // "globe_with_meridians" is a real but less common emoji in the emojis crate.
-        let c = completion_candidates(":globe_with_meridians", 21, &[], &[]).expect("has rows");
+        let c = completion_candidates(":globe_with_meridians", 21, &[], &[], &[]).expect("has rows");
         let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels.iter().any(|l| l.starts_with(":globe_with_meridians")), "should search the whole crate: {labels:?}");
     }
 
     #[test]
     fn a_bare_emoji_query_returns_curated_modern_emojis() {
-        let c = completion_candidates(":", 1, &[], &[]).expect("has rows");
+        let c = completion_candidates(":", 1, &[], &[], &[]).expect("has rows");
         // Verify we got the curated 50 emojis (or at least capped to MAX_CANDIDATES).
         assert_eq!(c.candidates.len(), 50);
         let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels[0].starts_with(":rofl"), "first emoji should be rofl: {:?}", labels[0]);
+    }
+
+    #[test]
+    fn a_resume_query_offers_archived_sessions() {
+        let sessions = vec![
+            crate::model::SessionInfo {
+                id: "20260725_120000".into(),
+                name: Some("bugfix-router".into()),
+            },
+            crate::model::SessionInfo {
+                id: "20260724_093000".into(),
+                name: None,
+            },
+        ];
+        let c = completion_candidates("/resume ", 8, &[], &[], &sessions).expect("has rows");
+        assert_eq!(c.start, 8);
+        assert_eq!(c.candidates.len(), 2);
+        assert_eq!(c.candidates[0].label, "bugfix-router");
+        assert_eq!(c.candidates[0].new_text, "bugfix-router ");
+        assert_eq!(c.candidates[1].label, "2026-07-24 09:30");
+        assert_eq!(c.candidates[1].new_text, "20260724_093000 ");
+
+        let c2 = completion_candidates("/resume bug", 11, &[], &[], &sessions).expect("has rows");
+        assert_eq!(c2.start, 8);
+        assert_eq!(c2.candidates.len(), 1);
+        assert_eq!(c2.candidates[0].label, "bugfix-router");
+        assert_eq!(c2.candidates[0].new_text, "bugfix-router ");
+    }
+
+    #[test]
+    fn a_reboot_query_offers_quarks() {
+        let c = completion_candidates("/reboot ", 8, &quarks(), &[], &[]).expect("has rows");
+        assert_eq!(c.start, 8);
+        let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"@Agy"));
+        assert!(labels.contains(&"@acp-claude"));
     }
 
     /// The regression this fixes was measured, so the guard is measured too: run
@@ -994,43 +1132,42 @@ mod tests {
 
     #[test]
     fn a_slash_command_is_offered_only_at_the_line_start() {
-        let c = completion_candidates("/tog", 4, &[], &[]).expect("has rows");
+        let c = completion_candidates("/tog", 4, &[], &[], &[]).expect("has rows");
         let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels.contains(&"/toggle-roster"), "matched toggle-roster offered: {labels:?}");
         // Was `/goa` — `/goal` was one of six rows the menu offered with no handler,
         // so choosing it posted the line as chat. Retired; `/brainstorm` is a real one.
-        assert!(completion_candidates("/brain", 6, &[], &[]).is_some());
+        assert!(completion_candidates("/brain", 6, &[], &[], &[]).is_some());
 
-
-        let c_reboot = completion_candidates("/reb", 4, &[], &[]).expect("has rows");
+        let c_reboot = completion_candidates("/reb", 4, &[], &[], &[]).expect("has rows");
         let labels_reboot: Vec<&str> = c_reboot.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels_reboot.contains(&"/reboot"), "matched reboot offered: {labels_reboot:?}");
 
-        let c_approve = completion_candidates("/app", 4, &[], &[]).expect("has rows");
+        let c_approve = completion_candidates("/app", 4, &[], &[], &[]).expect("has rows");
         let labels_approve: Vec<&str> = c_approve.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels_approve.contains(&"/approve"), "matched approve offered: {labels_approve:?}");
 
-        let c_deny = completion_candidates("/den", 4, &[], &[]).expect("has rows");
+        let c_deny = completion_candidates("/den", 4, &[], &[], &[]).expect("has rows");
         let labels_deny: Vec<&str> = c_deny.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels_deny.contains(&"/deny"), "matched deny offered: {labels_deny:?}");
         
         // Mid-line `/` at a word boundary IS a trigger.
-        assert!(completion_candidates("hi /brain", 9, &[], &[]).is_some());
+        assert!(completion_candidates("hi /brain", 9, &[], &[], &[]).is_some());
         // Path slashes are not triggers.
-        assert!(completion_candidates("src/app.rs", 10, &[], &[]).is_none());
+        assert!(completion_candidates("src/app.rs", 10, &[], &[], &[]).is_none());
     }
 
 
     #[test]
     fn no_trigger_yields_no_card() {
-        assert!(completion_candidates("just talking", 12, &quarks(), &[]).is_none());
+        assert!(completion_candidates("just talking", 12, &quarks(), &[], &[]).is_none());
     }
 
     #[test]
     fn a_cursor_past_the_end_or_mid_emoji_does_not_panic() {
         let hostile = "hi 🌍 @a";
         for cursor in 0..=hostile.len() + 4 {
-            let _ = completion_candidates(hostile, cursor, &quarks(), &[]);
+            let _ = completion_candidates(hostile, cursor, &quarks(), &[], &[]);
         }
     }
 
@@ -1105,11 +1242,11 @@ mod tests {
     fn finds_a_mention_and_an_emoji_trigger() {
         assert_eq!(
             extract_completion_query("hey @op", 7),
-            Some(('@', "op".to_string(), 4))
+            Some((CompletionTrigger::Mention, "op".to_string(), 4))
         );
         assert_eq!(
             extract_completion_query("nice :smi", 9),
-            Some((':', "smi".to_string(), 5))
+            Some((CompletionTrigger::Emoji, "smi".to_string(), 5))
         );
         assert_eq!(extract_completion_query("no trigger", 10), None);
     }
@@ -1138,7 +1275,7 @@ mod tests {
         assert_eq!(extract_completion_query(text, 10), None);
         assert_eq!(
             extract_completion_query(text, text.len()),
-            Some(('@', "world".to_string(), 11))
+            Some((CompletionTrigger::Mention, "world".to_string(), 11))
         );
         // An offset landing INSIDE the emoji must not crash.
         assert_eq!(extract_completion_query(text, 8), None);
@@ -1153,7 +1290,7 @@ mod tests {
         assert!(!text.is_char_boundary(mid_emoji), "the test's premise");
 
         let (trigger, query, idx) = extract_completion_query(text, mid_emoji).unwrap();
-        assert_eq!(trigger, '@');
+        assert_eq!(trigger, CompletionTrigger::Mention);
         assert_eq!(idx, 0);
         assert_eq!(query, "ab", "the partial emoji is dropped, not sliced");
     }
@@ -1163,13 +1300,13 @@ mod tests {
         let text = "hello /plan";
         assert_eq!(
             extract_completion_query(text, text.len()),
-            Some(('/', "plan".to_string(), 6))
+            Some((CompletionTrigger::Command, "plan".to_string(), 6))
         );
 
         let multi_line = "first line\n/reboot";
         assert_eq!(
             extract_completion_query(multi_line, multi_line.len()),
-            Some(('/', "reboot".to_string(), 11))
+            Some((CompletionTrigger::Command, "reboot".to_string(), 11))
         );
 
         // Path slashes must NOT trigger completions.
@@ -1179,16 +1316,16 @@ mod tests {
 
     #[test]
     fn exit_command_completion_candidates() {
-        let completions = completion_candidates("/ex", 3, &[], &[]).unwrap();
+        let completions = completion_candidates("/ex", 3, &[], &[], &[]).unwrap();
         assert!(completions.candidates.iter().any(|c| c.label == "/exit"));
     }
 
     #[test]
     fn rename_and_resume_command_completion_candidates() {
-        let completions = completion_candidates("/ren", 4, &[], &[]).unwrap();
+        let completions = completion_candidates("/ren", 4, &[], &[], &[]).unwrap();
         assert!(completions.candidates.iter().any(|c| c.label == "/rename"));
 
-        let completions = completion_candidates("/res", 4, &[], &[]).unwrap();
+        let completions = completion_candidates("/res", 4, &[], &[], &[]).unwrap();
         assert!(completions.candidates.iter().any(|c| c.label == "/resume"));
     }
 
