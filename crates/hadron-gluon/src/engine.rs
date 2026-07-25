@@ -12,7 +12,10 @@ use crate::field::append_event;
 use crate::preons::{self, Preon};
 use crate::quark::Quark;
 
-mod nucleus;
+// `pub(crate)`, not private: the prompt builder reads `NUCLEUS_INDEX_BUDGET` and
+// `tag_manifest` from here so the budget has ONE home. Re-declaring either in
+// `adapter/prompt` would be the drift rule 3 exists to prevent.
+pub(crate) mod nucleus;
 mod routing;
 mod turn;
 mod merge;
