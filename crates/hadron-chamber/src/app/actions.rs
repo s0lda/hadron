@@ -5,6 +5,15 @@
 //! the view code that calls them.
 
 use super::*;
+use std::io::Write;
+
+/// Append one line to a nucleus file, creating it if it doesn't exist yet. `/learn`
+/// writes straight to disk (see `handle_chat_command`'s `"learn"` arm) rather than
+/// riding the field, so this is a plain filesystem append, not an event.
+fn append_line(path: &std::path::Path, line: &str) -> std::io::Result<()> {
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    f.write_all(line.as_bytes())
+}
 
 impl Chamber {
     /// Post a chat message from `from` and reveal it. The shared tail of every
@@ -451,6 +460,45 @@ impl Chamber {
                 let events = io::read_events(&self.path).unwrap_or_default();
                 self.reproject(&events);
                 cx.notify();
+                true
+            }
+            // The human has already typed the full lesson — nothing left to interpret,
+            // so this writes straight to disk rather than spending a billable turn on
+            // it (same reasoning as `/clear`, above). Repo-scoped by default; only the
+            // explicit `-global` suffix writes to `~/.hadron` instead of this repo's
+            // `.hadron` — never the other way around, per the spec's security boundary.
+            "learn" | "learn-global" | "learn-std-model" | "learn-std-model-global" => {
+                let text = args.trim();
+                if text.is_empty() {
+                    eprintln!("chamber: `/{cmd}` needs text (e.g. `/{cmd} always run cargo fmt first`)");
+                    return true;
+                }
+                let hadron_dir = if cmd.ends_with("global") {
+                    hadron_lattice::user_hadron_dir()
+                } else {
+                    self.path.parent().map(std::path::Path::to_path_buf)
+                };
+                let Some(hadron_dir) = hadron_dir else {
+                    eprintln!("chamber: `/{cmd}` failed — could not resolve a target directory");
+                    return true;
+                };
+                let nucleus = hadron_dir.join("nucleus");
+                if let Err(e) = std::fs::create_dir_all(&nucleus) {
+                    eprintln!("chamber: failed to create nucleus dir: {e}");
+                    return true;
+                }
+                if cmd.starts_with("learn-std-model") {
+                    if let Err(e) = append_line(&nucleus.join("laws.md"), &format!("- {text}\n")) {
+                        eprintln!("chamber: failed to write laws.md: {e}");
+                    }
+                } else {
+                    let slug = crate::text::slugify(text);
+                    if let Err(e) =
+                        append_line(&nucleus.join("index.md"), &crate::text::learn_line(text, &slug))
+                    {
+                        eprintln!("chamber: failed to write index.md: {e}");
+                    }
+                }
                 true
             }
             _ => {

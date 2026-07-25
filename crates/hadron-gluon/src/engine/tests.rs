@@ -1971,6 +1971,35 @@ fn repo_rules_are_labelled_as_the_projects_own() {
     assert!(text.contains("Threat-model every endpoint."));
 }
 
+/// `/learn-std-model` writes `laws.md`, not the Standard Model itself — this is the
+/// proof it actually reaches the prompt, right after tier 1 and ahead of the named
+/// `invariants/` tier.
+#[test]
+fn repo_laws_are_appended_right_after_the_standard_model() {
+    use std::fs;
+    let ws = tempdir().unwrap();
+    let nucleus = ws.path().join(".hadron").join("nucleus");
+    fs::create_dir_all(&nucleus).unwrap();
+    fs::write(nucleus.join("laws.md"), "- Never merge on a red gate.\n").unwrap();
+
+    let (text, _) = build_invariants(ws.path(), &[]);
+    assert!(text.contains("# This project's standing laws"));
+    assert!(text.contains("Never merge on a red gate."));
+
+    let laws_pos = text.find("standing laws").unwrap();
+    let model_pos = text.find("# The Standard Model").unwrap();
+    assert!(model_pos < laws_pos, "the Standard Model must still come first");
+}
+
+/// A missing `laws.md` is the normal case (nobody has pinned a law yet) and must
+/// not appear as an empty, confusing section header.
+#[test]
+fn no_laws_file_means_no_laws_section() {
+    let ws = tempdir().unwrap();
+    let (text, _) = build_invariants(ws.path(), &[]);
+    assert!(!text.contains("standing laws"));
+}
+
 /// The whole point, driven end to end: a task that says "execute the plan" must
 /// arrive at the quark's CLI as the executing-plans procedure — and because the
 /// plan on disk records THIS quark as its author, the same prompt must refuse to

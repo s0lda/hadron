@@ -457,6 +457,10 @@ mod tests {
             "deny",
             "limit",
             "reset-energy",
+            "learn",
+            "learn-global",
+            "learn-std-model",
+            "learn-std-model-global",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(
