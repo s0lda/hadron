@@ -871,8 +871,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             // window frame (crate::window_frame) shows the shadow through the
             // corners instead of a square fill.
             t.tokens.background = gpui::hsla(0.0, 0.0, 0.0, 0.0).into();
-            t.font_family =
-                "Inter, Segoe UI, sans-serif, Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji".into();
+            t.font_family = ".SystemUIFont".into();
         }
         // Keyboard navigation. The chords still scoped to `KEY_CONTEXT` are ones
         // the text input's own key context (`gpui_component::input::state::CONTEXT`)
