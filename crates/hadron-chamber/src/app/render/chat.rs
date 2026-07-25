@@ -214,7 +214,7 @@ impl super::Chamber {
                             )
                             .child(
                                 div().text_xs().text_color(theme::text_muted()).child(
-                                    crate::vcs::repo_root_of(&self.path).display().to_string(),
+                                    crate::vcs::format_working_dir(&self.path),
                                 ),
                             ),
                     )
