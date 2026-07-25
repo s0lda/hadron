@@ -115,16 +115,27 @@ pub(super) fn read_nucleus_index_with_fallback(workspace_root: &std::path::Path)
     read_nucleus_index(&legacy_memory_dir(workspace_root).join("index.md"))
 }
 
+fn home_dir() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(std::path::PathBuf::from(home))
+}
+
 /// Where a user's own always-on rules live, under their home directory. Their
 /// preferences, across every project they run Hadron in.
 fn global_invariants_dir() -> Option<std::path::PathBuf> {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    Some(
-        std::path::PathBuf::from(home)
-            .join(".hadron")
-            .join("nucleus")
-            .join("invariants"),
-    )
+    Some(home_dir()?.join(".hadron").join("nucleus").join("invariants"))
+}
+
+/// Standing laws the human pinned with `/learn-std-model[-global]` — appended
+/// verbatim into every prompt, unlike a named `invariants/` rule which loads only
+/// when `always.md` or requested by name. A law is meant to be unconditional, the
+/// same way the Standard Model itself is.
+fn global_laws_path() -> Option<std::path::PathBuf> {
+    Some(home_dir()?.join(".hadron").join("nucleus").join("laws.md"))
+}
+
+fn repo_laws_path(workspace_root: &std::path::Path) -> std::path::PathBuf {
+    workspace_root.join(".hadron").join("nucleus").join("laws.md")
 }
 
 /// Read every `*.md` in a directory, sorted by name so the prompt is deterministic
@@ -173,6 +184,22 @@ pub(super) fn build_invariants(workspace_root: &std::path::Path, requested: &[St
     // Tier 1 — always, whatever else is or isn't on disk.
     combined.push_str(STANDARD_MODEL.trim());
     combined.push('\n');
+
+    // Standing laws, right after the Standard Model and before the invariant
+    // tiers — a law pinned via `/learn-std-model[-global]` is unconditional, the
+    // same as the Standard Model itself, not an opt-in named rule.
+    if let Some(path) = global_laws_path() {
+        if let Ok(body) = fs::read_to_string(&path) {
+            if !body.trim().is_empty() {
+                combined.push_str(&format!("\n# Your standing laws\n{}\n", body.trim()));
+            }
+        }
+    }
+    if let Ok(body) = fs::read_to_string(repo_laws_path(workspace_root)) {
+        if !body.trim().is_empty() {
+            combined.push_str(&format!("\n# This project's standing laws\n{}\n", body.trim()));
+        }
+    }
 
     // Tier 2 — the user's preferences, across all their projects.
     if let Some(global_dir) = global_invariants_dir() {

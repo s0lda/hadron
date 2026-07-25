@@ -92,7 +92,32 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "resume", detail: "Reopen an archived session as the live one (e.g. /resume bugfix-router)", arity: Arity::Line, listed: true },
     Command { name: "limit", detail: "Set custom energy token limit for a seat (e.g. /limit @acp-claude 1000000)", arity: Arity::Line, listed: true },
     Command { name: "reset-energy", detail: "Reset used token ledger for a seat or all (e.g. /reset-energy @acp-claude or /reset-energy all)", arity: Arity::Line, listed: true },
+    Command { name: "learn", detail: "Pin a lesson into this repo's nucleus (e.g. /learn always run cargo fmt first)", arity: Arity::Line, listed: true },
+    Command { name: "learn-global", detail: "Pin a lesson into your global nucleus, across every repo", arity: Arity::Line, listed: true },
+    Command { name: "learn-std-model", detail: "Add a standing law to this repo (appends to laws.md, never edits the Standard Model)", arity: Arity::Line, listed: true },
+    Command { name: "learn-std-model-global", detail: "Add a standing law across every repo you run Hadron in", arity: Arity::Line, listed: true },
 ];
+
+/// A short kebab-case id for a lesson line: the first few words, lowercased,
+/// stripped to alphanumerics and hyphens. Not guaranteed unique — the caller
+/// appends a suffix on collision, since uniqueness needs to see the existing index.
+pub(crate) fn slugify(text: &str) -> String {
+    text.split_whitespace()
+        .take(5)
+        .collect::<Vec<_>>()
+        .join("-")
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect()
+}
+
+/// One nucleus-index line, in the exact format the index expects a lesson to be
+/// written back in (`- **<slug>** — <lesson> [pinned]`). `[pinned]` marks a line the
+/// human wrote directly, as opposed to one a quark distilled from a post-mortem.
+pub(crate) fn learn_line(text: &str, slug: &str) -> String {
+    format!("- **{slug}** — {text} [pinned]\n")
+}
 
 /// Look a command up by the name typed after the slash.
 pub fn command(name: &str) -> Option<&'static Command> {
@@ -864,6 +889,23 @@ mod tests {
 
         let completions = completion_candidates("/res", 4, &[], &[]).unwrap();
         assert!(completions.candidates.iter().any(|c| c.label == "/resume"));
+    }
+
+    #[test]
+    fn slugify_makes_a_short_kebab_case_id() {
+        assert_eq!(
+            slugify("Always run cargo fmt before commit"),
+            "always-run-cargo-fmt-before"
+        );
+    }
+
+    #[test]
+    fn learn_line_is_pinned_and_matches_the_index_format() {
+        let line = learn_line("Always run cargo fmt before commit", "always-run-cargo-fmt-before");
+        assert_eq!(
+            line,
+            "- **always-run-cargo-fmt-before** — Always run cargo fmt before commit [pinned]\n"
+        );
     }
 }
 
