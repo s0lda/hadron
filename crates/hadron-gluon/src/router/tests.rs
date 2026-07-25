@@ -277,6 +277,14 @@ fn parse_addressee_matches_a_line_starting_mention() {
         parse_addressee("Here's the plan.\n@worker execute it.", &roster(), None, &[]),
         Some(QuarkId::new("worker"))
     );
+    assert_eq!(
+        parse_addressee("**@worker** please handle it.", &roster(), None, &[]),
+        Some(QuarkId::new("worker"))
+    );
+    assert_eq!(
+        human_mentions("**@worker** take over", &roster(), &[]),
+        vec![QuarkId::new("worker")]
+    );
     assert_eq!(parse_addressee("no mention here", &roster(), None, &[]), None);
     assert_eq!(parse_addressee("@ghost unknown", &roster(), None, &[]), None);
 }
