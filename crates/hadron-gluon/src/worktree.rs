@@ -339,11 +339,18 @@ pub fn reap_build_artifacts(repo_root: &Path, min_age: std::time::Duration) -> a
     Ok(Some(reap))
 }
 
-/// Remove every immediate child of `dir` whose own access time is older than
-/// `cutoff` — a file is removed directly, a directory (e.g. one
-/// `.fingerprint/<crate>-<hash>/` entry) is removed with everything inside it.
-/// A missing `dir` (one of the four categories simply does not exist yet) is not
-/// an error — there is nothing to sweep.
+/// Remove every immediate child of `dir` whose **newest atime anywhere inside
+/// it** is older than `cutoff` — a file is removed directly, a directory (e.g.
+/// one `.fingerprint/<crate>-<hash>/` entry) is removed with everything inside
+/// it. A missing `dir` (one of the four categories simply does not exist yet)
+/// is not an error — there is nothing to sweep.
+///
+/// Deliberately NOT the entry's own atime for a directory. Confirmed live on a
+/// real box (`touch -a` a `.fingerprint/<crate>-<hash>/` dir 8 days stale, then
+/// run a cargo build that hits it as a pure cache hit): cargo reads one marker
+/// file inside to verify the recorded hash, refreshing THAT file's atime, but
+/// never touches the directory's own atime. A sweep keyed on the directory
+/// entry alone would delete a fingerprint being reused every day.
 fn sweep_stale_entries(dir: &Path, cutoff: std::time::SystemTime, reap: &mut ArtifactReap) -> anyhow::Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -353,11 +360,11 @@ fn sweep_stale_entries(dir: &Path, cutoff: std::time::SystemTime, reap: &mut Art
     for entry in entries {
         let entry = entry.with_context(|| format!("reading an entry of {}", dir.display()))?;
         let path = entry.path();
-        let meta = entry.metadata().with_context(|| format!("stat-ing {}", path.display()))?;
-        let atime = meta.accessed().with_context(|| format!("reading atime of {}", path.display()))?;
+        let atime = newest_atime(&path)?;
         if atime >= cutoff {
             continue;
         }
+        let meta = entry.metadata().with_context(|| format!("stat-ing {}", path.display()))?;
         let bytes = dir_size(&path)?;
         if meta.is_dir() {
             std::fs::remove_dir_all(&path).with_context(|| format!("removing {}", path.display()))?;
@@ -368,6 +375,21 @@ fn sweep_stale_entries(dir: &Path, cutoff: std::time::SystemTime, reap: &mut Art
         reap.bytes_removed += bytes;
     }
     Ok(())
+}
+
+/// The most recent access time anywhere under `path` — `path`'s own atime for a
+/// file, or the max of every entry's `newest_atime` (recursively) for a
+/// directory, including the directory's own. One live file anywhere inside is
+/// enough to keep the whole directory looking used.
+fn newest_atime(path: &Path) -> anyhow::Result<std::time::SystemTime> {
+    let meta = std::fs::symlink_metadata(path).with_context(|| format!("stat-ing {}", path.display()))?;
+    let mut newest = meta.accessed().with_context(|| format!("reading atime of {}", path.display()))?;
+    if meta.is_dir() {
+        for entry in std::fs::read_dir(path).with_context(|| format!("reading {}", path.display()))? {
+            newest = newest.max(newest_atime(&entry?.path())?);
+        }
+    }
+    Ok(newest)
 }
 
 /// Total size in bytes of `path` — its own size if a file, or the recursive sum
@@ -1131,21 +1153,41 @@ pub(crate) mod tests {
         let repo = tempfile::tempdir().unwrap();
         let debug = repo.path().join("target").join("debug");
         let fp = debug.join(".fingerprint").join("hadron-gluon-abcd1234");
-        // Two files inside the directory; the directory's OWN atime is what decides,
-        // matching what cargo would touch when it reads the fingerprint as a unit.
+        // Every file inside, and the directory itself, uniformly 10 days stale.
         write_aged(&fp.join("lib-hadron_gluon.json"), b"12345", Duration::from_secs(10 * 86400));
         write_aged(&fp.join("invoked.timestamp"), b"12", Duration::from_secs(10 * 86400));
-        let f = File::options().write(true).open(&fp.join("invoked.timestamp")).unwrap();
-        drop(f);
         let old = SystemTime::now() - Duration::from_secs(10 * 86400);
-        // Set the directory's own atime explicitly — writing files into it just now
-        // would otherwise leave the directory itself freshly accessed.
         let dir_handle = File::open(&fp).unwrap();
         dir_handle.set_times(FileTimes::new().set_accessed(old).set_modified(old)).unwrap();
 
         let reap = reap_build_artifacts(repo.path(), Duration::from_secs(7 * 86400)).unwrap().unwrap();
         assert_eq!(reap, ArtifactReap { files_removed: 1, bytes_removed: 7 });
         assert!(!fp.exists());
+    }
+
+    /// The bug found live on the real box: `cargo build`ing a crate whose
+    /// fingerprint is already up to date touches ONE file inside its
+    /// `.fingerprint/<crate>-<hash>/` directory (verifying the recorded hash) but
+    /// never the directory's own atime — confirmed with `touch -a` + a real cargo
+    /// build against this box's actual target dir. A sweep keyed on the
+    /// directory's own atime would therefore delete a fingerprint a crate is
+    /// being rebuilt against every day, forcing a full rebuild it never needed.
+    #[test]
+    fn a_fingerprint_directory_with_one_fresh_file_inside_is_not_swept() {
+        let repo = tempfile::tempdir().unwrap();
+        let debug = repo.path().join("target").join("debug");
+        let fp = debug.join(".fingerprint").join("hadron-lattice-abcd1234");
+        write_aged(&fp.join("lib-hadron_lattice.json"), b"stale", Duration::from_secs(10 * 86400));
+        // The directory itself is stale...
+        let old = SystemTime::now() - Duration::from_secs(10 * 86400);
+        let dir_handle = File::open(&fp).unwrap();
+        dir_handle.set_times(FileTimes::new().set_accessed(old).set_modified(old)).unwrap();
+        // ...but one file inside was read moments ago, matching a real cache hit.
+        write_aged(&fp.join("lib-hadron_lattice"), b"fresh", Duration::ZERO);
+
+        let reap = reap_build_artifacts(repo.path(), Duration::from_secs(7 * 86400)).unwrap().unwrap();
+        assert_eq!(reap, ArtifactReap::default(), "a directory holding one live file must survive");
+        assert!(fp.exists());
     }
 
     #[test]
