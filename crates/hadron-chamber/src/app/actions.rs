@@ -234,11 +234,19 @@ impl Chamber {
                     let (named, task) = crate::text::split_target(args);
                     (named.unwrap_or(hadron_gluon::router::ORCHESTRATOR_ALIAS), task)
                 };
-                self.post_chat_message(
-                    Actor::Human,
-                    crate::text::skill_command_body(trigger, target, task),
-                    cx,
-                );
+                match crate::text::skill_command_body(trigger, target, task) {
+                    // The human's own words, carrying the trigger the engine matches.
+                    Some(body) => self.post_chat_message(Actor::Human, body, cx),
+                    // No task: there is nothing of the human's to post, and posting
+                    // a sentence composed here would put it under their name AND be
+                    // the task every mentioned seat is dispatched on. Say so from
+                    // `Actor::Gluon` instead, which wakes nobody.
+                    None => self.post_chat_message(
+                        Actor::Gluon,
+                        crate::text::skill_command_needs_a_task(cmd),
+                        cx,
+                    ),
+                }
                 true
             }
             // Discovery. Both print from `Actor::Gluon` with no `@mention`, which
