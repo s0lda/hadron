@@ -123,6 +123,58 @@ pub fn help_body() -> String {
     out
 }
 
+/// Longest line `skills_body` will emit. The chat column is narrow, and the
+/// first version of `/skills` printed every trigger of every skill: **4,687
+/// characters, a 339-character line, and nine lines over 200** for the real
+/// 15-skill corpus — measured, not guessed. A reference that has to be scrolled
+/// sideways answers nothing.
+const SKILL_LINE_MAX: usize = 110;
+
+/// Clip to `max` CHARACTERS (not bytes) and mark the cut.
+///
+/// `chars().take()` cannot split a multi-byte character, which is the crash
+/// class this whole file is built around — a byte-slice `&s[..max]` here would
+/// panic on the first skill description containing an em dash, and most of them
+/// contain one.
+fn clip(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let kept: String = s.chars().take(max.saturating_sub(1)).collect();
+    format!("{}…", kept.trim_end())
+}
+
+/// The markdown `/skills` prints: one compact line per skill — its id, the
+/// phrase that selects it, and a short gloss.
+///
+/// Only the **canonical** trigger is shown, not all of them. A skill has up to
+/// fourteen triggers and they are alternatives, so listing them all is a wall of
+/// synonyms; one phrase answers the question the reader actually has, which is
+/// "what do I type to get this".
+///
+/// Pure, so the line-length property is testable against the real corpus rather
+/// than eyeballed — see `the_skills_list_fits_the_chat_column`.
+pub fn skills_body(rows: &[(&str, Option<&str>, Option<&str>)]) -> String {
+    let mut out = format!("**Skills** — {} loaded\n\n", rows.len());
+    for (id, description, trigger) in rows {
+        // Budget the gloss with what the id and trigger have already spent, so a
+        // long id cannot push the line over on its own.
+        let prefix = match trigger {
+            Some(t) => format!("- **{id}** — `{t}`"),
+            None => format!("- **{id}**"),
+        };
+        match description {
+            Some(d) if !d.is_empty() => {
+                let room = SKILL_LINE_MAX.saturating_sub(prefix.chars().count() + 3);
+                out.push_str(&format!("{prefix} — {}\n", clip(d, room)));
+            }
+            _ => out.push_str(&format!("{prefix}\n")),
+        }
+    }
+    out.push_str("\nThe engine picks the skill from your task text — the phrase above selects it.\n");
+    out
+}
+
 /// Split an optional leading `@target` off a skill command's argument.
 ///
 /// `/brainstorm @Sonnet the menu` → `(Some("Sonnet"), "the menu")`, and
@@ -515,6 +567,62 @@ mod tests {
         assert_eq!(c.candidates.len(), 50);
         let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels[0].starts_with(":rofl"), "first emoji should be rofl: {:?}", labels[0]);
+    }
+
+    /// The regression this fixes was measured, so the guard is measured too: run
+    /// it against the **real** built-in corpus, not a fixture, or it guards a
+    /// shape nobody ships. Before the cap: 4,687 chars, longest line 339, nine
+    /// lines over 200.
+    #[test]
+    fn the_skills_list_fits_the_chat_column() {
+        let corpus = hadron_gluon::skills::builtins();
+        assert!(!corpus.is_empty(), "no built-in skills to render");
+        let rows: Vec<(&str, Option<&str>, Option<&str>)> = corpus
+            .iter()
+            .map(|s| {
+                (
+                    s.id.as_str(),
+                    s.description.as_deref(),
+                    s.triggers.first().map(String::as_str),
+                )
+            })
+            .collect();
+        let body = skills_body(&rows);
+
+        for line in body.lines() {
+            assert!(
+                line.chars().count() <= SKILL_LINE_MAX,
+                "a {}-char line would need sideways scrolling: {line:?}",
+                line.chars().count()
+            );
+        }
+        assert!(
+            body.chars().count() < 2_000,
+            "/skills is a wall again: {} chars",
+            body.chars().count()
+        );
+        // Every skill still appears — capping must not silently drop rows.
+        for s in &corpus {
+            assert!(body.contains(&s.id), "{} vanished from /skills", s.id);
+        }
+        // And it still cannot route (same rule as `/help` — the Gluon channel).
+        for line in body.lines() {
+            assert!(!line.trim_start().starts_with('@'), "would route: {line:?}");
+        }
+    }
+
+    /// Clipping happens on character boundaries — a byte slice here would panic
+    /// on the first description containing an em dash, which most of them do.
+    #[test]
+    fn clip_never_splits_a_character() {
+        assert_eq!(clip("short", 10), "short");
+        let clipped = clip("a — dash and an emoji 😀 beyond the cut", 12);
+        assert!(clipped.ends_with('…'), "cut is marked: {clipped:?}");
+        assert!(clipped.chars().count() <= 12);
+        // The pathological case: cutting exactly where a multi-byte char sits.
+        for n in 1..12 {
+            let _ = clip("😀😀😀😀😀", n); // must not panic
+        }
     }
 
     /// Found in review of `c3b978d`: a multi-byte char after `@` must not panic,
