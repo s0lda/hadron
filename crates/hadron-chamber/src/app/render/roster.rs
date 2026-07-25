@@ -2,6 +2,29 @@ use super::*;
 
 impl super::Chamber {
     pub(super) fn roster_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let title_child = if self.nucleus_over_budget {
+            h_flex()
+                .items_center()
+                .gap_1p5()
+                .child("Quarks")
+                .child(
+                    div()
+                        .id("nucleus-over-budget-warning")
+                        .text_xs()
+                        .text_color(theme::quark_state(hadron_lattice::QuarkState::Waiting))
+                        .child("⚠ over budget")
+                        .tooltip(|window, cx| {
+                            Tooltip::new(
+                                ".hadron/nucleus/index.md exceeds 32 KiB and is truncated in prompts",
+                            )
+                            .build(window, cx)
+                        }),
+                )
+                .into_any_element()
+        } else {
+            div().child("Quarks").into_any_element()
+        };
+
         let header = h_flex()
             .id("roster-toggle")
             .w_full()
@@ -9,7 +32,7 @@ impl super::Chamber {
             .items_center()
             .text_sm()
             .text_color(theme::text_muted())
-            .child("Quarks")
+            .child(title_child)
             .child(Icon::new(IconName::PanelLeftClose).small())
             .active(|s| s.opacity(0.6))
             .on_click(

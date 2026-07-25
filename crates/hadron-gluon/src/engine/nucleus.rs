@@ -42,7 +42,8 @@ fn legacy_memory_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
 /// not spending on the task. It is also the wrong thing to grow: the index is a
 /// routing table (one line per lesson) and the detail belongs in `notes/`, which the
 /// engine never loads. A file that outgrows this has stopped being an index.
-pub(super) const NUCLEUS_INDEX_BUDGET: usize = 32 * 1024;
+pub(super) use crate::nucleus_status::BUDGET_BYTES as NUCLEUS_INDEX_BUDGET;
+
 
 /// Read the lessons index, capped. A missing file is the normal first-run case, not an
 /// error — it simply means the swarm has learned nothing here yet.
