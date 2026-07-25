@@ -73,18 +73,17 @@ impl super::Chamber {
             // Linux desktop with an `xdg-desktop-portal`. Under WSL there usually is no
             // portal on the bus, so this resolves to `Err`/`None` almost immediately
             // (which the old code swallowed, so Browse looked dead).
-            let native = rx
-                .await
-                .ok()
-                .and_then(|r| r.ok())
-                .flatten()
-                .and_then(|v| v.into_iter().next())
-                .map(|p| p.to_string_lossy().into_owned());
-            // Fall back to a subprocess dialog on a background thread when the native
-            // picker gave nothing (portal missing). Blocking, so keep it off the UI.
-            let picked = match native {
-                Some(p) => Some(p),
-                None => cx.background_spawn(async { fallback_pick_image() }).await,
+            // Fall back to a subprocess dialog on a background thread ONLY when no picker
+            // answered (portal missing) — a cancel is an answer, and re-asking it is what
+            // popped a second dialog. Blocking, so keep it off the UI.
+            let picked = match crate::app::widgets::classify_pick(
+                rx.await.ok().and_then(|r| r.ok()),
+            ) {
+                crate::app::widgets::Picked::Path(p) => Some(p),
+                crate::app::widgets::Picked::Cancelled => return,
+                crate::app::widgets::Picked::NoPicker => {
+                    cx.background_spawn(async { fallback_pick_image() }).await
+                }
             };
             let _ = this.update(cx, |this, cx| {
                 match picked {

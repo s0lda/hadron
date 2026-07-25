@@ -503,6 +503,40 @@ pub(super) fn text_button(
         .child(label.into())
 }
 
+/// What the native picker actually said.
+///
+/// `Option<PathBuf>` conflated the two answers that must behave differently: the human
+/// said **no**, and there was **no dialog** for them to say it in. Both arrived as
+/// `None`, so a cancel fell through to the subprocess fallback and popped a SECOND
+/// dialog the human had to cancel again — reported live against "Open Workspace".
+/// An enum makes the two unmistakable at every call site.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Picked {
+    Path(String),
+    /// The human cancelled. Stop — do NOT offer another dialog.
+    Cancelled,
+    /// No picker answered at all (no `xdg-desktop-portal`, the usual case under WSL).
+    /// Only this one earns a fallback.
+    NoPicker,
+}
+
+/// Classify what `cx.prompt_for_paths` handed back, after both its error layers have
+/// been flattened to `Option`: the outer `None` is "the picker never answered", an
+/// inner `None` (or an empty list) is "the human cancelled".
+///
+/// Pure, so the distinction that caused the double dialog is unit-testable without a
+/// GPUI window.
+pub(super) fn classify_pick(result: Option<Option<Vec<std::path::PathBuf>>>) -> Picked {
+    match result {
+        None => Picked::NoPicker,
+        Some(None) => Picked::Cancelled,
+        Some(Some(paths)) => match paths.into_iter().next() {
+            Some(p) => Picked::Path(p.to_string_lossy().into_owned()),
+            None => Picked::Cancelled,
+        },
+    }
+}
+
 /// A best-effort file picker for environments where gpui's native (XDG desktop portal)
 /// dialog is unavailable — most notably WSL, which usually has no `xdg-desktop-portal`
 /// running, so `prompt_for_paths` resolves to nothing. Tries a GTK dialog (`zenity`,
@@ -977,6 +1011,27 @@ mod tests {
                 ("acp-claude".to_string(), "Terminal".to_string()),
                 ("cli-agy".to_string(), "working…".to_string()),
             ]
+        );
+    }
+
+    /// **The double-dialog bug.** Cancelling gpui's picker used to be indistinguishable
+    /// from having no picker at all, so Cancel immediately opened a second folder browser
+    /// the human had to cancel again (reported live against "Open Workspace"). Only
+    /// `NoPicker` may fall through to the subprocess fallback.
+    #[test]
+    fn a_cancelled_picker_is_not_a_missing_picker() {
+        use std::path::PathBuf;
+
+        assert_eq!(classify_pick(None), Picked::NoPicker, "no answer ⇒ try the fallback");
+        assert_eq!(classify_pick(Some(None)), Picked::Cancelled, "the human said no");
+        assert_eq!(
+            classify_pick(Some(Some(vec![]))),
+            Picked::Cancelled,
+            "an empty selection is a cancel, not a missing picker"
+        );
+        assert_eq!(
+            classify_pick(Some(Some(vec![PathBuf::from("/home/jake/dev")]))),
+            Picked::Path("/home/jake/dev".to_string())
         );
     }
 }
