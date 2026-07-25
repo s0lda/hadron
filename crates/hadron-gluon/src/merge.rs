@@ -188,7 +188,12 @@ pub async fn run_tests_within(
         // terminal, which is the same wedge by another route.
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stderr(std::process::Stdio::piped())
+        // The deadline arm below kills the group explicitly, but that is not the only
+        // way this future dies: cancel the surrounding turn (a reboot, a shutdown) and
+        // `wait_with_output` is dropped with the child still running. Same guarantee
+        // `ProcessRunner` relies on (`engine/run.rs`'s watchdog comment).
+        .kill_on_drop(true);
 
     // **The gate's cost lives or dies on this line** — and so does the disk. See
     // `worktree::shared_build_env` for why; the quark's own subprocess gets the very
