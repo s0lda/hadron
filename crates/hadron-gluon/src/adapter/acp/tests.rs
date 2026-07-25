@@ -278,11 +278,10 @@ fn a_target_renders_its_command_line() {
 /// the schema's shape as a second source of truth.
 #[test]
 fn acp_stdio_descriptor_includes_env() {
-    let json = super::session::acp_stdio_descriptor(
-        "python",
-        &["a.py".to_string()],
-        &[("GEMINI_API_KEY".to_string(), "k".to_string())],
-    );
+    let target = AcpTarget { program: "python".to_string(), args: vec!["a.py".to_string()], env: Vec::new() }
+        .resolved()
+        .expect("a bare program name needs no repo root");
+    let json = super::session::acp_stdio_descriptor(&target, &[("GEMINI_API_KEY".to_string(), "k".to_string())]);
 
     let agent = AcpAgent::from_str(&json).expect("a well-formed stdio descriptor parses");
     let agent_client_protocol::schema::v1::McpServer::Stdio(stdio) = agent.into_server() else {
@@ -303,7 +302,7 @@ fn acp_stdio_descriptor_includes_env() {
 #[test]
 fn acp_stdio_descriptor_no_env_matches_bare_command() {
     let target = AcpTarget::claude_adapter();
-    let json = super::session::acp_stdio_descriptor(&target.program, &target.args, &[]);
+    let json = super::session::acp_stdio_descriptor(&target.resolved().expect("no repo root needed"), &[]);
 
     let via_json = AcpAgent::from_str(&json).unwrap();
     let via_bare = AcpAgent::from_str(&target.command_line()).unwrap();

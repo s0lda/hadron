@@ -200,7 +200,7 @@ fn probe_session(target: &AcpTarget) -> anyhow::Result<(Option<String>, Vec<Sess
         .spawn(move || {
             let outcome: anyhow::Result<Probed> = futures::executor::block_on(async move {
                 let display_command = target_clone.command_line();
-                let agent_source = acp_stdio_descriptor(&target_clone.program, &target_clone.args, &target_clone.env);
+                let agent_source = acp_stdio_descriptor(&target_clone, target_clone.env());
                 let agent = AcpAgent::from_str(&agent_source)
                     .map_err(|e| anyhow::anyhow!("bad ACP command {display_command:?}: {e}"))?;
                 let probed = agent_client_protocol::Client
