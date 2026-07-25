@@ -29,6 +29,114 @@ pub fn mention_matches(name: &str, query_lower: &str) -> bool {
     query_lower.is_empty() || name.to_lowercase().contains(query_lower)
 }
 
+/// How much of its line a `/command` consumes.
+///
+/// An enum rather than two `&[&str]` lists, because the lists could disagree with
+/// the completion menu — and did, for six commands, silently (see [`COMMANDS`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arity {
+    /// Takes no argument, so several can chain ahead of a message on one line.
+    None,
+    /// Consumes the rest of its line as its argument.
+    Line,
+}
+
+/// One chat `/command`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Command {
+    /// The name typed after the slash. The lookup key, and unique.
+    pub name: &'static str,
+    /// The one-line gloss shown in the completion menu.
+    pub detail: &'static str,
+    pub arity: Arity,
+    /// Whether the completion menu offers it. `false` marks a working **alias**
+    /// we simply do not advertise (`/quit` is `/exit`) — never an unimplemented
+    /// command. Nothing may sit in this table that the handler does not handle.
+    pub listed: bool,
+}
+
+/// **The single source of truth for what a `/command` is.**
+///
+/// A command used to live in three places that could disagree: the completion
+/// rows here, the `ZERO_ARG_CMDS`/`LINE_ARG_CMDS` lists in `app::input`, and the
+/// `match` in `app::actions`. Six commands (`teamwork-preview`, `plan`, `goal`,
+/// `grill-me`, `schedule`, `learn`) sat in the menu and in neither list, so
+/// choosing one from the menu silently posted the whole line as chat. They were
+/// ported from another CLI's command surface and never had handlers here.
+///
+/// Now the menu and the parser both read this table, so "offered but unparsed"
+/// cannot be written. The `match` arm still cannot be checked by the compiler —
+/// `every_listed_command_is_handled` in `app::input` is the guard that closes it.
+///
+/// `/help` and `/skills` are deliberately **absent** for now. Both want to print
+/// into the chat without waking the swarm, and every write path the chamber has
+/// today appends an `Actor::Human` message — which is exactly what excites a quark.
+/// A row here with no arm is the bug this table exists to prevent, so they land
+/// with their notice channel, not before it.
+pub const COMMANDS: &[Command] = &[
+    Command { name: "clear", detail: "Archive and clear the current chat history", arity: Arity::None, listed: true },
+    Command { name: "exit", detail: "Exit Hadron Chamber", arity: Arity::None, listed: true },
+    // A working alias of `/exit`, kept so existing muscle memory does not break,
+    // unlisted so the menu offers one way to do it.
+    Command { name: "quit", detail: "Exit Hadron Chamber", arity: Arity::None, listed: false },
+    Command { name: "toggle-roster", detail: "Toggle the Roster sidebar", arity: Arity::None, listed: true },
+    Command { name: "toggle-inspector", detail: "Toggle the Inspector sidebar", arity: Arity::None, listed: true },
+    // The skill commands. Each posts a message carrying the skill's own canonical
+    // trigger, so the engine selects the procedure — see `skill_command_body`.
+    Command { name: "brainstorm", detail: "Explore a design before any code (e.g. /brainstorm @Sonnet the new menu)", arity: Arity::Line, listed: true },
+    Command { name: "writing-plans", detail: "Turn a settled design into an implementation plan", arity: Arity::Line, listed: true },
+    Command { name: "executing-plans", detail: "Work through an existing plan, task by task", arity: Arity::Line, listed: true },
+    Command { name: "team-brainstorm", detail: "Kick off brainstorming with the whole team", arity: Arity::Line, listed: true },
+    Command { name: "reboot", detail: "Force-restart a resident quark (e.g. /reboot @acp-claude or /reboot all)", arity: Arity::Line, listed: true },
+    Command { name: "approve", detail: "Approve a pending permission request (e.g. /approve @worker or /approve @worker remember)", arity: Arity::Line, listed: true },
+    Command { name: "deny", detail: "Deny a pending permission request (e.g. /deny @worker)", arity: Arity::Line, listed: true },
+    Command { name: "toggle", detail: "Park or unpark a quark — keeps the seat, skips its turns (e.g. /toggle @Sonnet)", arity: Arity::Line, listed: true },
+    Command { name: "rename", detail: "Name the current session (e.g. /rename bugfix-router)", arity: Arity::Line, listed: true },
+    Command { name: "resume", detail: "Reopen an archived session as the live one (e.g. /resume bugfix-router)", arity: Arity::Line, listed: true },
+    Command { name: "limit", detail: "Set custom energy token limit for a seat (e.g. /limit @acp-claude 1000000)", arity: Arity::Line, listed: true },
+    Command { name: "reset-energy", detail: "Reset used token ledger for a seat or all (e.g. /reset-energy @acp-claude or /reset-energy all)", arity: Arity::Line, listed: true },
+];
+
+/// Look a command up by the name typed after the slash.
+pub fn command(name: &str) -> Option<&'static Command> {
+    COMMANDS.iter().find(|c| c.name == name)
+}
+
+/// Split an optional leading `@target` off a skill command's argument.
+///
+/// `/brainstorm @Sonnet the menu` → `(Some("Sonnet"), "the menu")`, and
+/// `/brainstorm the menu` → `(None, "the menu")`. The caller substitutes the
+/// orchestrator alias when there is no target, which is the rule Jake asked for:
+/// the mentioned quark, or the orchestrator when none is named.
+pub fn split_target(args: &str) -> (Option<&str>, &str) {
+    let args = args.trim();
+    let Some(rest) = args.strip_prefix('@') else {
+        return (None, args);
+    };
+    let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    let (target, task) = rest.split_at(end);
+    if target.is_empty() {
+        (None, args)
+    } else {
+        (Some(target), task.trim())
+    }
+}
+
+/// The chat message a skill command posts.
+///
+/// `trigger` is the skill's own canonical trigger phrase, taken from
+/// `hadron_gluon::skills` rather than retyped here: the engine selects a skill by
+/// matching that phrase against the task text (`skills::select` is a pure function
+/// of the text), so a copy in the chamber would silently stop selecting the skill
+/// the day someone edited the trigger list.
+pub fn skill_command_body(trigger: &str, target: &str, task: &str) -> String {
+    if task.is_empty() {
+        format!("@{target} Let's {trigger}.")
+    } else {
+        format!("@{target} Let's {trigger}: {task}")
+    }
+}
+
 /// Find the `@`/`:` completion trigger immediately before the cursor.
 ///
 /// Returns the trigger char, the query typed after it, and its byte index.
@@ -285,34 +393,14 @@ pub fn completion_candidates(
             }
         }
         '/' => {
-            let cmds = [
-                ("clear", "Archive and clear the current chat history"),
-                ("exit", "Exit Hadron Chamber"),
-                ("quit", "Exit Hadron Chamber"),
-                ("team-brainstorm", "Kick off brainstorming with the team"),
-                ("reboot", "Force-restart a resident quark (e.g. /reboot @acp-claude or /reboot all)"),
-                ("approve", "Approve a pending permission request (e.g. /approve @worker or /approve @worker remember)"),
-                ("deny", "Deny a pending permission request (e.g. /deny @worker)"),
-                ("toggle", "Park or unpark a quark — keeps the seat, skips its turns (e.g. /toggle @Sonnet)"),
-                ("rename", "Name the current session (e.g. /rename bugfix-router)"),
-                ("resume", "Reopen an archived session as the live one (e.g. /resume bugfix-router)"),
-                ("toggle-roster", "Toggle the Roster sidebar"),
-                ("toggle-inspector", "Toggle the Inspector sidebar"),
-                ("goal", "Run a long-running task thoroughly"),
-                ("plan", "Create a step-by-step implementation plan"),
-                ("schedule", "Set a recurring cron job or one-shot timer"),
-                ("grill-me", "Start an interactive plan alignment interview"),
-                ("teamwork-preview", "Preview a team of autonomous agents working"),
-                ("learn", "Persist a corrected behavior or setup"),
-                ("limit", "Set custom energy token limit for a seat (e.g. /limit @acp-claude 1000000)"),
-                ("reset-energy", "Reset used token ledger for a seat or all (e.g. /reset-energy @acp-claude or /reset-energy all)"),
-            ];
-            for (cmd, detail) in cmds {
-                if query_lower.is_empty() || cmd.contains(&query_lower) {
+            // Straight off `COMMANDS`, so the menu cannot offer a command the
+            // parser does not recognise.
+            for cmd in COMMANDS.iter().filter(|c| c.listed) {
+                if query_lower.is_empty() || cmd.name.contains(&query_lower) {
                     out.push(Candidate {
-                        label: format!("/{cmd}"),
-                        detail: detail.to_string(),
-                        new_text: format!("/{cmd} "),
+                        label: format!("/{}", cmd.name),
+                        detail: cmd.detail.to_string(),
+                        new_text: format!("/{} ", cmd.name),
                     });
                 }
             }
@@ -407,8 +495,11 @@ mod tests {
         let c = completion_candidates("/tog", 4, &[], &[]).expect("has rows");
         let labels: Vec<&str> = c.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels.contains(&"/toggle-roster"), "matched toggle-roster offered: {labels:?}");
-        assert!(completion_candidates("/goa", 4, &[], &[]).is_some());
-        
+        // Was `/goa` — `/goal` was one of six rows the menu offered with no handler,
+        // so choosing it posted the line as chat. Retired; `/brainstorm` is a real one.
+        assert!(completion_candidates("/brain", 6, &[], &[]).is_some());
+
+
         let c_reboot = completion_candidates("/reb", 4, &[], &[]).expect("has rows");
         let labels_reboot: Vec<&str> = c_reboot.candidates.iter().map(|c| c.label.as_str()).collect();
         assert!(labels_reboot.contains(&"/reboot"), "matched reboot offered: {labels_reboot:?}");
@@ -422,7 +513,7 @@ mod tests {
         assert!(labels_deny.contains(&"/deny"), "matched deny offered: {labels_deny:?}");
         
         // Mid-line `/` at a word boundary IS a trigger.
-        assert!(completion_candidates("hi /goa", 7, &[], &[]).is_some());
+        assert!(completion_candidates("hi /brain", 9, &[], &[]).is_some());
         // Path slashes are not triggers.
         assert!(completion_candidates("src/app.rs", 10, &[], &[]).is_none());
     }
