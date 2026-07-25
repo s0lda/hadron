@@ -23,7 +23,110 @@ pub(super) fn looks_like_a_debugging_turn(text: &str) -> bool {
 /// enough that yesterday's red suite does not nag forever.
 const NUDGE_LOOKBACK: usize = 20;
 
+/// The sentence every merge-gate hand-back opens with. Two jobs: it tells the quark what
+/// happened, and it is what `is_gate_handback` matches to bound the retries. A
+/// visible sentence rather than a hidden token on purpose — the quark reads this body as
+/// its task, so a marker it can see is one it can quote back.
+pub(super) const GATE_HANDBACK_MARKER: &str = "The merge gate stopped this branch from landing.";
+
+/// How many repair turns ONE assignment gets before the gate stops handing the branch
+/// back and asks a human instead. Each one costs a full test run plus a model turn, so
+/// this is deliberately small: a branch that cannot heal itself in two passes is not
+/// going to heal itself in five, and the loop is the expensive failure mode here.
+const MAX_GATE_HANDBACKS: usize = 2;
+
 impl super::Engine {
+    /// Whether `e` is a merge-gate hand-back already issued to `target` for `assignment`.
+    fn is_gate_handback(e: &Event, target: &QuarkId, assignment: ulid::Ulid) -> bool {
+        e.from == Actor::Gluon
+            && e.to.as_ref() == Some(target)
+            && e.answers == Some(assignment)
+            && matches!(&e.kind, Kind::Message { body } if body.contains(GATE_HANDBACK_MARKER))
+    }
+
+    /// Stop the merge, but let the quark keep working on it.
+    ///
+    /// The gate refuses for two very different kinds of reason, and they need two very
+    /// different routes:
+    ///
+    /// - Something wrong INSIDE the quark's own worktree — a rebase that conflicts, a
+    ///   block conflict, red tests, uncommitted work. The quark is the only party that
+    ///   can fix it, it is sitting in the tree that needs fixing, and asking a human is
+    ///   just latency. That is this function.
+    /// - Something wrong in the TARGET checkout — `git merge --ff-only` refusing because
+    ///   the human's tree has uncommitted changes to a file the branch rewrites. The
+    ///   quark cannot fix that, and must not try: it works in the human's own checkout
+    ///   (see the `live-swarm-shares-the-checkout` hazard), so a quark told "fix the
+    ///   merge" would `stash`/`add` work the human never committed. Those stay on
+    ///   [`reroute_blocked_with_severity`], addressed to the human/orchestrator.
+    ///
+    /// The shape here is the merge refusal's, not a new mechanism: the finished turn
+    /// still ends on a terminal `Blocked` — appended FIRST, so nothing dangles and so
+    /// `next_pending` reads the hand-back below as unanswered rather than as already
+    /// completed — and the hand-back is then an ordinary addressed `Message`, which the
+    /// existing dispatch loop picks up with no new wiring.
+    ///
+    /// It is stamped `answers = assignment`, which is what keeps the quark on its OWN
+    /// branch (see [`Engine::continued_assignment`]). Without that the re-excited quark
+    /// resolves a fresh assignment ULID, `worktree::ensure` cuts a new branch off `base`,
+    /// and the failed branch is left behind for `run.rs`'s superseded-branch check to
+    /// re-gate and re-fail on every pass — the quark frozen forever, which is exactly
+    /// the bug this exists to fix.
+    ///
+    /// Bounded by [`MAX_GATE_HANDBACKS`] per assignment: a branch that will not heal
+    /// escalates to a human rather than burning a test run and a turn per pass.
+    pub(super) async fn hand_back_to_quark(
+        &self,
+        target: &QuarkId,
+        assignment: ulid::Ulid,
+        why: &str,
+    ) -> anyhow::Result<()> {
+        // Re-read rather than take the caller's snapshot: the gate's test run takes
+        // minutes, and a concurrent sibling may have moved the field since.
+        let events = read_events(&self.field_path)?;
+        let prior = events
+            .iter()
+            .filter(|e| Self::is_gate_handback(e, target, assignment))
+            .count();
+
+        if prior >= MAX_GATE_HANDBACKS {
+            return self
+                .reroute_blocked_with_severity(
+                    target,
+                    &format!(
+                        "{why}\n\n`@{}` has already had {prior} repair turn(s) on this branch and it \
+                         still cannot land, so the gate is escalating rather than spending another. \
+                         The branch is preserved — it needs a human.",
+                        target.as_str()
+                    ),
+                    hadron_lattice::Severity::Error,
+                )
+                .await;
+        }
+
+        self.park_blocked(target).await?;
+        self.append(
+            Event::new(
+                Actor::Gluon,
+                Some(target.clone()),
+                Kind::Message {
+                    body: format!(
+                        "@{id} {GATE_HANDBACK_MARKER} Nothing was merged and nothing was lost.\n\n\
+                         {why}\n\n\
+                         You are still on your own branch in your own worktree — fix it THERE and \
+                         end your turn as you normally would; the gate retries the merge on its own. \
+                         Do not touch the main checkout, and do not start new work until this lands. \
+                         If you cannot fix it, say so and hand back to a human rather than forcing it.",
+                        id = target.as_str(),
+                    ),
+                },
+            )
+            .with_severity(hadron_lattice::Severity::Error)
+            .with_answers(assignment),
+        )
+        .await
+    }
+
     /// The merge gate, fired when an assignment completes. Returns `true` if it parked
     /// the quark (Waiting on a human, or Blocked on red tests), in which case the
     /// caller must NOT append `Ground`.
@@ -65,10 +168,13 @@ impl super::Engine {
         } else {
             match runner.sync(&t.wt, &t.base) {
                 crate::merge::Synced::Conflicted(err) => {
-                    self.reroute_blocked_with_severity(
+                    // A conflict a machine must not resolve *unattended* — but the quark
+                    // whose branch it is may absolutely resolve it, in its own tree, with
+                    // its own judgment. Hand it back rather than freezing it.
+                    self.hand_back_to_quark(
                         target,
+                        t.assignment,
                         &crate::merge::Landed::Conflicted(err).describe(&t.wt.branch, &t.base),
-                        hadron_lattice::Severity::Error,
                     )
                     .await?;
                     return Ok(true);
@@ -185,13 +291,13 @@ impl super::Engine {
                         .map(|c| format!("- `{}` block `{}` [hash: {}]", c.file, c.block_name, c.base_hash))
                         .collect::<Vec<_>>()
                         .join("\n");
-                    self.reroute_blocked_with_severity(
+                    self.hand_back_to_quark(
                         target,
+                        t.assignment,
                         &format!(
                             "AST block conflict detected landing `{}` onto `{}`:\n{}\n\nResolve block conflicts before merging.",
                             t.wt.branch, t.base, details
                         ),
-                        hadron_lattice::Severity::Error,
                     )
                     .await?;
                     return Ok(true);
@@ -200,12 +306,20 @@ impl super::Engine {
                 let landed = match runner.land(root, &t.wt, &t.base) {
                     Ok(landed) => landed,
                     Err(e) => {
+                        // **Deliberately NOT a hand-back.** This failure is in the TARGET
+                        // checkout, not the quark's worktree — the realistic cause is the
+                        // human's own tree carrying an uncommitted change to a file this
+                        // branch rewrites. The quark cannot fix that from its worktree, and
+                        // must not be invited to try: quarks run git in the human's actual
+                        // checkout, so one told "fix the merge" would `stash` or `add` work
+                        // the human never committed. A human resolves this one.
                         self.reroute_blocked_with_severity(
                             target,
                             &format!(
-                                "`{}` could not be merged → `{}`: {e:#}. The branch is preserved at `{}` — resolve it (e.g. commit or stash conflicting local changes in the target checkout), and it lands on this quark's next turn.",
+                                "`{}` could not be merged → `{}`: {e:#}. This is in the TARGET checkout, not `@{}`'s worktree, so the quark is not being asked to fix it — commit or stash the conflicting local changes there and the branch lands on this quark's next turn. The branch is preserved at `{}`.",
                                 t.wt.branch,
                                 t.base,
+                                target.as_str(),
                                 t.wt.path.display()
                             ),
                             hadron_lattice::Severity::Error,
@@ -288,17 +402,34 @@ impl super::Engine {
             MergeVerdict::Block(reason) => {
                 // Red tests / a dirty tree / a branch that is somehow the default one.
                 // The branch STAYS. Nothing is deleted — the work is evidence.
-                self.reroute_blocked_with_severity(
-                    target,
-                    &format!(
-                        "merge of `{}` blocked: {}. The branch is preserved at `{}`.\n\n{tail}",
-                        t.wt.branch,
-                        reason.describe(),
-                        t.wt.path.display()
-                    ),
-                    hadron_lattice::Severity::Error,
-                )
-                .await?;
+                let why = format!(
+                    "merge of `{}` blocked: {}. The branch is preserved at `{}`.\n\n{tail}",
+                    t.wt.branch,
+                    reason.describe(),
+                    t.wt.path.display()
+                );
+                match reason {
+                    // Both live entirely inside the quark's own worktree: red tests are
+                    // its code, and an uncommitted tree is its uncommitted work. It is
+                    // already standing in the right place to fix them.
+                    BlockReason::TestsFailed | BlockReason::DirtyWorktree => {
+                        self.hand_back_to_quark(target, t.assignment, &why).await?;
+                    }
+                    // `BranchIsDefault` is a discipline violation the quark cannot undo
+                    // from inside (it is standing ON the branch it must never be on), and
+                    // `NoCommits` is unreachable here — the `commits == 0` early-outs above
+                    // catch it. Neither is a repair a quark should be handed.
+                    BlockReason::BranchIsDefault
+                    | BlockReason::NoCommits
+                    | BlockReason::NotApproved => {
+                        self.reroute_blocked_with_severity(
+                            target,
+                            &why,
+                            hadron_lattice::Severity::Error,
+                        )
+                        .await?;
+                    }
+                }
                 Ok(true)
             }
         }
