@@ -16,6 +16,54 @@ fn append_line(path: &std::path::Path, line: &str) -> std::io::Result<()> {
 }
 
 impl Chamber {
+    /// Pick a folder and open it as a workspace **in a second chamber**, leaving this
+    /// one running.
+    ///
+    /// This is the whole reason "Open Workspace" was absent for so long: a daemon binds
+    /// to one workspace at boot, so a chamber cannot repoint the running swarm at another
+    /// repo. It does not have to — a chamber launched with a directory argument resolves
+    /// `<dir>/.hadron/field.jsonl` itself and auto-spawns that workspace's own gluon
+    /// (guarded by its own `gluon.lock`), which is exactly what an editor's "Open Folder
+    /// in New Window" does. Nothing here touches the current workspace's field, roster or
+    /// daemon, so the failure mode `team_for_field-misses-repo-root` warns about — a
+    /// silently-empty roster — cannot be inflicted on the session already open.
+    pub(super) fn open_workspace(&mut self, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Open workspace".into()),
+        });
+        cx.spawn(async move |_this, cx| {
+            // Same two-step as `pick_avatar_image`: gpui's portal-backed picker first,
+            // then a subprocess dialog for WSL, where there is usually no portal.
+            let native = rx
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten()
+                .and_then(|v| v.into_iter().next())
+                .map(|p| p.to_string_lossy().into_owned());
+            let picked = match native {
+                Some(p) => Some(p),
+                None => cx.background_spawn(async { widgets::fallback_pick_directory() }).await,
+            };
+            let Some(dir) = picked else {
+                eprintln!("chamber: no folder chosen (or no picker available)");
+                return;
+            };
+            match std::env::current_exe() {
+                Ok(exe) => {
+                    if let Err(e) = std::process::Command::new(exe).arg(&dir).spawn() {
+                        eprintln!("chamber: failed to open a chamber for {dir}: {e}");
+                    }
+                }
+                Err(e) => eprintln!("chamber: cannot locate our own binary to relaunch: {e}"),
+            }
+        })
+        .detach();
+    }
+
     /// Post a chat message from `from` and reveal it. The shared tail of every
     /// command that *speaks*, so the chat-list bookkeeping has one home rather than
     /// one copy per command.
