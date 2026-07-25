@@ -1163,6 +1163,27 @@ pub(crate) mod tests {
         assert!(debug.join("deps").join("stale.rlib").exists(), "nothing may be removed while the lock is held");
     }
 
+    /// `.cargo-lock` is a file that PERSISTS across builds — cargo leaves it on
+    /// disk once created, and only locks it while a build runs. A real one on
+    /// this box was 0 bytes, dated weeks old, with nothing building. If this
+    /// sweep only checked whether the file *exists*, it would refuse to run
+    /// forever; it must actually attempt (and release) the advisory lock.
+    #[test]
+    fn a_present_but_unlocked_lock_file_does_not_skip_the_sweep() {
+        let repo = tempfile::tempdir().unwrap();
+        let debug = repo.path().join("target").join("debug");
+        write_aged(&debug.join("deps").join("stale.rlib"), b"x", Duration::from_secs(10 * 86400));
+        // A stale lock file, present but held by nobody — exactly what a
+        // completed build leaves behind, weeks after the fact.
+        let lock_path = debug.join(".cargo-lock");
+        std::fs::write(&lock_path, b"").unwrap();
+
+        let reap = reap_build_artifacts(repo.path(), Duration::from_secs(7 * 86400)).unwrap();
+        assert!(reap.is_some(), "an existing-but-unlocked lock file must not be mistaken for a live build");
+        assert_eq!(reap.unwrap().files_removed, 1);
+        assert!(!debug.join("deps").join("stale.rlib").exists(), "the sweep must actually run");
+    }
+
     #[test]
     fn all_four_categories_are_swept() {
         let repo = tempfile::tempdir().unwrap();
