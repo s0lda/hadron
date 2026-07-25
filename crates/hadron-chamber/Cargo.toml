@@ -1,8 +1,12 @@
 [package]
 name = "hadron-chamber"
-version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0"
+description = "A desktop chamber for orchestrating a swarm of AI coding agents across isolated git worktrees"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# Flip to publish. Blocked today regardless: the workspace patches
+# gpui-component from a `file:///` path, which crates.io rejects.
+publish = false
 
 [dependencies]
 hadron-lattice = { path = "../hadron-lattice" }

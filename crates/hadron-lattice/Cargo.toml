@@ -1,8 +1,12 @@
 [package]
 name = "hadron-lattice"
-version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0"
+description = "Storage, events and telemetry for a Hadron swarm: the append-only field, the ledger, and live activity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# Flip to publish. Blocked today regardless: the workspace patches
+# gpui-component from a `file:///` path, which crates.io rejects.
+publish = false
 
 [dependencies]
 anyhow = "1"

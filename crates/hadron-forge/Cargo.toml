@@ -1,8 +1,12 @@
 [package]
 name = "hadron-forge"
-version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0"
+description = "Compare-and-swap file editing by content hash, with an AST block parser for Rust, Python, TypeScript and Go"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# Flip to publish. Blocked today regardless: the workspace patches
+# gpui-component from a `file:///` path, which crates.io rejects.
+publish = false
 
 [dependencies]
 tree-sitter = "0.26"
