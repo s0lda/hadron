@@ -179,6 +179,13 @@ impl super::Chamber {
                 }
             }
 
+            let root = crate::vcs::repo_root_of(&self.path);
+            let is_over = hadron_gluon::nucleus_status::index_over_budget(root);
+            if is_over != self.nucleus_over_budget {
+                self.nucleus_over_budget = is_over;
+                changed = true;
+            }
+
             if events.len() != self.view.messages.len() {
                 // Decide *before* the content grows: if the user is parked at the
                 // bottom, keep them there as the new message lands; if they've

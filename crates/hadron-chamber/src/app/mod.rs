@@ -353,6 +353,8 @@ struct Chamber {
     pub(super) last_gluon_running: bool,
     /// Whether the "gluon stopped" banner is currently shown. Set on the
     /// running→stopped edge, cleared on stopped→running or manual dismiss.
+    /// Whether `.hadron/nucleus/index.md` exceeds the 32 KiB prompt limit
+    pub(super) nucleus_over_budget: bool,
     pub(super) gluon_stopped_notice: bool,
 }
 
@@ -684,6 +686,7 @@ impl Chamber {
             completion_scroll: ScrollHandle::new(),
             last_live_activities: std::collections::HashMap::new(),
             last_gluon_running: true,
+            nucleus_over_budget: hadron_gluon::nucleus_status::index_over_budget(&repo_root),
             gluon_stopped_notice: false,
         };
         chamber.update_active_plan();
