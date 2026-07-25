@@ -427,12 +427,21 @@ async fn main() {
         &repo_root,
         hadron_gluon::worktree::ARTIFACT_REAP_MIN_AGE,
     ) {
-        Ok(Some(reap)) if reap.files_removed > 0 => eprintln!(
-            "hadron-gluon: swept {} stale build artifacts ({:.1} GB)",
-            reap.files_removed,
-            reap.bytes_removed as f64 / 1e9,
-        ),
-        Ok(Some(_)) => {}
+        // Recorded to `<hadron dir>/artifact-sweeps.log` as well as printed: this
+        // deletes tens of GB unattended, and the first real run's figure was lost
+        // because `eprintln!` went to the launching terminal and nowhere else.
+        Ok(Some(reap)) => {
+            if reap.files_removed > 0 {
+                eprintln!(
+                    "hadron-gluon: swept {} stale build artifacts ({:.1} GB)",
+                    reap.files_removed,
+                    reap.bytes_removed as f64 / 1e9,
+                );
+            }
+            if let Err(e) = hadron_gluon::worktree::record_artifact_sweep(&field_dir, &reap) {
+                eprintln!("hadron-gluon: could not record the artifact sweep (non-fatal): {e:#}");
+            }
+        }
         Ok(None) => eprintln!("hadron-gluon: build artifact sweep skipped — cargo is building right now"),
         Err(e) => eprintln!("hadron-gluon: build artifact sweep failed (non-fatal): {e:#}"),
     }
