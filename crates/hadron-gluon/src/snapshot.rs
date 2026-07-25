@@ -26,19 +26,71 @@ pub(crate) fn git_ok(repo_root: &Path, args: &[&str]) -> anyhow::Result<Option<S
     }
 }
 
+/// How long any single `git` invocation may take before it is killed.
+///
+/// Deliberately far above a healthy git call and far below
+/// [`crate::merge::GATE_TEST_DEADLINE`]: the gate's rebase and its `commits_ahead`
+/// probes run BEFORE the tests, so a hang here is additive to a turn AND invisible —
+/// it happens after the "gating…" notice and before any other field append.
+pub(crate) const GIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Run `cmd` under a wall-clock `deadline`, killing its process GROUP on expiry.
+///
+/// Written here rather than reusing [`crate::merge::run_tests_within`] — which already
+/// does deadline-plus-group-kill — because that one is `async` and tokio-driven, and
+/// every git call in this crate is synchronous. The kill itself IS reused
+/// ([`crate::merge::kill_process_group`]); `git` is a launcher too (hooks, `git rebase`'s
+/// own sub-gits), so killing the leader alone would orphan its children exactly the way
+/// killing `cargo test` alone once orphaned a test binary for four CPU-hours.
+///
+/// The wait happens on a worker thread via `wait_with_output`, which drains both pipes —
+/// polling `try_wait` on this thread instead would deadlock on a child that fills one.
+fn run_bounded(
+    mut cmd: Command,
+    deadline: std::time::Duration,
+    args: &[&str],
+) -> anyhow::Result<std::process::Output> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let child = cmd
+        .spawn()
+        .with_context(|| format!("failed to spawn git {args:?}"))?;
+    let pid = child.id();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+
+    match rx.recv_timeout(deadline) {
+        Ok(out) => out.with_context(|| format!("git {args:?} failed to run")),
+        Err(_) => {
+            crate::merge::kill_process_group(pid);
+            Err(anyhow!("git {args:?} timed out after {deadline:?} and was killed"))
+        }
+    }
+}
+
 fn git_with_env(repo_root: &Path, args: &[&str], envs: &[(&str, &str)]) -> anyhow::Result<String> {
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(repo_root).args(args);
     cmd.env("GIT_AUTHOR_NAME", "hadron")
         .env("GIT_AUTHOR_EMAIL", "hadron@localhost")
         .env("GIT_COMMITTER_NAME", "hadron")
-        .env("GIT_COMMITTER_EMAIL", "hadron@localhost");
+        .env("GIT_COMMITTER_EMAIL", "hadron@localhost")
+        // Never block on a human who is not there: the daemon has no terminal, so a
+        // credential prompt would wait forever instead of failing.
+        .env("GIT_TERMINAL_PROMPT", "0");
     for (k, v) in envs {
         cmd.env(k, v);
     }
-    let out = cmd
-        .output()
-        .with_context(|| format!("failed to spawn git {args:?}"))?;
+    let out = run_bounded(cmd, GIT_DEADLINE, args)?;
     if !out.status.success() {
         return Err(anyhow!(
             "git {:?} failed: {}",
@@ -169,6 +221,47 @@ pub fn restore(repo_root: &Path, snap: &SnapshotRef) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// **The dispatch loop's unbounded window.** `merge_gate` runs `sync` (a `git rebase`)
+    /// and its `commits_ahead`/`is_dirty` probes BEFORE the deadline-protected test run,
+    /// and every one of them went through this module's blocking `output()`. A git that
+    /// never returns — a hook waiting on stdin, a credential prompt, a stale lock — wedged
+    /// the daemon with the "gating…" notice already posted and nothing after it, which is
+    /// exactly what `my-cloud`'s field showed three times on one branch. Nothing in the
+    /// engine could save it: `GATE_TEST_DEADLINE` wraps only the tests, and `TURN_DEADLINE`
+    /// wraps only `quark.excite`.
+    #[test]
+    fn a_command_that_outlives_its_deadline_is_killed_and_reported() {
+        let started = std::time::Instant::now();
+        let mut cmd = Command::new("sleep");
+        cmd.arg("30");
+
+        let err = run_bounded(cmd, std::time::Duration::from_millis(300), &["sleep", "30"])
+            .expect_err("a 30s sleep under a 300ms deadline must not succeed");
+
+        assert!(
+            err.to_string().contains("timed out"),
+            "the error must say it timed out, got: {err}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "it waited {:?} — the deadline did not cut it",
+            started.elapsed()
+        );
+    }
+
+    /// The bound must not change the answer for a command that finishes normally:
+    /// stdout still comes back, and a nonzero exit is still an `Err`.
+    #[test]
+    fn a_command_inside_its_deadline_is_unaffected() {
+        let dir = repo_with_file("a.txt", "hi");
+        let out = git(dir.path(), &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert!(!out.is_empty(), "a normal git call must still return its stdout");
+        assert!(
+            git(dir.path(), &["rev-parse", "--verify", "refs/heads/nope"]).is_err(),
+            "a nonzero exit must still be an Err"
+        );
+    }
 
     /// Make a temp git repo with one committed file. Returns the TempDir guard.
     fn repo_with_file(name: &str, contents: &str) -> tempfile::TempDir {
