@@ -675,6 +675,12 @@ impl super::AcpQuark {
     pub(super) async fn run_turn(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let mode = turn.mode;
         let prompt = crate::adapter::prompt::build(&turn, &self.id);
+        // Best-effort, same as quota's persistence right below: a failed write must
+        // never fail a turn.
+        if let Some(dir) = &self.prompt_cost_dir {
+            let breakdown = crate::adapter::prompt::measure(&turn, &self.id);
+            let _ = hadron_lattice::prompt_cost::save(dir, &self.id, &breakdown);
+        }
 
         // If the chat history has been cleared/reset, discard the resident session so the agent boots fresh.
         if turn.field_window.is_empty() {

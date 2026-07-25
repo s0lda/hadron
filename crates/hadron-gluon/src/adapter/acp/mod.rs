@@ -96,6 +96,9 @@ pub struct AcpQuark {
     /// `hadron_lattice::quota`). `None` for the same reason `live` is: no field on
     /// disk, so quota lives in memory for the session and nowhere else.
     quota_dir: Option<PathBuf>,
+    /// Where this quark's per-section prompt-size breakdown is persisted (see
+    /// `hadron_lattice::prompt_cost`). Same absence rule as `quota_dir`.
+    prompt_cost_dir: Option<PathBuf>,
     energy_limit: Option<u32>,
     deny_skills: Vec<String>,
 }
@@ -118,6 +121,7 @@ impl AcpQuark {
             last_spend: SpendWatermark::default(),
             live: None,
             quota_dir: None,
+            prompt_cost_dir: None,
             energy_limit: None,
             deny_skills: Vec::new(),
         }
@@ -136,13 +140,15 @@ impl AcpQuark {
     }
 
     /// Stream this quark's mid-turn activity into `dir` (see `hadron_lattice::live`),
-    /// and persist its quota buckets into the sibling `quota/` directory (see
-    /// `hadron_lattice::quota`) — `dir` is always `<hadron-dir>/live`, so `quota/` is
-    /// a plain sibling, not a second setting to thread through. The daemon calls
+    /// and persist its quota buckets and prompt-size breakdown into the sibling
+    /// `quota/` and `prompt-cost/` directories (see `hadron_lattice::quota`,
+    /// `hadron_lattice::prompt_cost`) — `dir` is always `<hadron-dir>/live`, so both
+    /// are plain siblings, not a second setting to thread through. The daemon calls
     /// this; a test that has no field does not, and the quark then publishes and
     /// persists nothing.
     pub fn watching(mut self, dir: PathBuf) -> Self {
         self.quota_dir = dir.parent().map(|p| p.join("quota"));
+        self.prompt_cost_dir = dir.parent().map(|p| p.join("prompt-cost"));
         self.live = Some(LiveFeed {
             dir,
             quark: self.id.clone(),

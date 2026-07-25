@@ -564,3 +564,27 @@ fn prompt_contains_your_role_when_present() {
     assert!(p.contains("# Your role"));
     assert!(p.contains("You must act as the lead architect and write design docs."));
 }
+
+#[test]
+fn measure_reports_nonzero_sizes_for_present_sections() {
+    let mut proj = projection("do the thing");
+    proj.invariants = "some rule".to_string();
+    proj.nucleus_digest = String::new();
+    let b = measure(&proj, &QuarkId::new("agy"));
+    assert!(b.standard_model > 0, "standard model is always present");
+    assert!(b.invariants > 0);
+    assert!(b.task > 0);
+    assert_eq!(b.nucleus_digest, 0, "empty digest measures as zero");
+}
+
+/// The sum of every measured section must not exceed `build()`'s total length —
+/// `measure` must not double-count a section `build` only writes once.
+#[test]
+fn measure_and_build_agree_on_section_boundaries() {
+    let proj = projection("do the thing");
+    let id = QuarkId::new("agy");
+    let built = build(&proj, &id);
+    let b = measure(&proj, &id);
+    let total = b.standard_model + b.invariants + b.nucleus_digest + b.nucleus_index + b.task + b.field_window;
+    assert!(total <= built.len());
+}
