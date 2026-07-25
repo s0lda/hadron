@@ -114,11 +114,76 @@ pub(crate) fn slugify(text: &str) -> String {
         .collect()
 }
 
-/// One nucleus-index line, in the exact format the index expects a lesson to be
-/// written back in (`- **<slug>** — <lesson> [pinned]`). `[pinned]` marks a line the
-/// human wrote directly, as opposed to one a quark distilled from a post-mortem.
-pub(crate) fn learn_line(text: &str, slug: &str) -> String {
-    format!("- **{slug}** — {text} [pinned]\n")
+/// What a memory is FOR, which is not the same as what it says. Four fixed kinds,
+/// as an enum rather than a string: the type tells a quark *how* to use the fact,
+/// and a fifth spelling arriving by typo would silently mean nothing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+// `/learn` writes `User` (the human typing a fact directly). The other three are
+// the format's contract — what a quark writing a note by hand must choose from —
+// so they are spelled once here rather than as free strings in a document.
+#[allow(dead_code)]
+pub enum MemoryType {
+    /// Who the human is — role, expertise, standing preferences.
+    User,
+    /// Guidance on how to work, including the why behind a correction.
+    Feedback,
+    /// Ongoing work, goals or constraints not derivable from the code itself.
+    Project,
+    /// A pointer to something external — a URL, a dashboard, a ticket.
+    Reference,
+}
+
+impl MemoryType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MemoryType::User => "user",
+            MemoryType::Feedback => "feedback",
+            MemoryType::Project => "project",
+            MemoryType::Reference => "reference",
+        }
+    }
+}
+
+/// How long an index hook may be. The index is force-loaded into every prompt of
+/// every turn, and `.hadron/nucleus/index.md` reached 46 KB against the engine's
+/// 32 KB `NUCLEUS_INDEX_BUDGET` — past which the prompt sends a per-section COUNT
+/// and no lesson text at all. An unbounded hook is that failure with extra steps,
+/// so the bound lives in the writer.
+pub(crate) const HOOK_MAX_CHARS: usize = 100;
+
+/// A one-line, length-bounded hook for the index. Truncation counts CHARACTERS and
+/// never bytes — a byte slice into prose lands mid-character and panics (the char
+/// boundary rule this file is otherwise full of).
+pub(crate) fn hook(text: &str) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= HOOK_MAX_CHARS {
+        return flat;
+    }
+    flat.chars().take(HOOK_MAX_CHARS).chain(std::iter::once('…')).collect()
+}
+
+/// One nucleus-index line: a POINTER, never the lesson. `- [<slug>](notes/<slug>.md)
+/// — <hook>`. Content in the index is a bug — the index is a routing table that every
+/// quark pays for on every turn, and the fact belongs in the note the engine never
+/// loads until someone opens it.
+pub(crate) fn learn_line(slug: &str, hook: &str) -> String {
+    format!("- [{slug}](notes/{slug}.md) — {hook}\n")
+}
+
+/// The note itself: frontmatter, then the fact. `description` is a **retrieval key**,
+/// not a summary — its only job is letting a quark decide whether to open the file,
+/// which is what keeps the index short enough to always send.
+pub(crate) fn note_body(
+    slug: &str,
+    description: &str,
+    kind: MemoryType,
+    fact: &str,
+) -> String {
+    let kind = kind.as_str();
+    let fact = fact.trim();
+    format!(
+        "---\nname: {slug}\ndescription: {description}\nmetadata:\n  type: {kind}\n---\n\n{fact}\n"
+    )
 }
 
 /// Look a command up by the name typed after the slash.
@@ -1135,13 +1200,65 @@ mod tests {
         );
     }
 
+    /// The index is force-loaded into every prompt of every turn, so a line in it
+    /// is a pointer and nothing else. It names the note; the note holds the fact.
     #[test]
-    fn learn_line_is_pinned_and_matches_the_index_format() {
-        let line = learn_line("Always run cargo fmt before commit", "always-run-cargo-fmt-before");
+    fn an_index_line_points_at_a_note_and_carries_no_content() {
         assert_eq!(
-            line,
-            "- **always-run-cargo-fmt-before** — Always run cargo fmt before commit [pinned]\n"
+            learn_line("always-run-cargo-fmt-before", "Always run cargo fmt before commit"),
+            "- [always-run-cargo-fmt-before](notes/always-run-cargo-fmt-before.md) — \
+             Always run cargo fmt before commit\n"
         );
+    }
+
+    /// The whole failure this format exists to prevent: `.hadron/nucleus/index.md`
+    /// grew to 46 KB against a 32 KB budget, so every quark got a per-section COUNT
+    /// instead of any lesson at all. A hook that can grow without bound is that bug
+    /// with extra steps, so the cap lives in the writer, not in a reviewer's memory.
+    #[test]
+    fn a_hook_is_capped_and_never_splits_a_character() {
+        let long = "é".repeat(HOOK_MAX_CHARS * 2);
+        let capped = hook(&long);
+        assert_eq!(capped.chars().count(), HOOK_MAX_CHARS + 1, "cap plus the ellipsis");
+        assert!(capped.ends_with('…'));
+        // Round-tripping through `str` at all proves no slice landed mid-character.
+        assert!(capped.chars().all(|c| c == 'é' || c == '…'));
+    }
+
+    #[test]
+    fn a_short_hook_is_left_alone_and_flattened_to_one_line() {
+        assert_eq!(hook("  two\nlines  "), "two lines");
+    }
+
+    /// `description` is a retrieval key: its only job is letting a quark decide
+    /// whether to open the file. The fact itself lives in the body, below the
+    /// frontmatter, and is never loaded until then.
+    #[test]
+    fn a_note_carries_frontmatter_then_the_fact() {
+        let note = note_body(
+            "always-run-cargo-fmt-before",
+            "Formatting must precede a commit",
+            MemoryType::User,
+            "Always run cargo fmt before commit.",
+        );
+        assert!(note.starts_with("---\nname: always-run-cargo-fmt-before\n"));
+        assert!(note.contains("description: Formatting must precede a commit\n"));
+        assert!(note.contains("metadata:\n  type: user\n"));
+        assert!(note.ends_with("Always run cargo fmt before commit.\n"));
+    }
+
+    /// The four types are fixed. A string here would let a fifth appear by typo,
+    /// and the type is what tells a quark HOW to use the fact.
+    #[test]
+    fn every_memory_type_has_exactly_one_spelling() {
+        let all = [
+            MemoryType::User,
+            MemoryType::Feedback,
+            MemoryType::Project,
+            MemoryType::Reference,
+        ];
+        let names: Vec<_> = all.iter().map(|t| t.as_str()).collect();
+        assert_eq!(names, ["user", "feedback", "project", "reference"]);
     }
 }
 

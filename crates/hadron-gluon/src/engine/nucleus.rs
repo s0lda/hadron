@@ -44,6 +44,19 @@ fn legacy_memory_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
 /// engine never loads. A file that outgrows this has stopped being an index.
 pub(crate) use crate::nucleus_status::BUDGET_BYTES as NUCLEUS_INDEX_BUDGET;
 
+/// Whether an index line names a lesson, in EITHER shape the index has had.
+///
+/// The pointer form — `- [slug](notes/slug.md) — hook` — is what the chamber writes
+/// now (`text::learn_line`); the bold form — `- **slug** — lesson` — is what every
+/// line written before the migration looks like, and those files are on disk in
+/// projects nobody is going to rewrite by hand. A counter that knew only one shape
+/// would report `0 lesson(s)` for a full index, which is a lie in the one place a
+/// quark cannot check: the summary it is shown INSTEAD of the index.
+fn is_lesson_line(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with("- **") || line.starts_with("- [")
+}
+
 /// A few hundred bytes: one heading per `## ` section in the index, with a count
 /// of lessons under it. What the quark sees instead of the full index when the
 /// index has grown past a size worth always sending in full.
@@ -56,7 +69,7 @@ pub(crate) fn tag_manifest(index_text: &str) -> String {
                 out.push_str(&format!("- {h}: {n} lesson(s)\n"));
             }
             current = Some((heading, 0));
-        } else if line.trim_start().starts_with("- **") {
+        } else if is_lesson_line(line) {
             if current.is_none() {
                 current = Some(("General", 0));
             }
