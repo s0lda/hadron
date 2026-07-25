@@ -320,6 +320,19 @@ pub struct ArtifactReap {
 /// again. Returns `Ok(Some(ArtifactReap::default()))` when there is nothing to
 /// sweep (no `target/debug` yet, or nothing older than `min_age`).
 pub fn reap_build_artifacts(repo_root: &Path, min_age: std::time::Duration) -> anyhow::Result<Option<ArtifactReap>> {
+    reap_build_artifacts_maybe_dry(repo_root, min_age, false)
+}
+
+/// [`reap_build_artifacts`], with `dry_run: true` reporting exactly what it would
+/// reclaim (same walk, same staleness check) without deleting anything — the way
+/// to get a trustworthy number off a production `target/debug` before letting the
+/// deleting form run unattended. Both forms share this one implementation, so a
+/// dry-run number can never diverge from what a real run actually does.
+pub fn reap_build_artifacts_maybe_dry(
+    repo_root: &Path,
+    min_age: std::time::Duration,
+    dry_run: bool,
+) -> anyhow::Result<Option<ArtifactReap>> {
     let debug_dir = repo_root.join("target").join("debug");
     if !debug_dir.is_dir() {
         return Ok(Some(ArtifactReap::default()));
@@ -347,7 +360,7 @@ pub fn reap_build_artifacts(repo_root: &Path, min_age: std::time::Duration) -> a
         .context("min_age is larger than the current time")?;
     let mut reap = ArtifactReap::default();
     for sub in ["incremental", "deps", ".fingerprint", "build"] {
-        sweep_stale_entries(&debug_dir.join(sub), cutoff, &mut reap)?;
+        sweep_stale_entries(&debug_dir.join(sub), cutoff, dry_run, &mut reap)?;
     }
     // `lock_file` drops here, releasing the advisory lock.
     Ok(Some(reap))
@@ -365,7 +378,12 @@ pub fn reap_build_artifacts(repo_root: &Path, min_age: std::time::Duration) -> a
 /// file inside to verify the recorded hash, refreshing THAT file's atime, but
 /// never touches the directory's own atime. A sweep keyed on the directory
 /// entry alone would delete a fingerprint being reused every day.
-fn sweep_stale_entries(dir: &Path, cutoff: std::time::SystemTime, reap: &mut ArtifactReap) -> anyhow::Result<()> {
+fn sweep_stale_entries(
+    dir: &Path,
+    cutoff: std::time::SystemTime,
+    dry_run: bool,
+    reap: &mut ArtifactReap,
+) -> anyhow::Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -380,10 +398,12 @@ fn sweep_stale_entries(dir: &Path, cutoff: std::time::SystemTime, reap: &mut Art
         }
         let meta = entry.metadata().with_context(|| format!("stat-ing {}", path.display()))?;
         let bytes = dir_size(&path)?;
-        if meta.is_dir() {
-            std::fs::remove_dir_all(&path).with_context(|| format!("removing {}", path.display()))?;
-        } else {
-            std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+        if !dry_run {
+            if meta.is_dir() {
+                std::fs::remove_dir_all(&path).with_context(|| format!("removing {}", path.display()))?;
+            } else {
+                std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+            }
         }
         reap.files_removed += 1;
         reap.bytes_removed += bytes;
@@ -393,8 +413,15 @@ fn sweep_stale_entries(dir: &Path, cutoff: std::time::SystemTime, reap: &mut Art
 
 /// The most recent access time anywhere under `path` — `path`'s own atime for a
 /// file, or the max of every entry's `newest_atime` (recursively) for a
-/// directory, including the directory's own. One live file anywhere inside is
-/// enough to keep the whole directory looking used.
+/// directory, EXCLUDING the directory's own (see below — it is not signal, it is
+/// noise this function's own traversal would otherwise inject). One live file
+/// anywhere inside is enough to keep the whole directory looking used.
+///
+/// Safe to call repeatedly, including once as a dry run and again for real:
+/// `symlink_metadata(..).accessed()` is a `stat`, not an `open`+read, and `stat`
+/// does not update atime (confirmed on this box — probed a file's atime before
+/// and after a bare `stat`, unchanged) — so measuring a file never changes what
+/// the next measurement of it will see.
 fn newest_atime(path: &Path) -> anyhow::Result<std::time::SystemTime> {
     let meta = std::fs::symlink_metadata(path).with_context(|| format!("stat-ing {}", path.display()))?;
     if !meta.is_dir() {
@@ -1305,5 +1332,43 @@ pub(crate) mod tests {
 
         let reap = reap_build_artifacts(repo.path(), Duration::from_secs(7 * 86400)).unwrap().unwrap();
         assert_eq!(reap.files_removed, 4, "one stale entry per category, all four swept");
+    }
+
+    /// `dry_run` must report exactly what a real sweep would reclaim, without
+    /// touching the filesystem — the way to get a trustworthy number off a
+    /// production box before the first real (deleting) run.
+    #[test]
+    fn dry_run_reports_the_reclaim_without_deleting_anything() {
+        let repo = tempfile::tempdir().unwrap();
+        let debug = repo.path().join("target").join("debug");
+        write_aged(&debug.join("deps").join("stale.rlib"), b"0123456789", Duration::from_secs(10 * 86400));
+        write_aged(&debug.join("deps").join("fresh.rlib"), b"x", Duration::from_secs(86400));
+
+        let reap = reap_build_artifacts_maybe_dry(repo.path(), Duration::from_secs(7 * 86400), true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reap, ArtifactReap { files_removed: 1, bytes_removed: 10 }, "counts the stale entry only");
+        assert!(debug.join("deps").join("stale.rlib").exists(), "dry_run must not delete the stale file");
+        assert!(debug.join("deps").join("fresh.rlib").exists());
+    }
+
+    /// The number a dry run reports and the number a real run reclaims must
+    /// agree exactly, on the same fixture — proves dry_run isn't a second,
+    /// possibly-diverging code path.
+    #[test]
+    fn dry_run_and_a_real_run_agree_on_the_same_fixture() {
+        let repo = tempfile::tempdir().unwrap();
+        let debug = repo.path().join("target").join("debug");
+        write_aged(&debug.join("deps").join("a.rlib"), b"12345", Duration::from_secs(10 * 86400));
+        write_aged(&debug.join("incremental").join("a-hash").join("f"), b"1234567", Duration::from_secs(10 * 86400));
+        let old = SystemTime::now() - Duration::from_secs(10 * 86400);
+        let dir_handle = File::open(&debug.join("incremental").join("a-hash")).unwrap();
+        dir_handle.set_times(FileTimes::new().set_accessed(old).set_modified(old)).unwrap();
+
+        let dry = reap_build_artifacts_maybe_dry(repo.path(), Duration::from_secs(7 * 86400), true)
+            .unwrap()
+            .unwrap();
+        let real = reap_build_artifacts(repo.path(), Duration::from_secs(7 * 86400)).unwrap().unwrap();
+        assert_eq!(dry, real, "a dry run must predict exactly what the real run reclaims");
     }
 }
