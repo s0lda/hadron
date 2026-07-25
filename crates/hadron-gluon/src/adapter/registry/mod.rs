@@ -77,6 +77,61 @@ pub struct AcpTarget {
     pub env: Vec<(String, String)>,
 }
 
+/// A boot command that has been through [`AcpTarget::resolved`] — no `{repo}` token
+/// left, and no program that `execve` would resolve against the spawning cwd.
+///
+/// It exists because `resolved` used to return another [`AcpTarget`], so the two forms
+/// were the same type and nothing stopped a call site from spawning the unresolved one.
+/// That is exactly how the live `acp-agy` seat's relative `command` reached `spawn` and
+/// died with a bare ENOENT. [`acp_stdio_descriptor`](crate::adapter::acp::session) takes
+/// this type and only this type, so the descriptor handed to `AcpAgent::from_str` cannot
+/// be built from anything else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedAcpTarget(AcpTarget);
+
+impl ResolvedAcpTarget {
+    pub fn program(&self) -> &str {
+        &self.0.program
+    }
+
+    pub fn args(&self) -> &[String] {
+        &self.0.args
+    }
+
+    pub fn env(&self) -> &[(String, String)] {
+        &self.0.env
+    }
+
+    /// The shell-ish command line, for diagnostics. Carries no secret: `env` is not in it.
+    pub fn command_line(&self) -> String {
+        self.0.command_line()
+    }
+}
+
+/// A part that names a file relative to the checkout: it has a separator, but is neither
+/// absolute, nor `{repo}`-anchored, nor `~`-anchored (the shell would expand that).
+fn is_repo_relative(part: &str) -> bool {
+    part.contains('/')
+        && !part.starts_with('/')
+        && !part.starts_with(REPO_ROOT_TOKEN)
+        && !part.starts_with('~')
+}
+
+/// `part` with `{repo}` substituted and, if it is repo-relative, anchored to `root`.
+/// With `only_if_it_exists`, anchoring is skipped unless the joined path is really there
+/// — the test that separates `crates/…/agy_acp.py` from `@scope/pkg` and `https://…`.
+fn anchor(part: &str, root: &str, only_if_it_exists: bool) -> String {
+    let part = part.replace(REPO_ROOT_TOKEN, root);
+    if !is_repo_relative(&part) {
+        return part;
+    }
+    let joined = std::path::Path::new(root).join(&part);
+    if only_if_it_exists && !joined.exists() {
+        return part;
+    }
+    joined.to_string_lossy().to_string()
+}
+
 impl AcpTarget {
     /// The Claude ACP adapter — a Node process wrapping the Claude Agent SDK and
     /// speaking ACP. This is the default boot command for the `"claude"`
@@ -133,8 +188,21 @@ impl AcpTarget {
             .any(|s| s.contains(REPO_ROOT_TOKEN))
     }
 
-    /// This target with [`REPO_ROOT_TOKEN`] replaced by the main checkout's root —
-    /// **the only form that may be spawned.**
+    /// Whether any part is a path written relative to the checkout — a part that names
+    /// a file (it has a separator) but is neither absolute nor already `{repo}`-anchored.
+    ///
+    /// A seat's own `command` in `team.json` is written by hand and by the Settings UI,
+    /// and nothing there teaches anyone about [`REPO_ROOT_TOKEN`] — the live global
+    /// `team.json` had `crates/hadron-gluon/scripts/venv/bin/python` — so the token
+    /// alone is not enough to decide whether resolution is needed.
+    fn has_repo_relative_part(&self) -> bool {
+        std::iter::once(&self.program)
+            .chain(self.args.iter())
+            .any(|s| is_repo_relative(s))
+    }
+
+    /// This target with [`REPO_ROOT_TOKEN`] replaced by the main checkout's root and
+    /// every repo-relative path anchored to it — **the only form that may be spawned.**
     ///
     /// A boot command that names a path in this repo cannot be written relative: the
     /// ACP transport spawns it with `Command::new(program)` and never sets
@@ -154,27 +222,52 @@ impl AcpTarget {
     ///
     /// Errs rather than passing an unresolved `{repo}` through to `spawn`: that would be
     /// a worse version of the same ENOENT, naming a path no human ever wrote.
-    pub fn resolved(&self) -> anyhow::Result<AcpTarget> {
-        if !self.needs_repo_root() {
-            return Ok(self.clone());
+    pub fn resolved(&self) -> anyhow::Result<ResolvedAcpTarget> {
+        if !self.needs_repo_root() && !self.has_repo_relative_part() {
+            return Ok(ResolvedAcpTarget(self.clone()));
         }
         let exe = std::env::current_exe()?;
         let near = exe.parent().unwrap_or(&exe);
-        let root = crate::snapshot::main_repo_root(near).map_err(|e| {
-            anyhow::anyhow!(
-                "boot command {:?} names {REPO_ROOT_TOKEN}, but the main checkout root could \
-                 not be found from {}: {e}",
-                self.command_line(),
-                near.display()
-            )
-        })?;
-        let root = root.to_string_lossy();
-        let sub = |s: &String| s.replace(REPO_ROOT_TOKEN, &root);
-        Ok(AcpTarget {
-            program: sub(&self.program),
-            args: self.args.iter().map(sub).collect(),
-            env: self.env.clone(),
-        })
+        let root = match crate::snapshot::main_repo_root(near) {
+            Ok(root) => Some(root),
+            // Only a `{repo}` token makes the root mandatory. A relative part may be an
+            // npm scoped package (`@scope/pkg`) rather than a path, and those must keep
+            // working outside a git checkout — the guard below still catches a program
+            // that really is a path.
+            Err(e) if self.needs_repo_root() => {
+                return Err(anyhow::anyhow!(
+                    "boot command {:?} names {REPO_ROOT_TOKEN}, but the main checkout root could \
+                     not be found from {}: {e}",
+                    self.command_line(),
+                    near.display()
+                ))
+            }
+            Err(_) => None,
+        };
+        let anchored = match root {
+            Some(root) => {
+                let root = root.to_string_lossy().to_string();
+                AcpTarget {
+                    // A program holding a separator is opened as a path by `execve`, so
+                    // anchoring it is always right: relative, it cannot work at all.
+                    program: anchor(&self.program, &root, false),
+                    // An arg is only a path if it names one that exists — otherwise it is
+                    // a flag, a URL or an npm package spec, and must pass through whole.
+                    args: self.args.iter().map(|a| anchor(a, &root, true)).collect(),
+                    env: self.env.clone(),
+                }
+            }
+            None => self.clone(),
+        };
+        if is_repo_relative(&anchored.program) {
+            anyhow::bail!(
+                "boot command program {:?} is a path relative to nothing — `execve` would \
+                 resolve it against the spawning process's cwd. Anchor it with \
+                 {REPO_ROOT_TOKEN} or give an absolute path.",
+                anchored.program
+            );
+        }
+        Ok(ResolvedAcpTarget(anchored))
     }
 
     /// The shell-ish command line, for `AcpAgent::from_str` and for diagnostics.
