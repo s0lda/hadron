@@ -214,8 +214,22 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
     let mut body_lines: Vec<&str> = Vec::new();
     let mut in_fence = false;
 
+    // An UNBALANCED fence must not suppress commands. With a single stray ``` —
+    // easily typed, and common when pasting a fragment — a toggle-on-first-sight
+    // parser flips `in_fence` and never flips it back, so every command below it
+    // is silently swallowed into the body. That is exactly the "offered but
+    // becomes chat" failure this parser exists to prevent, reached by a different
+    // door. So: fences only mask when they come in pairs. An odd count means the
+    // human did not really fence anything, and we parse the message as prose.
+    let fenced = full
+        .lines()
+        .filter(|l| l.trim_start().starts_with("```"))
+        .count()
+        % 2
+        == 0;
+
     for line in full.lines() {
-        if line.trim_start().starts_with("```") {
+        if fenced && line.trim_start().starts_with("```") {
             in_fence = !in_fence;
             body_lines.push(line);
             continue;
@@ -322,6 +336,25 @@ mod tests {
         let (cmds, body) = split_leading_commands("look:\n```\n/clear\n```\ndone");
         assert!(cmds.is_empty(), "fenced command must not run: {cmds:?}");
         assert_eq!(body.as_deref(), Some("look:\n```\n/clear\n```\ndone"));
+    }
+
+    /// An unbalanced fence must not silently swallow the commands below it —
+    /// found in review of `c3b978d`, and the same failure class the table fixes.
+    #[test]
+    fn an_unclosed_fence_does_not_swallow_later_commands() {
+        let unclosed = "```\nsome code, never closed\n/team-brainstorm ship it\nmore text";
+        let (cmds, body) = split_leading_commands(unclosed);
+        assert_eq!(
+            cmds,
+            vec![("team-brainstorm".to_string(), "ship it".to_string())],
+            "a stray ``` must not suppress a real command"
+        );
+        assert!(body.is_some());
+
+        // A balanced pair still masks, which is the whole point of the guard.
+        let closed = "```\n/clear\n```\nafter";
+        let (cmds, _) = split_leading_commands(closed);
+        assert!(cmds.is_empty(), "a closed fence still protects its contents: {cmds:?}");
     }
 
     /// Only names in the table are commands, so a path is not one.
