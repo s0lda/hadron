@@ -255,6 +255,8 @@ fn apply_reseat(
 
 #[tokio::main]
 async fn main() {
+    let _shutdown_guard = hadron_gluon::proc::ShutdownGuard::new();
+
     let Some(args) = parse_args() else {
         eprintln!("usage: hadron-gluon <field.jsonl> [--interval-ms N] [--team team.json]");
         eprintln!("  Team resolution: --team, else a team.json next to the field");
@@ -514,9 +516,28 @@ async fn main() {
         .as_deref()
         .and_then(|p| std::fs::read_to_string(p).ok());
 
+    let mut shutdown_signal = tokio::spawn(async move {
+        #[cfg(unix)]
+        wait_for_shutdown_signal().await;
+        #[cfg(not(unix))]
+        tokio::signal::ctrl_c().await.ok();
+    });
+
     loop {
+        if shutdown_signal.is_finished() {
+            break;
+        }
+
         let before = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
-        if let Err(e) = engine.run_until_quiesce().await {
+        let excite_res = tokio::select! {
+            _ = &mut shutdown_signal => {
+                eprintln!("hadron-gluon: shutting down daemon...");
+                break;
+            }
+            res = engine.run_until_quiesce() => res,
+        };
+
+        if let Err(e) = excite_res {
             eprintln!("gluon: excite error (continuing): {e:#}");
             let events_after = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
             if events_after == before {
@@ -613,9 +634,44 @@ async fn main() {
             }
         }
 
-        tokio::time::sleep(args.interval).await;
+        tokio::select! {
+            _ = &mut shutdown_signal => {
+                eprintln!("hadron-gluon: shutting down daemon...");
+                break;
+            }
+            _ = tokio::time::sleep(args.interval) => {}
+        }
     }
 }
+
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut sigint = signal(SignalKind::interrupt()).ok();
+    let mut sigterm = signal(SignalKind::terminate()).ok();
+
+    tokio::select! {
+        _ = async {
+            if let Some(s) = &mut sigint {
+                s.recv().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        } => {
+            eprintln!("hadron-gluon: received SIGINT, shutting down...");
+        }
+        _ = async {
+            if let Some(s) = &mut sigterm {
+                s.recv().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        } => {
+            eprintln!("hadron-gluon: received SIGTERM, shutting down...");
+        }
+    }
+}
+
 
 /// Read `team.json` and return its text **only if it differs from the last read**.
 ///
