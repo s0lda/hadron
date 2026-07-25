@@ -368,7 +368,7 @@ pub fn reap_build_artifacts_maybe_dry(
 /// is established is that one attempt is not enough. Waiting turns a false
 /// "cargo is building" (which silently skips the whole sweep until the next
 /// daemon start) into a real answer, and costs at most this long, once, at startup.
-const LOCK_ATTEMPTS: u32 = 10;
+const LOCK_ATTEMPTS: u32 = 20;
 const LOCK_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(25);
 
 /// Take the same lock file cargo itself holds around the target dir, retrying for
@@ -1457,7 +1457,7 @@ pub(crate) mod tests {
             let f = File::options().create(true).write(true).open(&lock_path).unwrap();
             f.lock().unwrap();
             locked_tx.send(()).unwrap();
-            std::thread::sleep(Duration::from_millis(60));
+            std::thread::sleep(Duration::from_millis(25));
             // `f` drops here, releasing well inside LOCK_ATTEMPTS * LOCK_RETRY_PAUSE.
         });
         locked_rx.recv().unwrap();
