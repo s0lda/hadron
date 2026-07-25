@@ -225,25 +225,50 @@ impl super::Engine {
                                             base,
                                             assignment: old_assignment,
                                         };
-                                        if self.merge.is_some() && self.merge_gate(&target, &old_turn_tree).await? {
-                                            // The gate PARKED the quark, and parking may
-                                            // have written new pending work to the field —
-                                            // a merge-gate hand-back is a `Message`
-                                            // addressed right back to this quark. Unlike
-                                            // the gate's other call site (in `finish_turn`,
-                                            // after a join, where the loop goes around
-                                            // anyway), this one runs while nothing else is
-                                            // in flight, so the quiesce check below would
-                                            // fire on the SAME pass and return with that
-                                            // hand-back unserved — the repair turn silently
-                                            // deferred to whenever the daemon next happened
-                                            // to wake. Force one more pass to re-read
-                                            // instead. Costs a single extra read when the
-                                            // park created nothing (the parked quark's own
-                                            // terminal status suppresses re-selection, so
-                                            // this cannot spin).
-                                            spawned_any = true;
-                                            continue;
+                                        if self.merge.is_some() {
+                                            // Say so BEFORE the gate runs. This is the
+                                            // first thing on the dispatch path that can
+                                            // take minutes (it rebases and runs the target
+                                            // project's whole test suite), and it sits
+                                            // ahead of `ensure`, the snapshot and
+                                            // `Status{Excited}` — so without this line a
+                                            // slow or hung gate leaves the field completely
+                                            // empty and the human has nothing to look at
+                                            // while the whole daemon waits on it.
+                                            // `Actor::Gluon`, `to: None`, no leading `@`:
+                                            // it prints and wakes nobody.
+                                            self.append(Event::new(
+                                                Actor::Gluon,
+                                                None,
+                                                Kind::Message {
+                                                    body: format!(
+                                                        "gating `{old_branch}` (a previous assignment of `{}`) \
+                                                         before its next turn — this can take minutes.",
+                                                        target.as_str(),
+                                                    ),
+                                                },
+                                            ))
+                                            .await?;
+                                            if self.merge_gate(&target, &old_turn_tree).await? {
+                                                // The gate PARKED the quark, and parking may
+                                                // have written new pending work to the field —
+                                                // a merge-gate hand-back is a `Message`
+                                                // addressed right back to this quark. Unlike
+                                                // the gate's other call site (in `finish_turn`,
+                                                // after a join, where the loop goes around
+                                                // anyway), this one runs while nothing else is
+                                                // in flight, so the quiesce check below would
+                                                // fire on the SAME pass and return with that
+                                                // hand-back unserved — the repair turn silently
+                                                // deferred to whenever the daemon next happened
+                                                // to wake. Force one more pass to re-read
+                                                // instead. Costs a single extra read when the
+                                                // park created nothing (the parked quark's own
+                                                // terminal status suppresses re-selection, so
+                                                // this cannot spin).
+                                                spawned_any = true;
+                                                continue;
+                                            }
                                         }
                                     }
                                 }

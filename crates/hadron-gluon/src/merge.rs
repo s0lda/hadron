@@ -145,7 +145,23 @@ fn tail(s: &str) -> String {
     s[start..].to_string()
 }
 
-/// Run an arbitrary command as "the tests", in the worktree.
+/// How long the gate will wait for a project's test suite before cutting it off.
+///
+/// **The gate runs a command nobody in this repo wrote.** `detect_runner` picks it
+/// from the target project's own manifest, so a hung test in the human's project is
+/// a hung `await` in the daemon — and the gate sits in the dispatch path *ahead* of
+/// `worktree::ensure`, the snapshot and the `Status{Excited}` append, so a wedge here
+/// writes no field event at all: every quark reads as "working…" forever with an
+/// empty field and nothing to point at. `TURN_DEADLINE` does not cover this; it wraps
+/// `quark.excite`, and the gate is outside it. Deliberately under that 30 minutes, so
+/// a wedged gate stays inside the turn budget the human already expects.
+///
+/// Measured cause: a `cargo test --workspace` in a project whose own suite spun
+/// forever kept a daemon from dispatching anything for hours.
+pub const GATE_TEST_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Run an arbitrary command as "the tests", in the worktree, under
+/// [`GATE_TEST_DEADLINE`].
 ///
 /// The command is a parameter so this is testable without spawning a real `cargo
 /// test` (which, inside this workspace's own suite, would recurse). The production
@@ -155,22 +171,84 @@ pub async fn run_tests_with(
     program: &str,
     args: &[&str],
 ) -> anyhow::Result<(bool, String)> {
+    run_tests_within(wt, program, args, GATE_TEST_DEADLINE).await
+}
+
+/// [`run_tests_with`] with the deadline as a parameter. Tests use a tiny one.
+pub async fn run_tests_within(
+    wt: &Worktree,
+    program: &str,
+    args: &[&str],
+    deadline: std::time::Duration,
+) -> anyhow::Result<(bool, String)> {
     let mut cmd = tokio::process::Command::new(program);
-    cmd.args(args).current_dir(&wt.path);
+    cmd.args(args)
+        .current_dir(&wt.path)
+        // A test runner that reads stdin would otherwise block on the daemon's own
+        // terminal, which is the same wedge by another route.
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
 
     // **The gate's cost lives or dies on this line** — and so does the disk. See
     // `worktree::shared_build_env` for why; the quark's own subprocess gets the very
     // same env, which is the point of it living in one place.
     cmd.envs(crate::worktree::shared_build_env(&wt.path));
 
-    let out = cmd
-        .output()
-        .await
+    // Its own process group, so the deadline can kill the whole tree rather than just
+    // the launcher. `cargo test` is a launcher: killing it orphans the test binary,
+    // which is exactly the process that was still burning four CPU-hours after the
+    // daemon that started it had given up on it.
+    #[cfg(unix)]
+    cmd.process_group(0);
+
+    let child = cmd
+        .spawn()
         .map_err(|e| anyhow::anyhow!("failed to run the gate's tests ({program}): {e}"))?;
+    // Read before the handle is consumed by `wait_with_output`.
+    let pid = child.id();
+
+    let out = match tokio::time::timeout(deadline, child.wait_with_output()).await {
+        Ok(out) => out
+            .map_err(|e| anyhow::anyhow!("failed to run the gate's tests ({program}): {e}"))?,
+        // **Red, not `Err`.** An `Err` propagates out of `merge_gate` through
+        // `run_until_quiesce`'s `?` into the daemon's "excite error (continuing)" arm,
+        // which loops straight back onto the same branch and hangs again — a wedge
+        // traded for a slow loop. A red gate is a state the engine already handles:
+        // `Status{Blocked}` with a reason, the branch untouched, the quark excitable.
+        Err(_) => {
+            if let Some(pid) = pid {
+                kill_process_group(pid);
+            }
+            return Ok((
+                false,
+                format!(
+                    "the gate's tests ({program}) did not finish within {}s and were killed. \
+                     The branch is untouched and nothing was landed. A suite that hangs here \
+                     stops the daemon dispatching ANY quark, so fix or exclude the hanging \
+                     test before the next turn.",
+                    deadline.as_secs(),
+                ),
+            ));
+        }
+    };
     let mut text = String::from_utf8_lossy(&out.stdout).to_string();
     text.push_str(&String::from_utf8_lossy(&out.stderr));
     Ok((out.status.success(), tail(&text)))
 }
+
+/// SIGKILL the whole process group led by `pid` — the launcher *and* everything it
+/// spawned. Best-effort: a group that has already exited is not an error.
+#[cfg(unix)]
+fn kill_process_group(pid: u32) {
+    // Safety: `kill(2)` with a negative pid signals the process group. `pid` came
+    // from a child we spawned with `process_group(0)`, so it leads its own group and
+    // the signal cannot reach the daemon or anything else.
+    unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(_pid: u32) {}
 
 /// Land `wt.branch` on `base` in the parent repo.
 ///
@@ -486,6 +564,53 @@ mod tests {
         );
         // And emphatically NOT the worktree's own (cold, duplicated) target dir.
         assert_ne!(got, wt.path.join("target"));
+    }
+
+    /// **A hung suite must not wedge the daemon.** The gate runs a command chosen from
+    /// the *target project's* manifest, on the dispatch path and ahead of every field
+    /// append — so a suite that never returns stops the daemon dispatching anything at
+    /// all, with no event written to point at. Measured live: a project whose own
+    /// `cargo test` spun forever kept a daemon silent for hours.
+    ///
+    /// Two claims, and the second is the one that costs real machines: the gate gives
+    /// up, and it kills the whole process TREE. `cargo test` is a launcher — killing
+    /// only the launcher orphans the test binary, which is the process that was still
+    /// burning CPU long after the daemon stopped waiting for it.
+    #[tokio::test]
+    async fn a_hung_suite_is_cut_at_the_deadline_and_its_whole_tree_killed() {
+        let repo = git_repo();
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+        let marker = wt.path.join("still-alive");
+
+        // A launcher that outlives nothing of its own but spawns a grandchild which
+        // keeps touching a file — the shape of `cargo test` and its test binary.
+        let script = format!(
+            "sh -c 'while true; do date +%s%N > {}; sleep 0.05; done' & wait",
+            marker.display()
+        );
+        let (passed, out) = run_tests_within(
+            &wt,
+            "sh",
+            &["-c", &script],
+            std::time::Duration::from_millis(400),
+        )
+        .await
+        .unwrap();
+
+        assert!(!passed, "a suite that never finishes is red, not green");
+        assert!(
+            out.contains("did not finish within"),
+            "the human is told what happened: {out}"
+        );
+
+        // The grandchild must be dead: the marker stops moving.
+        let first = std::fs::read_to_string(&marker).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        let second = std::fs::read_to_string(&marker).unwrap();
+        assert_eq!(
+            first, second,
+            "the grandchild outlived the deadline — killing only the launcher orphans it"
+        );
     }
 
     #[tokio::test]
