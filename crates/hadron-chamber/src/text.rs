@@ -96,6 +96,8 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "learn-global", detail: "Pin a lesson into your global nucleus, across every repo", arity: Arity::Line, listed: true },
     Command { name: "learn-std-model", detail: "Add a standing law to this repo (appends to laws.md, never edits the Standard Model)", arity: Arity::Line, listed: true },
     Command { name: "learn-std-model-global", detail: "Add a standing law across every repo you run Hadron in", arity: Arity::Line, listed: true },
+    Command { name: "gate-status", detail: "Show which branch the merge gate is running, since when, and time left", arity: Arity::None, listed: true },
+    Command { name: "abandon", detail: "Archive-tag then discard a quark's pending branch (e.g. /abandon @acp-claude, then /abandon @acp-claude confirm to force)", arity: Arity::Line, listed: true },
 ];
 
 /// A short kebab-case id for a lesson line: the first few words, lowercased,
@@ -145,6 +147,90 @@ pub fn help_body() -> String {
          paragraph and put the command underneath it. Inside a ``` fence it stays \
          plain text.\n",
     );
+    out
+}
+
+/// The exact prefix `engine::run.rs`'s superseded-assignment arm posts before it
+/// blocks the dispatch loop on the merge gate — see the "The Gate Runs an
+/// Untrusted Command on the Dispatch Path" invariant. Matched literally rather
+/// than with a regex: it is one `format!` call in one place, and a change there
+/// should break this parser loudly (a test pins the exact shape) rather than
+/// silently stop matching.
+const GATING_PREFIX: &str = "gating `";
+const GATING_ASSIGNMENT_OF: &str = "assignment of `";
+
+/// `/gate-status`'s answer, built by re-reading the field rather than asking the
+/// daemon: the chamber has no live channel into the engine's in-memory state, and
+/// the gate's own notice (`GATING_PREFIX`) plus every completion message it can
+/// produce (landed / already-landed / conflicted / hand-back) all quote the
+/// branch name in backticks — so "still running" is exactly "a gating notice with
+/// no later message mentioning that branch".
+///
+/// `now` and `deadline` are parameters rather than read from the clock/constant
+/// here so the function stays pure and testable against synthetic events.
+pub fn gate_status_body(
+    events: &[hadron_lattice::Event],
+    now: chrono::DateTime<chrono::Utc>,
+    deadline: std::time::Duration,
+) -> String {
+    use hadron_lattice::Kind;
+
+    struct Notice {
+        ts: chrono::DateTime<chrono::Utc>,
+        branch: String,
+        quark: String,
+    }
+
+    let mut notices = Vec::new();
+    for e in events {
+        let Kind::Message { body } = &e.kind else { continue };
+        let Some(rest) = body.strip_prefix(GATING_PREFIX) else { continue };
+        let Some(branch_end) = rest.find('`') else { continue };
+        let branch = rest[..branch_end].to_string();
+        let Some(q_start) = rest.find(GATING_ASSIGNMENT_OF) else { continue };
+        let after = &rest[q_start + GATING_ASSIGNMENT_OF.len()..];
+        let Some(q_end) = after.find('`') else { continue };
+        notices.push(Notice { ts: e.ts, branch, quark: after[..q_end].to_string() });
+    }
+
+    if notices.is_empty() {
+        return "No merge gate has run yet this session.".to_string();
+    }
+
+    // A notice is "still running" when no message AFTER it names its branch —
+    // every terminal outcome (landed, already-landed, conflicted, handed back)
+    // quotes the branch, so a mention closes it out regardless of which one fired.
+    let active: Vec<&Notice> = notices
+        .iter()
+        .filter(|n| {
+            !events.iter().any(|e| {
+                e.ts > n.ts
+                    && matches!(&e.kind, Kind::Message { body }
+                        if body.contains(&format!("`{}`", n.branch)) && !body.starts_with(GATING_PREFIX))
+            })
+        })
+        .collect();
+
+    if active.is_empty() {
+        return "No merge gate is currently running.".to_string();
+    }
+
+    let mut out = String::from("**Merge gate status**\n\n");
+    for n in active {
+        let elapsed = (now - n.ts).to_std().unwrap_or_default();
+        let remaining = deadline.checked_sub(elapsed);
+        let status = match remaining {
+            Some(r) => format!("{}s left of {}s", r.as_secs(), deadline.as_secs()),
+            None => "past its deadline — should report red any moment".to_string(),
+        };
+        out.push_str(&format!(
+            "- `{}` (a previous assignment of `{}`) — running {}s, {}\n",
+            n.branch,
+            n.quark,
+            elapsed.as_secs(),
+            status
+        ));
+    }
     out
 }
 
@@ -521,6 +607,88 @@ pub fn completion_candidates(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hadron_lattice::{Actor, Event, Kind};
+
+    fn gating_notice(branch: &str, quark: &str, ts: chrono::DateTime<chrono::Utc>) -> Event {
+        let mut e = Event::new(
+            Actor::Gluon,
+            None,
+            Kind::Message {
+                body: format!(
+                    "gating `{branch}` (a previous assignment of `{quark}`) before its next \
+                     turn — this can take minutes."
+                ),
+            },
+        );
+        e.ts = ts;
+        e
+    }
+
+    fn landed_notice(branch: &str, ts: chrono::DateTime<chrono::Utc>) -> Event {
+        let mut e = Event::new(
+            Actor::Gluon,
+            None,
+            Kind::Message { body: format!("landed `{branch}` onto `main`.") },
+        );
+        e.ts = ts;
+        e
+    }
+
+    #[test]
+    fn no_notices_reads_as_no_gate_ever_run() {
+        assert_eq!(
+            gate_status_body(&[], chrono::Utc::now(), std::time::Duration::from_secs(900)),
+            "No merge gate has run yet this session."
+        );
+    }
+
+    #[test]
+    fn a_notice_with_no_later_mention_is_still_running() {
+        let now = chrono::Utc::now();
+        let t0 = now - chrono::Duration::seconds(60);
+        let events = vec![gating_notice("quark/acp-claude/01K", "acp-claude", t0)];
+        let body = gate_status_body(&events, now, std::time::Duration::from_secs(900));
+        assert!(body.contains("quark/acp-claude/01K"), "{body}");
+        assert!(body.contains("acp-claude"), "{body}");
+        assert!(body.contains("840s left of 900s"), "{body}");
+    }
+
+    #[test]
+    fn a_later_mention_of_the_branch_closes_the_notice() {
+        let now = chrono::Utc::now();
+        let t0 = now - chrono::Duration::seconds(60);
+        let t1 = now - chrono::Duration::seconds(10);
+        let events = vec![
+            gating_notice("quark/acp-claude/01K", "acp-claude", t0),
+            landed_notice("quark/acp-claude/01K", t1),
+        ];
+        assert_eq!(
+            gate_status_body(&events, now, std::time::Duration::from_secs(900)),
+            "No merge gate is currently running."
+        );
+    }
+
+    #[test]
+    fn a_gate_past_its_deadline_says_so_instead_of_underflowing() {
+        let now = chrono::Utc::now();
+        let t0 = now - chrono::Duration::seconds(1000);
+        let events = vec![gating_notice("quark/x/01K", "x", t0)];
+        let body = gate_status_body(&events, now, std::time::Duration::from_secs(900));
+        assert!(body.contains("past its deadline"), "{body}");
+    }
+
+    /// The invariant this command exists to respect: it prints as `Actor::Gluon`
+    /// with `to: None`, so no line may begin with `@` or it would route.
+    #[test]
+    fn gate_status_never_addresses_a_seat() {
+        let now = chrono::Utc::now();
+        let t0 = now - chrono::Duration::seconds(60);
+        let events = vec![gating_notice("quark/acp-claude/01K", "acp-claude", t0)];
+        let body = gate_status_body(&events, now, std::time::Duration::from_secs(900));
+        for line in body.lines() {
+            assert!(!line.trim_start().starts_with('@'), "would route: {line:?}");
+        }
+    }
 
     fn quarks() -> Vec<(String, Option<String>)> {
         vec![

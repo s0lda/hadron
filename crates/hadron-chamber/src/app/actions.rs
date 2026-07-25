@@ -434,6 +434,62 @@ impl Chamber {
                 cx.notify();
                 true
             }
+            // Re-reads the field rather than asking the daemon directly — the
+            // chamber has no live channel into engine state, only the field it
+            // both read and just posted the gate's own notice into. See
+            // `text::gate_status_body`.
+            "gate-status" => {
+                let events = io::read_events(&self.path).unwrap_or_default();
+                let body = crate::text::gate_status_body(
+                    &events,
+                    chrono::Utc::now(),
+                    hadron_gluon::merge::GATE_TEST_DEADLINE,
+                );
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            // Discard a quark's pending assignment branch instead of waiting minutes
+            // for the merge gate. Archive-tags it first (so nothing is ever truly
+            // lost), then `git branch -d` — refusing an unmerged branch exactly as
+            // `-d` always does. `confirm` is the human's explicit in-chat
+            // authorisation the `Branch Deletion Uses -d` invariant asks for before
+            // a retry escalates to `-D`. See `vcs::abandon_branch`.
+            "abandon" => {
+                let (target, rest) = crate::text::split_target(args);
+                let confirm = rest.trim().eq_ignore_ascii_case("confirm");
+                let Some(target) = target else {
+                    eprintln!(
+                        "chamber: `/abandon` needs a quark (e.g. `/abandon @acp-claude`, then \
+                         `/abandon @acp-claude confirm` to force)"
+                    );
+                    return true;
+                };
+                let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) else {
+                    eprintln!("chamber: `/abandon` target not found: {target}");
+                    return true;
+                };
+                let quark_id = row.id.clone();
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let wt_path = hadron_gluon::worktree::trees_dir(&repo_root).join(&quark_id);
+                if !wt_path.exists() {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("`{quark_id}` has no worktree — nothing to abandon."),
+                        cx,
+                    );
+                    return true;
+                }
+                let base = hadron_gluon::worktree::default_branch(&repo_root);
+                let body = match crate::vcs::quark_branch_to_abandon(&repo_root, &wt_path, &quark_id) {
+                    Err(msg) => msg,
+                    Ok(branch) if branch == base => {
+                        format!("`{quark_id}` is sitting on `{base}` itself — refusing to touch the default branch.")
+                    }
+                    Ok(branch) => crate::vcs::abandon_branch(&repo_root, &wt_path, &branch, confirm),
+                };
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
             "approve" | "deny" => {
                 let target = args.trim().trim_start_matches('@');
                 let parts: Vec<&str> = target.split_whitespace().collect();

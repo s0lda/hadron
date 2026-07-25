@@ -321,6 +321,132 @@ pub fn list_worktrees(repo_root: &Path) -> Vec<WorktreeInfo> {
     parse_worktrees(&raw)
 }
 
+/// Which branch `/abandon @quark` should act on, and where to look for it when
+/// the worktree isn't sitting on a branch at all.
+///
+/// The obvious source is `hadron_gluon::worktree::current_branch(wt_path)` — but
+/// `abandon_branch` detaches the worktree as its FIRST step, on every call,
+/// including the one that only tags-and-refuses an unmerged branch. So a human
+/// who types `/abandon @quark` (refused, unmerged) then `/abandon @quark confirm`
+/// hits a worktree that is already detached on the second call, and
+/// `current_branch` would report `None` — reading as "nothing to abandon" for the
+/// exact branch the first call just tagged. Falling back to the one surviving
+/// `quark/<id>/*` ref (there is normally at most one — old ones are pruned on
+/// land) closes that gap; more than one is a real ambiguity this reports rather
+/// than guesses at.
+pub fn quark_branch_to_abandon(repo_root: &Path, wt_path: &Path, quark_id: &str) -> Result<String, String> {
+    if let Some(b) = hadron_gluon::worktree::current_branch(wt_path) {
+        return Ok(b);
+    }
+    let raw = run_git(
+        repo_root,
+        &["for-each-ref", "--format=%(refname:short)", &format!("refs/heads/quark/{quark_id}/")],
+    );
+    let mut candidates: Vec<String> =
+        raw.lines().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
+    match candidates.len() {
+        0 => Err(format!(
+            "`{quark_id}`'s worktree is detached and no `quark/{quark_id}/*` branch remains — nothing to abandon."
+        )),
+        1 => Ok(candidates.remove(0)),
+        _ => Err(format!(
+            "`{quark_id}` has {} pending branches ({}) and its worktree is detached — ambiguous; \
+             delete the right one with `git branch -D <name>` directly.",
+            candidates.len(),
+            candidates.join(", ")
+        )),
+    }
+}
+
+/// A short kebab-case-ish tag name for an archived branch: `quark/acp-claude/01K`
+/// → `archive/acp-claude-01K`. Not `text::slugify` — that trims prose to five
+/// words and lowercases it, which would mangle a ULID; this only strips the
+/// `quark/` prefix every branch carries and joins what's left with `-` so the
+/// result is a single valid ref path segment.
+fn archive_tag_name(branch: &str) -> String {
+    format!("archive/{}", branch.trim_start_matches("quark/").replace('/', "-"))
+}
+
+/// Discard `branch`, currently checked out (or previously checked out — see
+/// [`quark_branch_to_abandon`]) in a quark's worktree at `wt_path`.
+///
+/// Three steps, always in this order so an interrupted run never loses work:
+/// 1. **Archive-tag it first** (`archive/<slug>` at its current HEAD) — idempotent,
+///    so calling this twice for the same branch (the confirm re-invocation) does
+///    not fail on "tag already exists".
+/// 2. **Detach the worktree.** `git branch -d/-D` refuses a branch checked out in
+///    ANY worktree, and this is the one it's checked out in; detaching to the
+///    same commit changes no files, so it is safe regardless of a dirty tree.
+/// 3. **`-d`.** Only when `force` (the human's explicit `/abandon @quark confirm`,
+///    the in-chat authorisation the `Branch Deletion Uses -d` invariant asks for)
+///    does a refused `-d` retry as `-D` — never on the first, unconfirmed call.
+pub fn abandon_branch(repo_root: &Path, wt_path: &Path, branch: &str, force: bool) -> String {
+    let sha = run_git(wt_path, &["rev-parse", "HEAD"]).trim().to_string();
+    if sha.is_empty() {
+        return format!("`{branch}` — could not resolve its HEAD commit; nothing touched.");
+    }
+
+    let tag = archive_tag_name(branch);
+    let existing = run_git(repo_root, &["rev-parse", "--verify", "-q", &tag]).trim().to_string();
+    if existing.is_empty() {
+        let ok = Command::new("git")
+            .current_dir(repo_root)
+            .args(["tag", &tag, &sha])
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !ok {
+            return format!("`{branch}` — could not create archive tag `{tag}`; nothing deleted.");
+        }
+    } else if existing != sha {
+        return format!(
+            "`{branch}` — archive tag `{tag}` already exists but points elsewhere ({existing}); \
+             refusing to overwrite it. Resolve manually with `git tag -d {tag}` if that's stale."
+        );
+    }
+
+    let detached = Command::new("git")
+        .current_dir(wt_path)
+        .args(["checkout", "--detach", "-q"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !detached {
+        return format!(
+            "`{branch}` — tagged `{tag}` ({sha}), but could not detach its worktree; branch left in place."
+        );
+    }
+
+    let deleted_d = Command::new("git")
+        .current_dir(repo_root)
+        .args(["branch", "-d", branch])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if deleted_d {
+        return format!("`{branch}` abandoned — tagged `{tag}` ({sha}), then deleted (`-d`, already merged).");
+    }
+
+    if !force {
+        return format!(
+            "`{branch}` has unmerged commits — tagged `{tag}` ({sha}) but NOT deleted. Re-run \
+             `/abandon @<quark> confirm` to force it (`-D`); restore any time with \
+             `git branch {branch} {tag}`."
+        );
+    }
+
+    let deleted_big_d = Command::new("git")
+        .current_dir(repo_root)
+        .args(["branch", "-D", branch])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if deleted_big_d {
+        format!(
+            "`{branch}` force-abandoned — tagged `{tag}` ({sha}), then deleted (`-D`, confirmed). \
+             Restore any time with `git branch {branch} {tag}`."
+        )
+    } else {
+        format!("`{branch}` — tagged `{tag}` ({sha}), but `-D` still failed; branch left in place.")
+    }
+}
+
 /// A short ASCII commit graph (`git log --graph --oneline --decorate`) — rendered
 /// verbatim in a monospace font rather than parsed, since git already draws the
 /// graph characters and decorations (branch/tag labels) correctly.
@@ -643,6 +769,117 @@ detached
     #[test]
     fn parse_worktrees_of_empty_input_is_empty() {
         assert_eq!(parse_worktrees(""), Vec::new());
+    }
+
+    /// `/abandon`'s git plumbing, run against a REAL repo — not just parsed
+    /// fixtures — because it drives three destructive-adjacent git subcommands
+    /// (`checkout --detach`, `tag`, `branch -d`/`-D`) and rule 1 asks for a caller
+    /// that actually executes, not just a parser that compiles.
+    mod abandon {
+        use super::*;
+        use std::process::Command;
+
+        fn git_id(dir: &Path, args: &[&str]) -> std::process::Output {
+            Command::new("git")
+                .current_dir(dir)
+                .env("GIT_AUTHOR_NAME", "hadron-test")
+                .env("GIT_AUTHOR_EMAIL", "hadron-test@localhost")
+                .env("GIT_COMMITTER_NAME", "hadron-test")
+                .env("GIT_COMMITTER_EMAIL", "hadron-test@localhost")
+                .args(args)
+                .output()
+                .expect("git must run")
+        }
+
+        /// A repo with one commit on `main` and a quark worktree one unmerged
+        /// commit ahead of it on `quark/testq/01ABC` — the exact shape `/abandon`
+        /// is meant to act on.
+        fn repo_with_unmerged_quark_branch() -> (tempfile::TempDir, PathBuf, PathBuf, String) {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().to_path_buf();
+            assert!(git_id(&root, &["init", "-q", "-b", "main"]).status.success());
+            std::fs::write(root.join("f.txt"), "x\n").unwrap();
+            assert!(git_id(&root, &["add", "."]).status.success());
+            assert!(git_id(&root, &["commit", "-q", "-m", "init"]).status.success());
+
+            let branch = "quark/testq/01ABC".to_string();
+            let wt = root.join(".hadron").join("trees").join("testq");
+            assert!(git_id(&root, &["worktree", "add", "-q", "--detach", wt.to_str().unwrap()])
+                .status
+                .success());
+            assert!(git_id(&wt, &["checkout", "-q", "-b", &branch]).status.success());
+            std::fs::write(wt.join("g.txt"), "y\n").unwrap();
+            assert!(git_id(&wt, &["add", "."]).status.success());
+            assert!(git_id(&wt, &["commit", "-q", "-m", "unmerged work"]).status.success());
+
+            (dir, root, wt, branch)
+        }
+
+        #[test]
+        fn an_unconfirmed_abandon_tags_and_refuses_to_delete() {
+            let (_dir, root, wt, branch) = repo_with_unmerged_quark_branch();
+            let msg = abandon_branch(&root, &wt, &branch, false);
+            assert!(msg.contains("unmerged commits"), "{msg}");
+            assert!(msg.contains("tagged"), "{msg}");
+
+            let tags = run_git(&root, &["tag", "-l", "archive/testq-01ABC"]);
+            assert!(tags.contains("archive/testq-01ABC"), "tag not created: {tags:?}");
+            let branches = run_git(&root, &["branch", "--list", &branch]);
+            assert!(branches.contains("testq"), "branch was deleted without confirm: {branches:?}");
+        }
+
+        #[test]
+        fn a_confirmed_abandon_force_deletes_and_the_tag_survives() {
+            let (_dir, root, wt, branch) = repo_with_unmerged_quark_branch();
+            let first = abandon_branch(&root, &wt, &branch, false);
+            assert!(first.contains("unmerged"), "{first}");
+
+            let second = abandon_branch(&root, &wt, &branch, true);
+            assert!(second.contains("force-abandoned"), "{second}");
+
+            let branches = run_git(&root, &["branch", "--list", &branch]);
+            assert!(branches.trim().is_empty(), "branch should be gone: {branches:?}");
+            let tags = run_git(&root, &["tag", "-l", "archive/testq-01ABC"]);
+            assert!(tags.contains("archive/testq-01ABC"), "archive tag must survive -D");
+        }
+
+        #[test]
+        fn an_already_merged_branch_deletes_on_the_first_call() {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().to_path_buf();
+            assert!(git_id(&root, &["init", "-q", "-b", "main"]).status.success());
+            std::fs::write(root.join("f.txt"), "x\n").unwrap();
+            assert!(git_id(&root, &["add", "."]).status.success());
+            assert!(git_id(&root, &["commit", "-q", "-m", "init"]).status.success());
+
+            let branch = "quark/testq/01MERGED".to_string();
+            let wt = root.join(".hadron").join("trees").join("testq");
+            assert!(git_id(&root, &["worktree", "add", "-q", "--detach", wt.to_str().unwrap()])
+                .status
+                .success());
+            // Branch cut but never advanced past `main` — trivially "merged".
+            assert!(git_id(&wt, &["checkout", "-q", "-b", &branch]).status.success());
+
+            let msg = abandon_branch(&root, &wt, &branch, false);
+            assert!(msg.contains("already merged"), "{msg}");
+            let branches = run_git(&root, &["branch", "--list", &branch]);
+            assert!(branches.trim().is_empty(), "a merged branch should go on the first call: {branches:?}");
+        }
+
+        #[test]
+        fn resolution_survives_the_worktree_going_detached_between_calls() {
+            let (_dir, root, wt, branch) = repo_with_unmerged_quark_branch();
+            assert_eq!(quark_branch_to_abandon(&root, &wt, "testq"), Ok(branch.clone()));
+
+            // Simulate the unconfirmed call's detach step directly, without going
+            // through `abandon_branch`, to isolate the resolution fallback.
+            assert!(git_id(&wt, &["checkout", "--detach", "-q"]).status.success());
+            assert_eq!(
+                quark_branch_to_abandon(&root, &wt, "testq"),
+                Ok(branch),
+                "must fall back to the surviving quark/testq/* ref once detached"
+            );
+        }
     }
 
     #[test]
