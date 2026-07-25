@@ -371,6 +371,8 @@ mod tests {
     #[test]
     fn every_listed_command_is_handled() {
         const HANDLED: &[&str] = &[
+            "help",
+            "skills",
             "exit",
             "quit",
             "toggle-roster",
