@@ -542,6 +542,12 @@ fn an_over_budget_nucleus_index_emits_tag_manifest_and_relevant_lessons() {
     assert!(p.contains("Relevant & Pinned Lessons"));
     assert!(p.contains("gui-bug"));
     assert!(p.contains("pinned-item"));
+    // A degraded section that does not announce itself is how the nucleus went
+    // inert unnoticed: counts printed under "What the swarm has learned" read as
+    // the truth about what is known.
+    assert!(p.contains("COUNTS, not lessons"), "the substitution must announce itself");
+    let notice = p.find("COUNTS, not lessons").unwrap();
+    assert!(notice < p.find("GUI:").unwrap(), "the notice must precede the counts");
 }
 
 /// No nucleus index path (a mock adapter, an old snapshot) → no section, rather

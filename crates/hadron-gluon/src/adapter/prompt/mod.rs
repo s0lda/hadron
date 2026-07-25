@@ -146,6 +146,19 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
             p.push_str("_Empty — nothing has been recorded here yet._\n\n");
         } else if projection.nucleus_index.len() > crate::engine::nucleus::NUCLEUS_INDEX_BUDGET {
             let manifest = crate::engine::nucleus::tag_manifest(&projection.nucleus_index);
+            // Say that this is a substitute BEFORE printing it. The index reached 46 KB
+            // against a 32 KB budget and every quark was handed these counts under the
+            // heading "What the swarm has learned" with nothing marking them as a
+            // degraded form — so the nucleus was inert for an unknown number of turns
+            // and no quark could tell. (The `nucleus_index_truncated` warning below does
+            // not cover this: `read_nucleus_index` stopped truncating, so that flag is
+            // now always false and the one path that DOES degrade said nothing.)
+            p.push_str(
+                "**You are seeing COUNTS, not lessons — the index is over budget, so \
+                 nothing below is the index itself.** Open it to read a lesson, and \
+                 prune it: a line must be a pointer (`- [slug](notes/slug.md) — hook`), \
+                 never the lesson text.\n\n",
+            );
             p.push_str(&manifest);
             p.push_str("\n");
             let lower_task = projection.task.to_lowercase();

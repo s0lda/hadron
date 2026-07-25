@@ -50,7 +50,10 @@ pub enum ArgSource {
     Quark,
     /// Argument completes from archived sessions (`name` or `id`).
     Session,
-    /// Argument completes from project files (`@file`).
+    /// Argument completes from project files (`@file`). No row in [`COMMANDS`]
+    /// selects it yet — it is here because the set of sources is the contract,
+    /// and a command that takes a path should not have to invent a fifth spelling.
+    #[allow(dead_code)]
     File,
 }
 
