@@ -1887,21 +1887,40 @@ async fn the_shared_nucleus_index_actually_reaches_a_quarks_projection() {
 /// grows forever. Cap it — but never silently: a lesson dropped for size that nobody
 /// is told about is indistinguishable from a lesson never learned.
 #[test]
+fn tag_manifest_summarises_by_heading_not_by_dropping_lines() {
+    let index = "## GUI\n- **a** — one [tag:gui]\n- **b** — two [tag:gui]\n\
+                 ## IPC\n- **c** — three [tag:ipc]\n";
+    let manifest = super::nucleus::tag_manifest(index);
+    assert!(manifest.contains("GUI") && manifest.contains("2"));
+    assert!(manifest.contains("IPC") && manifest.contains("1"));
+    assert!(manifest.len() < index.len(), "the manifest must be smaller than the full index");
+}
+
+#[test]
+fn an_oversized_index_is_no_longer_truncated() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = nucleus_index_path(dir.path());
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let big = "- **x** — ".to_string() + &"a".repeat(NUCLEUS_INDEX_BUDGET + 1000);
+    std::fs::write(&path, &big).unwrap();
+    let (text, truncated) = read_nucleus_index(&path);
+    assert!(!truncated, "Task 4 removes truncation entirely");
+    assert_eq!(text.len(), big.len());
+}
+
+#[test]
 fn an_oversized_nucleus_index_is_cut_and_says_so() {
     use std::fs;
     let ws = tempdir().unwrap();
     let path = nucleus_index_path(ws.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
 
-    // Multi-byte on purpose: cutting a UTF-8 file at a fixed byte offset is a panic
-    // unless the cut walks back to a char boundary. Same crash family as the emoji bug.
     let fat = "é".repeat(NUCLEUS_INDEX_BUDGET);
     fs::write(&path, &fat).unwrap();
 
     let (text, truncated) = read_nucleus_index(&path);
-    assert!(truncated, "an index over budget must report that it was cut");
-    assert!(text.len() <= NUCLEUS_INDEX_BUDGET);
-    assert!(!text.is_empty(), "cut, not discarded");
+    assert!(!truncated, "truncation removed in Task 4");
+    assert_eq!(text, fat);
 
     // A small index is passed through whole and NOT flagged.
     fs::write(&path, "- **a** — a lesson.").unwrap();

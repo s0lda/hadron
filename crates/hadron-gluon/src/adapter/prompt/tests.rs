@@ -525,6 +525,25 @@ fn a_truncated_nucleus_index_says_so() {
     assert!(p.contains("index above is CUT"));
 }
 
+#[test]
+fn an_over_budget_nucleus_index_emits_tag_manifest_and_relevant_lessons() {
+    let mut proj = projection("fix GUI rendering bug");
+    proj.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
+
+    let mut big_index = String::from("## GUI\n- **gui-bug** — fixed [tag:gui]\n- **pinned-item** — important [pinned]\n## IPC\n");
+    while big_index.len() <= crate::engine::nucleus::NUCLEUS_INDEX_BUDGET {
+        big_index.push_str("- **other** — padding line\n");
+    }
+    proj.nucleus_index = big_index;
+
+    let p = build(&proj, &QuarkId::new("agy"));
+    assert!(p.contains("GUI:"));
+    assert!(p.contains("IPC:"));
+    assert!(p.contains("Relevant & Pinned Lessons"));
+    assert!(p.contains("gui-bug"));
+    assert!(p.contains("pinned-item"));
+}
+
 /// No nucleus index path (a mock adapter, an old snapshot) → no section, rather
 /// than a section telling the quark to write to nowhere.
 #[test]
