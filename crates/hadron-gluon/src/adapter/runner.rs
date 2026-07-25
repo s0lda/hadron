@@ -91,7 +91,8 @@ impl CliRunner for ProcessRunner {
         use std::process::Stdio;
         use tokio::io::AsyncWriteExt;
 
-        let mut child = tokio::process::Command::new(&inv.program)
+        let mut child_cmd = tokio::process::Command::new(&inv.program);
+        child_cmd
             .args(&inv.args)
             // THE fix: the CLI runs in the quark's own worktree, not wherever the
             // daemon happened to be launched from.
@@ -101,7 +102,12 @@ impl CliRunner for ProcessRunner {
             .envs(inv.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        #[cfg(unix)]
+        child_cmd.process_group(0);
+
+        let mut child = child_cmd
             .spawn()
             // A missing `cwd` fails as ENOENT — indistinguishable, in the raw error, from a
             // missing *program*. That cost a real debugging session: `failed to spawn claude:
@@ -119,12 +125,33 @@ impl CliRunner for ProcessRunner {
                 }
             })?;
 
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(inv.stdin.as_bytes()).await?;
-            stdin.shutdown().await?; // close stdin so the CLI proceeds
+        let pid = child.id();
+        if let Some(pid) = pid {
+            crate::proc::register(pid);
         }
 
-        let output = child.wait_with_output().await?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let res = stdin.write_all(inv.stdin.as_bytes()).await;
+            if res.is_err() {
+                if let Some(pid) = pid {
+                    crate::proc::unregister(pid);
+                }
+            }
+            res?;
+            let res = stdin.shutdown().await;
+            if res.is_err() {
+                if let Some(pid) = pid {
+                    crate::proc::unregister(pid);
+                }
+            }
+            res?; // close stdin so the CLI proceeds
+        }
+
+        let output_res = child.wait_with_output().await;
+        if let Some(pid) = pid {
+            crate::proc::unregister(pid);
+        }
+        let output = output_res?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
