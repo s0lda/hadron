@@ -196,7 +196,13 @@ impl super::Chamber {
                                             }))
                                             .tooltip(|window, cx| {
                                                 Tooltip::new(
-                                                    "Permission mode — Shift+Tab or click to cycle",
+                                                    // F6, not Shift+Tab: `shift-tab` was
+                                                    // abandoned as the CycleMode chord (the
+                                                    // text input claims it for OutdentInline),
+                                                    // and the tooltip kept the dead one.
+                                                    // `app/mod.rs::default_key_bindings` is
+                                                    // the truth.
+                                                    "Permission mode — F6 or click to cycle",
                                                 )
                                                 .build(window, cx)
                                             })

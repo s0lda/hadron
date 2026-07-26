@@ -671,18 +671,39 @@ fn wsl_to_linux(win: String) -> Option<String> {
     translated.or(Some(win))
 }
 
-/// The next mode for a **click** on a mode chip, cycling Ask → Write → Auto → Ask.
+/// The next mode for a **click on a PER-QUARK chip**, cycling Ask → Write → Auto → Ask.
 ///
-/// `Bypass` is deliberately not in the cycle: it is full unattended tool access,
-/// and the chip is a word-sized target with no confirm and no undo behind it.
-/// Escalating into it is an explicit act — the Settings picker (`set_quark_mode`)
-/// or `/mode bypass @quark`. Clicking a quark that is already in `Bypass` still
-/// drops it to `Ask`, since de-escalation by accident costs nothing.
+/// `Bypass` is deliberately not in this cycle: it is full unattended tool access for
+/// one worker, and the chip is a word-sized target with no confirm and no undo behind
+/// it. Escalating a worker into it is an explicit act — the Settings picker
+/// (`set_quark_mode`) or `/mode bypass @quark`. Clicking a quark that is already in
+/// `Bypass` still drops it to `Ask`, since de-escalation by accident costs nothing.
+///
+/// The GLOBAL chip uses [`next_global_mode`], which DOES reach `Bypass` — see there
+/// for why the two ladders differ.
 pub(super) fn next_mode(mode: Mode) -> Mode {
     match mode {
         Mode::Ask => Mode::Write,
         Mode::Write => Mode::Auto,
         Mode::Auto | Mode::Bypass => Mode::Ask,
+    }
+}
+
+/// The next mode for a click on the **GLOBAL** mode chip (or `F6`), cycling the full
+/// ladder Ask → Write → Auto → Bypass → Ask.
+///
+/// This is NOT [`next_mode`]. The per-quark clamp exists so a stray click cannot hand
+/// one worker unattended access; the global chip is the human's own posture control and
+/// `Bypass` is a posture they choose for the whole swarm — the mode Hadron is normally
+/// driven in. Sharing one function made the per-quark clamp swallow the global ladder
+/// too, so `Bypass` became unreachable from the chip and from `F6`, contradicting the
+/// documented shortcut (`README.md`). Keep them separate.
+pub(super) fn next_global_mode(mode: Mode) -> Mode {
+    match mode {
+        Mode::Ask => Mode::Write,
+        Mode::Write => Mode::Auto,
+        Mode::Auto => Mode::Bypass,
+        Mode::Bypass => Mode::Ask,
     }
 }
 
@@ -982,6 +1003,19 @@ mod tests {
         assert_eq!(next_mode(Mode::Write), Mode::Auto);
         assert_eq!(next_mode(Mode::Auto), Mode::Ask, "must NOT reach Bypass");
         assert_eq!(next_mode(Mode::Bypass), Mode::Ask, "but clicking out still works");
+    }
+
+    /// The per-quark clamp above was shared with the GLOBAL chip, so `Bypass` fell out
+    /// of the global ladder entirely: the chip and `F6` cycled Ask → Write → Auto → Ask
+    /// and there was no way back into `Bypass` short of typing `/mode bypass`, while
+    /// `README.md` documented `F6` as cycling all four. The global ladder must be
+    /// complete and must close the loop.
+    #[test]
+    fn the_global_cycle_does_reach_bypass() {
+        assert_eq!(next_global_mode(Mode::Ask), Mode::Write);
+        assert_eq!(next_global_mode(Mode::Write), Mode::Auto);
+        assert_eq!(next_global_mode(Mode::Auto), Mode::Bypass, "MUST reach Bypass");
+        assert_eq!(next_global_mode(Mode::Bypass), Mode::Ask, "and wrap back round");
     }
 
     #[test]
