@@ -650,7 +650,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
         messages,
         roster,
         global_mode: global_mode(events),
-        pending_permission: hadron_gatekeeper::pending_permission(events),
+        pending_permission: hadron_gatekeeper::any_pending_permission(events),
     }
 }
 
