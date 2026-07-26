@@ -330,6 +330,7 @@ mod tests {
             cwd,
             mode,
             role_body: None,
+            active_skill: None,
             named_specifically: true,
             has_forge_tools: false,
         }

@@ -432,6 +432,7 @@ fn projection() -> Projection {
         isolated: false,
         mode: Mode::Ask,
         role_body: None,
+        active_skill: None,
         named_specifically: true,
         has_forge_tools: true,
     }
