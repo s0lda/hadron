@@ -61,18 +61,27 @@ pub fn resolve_jailed_path(root: &Root, rel_path: &str) -> Result<PathBuf, Forge
         if !canonical_full.starts_with(&canonical_root) {
             return Err(ForgeError::OutsideRoot);
         }
-        Ok(canonical_full)
-    } else {
-        if let Some(parent) = full_path.parent() {
-            if parent.exists() {
-                let canonical_parent = parent.canonicalize().map_err(|e| ForgeError::Io(e.to_string()))?;
-                if !canonical_parent.starts_with(&canonical_root) {
-                    return Err(ForgeError::OutsideRoot);
-                }
-            }
-        }
-        Ok(full_path)
+        return Ok(canonical_full);
     }
+    // No component of `full_path` need exist yet — walk up to the deepest
+    // ancestor that DOES, canonicalize only that (resolving any symlink in
+    // the existing prefix), and require it stay inside root before trusting
+    // the remaining, still-lexical segments.
+    let mut existing_ancestor = full_path.as_path();
+    let mut missing_suffix: Vec<&std::ffi::OsStr> = Vec::new();
+    while !existing_ancestor.exists() {
+        missing_suffix.push(existing_ancestor.file_name().ok_or(ForgeError::OutsideRoot)?);
+        existing_ancestor = existing_ancestor.parent().ok_or(ForgeError::OutsideRoot)?;
+    }
+    let canonical_existing = existing_ancestor.canonicalize().map_err(|e| ForgeError::Io(e.to_string()))?;
+    if !canonical_existing.starts_with(&canonical_root) {
+        return Err(ForgeError::OutsideRoot);
+    }
+    let mut resolved = canonical_existing;
+    for segment in missing_suffix.into_iter().rev() {
+        resolved.push(segment);
+    }
+    Ok(resolved)
 }
 
 fn atomic_write(path: &Path, content: &str) -> Result<(), ForgeError> {
@@ -206,6 +215,23 @@ mod tests {
         let rep = apply_block_edit(&root, "a.rs", &h, "pub fn a() -> i32 { 2 }").unwrap();
         assert!(std::fs::read_to_string(dir.path().join("a.rs")).unwrap().contains("2"));
         assert!(rep.blocks.contains("[Hash: "));
+    }
+
+    #[test]
+    fn rejects_a_two_level_symlink_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = Root::new(dir.path());
+        let outside = tempfile::tempdir().unwrap();
+        // `vendor` is a real symlink out of root, but the escape only reaches
+        // the unchecked branch when a NON-existent path is walked one level
+        // further through it (`generated/` does not exist under `outside`).
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("vendor")).unwrap();
+
+        let resolved = resolve_jailed_path(&root, "vendor/generated/out.rs");
+        assert!(
+            matches!(resolved, Err(ForgeError::OutsideRoot)),
+            "expected OutsideRoot, got {resolved:?}"
+        );
     }
 
     #[test]
