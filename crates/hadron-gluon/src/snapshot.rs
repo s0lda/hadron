@@ -36,45 +36,25 @@ pub(crate) const GIT_DEADLINE: std::time::Duration = std::time::Duration::from_s
 
 /// Run `cmd` under a wall-clock `deadline`, killing its process GROUP on expiry.
 ///
-/// Written here rather than reusing [`crate::merge::run_tests_within`] — which already
-/// does deadline-plus-group-kill — because that one is `async` and tokio-driven, and
-/// every git call in this crate is synchronous. The kill itself IS reused
-/// ([`crate::merge::kill_process_group`]); `git` is a launcher too (hooks, `git rebase`'s
-/// own sub-gits), so killing the leader alone would orphan its children exactly the way
-/// killing `cargo test` alone once orphaned a test binary for four CPU-hours.
-///
-/// The wait happens on a worker thread via `wait_with_output`, which drains both pipes —
-/// polling `try_wait` on this thread instead would deadlock on a child that fills one.
+/// A thin adapter over [`hadron_forge::exec::run_bounded`], which owns the spawn,
+/// the draining wait and the group kill — `git` is a launcher (hooks, `git
+/// rebase`'s own sub-gits), so killing the leader alone would orphan its children
+/// exactly the way killing `cargo test` alone once orphaned a test binary for four
+/// CPU-hours. What this adds is the *contract every git caller here wants*: a
+/// timeout is an `Err`, because a git command that did not finish has no output
+/// worth reading.
 fn run_bounded(
-    mut cmd: Command,
+    cmd: Command,
     deadline: std::time::Duration,
     args: &[&str],
-) -> anyhow::Result<std::process::Output> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    let child = cmd
-        .spawn()
+) -> anyhow::Result<hadron_forge::exec::BoundedOutput> {
+    let label = format!("git {args:?}");
+    let out = hadron_forge::exec::run_bounded(cmd, deadline, &label)
         .with_context(|| format!("failed to spawn git {args:?}"))?;
-    let pid = child.id();
-
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
-
-    match rx.recv_timeout(deadline) {
-        Ok(out) => out.with_context(|| format!("git {args:?} failed to run")),
-        Err(_) => {
-            crate::merge::kill_process_group(pid);
-            Err(anyhow!("git {args:?} timed out after {deadline:?} and was killed"))
-        }
+    if out.timed_out {
+        return Err(anyhow!("git {args:?} timed out after {deadline:?} and was killed"));
     }
+    Ok(out)
 }
 
 fn git_with_env(repo_root: &Path, args: &[&str], envs: &[(&str, &str)]) -> anyhow::Result<String> {
@@ -91,7 +71,7 @@ fn git_with_env(repo_root: &Path, args: &[&str], envs: &[(&str, &str)]) -> anyho
         cmd.env(k, v);
     }
     let out = run_bounded(cmd, GIT_DEADLINE, args)?;
-    if !out.status.success() {
+    if !out.success() {
         return Err(anyhow!(
             "git {:?} failed: {}",
             args,
