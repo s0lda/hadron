@@ -60,7 +60,22 @@ pub fn branch_diff(repo_root: &Path, base: &str, branch: &str) -> Option<Vec<Fil
     if !out.status.success() {
         return None;
     }
-    Some(parse_diff(&String::from_utf8_lossy(&out.stdout)))
+    let raw = String::from_utf8_lossy(&out.stdout);
+    Some(parse_diff(&raw))
+}
+
+/// How many commits the branch/worktree at `wt_path` is ahead of `base`.
+pub fn commits_ahead(wt_path: &Path, base: &str) -> Option<usize> {
+    let range = format!("{base}..HEAD");
+    let out = Command::new("git")
+        .current_dir(wt_path)
+        .args(["rev-list", "--count", &range])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
 /// The patch diff for a single commit (`git show --patch <commit>`).

@@ -1220,6 +1220,11 @@ mod cli_spec_tests {
         assert_eq!(spec.posture, PostureMap::default());
         assert!(!spec.argv_guard);
     }
+
+    // The budget RESOLVER is not here. `Team` carries the raw `nucleus_index_budget_kb`
+    // and nothing else; turning it into bytes (including the `Some(0)` → default rule a
+    // naive `unwrap_or(32) * 1024` gets wrong) has one home,
+    // `hadron_gluon::nucleus_status::resolve_budget_bytes`, and is tested there.
 }
 
 #[cfg(test)]

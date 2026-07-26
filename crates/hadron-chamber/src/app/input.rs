@@ -444,6 +444,12 @@ mod tests {
             "learn-std-model-global",
             "gate-status",
             "abandon",
+            "status",
+            "mode",
+            "whoami",
+            "nucleus",
+            "health",
+            "sessions",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(
