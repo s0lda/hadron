@@ -141,7 +141,7 @@ impl super::Chamber {
 
     fn git_branches_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let rows: gpui::AnyElement = match &self.git_branches {
-            None => Self::muted("Failed to load branches.").into_any_element(),
+            None => Self::muted("Loading branches...").into_any_element(),
             Some(branches) if branches.is_empty() => {
                 Self::muted("No local branches.").into_any_element()
             }
@@ -402,7 +402,7 @@ impl super::Chamber {
 
     fn git_worktrees_section(&self) -> impl IntoElement {
         let rows: gpui::AnyElement = match &self.git_worktrees {
-            None => Self::muted("Failed to load worktrees.").into_any_element(),
+            None => Self::muted("Loading worktrees...").into_any_element(),
             Some(worktrees) if worktrees.is_empty() => {
                 Self::muted("No worktrees.").into_any_element()
             }
