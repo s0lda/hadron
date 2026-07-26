@@ -661,12 +661,34 @@ impl Chamber {
                         eprintln!("chamber: failed to write laws.md: {e}");
                     }
                 } else {
+                    let slug = crate::text::slugify(text);
+                    let hook = crate::text::hook(text);
+                    let index_path = nucleus.join("index.md");
+                    let index_line = crate::text::learn_line(&slug, &hook);
+                    let budget_bytes = hadron_gluon::nucleus_status::resolve_budget_bytes(&self.team);
+                    let current_len =
+                        std::fs::metadata(&index_path).map(|m| m.len() as usize).unwrap_or(0);
+
+                    // The budget is checked when the prompt is READ (`prompt::build`);
+                    // nothing checked it when a line was APPENDED, so this is the only
+                    // thing standing between the swarm and a dark nucleus. Refuse BEFORE
+                    // writing the note — a note with no index pointer is worse than no
+                    // note at all, and refusing here makes the cliff unreachable rather
+                    // than merely reported after the fact.
+                    if crate::text::would_exceed_index_budget(current_len, &index_line, budget_bytes) {
+                        eprintln!(
+                            "chamber: `/{cmd}` refused — this would push index.md past its \
+                             {budget_bytes}-byte budget ({current_len} + {} bytes). Prune \
+                             `.hadron/nucleus/index.md` first, or raise the budget in Settings.",
+                            index_line.len()
+                        );
+                        return true;
+                    }
+
                     // Two writes, in this order: the note holds the fact, the index
                     // holds a pointer to it and nothing else. An index line whose
                     // note does not exist is the worse failure of the two, so the
                     // note is written first and a failure there skips the pointer.
-                    let slug = crate::text::slugify(text);
-                    let hook = crate::text::hook(text);
                     let note = crate::text::note_body(
                         &slug,
                         &hook,
@@ -680,10 +702,7 @@ impl Chamber {
                         .and_then(|()| std::fs::write(notes.join(format!("{slug}.md")), note));
                     if let Err(e) = wrote_note {
                         eprintln!("chamber: failed to write the note for `{slug}`: {e}");
-                    } else if let Err(e) = append_line(
-                        &nucleus.join("index.md"),
-                        &crate::text::learn_line(&slug, &hook),
-                    ) {
+                    } else if let Err(e) = append_line(&index_path, &index_line) {
                         eprintln!("chamber: failed to write index.md: {e}");
                     }
                 }
@@ -1286,6 +1305,7 @@ mod tests {
                 },
             ],
             max_exchanges: None,
+            nucleus_index_budget_kb: None,
         };
 
         let global = Team {
@@ -1294,6 +1314,7 @@ mod tests {
             ],
             roster: vec![],
             max_exchanges: None,
+            nucleus_index_budget_kb: None,
         };
 
         apply_orchestrator_exclusivity(&mut team, &global, &QuarkId::new("override-one"));

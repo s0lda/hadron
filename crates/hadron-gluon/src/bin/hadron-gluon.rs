@@ -451,6 +451,7 @@ async fn main() {
     let engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
         .with_git(repo_root.clone())
         .with_merge_gate(std::sync::Arc::new(hadron_gluon::merge::CargoMergeRunner))
+        .with_nucleus_index_budget_bytes(hadron_gluon::nucleus_status::resolve_budget_bytes(&team))
         .with_nucleus(hadron_gluon::engine::build_nucleus_digest(&repo_root))
         // `Engine::new` defaults this to `None` (hermetic — see the field doc), so the
         // real daemon must opt in explicitly or custom global skills under
@@ -610,6 +611,9 @@ async fn main() {
                     } else {
                         let max_exchanges = desired.max_exchanges.unwrap_or(12);
                         engine.set_max_exchanges(max_exchanges);
+                        engine.set_nucleus_index_budget_bytes(
+                            hadron_gluon::nucleus_status::resolve_budget_bytes(&desired),
+                        );
                         // Booted with no usable team.json ⇒ the roster is the DemoQuark
                         // pair. Those answer to no `Seat`, so no team-vs-team diff can
                         // see them: evict them by hand the first time a real team lands,

@@ -166,6 +166,18 @@ pub(super) fn parse_max_exchanges(raw: &str) -> Option<usize> {
     }
 }
 
+/// The Settings "Nucleus index budget" ladder's offered choices, KiB.
+pub(super) const NUCLEUS_BUDGET_LADDER_KB: [usize; 4] = [16, 32, 64, 128];
+
+/// Which chip the ladder shows as selected — the KiB the team is ACTUALLY running
+/// under, not just `team.nucleus_index_budget_kb` verbatim: an absent or hand-edited
+/// `0` resolves to the shipped default, and the picker must reflect that resolution
+/// (SSOT: derived from [`hadron_gluon::nucleus_status::resolve_budget_bytes`], never
+/// a second copy of its fallback arithmetic).
+pub(super) fn nucleus_budget_kb_for(team: &Team) -> usize {
+    hadron_gluon::nucleus_status::resolve_budget_bytes(team) / 1024
+}
+
 /// The custom-CLI wizard's channel-toggle → [`PromptChannel`] mapping. The one bit of
 /// this form that isn't a straight field copy: `Arg` with a blank flag field means "the
 /// prompt rides as a bare positional argument" (`flag: None`), not "flag unset by
@@ -346,6 +358,7 @@ mod tests {
             ],
             roster: vec![],
             max_exchanges: None,
+            nucleus_index_budget_kb: None,
         };
 
         let providers = configured_providers(&team);
@@ -578,5 +591,24 @@ mod tests {
         assert_eq!(parse_max_exchanges("abc"), None);
         assert_eq!(parse_max_exchanges("-5"), None, "negative — usize can't parse it");
         assert_eq!(parse_max_exchanges("3.5"), None);
+    }
+
+    // -- nucleus_budget_kb_for: which ladder chip the Settings picker highlights --
+
+    #[test]
+    fn nucleus_budget_kb_for_defaults_to_32_when_unset() {
+        assert_eq!(nucleus_budget_kb_for(&Team::default()), 32);
+    }
+
+    #[test]
+    fn nucleus_budget_kb_for_honours_a_configured_value() {
+        let team = Team { nucleus_index_budget_kb: Some(64), ..Team::default() };
+        assert_eq!(nucleus_budget_kb_for(&team), 64);
+    }
+
+    #[test]
+    fn nucleus_budget_kb_for_treats_a_hand_edited_zero_as_unset() {
+        let team = Team { nucleus_index_budget_kb: Some(0), ..Team::default() };
+        assert_eq!(nucleus_budget_kb_for(&team), 32);
     }
 }

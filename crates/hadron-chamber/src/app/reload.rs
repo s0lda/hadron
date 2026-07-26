@@ -180,7 +180,10 @@ impl super::Chamber {
             }
 
             let root = crate::vcs::repo_root_of(&self.path);
-            let is_over = hadron_gluon::nucleus_status::index_over_budget(root);
+            let is_over = hadron_gluon::nucleus_status::index_over_budget(
+                root,
+                hadron_gluon::nucleus_status::resolve_budget_bytes(&self.team),
+            );
             if is_over != self.nucleus_over_budget {
                 self.nucleus_over_budget = is_over;
                 changed = true;

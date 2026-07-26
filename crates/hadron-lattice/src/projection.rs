@@ -2,6 +2,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Event, Mode, QuarkCard, Risk};
 
+/// The shipped default nucleus index budget, in bytes — 32 KiB. The one and only
+/// definition: `hadron_gluon::nucleus_status::BUDGET_BYTES` re-exports this
+/// constant rather than declaring its own (the same pattern
+/// `engine::nucleus::NUCLEUS_INDEX_BUDGET` already uses), because `hadron-gluon`
+/// depends on `hadron-lattice` and not the other way around — this is the only
+/// direction a shared constant can live in.
+pub const DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES: usize = 32 * 1024;
+
+fn default_nucleus_index_budget_bytes() -> usize {
+    DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES
+}
+
 /// The curated context handed to a quark on excitation. The single chokepoint
 /// where cost-control (what context), invariants (methodology), nucleus (project
 /// SSOT), and roster (who to delegate to) converge.
@@ -37,6 +49,15 @@ pub struct Projection {
     /// "never learned" from "not shown".
     #[serde(default)]
     pub nucleus_index_truncated: bool,
+    /// The resolved budget (bytes) `nucleus_index` may occupy before the prompt
+    /// substitutes counts for it — repo policy (`Team::nucleus_index_budget_kb`),
+    /// resolved ONCE by whoever builds this projection and carried here rather than
+    /// re-resolved by each reader. `prompt::build` is the sole consumer today; a
+    /// serde default keeps a pre-existing snapshot (no such key on disk) reading as
+    /// the shipped default rather than `0`, which would make every prompt read as
+    /// permanently over budget.
+    #[serde(default = "default_nucleus_index_budget_bytes")]
+    pub nucleus_index_budget_bytes: usize,
     /// Where to WRITE the index. Non-optional and always populated: telling a quark to
     /// "remember this" without telling it the path is an instruction it cannot obey,
     /// and it will either invent a path or silently do nothing.
@@ -163,6 +184,7 @@ mod tests {
             nucleus_index: String::new(),
             nucleus_index_path: std::path::PathBuf::new(),
             nucleus_index_truncated: false,
+            nucleus_index_budget_bytes: DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES,
             nucleus_notes_dir: std::path::PathBuf::new(),
             live_activities: vec![],
             git_diff: String::new(),
@@ -201,6 +223,19 @@ mod tests {
         }"#;
         let proj: Projection = serde_json::from_str(json).unwrap();
         assert!(!proj.named_specifically);
+    }
+
+    #[test]
+    fn nucleus_index_budget_bytes_defaults_to_the_shipped_constant_when_absent() {
+        // A pre-configurable-budget field snapshot (no `nucleus_index_budget_bytes`
+        // key) must read as the shipped 32 KiB default, not `0` — a `0` budget would
+        // make every prompt believe its index is permanently over budget.
+        let json = r#"{
+            "task":"x","invariants":"","available_invariants":[],
+            "nucleus_digest":"","roster":[],"field_window":[],"git_diff":""
+        }"#;
+        let proj: Projection = serde_json::from_str(json).unwrap();
+        assert_eq!(proj.nucleus_index_budget_bytes, DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES);
     }
 
     #[test]

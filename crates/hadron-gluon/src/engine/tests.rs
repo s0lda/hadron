@@ -3981,6 +3981,25 @@ async fn the_field_window_is_bounded_however_big_the_field_grows() {
     );
 }
 
+/// `Engine::set_nucleus_index_budget_bytes` is the live-reload seam
+/// (`set_max_exchanges`'s sibling): the daemon bin calls it when `team.json`
+/// changes, and every projection built after that must carry the new value —
+/// never the shipped default silently.
+#[test]
+fn projection_carries_the_engines_configured_nucleus_index_budget() {
+    let dir = tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+    seed_human_message(&field, "worker", "go");
+    let events = read_events(&field).unwrap();
+
+    let mut engine = Engine::new(field.clone(), vec![], 8);
+    engine.set_nucleus_index_budget_bytes(64 * 1024);
+
+    let driver = engine.driver_for(&events, &QuarkId::new("worker"), None);
+    let proj = engine.projection_for(&events, &QuarkId::new("worker"), driver.as_ref(), String::new(), None);
+    assert_eq!(proj.nucleus_index_budget_bytes, 64 * 1024);
+}
+
 /// **THE DISCRIMINATING TEST for the prompt-bloat trim (WS4 §5).** A resident
 /// (ACP) quark used to get `skills::index()` PLUS the entire skill library
 /// (`skills::corpus()`) crammed into its cache-stable prefix every turn — ~70-80k

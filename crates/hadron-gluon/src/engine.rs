@@ -12,9 +12,11 @@ use crate::field::append_event;
 use crate::preons::{self, Preon};
 use crate::quark::Quark;
 
-// `pub(crate)`, not private: the prompt builder reads `NUCLEUS_INDEX_BUDGET` and
-// `tag_manifest` from here so the budget has ONE home. Re-declaring either in
-// `adapter/prompt` would be the drift rule 3 exists to prevent.
+// `pub(crate)`, not private: the prompt builder reads `tag_manifest` from here, and
+// tests read `NUCLEUS_INDEX_BUDGET` — the default budget, re-exported from
+// `nucleus_status` so it has ONE home. The RESOLVED (possibly configured) budget the
+// prompt actually enforces travels on `Projection::nucleus_index_budget_bytes`
+// instead — see `Engine::nucleus_index_budget_bytes`.
 pub(crate) mod nucleus;
 mod routing;
 mod turn;
@@ -332,6 +334,10 @@ pub struct Engine {
     quarks: HashMap<QuarkId, SharedQuark>,
     roster: Vec<QuarkCard>,
     max_exchanges: usize,
+    /// Resolved from repo policy (`Team::nucleus_index_budget_kb`) the same way
+    /// `max_exchanges` is — read once at boot and on every live team reload, never
+    /// re-resolved per turn. Defaults to `nucleus_status::BUDGET_BYTES`.
+    nucleus_index_budget_bytes: usize,
     /// Opt-in git safety: target project repo to snapshot/diff. `None` = off.
     repo_root: Option<PathBuf>,
     /// Opt-in nucleus context: pre-rendered digest injected into projections.
@@ -473,6 +479,7 @@ impl Engine {
             quarks,
             roster,
             max_exchanges,
+            nucleus_index_budget_bytes: crate::nucleus_status::BUDGET_BYTES,
             repo_root: None,
             nucleus_digest: String::new(),
             ledger: None,
@@ -568,6 +575,14 @@ impl Engine {
     /// Set the maximum number of exchanges allowed before triggering the backstop.
     pub fn set_max_exchanges(&mut self, max: usize) {
         self.max_exchanges = max;
+    }
+
+    /// Set the resolved nucleus index budget (bytes) that every projection from
+    /// this point on carries. Same live-reload seam as [`Engine::set_max_exchanges`]:
+    /// the daemon bin calls this when `team.json` changes, so a repo policy edit
+    /// takes effect on the very next turn without a restart.
+    pub fn set_nucleus_index_budget_bytes(&mut self, bytes: usize) {
+        self.nucleus_index_budget_bytes = bytes;
     }
 
     /// Switch a seated quark's **participation** on or off.
@@ -702,6 +717,14 @@ impl Engine {
     /// every projection. Build it with [`build_nucleus_digest`].
     pub fn with_nucleus(mut self, digest: String) -> Self {
         self.nucleus_digest = digest;
+        self
+    }
+
+    /// Boot-time counterpart to [`Engine::set_nucleus_index_budget_bytes`] — same
+    /// chained-builder shape as [`Engine::with_nucleus`], for the daemon bin's
+    /// initial construction.
+    pub fn with_nucleus_index_budget_bytes(mut self, bytes: usize) -> Self {
+        self.nucleus_index_budget_bytes = bytes;
         self
     }
 
