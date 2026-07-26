@@ -32,7 +32,9 @@ pub struct ForgeMcpServer {
 impl ForgeMcpServer {
     pub fn new(root_path: impl Into<std::path::PathBuf>) -> Self {
         let root_pb = root_path.into();
-        let nucleus = hadron_forge::nucleus::derive_nucleus_root()
+        // The nucleus follows the PROJECT, not this binary. A non-git project keeps the
+        // plain fallback — that is the correct root there, not a degraded one.
+        let nucleus = hadron_forge::nucleus::derive_nucleus_root(&root_pb)
             .unwrap_or_else(|_| Root::new(root_pb.join(".hadron").join("nucleus")));
         Self::with_nucleus(root_pb, nucleus.path())
     }
