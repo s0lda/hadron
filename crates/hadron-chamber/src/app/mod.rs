@@ -25,7 +25,7 @@ use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, Mov
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
 use gpui_component::resizable::{h_resizable, resizable_panel};
-use gpui_component::scroll::{ScrollableElement, Scrollbar, ScrollbarHandle, ScrollbarShow};
+use gpui_component::scroll::{ScrollableElement, Scrollbar, ScrollbarShow};
 use gpui_component::stepper::{Stepper, StepperItem};
 use gpui_component::switch::Switch;
 use gpui_component::tab::{Tab, TabBar};

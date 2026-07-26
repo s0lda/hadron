@@ -556,6 +556,54 @@
     }
 
     #[test]
+    fn stats_accumulation_does_not_overflow_u32() {
+        let mut reply1 = ev(
+            Actor::Quark(QuarkId::new("agy")),
+            None,
+            Kind::Message {
+                body: "turn 1".into(),
+            },
+        );
+        reply1.usage = Some(hadron_lattice::Usage {
+            model: Some("gemini-1.5-pro".to_string()),
+            spend: hadron_lattice::TokenSpend {
+                input: Some(3_000_000_000),
+                output: Some(0),
+                cache_read: Some(3_000_000_000),
+                cache_write: None,
+            },
+            context: None,
+            quota: vec![],
+        });
+
+        let mut reply2 = ev(
+            Actor::Quark(QuarkId::new("agy")),
+            None,
+            Kind::Message {
+                body: "turn 2".into(),
+            },
+        );
+        reply2.usage = Some(hadron_lattice::Usage {
+            model: Some("gemini-1.5-pro".to_string()),
+            spend: hadron_lattice::TokenSpend {
+                input: Some(2_000_000_000),
+                output: Some(0),
+                cache_read: Some(2_000_000_000),
+                cache_write: None,
+            },
+            context: None,
+            quota: vec![],
+        });
+
+        let stats = project(&[reply1, reply2]).session_stats();
+        let (_, s) = &stats.per_quark[0];
+        assert_eq!(s.fresh, 5_000_000_000u64);
+        assert_eq!(s.cached, 5_000_000_000u64);
+        assert_eq!(stats.total_fresh, 5_000_000_000u64);
+        assert_eq!(stats.total_cached, 5_000_000_000u64);
+    }
+
+    #[test]
     fn global_mode_and_per_quark_override_are_surfaced() {
         let evs = vec![
             ev(
