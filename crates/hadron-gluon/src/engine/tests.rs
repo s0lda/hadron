@@ -2512,7 +2512,7 @@ async fn every_unserved_human_message_is_serviced_not_just_the_latest() {
     let claude_task = targets
         .iter()
         .find(|(q, _)| q.as_str() == "claude")
-        .map(|(_, t)| t.as_str())
+        .map(|(_, t)| t.task.as_str())
         .unwrap();
     assert!(claude_task.contains("do Z"), "claude got a stale request: {claude_task:?}");
 }
@@ -5175,4 +5175,182 @@ async fn looks_like_a_debugging_turn_catches_the_known_failure_markers() {
     assert!(debugged("error[E0599]: no method named `foo`"));
     assert!(!debugged("test result: ok. 40 passed; 0 failed"));
     assert!(!debugged("merged `quark/acp-claude/01K` → `main` (fast-forward)."));
+}
+
+/// **Bug C.** The human names who they want in one message and says what they want in
+/// the next. `unaddressed_message_targets` walks newest-first and hands each seat its
+/// most-recent unserved mention, so the workers were dispatched on the *older* naming
+/// message while the orchestrator — claimed by the newer, mention-less message via
+/// default routing — was the only seat that ever saw the actual ask.
+///
+/// Mentions decide **who**; the human's latest unaddressed message decides **what**.
+#[tokio::test]
+async fn a_named_worker_is_dispatched_on_the_humans_latest_message_not_the_naming_one() {
+    use crate::mock::MockQuark;
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+    for body in ["@claude @agy", "here is the actual six-item ask"] {
+        append_event(&path, &Event::new(Actor::Human, None, Kind::Message { body: body.into() }))
+            .unwrap();
+    }
+
+    let engine = Engine::new(
+        path.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("claude"), Flavor::Worker, "ok")),
+            Box::new(MockQuark::repeating(QuarkId::new("agy"), Flavor::Orchestrator, "ok")),
+        ],
+        10,
+    );
+
+    let events = read_events(&path).unwrap();
+    let targets = engine.unaddressed_message_targets(&events);
+    let claude = targets.iter().find(|(q, _)| q.as_str() == "claude").expect("claude pending");
+    assert!(
+        claude.1.task.contains("six-item ask"),
+        "worker was dispatched on the naming message, not the ask: {:?}",
+        claude.1.task
+    );
+    // …but WHO named it is preserved, because the exclusive-seat gate reads that text.
+    assert!(claude.1.addressing.contains("@claude"), "the naming text was lost: {:?}", claude.1.addressing);
+}
+
+/// The human's caveat: `@mention prompt` keeps working exactly as before. When the
+/// naming message IS the newest human message there is nothing newer to substitute,
+/// so the body stays its own task — no heuristic needed, it falls out of the rule.
+#[tokio::test]
+async fn a_mention_that_carries_its_own_prompt_is_unchanged() {
+    use crate::mock::MockQuark;
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+    append_event(&path, &Event::new(Actor::Human, None, Kind::Message { body: "@claude do X".into() }))
+        .unwrap();
+
+    let engine = Engine::new(
+        path.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("claude"), Flavor::Worker, "ok")),
+            Box::new(MockQuark::repeating(QuarkId::new("agy"), Flavor::Orchestrator, "ok")),
+        ],
+        10,
+    );
+
+    let events = read_events(&path).unwrap();
+    let targets = engine.unaddressed_message_targets(&events);
+    let claude = targets.iter().find(|(q, _)| q.as_str() == "claude").expect("claude pending");
+    assert_eq!(claude.1.task, "@claude do X");
+    assert_eq!(claude.1.addressing, "@claude do X");
+}
+
+/// A quark→quark delegation keeps its OWN body. Substitution is a human-input rule:
+/// a worker told "@peer rebase onto main first" must not have that replaced by
+/// whatever the human happened to type last, which names nobody and means nothing
+/// to the peer.
+#[tokio::test]
+async fn a_quark_delegation_is_never_rewritten_by_the_humans_latest_message() {
+    use crate::mock::MockQuark;
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+    append_event(
+        &path,
+        &Event::new(
+            Actor::Quark(QuarkId::new("agy")),
+            None,
+            Kind::Message { body: "@claude rebase onto main first".into() },
+        ),
+    )
+    .unwrap();
+    append_event(&path, &Event::new(Actor::Human, None, Kind::Message { body: "thanks".into() }))
+        .unwrap();
+
+    let engine = Engine::new(
+        path.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("claude"), Flavor::Worker, "ok")),
+            Box::new(MockQuark::repeating(QuarkId::new("agy"), Flavor::Orchestrator, "ok")),
+        ],
+        10,
+    );
+
+    let events = read_events(&path).unwrap();
+    let targets = engine.unaddressed_message_targets(&events);
+    let claude = targets.iter().find(|(q, _)| q.as_str() == "claude").expect("claude pending");
+    assert_eq!(claude.1.task, "@claude rebase onto main first");
+}
+
+/// The coupling the substitution could have broken: `has_answered` keys on the id of
+/// the message that NAMED the quark, and the turn stamps `answers` with
+/// `driver_for`'s assignment — which resolves the same naming message. If those two
+/// ever disagreed, a served turn would either be dispatched forever or drop the work
+/// silently. Serve the turn and assert the next pass is empty.
+#[tokio::test]
+async fn a_substituted_task_is_still_marked_served_after_one_turn() {
+    use crate::mock::MockQuark;
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+    let naming = Event::new(Actor::Human, None, Kind::Message { body: "@claude".into() });
+    let naming_id = naming.id;
+    append_event(&path, &naming).unwrap();
+    append_event(&path, &Event::new(Actor::Human, None, Kind::Message { body: "the real ask".into() }))
+        .unwrap();
+
+    let engine = Engine::new(
+        path.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("claude"), Flavor::Worker, "ok")),
+            Box::new(MockQuark::repeating(QuarkId::new("agy"), Flavor::Orchestrator, "ok")),
+        ],
+        10,
+    );
+
+    let events = read_events(&path).unwrap();
+    // The turn is dispatched against `driver_for`'s assignment — that is the ULID
+    // stamped into `answers`, so this is the real id, not a guess.
+    let driver = engine
+        .driver_for(&events, &QuarkId::new("claude"), Some("the real ask"))
+        .expect("a driver for the substituted task");
+    assert_eq!(driver.assignment, naming_id, "the assignment must be the message that NAMED claude");
+    assert_eq!(driver.task, "the real ask", "the task must be the human's latest message");
+
+    append_event(
+        &path,
+        &Event::new(Actor::Quark(QuarkId::new("claude")), None, Kind::Message { body: "done".into() })
+            .answering(Some(driver.assignment)),
+    )
+    .unwrap();
+
+    let events = read_events(&path).unwrap();
+    let served = engine.unaddressed_message_targets(&events);
+    let ids: Vec<&str> = served.iter().map(|(q, _)| q.as_str()).collect();
+    assert!(!ids.contains(&"claude"), "the served turn was re-dispatched: {ids:?}");
+}
+
+/// The over-reach the first cut of Bug C introduced, caught by the existing burst-bug
+/// fixture: `"@agy do Y"` then `"@claude do Z"` are two DIFFERENT tasks for two seats.
+/// Substituting "the human's latest message" unconditionally handed agy an instruction
+/// addressed to claude. A message that names seats steers only those seats; only a
+/// mention-less message can stand in for someone else's task.
+#[tokio::test]
+async fn a_newer_message_naming_another_seat_does_not_steal_this_seats_task() {
+    use crate::mock::MockQuark;
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+    for body in ["@claude do Y", "@agy do Z"] {
+        append_event(&path, &Event::new(Actor::Human, None, Kind::Message { body: body.into() }))
+            .unwrap();
+    }
+
+    let engine = Engine::new(
+        path.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("claude"), Flavor::Worker, "ok")),
+            Box::new(MockQuark::repeating(QuarkId::new("agy"), Flavor::Orchestrator, "ok")),
+        ],
+        10,
+    );
+
+    let events = read_events(&path).unwrap();
+    let targets = engine.unaddressed_message_targets(&events);
+    let claude = targets.iter().find(|(q, _)| q.as_str() == "claude").expect("claude pending");
+    assert_eq!(claude.1.task, "@claude do Y", "claude was handed agy's instruction");
 }
