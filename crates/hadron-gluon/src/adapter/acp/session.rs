@@ -18,7 +18,10 @@ use agent_client_protocol::{AcpAgent, Agent, ConnectionTo};
 
 use crate::adapter::registry::{AcpTarget, ResolvedAcpTarget};
 
-use super::model::{effort_selector, mode_selector, model_selector, permission_choice, resolve_model};
+use super::model::{
+    classify_request, effort_selector, mode_selector, model_selector, permission_choice,
+    resolve_model,
+};
 use super::spend::turn_spend;
 
 /// Build the ACP JSON stdio descriptor `AcpAgent::from_str` parses (see the crate
@@ -455,23 +458,20 @@ impl super::AcpQuark {
                         )
                         .on_receive_request(
                             async move |req: RequestPermissionRequest, responder, _cx| {
-                                let chosen = if is_native_edit_request(&req) {
-                                    req.options
-                                        .iter()
-                                        .find(|o| o.kind == PermissionOptionKind::RejectOnce)
-                                        .map(|o| o.option_id.clone())
-                                } else {
-                                    let want = permission_choice(*handler_mode.lock().unwrap());
-                                    req.options
-                                        .iter()
-                                        .find(|o| o.kind == want)
-                                        .or_else(|| {
-                                            req.options
-                                                .iter()
-                                                .find(|o| o.kind == PermissionOptionKind::RejectOnce)
-                                        })
-                                        .map(|o| o.option_id.clone())
-                                };
+                                let want = permission_choice(
+                                    *handler_mode.lock().unwrap(),
+                                    classify_request(&req),
+                                );
+                                let chosen = req
+                                    .options
+                                    .iter()
+                                    .find(|o| o.kind == want)
+                                    .or_else(|| {
+                                        req.options
+                                            .iter()
+                                            .find(|o| o.kind == PermissionOptionKind::RejectOnce)
+                                    })
+                                    .map(|o| o.option_id.clone());
 
                                 match chosen {
                                     Some(id) => responder.respond(RequestPermissionResponse::new(
@@ -779,19 +779,3 @@ impl super::AcpQuark {
     }
 }
 
-pub fn is_native_edit_request(req: &RequestPermissionRequest) -> bool {
-    let fields = &req.tool_call.fields;
-    if matches!(fields.kind, Some(ToolKind::Edit)) {
-        return true;
-    }
-    if let Some(title) = &fields.title {
-        let name = title.trim();
-        if matches!(
-            name,
-            "Edit" | "Write" | "MultiEdit" | "NotebookEdit" | "fs/write_text_file" | "write_file"
-        ) {
-            return true;
-        }
-    }
-    false
-}

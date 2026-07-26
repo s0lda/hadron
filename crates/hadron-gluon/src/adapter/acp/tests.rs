@@ -115,13 +115,41 @@ fn a_backwards_counter_is_read_as_an_absolute_not_as_zero() {
 }
 
 /// Posture decides the answer to ACP's blocking permission request, and the
-/// unattended postures are the only ones that act. Never fail open.
+/// unattended postures are the only ones that *run commands*. Never fail open.
 #[test]
 fn permission_follows_the_turn_posture() {
-    assert_eq!(permission_choice(Mode::Ask), PermissionOptionKind::RejectOnce);
-    assert_eq!(permission_choice(Mode::Write), PermissionOptionKind::RejectOnce);
-    assert_eq!(permission_choice(Mode::Auto), PermissionOptionKind::AllowOnce);
-    assert_eq!(permission_choice(Mode::Bypass), PermissionOptionKind::AllowOnce);
+    use super::model::RequestClass::Other;
+    assert_eq!(permission_choice(Mode::Ask, Other), PermissionOptionKind::RejectOnce);
+    assert_eq!(permission_choice(Mode::Write, Other), PermissionOptionKind::RejectOnce);
+    assert_eq!(permission_choice(Mode::Auto, Other), PermissionOptionKind::AllowOnce);
+    assert_eq!(permission_choice(Mode::Bypass, Other), PermissionOptionKind::AllowOnce);
+}
+
+/// **Write** means "edits auto-approve; every command asks you" — the CLI seat
+/// maps it to `--mode accept-edits`. The ACP seat honoured neither half: it
+/// rejected *every* permission request in Write, so the one sanctioned edit path
+/// — a jailed, hash-checked `hadron_forge_*` MCP call — was refused as well, and
+/// forge was reachable only in Auto/Bypass, exactly the postures where a native
+/// `Write` already sails through unasked. A native edit stays refused in every
+/// posture: that is what routes edits through forge in the first place.
+#[test]
+fn write_posture_approves_a_forge_edit_and_still_refuses_a_native_one() {
+    use super::model::RequestClass::{Forge, NativeEdit, Other};
+    use PermissionOptionKind::{AllowOnce, RejectOnce};
+
+    assert_eq!(permission_choice(Mode::Write, Forge), AllowOnce, "forge IS the edit path");
+    assert_eq!(permission_choice(Mode::Write, NativeEdit), RejectOnce);
+    assert_eq!(permission_choice(Mode::Write, Other), RejectOnce, "a command still asks");
+
+    // Ask never acts, whatever the tool.
+    for class in [Forge, NativeEdit, Other] {
+        assert_eq!(permission_choice(Mode::Ask, class), RejectOnce, "{class:?} in Ask");
+    }
+    // And a native edit is refused even unattended — forge or nothing.
+    for mode in [Mode::Auto, Mode::Bypass] {
+        assert_eq!(permission_choice(mode, NativeEdit), RejectOnce, "{mode:?}");
+        assert_eq!(permission_choice(mode, Forge), AllowOnce, "{mode:?}");
+    }
 }
 
 /// Build the shape the agent actually sends: a `Model` select alongside the other
@@ -1179,11 +1207,27 @@ fn native_edit_request_is_detected_and_rejected() {
         )
     };
 
-    assert!(session::is_native_edit_request(&make_req(Some(ToolKind::Edit), None)));
-    assert!(session::is_native_edit_request(&make_req(None, Some("Edit"))));
-    assert!(session::is_native_edit_request(&make_req(None, Some("Write"))));
-    assert!(session::is_native_edit_request(&make_req(None, Some("MultiEdit"))));
-    assert!(session::is_native_edit_request(&make_req(None, Some("fs/write_text_file"))));
-    assert!(!session::is_native_edit_request(&make_req(Some(ToolKind::Read), Some("Read"))));
-    assert!(!session::is_native_edit_request(&make_req(None, Some("hadron_forge_edit"))));
+    use super::model::{classify_request, RequestClass};
+
+    assert!(model::is_native_edit_request(&make_req(Some(ToolKind::Edit), None)));
+    assert!(model::is_native_edit_request(&make_req(None, Some("Edit"))));
+    assert!(model::is_native_edit_request(&make_req(None, Some("Write"))));
+    assert!(model::is_native_edit_request(&make_req(None, Some("MultiEdit"))));
+    assert!(model::is_native_edit_request(&make_req(None, Some("fs/write_text_file"))));
+    assert!(!model::is_native_edit_request(&make_req(Some(ToolKind::Read), Some("Read"))));
+    assert!(!model::is_native_edit_request(&make_req(None, Some("hadron_forge_edit"))));
+
+    // claude-agent-acp gives an MCP tool no special case: `toolInfoFromToolUse`'s
+    // default arm sets `title` to the raw tool name and `kind` to `other`
+    // (`dist/tools.js`), so the wire name is the only signal a forge call carries.
+    assert_eq!(
+        classify_request(&make_req(None, Some("mcp__hadron-forge-mcp__hadron_forge_edit"))),
+        RequestClass::Forge,
+    );
+    assert_eq!(
+        classify_request(&make_req(None, Some("hadron_forge_read_blocks"))),
+        RequestClass::Forge,
+    );
+    assert_eq!(classify_request(&make_req(Some(ToolKind::Edit), None)), RequestClass::NativeEdit);
+    assert_eq!(classify_request(&make_req(None, Some("git status"))), RequestClass::Other);
 }
