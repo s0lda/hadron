@@ -39,6 +39,11 @@ pub enum Arity {
     None,
     /// Consumes the rest of its line as its argument.
     Line,
+    /// Consumes the rest of the *entire message*, newlines included, verbatim —
+    /// nothing after it on a later line is scanned for further commands. The only
+    /// arity that can carry a multi-line body (e.g. a skill file's front-matter
+    /// block, whose indentation must survive).
+    Body,
 }
 
 /// Where a `/command` argument gets its autocompletions from.
@@ -50,10 +55,8 @@ pub enum ArgSource {
     Quark,
     /// Argument completes from archived sessions (`name` or `id`).
     Session,
-    /// Argument completes from project files (`@file`). No row in [`COMMANDS`]
-    /// selects it yet — it is here because the set of sources is the contract,
-    /// and a command that takes a path should not have to invent a fifth spelling.
-    #[allow(dead_code)]
+    /// Argument completes from project files (`@file`) — `/add-skill`'s
+    /// `@path/to/file.md` form.
     File,
 }
 
@@ -125,6 +128,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "search", detail: "Search this session's messages for text", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "diff", detail: "Summarize a seat's branch diff against the default branch, or the working tree if no seat is given", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "export", detail: "Export the current session (or a named archived session) as a Markdown transcript", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "add-skill", detail: "Add a custom skill (e.g. /add-skill @path/to/file.md, or /add-skill my-skill then paste the file content)", arity: Arity::Body, arg: ArgSource::File, listed: true },
 ];
 
 /// A short kebab-case id for a lesson line: the first few words, lowercased,
@@ -240,6 +244,7 @@ pub fn help_body() -> String {
         let arg = match c.arity {
             Arity::None => "",
             Arity::Line => " <…>",
+            Arity::Body => " <name> (then paste the file content on the following lines)",
         };
         out.push_str(&format!("- `/{}{}` — {}\n", c.name, arg, c.detail));
     }
@@ -711,6 +716,66 @@ pub fn render_session_markdown(messages: &[crate::model::MessageRow]) -> String 
 /// Format `/export`'s confirmation.
 pub fn export_body(dest: &std::path::Path, count: usize) -> String {
     format!("**Exported** {count} message(s) to `{}`\n", dest.display())
+}
+
+/// What `/add-skill`'s captured `Arity::Body` argument turned out to name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AddSkillSource {
+    /// `/add-skill @path/to/file.md` — copy an existing file's content.
+    Path(String),
+    /// `/add-skill <name>` followed by the file content on later lines.
+    Inline { name: String, content: String },
+}
+
+/// Parse `/add-skill`'s argument (spec §10): the first line is either an
+/// `@`-prefixed path or a bare skill name, and everything after the first
+/// newline — if anything — is the inline content verbatim, untouched by this
+/// function. `None` when there is nothing to act on (an empty first line).
+pub fn parse_add_skill_args(args: &str) -> Option<AddSkillSource> {
+    let (first, rest) = args.split_once('\n').unwrap_or((args, ""));
+    let first = first.trim();
+    if first.is_empty() {
+        return None;
+    }
+    match first.strip_prefix('@') {
+        Some(path) => Some(AddSkillSource::Path(path.to_string())),
+        None => Some(AddSkillSource::Inline { name: first.to_string(), content: rest.to_string() }),
+    }
+}
+
+/// Turn a `/add-skill <name>` argument into a safe `<name>.md` filename —
+/// never a path. `load_skills` keys a skill by its front-matter `name:`, not
+/// its filename, so this only needs to be a filesystem-safe label; it must
+/// never let the human's typed name escape `.hadron/skills/` (e.g. `../..`).
+pub fn add_skill_filename(name: &str) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+        return None;
+    }
+    Some(format!("{name}.md"))
+}
+
+/// Format `/add-skill`'s confirmation, including the `tools:` warning when the
+/// written content declared one (spec §10: `ResolvedSkill.tools` is parsed but
+/// **not enforced anywhere** — see `hadron_gluon::skills::is_tool_allowed`'s own
+/// doc comment — so accepting the field silently would ship a security-shaped
+/// lie about what the skill restricts).
+pub fn add_skill_written_body(dest: &std::path::Path, has_tools_field: bool, has_name_field: bool) -> String {
+    let mut out = format!("**Wrote skill** to `{}`\n", dest.display());
+    if !has_name_field {
+        out.push_str(
+            "\n⚠️ No `name:` front-matter found — the skill loader requires one and will \
+             skip this file (silently, to its own stderr) until you add it.\n",
+        );
+    }
+    if has_tools_field {
+        out.push_str(
+            "\n⚠️ This skill declares a `tools:` front-matter line. That field is parsed \
+             but **not enforced anywhere** — every quark can still use every tool while \
+             this skill is active. Do not rely on it to restrict tool access.\n",
+        );
+    }
+    out
 }
 
 /// Split an optional leading `@target` off a skill command's argument.
@@ -2001,6 +2066,79 @@ mod tests {
         let body = export_body(std::path::Path::new("/tmp/x.md"), 7);
         assert!(body.contains("7 message"));
         assert!(body.contains("/tmp/x.md"));
+    }
+
+    #[test]
+    fn add_skill_args_reads_an_at_prefixed_path() {
+        assert_eq!(
+            parse_add_skill_args("@path/to/file.md"),
+            Some(AddSkillSource::Path("path/to/file.md".to_string()))
+        );
+    }
+
+    #[test]
+    fn add_skill_args_reads_a_name_and_inline_body_verbatim() {
+        let args = "my-skill\n---\nname: my-skill\n---\n  indented step\nDo the thing.";
+        let parsed = parse_add_skill_args(args);
+        assert_eq!(
+            parsed,
+            Some(AddSkillSource::Inline {
+                name: "my-skill".to_string(),
+                // The interior is untouched: indentation on `  indented step`
+                // must survive, or a front-matter block written this way is
+                // a broken skill file.
+                content: "---\nname: my-skill\n---\n  indented step\nDo the thing.".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn add_skill_args_with_no_second_line_has_empty_content() {
+        assert_eq!(
+            parse_add_skill_args("my-skill"),
+            Some(AddSkillSource::Inline { name: "my-skill".to_string(), content: String::new() })
+        );
+    }
+
+    #[test]
+    fn add_skill_args_rejects_an_empty_first_line() {
+        assert_eq!(parse_add_skill_args(""), None);
+        assert_eq!(parse_add_skill_args("   \nbody"), None);
+    }
+
+    #[test]
+    fn add_skill_filename_accepts_a_plain_name() {
+        assert_eq!(add_skill_filename("my-skill"), Some("my-skill.md".to_string()));
+    }
+
+    #[test]
+    fn add_skill_filename_rejects_path_traversal() {
+        assert_eq!(add_skill_filename("../../etc/passwd"), None);
+        assert_eq!(add_skill_filename("a/b"), None);
+        assert_eq!(add_skill_filename("a\\b"), None);
+        assert_eq!(add_skill_filename(".."), None);
+        assert_eq!(add_skill_filename("."), None);
+        assert_eq!(add_skill_filename(""), None);
+        assert_eq!(add_skill_filename("   "), None);
+    }
+
+    #[test]
+    fn add_skill_written_body_warns_about_unenforced_tools() {
+        let body = add_skill_written_body(std::path::Path::new("/tmp/x.md"), true, true);
+        assert!(body.contains("not enforced"));
+    }
+
+    #[test]
+    fn add_skill_written_body_warns_about_a_missing_name_field() {
+        let body = add_skill_written_body(std::path::Path::new("/tmp/x.md"), false, false);
+        assert!(body.contains("No `name:`"));
+        assert!(!body.contains("not enforced"));
+    }
+
+    #[test]
+    fn add_skill_written_body_stays_quiet_with_neither_warning() {
+        let body = add_skill_written_body(std::path::Path::new("/tmp/x.md"), false, true);
+        assert!(!body.contains('⚠'));
     }
 }
 
