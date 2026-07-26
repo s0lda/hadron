@@ -215,7 +215,7 @@ Hadron stands on the shoulders of giants. Everything below is a real dependency 
 
 - **[Rust](https://www.rust-lang.org/)** — Safe, concurrent systems programming language.
 - **[GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui)** by **[Zed Industries](https://zed.dev)** (Apache-2.0) — GPU-accelerated UI framework.
-- **[gpui-component](https://github.com/longbridge/gpui-component)** by **[Longbridge](https://longbridge.com)** (Apache-2.0) — High-performance native desktop widgets. Almost every widget you see is theirs. We run a **small fork** that adds a foreground colour to `TextMark`, so an `@mention` can be coloured text rather than a tinted block — a patch off their tree, meant to go home.
+- **[gpui-component](https://github.com/longbridge/gpui-component)** by **[Longbridge](https://longbridge.com)** (Apache-2.0) — High-performance native desktop widgets. Almost every widget you see is theirs. We run a **small fork** ([s0lda/gpui-component](https://github.com/s0lda/gpui-component), pinned to a `rev` in the workspace `[patch]` table) that adds a foreground colour to `TextMark`, so an `@mention` can be coloured text rather than a tinted block — a patch off their tree, meant to go home.
 - **[Agent Client Protocol (ACP)](https://agentclientprotocol.com)** by **[Zed](https://zed.dev)** — Standardized protocol for long-running resident agents.
 - **[Tree-Sitter](https://github.com/tree-sitter/tree-sitter)** — Incremental AST parsing for syntax highlighting and forge block extraction.
 
