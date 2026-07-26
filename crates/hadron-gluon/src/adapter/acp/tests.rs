@@ -1230,4 +1230,13 @@ fn native_edit_request_is_detected_and_rejected() {
     );
     assert_eq!(classify_request(&make_req(Some(ToolKind::Edit), None)), RequestClass::NativeEdit);
     assert_eq!(classify_request(&make_req(None, Some("git status"))), RequestClass::Other);
+
+    // `Bash`'s title IS the command line (`tools.js` again), so a substring
+    // search would let a shell command name itself into the forge class and
+    // through the Write rung.
+    assert_eq!(
+        classify_request(&make_req(None, Some("echo hadron_forge_edit >/tmp/x"))),
+        RequestClass::Other,
+        "a command that merely mentions forge is not a forge call",
+    );
 }
