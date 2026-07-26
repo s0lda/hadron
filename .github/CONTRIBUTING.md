@@ -36,7 +36,7 @@ and leave it alone.
 
 Every quark in this project works to a short set of invariants, and they apply to
 human contributors too. They live in
-[`crates/hadron-gluon/invariants/`](crates/hadron-gluon/invariants/) and are
+[`crates/hadron-gluon/invariants/`](../crates/hadron-gluon/invariants/) and are
 compiled into the daemon so they cannot drift from what the agents are told.
 
 The short version:
@@ -77,4 +77,4 @@ turn that dies loses everything not yet committed.
 ## Licence
 
 By contributing, you agree that your contributions are licensed under the
-[Apache License 2.0](LICENSE), the same licence that covers the project.
+[Apache License 2.0](../LICENSE), the same licence that covers the project.
