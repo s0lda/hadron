@@ -17,12 +17,18 @@ impl super::Chamber {
             match dims {
                 Some((cols, rows)) => {
                     let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                    if let Ok(term) = crate::pty::PtyTerminal::new(&root, cols, rows) {
-                        self.terminal = Some(term);
-                        // The panel is still settling its width as the window
-                        // opens; keep re-measuring so we track it to the final
-                        // size (see `terminal_warmup`).
-                        self.terminal_warmup = 20;
+                    match crate::pty::PtyTerminal::new(&root, cols, rows) {
+                        Ok(term) => {
+                            self.terminal = Some(term);
+                            self.terminal_error = None;
+                            // The panel is still settling its width as the window
+                            // opens; keep re-measuring so we track it to the final
+                            // size (see `terminal_warmup`).
+                            self.terminal_warmup = 20;
+                        }
+                        Err(err) => {
+                            self.terminal_error = Some(err);
+                        }
                     }
                 }
                 // No frame has measured the screen yet — force one so we can size

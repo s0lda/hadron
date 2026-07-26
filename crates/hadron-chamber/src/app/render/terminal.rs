@@ -93,13 +93,17 @@ impl super::Chamber {
                     }
                     lines.into_any_element()
                 } else {
+                    let msg = self
+                        .terminal_error
+                        .as_deref()
+                        .unwrap_or("starting shell…");
                     div()
                         .flex_1()
                         .p_3()
                         .font_family("Cascadia Code")
                         .text_size(px(TERM_FONT))
                         .text_color(theme::text_muted())
-                        .child("starting shell…")
+                        .child(msg.to_string())
                         .into_any_element()
                 };
 
