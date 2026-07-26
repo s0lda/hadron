@@ -1134,7 +1134,7 @@ index a1b2c3d..e4f5g6h 100644
     fn commit_diff_parses_patch() {
         let raw_patch = "\
 commit 3aee5bb1234567890abcdef1234567890abcdef
-Author: Jake <jake@example.com>
+Author: Jake <jake@orch.dev>
 Date:   Thu Jul 23 22:00:00 2026 -0400
 
     feat: example commit
