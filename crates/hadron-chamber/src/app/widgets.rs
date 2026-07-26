@@ -669,13 +669,18 @@ fn wsl_to_linux(win: String) -> Option<String> {
     translated.or(Some(win))
 }
 
-/// The next mode in the ladder, cycling Ask → Write → Auto → Bypass → Ask.
+/// The next mode for a **click** on a mode chip, cycling Ask → Write → Auto → Ask.
+///
+/// `Bypass` is deliberately not in the cycle: it is full unattended tool access,
+/// and the chip is a word-sized target with no confirm and no undo behind it.
+/// Escalating into it is an explicit act — the Settings picker (`set_quark_mode`)
+/// or `/mode bypass @quark`. Clicking a quark that is already in `Bypass` still
+/// drops it to `Ask`, since de-escalation by accident costs nothing.
 pub(super) fn next_mode(mode: Mode) -> Mode {
     match mode {
         Mode::Ask => Mode::Write,
         Mode::Write => Mode::Auto,
-        Mode::Auto => Mode::Bypass,
-        Mode::Bypass => Mode::Ask,
+        Mode::Auto | Mode::Bypass => Mode::Ask,
     }
 }
 
@@ -960,6 +965,20 @@ mod tests {
         assert_eq!(mode_tag_label(Mode::Auto, false), "AUTO");
         assert_eq!(mode_tag_label(Mode::Ask, false), "ASK");
         assert_eq!(mode_tag_label(Mode::Bypass, false), "BYPASS");
+    }
+
+    /// One click on a small roster chip used to take a quark from `Auto` straight
+    /// to `Bypass` — full unattended tool access, no confirm and no undo, from a
+    /// stray click on a chip the size of a word. The cycle now stops at `Auto`;
+    /// escalating INTO `Bypass` needs a deliberate path (the Settings picker's
+    /// `set_quark_mode`, or `/mode bypass @quark`). De-escalating OUT of it by
+    /// clicking stays, because that direction is always safe.
+    #[test]
+    fn the_click_cycle_never_escalates_into_bypass() {
+        assert_eq!(next_mode(Mode::Ask), Mode::Write);
+        assert_eq!(next_mode(Mode::Write), Mode::Auto);
+        assert_eq!(next_mode(Mode::Auto), Mode::Ask, "must NOT reach Bypass");
+        assert_eq!(next_mode(Mode::Bypass), Mode::Ask, "but clicking out still works");
     }
 
     #[test]
