@@ -15,7 +15,12 @@ async fn main() -> Result<()> {
         env::current_dir().context("Failed to get current directory")?
     };
 
-    let server = ForgeMcpServer::new(root_path);
+    let server = if args.len() > 2 {
+        ForgeMcpServer::with_nucleus(root_path, PathBuf::from(&args[2]))
+    } else {
+        ForgeMcpServer::new(root_path)
+    };
+
     let running = serve_server(server, rmcp::transport::stdio()).await?;
     running.waiting().await?;
     Ok(())
