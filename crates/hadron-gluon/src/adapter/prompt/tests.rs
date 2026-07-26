@@ -614,7 +614,7 @@ fn empty_optional_sections_are_omitted() {
     proj.git_diff = String::new();
     let p = build(&proj, &QuarkId::new("agy"));
     assert!(!p.contains("Invariants"));
-    assert!(!p.contains("nucleus"));
+    assert!(!p.contains("Project knowledge"));
     assert!(!p.contains("working diff"));
     assert!(p.contains("# Your task"));
 }
@@ -676,4 +676,19 @@ fn a_pointer_line_still_matches_the_task_it_names() {
         "- [gpui-hsla-takes-normalised-hue-not-degrees](notes/x.md) — hue clamps to 0..1",
         &lower
     ));
+}
+
+#[test]
+fn prompt_contains_hadron_forge_tools_section() {
+    let p = build(&projection("x"), &QuarkId::new("agy"));
+    assert!(p.contains("# Available Hadron Forge Tools"));
+    assert!(p.contains("hadron_forge_read_file"));
+    assert!(p.contains("hadron_forge_list_dir"));
+    assert!(p.contains("hadron_forge_grep"));
+    assert!(p.contains("hadron_forge_exec"));
+    assert!(p.contains("hadron_forge_diagnostics"));
+    assert!(p.contains("hadron_forge_cargo_tree"));
+    assert!(p.contains("hadron_forge_query_nucleus"));
+    assert!(p.contains("hadron_forge_read_blocks"));
+    assert!(p.contains("hadron_forge_edit"));
 }
