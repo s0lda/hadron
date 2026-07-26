@@ -122,8 +122,16 @@ impl super::Engine {
                     }
 
                     if let Some(card) = self.roster.iter().find(|c| c.id == target) {
+                        // The eligibility text is `addressing`, NOT `task`: the two
+                        // differ the moment the human names a seat in one message and
+                        // types the ask in the next, and an exclusive seat must be
+                        // judged on the words that named it.
                         if card.exclusive
-                            && !self.exclusive_task_names_target(&events, &target, fallback_task.as_deref())
+                            && !self.exclusive_task_names_target(
+                                &events,
+                                &target,
+                                fallback_task.as_ref().map(|t| t.addressing.as_str()),
+                            )
                         {
                             let msg = format!(
                                 "@{} is exclusive to role(s) [{}] and this task did not address it by role or @id; skipping.",
@@ -134,9 +142,10 @@ impl super::Engine {
                             continue;
                         }
 
-                        let task_text = self.driver_for(&events, &target, fallback_task.as_deref())
+                        let human_task = fallback_task.as_ref().map(|t| t.task.as_str());
+                        let task_text = self.driver_for(&events, &target, human_task)
                             .map(|d| d.task)
-                            .unwrap_or_else(|| fallback_task.clone().unwrap_or_default());
+                            .unwrap_or_else(|| human_task.unwrap_or_default().to_string());
                         let base = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
                         let workspace_root = workspace_root_of(&self.field_path, &base);
                         let repo_skills_dir = workspace_root.join(".hadron").join("skills");
@@ -180,7 +189,8 @@ impl super::Engine {
 
                     // The assignment that drives this turn. Its ULID names the branch,
                     // and its body is the task — resolved ONCE, so both agree.
-                    let driver = self.driver_for(&events, &target, fallback_task.as_deref());
+                    let driver =
+                        self.driver_for(&events, &target, fallback_task.as_ref().map(|t| t.task.as_str()));
 
                     // Worktree discipline (on iff `with_git`): the quark works in its
                     // own checkout, on its own branch, and never in the human's tree.

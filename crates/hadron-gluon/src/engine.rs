@@ -66,6 +66,26 @@ struct Driver {
     invariants: Vec<String>,
 }
 
+/// What an unaddressed human/quark message hands a seat, kept as two fields because
+/// the two questions have different answers: **who** was addressed and **what** the
+/// work is.
+///
+/// They used to be one `String`, which was fine only while they were always the same
+/// message. They are not: the human names the seats they want and then types the ask
+/// (Bug C), so `task` is the human's latest word while `addressing` stays the message
+/// that actually named this seat. Both are load-bearing — `addressing` is what the
+/// exclusive-seat gate reads (`exclusive_task_names_target`), and handing it `task`
+/// instead would make an exclusive seat fail a gate about text it was never given.
+/// One field could not carry both meanings without one of the two call sites being
+/// silently wrong.
+#[derive(Debug, Clone)]
+struct HumanTask {
+    /// The body the quark is dispatched on.
+    task: String,
+    /// The body that named this quark — the eligibility text, never substituted.
+    addressing: String,
+}
+
 /// The worktree a turn ran in, carried from dispatch through to `finish_turn` so the
 /// turn can end on a commit in the right branch. `head_before` is HEAD at dispatch:
 /// the turn's commit is detected by **comparing HEAD**, not by assuming we were the

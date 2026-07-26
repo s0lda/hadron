@@ -103,10 +103,11 @@ impl super::Engine {
     /// `Status{Blocked}` a `reroute_blocked` leaves behind — so a dispatched, in-flight,
     /// or un-dispatchable quark is not re-selected. The walk stops once every seat is
     /// accounted for, because an older message can add no addressee a newer one hasn't.
-    pub(super) fn unaddressed_message_targets(&self, events: &[Event]) -> Vec<(QuarkId, String)> {
-        let mut out: Vec<(QuarkId, String)> = Vec::new();
+    pub(super) fn unaddressed_message_targets(&self, events: &[Event]) -> Vec<(QuarkId, HumanTask)> {
+        let mut out: Vec<(QuarkId, HumanTask)> = Vec::new();
         let mut seen: HashSet<QuarkId> = HashSet::new();
         let preons = self.loaded_preons();
+        let latest_human = self.latest_unaddressed_human(events);
         for idx in (0..events.len()).rev() {
             if seen.len() >= self.roster.len() {
                 break; // every seat already has its most-recent status; older msgs add none
@@ -132,11 +133,55 @@ impl super::Engine {
                     continue;
                 }
                 if !Self::has_answered(&events[idx + 1..], &addressee, msg_id) {
-                    out.push((addressee, body.clone()));
+                    // Mentions decide WHO; the human's latest unaddressed message
+                    // decides WHAT. Only a human naming message is superseded — a
+                    // quark→quark delegation carries instructions the human's last
+                    // line knows nothing about.
+                    let task = match (&e.from, latest_human) {
+                        (Actor::Human, Some((newest_idx, newest_body))) if newest_idx > idx => {
+                            newest_body.to_string()
+                        }
+                        _ => body.clone(),
+                    };
+                    out.push((addressee, HumanTask { task, addressing: body.clone() }));
                 }
             }
         }
         out
+    }
+
+    /// The newest `to: None` human `Message` that **names nobody**, as `(index, body)`.
+    ///
+    /// This is the "what" half of the dispatch rule. A human who names the seats they
+    /// want in one message and then types the actual ask in the next used to have that
+    /// ask reach only the orchestrator — default-routing claims a mention-less message —
+    /// while every named worker was dispatched on the older naming message. Newest-first
+    /// with a per-quark `seen` set is what makes that happen, and it is otherwise right,
+    /// so the fix keeps WHO the walk resolves and replaces WHAT it hands over.
+    ///
+    /// **Mention-less is the whole condition, and it is not a body-shape heuristic.** A
+    /// message that names seats is the human steering *those* seats: `"@agy do Y"` then
+    /// `"@claude do Z"` must still fan out as two distinct tasks, and substituting the
+    /// newer body would hand agy an instruction addressed to claude. A mention-less
+    /// message names no one, so it is the human's latest word to the conversation as a
+    /// whole — the only kind that can stand in for someone else's task.
+    ///
+    /// The human's caveat ("`@mention prompt` sends as we do now") then holds for free
+    /// in both directions: a naming message that IS the newest fails `newest_idx > idx`,
+    /// and a naming message that is newer than another naming message is not a candidate
+    /// here at all.
+    fn latest_unaddressed_human<'a>(&self, events: &'a [Event]) -> Option<(usize, &'a str)> {
+        let preons = self.loaded_preons();
+        events.iter().enumerate().rev().find_map(|(idx, e)| match &e.kind {
+            Kind::Message { body }
+                if e.from == Actor::Human
+                    && e.to.is_none()
+                    && human_mentions(body, &self.roster, &preons).is_empty() =>
+            {
+                Some((idx, body.as_str()))
+            }
+            _ => None,
+        })
     }
 
     /// Has `addressee` answered the human message `msg_id`?
@@ -176,8 +221,8 @@ impl super::Engine {
     /// the latest unaddressed human message. The `String` is the `fallback_task` —
     /// the human message body, carried along because it is `to: None` and so cannot
     /// be found by the `to == target` trigger-finder.
-    pub(super) fn pending_targets(&self, events: &[Event]) -> Vec<(QuarkId, Option<String>)> {
-        let mut targets: Vec<(QuarkId, Option<String>)> = Vec::new();
+    pub(super) fn pending_targets(&self, events: &[Event]) -> Vec<(QuarkId, Option<HumanTask>)> {
+        let mut targets: Vec<(QuarkId, Option<HumanTask>)> = Vec::new();
         if let Some(q) = next_pending(events) {
             targets.push((q, None));
         }
