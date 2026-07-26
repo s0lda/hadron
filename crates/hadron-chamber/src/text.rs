@@ -121,6 +121,10 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "nucleus", detail: "Show nucleus index size vs resolved budget, lesson count, notes count, and index path", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "health", detail: "Show daemon PID, daemon process state, repo root, and worktree count", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "sessions", detail: "List archived sessions with labels", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "spend", detail: "Show spend per seat over a window: today (session), week, or all (e.g. /spend @acp-claude week)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "search", detail: "Search this session's messages for text", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "diff", detail: "Summarize a seat's branch diff against the default branch, or the working tree if no seat is given", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "export", detail: "Export the current session (or a named archived session) as a Markdown transcript", arity: Arity::Line, arg: ArgSource::None, listed: true },
 ];
 
 /// A short kebab-case id for a lesson line: the first few words, lowercased,
@@ -583,6 +587,130 @@ pub fn sessions_body(sessions: &[crate::model::SessionInfo]) -> String {
         }
     }
     out
+}
+
+/// Parse `/spend` arguments into `(seat, window)`. Any token matching a window
+/// keyword sets the window; any other token (with or without a leading `@`) names
+/// the seat. `today` is accepted but is NOT a distinct calendar-day cutoff — no such
+/// bucket exists in [`crate::model::StatsWindow`], and adding one would touch the
+/// Stats tab's UI cycle (`StatsWindow::ALL`), out of scope for this command — so
+/// `today` and `session` both resolve to [`crate::model::StatsWindow::Session`], the
+/// live field since the last `/clear`. Absent a window keyword, defaults to `Session`.
+pub fn parse_spend_arg(args: &str) -> (Option<&str>, crate::model::StatsWindow) {
+    let mut seat = None;
+    let mut window = crate::model::StatsWindow::Session;
+    for tok in args.trim().split_whitespace() {
+        match tok.to_lowercase().as_str() {
+            "today" | "session" => window = crate::model::StatsWindow::Session,
+            "week" => window = crate::model::StatsWindow::Week,
+            "all" | "alltime" => window = crate::model::StatsWindow::AllTime,
+            _ => {
+                let s = tok.trim_start_matches('@');
+                if !s.is_empty() {
+                    seat = Some(s);
+                }
+            }
+        }
+    }
+    (seat, window)
+}
+
+/// Format `/spend` output. `target` narrows to one seat; `None` shows every seat with
+/// spend plus the team total. The window is the CURRENT-FIELD-or-wider window
+/// [`SessionStats`](crate::model::SessionStats) was folded over — never the ledger's
+/// all-time cumulative, which the chamber does not read
+/// (`roster-tokens-and-depletion-are-different-windows`).
+pub fn spend_body(stats: &crate::model::SessionStats, window_label: &str, target: Option<&str>) -> String {
+    let mut out = format!("**Spend — {window_label} window**\n\n");
+    let rows: Vec<&(String, crate::model::QuarkStats)> = match target {
+        Some(t) => stats.per_quark.iter().filter(|(id, _)| id.eq_ignore_ascii_case(t)).collect(),
+        None => stats.per_quark.iter().collect(),
+    };
+    if rows.is_empty() {
+        out.push_str(&format!("No seat matches `{}`.\n", target.unwrap_or("")));
+        return out;
+    }
+    for (id, qs) in &rows {
+        let cost = qs.cost_usd.map(|c| format!("${c:.4}")).unwrap_or_else(|| "n/a".to_string());
+        out.push_str(&format!(
+            "- **@{id}** — {} turn(s), {} fresh token(s), cost {cost}\n",
+            qs.turns, qs.fresh
+        ));
+    }
+    if target.is_none() {
+        out.push_str(&format!(
+            "\n**Team total** — {} turn(s), {} fresh token(s)\n",
+            stats.total_turns, stats.total_fresh
+        ));
+    }
+    out
+}
+
+/// Format `/search` output: every message whose body contains `query`
+/// (case-insensitive), newest constraint applied by the caller (this just filters).
+pub fn search_body(messages: &[crate::model::MessageRow], query: &str) -> String {
+    let q = query.to_lowercase();
+    let hits: Vec<&crate::model::MessageRow> =
+        messages.iter().filter(|m| m.body.to_lowercase().contains(&q)).collect();
+    if hits.is_empty() {
+        return format!("No matches for `{query}`.\n");
+    }
+    let mut out = format!("**Search: `{query}`** — {} match(es)\n\n", hits.len());
+    for m in hits {
+        let to = m.to.as_deref().unwrap_or("(broadcast)");
+        let snippet: String = m.body.chars().take(160).collect();
+        out.push_str(&format!(
+            "- **{} → {}** ({}): {snippet}\n",
+            m.from,
+            to,
+            m.ts.format("%Y-%m-%d %H:%M")
+        ));
+    }
+    out
+}
+
+/// Format `/diff` output as a per-file summary — never the raw unified diff, which
+/// would paste an unbounded blob into the field that every quark re-reads on every
+/// later turn.
+pub fn diff_body(label: &str, diffs: Option<&[crate::vcs::FileDiff]>) -> String {
+    match diffs {
+        None => format!("**Diff — {label}**\n\nNo diff available (git call failed, or nothing to diff against).\n"),
+        Some(files) if files.is_empty() => format!("**Diff — {label}**\n\nNo changes.\n"),
+        Some(files) => {
+            let (added, removed) =
+                files.iter().fold((0usize, 0usize), |(a, r), f| (a + f.added, r + f.removed));
+            let mut out =
+                format!("**Diff — {label}** ({} file(s), +{added} \u{2212}{removed})\n\n", files.len());
+            for f in files {
+                out.push_str(&format!("- `{}` (+{} \u{2212}{})\n", f.path, f.added, f.removed));
+            }
+            out
+        }
+    }
+}
+
+/// Render a session's chat messages as a standalone Markdown transcript, for `/export`.
+/// Only chat rows ([`MessageRow::is_chat`](crate::model::MessageRow::is_chat)) — the
+/// Log tab's internal events (status, energy reports) are not part of a human-readable
+/// transcript.
+pub fn render_session_markdown(messages: &[crate::model::MessageRow]) -> String {
+    let mut out = String::new();
+    for m in messages.iter().filter(|m| m.is_chat()) {
+        let to = m.to.as_deref().unwrap_or("(broadcast)");
+        out.push_str(&format!(
+            "## {} — {} \u{2192} {}\n\n{}\n\n",
+            m.ts.format("%Y-%m-%d %H:%M:%S"),
+            m.from,
+            to,
+            m.body
+        ));
+    }
+    out
+}
+
+/// Format `/export`'s confirmation.
+pub fn export_body(dest: &std::path::Path, count: usize) -> String {
+    format!("**Exported** {count} message(s) to `{}`\n", dest.display())
 }
 
 /// Split an optional leading `@target` off a skill command's argument.
@@ -1726,6 +1854,153 @@ mod tests {
         assert!(body.contains("20260726_010000"));
         assert!(body.contains("test-session"));
         assert!(body.contains("20260726_020000"));
+    }
+
+    fn msg(from: &str, to: Option<&str>, body: &str, kind_label: &'static str) -> crate::model::MessageRow {
+        crate::model::MessageRow {
+            from: from.to_string(),
+            to: to.map(str::to_string),
+            body: body.to_string(),
+            kind_label,
+            usage: None,
+            ts: chrono::Utc::now(),
+            legacy_used_tokens: None,
+            turn: None,
+            severity: None,
+        }
+    }
+
+    // -- parse_spend_arg --
+
+    #[test]
+    fn parse_spend_arg_defaults_to_session_window_with_no_seat() {
+        assert_eq!(parse_spend_arg(""), (None, crate::model::StatsWindow::Session));
+    }
+
+    #[test]
+    fn parse_spend_arg_today_and_session_both_resolve_to_session_window() {
+        assert_eq!(parse_spend_arg("today").1, crate::model::StatsWindow::Session);
+        assert_eq!(parse_spend_arg("session").1, crate::model::StatsWindow::Session);
+    }
+
+    #[test]
+    fn parse_spend_arg_parses_week_and_all_windows() {
+        assert_eq!(parse_spend_arg("week").1, crate::model::StatsWindow::Week);
+        assert_eq!(parse_spend_arg("all").1, crate::model::StatsWindow::AllTime);
+    }
+
+    #[test]
+    fn parse_spend_arg_parses_a_seat_alongside_a_window() {
+        assert_eq!(parse_spend_arg("@Sonnet week"), (Some("Sonnet"), crate::model::StatsWindow::Week));
+        assert_eq!(parse_spend_arg("week @Sonnet"), (Some("Sonnet"), crate::model::StatsWindow::Week));
+    }
+
+    // -- spend_body --
+
+    #[test]
+    fn spend_body_labels_the_window_and_lists_per_seat_spend() {
+        let stats = crate::model::SessionStats {
+            per_quark: vec![(
+                "acp-claude".to_string(),
+                crate::model::QuarkStats { turns: 3, fresh: 1500, cost_usd: Some(0.02), ..Default::default() },
+            )],
+            total_turns: 3,
+            total_fresh: 1500,
+            ..Default::default()
+        };
+        let body = spend_body(&stats, "Week", None);
+        assert!(body.contains("Week window"));
+        assert!(body.contains("@acp-claude"));
+        assert!(body.contains("1500 fresh token"));
+        assert!(body.contains("Team total"));
+    }
+
+    #[test]
+    fn spend_body_narrows_to_one_seat_and_omits_the_team_total() {
+        let stats = crate::model::SessionStats {
+            per_quark: vec![
+                ("a".to_string(), crate::model::QuarkStats { turns: 1, fresh: 10, ..Default::default() }),
+                ("b".to_string(), crate::model::QuarkStats { turns: 2, fresh: 20, ..Default::default() }),
+            ],
+            ..Default::default()
+        };
+        let body = spend_body(&stats, "All time", Some("a"));
+        assert!(body.contains("@a"));
+        assert!(!body.contains("@b"));
+        assert!(!body.contains("Team total"));
+    }
+
+    #[test]
+    fn spend_body_reports_no_match_for_an_unknown_seat() {
+        let stats = crate::model::SessionStats::default();
+        let body = spend_body(&stats, "Session", Some("nobody"));
+        assert!(body.contains("No seat matches"));
+    }
+
+    // -- search_body --
+
+    #[test]
+    fn search_body_finds_case_insensitive_matches() {
+        let messages = vec![
+            msg("acp-claude", Some("acp-agy"), "fix the merge gate", "message"),
+            msg("acp-agy", Some("acp-claude"), "unrelated reply", "message"),
+        ];
+        let body = search_body(&messages, "MERGE GATE");
+        assert!(body.contains("1 match"));
+        assert!(body.contains("fix the merge gate"));
+        assert!(!body.contains("unrelated reply"));
+    }
+
+    #[test]
+    fn search_body_reports_no_matches() {
+        let body = search_body(&[], "anything");
+        assert!(body.contains("No matches"));
+    }
+
+    // -- diff_body --
+
+    #[test]
+    fn diff_body_summarises_files_never_the_raw_hunks() {
+        let files = vec![
+            crate::vcs::FileDiff { path: "src/a.rs".into(), added: 5, removed: 2, hunks: vec![] },
+            crate::vcs::FileDiff { path: "src/b.rs".into(), added: 1, removed: 0, hunks: vec![] },
+        ];
+        let body = diff_body("acp-claude", Some(&files));
+        assert!(body.contains("2 file(s)"));
+        assert!(body.contains("src/a.rs"));
+        assert!(body.contains("src/b.rs"));
+    }
+
+    #[test]
+    fn diff_body_reports_no_changes_for_an_empty_diff() {
+        let body = diff_body("acp-claude", Some(&[]));
+        assert!(body.contains("No changes"));
+    }
+
+    #[test]
+    fn diff_body_reports_unavailable_when_the_git_call_failed() {
+        let body = diff_body("acp-claude", None);
+        assert!(body.contains("No diff available"));
+    }
+
+    // -- render_session_markdown / export_body --
+
+    #[test]
+    fn render_session_markdown_includes_only_chat_rows() {
+        let messages = vec![
+            msg("human", Some("acp-claude"), "do the thing", "message"),
+            msg("acp-claude", None, "status update", "status"),
+        ];
+        let md = render_session_markdown(&messages);
+        assert!(md.contains("do the thing"));
+        assert!(!md.contains("status update"));
+    }
+
+    #[test]
+    fn export_body_names_the_destination_and_count() {
+        let body = export_body(std::path::Path::new("/tmp/x.md"), 7);
+        assert!(body.contains("7 message"));
+        assert!(body.contains("/tmp/x.md"));
     }
 }
 

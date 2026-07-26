@@ -450,6 +450,10 @@ mod tests {
             "nucleus",
             "health",
             "sessions",
+            "spend",
+            "search",
+            "diff",
+            "export",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(
