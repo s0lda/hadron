@@ -1,16 +1,20 @@
 use std::path::{Path, PathBuf};
 use crate::file::{resolve_jailed_path, ForgeError, Root};
 
-/// Derive the main repository's `.hadron/nucleus` directory as a [`Root`].
+/// Derive a project's `.hadron/nucleus` directory as a [`Root`].
 ///
-/// Finds the main repository root using `current_exe` and `git --git-common-dir`,
-/// ensuringLinked worktree checkouts find the single shared nucleus root.
-pub fn derive_nucleus_root() -> Result<Root, ForgeError> {
-    let exe = std::env::current_exe().map_err(|e| ForgeError::Io(e.to_string()))?;
-    let near = exe.parent().unwrap_or(&exe);
+/// `project` is the directory forge-mcp was given as `argv[1]` — the cwd of the turn.
+/// The `--git-common-dir` walk is what makes a quark's LINKED worktree
+/// (`.hadron/trees/<id>`) resolve to the main checkout's single shared nucleus rather
+/// than growing a private empty one.
+///
+/// This used to resolve from `current_exe`, which answered about the repository the
+/// BINARY was built in. That is not a hypothetical: in-repo the git call succeeds and
+/// silently returns a different project's nucleus.
+pub fn derive_nucleus_root(project: &Path) -> Result<Root, ForgeError> {
     let output = std::process::Command::new("git")
         .arg("-C")
-        .arg(near)
+        .arg(project)
         .args(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
         .output()
         .map_err(|e| ForgeError::Io(e.to_string()))?;
@@ -18,7 +22,7 @@ pub fn derive_nucleus_root() -> Result<Root, ForgeError> {
     if !output.status.success() {
         return Err(ForgeError::Io(format!(
             "failed to find main git repo root from {}: {}",
-            near.display(),
+            project.display(),
             String::from_utf8_lossy(&output.stderr)
         )));
     }
@@ -152,9 +156,60 @@ mod tests {
         assert!(res_index.contains("index.md:1: - [test-slug]"));
     }
 
+    /// `derive_nucleus_root` used to resolve from `current_exe`, so forge-mcp answered
+    /// about the repository its own binary was built in, not the project the quark is
+    /// working on. In-repo the git call SUCCEEDS and returns the wrong root, silently.
+    /// The nucleus must come from the project path forge-mcp is given as argv[1].
     #[test]
-    fn derive_nucleus_root_finds_real_nucleus() {
-        let root = derive_nucleus_root().unwrap();
-        assert!(root.path().to_string_lossy().ends_with(".hadron/nucleus"));
+    fn the_nucleus_root_follows_the_project_not_the_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("some-users-project");
+        std::fs::create_dir_all(&project).unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&project)
+            .status()
+            .unwrap()
+            .success());
+
+        let root = derive_nucleus_root(&project).expect("a git checkout resolves");
+        assert_eq!(
+            root.path(),
+            project.join(".hadron").join("nucleus"),
+            "the nucleus must be the project's own, whatever repo the binary came from"
+        );
+    }
+
+    /// The `--git-common-dir` walk is load-bearing, not incidental: a quark's turn runs
+    /// in a LINKED worktree (`.hadron/trees/<id>`), and this is what makes every quark
+    /// share one nucleus instead of silently growing a private empty one per worktree.
+    #[test]
+    fn a_linked_worktree_resolves_to_the_main_checkouts_nucleus() {
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("main-checkout");
+        std::fs::create_dir_all(&main).unwrap();
+        let git = |args: &[&str], cwd: &std::path::Path| {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .status()
+                .unwrap()
+                .success(), "git {args:?} failed");
+        };
+        git(&["init", "-q"], &main);
+        git(&["config", "user.email", "t@t"], &main);
+        git(&["config", "user.name", "t"], &main);
+        std::fs::write(main.join("f"), "x").unwrap();
+        git(&["add", "f"], &main);
+        git(&["commit", "-qm", "one"], &main);
+        let tree = tmp.path().join("tree");
+        git(&["worktree", "add", "-q", tree.to_str().unwrap()], &main);
+
+        let root = derive_nucleus_root(&tree).expect("a linked worktree resolves");
+        assert_eq!(
+            root.path(),
+            main.join(".hadron").join("nucleus"),
+            "a linked worktree must share the MAIN checkout's nucleus"
+        );
     }
 }
