@@ -7,7 +7,14 @@ gpui-component
 # Session-local hook scratch (remember plugin); not project state.
 .remember/
 
+# Our own plans, specs and research. Internal working documents: they name
+# branches, quote half-finished designs, and are written for us, not for anyone
+# who clones this. They live in the untracked `.hadron/docs/` workspace instead.
+#
+# BOTH spellings, because only the dotted one was ignored and `docs/` was
+# therefore tracked for months — 89 distinct paths reached the history that way.
 .docs/
+docs/
 
 # A project's own Hadron workspace: the user's team, their field, their
 # repo-specific rules. This one (ours) is a live workspace, not source we ship —
