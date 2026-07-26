@@ -475,22 +475,14 @@ impl super::Chamber {
         ix: usize,
         roster: &[crate::model::RosterRow],
     ) -> impl IntoElement {
-        let summary_chip = m.turn.as_ref().and_then(|turn_id| {
-            let turn_events: Vec<&MessageRow> = self.view.messages.iter()
-                .filter(|x| x.turn.as_ref() == Some(turn_id))
-                .collect();
-            if turn_events.is_empty() {
-                return None;
-            }
-            let start_time = turn_events.iter().map(|x| x.ts).min()?;
-            let duration_secs = (m.ts - start_time).num_seconds();
-            let num_commands = turn_events.iter().filter(|x| x.kind_label == "command").count();
-            let num_edits = turn_events.iter().filter(|x| x.kind_label == "edit").count();
-            let num_tools = num_commands + num_edits;
-            
+        let summary_chip = turn_summary_parts(&self.view.messages, m).and_then(|(duration_secs, num_tools)| {
             if duration_secs > 0 || num_tools > 0 {
                 let mut parts = Vec::new();
-                parts.push(format!("thought for {}s", duration_secs));
+                if duration_secs == 0 {
+                    parts.push("thought for <1s".to_string());
+                } else {
+                    parts.push(format!("thought for {}s", duration_secs));
+                }
                 if num_tools > 0 {
                     parts.push(format!("ran {} tool{}", num_tools, if num_tools == 1 { "" } else { "s" }));
                 }
@@ -739,3 +731,90 @@ mod severity_tests {
         }
     }
 }
+
+/// Helper to compute turn duration (seconds) and tool count for a given message row.
+/// Resolves turn start time from the preceding `Status::Excited` event for the same actor
+/// if available, falling back to the earliest event associated with the turn ULID.
+pub(super) fn turn_summary_parts(
+    messages: &[MessageRow],
+    m: &MessageRow,
+) -> Option<(i64, usize)> {
+    let turn_id = m.turn.as_ref()?;
+    let turn_events: Vec<&MessageRow> = messages
+        .iter()
+        .filter(|x| x.turn.as_ref() == Some(turn_id))
+        .collect();
+    if turn_events.is_empty() {
+        return None;
+    }
+    let start_time = messages
+        .iter()
+        .take_while(|x| x.ts <= m.ts)
+        .rfind(|x| x.from == m.from && x.kind_label == "status" && x.body == "excited")
+        .map(|x| x.ts)
+        .or_else(|| turn_events.iter().map(|x| x.ts).min())?;
+    let duration_secs = (m.ts - start_time).num_seconds().max(0);
+    let num_commands = turn_events.iter().filter(|x| x.kind_label == "command").count();
+    let num_edits = turn_events.iter().filter(|x| x.kind_label == "edit").count();
+    let num_tools = num_commands + num_edits;
+    Some((duration_secs, num_tools))
+}
+
+#[cfg(test)]
+mod turn_summary_tests {
+    use super::turn_summary_parts;
+    use crate::model::MessageRow;
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn calculates_actual_turn_duration_from_excited_status() {
+        let now = Utc::now();
+        let turn_id = "01J00000000000000000000000".to_string();
+        let qid = "acp-agy".to_string();
+
+        let msgs = vec![
+            // Excited status event when turn starts at T=0
+            MessageRow {
+                from: qid.clone(),
+                to: None,
+                body: "excited".to_string(),
+                kind_label: "status",
+                usage: None,
+                ts: now,
+                legacy_used_tokens: None,
+                turn: None,
+                severity: None,
+            },
+            // Tool execution event at T=15s
+            MessageRow {
+                from: qid.clone(),
+                to: None,
+                body: "edited 1 path".to_string(),
+                kind_label: "edit",
+                usage: None,
+                ts: now + Duration::seconds(15),
+                legacy_used_tokens: None,
+                turn: Some(turn_id.clone()),
+                severity: None,
+            },
+            // Final message row at T=15s
+            MessageRow {
+                from: qid.clone(),
+                to: None,
+                body: "done".to_string(),
+                kind_label: "message",
+                usage: None,
+                ts: now + Duration::seconds(15),
+                legacy_used_tokens: None,
+                turn: Some(turn_id.clone()),
+                severity: None,
+            },
+        ];
+
+        let m = &msgs[2];
+        let (duration, tools) = turn_summary_parts(&msgs, m).expect("summary parts found");
+        assert_eq!(duration, 15, "turn duration should be 15 seconds, not 0");
+        assert_eq!(tools, 1, "should count 1 tool");
+    }
+}
+
