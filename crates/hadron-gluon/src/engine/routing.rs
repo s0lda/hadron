@@ -529,6 +529,13 @@ impl super::Engine {
             }
         }
 
+        let has_forge_tools = self
+            .roster
+            .iter()
+            .find(|c| &c.id == target)
+            .map(|c| c.has_forge_tools)
+            .unwrap_or(false);
+
         Projection {
             nucleus_index,
             nucleus_index_truncated,
@@ -555,6 +562,7 @@ impl super::Engine {
             mode: turn_mode,
             role_body,
             named_specifically,
+            has_forge_tools,
         }
     }
 }

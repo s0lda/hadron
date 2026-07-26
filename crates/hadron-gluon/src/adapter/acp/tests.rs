@@ -433,6 +433,7 @@ fn projection() -> Projection {
         mode: Mode::Ask,
         role_body: None,
         named_specifically: true,
+        has_forge_tools: true,
     }
 }
 

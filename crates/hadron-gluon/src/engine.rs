@@ -463,6 +463,7 @@ impl Engine {
                 commands: q.commands().clone(),
                 energy_limit: q.energy_limit(),
                 deny_skills: q.deny_skills(),
+                has_forge_tools: q.has_forge_tools(),
             })
             .collect();
         let resident = quarks
@@ -549,6 +550,7 @@ impl Engine {
             commands: quark.commands().clone(),
             energy_limit: quark.energy_limit(),
             deny_skills: quark.deny_skills(),
+            has_forge_tools: quark.has_forge_tools(),
         };
         self.roster.retain(|c| c.id != id);
         self.roster.push(card);

@@ -58,6 +58,11 @@ pub trait Quark: Send {
     fn resident(&self) -> bool {
         false
     }
+    /// Whether this quark has Hadron Forge MCP tools attached (e.g. resident ACP sessions).
+    /// Defaults to `false` — CLI transports do not attach forge tools.
+    fn has_forge_tools(&self) -> bool {
+        false
+    }
     /// Run one turn against a projection and return the field message (if any).
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome>;
 
