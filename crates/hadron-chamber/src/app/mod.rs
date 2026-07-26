@@ -329,6 +329,7 @@ struct Chamber {
     file_tree_open: Option<(String, String)>,
     file_tree_expanded: std::collections::HashSet<String>,
     terminal: Option<crate::pty::PtyTerminal>,
+    terminal_error: Option<String>,
     /// Keyboard focus for the terminal grid — keystrokes flow to the PTY only
     /// while this holds focus.
     terminal_focus: FocusHandle,
@@ -679,6 +680,7 @@ impl Chamber {
             file_tree_open: None,
             file_tree_expanded: std::collections::HashSet::new(),
             terminal: None,
+            terminal_error: None,
             terminal_focus: cx.focus_handle(),
             terminal_px: std::rc::Rc::new(std::cell::Cell::new(None)),
             terminal_warmup: 0,
