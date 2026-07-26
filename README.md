@@ -262,6 +262,6 @@ Every dependency above is used under its own licence; the full set is listed in
 ## 📄 Licence & Community
 
 - **License**: Licensed under the **[Apache License 2.0](LICENSE)**.
-- **Contributing**: Read **[CONTRIBUTING.md](CONTRIBUTING.md)** for build instructions, developer test gates, and Standard Model invariants.
-- **Security**: Read **[SECURITY.md](SECURITY.md)** before you deploy this — how to report a vulnerability, and an honest account of what Hadron does to your machine. **Hadron runs AI agents that execute code as you, in your repository. It is not a sandbox.**
-- **Code of Conduct**: Read **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** (Contributor Covenant 2.1).
+- **Contributing**: Read **[CONTRIBUTING.md](.github/CONTRIBUTING.md)** for build instructions, developer test gates, and Standard Model invariants.
+- **Security**: Read **[SECURITY.md](.github/SECURITY.md)** before you deploy this — how to report a vulnerability, and an honest account of what Hadron does to your machine. **Hadron runs AI agents that execute code as you, in your repository. It is not a sandbox.**
+- **Code of Conduct**: Read **[CODE_OF_CONDUCT.md](.github/CODE_OF_CONDUCT.md)** (Contributor Covenant 2.1).
