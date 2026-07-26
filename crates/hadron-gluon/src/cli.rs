@@ -21,11 +21,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use hadron_gluon::adapter::registry;
-use hadron_gluon::engine::Engine;
-use hadron_gluon::field::read_events;
-use hadron_gluon::quark::Quark;
-use hadron_gluon::reseat;
+use crate::adapter::registry;
+use crate::engine::Engine;
+use crate::field::read_events;
+use crate::quark::Quark;
+use crate::reseat;
 use hadron_lattice::secrets::SecretStore;
 use hadron_lattice::{
     load_team, orphan_overrides, parse_team, resolve_team, team_config_path, Actor, EnergyState, Event, Flavor, Kind,
@@ -253,9 +253,12 @@ fn apply_reseat(
     out
 }
 
-#[tokio::main]
-async fn main() {
-    let _shutdown_guard = hadron_gluon::proc::ShutdownGuard::new();
+/// The `hadron-gluon` daemon entrypoint, in the library rather than in a `[[bin]]`,
+/// so the single installable package (`hadron`) can carry a bin target that calls it.
+/// The chamber finds the daemon as a sibling of its own `current_exe`
+/// (`chamber/src/main.rs:211`), so all three binaries must install together.
+pub async fn run() {
+    let _shutdown_guard = crate::proc::ShutdownGuard::new();
 
     let Some(args) = parse_args() else {
         eprintln!("usage: hadron-gluon <field.jsonl> [--interval-ms N] [--team team.json]");
@@ -329,9 +332,9 @@ async fn main() {
     // Real seats get real keys: `KeyringStore` resolves each seat's
     // `secret_env` names against the OS credential store (Keychain /
     // Credential Manager / Secret Service). team.json only ever holds names;
-    // values live only in the keychain. See `hadron_gluon::secrets` and the
+    // values live only in the keychain. See `crate::secrets` and the
     // Security note in the encrypted-secrets design doc.
-    let secret_store = hadron_gluon::secrets::KeyringStore::new();
+    let secret_store = crate::secrets::KeyringStore::new();
 
     let (quarks, mode_label) = seat_quarks(&team, &live_dir, &secret_store);
     if quarks.is_empty() {
@@ -346,7 +349,7 @@ async fn main() {
     // `.hadron/nucleus/` before anything else reads either. Non-fatal — the
     // reader's own fallback (`read_nucleus_index_with_fallback`) covers a
     // failed or skipped migration.
-    if let Err(e) = hadron_gluon::engine::migrate_legacy_memory(&repo_root) {
+    if let Err(e) = crate::engine::migrate_legacy_memory(&repo_root) {
         eprintln!("hadron-gluon: memory→nucleus migration failed (non-fatal): {e:#}");
     }
 
@@ -357,7 +360,7 @@ async fn main() {
     // Report it up front, and sweep the merged `quark/*` branches that accumulate one
     // per turn forever (178 of them here, 156 already merged). Both are non-fatal:
     // a repo that cannot be swept is still a repo the daemon can serve.
-    match hadron_gluon::worktree::reclaim(&repo_root) {
+    match crate::worktree::reclaim(&repo_root) {
         Ok(found) => {
             for wt in found.iter().filter(|w| w.dirty) {
                 eprintln!(
@@ -370,7 +373,7 @@ async fn main() {
         }
         Err(e) => eprintln!("hadron-gluon: worktree reclamation failed (non-fatal): {e:#}"),
     }
-    let base = hadron_gluon::worktree::default_branch(&repo_root);
+    let base = crate::worktree::default_branch(&repo_root);
     // Then the disk bound. A worktree is stable per quark and nothing ever removed
     // one, so every seat the human switches off — or deletes from the roster — keeps a
     // full checkout of the repo forever. At twenty seats in a monorepo that is the
@@ -386,11 +389,11 @@ async fn main() {
     } else {
         let keep: Vec<_> =
             team.quarks.iter().filter(|s| s.enabled).map(|s| s.id.clone()).collect();
-        match hadron_gluon::worktree::reap_idle_worktrees(&repo_root, &keep, &base) {
+        match crate::worktree::reap_idle_worktrees(&repo_root, &keep, &base) {
             Ok(reaped) => {
                 for r in &reaped {
                     match r {
-                        hadron_gluon::worktree::Reap::Removed { quark, preserved, .. } => {
+                        crate::worktree::Reap::Removed { quark, preserved, .. } => {
                             eprintln!(
                                 "hadron-gluon: reclaimed {}'s worktree — it takes no turns and \
                                  held nothing that is not on {base} (recreated on its next turn)",
@@ -402,7 +405,7 @@ async fn main() {
                                 eprintln!("hadron-gluon:   {note}");
                             }
                         }
-                        hadron_gluon::worktree::Reap::Spared { quark, path, why } => eprintln!(
+                        crate::worktree::Reap::Spared { quark, path, why } => eprintln!(
                             "hadron-gluon: keeping {}'s worktree at {} — {why}",
                             quark.as_str(),
                             path.display(),
@@ -413,7 +416,7 @@ async fn main() {
             Err(e) => eprintln!("hadron-gluon: idle-worktree reap failed (non-fatal): {e:#}"),
         }
     }
-    match hadron_gluon::worktree::prune_merged_branches(&repo_root, &base) {
+    match crate::worktree::prune_merged_branches(&repo_root, &base) {
         Ok(pruned) if !pruned.is_empty() => {
             eprintln!("hadron-gluon: pruned {} merged quark branches", pruned.len());
         }
@@ -425,9 +428,9 @@ async fn main() {
     // before this existed: target/debug was 107G, 22G of it untouched for >7 days.
     // Skips (not waits) if cargo already holds the target dir's lock — a build is in
     // flight, and deleting artifacts out from under it could remove a file mid-link.
-    match hadron_gluon::worktree::reap_build_artifacts(
+    match crate::worktree::reap_build_artifacts(
         &repo_root,
-        hadron_gluon::worktree::ARTIFACT_REAP_MIN_AGE,
+        crate::worktree::ARTIFACT_REAP_MIN_AGE,
     ) {
         // Recorded to `<hadron dir>/artifact-sweeps.log` as well as printed: this
         // deletes tens of GB unattended, and the first real run's figure was lost
@@ -440,7 +443,7 @@ async fn main() {
                     reap.bytes_removed as f64 / 1e9,
                 );
             }
-            if let Err(e) = hadron_gluon::worktree::record_artifact_sweep(&field_dir, &reap) {
+            if let Err(e) = crate::worktree::record_artifact_sweep(&field_dir, &reap) {
                 eprintln!("hadron-gluon: could not record the artifact sweep (non-fatal): {e:#}");
             }
         }
@@ -450,9 +453,9 @@ async fn main() {
 
     let engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
         .with_git(repo_root.clone())
-        .with_merge_gate(std::sync::Arc::new(hadron_gluon::merge::CargoMergeRunner))
-        .with_nucleus_index_budget_bytes(hadron_gluon::nucleus_status::resolve_budget_bytes(&team))
-        .with_nucleus(hadron_gluon::engine::build_nucleus_digest(&repo_root))
+        .with_merge_gate(std::sync::Arc::new(crate::merge::CargoMergeRunner))
+        .with_nucleus_index_budget_bytes(crate::nucleus_status::resolve_budget_bytes(&team))
+        .with_nucleus(crate::engine::build_nucleus_digest(&repo_root))
         // `Engine::new` defaults this to `None` (hermetic — see the field doc), so the
         // real daemon must opt in explicitly or custom global skills under
         // `~/.hadron/skills` would silently never load in production.
@@ -467,7 +470,7 @@ async fn main() {
     // The path is derived using standard library functions to prevent traversal or access
     // to untrusted locations.
     let ledger_path = field_dir.join("ledger.db");
-    let ledger = match hadron_gluon::ledger::Ledger::open(&ledger_path) {
+    let ledger = match crate::ledger::Ledger::open(&ledger_path) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("hadron-gluon: failed to open ledger at {}: {e:#}", ledger_path.display());
@@ -545,7 +548,7 @@ async fn main() {
                 let orch_exists =
                     engine.roster().iter().any(|c| c.flavor == Flavor::Orchestrator);
                 let body = if orch_exists {
-                    format!("@{} Gluon excite error: {e:#}", hadron_gluon::router::ORCHESTRATOR_ALIAS)
+                    format!("@{} Gluon excite error: {e:#}", crate::router::ORCHESTRATOR_ALIAS)
                 } else {
                     format!("Gluon excite error: {e:#}")
                 };
@@ -612,7 +615,7 @@ async fn main() {
                         let max_exchanges = desired.max_exchanges.unwrap_or(12);
                         engine.set_max_exchanges(max_exchanges);
                         engine.set_nucleus_index_budget_bytes(
-                            hadron_gluon::nucleus_status::resolve_budget_bytes(&desired),
+                            crate::nucleus_status::resolve_budget_bytes(&desired),
                         );
                         // Booted with no usable team.json ⇒ the roster is the DemoQuark
                         // pair. Those answer to no `Seat`, so no team-vs-team diff can

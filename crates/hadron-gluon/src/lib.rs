@@ -1,4 +1,7 @@
 pub mod adapter;
+/// The daemon entrypoint. Lives here, not in a `[[bin]]`, so the one installable
+/// package can ship it alongside the chamber — see [`cli::run`].
+pub mod cli;
 pub mod engine;
 pub mod field;
 pub mod mock;

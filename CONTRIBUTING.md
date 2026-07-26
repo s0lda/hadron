@@ -7,17 +7,21 @@ humans and, yes, from agents.
 
 ## The gate
 
-There are **two** test gates, and you must run both. This is not optional and it
-is the single most common way a change breaks `main`:
+There is **one** gate, and you must run all of it:
 
 ```bash
-cargo test --workspace                       # the crates, ~299 tests
-cargo test -p hadron-chamber --features gui  # the GPUI app, ~39 tests
+cargo test --workspace   # ~970 tests, the GPUI app included
 ```
 
-**`cargo test --workspace` does not compile the GUI.** Everything behind
-`#[cfg(feature = "gui")]` is invisible to it, so a change that breaks the chamber
-can pass the workspace gate cleanly. It has happened more than once. Run both.
+`gui` is in the chamber package's `default` features, so the workspace gate **does**
+compile and run everything behind `#[cfg(feature = "gui")]`. (An earlier version of
+this file claimed the opposite and told you to run a second `-p` gate; that was wrong,
+and the package it named no longer exists — `hadron-chamber` is the *directory*, and
+the package is now called `hadron`.) Run the filtered form only to iterate quickly:
+
+```bash
+cargo test -p hadron   # the chamber package, all three bin targets
+```
 
 A corollary that matters when you write tests: **pure logic belongs in a module
 that is not feature-gated** (`text.rs`, `sys.rs`, `model.rs`), so its tests run in

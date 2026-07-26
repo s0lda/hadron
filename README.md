@@ -98,12 +98,20 @@ hadron/
 ├── crates/
 │   ├── hadron-lattice/     (Shared Protocol: Structs, Intents, & Edit-by-Hash schemas)
 │   ├── hadron-gluon/       (Headless Daemon: File watcher, turn router, Git runner)
-│   ├── hadron-chamber/     (GPUI Glass: Native Visualizer & PTY Terminal)
+│   ├── hadron-chamber/     (package `hadron` — GPUI Glass, PTY Terminal, and all
+│   │                        three bin targets: hadron, hadron-gluon, hadron-forge-mcp)
 │   ├── hadron-forge/       (Edit-by-Hash Engine: AST block parsing & blake3 hashing)
 │   ├── hadron-forge-mcp/   (Stdio MCP Server: Tool protocol adapters for ACP agents)
-│   ├── hadron-gatekeeper/  (Security Engine: Verification, permissions, & policy checks)
-│   └── gpui-component/     (UI Component Library: Forked GPUI widgets & native styling)
+│   └── hadron-gatekeeper/  (Security Engine: Verification, permissions, & policy checks)
 ```
+
+The forked `gpui-component` is a **separate repository**
+([s0lda/gpui-component](https://github.com/s0lda/gpui-component)), consumed through the
+`[patch]` table in the workspace `Cargo.toml` — it is not a directory in this repo.
+
+`hadron-gluon` and `hadron-forge-mcp` are pure libraries; their entrypoints are
+`hadron_gluon::cli::run` and `hadron_forge_mcp::run`, and the bin targets that call them
+live in the one installable package so `cargo install` lands all three side by side.
 
 <div align="center">
     <img src="assets/demo.png" alt="Hadron Chamber UI Demo" width="900" />
@@ -148,6 +156,29 @@ Hadron uses particle physics as a cohesive mental model for multi-agent operatin
   a coding CLI on your `PATH`, or the Antigravity SDK bridge. Seats are configured in the
   Chamber's Settings, or by hand in `.hadron/team.json`.
 
+### Install
+
+```bash
+cargo install --git https://github.com/s0lda/hadron.git hadron
+```
+
+That places **three** binaries in `~/.cargo/bin`: `hadron` (the Chamber), `hadron-gluon`
+(the headless daemon) and `hadron-forge-mcp` (the stdio MCP server). They must stay in
+one directory — each finds the next as a sibling of its own executable, which is why
+they ship from a single package.
+
+### Run it anywhere
+
+**The directory you are standing in is the workspace.** No argument, no config:
+
+```bash
+cd ~/dev/project_1 && hadron     # swarm rooted at ~/dev/project_1
+cd ~/dev/project_2 && hadron     # a different swarm, rooted at ~/dev/project_2
+```
+
+Each project gets its own `.hadron/` — field, team, nucleus, worktrees — created on
+first run. Pass a directory (`hadron ~/dev/project_3`) to open or create one elsewhere.
+
 ### Building from Source
 
 ```bash
@@ -158,13 +189,9 @@ cd hadron
 cargo test --workspace
 
 # Launch the Chamber (the default workspace member). It starts the
-# hadron-gluon daemon for you.
-cargo run -p hadron-chamber
+# hadron-gluon daemon for you, and opens the swarm in the current directory.
+cargo run --bin hadron
 ```
-
-The workspace also builds `hadron-gluon` (the headless daemon — run it alone for a
-headless swarm) and `hadron-forge-mcp` (the stdio MCP server the Chamber hands to
-each ACP seat).
 
 ---
 
