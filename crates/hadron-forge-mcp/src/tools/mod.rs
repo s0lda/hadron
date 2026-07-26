@@ -22,13 +22,25 @@ impl ServerHandler for ForgeMcpServer {}
 pub struct ForgeMcpServer {
     tool_router: ToolRouter<Self>,
     pub root: Root,
+    pub nucleus_root: Root,
 }
 
 impl ForgeMcpServer {
     pub fn new(root_path: impl Into<std::path::PathBuf>) -> Self {
+        let root_pb = root_path.into();
+        let nucleus = hadron_forge::nucleus::derive_nucleus_root()
+            .unwrap_or_else(|_| Root::new(root_pb.join(".hadron").join("nucleus")));
+        Self::with_nucleus(root_pb, nucleus.path())
+    }
+
+    pub fn with_nucleus(
+        root_path: impl Into<std::path::PathBuf>,
+        nucleus_root: impl Into<std::path::PathBuf>,
+    ) -> Self {
         Self {
             tool_router: Self::edit_router() + Self::inspect_router() + Self::nucleus_router(),
             root: Root::new(root_path),
+            nucleus_root: Root::new(nucleus_root),
         }
     }
 }
