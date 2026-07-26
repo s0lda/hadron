@@ -743,13 +743,22 @@ pub fn parse_add_skill_args(args: &str) -> Option<AddSkillSource> {
     }
 }
 
+/// Whether `s` could escape a directory it's joined into, or a filename it's
+/// interpolated into — a path separator, or a literal `..` anywhere in it.
+/// Shared by every place that turns a chat-typed argument into a filesystem
+/// name (`/add-skill`'s name, `/export`'s session argument): one definition,
+/// not two similar checks that started identical and drifted (rule 3).
+fn contains_path_escape(s: &str) -> bool {
+    s.contains(['/', '\\']) || s.contains("..")
+}
+
 /// Turn a `/add-skill <name>` argument into a safe `<name>.md` filename —
 /// never a path. `load_skills` keys a skill by its front-matter `name:`, not
 /// its filename, so this only needs to be a filesystem-safe label; it must
 /// never let the human's typed name escape `.hadron/skills/` (e.g. `../..`).
 pub fn add_skill_filename(name: &str) -> Option<String> {
     let name = name.trim();
-    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+    if name.is_empty() || name == "." || contains_path_escape(name) {
         return None;
     }
     Some(format!("{name}.md"))
@@ -778,14 +787,13 @@ pub fn add_skill_written_body(dest: &std::path::Path, has_tools_field: bool, has
     out
 }
 
-/// Validate whether a session argument for `/export` is safe —
-/// rejects any input containing path separators (`/`, `\`) or `..` to prevent escaping `.hadron/exports/`.
+/// Validate whether a session argument for `/export` is safe — rejects any
+/// input that could escape `.hadron/exports/` (the write path) or
+/// `.hadron/sessions/` (the read path). An empty argument is safe: it means
+/// "the current session", not a path component.
 pub fn is_safe_session_arg(arg: &str) -> bool {
     let s = arg.trim();
-    if s.is_empty() {
-        return true;
-    }
-    !s.contains(['/', '\\']) && !s.contains("..")
+    s.is_empty() || !contains_path_escape(s)
 }
 
 /// Split an optional leading `@target` off a skill command's argument.
