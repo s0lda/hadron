@@ -786,6 +786,80 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
+            "spend" => {
+                let (seat, window) = crate::text::parse_spend_arg(args);
+                let stats = self.view.stats_for(&self.archived_messages, window, chrono::Utc::now());
+                let body = crate::text::spend_body(&stats, window.label(), seat);
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "search" => {
+                let query = args.trim();
+                if query.is_empty() {
+                    eprintln!("chamber: `/search` needs text (e.g. `/search merge gate`)");
+                    return true;
+                }
+                let events = io::read_events(&self.path).unwrap_or_default();
+                let messages = crate::model::project(&events).messages;
+                let body = crate::text::search_body(&messages, query);
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "diff" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let target = args.trim().trim_start_matches('@');
+                let (label, diffs) = if target.is_empty() {
+                    ("working tree".to_string(), crate::vcs::working_diff(&repo_root))
+                } else {
+                    let wt_path = hadron_gluon::worktree::trees_dir(&repo_root).join(target);
+                    match hadron_gluon::worktree::current_branch(&wt_path) {
+                        Some(branch) => {
+                            let base = hadron_gluon::worktree::default_branch(&repo_root);
+                            let diffs = crate::vcs::branch_diff(&repo_root, &base, &branch);
+                            (branch, diffs)
+                        }
+                        None => {
+                            eprintln!("chamber: `/diff {target}` — no worktree/branch found for that seat");
+                            return true;
+                        }
+                    }
+                };
+                let body = crate::text::diff_body(&label, diffs.as_deref());
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "export" => {
+                let session_arg = args.trim();
+                let (label, field_path) = if session_arg.is_empty() {
+                    ("current".to_string(), self.path.clone())
+                } else {
+                    (session_arg.to_string(), self.sessions_dir().join(session_arg).join("field.jsonl"))
+                };
+                let events = io::read_events(&field_path).unwrap_or_default();
+                let messages = crate::model::project(&events).messages;
+                if messages.iter().filter(|m| m.is_chat()).count() == 0 {
+                    eprintln!("chamber: `/export {session_arg}` — no messages found for `{label}`");
+                    return true;
+                }
+                let hadron_dir = self.path.parent().map(std::path::Path::to_path_buf)
+                    .unwrap_or_else(|| std::path::PathBuf::from(".hadron"));
+                let exports_dir = hadron_dir.join("exports");
+                if let Err(e) = std::fs::create_dir_all(&exports_dir) {
+                    eprintln!("chamber: failed to create exports dir: {e}");
+                    return true;
+                }
+                let markdown = crate::text::render_session_markdown(&messages);
+                let filename = format!("{label}-{}.md", chrono::Utc::now().format("%Y%m%d%H%M%S"));
+                let dest = exports_dir.join(&filename);
+                if let Err(e) = std::fs::write(&dest, markdown) {
+                    eprintln!("chamber: failed to write export: {e}");
+                    return true;
+                }
+                let count = messages.iter().filter(|m| m.is_chat()).count();
+                let body = crate::text::export_body(&dest, count);
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
             _ => {
                 // If it contains a slash, it's probably a path. 
                 // Return false to let it pass through as a normal message.
