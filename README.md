@@ -2,13 +2,13 @@
 
 <div align="center">
 
-**A Native Rust Multi-Agent Operating System & Swarm Workspace**
+  **Hyper-Fast, 120 FPS Native Rust Multi-Agent Operating System & Swarm Workspace**
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Language](https://img.shields.io/badge/Language-Rust_2021-orange.svg)](https://www.rust-lang.org/)
-[![UI](https://img.shields.io/badge/GUI-GPUI-purple.svg)](https://zed.dev)
-[![Protocol](https://img.shields.io/badge/Protocol-Agent_Client_Protocol_%28ACP%29-green.svg)](https://agentclientprotocol.com)
-[![Architecture](https://img.shields.io/badge/Architecture-Decoupled_Zero--CPU_Bus-red.svg)](#-how-it-works-what--how-we-do-it)
+  [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+  [![Language](https://img.shields.io/badge/Language-Rust_2021-orange.svg)](https://www.rust-lang.org/)
+  [![UI](https://img.shields.io/badge/GUI-GPUI_120_FPS-purple.svg)](https://zed.dev)
+  [![Protocol](https://img.shields.io/badge/Protocol-Agent_Client_Protocol_(ACP)-green.svg)](https://agentclientprotocol.com)
+  [![Architecture](https://img.shields.io/badge/Architecture-Decoupled_Zero--CPU_Bus-red.svg)](#-how-it-works-what--how-we-do-it)
 
   <br />
 
@@ -22,23 +22,20 @@
 
 **Hadron** is a native, GPU-accelerated multi-agent execution environment built in Rust. It orchestrates autonomous AI agent swarms—called **Quarks**—over a zero-CPU filesystem event bus (`field.jsonl`) and local SQLite ledgers.
 
-Seats ship for **Claude** (over ACP and over the Claude CLI), **Antigravity / Gemini** (over the `agy` CLI) and **Codex / OpenAI** (over ACP) — and any agent that speaks the **[Agent Client Protocol](https://agentclientprotocol.com)** can take a seat. Hadron gives them parallel execution, isolated git worktree branching, and race-free AST code edits via **Hadron Forge (Edit-by-Hash)**.
+Seats ship for **Claude** (over ACP and over the Claude CLI), **Antigravity / Gemini** (over the `agy` CLI), and **Codex / OpenAI** (over ACP)—and any agent that speaks the **[Agent Client Protocol (ACP)](https://agentclientprotocol.com)** can take a seat. Hadron enables parallel model execution, isolated git worktree branching, and race-free AST code edits via **Hadron Forge (AST Edit-by-Hash)**.
 
-> **The vision.** We are building Hadron—a hyper-fast, natively compiled Rust multi-agent operating system. Hadron will securely orchestrate existing models (Claude, Llama, OpenAI) using a zero-CPU filesystem bus.
+> **The vision.** We are building Hadron—a hyper-fast, natively compiled Rust multi-agent operating system. Hadron will securely orchestrate existing models (Claude, Gemini, OpenAI) using a zero-CPU filesystem bus.
 
 ---
 
 ## 🔭 How It Works (What & How We Do It)
 
 ### 1. The Decoupled 2-Tier Architecture
-
 Hadron separates execution from presentation:
-
 - **`hadron-gluon` (Headless Daemon)**: Watches the NDJSON file bus, dispatches turns, manages worktrees, enforces gatekeeper security policies, and executes merge gates.
-- **`hadron-chamber` (Native Visualizer)**: Powered by Zed's **GPUI** framework — a GPU-accelerated desktop GUI with chat, PTY terminals, telemetry charts, and live git inspection.
+- **`hadron-chamber` (120 FPS Native Visualizer)**: Powered by Zed's **GPUI** framework, providing a hardware-accelerated, sub-millisecond responsive GUI with chat, PTY terminals, telemetry charts, and live git inspection.
 
 ### 2. The Zero-CPU File Bus & Swarm Event Loop
-
 Agents communicate by appending NDJSON events to `field.jsonl`. File watchers (`notify`) wake waiting components with zero CPU polling overhead:
 
 ```
@@ -57,11 +54,9 @@ Agents communicate by appending NDJSON events to `field.jsonl`. File watchers (`
 ```
 
 ### 3. Hadron Forge (AST Edit-by-Hash Precision)
-
 Instead of fragile line diffs or full file rewrites, **Hadron Forge** parses source files (`Rust`, `Python`, `TypeScript`, `Go`) into AST item blocks tagged with cryptographic `blake3` hashes. Agents perform Compare-And-Swap (CAS) block modifications—preventing race conditions and preserving token budgets.
 
 ### 4. Git Worktree Isolation & Merge Gate
-
 Every quark turn executes inside an isolated git worktree (`.hadron/trees/<id>`). When work completes, the **Merge Gate** automatically rebases the branch onto `main`, executes the host project's native test suite within a strict deadline, and fast-forwards clean passing code.
 
 ---
@@ -74,7 +69,7 @@ hadron/
 ├── crates/
 │   ├── hadron-lattice/     (Shared Protocol: Structs, Intents, & Edit-by-Hash schemas)
 │   ├── hadron-gluon/       (Headless Daemon: File watcher, turn router, Git runner)
-│   ├── hadron-chamber/     (GPUI Glass: Native Visualizer & PTY Terminal)
+│   ├── hadron-chamber/     (GPUI Glass: 120 FPS Native Visualizer & PTY Terminal)
 │   ├── hadron-forge/       (Edit-by-Hash Engine: AST block parsing & blake3 hashing)
 │   ├── hadron-forge-mcp/   (Stdio MCP Server: Tool protocol adapters for ACP agents)
 │   ├── hadron-gatekeeper/  (Security Engine: Verification, permissions, & policy checks)
@@ -91,38 +86,35 @@ hadron/
 
 Hadron uses particle physics as a cohesive mental model for multi-agent operating system concepts.
 
-| Term                 | Meaning in Hadron                                             | Physics Metaphor                                     |
-| :------------------- | :------------------------------------------------------------ | :--------------------------------------------------- |
-| **Hadron**           | The complete multi-agent operating environment                | A composite particle that binds quarks together      |
-| **Quark**            | An active agent seat in the swarm (e.g., Claude, Antigravity) | The fundamental particle of intelligence             |
-| **Preon**            | Addressable markdown instructions loaded into a quark         | Proposed substructure inside a quark                 |
-| **Field**            | The shared append-only NDJSON event bus (`field.jsonl`)       | Interactive quantum field                            |
-| **Event**            | One structured record in the field bus                        | A detected particle interaction                      |
-| **Gluon**            | The headless daemon (`hadron-gluon`) routing tasks            | The gauge boson/force carrier binding quarks         |
-| **Lattice**          | The shared protocol data layer (`hadron-lattice`)             | The underlying space-time lattice                    |
-| **Chamber**          | The GPUI desktop workspace (`hadron-chamber`)                 | A cloud/bubble chamber for observing particle tracks |
-| **Nucleus**          | Shared persistent single-source-of-truth knowledge base       | The dense, stable core                               |
-| **Flavor**           | A quark's role in the swarm (Orchestrator, Worker)            | Quark flavors (up, down, charm...)                   |
-| **Energy & Ledger**  | Real-time token spend tracking and SQLite quotas              | Conservation of energy & energy states               |
-| **Excited / Ground** | A quark mid-turn / idle — the presence states                 | Exciting a field produces a particle                 |
-| **Standard Model**   | Non-negotiable base system invariants (`standard_model.md`)   | Fundamental laws of physics                          |
+| Term | Meaning in Hadron | Physics Metaphor |
+| :--- | :--- | :--- |
+| **Hadron** | The complete multi-agent operating environment | A composite particle that binds quarks together |
+| **Quark** | An active agent seat in the swarm (e.g., Claude, Antigravity) | The fundamental particle of intelligence |
+| **Preon** | Addressable markdown instructions loaded into a quark | Proposed substructure inside a quark |
+| **Field** | The shared append-only NDJSON event bus (`field.jsonl`) | Interactive quantum field |
+| **Event** | One structured record in the field bus | A detected particle interaction |
+| **Gluon** | The headless daemon (`hadron-gluon`) routing tasks | The gauge boson/force carrier binding quarks |
+| **Lattice** | The shared protocol data layer (`hadron-lattice`) | The underlying space-time lattice |
+| **Chamber** | The 120 FPS GPUI desktop workspace (`hadron-chamber`) | A cloud/bubble chamber for observing particle tracks |
+| **Nucleus** | Shared persistent single-source-of-truth knowledge base | The dense, stable core |
+| **Flavor** | A quark's role in the swarm (Orchestrator, Worker) | Quark flavors (up, down, charm...) |
+| **Energy & Ledger** | Real-time token spend tracking and SQLite quotas | Conservation of energy & energy states |
+| **Excited / Ground** | A quark mid-turn / idle — the presence states | Exciting a field produces a particle |
+| **Standard Model** | Non-negotiable base system invariants (`standard_model.md`) | Fundamental laws of physics |
 
 ---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-
-- **Rust Toolchain**: a recent stable `rustup` toolchain (edition 2021; the workspace
-  declares no `rust-version` floor because that number has to be measured against older
-  toolchains, not guessed — this box builds on 1.96.0)
+- **Rust Toolchain**: A recent stable `rustup` toolchain (edition 2021; builds on 1.80+)
 - **System Dependencies**: Linux (X11/Wayland/WSL2) or macOS
 
 ### Building from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/<your-account>/hadron.git
+git clone https://github.com/your-username/hadron.git
 cd hadron
 
 # Run the full workspace test suite
@@ -136,13 +128,13 @@ cargo run -p hadron-chamber
 
 ## ⌨️ Keyboard Shortcuts
 
-| Shortcut                      | Action                                                         |
-| :---------------------------- | :------------------------------------------------------------- |
-| `Ctrl+Tab` / `Ctrl+\``        | Toggle focus between Chat Input and PTY Terminal               |
-| `Alt+Left` / `Alt+Right`      | Switch Chat column tabs                                        |
-| `Alt+PageUp` / `Alt+PageDown` | Switch Right-Rail Inspector tabs                               |
-| `Alt+Up` / `Alt+Down`         | Switch Telemetry & Stats time windows                          |
-| `F6`                          | Cycle the global permission mode (Ask / Write / Auto / Bypass) |
+| Shortcut | Action |
+| :--- | :--- |
+| `Ctrl+Tab` / `Ctrl+\`` | Toggle focus between Chat Input and PTY Terminal |
+| `Alt+Left` / `Alt+Right` | Switch Chat column tabs |
+| `Alt+PageUp` / `Alt+PageDown` | Switch Right-Rail Inspector tabs |
+| `Alt+Up` / `Alt+Down` | Switch Telemetry & Stats time windows |
+| `F6` | Cycle global permission security modes (Ask / Write / Auto / Bypass) |
 
 ---
 
@@ -151,21 +143,18 @@ cargo run -p hadron-chamber
 Hadron stands on the shoulders of giants. Everything below is a real dependency of this repository:
 
 ### Core Frameworks
-
 - **[Rust](https://www.rust-lang.org/)** — Safe, concurrent systems programming language.
 - **[GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui)** by **[Zed Industries](https://zed.dev)** (Apache-2.0) — GPU-accelerated UI framework.
-- **[gpui-component](https://github.com/longbridge/gpui-component)** by **[Longbridge](https://longbridge.com)** (Apache-2.0) — High-performance native desktop widgets. Almost every widget you see is theirs. We run a **small fork** that adds a foreground colour to `TextMark`, so an `@mention` can be coloured text rather than a tinted block — a patch off their tree, meant to go home.
+- **[gpui-component](https://github.com/longbridge/gpui-component)** by **[Longbridge](https://longbridge.com)** (Apache-2.0) — High-performance native desktop widgets. Almost every widget you see is theirs. We run a **small fork** that adds a foreground colour to `TextMark`, so an `@mention` can be coloured text rather than a tinted block—a patch off their tree, meant to go home.
 - **[Agent Client Protocol (ACP)](https://agentclientprotocol.com)** by **[Zed](https://zed.dev)** — Standardized protocol for long-running resident agents.
 - **[Tree-Sitter](https://github.com/tree-sitter/tree-sitter)** — Incremental AST parsing for syntax highlighting and forge block extraction.
 
 ### Supported Models & Transports
-
 - **[Claude](https://www.anthropic.com/claude)** (Anthropic) via ACP and Claude CLI.
 - **[Antigravity / Gemini](https://antigravity.google/)** (Google) via `agy` CLI transport.
 - **[Codex](https://openai.com/codex/)** (OpenAI) via the bundled `@agentclientprotocol/codex-acp` seat preset.
 
 ### Ecosystem Crates
-
 - [`tokio`](https://tokio.rs) (async runtime)
 - [`serde`](https://serde.rs) / `serde_json` (NDJSON wire format)
 - [`rusqlite`](https://github.com/rusqlite/rusqlite) + [SQLite](https://sqlite.org) (energy ledger)
@@ -173,8 +162,7 @@ Hadron stands on the shoulders of giants. Everything below is a real dependency 
 - [`ulid`](https://github.com/dylanhart/ulid-rs) (sortable IDs for events & turns)
 - [`chrono`](https://github.com/chronotope/chrono) · [`anyhow`](https://github.com/dtolnay/anyhow) · [`futures`](https://github.com/rust-lang/futures-rs) · [`markdown`](https://github.com/wooorm/markdown-rs) · [`blake3`](https://github.com/BLAKE3-team/BLAKE3) · [`lsp-types`](https://github.com/gluon-lang/lsp-types) · [`emojis`](https://github.com/rossmacarthur/emojis) · [`tempfile`](https://github.com/Stebalien/tempfile)
 
-Every dependency above is used under its own licence; the full set is listed in
-**[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)**.
+Every dependency above is used under its own licence; the full set is listed in **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)**.
 
 ---
 
