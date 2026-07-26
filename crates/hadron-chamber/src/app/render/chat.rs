@@ -116,13 +116,13 @@ impl super::Chamber {
                     .bottom_0()
                     .child(match selected {
                         ChatTab::Chat => Scrollbar::vertical(&self.chat_list_state)
-                            .scrollbar_show(ScrollbarShow::Hover)
+                            .scrollbar_show(ScrollbarShow::Always)
                             .into_any_element(),
                         ChatTab::Log => Scrollbar::vertical(&self.log_list_state)
-                            .scrollbar_show(ScrollbarShow::Hover)
+                            .scrollbar_show(ScrollbarShow::Always)
                             .into_any_element(),
                         ChatTab::Stats => Scrollbar::vertical(&self.chat_scrolls[selected.index()])
-                            .scrollbar_show(ScrollbarShow::Hover)
+                            .scrollbar_show(ScrollbarShow::Always)
                             .into_any_element(),
                     }),
             );

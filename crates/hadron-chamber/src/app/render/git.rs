@@ -83,10 +83,10 @@ impl super::Chamber {
         };
         let scrollbar: gpui::AnyElement = match selected {
             GitSubtab::Graph => Scrollbar::vertical(&self.git_graph_list)
-                .scrollbar_show(ScrollbarShow::Hover)
+                .scrollbar_show(ScrollbarShow::Always)
                 .into_any_element(),
             _ => Scrollbar::vertical(&self.git_scroll)
-                .scrollbar_show(ScrollbarShow::Hover)
+                .scrollbar_show(ScrollbarShow::Always)
                 .into_any_element(),
         };
 
