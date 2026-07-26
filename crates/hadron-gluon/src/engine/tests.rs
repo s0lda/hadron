@@ -486,7 +486,10 @@ async fn ask_mode_default_pauses_for_human() {
     assert!(!has_kind(&events, |k| matches!(k, Kind::PermissionGrant { .. })), "no auto-grant under Ask");
     assert!(has_kind(&events, |k| matches!(k, Kind::Status { state: QuarkState::Waiting })), "quark waits");
     assert!(!has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "published")), "op not performed yet");
-    assert!(hadron_gatekeeper::pending_permission(&events).is_some(), "chamber can surface the request");
+    assert!(
+        hadron_gatekeeper::pending_permission(&events, &QuarkId::new("agy")).is_some(),
+        "chamber can surface the request"
+    );
 }
 
 #[tokio::test]

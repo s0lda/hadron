@@ -378,8 +378,8 @@ impl super::Engine {
             MergeVerdict::Block(BlockReason::NotApproved) => {
                 // Idempotent: if the ask is already outstanding for this branch, stay
                 // Waiting rather than appending a second request.
-                let already_asked = hadron_gatekeeper::pending_permission(&events)
-                    .is_some_and(|p| p.quark == *target && p.description == op);
+                let already_asked = hadron_gatekeeper::pending_permission(&events, target)
+                    .is_some_and(|p| p.description == op);
                 if !already_asked {
                     self.append(Event::new(
                         Actor::Quark(target.clone()),

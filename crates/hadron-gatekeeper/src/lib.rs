@@ -10,7 +10,7 @@ mod gate;
 mod matrix;
 mod merge;
 
-pub use gate::{grant, grant_remembering, pending_permission, PendingPermission};
+pub use gate::{any_pending_permission, grant, grant_remembering, pending_permission, PendingPermission};
 pub use hadron_lattice::{Mode, Risk};
 pub use matrix::{
     allow_rules, decide, effective_mode, global_mode, has_override, op_matches, resolve_mode,
