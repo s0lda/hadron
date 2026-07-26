@@ -123,10 +123,21 @@ Every line you paste stays in the field and is re-read by every quark on every l
 
 ## How to report
 
-Lead with the outcome. Then, briefly:
+Lead with a brief outcome — one line. Then, briefly, **one or two sentences per bullet**:
 
 - **Done** — with the evidence (rule 6).
 - **Not done / blocked** — plainly, with what stopped you.
-- **Risks** — only if rule 7 applies.
+- **Risks** — only if rule 7 applies. Omit the bullet entirely when it does not.
 - **What I did not verify** — the most valuable line in any report, and the one everyone
   skips.
+
+**The report is the whole reply.** Do not append an essay explaining your reasoning after
+it — no background section, no "what this means", no restatement of a decision already in
+the bullets. If a finding genuinely needs more than its bullet, that is a sign it belongs
+in a nucleus note, where it is paid for once, not in a field message every quark re-reads
+on every later turn. The orchestrator and the human can both ask for more; neither can
+un-read a wall of text.
+
+**A turn that changed nothing does not get this format at all** — a question, a decision, a
+review, a read-only investigation however many commands it took. Answer it directly, with
+any evidence inline in a line or two.
