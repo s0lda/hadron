@@ -133,13 +133,14 @@ impl super::Engine {
                     continue;
                 }
                 if !Self::has_answered(&events[idx + 1..], &addressee, msg_id) {
-                    // Mentions decide WHO; the human's latest unaddressed message
-                    // decides WHAT. Only a human naming message is superseded — a
-                    // quark→quark delegation carries instructions the human's last
-                    // line knows nothing about.
+                    // Mentions decide WHO; the human's latest mention-less message
+                    // decides WHAT — but it is APPENDED, never substituted. Only a
+                    // human naming message is extended at all: a quark→quark
+                    // delegation carries instructions the human's last line knows
+                    // nothing about.
                     let task = match (&e.from, latest_human) {
                         (Actor::Human, Some((newest_idx, newest_body))) if newest_idx > idx => {
-                            newest_body.to_string()
+                            format!("{body}\n\n{newest_body}")
                         }
                         _ => body.clone(),
                     };
@@ -166,10 +167,14 @@ impl super::Engine {
     /// message names no one, so it is the human's latest word to the conversation as a
     /// whole — the only kind that can stand in for someone else's task.
     ///
-    /// The human's caveat ("`@mention prompt` sends as we do now") then holds for free
-    /// in both directions: a naming message that IS the newest fails `newest_idx > idx`,
-    /// and a naming message that is newer than another naming message is not a candidate
-    /// here at all.
+    /// **The newer body is appended, not substituted** — the caller concatenates, and
+    /// that is what makes the human's caveat ("`@mention prompt` sends as we do now")
+    /// literally true. Substituting looks right for a correction (`"@sonnet fix the
+    /// router"` → `"actually do the README first"`) and destroys the instruction for the
+    /// far commoner aside (`"@sonnet fix the router"` → `"thanks"`), and no heuristic
+    /// tells the two apart. Appending is right for both, and it is the same silent-drop
+    /// family as [`Self::has_answered`]'s own comment: the newer message must be added to
+    /// the field's account of the turn, never allowed to erase an older one.
     fn latest_unaddressed_human<'a>(&self, events: &'a [Event]) -> Option<(usize, &'a str)> {
         let preons = self.loaded_preons();
         events.iter().enumerate().rev().find_map(|(idx, e)| match &e.kind {

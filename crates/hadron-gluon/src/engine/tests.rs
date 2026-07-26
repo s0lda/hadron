@@ -5354,3 +5354,38 @@ async fn a_newer_message_naming_another_seat_does_not_steal_this_seats_task() {
     let claude = targets.iter().find(|(q, _)| q.as_str() == "claude").expect("claude pending");
     assert_eq!(claude.1.task, "@claude do Y", "claude was handed agy's instruction");
 }
+
+/// The silent drop the first cut of Bug C would have shipped. `"@claude fix the router"`
+/// then `"thanks"` is the commonest two-message shape there is, and substituting the
+/// newer body hands claude `"thanks"` with the instruction gone — not stale, destroyed.
+/// A correction (`"actually do the README first"`) and an aside (`"thanks"`) are
+/// indistinguishable, so the newer body is APPENDED and both readings stay true.
+#[tokio::test]
+async fn a_mention_less_follow_up_is_appended_and_never_erases_the_instruction() {
+    use crate::mock::MockQuark;
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+    for body in ["@claude fix the router", "thanks"] {
+        append_event(&path, &Event::new(Actor::Human, None, Kind::Message { body: body.into() }))
+            .unwrap();
+    }
+
+    let engine = Engine::new(
+        path.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("claude"), Flavor::Worker, "ok")),
+            Box::new(MockQuark::repeating(QuarkId::new("agy"), Flavor::Orchestrator, "ok")),
+        ],
+        10,
+    );
+
+    let events = read_events(&path).unwrap();
+    let targets = engine.unaddressed_message_targets(&events);
+    let claude = targets.iter().find(|(q, _)| q.as_str() == "claude").expect("claude pending");
+    assert!(
+        claude.1.task.contains("fix the router"),
+        "the instruction was destroyed by the follow-up: {:?}",
+        claude.1.task
+    );
+    assert!(claude.1.task.contains("thanks"), "the follow-up was dropped: {:?}", claude.1.task);
+}
