@@ -10,8 +10,10 @@ use super::*;
 /// Human-readable token count: `50.6k`, `1.2m`, `2m`. One decimal, with a trailing
 /// `.0` trimmed so a round value reads `2m`, not `2.0m`. This is the single formatter
 /// for every token figure in the UI (roster + stats) — do not re-inline the k/m logic.
-pub(super) fn format_num(n: u32) -> String {
-    if n >= 1_000_000 {
+pub(super) fn format_num(n: u64) -> String {
+    if n >= 1_000_000_000 {
+        trim_unit(n as f64 / 1_000_000_000.0, 'b')
+    } else if n >= 1_000_000 {
         trim_unit(n as f64 / 1_000_000.0, 'm')
     } else if n >= 1_000 {
         trim_unit(n as f64 / 1_000.0, 'k')
@@ -337,7 +339,7 @@ pub(super) fn roster_row(
     };
     let transport_label = r.transport.code();
 
-    let tokens_str = format_num(r.tokens);
+    let tokens_str = format_num(r.tokens as u64);
 
     let flavor_str = match &r.flavor {
         Some(hadron_lattice::Flavor::Orchestrator) => "Orchestrator",
@@ -946,6 +948,7 @@ mod tests {
         assert_eq!(format_num(1_200_000), "1.2m");
         assert_eq!(format_num(2_000_000), "2m"); // not "2.0m"
         assert_eq!(format_num(503_937), "503.9k");
+        assert_eq!(format_num(5_400_000_000u64), "5.4b");
     }
 
     /// `mode_tag` used to early-return an empty element for any quark running the

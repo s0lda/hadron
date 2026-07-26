@@ -309,8 +309,8 @@ impl super::Chamber {
                     format!(
                         "{:.1}% ({} / {})",
                         ctx.used_percentage,
-                        format_num(ctx.used_tokens),
-                        format_num(ctx.context_window_size)
+                        format_num(ctx.used_tokens as u64),
+                        format_num(ctx.context_window_size as u64)
                     ),
                 ));
                 // Context occupancy is NOT a fixed proportion — it rises and falls as the
@@ -685,8 +685,8 @@ impl super::Chamber {
                             div().text_xs().text_color(theme::text_muted()).child(format!(
                                 "Context {:.0}% · {} / {}",
                                 ctx.used_percentage,
-                                format_num(ctx.used_tokens),
-                                format_num(ctx.context_window_size),
+                                format_num(ctx.used_tokens as u64),
+                                format_num(ctx.context_window_size as u64),
                             )),
                         )
                         .child(progress_meter(frac, q_color));

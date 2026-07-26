@@ -131,15 +131,15 @@ impl super::ChamberView {
             s.last_active = Some(m.ts);
 
             if m.is_chat() {
-                s.turns += 1;
-                out.total_turns += 1;
+                s.turns = s.turns.saturating_add(1);
+                out.total_turns = out.total_turns.saturating_add(1);
             }
 
             let fresh = message_fresh(m, row.transport);
 
             if let Some(f) = fresh {
-                s.fresh += f;
-                out.total_fresh += f;
+                s.fresh = s.fresh.saturating_add(f as u64);
+                out.total_fresh = out.total_fresh.saturating_add(f as u64);
 
                 let cost_usd = m.usage.as_ref().and_then(|u| u.cost_usd());
                 if let Some(c) = cost_usd {
@@ -162,8 +162,8 @@ impl super::ChamberView {
             let Some(u) = &m.usage else { continue };
 
             if let Some(c) = u.spend.cached() {
-                s.cached += c;
-                out.total_cached += c;
+                s.cached = s.cached.saturating_add(c as u64);
+                out.total_cached = out.total_cached.saturating_add(c as u64);
             }
             if let Some(ctx) = &u.context {
                 s.context = Some(ctx.clone());

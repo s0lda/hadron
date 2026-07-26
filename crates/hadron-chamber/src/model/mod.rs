@@ -292,16 +292,16 @@ pub fn build_process_rows(gluon_running: bool, roster: &[RosterRow]) -> Vec<Proc
 /// levels, and adding them up would mean nothing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TurnSpend {
-    pub turn: u32,
+    pub turn: u64,
     pub fresh: u32,
     pub cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct QuarkStats {
-    pub turns: u32,
-    pub fresh: u32,
-    pub cached: u32,
+    pub turns: u64,
+    pub fresh: u64,
+    pub cached: u64,
     pub cost_usd: Option<f64>,
     pub context: Option<hadron_lattice::ContextUsage>,
     pub quota: Vec<hadron_lattice::QuotaBucket>,
@@ -369,9 +369,9 @@ impl StatsWindow {
 pub struct SessionStats {
     /// In roster order, so the tab and the roster agree.
     pub per_quark: Vec<(String, QuarkStats)>,
-    pub total_turns: u32,
-    pub total_fresh: u32,
-    pub total_cached: u32,
+    pub total_turns: u64,
+    pub total_fresh: u64,
+    pub total_cached: u64,
     pub total_cost_usd: Option<f64>,
     pub spend_history: Vec<TurnSpend>,
 }
