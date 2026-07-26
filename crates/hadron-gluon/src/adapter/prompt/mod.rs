@@ -504,11 +504,12 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
 /// stays a single `String`-returning function any adapter can call unchanged; a
 /// caller that wants the breakdown calls this too.
 ///
-/// There is no separate `skill` field: a matched skill's body is folded into
-/// `projection.invariants` before the projection is built (`engine/routing.rs`'s
-/// `invariants_text.push_str(&skills::render(...))`), so counting it again here
-/// would double-count bytes `build` only writes once — checked against the real
-/// `Projection` fields rather than the field names the plan guessed.
+/// A matched skill's body used to be folded into `projection.invariants`, so there
+/// was no separate field to count. `69f3d9e` moved it onto `projection.active_skill`
+/// (out of the cache-stable prefix, rendered just before the task) and it now has its
+/// own line here — the `<=` in `measure_and_build_agree_on_section_boundaries` guards
+/// double-counting but is blind to a section dropped entirely, which is how ~3 KB
+/// went unmeasured in the one instrument used to size prompt cost.
 pub fn measure(projection: &Projection, _self_id: &QuarkId) -> PromptBreakdown {
     // `_self_id` mirrors `build`'s signature (same caller shape) — no measured
     // section's size actually depends on which quark is asking.
@@ -517,6 +518,7 @@ pub fn measure(projection: &Projection, _self_id: &QuarkId) -> PromptBreakdown {
         invariants: projection.invariants.trim().len(),
         nucleus_digest: projection.nucleus_digest.trim().len(),
         nucleus_index: projection.nucleus_index.trim().len(),
+        active_skill: projection.active_skill.as_deref().map_or(0, |s| s.trim().len()),
         task: projection.task.trim().len(),
         field_window: field_window_cost(&projection.field_window, &projection.roster),
     }

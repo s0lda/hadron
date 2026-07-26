@@ -20,6 +20,10 @@ pub struct PromptBreakdown {
     pub invariants: usize,
     pub nucleus_digest: usize,
     pub nucleus_index: usize,
+    /// The matched skill's rendered body plus its handoff block. Defaulted, so a
+    /// prompt-cost file written before this section existed still deserialises.
+    #[serde(default)]
+    pub active_skill: usize,
     pub task: usize,
     pub field_window: usize,
 }
@@ -81,11 +85,27 @@ mod tests {
             invariants: 200,
             nucleus_digest: 0,
             nucleus_index: 50,
+            active_skill: 3_145,
             task: 20,
             field_window: 300,
         };
         save(&dir, &id, &breakdown).unwrap();
         assert_eq!(load(&dir, &id), Some(breakdown));
+    }
+
+    /// A file written before `active_skill` existed must still load — the field is
+    /// `#[serde(default)]` for exactly this, and every quark already has one on disk.
+    #[test]
+    fn a_breakdown_written_before_active_skill_still_loads() {
+        let dir = tmp();
+        let id = QuarkId::new("acp-claude");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            file_for(&dir, &id),
+            r#"{"standard_model":393,"invariants":26563,"nucleus_digest":1653,"nucleus_index":24286,"task":1171,"field_window":44185}"#,
+        )
+        .unwrap();
+        assert_eq!(load(&dir, &id).map(|b| b.active_skill), Some(0));
     }
 
     /// Absence is "never run a turn here", not an error.
