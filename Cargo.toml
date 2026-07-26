@@ -39,7 +39,12 @@ opt-level = 1
 # text. This fork branches from the same commit we already pinned and adds
 # `TextMark::color`, parsed from `<span style="color: …">`. It is a small, upstreamable
 # patch, not a divergence — drop this section the moment longbridge takes it.
+#
+# Pinned to a `rev`, never a branch: Cargo.lock pins a rev regardless, so a branch
+# spec only hides which commit is actually in use. The URL must stay fetchable by a
+# stranger — a `file:///` path here made a fresh clone unresolvable on every machine
+# but the author's, which broke `git clone`, `cargo install --git` and CI at once.
 [patch."https://github.com/longbridge/gpui-component"]
-gpui-component = { git = "file:///home/Jake/dev/hadron/crates/gpui-component", branch = "main" }
-gpui-component-macros = { git = "file:///home/Jake/dev/hadron/crates/gpui-component", branch = "main" }
-gpui-component-assets = { git = "file:///home/Jake/dev/hadron/crates/gpui-component", branch = "main" }
+gpui-component = { git = "https://github.com/s0lda/gpui-component", rev = "b7bc424dfe80a3de7b8d5a8132fef7c79b447057" }
+gpui-component-macros = { git = "https://github.com/s0lda/gpui-component", rev = "b7bc424dfe80a3de7b8d5a8132fef7c79b447057" }
+gpui-component-assets = { git = "https://github.com/s0lda/gpui-component", rev = "b7bc424dfe80a3de7b8d5a8132fef7c79b447057" }
