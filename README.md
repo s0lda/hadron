@@ -159,8 +159,14 @@ Hadron uses particle physics as a cohesive mental model for multi-agent operatin
 ### Install
 
 ```bash
-cargo install --git https://github.com/s0lda/hadron.git hadron
+cargo install --locked --git https://github.com/s0lda/hadron.git hadron
 ```
+
+`--locked` is not optional. `cargo install` ignores `Cargo.lock` by default and
+re-resolves from the manifests, and this workspace depends on `zed-industries/zed`
+by **branch** — measured 2026-07-26, an unlocked resolve moves every `gpui*` crate
+onto a revision nobody here has ever compiled. The committed lockfile is the graph
+the test suite is green against.
 
 That places **three** binaries in `~/.cargo/bin`: `hadron` (the Chamber), `hadron-gluon`
 (the headless daemon) and `hadron-forge-mcp` (the stdio MCP server). They must stay in
