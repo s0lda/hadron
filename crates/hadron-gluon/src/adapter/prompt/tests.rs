@@ -661,8 +661,34 @@ fn measure_and_build_agree_on_section_boundaries() {
     let id = QuarkId::new("agy");
     let built = build(&proj, &id);
     let b = measure(&proj, &id);
-    let total = b.standard_model + b.invariants + b.nucleus_digest + b.nucleus_index + b.task + b.field_window;
+    let total = b.standard_model
+        + b.invariants
+        + b.nucleus_digest
+        + b.nucleus_index
+        + b.active_skill
+        + b.task
+        + b.field_window;
     assert!(total <= built.len());
+}
+
+/// The test above is a `<=`, so a section `measure` forgets entirely passes it —
+/// which is what happened when `69f3d9e` moved the skill body off `invariants`:
+/// ~3 KB stopped being counted by the one instrument used to size prompt cost.
+#[test]
+fn measure_counts_the_active_skill_body() {
+    let mut proj = projection("do the thing");
+    proj.active_skill = Some("# systematic-debugging\nphase 1: read the error".to_string());
+    let id = QuarkId::new("agy");
+    let b = measure(&proj, &id);
+    assert!(b.active_skill > 0, "a matched skill's body must be measured, not dropped");
+    let total = b.standard_model
+        + b.invariants
+        + b.nucleus_digest
+        + b.nucleus_index
+        + b.active_skill
+        + b.task
+        + b.field_window;
+    assert!(total <= build(&proj, &id).len(), "and still not double-counted");
 }
 
 /// The safety net under the budget cliff was silently disabled by the index migration.
