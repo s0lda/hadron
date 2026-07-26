@@ -5,8 +5,11 @@
 //! is not cosmetic: it is what lets separate families be written, reviewed and
 //! landed independently without three branches all editing one file.
 
+pub mod cargo_tree;
+pub mod diagnostics;
 pub mod edit;
 pub mod exec;
+pub mod git;
 pub mod inspect;
 pub mod nucleus;
 
@@ -42,7 +45,10 @@ impl ForgeMcpServer {
             tool_router: Self::edit_router()
                 + Self::exec_router()
                 + Self::inspect_router()
-                + Self::nucleus_router(),
+                + Self::nucleus_router()
+                + Self::git_router()
+                + Self::diagnostics_router()
+                + Self::cargo_tree_router(),
             root: Root::new(root_path),
             nucleus_root: Root::new(nucleus_root),
         }
