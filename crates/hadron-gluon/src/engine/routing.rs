@@ -463,6 +463,7 @@ impl super::Engine {
         invariants_text.push_str(&skills::index(&skill_corpus));
 
         let mut role_body = None;
+        let mut active_skill = None;
         if let Some(m) = skills::select(&task_desc, &skill_corpus) {
             if let Some(role) = skills::preferred_role(&m.id) {
                 if let Some(card) = self.roster.iter().find(|c| &c.id == target) {
@@ -498,7 +499,7 @@ impl super::Engine {
             // cache-stable prefix every turn (`skills::corpus()`, ~70-80k tokens); that
             // is gone — composition still works off the index, and the one skill this
             // turn actually needs arrives in full, same as it always has for CLI.
-            invariants_text.push_str(&skills::render(&m, target, &skills::Handoff { peers, plan_author }, true));
+            active_skill = Some(skills::render(&m, target, &skills::Handoff { peers, plan_author }, true));
         }
 
         // Resolve the quark's effective mode from the field before the turn:
@@ -561,6 +562,7 @@ impl super::Engine {
             cwd: cwd.unwrap_or(workspace_root),
             mode: turn_mode,
             role_body,
+            active_skill,
             named_specifically,
             has_forge_tools,
         }

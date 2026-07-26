@@ -230,6 +230,14 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         ));
     }
 
+    // 2c. Active skill procedure and handoff context for this turn.
+    if let Some(ref skill) = projection.active_skill {
+        if !skill.trim().is_empty() {
+            p.push_str(skill.trim());
+            p.push_str("\n\n");
+        }
+    }
+
     // 3. The task.
     p.push_str("# Your task\n");
     p.push_str(projection.task.trim());

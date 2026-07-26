@@ -2232,9 +2232,9 @@ async fn engine_loads_repo_skills() {
         }
         async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
             assert!(
-                turn.invariants.contains("THE DISTINCTIVE CUSTOM-SKILL BODY LINE."),
-                "the repo custom skill's body must be injected:\n{}",
-                turn.invariants
+                turn.active_skill.as_deref().unwrap_or_default().contains("THE DISTINCTIVE CUSTOM-SKILL BODY LINE."),
+                "the repo custom skill's body must be injected:\n{:?}",
+                turn.active_skill
             );
             assert!(
                 turn.invariants.contains("custom-thing"),
@@ -2294,9 +2294,9 @@ async fn engine_uses_injected_global_skills_dir() {
         }
         async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
             assert!(
-                turn.invariants.contains("THE DISTINCTIVE GLOBAL-SKILL BODY LINE."),
-                "the injected global skill's body must be injected:\n{}",
-                turn.invariants
+                turn.active_skill.as_deref().unwrap_or_default().contains("THE DISTINCTIVE GLOBAL-SKILL BODY LINE."),
+                "the injected global skill's body must be injected:\n{:?}",
+                turn.active_skill
             );
             assert!(
                 turn.invariants.contains("global-thing"),
@@ -4037,9 +4037,9 @@ fn resident_quark_gets_index_plus_active_body_not_the_whole_corpus() {
     // (2) The MATCHED skill's body — "execute the plan at docs/plans/..." selects
     // executing-plans (the bare `docs/plans/` path is itself a trigger).
     assert!(
-        proj.invariants.contains("Load plan, review critically, execute all tasks, report when complete."),
-        "the active skill's body must be injected in full:\n{}",
-        proj.invariants
+        proj.active_skill.as_deref().unwrap_or_default().contains("Load plan, review critically, execute all tasks, report when complete."),
+        "the active skill's body must be injected in full:\n{:?}",
+        proj.active_skill
     );
 
     // (3) NOT a body-only line from a DIFFERENT, non-matched skill — this line
@@ -4070,7 +4070,7 @@ fn one_shot_quark_still_gets_index_plus_active_body_only() {
     let proj = engine.projection_for(&events, &QuarkId::new("worker"), driver.as_ref(), String::new(), None);
 
     assert!(proj.invariants.contains("**executing-plans** — Use when you have a written implementation plan"));
-    assert!(proj.invariants.contains("Load plan, review critically, execute all tasks, report when complete."));
+    assert!(proj.active_skill.as_deref().unwrap_or_default().contains("Load plan, review critically, execute all tasks, report when complete."));
     assert!(!proj.invariants.contains(
         "Help turn ideas into fully formed designs and specs through natural collaborative dialogue."
     ));

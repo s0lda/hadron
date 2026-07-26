@@ -37,6 +37,7 @@ fn projection(task: &str) -> Projection {
         cwd: std::path::PathBuf::from("/repo/.hadron/trees/agy"),
         mode: hadron_lattice::Mode::default(),
         role_body: None,
+        active_skill: None,
         named_specifically: true,
         has_forge_tools: false,
     }
@@ -714,4 +715,18 @@ fn a_cli_transport_projection_does_not_contain_forge_tools_section() {
     let p = build(&proj, &QuarkId::new("agy"));
     assert!(!p.contains("# Available Hadron Forge Tools"));
     assert!(!p.contains("hadron_forge_"));
+}
+
+#[test]
+fn prompt_renders_active_skill_immediately_before_your_task() {
+    let mut proj = projection("Build auth feature");
+    proj.active_skill = Some("\n# Skill for this turn: executing-plans\n\nLoad plan and execute.".to_string());
+    let p = build(&proj, &QuarkId::new("agy"));
+
+    let skill_pos = p.find("# Skill for this turn: executing-plans").expect("active skill header present");
+    let task_pos = p.find("# Your task").expect("task header present");
+    let inv_pos = p.find("# Working protocol (Invariants)").expect("invariants header present");
+
+    assert!(inv_pos < skill_pos, "invariants precede active skill");
+    assert!(skill_pos < task_pos, "active skill precedes task");
 }
