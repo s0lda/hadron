@@ -153,6 +153,16 @@ pub fn accent_secondary() -> Rgba {
 pub fn danger() -> Rgba {
     rgb(0xef4444) // red — close-button hover
 }
+/// Markdown link colour in chat — light blue (sky), distinct from the pink accent.
+pub fn link() -> Rgba {
+    rgb(0x7dd3fc) // sky-300
+}
+pub fn link_hover() -> Rgba {
+    rgb(0xbae6fd) // sky-200 — brighter on hover
+}
+pub fn link_active() -> Rgba {
+    rgb(0x38bdf8) // sky-400 — darker while pressed
+}
 
 /// Roster chip color for a quark's lifecycle state (the status ramp).
 pub fn quark_state(state: QuarkState) -> Rgba {

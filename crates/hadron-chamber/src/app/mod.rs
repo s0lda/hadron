@@ -942,6 +942,11 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             // stays legible (was red-on-red).
             t.danger = rgb(0xef4444).into();
             t.danger_foreground = rgb(0xf5f5f6).into();
+            // Chat markdown links — light blue instead of the fork's stock
+            // near-white, so a link reads as a link against chat prose.
+            t.link = theme::link().into();
+            t.link_hover = theme::link_hover().into();
+            t.link_active = theme::link_active().into();
             // Subtle dark window frame (Zed-style CSD border), matching the UI.
             t.window_border = rgb(0x2a2b2c).into();
             // Root paints this behind everything; transparent so our rounded
