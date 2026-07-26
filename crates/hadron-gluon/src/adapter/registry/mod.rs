@@ -222,12 +222,12 @@ impl AcpTarget {
     ///
     /// Errs rather than passing an unresolved `{repo}` through to `spawn`: that would be
     /// a worse version of the same ENOENT, naming a path no human ever wrote.
-    pub fn resolved(&self) -> anyhow::Result<ResolvedAcpTarget> {
+    /// [`Self::resolved`], with the search origin injected so a test can exercise the
+    /// installed case (no checkout above the binary) without installing anything.
+    pub fn resolved_from(&self, near: &std::path::Path) -> anyhow::Result<ResolvedAcpTarget> {
         if !self.needs_repo_root() && !self.has_repo_relative_part() {
             return Ok(ResolvedAcpTarget(self.clone()));
         }
-        let exe = std::env::current_exe()?;
-        let near = exe.parent().unwrap_or(&exe);
         let root = match crate::snapshot::main_repo_root(near) {
             Ok(root) => Some(root),
             // Only a `{repo}` token makes the root mandatory. A relative part may be an
@@ -236,8 +236,9 @@ impl AcpTarget {
             // that really is a path.
             Err(e) if self.needs_repo_root() => {
                 return Err(anyhow::anyhow!(
-                    "boot command {:?} names {REPO_ROOT_TOKEN}, but the main checkout root could \
-                     not be found from {}: {e}",
+                    "boot command {:?} names {REPO_ROOT_TOKEN}, so it only works from a source \
+                     checkout: the files it boots live in the repository and are not installed \
+                     by `cargo install`. Searched from {}: {e}",
                     self.command_line(),
                     near.display()
                 ))
@@ -269,6 +270,13 @@ impl AcpTarget {
         }
         Ok(ResolvedAcpTarget(anchored))
     }
+
+    pub fn resolved(&self) -> anyhow::Result<ResolvedAcpTarget> {
+        let exe = std::env::current_exe()?;
+        let near = exe.parent().unwrap_or(&exe);
+        self.resolved_from(near)
+    }
+
 
     /// The shell-ish command line, for `AcpAgent::from_str` and for diagnostics.
     pub fn command_line(&self) -> String {

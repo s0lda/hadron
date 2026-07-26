@@ -689,3 +689,28 @@ fn the_agy_preset_resolves_to_files_that_exist() {
         _ => eprintln!("skipped: no agy venv at {venv:?} — run the bootstrap to cover this"),
     }
 }
+
+/// The Antigravity bridge preset boots `{repo}/scripts/venv/bin/python` — a path that
+/// exists only in a checkout, and `scripts/venv` is gitignored so it is not even in a
+/// clone. From an installed binary (`~/.cargo/bin`) there is no checkout root at all
+/// and `resolved()` hard-Errs. Erring is right for a seat that really needs a repo
+/// file; offering the preset on a build where it CANNOT work is not. The error must
+/// at minimum say so in words the human can act on.
+#[test]
+fn a_repo_anchored_preset_explains_itself_when_there_is_no_checkout() {
+    let target = AcpTarget {
+        program: format!("{REPO_ROOT_TOKEN}/scripts/venv/bin/python"),
+        args: vec![format!("{REPO_ROOT_TOKEN}/scripts/agy_acp.py")],
+        env: Default::default(),
+    };
+    // Simulate the installed case by resolving from a directory that is not a checkout.
+    let err = target
+        .resolved_from(std::path::Path::new("/"))
+        .expect_err("no checkout root exists above /");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("only works from a source checkout"),
+        "the error must name the cause a human can act on, got: {msg}"
+    );
+}
+
