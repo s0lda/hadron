@@ -331,6 +331,7 @@ mod tests {
             mode,
             role_body: None,
             named_specifically: true,
+            has_forge_tools: false,
         }
     }
 

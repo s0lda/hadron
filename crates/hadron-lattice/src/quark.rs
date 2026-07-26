@@ -67,6 +67,9 @@ pub struct QuarkCard {
     /// `skills::select`'s chosen name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deny_skills: Vec<String>,
+    /// Whether this seat has Hadron Forge MCP tools attached (e.g. resident ACP sessions).
+    #[serde(default, skip_serializing_if = "crate::team::is_false")]
+    pub has_forge_tools: bool,
 }
 
 #[cfg(test)]
@@ -88,6 +91,7 @@ mod tests {
             commands: SeatCommands::default(),
             energy_limit: None,
             deny_skills: vec![],
+            has_forge_tools: false,
         };
         let json = serde_json::to_string(&card).unwrap();
         assert_eq!(json, r#"{"id":"claude","display_name":"Claude","flavor":"orchestrator","energy":"available","provider":"claude","model":"opus-4.8"}"#);
@@ -118,6 +122,7 @@ mod tests {
             commands: SeatCommands::default(),
             energy_limit: None,
             deny_skills: vec![],
+            has_forge_tools: false,
         };
         // Default (empty roles, not exclusive) must not appear in the JSON — back-compat
         // with a card built before role-routing existed.
@@ -155,6 +160,7 @@ mod tests {
             commands: SeatCommands::default(),
             energy_limit: None,
             deny_skills: vec!["writing-plans".into()],
+            has_forge_tools: false,
         };
         let json = serde_json::to_string(&card).unwrap();
         assert!(json.contains("\"deny_skills\":[\"writing-plans\"]"), "{json}");

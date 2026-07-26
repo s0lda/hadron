@@ -19,6 +19,7 @@ fn projection(task: &str) -> Projection {
             commands: Default::default(),
             energy_limit: None,
             deny_skills: vec![],
+        has_forge_tools: false,
         }],
         field_window: vec![Event::new(
             Actor::Human,
@@ -37,6 +38,7 @@ fn projection(task: &str) -> Projection {
         mode: hadron_lattice::Mode::default(),
         role_body: None,
         named_specifically: true,
+        has_forge_tools: false,
     }
 }
 
@@ -70,6 +72,7 @@ fn peers_are_named_by_display_name_not_raw_id() {
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
+        has_forge_tools: false,
     });
     proj.field_window.push(Event::new(
         Actor::Quark(QuarkId::new("acp-claude")),
@@ -180,6 +183,7 @@ fn worker_is_told_to_escalate_to_the_orchestrator_role() {
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
+        has_forge_tools: false,
     });
 
     let worker_prompt = build(&proj, &QuarkId::new("agy"));
@@ -210,6 +214,7 @@ fn a_finished_worker_reports_up_and_is_never_told_to_drop_the_mention() {
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
+        has_forge_tools: false,
     });
 
     let worker = build(&proj, &QuarkId::new("agy"));
@@ -256,6 +261,7 @@ fn only_the_orchestrator_is_told_to_stay_available() {
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
+        has_forge_tools: false,
     });
 
     let orch_prompt = build(&proj, &QuarkId::new("opus"));
@@ -286,6 +292,7 @@ fn orchestrator_is_told_to_delegate_before_implementing() {
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
+        has_forge_tools: false,
     });
 
     let prompt = build(&proj, &QuarkId::new("opus"));
@@ -316,6 +323,7 @@ fn a_broadcast_reached_worker_is_told_to_think_not_do() {
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
+        has_forge_tools: false,
     });
 
     let worker_prompt = build(&proj, &QuarkId::new("agy"));
@@ -350,6 +358,7 @@ fn a_specifically_named_worker_gets_no_broadcast_clause() {
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
+        has_forge_tools: false,
     });
 
     let worker_prompt = build(&proj, &QuarkId::new("agy"));
@@ -372,6 +381,7 @@ fn bypass_orchestrator_gets_autonomous_loop_directives() {
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
+        has_forge_tools: false,
     });
 
     let prompt = build(&proj, &QuarkId::new("opus"));
@@ -400,6 +410,7 @@ fn bypass_completion_gate_forbids_menus() {
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
+        has_forge_tools: false,
     });
 
     let prompt = build(&proj, &QuarkId::new("opus"));
@@ -469,6 +480,7 @@ fn the_orchestrator_must_verify_a_workers_claim_before_relaying_it() {
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
+        has_forge_tools: false,
     });
 
     let orch = build(&proj, &QuarkId::new("opus"));
@@ -679,8 +691,10 @@ fn a_pointer_line_still_matches_the_task_it_names() {
 }
 
 #[test]
-fn prompt_contains_hadron_forge_tools_section() {
-    let p = build(&projection("x"), &QuarkId::new("agy"));
+fn prompt_contains_hadron_forge_tools_section_when_enabled() {
+    let mut proj = projection("x");
+    proj.has_forge_tools = true;
+    let p = build(&proj, &QuarkId::new("agy"));
     assert!(p.contains("# Available Hadron Forge Tools"));
     assert!(p.contains("hadron_forge_read_file"));
     assert!(p.contains("hadron_forge_list_dir"));
@@ -691,4 +705,13 @@ fn prompt_contains_hadron_forge_tools_section() {
     assert!(p.contains("hadron_forge_query_nucleus"));
     assert!(p.contains("hadron_forge_read_blocks"));
     assert!(p.contains("hadron_forge_edit"));
+}
+
+#[test]
+fn a_cli_transport_projection_does_not_contain_forge_tools_section() {
+    let proj = projection("x");
+    assert!(!proj.has_forge_tools, "CLI projection defaults to has_forge_tools = false");
+    let p = build(&proj, &QuarkId::new("agy"));
+    assert!(!p.contains("# Available Hadron Forge Tools"));
+    assert!(!p.contains("hadron_forge_"));
 }

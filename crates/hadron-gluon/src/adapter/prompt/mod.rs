@@ -261,20 +261,22 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     p.push_str(mode_guidance(projection.mode));
     p.push_str("\n\n");
 
-    // 3e. Hadron Forge Tools suite guidance.
-    p.push_str(
-        "# Available Hadron Forge Tools\n\
-         The `hadron-forge-mcp` suite provides:\n\
-         - `hadron_forge_read_file`: read file contents\n\
-         - `hadron_forge_list_dir`: list directory contents\n\
-         - `hadron_forge_grep`: search codebase pattern\n\
-         - `hadron_forge_exec`: run jailed project command\n\
-         - `hadron_forge_diagnostics`: run cargo check compiler messages\n\
-         - `hadron_forge_cargo_tree`: inspect workspace dependencies & features\n\
-         - `hadron_forge_query_nucleus`: search nucleus knowledge notes\n\
-         - `hadron_forge_read_blocks`: read line-bounded file blocks\n\
-         - `hadron_forge_edit`: replace-by-hash file modification\n\n",
-    );
+    // 3e. Hadron Forge Tools suite guidance (gated on has_forge_tools).
+    if projection.has_forge_tools {
+        p.push_str(
+            "# Available Hadron Forge Tools\n\
+             The `hadron-forge-mcp` suite provides:\n\
+             - `hadron_forge_read_file`: read file contents\n\
+             - `hadron_forge_list_dir`: list directory contents\n\
+             - `hadron_forge_grep`: search codebase pattern\n\
+             - `hadron_forge_exec`: run jailed project command\n\
+             - `hadron_forge_diagnostics`: run cargo check compiler messages\n\
+             - `hadron_forge_cargo_tree`: inspect workspace dependencies & features\n\
+             - `hadron_forge_query_nucleus`: search nucleus knowledge notes\n\
+             - `hadron_forge_read_blocks`: read line-bounded file blocks\n\
+             - `hadron_forge_edit`: replace-by-hash file modification\n\n",
+        );
+    }
 
     // 3c. Where you are. The CLI already *runs* in this directory (the engine sets
     // the process cwd to the quark's own worktree), but a model that isn't told its

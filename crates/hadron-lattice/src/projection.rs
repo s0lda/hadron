@@ -107,6 +107,10 @@ pub struct Projection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role_body: Option<String>,
     /// Whether the driving task names THIS quark specifically — by `@id`,
+    /// Whether the target quark of this projection has Hadron Forge MCP tools attached.
+    #[serde(default)]
+    pub has_forge_tools: bool,
+    /// Whether the driving task names THIS quark specifically — by `@id`,
     /// display name, or role (`router::task_names_card_specifically`, which
     /// deliberately does not count a `@team` broadcast). A worker reached only
     /// by broadcast was handed the identical "go implement this" prompt as one
@@ -174,6 +178,7 @@ mod tests {
                 commands: crate::team::SeatCommands::default(),
                 energy_limit: None,
                 deny_skills: vec![],
+                has_forge_tools: false,
             }],
             field_window: vec![Event::new(
                 Actor::Human,
@@ -193,6 +198,7 @@ mod tests {
             mode: Mode::Bypass,
             role_body: None,
             named_specifically: true,
+            has_forge_tools: false,
         };
         assert_eq!(proj.cwd, std::path::Path::new("/tmp/wt"));
         assert_eq!(proj.roster.len(), 1);

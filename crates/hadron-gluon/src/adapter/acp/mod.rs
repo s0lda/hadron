@@ -233,6 +233,9 @@ impl Quark for AcpQuark {
     fn resident(&self) -> bool {
         true
     }
+    fn has_forge_tools(&self) -> bool {
+        true
+    }
 
     /// The turn ends the moment this returns, however it returns. Clearing the live
     /// feed here — rather than on the happy path inside [`AcpQuark::run_turn`] — is

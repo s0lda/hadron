@@ -7,8 +7,8 @@ fn msg(from: Actor, to: Option<&str>, body: &str) -> Event {
 
 fn roster() -> Vec<QuarkCard> {
     vec![
-        QuarkCard { id: QuarkId::new("orch"), display_name: None, flavor: Flavor::Orchestrator, energy: EnergyState::Available, provider: String::new(), model: String::new(), roles: vec![], exclusive: false, commands: Default::default(), energy_limit: None, deny_skills: vec![] },
-        QuarkCard { id: QuarkId::new("worker"), display_name: None, flavor: Flavor::Worker, energy: EnergyState::Available, provider: String::new(), model: String::new(), roles: vec![], exclusive: false, commands: Default::default(), energy_limit: None, deny_skills: vec![] },
+        QuarkCard { id: QuarkId::new("orch"), display_name: None, flavor: Flavor::Orchestrator, energy: EnergyState::Available, provider: String::new(), model: String::new(), roles: vec![], exclusive: false, commands: Default::default(), energy_limit: None, deny_skills: vec![], has_forge_tools: false },
+        QuarkCard { id: QuarkId::new("worker"), display_name: None, flavor: Flavor::Worker, energy: EnergyState::Available, provider: String::new(), model: String::new(), roles: vec![], exclusive: false, commands: Default::default(), energy_limit: None, deny_skills: vec![], has_forge_tools: false },
     ]
 }
 
@@ -26,6 +26,7 @@ fn card(id: &str, roles: &[&str]) -> QuarkCard {
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
+        has_forge_tools: false,
     }
 }
 
