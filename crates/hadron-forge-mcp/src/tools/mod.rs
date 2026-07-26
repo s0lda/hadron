@@ -6,6 +6,7 @@
 //! landed independently without three branches all editing one file.
 
 pub mod edit;
+pub mod exec;
 pub mod inspect;
 pub mod nucleus;
 
@@ -38,7 +39,10 @@ impl ForgeMcpServer {
         nucleus_root: impl Into<std::path::PathBuf>,
     ) -> Self {
         Self {
-            tool_router: Self::edit_router() + Self::inspect_router() + Self::nucleus_router(),
+            tool_router: Self::edit_router()
+                + Self::exec_router()
+                + Self::inspect_router()
+                + Self::nucleus_router(),
             root: Root::new(root_path),
             nucleus_root: Root::new(nucleus_root),
         }

@@ -252,16 +252,10 @@ pub async fn run_tests_within(
 
 /// SIGKILL the whole process group led by `pid` — the launcher *and* everything it
 /// spawned. Best-effort: a group that has already exited is not an error.
-#[cfg(unix)]
-pub(crate) fn kill_process_group(pid: u32) {
-    // Safety: `kill(2)` with a negative pid signals the process group. `pid` came
-    // from a child we spawned with `process_group(0)`, so it leads its own group and
-    // the signal cannot reach the daemon or anything else.
-    unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
-}
-
-#[cfg(not(unix))]
-pub(crate) fn kill_process_group(_pid: u32) {}
+///
+/// Re-exported, not reimplemented: `hadron-forge` runs jailed commands under the
+/// same rule, and two copies of a kill is one copy that stops matching.
+pub(crate) use hadron_forge::exec::kill_process_group;
 
 /// Land `wt.branch` on `base` in the parent repo.
 ///
