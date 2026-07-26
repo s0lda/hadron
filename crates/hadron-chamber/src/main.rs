@@ -286,6 +286,24 @@ fn run_headless(path: Option<String>) {
 /// that is a directory, resolves to `.hadron/field.jsonl` (or `field.jsonl`) inside that directory.
 /// Otherwise defaults to `.hadron/field.jsonl` in the current directory.
 fn resolve_field_path(args: &[String]) -> Option<String> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    resolve_field_path_in(&cwd, args)
+}
+
+/// [`resolve_field_path`] with the current directory injected.
+///
+/// The bare-invocation arm **creates** `<cwd>/.hadron/field.jsonl` when it is absent,
+/// and that is the product, not an oversight: `cd /some/dir && hadron` makes
+/// `/some/dir` the workspace. Two directories are two independent swarms, and nothing
+/// resolves back to wherever the binary was installed or built. The accepted
+/// consequence is that a mistyped `cd` seeds `.hadron/` where you land — the directory
+/// you are standing in is the answer, always. **Do not turn this into a refusal.**
+///
+/// The cwd is a parameter because the function used to read it implicitly through a
+/// relative `Path::new(".hadron")`, which no test can exercise without `chdir` — and
+/// `chdir` in a test race-corrupts every other test in the binary. So the contract
+/// above was untested, one refactor away from silently becoming that refusal.
+fn resolve_field_path_in(cwd: &std::path::Path, args: &[String]) -> Option<String> {
     let current_exe_name = std::env::current_exe()
         .ok()
         .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()));
@@ -324,7 +342,8 @@ fn resolve_field_path(args: &[String]) -> Option<String> {
             }
         }
         None => {
-            let hadron_dir = std::path::Path::new(".hadron");
+            let hadron_dir = cwd.join(".hadron");
+            let hadron_dir = hadron_dir.as_path();
             if !hadron_dir.exists() {
                 let _ = std::fs::create_dir_all(hadron_dir);
             }
@@ -341,32 +360,108 @@ fn resolve_field_path(args: &[String]) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// The cwd's own field, as a string — what the bare arm must resolve to.
+    fn field_in(dir: &std::path::Path) -> String {
+        dir.join(".hadron")
+            .join("field.jsonl")
+            .to_string_lossy()
+            .to_string()
+    }
+
     #[test]
     fn test_resolve_field_path_ignores_binary_names() {
+        let tmp = tempfile::tempdir().unwrap();
         let args = vec![
-            "target/debug/hadron-chamber".to_string(),
+            "target/debug/hadron".to_string(),
             "hadron-chamber".to_string(),
         ];
-        let path = resolve_field_path(&args).unwrap();
-        assert_eq!(path, ".hadron/field.jsonl");
+        let path = resolve_field_path_in(tmp.path(), &args).unwrap();
+        assert_eq!(path, field_in(tmp.path()));
 
-        let args_gluon = vec![
-            "target/debug/hadron-chamber".to_string(),
-            "hadron-gluon".to_string(),
-        ];
-        let path_gluon = resolve_field_path(&args_gluon).unwrap();
-        assert_eq!(path_gluon, ".hadron/field.jsonl");
+        let args_gluon = vec!["target/debug/hadron".to_string(), "hadron-gluon".to_string()];
+        let path_gluon = resolve_field_path_in(tmp.path(), &args_gluon).unwrap();
+        assert_eq!(path_gluon, field_in(tmp.path()));
     }
 
     #[test]
     fn test_resolve_field_path_ignores_flags() {
+        let tmp = tempfile::tempdir().unwrap();
         let args = vec![
-            "target/debug/hadron-chamber".to_string(),
+            "target/debug/hadron".to_string(),
             "--no-daemon".to_string(),
             "hadron-chamber".to_string(),
         ];
-        let path = resolve_field_path(&args).unwrap();
-        assert_eq!(path, ".hadron/field.jsonl");
+        let path = resolve_field_path_in(tmp.path(), &args).unwrap();
+        assert_eq!(path, field_in(tmp.path()));
+    }
+
+    /// The product contract: `cd /some/dir && hadron` makes `/some/dir` the workspace,
+    /// creating `.hadron/field.jsonl` there. A directory with no workspace is not an
+    /// error — it is a new workspace. This test exists because an earlier draft of the
+    /// shipping plan proposed making a bare run REFUSE here; the cwd is the answer,
+    /// always, and that must not be refactored away by accident.
+    #[test]
+    fn a_bare_invocation_roots_the_workspace_at_the_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let args = vec!["hadron".to_string()];
+        assert_eq!(
+            resolve_field_path_in(tmp.path(), &args),
+            Some(field_in(tmp.path()))
+        );
+        assert!(
+            tmp.path().join(".hadron").join("field.jsonl").exists(),
+            "a bare run creates the field it resolves to"
+        );
+    }
+
+    /// Two different directories are two different swarms. Nothing is shared between
+    /// them, and neither resolves back to the directory `hadron` was installed from.
+    #[test]
+    fn two_directories_are_two_workspaces() {
+        let tmp = tempfile::tempdir().unwrap();
+        let one = tmp.path().join("project_1");
+        let two = tmp.path().join("project_2");
+        std::fs::create_dir_all(&one).unwrap();
+        std::fs::create_dir_all(&two).unwrap();
+
+        let bare = vec!["hadron".to_string()];
+        assert_eq!(resolve_field_path_in(&one, &bare), Some(field_in(&one)));
+        assert_eq!(resolve_field_path_in(&two, &bare), Some(field_in(&two)));
+        assert_ne!(
+            resolve_field_path_in(&one, &bare),
+            resolve_field_path_in(&two, &bare)
+        );
+    }
+
+    /// `cargo install` places one PACKAGE's bins in one directory, and this package is
+    /// the only one in the workspace that has any — because the chamber resolves
+    /// `hadron-gluon` as a sibling of its own `current_exe` (`main.rs:211`) and the
+    /// daemon resolves `hadron-forge-mcp` as a sibling of ITS own (`session.rs:494`).
+    /// Split them across packages and two of the three fall back to a bare PATH name,
+    /// silently miss, and nothing ever names a path. The manifest is the source of
+    /// truth for what an install produces, and it is readable without installing.
+    #[test]
+    fn the_package_carries_every_binary_the_sibling_chain_needs() {
+        let manifest =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+                .expect("own manifest is readable");
+        let declared: Vec<&str> = manifest
+            .split("[[bin]]")
+            .skip(1)
+            .filter_map(|section| {
+                section
+                    .lines()
+                    .find_map(|l| l.trim().strip_prefix("name = "))
+                    .map(|n| n.trim().trim_matches('"'))
+            })
+            .collect();
+        for expected in ["hadron", "hadron-gluon", "hadron-forge-mcp"] {
+            assert!(
+                declared.contains(&expected),
+                "this package must declare a [[bin]] named {expected}; without it \
+                 `cargo install` leaves the sibling chain broken. Declared: {declared:?}"
+            );
+        }
     }
 
     #[test]

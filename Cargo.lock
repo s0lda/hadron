@@ -2883,7 +2883,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hadron-chamber"
+name = "hadron"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
@@ -2895,6 +2895,7 @@ dependencies = [
  "gpui-component",
  "gpui-component-assets",
  "gpui_platform",
+ "hadron-forge-mcp",
  "hadron-gatekeeper",
  "hadron-gluon",
  "hadron-lattice",
@@ -2906,6 +2907,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

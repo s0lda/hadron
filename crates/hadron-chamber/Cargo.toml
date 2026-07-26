@@ -1,18 +1,53 @@
+# This is the ONE installable package: `cargo install --git <url> hadron`.
+#
+# `cargo install --git <url> <pkg>` resolves <pkg> against this repository's own
+# workspace members, never against crates.io — so the name `hadron` being taken on
+# the registry (PsiACE's Spin runtime, 0.0.0, measured 2026-07-26) does not block
+# the install path. It does mean this package can never be published, which costs
+# nothing: it depends on `gpui`/`gpui_platform` by git URL and crates.io refuses git
+# dependencies outright. The five library crates keep their own free names.
+#
+# The directory stays `crates/hadron-chamber/` — a package name and its directory
+# name are independent, and renaming the directory would rewrite every path in the
+# docs and the nucleus for no gain.
 [package]
-name = "hadron-chamber"
+name = "hadron"
 description = "A desktop chamber for orchestrating a swarm of AI coding agents across isolated git worktrees"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-# Flip to publish. Blocked today regardless: the workspace patches
-# gpui-component from a `file:///` path, which crates.io rejects.
+# Never publishable: git deps on gpui/gpui_platform, which crates.io refuses.
 publish = false
+
+# All three binaries ship from this one package, and that is load-bearing rather
+# than tidy: the chamber resolves `hadron-gluon` as a sibling of its own
+# `current_exe` (`src/main.rs:211`) and the daemon resolves `hadron-forge-mcp` as a
+# sibling of ITS own (`hadron-gluon/src/adapter/acp/session.rs:494`). Installing one
+# package's bins and letting the other two fall back to a bare PATH name is a silent
+# miss — the daemon never starts and no error names a path. One package makes the
+# sibling chain a structural guarantee instead of an install instruction to get wrong.
+[[bin]]
+name = "hadron"
+path = "src/main.rs"
+
+[[bin]]
+name = "hadron-gluon"
+path = "src/bin/hadron-gluon.rs"
+
+[[bin]]
+name = "hadron-forge-mcp"
+path = "src/bin/hadron-forge-mcp.rs"
 
 [dependencies]
 hadron-lattice = { path = "../hadron-lattice" }
-# The provider list the wizard renders is a view of the daemon's ACP catalogue.
+# The provider list the wizard renders is a view of the daemon's ACP catalogue —
+# and since `cli::run`, the daemon's whole entrypoint as well.
 hadron-gluon = { path = "../hadron-gluon" }
+# Carried only so this package can ship the `hadron-forge-mcp` bin target.
+hadron-forge-mcp = { path = "../hadron-forge-mcp" }
 hadron-gatekeeper = { path = "../hadron-gatekeeper" }
+# Only the two bin shims need a runtime; the chamber itself is not async.
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # GPUI stack from git (Zed's live gpui + longbridge's component library), matching
