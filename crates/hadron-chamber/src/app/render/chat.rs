@@ -88,44 +88,31 @@ impl super::Chamber {
         // the input (and the whole layout) off the bottom. The hover scrollbar is
         // an absolute sibling of the scrolled content (not a child of it, or it
         // would scroll away), reading the same handle.
+        let scroll_container = div()
+            .id("chat-body-scroll")
+            .size_full()
+            .relative()
+            .child(match selected {
+                ChatTab::Chat => self.chat_view(cx).into_any_element(),
+                ChatTab::Log => self.log_view(cx).into_any_element(),
+                ChatTab::Stats => div()
+                    .id("session-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.chat_scrolls[selected.index()])
+                    .child(self.stats_view(cx))
+                    .into_any_element(),
+            });
+
         let body = div()
             .relative()
             .flex_1()
             .min_h_0()
-            .child(
-                div()
-                    .id("chat-body-scroll")
-                    .size_full()
-                    .child(match selected {
-                        ChatTab::Chat => self.chat_view(cx).into_any_element(),
-                        ChatTab::Log => self.log_view(cx).into_any_element(),
-                        ChatTab::Stats => div()
-                            .id("session-scroll")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.chat_scrolls[selected.index()])
-                            .child(self.stats_view(cx))
-                            .into_any_element(),
-                    }),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .right_0()
-                    .bottom_0()
-                    .child(match selected {
-                        ChatTab::Chat => Scrollbar::vertical(&self.chat_list_state)
-                            .scrollbar_show(ScrollbarShow::Always)
-                            .into_any_element(),
-                        ChatTab::Log => Scrollbar::vertical(&self.log_list_state)
-                            .scrollbar_show(ScrollbarShow::Always)
-                            .into_any_element(),
-                        ChatTab::Stats => Scrollbar::vertical(&self.chat_scrolls[selected.index()])
-                            .scrollbar_show(ScrollbarShow::Always)
-                            .into_any_element(),
-                    }),
-            );
+            .child(match selected {
+                ChatTab::Chat => scroll_container.vertical_scrollbar(&self.chat_list_state),
+                ChatTab::Log => scroll_container.vertical_scrollbar(&self.log_list_state),
+                ChatTab::Stats => scroll_container.vertical_scrollbar(&self.chat_scrolls[selected.index()]),
+            });
 
         // The message box is only meaningful in Chat — you talk to the field
         // there. Log and Timeline are read-only views, so they get no input.

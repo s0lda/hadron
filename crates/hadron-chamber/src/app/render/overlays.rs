@@ -67,10 +67,7 @@ impl super::Chamber {
             .rounded_lg()
             .overflow_hidden()
             .child(list)
-            .child(
-                Scrollbar::vertical(&self.completion_scroll)
-                    .scrollbar_show(ScrollbarShow::Always)
-            )
+            .vertical_scrollbar(&self.completion_scroll)
     }
 
     /// The non-blocking permission toast: when a quark is waiting on the human,

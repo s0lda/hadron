@@ -81,36 +81,24 @@ impl super::Chamber {
                 .child(self.git_graph_section(cx))
                 .into_any_element(),
         };
-        let scrollbar: gpui::AnyElement = match selected {
-            GitSubtab::Graph => Scrollbar::vertical(&self.git_graph_list)
-                .scrollbar_show(ScrollbarShow::Always)
-                .into_any_element(),
-            _ => Scrollbar::vertical(&self.git_scroll)
-                .scrollbar_show(ScrollbarShow::Always)
-                .into_any_element(),
+        let git_pane = div()
+            .flex_1()
+            .min_h_0()
+            .relative()
+            .text_sm()
+            .text_color(theme::text())
+            .child(body);
+
+        let git_pane = match selected {
+            GitSubtab::Graph => git_pane.vertical_scrollbar(&self.git_graph_list),
+            _ => git_pane.vertical_scrollbar(&self.git_scroll),
         };
 
         v_flex()
             .flex_1()
             .min_h_0()
             .child(h_flex().flex_none().px_3().py_2().child(subtabs))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .relative()
-                    .text_sm()
-                    .text_color(theme::text())
-                    .child(body)
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .bottom_0()
-                            .right_0()
-                            .child(scrollbar),
-                    ),
-            )
+            .child(git_pane)
     }
 
     fn git_section_title(title: &'static str) -> impl IntoElement {

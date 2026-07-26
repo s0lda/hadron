@@ -218,12 +218,7 @@ impl super::Chamber {
                                             &[],
                                         )),
                                 )
-                                .child(
-                                    div().absolute().top_0().bottom_0().right_0().child(
-                                        Scrollbar::vertical(&self.file_tree_open_scroll)
-                                            .scrollbar_show(ScrollbarShow::Always),
-                                    ),
-                                ),
+                                .vertical_scrollbar(&self.file_tree_open_scroll),
                         );
 
                     v_flex().flex_1().child(list).into_any_element()
