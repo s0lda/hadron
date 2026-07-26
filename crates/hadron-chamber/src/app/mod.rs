@@ -25,7 +25,7 @@ use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, Mov
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
 use gpui_component::resizable::{h_resizable, resizable_panel};
-use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+use gpui_component::scroll::{ScrollableElement, Scrollbar, ScrollbarHandle, ScrollbarShow};
 use gpui_component::stepper::{Stepper, StepperItem};
 use gpui_component::switch::Switch;
 use gpui_component::tab::{Tab, TabBar};
@@ -948,12 +948,13 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             t.link_hover = theme::link_hover().into();
             t.link_active = theme::link_active().into();
             // Scrollbar thumb theme tokens — frosted white over dark background
-            // so scrollbars are clearly visible when scrolling or hovering.
+            // so scrollbars are clearly visible on hover or scrolling.
+            t.scrollbar_show = ScrollbarShow::Hover;
             t.scrollbar = gpui::rgba(0x00000000).into();
             t.scrollbar_thumb = gpui::rgba(0xffffff40).into();
-            t.scrollbar_thumb_hover = gpui::rgba(0xffffff80).into();
+            t.scrollbar_thumb_hover = gpui::rgba(0xffffffa0).into();
             t.tokens.scrollbar_thumb = gpui::Hsla::from(gpui::rgba(0xffffff40)).into();
-            t.tokens.scrollbar_thumb_hover = gpui::Hsla::from(gpui::rgba(0xffffff80)).into();
+            t.tokens.scrollbar_thumb_hover = gpui::Hsla::from(gpui::rgba(0xffffffa0)).into();
             // Subtle dark window frame (Zed-style CSD border), matching the UI.
             t.window_border = rgb(0x2a2b2c).into();
             // Root paints this behind everything; transparent so our rounded
