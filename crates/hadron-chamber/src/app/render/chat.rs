@@ -108,15 +108,24 @@ impl super::Chamber {
                             .into_any_element(),
                     }),
             )
-            .child(div().absolute().top_0().right_0().bottom_0().when(
-                selected != ChatTab::Chat,
-                |this| {
-                    this.child(
-                        Scrollbar::vertical(&self.chat_scrolls[selected.index()])
-                            .scrollbar_show(ScrollbarShow::Hover),
-                    )
-                },
-            ));
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .bottom_0()
+                    .child(match selected {
+                        ChatTab::Chat => Scrollbar::vertical(&self.chat_list_state)
+                            .scrollbar_show(ScrollbarShow::Hover)
+                            .into_any_element(),
+                        ChatTab::Log => Scrollbar::vertical(&self.log_list_state)
+                            .scrollbar_show(ScrollbarShow::Hover)
+                            .into_any_element(),
+                        ChatTab::Stats => Scrollbar::vertical(&self.chat_scrolls[selected.index()])
+                            .scrollbar_show(ScrollbarShow::Hover)
+                            .into_any_element(),
+                    }),
+            );
 
         // The message box is only meaningful in Chat — you talk to the field
         // there. Log and Timeline are read-only views, so they get no input.
