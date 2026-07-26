@@ -229,14 +229,22 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
         % 2
         == 0;
 
-    for line in full.lines() {
+    // Indexed rather than a plain `for line in full.lines()` because `Arity::Body`
+    // needs to grab every line AFTER the current one, verbatim — something only
+    // an index into the whole line list can answer.
+    let lines: Vec<&str> = full.lines().collect();
+    let mut i = 0;
+    'lines: while i < lines.len() {
+        let line = lines[i];
         if fenced && line.trim_start().starts_with("```") {
             in_fence = !in_fence;
             body_lines.push(line);
+            i += 1;
             continue;
         }
         if in_fence {
             body_lines.push(line);
+            i += 1;
             continue;
         }
 
@@ -267,6 +275,27 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
                     rest = "";
                     break;
                 }
+                crate::text::Arity::Body => {
+                    // The rest of THIS line (the command's own "first line" —
+                    // e.g. a skill's `<name>`) is trimmed once, same as
+                    // `Arity::Line`. Every following line is joined verbatim —
+                    // no per-line trim — because indentation inside a body
+                    // (a skill's front-matter block, for instance) is content,
+                    // not whitespace to discard.
+                    let first = head[tok_end..].trim();
+                    let arg = if i + 1 < lines.len() {
+                        format!("{first}\n{}", lines[i + 1..].join("\n"))
+                    } else {
+                        first.to_string()
+                    };
+                    cmds.push((cmd.name.to_string(), arg));
+                    // Break the OUTER loop, not just this line's inner one:
+                    // every remaining line already belongs to the body just
+                    // captured, so none of it should be re-scanned for
+                    // commands (`Arity::Line` only breaks the inner loop,
+                    // which is exactly the bug this arity exists to avoid).
+                    break 'lines;
+                }
             }
         }
 
@@ -275,6 +304,7 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
             (true, false) => body_lines.push(rest.trim()),
             (false, false) => body_lines.push(line),
         }
+        i += 1;
     }
 
     let body = body_lines.join("\n");
@@ -407,6 +437,56 @@ mod tests {
         assert_eq!(body.as_deref(), Some("- one\n    - nested"));
     }
 
+    /// `Arity::Body` captures every remaining line verbatim, newlines and
+    /// interior indentation intact — a front-matter block's indentation must
+    /// survive, or the skill file `/add-skill` writes is broken.
+    #[test]
+    fn arity_body_captures_every_remaining_line_verbatim() {
+        let msg = "/add-skill my-skill\n---\nname: my-skill\n---\n  indented step\nlast line";
+        let (cmds, body) = split_leading_commands(msg);
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].0, "add-skill");
+        assert_eq!(
+            cmds[0].1,
+            "my-skill\n---\nname: my-skill\n---\n  indented step\nlast line"
+        );
+        // Every line was consumed into the command's argument — nothing is
+        // left over for the message box to keep.
+        assert_eq!(body, None);
+    }
+
+    /// The bug the outer-loop break exists to prevent: `Arity::Line` only
+    /// breaks its own line's inner loop, so a command on a *later* line still
+    /// runs. `Arity::Body` must break the whole scan — a `/help` typed on a
+    /// later line, inside what the human meant as skill content, must NOT run
+    /// as a second command; it is just a line of the body.
+    #[test]
+    fn arity_body_stops_the_outer_scan_so_a_later_command_look_alike_is_swallowed() {
+        let msg = "/add-skill my-skill\nsome content\n/help\nmore content";
+        let (cmds, body) = split_leading_commands(msg);
+        assert_eq!(cmds, vec![("add-skill".to_string(), "my-skill\nsome content\n/help\nmore content".to_string())]);
+        assert_eq!(body, None);
+    }
+
+    /// Text before an `Arity::Body` command on an earlier line is ordinary
+    /// body text, exactly as for the other arities.
+    #[test]
+    fn arity_body_does_not_disturb_body_text_on_earlier_lines() {
+        let msg = "a preamble line\n/add-skill my-skill\nthe content";
+        let (cmds, body) = split_leading_commands(msg);
+        assert_eq!(cmds, vec![("add-skill".to_string(), "my-skill\nthe content".to_string())]);
+        assert_eq!(body.as_deref(), Some("a preamble line"));
+    }
+
+    /// With nothing after the command on its own line, the argument is just
+    /// that first line — the same shape `Arity::Line` would produce.
+    #[test]
+    fn arity_body_with_no_following_lines_is_just_the_first_line() {
+        let (cmds, body) = split_leading_commands("/add-skill @path/to/file.md");
+        assert_eq!(cmds, vec![("add-skill".to_string(), "@path/to/file.md".to_string())]);
+        assert_eq!(body, None);
+    }
+
     /// **The guard that closes the loop the compiler cannot.** `COMMANDS` is the
     /// source of truth for the menu and this parser, but `handle_chat_command`'s
     /// `match` is plain control flow — nothing makes a table entry have an arm. This
@@ -454,6 +534,7 @@ mod tests {
             "search",
             "diff",
             "export",
+            "add-skill",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(
@@ -489,6 +570,10 @@ mod tests {
                 crate::text::Arity::None => {
                     assert_eq!(cmds[0].1, "", "/{} must take no argument", cmd.name);
                     assert_eq!(body.as_deref(), Some("some argument"));
+                }
+                crate::text::Arity::Body => {
+                    assert_eq!(cmds[0].1, "some argument", "/{} lost its argument", cmd.name);
+                    assert_eq!(body, None);
                 }
             }
         }

@@ -860,6 +860,80 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
+            // `load_skills` globs `*.md` from `.hadron/skills` — writing one
+            // validated file there is the entire feature, no registry edit. The
+            // WRITE destination is always the sanitized basename inside that
+            // directory (`add_skill_filename` for the inline form,
+            // `Path::file_name` for the copy form — neither can contain `/` or
+            // `..`), regardless of what the human typed or what path they read
+            // from, so this cannot write outside `.hadron/skills/`. The READ side
+            // (an arbitrary local path in the `@path` form) is intentionally
+            // unrestricted — this is the human's own chat box on their own
+            // machine, reading a file they could already `cat`.
+            "add-skill" => {
+                let Some(source) = crate::text::parse_add_skill_args(args) else {
+                    eprintln!(
+                        "chamber: `/add-skill` needs `@path/to/file.md`, or a name followed by \
+                         the file content on the next lines"
+                    );
+                    return true;
+                };
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let skills_dir = repo_root.join(".hadron").join("skills");
+                if let Err(e) = std::fs::create_dir_all(&skills_dir) {
+                    eprintln!("chamber: failed to create {}: {e}", skills_dir.display());
+                    return true;
+                }
+                let (dest, content) = match source {
+                    crate::text::AddSkillSource::Path(path_arg) => {
+                        let src = std::path::Path::new(&path_arg);
+                        let src = if src.is_absolute() { src.to_path_buf() } else { repo_root.join(src) };
+                        let content = match std::fs::read_to_string(&src) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                eprintln!("chamber: `/add-skill @{path_arg}` — could not read {}: {e}", src.display());
+                                return true;
+                            }
+                        };
+                        let Some(basename) = src.file_name().and_then(|n| n.to_str()) else {
+                            eprintln!("chamber: `/add-skill @{path_arg}` — no filename to copy");
+                            return true;
+                        };
+                        (skills_dir.join(basename), content)
+                    }
+                    crate::text::AddSkillSource::Inline { name, content } => {
+                        let Some(filename) = crate::text::add_skill_filename(&name) else {
+                            eprintln!(
+                                "chamber: `/add-skill {name}` — not a valid skill name \
+                                 (no `/`, `\\`, `.`, or `..`)"
+                            );
+                            return true;
+                        };
+                        if content.trim().is_empty() {
+                            eprintln!(
+                                "chamber: `/add-skill {name}` — no content followed the name; \
+                                 paste the skill file's content on the lines after it"
+                            );
+                            return true;
+                        }
+                        (skills_dir.join(filename), content)
+                    }
+                };
+                // Warn rather than silently accept a `tools:` line nothing
+                // enforces (spec §10), and rather than silently write a file
+                // the loader will skip for having no `name:` — reuses the same
+                // front-matter parser `load_skills` itself uses (rule 3).
+                let (front, _) = hadron_gluon::skills::split_front_matter(&content);
+                let has_tools = front.is_some_and(|f| hadron_gluon::skills::front_matter_value(f, "tools").is_some());
+                let has_name = front.is_some_and(|f| hadron_gluon::skills::front_matter_value(f, "name").is_some());
+                if let Err(e) = std::fs::write(&dest, &content) {
+                    eprintln!("chamber: failed to write {}: {e}", dest.display());
+                    return true;
+                }
+                let body = crate::text::add_skill_written_body(&dest, has_tools, has_name);
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
             _ => {
                 // If it contains a slash, it's probably a path. 
                 // Return false to let it pass through as a normal message.
