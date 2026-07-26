@@ -778,6 +778,16 @@ pub fn add_skill_written_body(dest: &std::path::Path, has_tools_field: bool, has
     out
 }
 
+/// Validate whether a session argument for `/export` is safe —
+/// rejects any input containing path separators (`/`, `\`) or `..` to prevent escaping `.hadron/exports/`.
+pub fn is_safe_session_arg(arg: &str) -> bool {
+    let s = arg.trim();
+    if s.is_empty() {
+        return true;
+    }
+    !s.contains(['/', '\\']) && !s.contains("..")
+}
+
 /// Split an optional leading `@target` off a skill command's argument.
 ///
 /// `/brainstorm @Sonnet the menu` → `(Some("Sonnet"), "the menu")`, and
@@ -2140,5 +2150,18 @@ mod tests {
         let body = add_skill_written_body(std::path::Path::new("/tmp/x.md"), false, true);
         assert!(!body.contains('⚠'));
     }
+
+    #[test]
+    fn is_safe_session_arg_accepts_valid_labels_and_rejects_traversal() {
+        assert!(is_safe_session_arg(""));
+        assert!(is_safe_session_arg("   "));
+        assert!(is_safe_session_arg("session-1"));
+        assert!(is_safe_session_arg("my_session_2026"));
+        assert!(!is_safe_session_arg("../foo"));
+        assert!(!is_safe_session_arg("foo/bar"));
+        assert!(!is_safe_session_arg("foo\\bar"));
+        assert!(!is_safe_session_arg(".."));
+    }
 }
+
 
