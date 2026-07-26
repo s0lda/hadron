@@ -830,6 +830,10 @@ impl Chamber {
             }
             "export" => {
                 let session_arg = args.trim();
+                if !crate::text::is_safe_session_arg(session_arg) {
+                    eprintln!("chamber: `/export {session_arg}` — session argument must not contain path separators or `..`");
+                    return true;
+                }
                 let (label, field_path) = if session_arg.is_empty() {
                     ("current".to_string(), self.path.clone())
                 } else {
