@@ -17,6 +17,7 @@ from typing import Any, Dict
 import os
 
 from google.antigravity import Agent, LocalAgentConfig
+from google.antigravity.hooks import policy
 from google.antigravity.types import Text, Thought
 
 # The model this seat runs. The SDK's own DEFAULT_MODEL is gemini-3.5-flash, which
@@ -196,10 +197,20 @@ async def ensure_agent(session_data):
     if not api_key:
         raise RuntimeError(NO_KEY)
     cwd = session_data.get("cwd") or ""
+    # The SDK's DEFAULT policy is `confirm_run_command()`, which DENIES
+    # `run_command` outright — a non-interactive seat gets no prompt, just a
+    # refusal. That cost this seat two turns: it could edit files but never run
+    # `cargo test`, so it committed unverified code and the merge gate caught the
+    # compile errors instead. Hadron gates a turn's authority through its own
+    # permission mode; a client-side default the daemon cannot see is not a
+    # second opinion, it is a silent veto. `workspaces` is deliberately kept: the
+    # SDK auto-prepends `policy.workspace_only()` when it is set, and that jail
+    # is the layer worth having.
     agent = Agent(
         config=LocalAgentConfig(
             api_key=api_key,
             model=SEAT_MODEL,
+            policies=[policy.allow_all()],
             workspaces=[cwd] if cwd else None
         )
     )
