@@ -60,11 +60,16 @@ fn undeclare_secret_var_noop_when_absent() {
 /// The behaviour the masked field's status line depends on: setting a value
 /// via a `SecretStore` flips the status to `Set`, clearing it back to `NotSet` —
 /// exercised against a `MemoryStore`, never a real keychain.
+///
+/// The var name must be one no environment can hold: `secret_status` falls back
+/// to `std::env::var` on a store miss (deliberately — an exported key really is
+/// available), so naming a live var like `GEMINI_API_KEY` made this test fail on
+/// any machine that has one exported, including the merge gate's.
 #[test]
 fn set_then_status_reports_set() {
     let store = MemoryStore::new();
     let id = QuarkId::new("acp-agy");
-    let var = "GEMINI_API_KEY";
+    let var = "GEMINI_API_KEY_TEST_VAR_NOT_SET_1234";
 
     assert_eq!(secret_status(&store, &id, var), SecretStatus::NotSet, "unset");
 
