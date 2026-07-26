@@ -1,55 +1,17 @@
+//! The **edit** family: change a file, or ask what its addressable blocks are.
+//!
+//! Every one of these is hash-checked — an edit names the block it believes it
+//! is replacing, and a stale hash is refused rather than silently overwriting
+//! whatever landed there in the meantime.
+
+use super::{ForgeMcpServer, ToolResponse};
 use hadron_forge::file::{
-    apply_block_edit, create_file, delete_file_cas, read_blocks, write_file_cas, Root,
+    apply_block_edit, create_file, delete_file_cas, read_blocks, write_file_cas,
 };
-use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
-use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use rmcp::schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
-#[tool_handler(router = self.tool_router)]
-impl ServerHandler for ForgeMcpServer {}
-
-#[derive(Clone)]
-pub struct ForgeMcpServer {
-    tool_router: ToolRouter<Self>,
-    pub root: Root,
-}
-
-impl ForgeMcpServer {
-    pub fn new(root_path: impl Into<std::path::PathBuf>) -> Self {
-        Self {
-            tool_router: Self::tool_router(),
-            root: Root::new(root_path),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct ToolResponse {
-    pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub blocks: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-impl ToolResponse {
-    pub fn success(blocks: Option<String>) -> Self {
-        Self {
-            ok: true,
-            blocks,
-            reason: None,
-        }
-    }
-    pub fn error(reason: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            blocks: None,
-            reason: Some(reason.into()),
-        }
-    }
-}
+use rmcp::{tool, tool_router};
+use serde::Deserialize;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditArgs {
@@ -82,7 +44,7 @@ pub struct ReadBlocksArgs {
     pub path: String,
 }
 
-#[tool_router(router = tool_router)]
+#[tool_router(router = edit_router, vis = "pub(super)")]
 impl ForgeMcpServer {
     #[tool(
         name = "hadron_forge_edit",
