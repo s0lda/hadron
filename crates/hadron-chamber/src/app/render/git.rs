@@ -72,7 +72,7 @@ impl super::Chamber {
                 .track_scroll(&self.git_scroll)
                 .px_3()
                 .pb_3()
-                .child(self.git_worktrees_section())
+                .child(self.git_worktrees_section(cx))
                 .into_any_element(),
             GitSubtab::Graph => div()
                 .size_full()
@@ -400,7 +400,14 @@ impl super::Chamber {
 
     // ── Worktrees ────────────────────────────────────────────────────────────────
 
-    fn git_worktrees_section(&self) -> impl IntoElement {
+    /// The branch a worktree row selects when clicked, and the single home of
+    /// "is this row clickable at all" — `None` for a detached HEAD, which has no
+    /// branch to diff and must therefore stay inert rather than look live.
+    fn worktree_selects_branch(wt: &crate::vcs::WorktreeInfo) -> Option<String> {
+        wt.branch.clone()
+    }
+
+    fn git_worktrees_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let rows: gpui::AnyElement = match &self.git_worktrees {
             None => Self::muted("Loading worktrees...").into_any_element(),
             Some(worktrees) if worktrees.is_empty() => {
@@ -408,7 +415,7 @@ impl super::Chamber {
             }
             Some(worktrees) => {
                 let mut list = v_flex().w_full().gap_1();
-                for wt in worktrees {
+                for (ix, wt) in worktrees.iter().enumerate() {
                     // Colour the commit token by the branch's merged status; a
                     // detached HEAD has no branch to be merged, so it stays neutral.
                     let color = match self.branch_merged(wt.branch.as_deref()) {
@@ -418,13 +425,29 @@ impl super::Chamber {
                     };
                     let branch_label =
                         wt.branch.clone().unwrap_or_else(|| "detached".to_string());
+                    // Parity with a branch row: a worktree row selects its branch and
+                    // opens the same diff panel. A detached worktree has no branch, so
+                    // it keeps none of the affordances rather than becoming a dead click.
+                    let selects = Self::worktree_selects_branch(wt);
+                    let is_selected =
+                        selects.is_some() && self.git_selected_branch == selects;
                     let card = v_flex()
+                        .id(("worktree-row", ix))
                         .w_full()
                         .gap_1()
                         .py_1()
                         .px_2()
                         .border_b_1()
                         .border_color(theme::border())
+                        .when_some(selects, |d, name| {
+                            d.cursor_pointer()
+                                .hover(|s| s.bg(theme::border()))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.select_branch(name.clone());
+                                    cx.notify();
+                                }))
+                        })
+                        .when(is_selected, |d| d.bg(theme::border()))
                         .child(
                             h_flex()
                                 .w_full()
@@ -450,7 +473,14 @@ impl super::Chamber {
                                 .text_color(theme::text_muted())
                                 .child(wt.path.clone()),
                         );
-                    list = list.child(card);
+                    // The diff panel goes UNDER the row that was clicked, not after the
+                    // whole list — the same accordion the branch rows use, and the same
+                    // reason (a panel below 100 rows reads as a dead click).
+                    let mut entry = v_flex().w_full().child(card);
+                    if let (true, Some(name)) = (is_selected, wt.branch.as_deref()) {
+                        entry = entry.child(self.branch_diff_panel(name, cx));
+                    }
+                    list = list.child(entry);
                 }
                 list.into_any_element()
             }
@@ -953,7 +983,29 @@ impl super::Chamber {
 #[cfg(test)]
 mod tests {
     use super::Chamber;
-    use crate::vcs::{RefDecoration, RefKind};
+    use crate::vcs::{RefDecoration, RefKind, WorktreeInfo};
+
+    fn worktree(branch: Option<&str>) -> WorktreeInfo {
+        WorktreeInfo {
+            path: "/tmp/wt".into(),
+            head: "abc1234".into(),
+            branch: branch.map(str::to_string),
+        }
+    }
+
+    /// Worktree rows used to be inert while branch rows were clickable — the same
+    /// list shape with a different affordance. They select their branch now, which
+    /// makes "is this row clickable" a real decision: a **detached** worktree has no
+    /// branch to select, so it must stay non-interactive rather than become a row
+    /// that looks live and does nothing.
+    #[test]
+    fn a_detached_worktree_row_is_not_clickable() {
+        assert_eq!(
+            Chamber::worktree_selects_branch(&worktree(Some("main"))),
+            Some("main".to_string())
+        );
+        assert_eq!(Chamber::worktree_selects_branch(&worktree(None)), None);
+    }
 
     fn deco(name: &str, kind: RefKind) -> RefDecoration {
         RefDecoration { name: name.into(), kind }
