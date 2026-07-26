@@ -69,7 +69,7 @@ impl super::Chamber {
             .child(list)
             .child(
                 Scrollbar::vertical(&self.completion_scroll)
-                    .scrollbar_show(ScrollbarShow::Hover)
+                    .scrollbar_show(ScrollbarShow::Always)
             )
     }
 

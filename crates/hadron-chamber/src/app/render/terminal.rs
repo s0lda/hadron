@@ -221,7 +221,7 @@ impl super::Chamber {
                                 .child(
                                     div().absolute().top_0().bottom_0().right_0().child(
                                         Scrollbar::vertical(&self.file_tree_open_scroll)
-                                            .scrollbar_show(ScrollbarShow::Hover),
+                                            .scrollbar_show(ScrollbarShow::Always),
                                     ),
                                 ),
                         );
@@ -529,7 +529,7 @@ impl super::Chamber {
                         .child(
                             div().absolute().top_0().bottom_0().right_0().child(
                                 Scrollbar::vertical(&self.file_tree_scroll)
-                                    .scrollbar_show(ScrollbarShow::Hover),
+                                    .scrollbar_show(ScrollbarShow::Always),
                             ),
                         )
                         .into_any_element()
@@ -574,7 +574,7 @@ impl super::Chamber {
                     .child(
                         div().absolute().top_0().bottom_0().right_0().child(
                             Scrollbar::vertical(&self.changes_scroll)
-                                .scrollbar_show(ScrollbarShow::Hover),
+                                .scrollbar_show(ScrollbarShow::Always),
                         ),
                     )
                     .into_any_element()
@@ -768,7 +768,7 @@ impl super::Chamber {
                     .child(
                         div().absolute().top_0().bottom_0().right_0().child(
                             Scrollbar::vertical(&self.plan_scroll)
-                                .scrollbar_show(ScrollbarShow::Hover),
+                                .scrollbar_show(ScrollbarShow::Always),
                         ),
                     )
                     .into_any_element()

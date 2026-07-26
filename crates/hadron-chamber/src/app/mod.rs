@@ -947,6 +947,13 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             t.link = theme::link().into();
             t.link_hover = theme::link_hover().into();
             t.link_active = theme::link_active().into();
+            // Scrollbar thumb theme tokens — frosted white over dark background
+            // so scrollbars are clearly visible when scrolling or hovering.
+            t.scrollbar = gpui::rgba(0x00000000).into();
+            t.scrollbar_thumb = gpui::rgba(0xffffff40).into();
+            t.scrollbar_thumb_hover = gpui::rgba(0xffffff80).into();
+            t.tokens.scrollbar_thumb = gpui::Hsla::from(gpui::rgba(0xffffff40)).into();
+            t.tokens.scrollbar_thumb_hover = gpui::Hsla::from(gpui::rgba(0xffffff80)).into();
             // Subtle dark window frame (Zed-style CSD border), matching the UI.
             t.window_border = rgb(0x2a2b2c).into();
             // Root paints this behind everything; transparent so our rounded
