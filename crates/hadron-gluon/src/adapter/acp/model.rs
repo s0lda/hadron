@@ -35,14 +35,28 @@ pub(super) enum RequestClass {
 /// carries: `claude-agent-acp` gives MCP tools no special case, so its
 /// `toolInfoFromToolUse` default arm reports `title` = the raw wire name
 /// (`mcp__hadron-forge-mcp__hadron_forge_edit`) and `kind` = `other`.
+///
+/// The match is on the **last** `__`-delimited segment, and it must *start* with
+/// the prefix. A substring search would be an escalation, not a convenience:
+/// `Bash`'s title is the command line itself, so `echo hadron_forge_edit` would
+/// read as a forge call and be allowed in Write posture.
 pub(super) fn classify_request(req: &RequestPermissionRequest) -> RequestClass {
     if is_native_edit_request(req) {
         return RequestClass::NativeEdit;
     }
     match &req.tool_call.fields.title {
-        Some(title) if title.contains("hadron_forge_") => RequestClass::Forge,
+        Some(title) if forge_tool_name(title) => RequestClass::Forge,
         _ => RequestClass::Other,
     }
+}
+
+fn forge_tool_name(title: &str) -> bool {
+    let name = title.trim();
+    // `mcp__<server>__<tool>` is Claude Code's wire form; another agent may pass
+    // the bare tool name, which `rsplit` leaves untouched.
+    name.rsplit("__")
+        .next()
+        .is_some_and(|tool| tool.starts_with("hadron_forge_"))
 }
 
 /// Translate the turn's posture and the request's class into an answer to ACP's
