@@ -62,8 +62,25 @@ pub struct ChamberPrefs {
     /// `file://` link and the file tree's "Open in editor". Defaults to
     /// [`crate::sys::EditorChoice::System`], which is the pre-existing behaviour
     /// (the desktop's own association, i.e. whatever `xdg-open` picks).
-    #[serde(default)]
+    ///
+    /// Read leniently, because this is the one field whose docs invite a hand edit
+    /// (`Custom`, which the Settings ladder cannot offer). [`load_from`] does
+    /// `from_str(..).unwrap_or_default()`, so without [`lenient_editor`] a single
+    /// typo here — `"Vim"`, a malformed object — would fail the WHOLE `ChamberPrefs`
+    /// and silently reset the human's layout, widths and every quark identity.
+    #[serde(default, deserialize_with = "lenient_editor")]
     pub editor: crate::sys::EditorChoice,
+}
+
+/// An `editor` value we do not understand resolves to the default instead of
+/// poisoning the rest of the file. See [`ChamberPrefs::editor`].
+fn lenient_editor<'de, D>(d: D) -> Result<crate::sys::EditorChoice, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let raw = serde_json::Value::deserialize(d)?;
+    Ok(serde_json::from_value(raw).unwrap_or_default())
 }
 
 fn default_true() -> bool {
@@ -280,6 +297,35 @@ mod tests {
         // 240.0 is <= 410.0, so it migrates to 500.0. Let's make sure it's 500.0.
         assert_eq!(load_from(&path).roster_width, default_roster_width());
         assert_eq!(load_from(&path).window_bounds, None);
+    }
+
+    /// A typo in the one field we tell people to hand-edit must not cost them the
+    /// rest of the file. Without `lenient_editor` this resets width AND identities.
+    #[test]
+    fn a_nonsense_editor_value_does_not_discard_the_rest_of_the_prefs() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("chamber.json");
+        std::fs::write(
+            &path,
+            r#"{"editor":"Vim","inspector_width":333.0,"human":{"display_name":"Jake"}}"#,
+        )
+        .unwrap();
+        let prefs = load_from(&path);
+        assert_eq!(prefs.editor, crate::sys::EditorChoice::System);
+        assert_eq!(prefs.inspector_width, 333.0);
+        assert_eq!(prefs.human.display_name.as_deref(), Some("Jake"));
+    }
+
+    /// The hand-edit the docs actually invite, and the reason the field exists.
+    #[test]
+    fn a_hand_written_custom_editor_is_honoured() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("chamber.json");
+        std::fs::write(&path, r#"{"editor":{"Custom":"kate -l {line} {file}"}}"#).unwrap();
+        assert_eq!(
+            load_from(&path).editor,
+            crate::sys::EditorChoice::Custom("kate -l {line} {file}".into())
+        );
     }
 
     #[test]

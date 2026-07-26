@@ -283,7 +283,14 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+            // Read the two hex digits as BYTES, never as `&s[i+1..i+3]`: slicing a
+            // `&str` by byte offset panics when the range cuts a multi-byte char, and
+            // `%aé` is a URL a quark can write (invariants: Char Boundary Safety).
+            let hex = [bytes[i + 1], bytes[i + 2]];
+            if let Some(byte) = std::str::from_utf8(&hex)
+                .ok()
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
+            {
                 out.push(byte);
                 i += 3;
                 continue;
@@ -363,6 +370,15 @@ mod tests {
     #[test]
     fn a_non_numeric_fragment_is_not_a_line() {
         assert_eq!(file_url_target("file:///tmp/a.md#install").unwrap().1, None);
+    }
+
+    /// A malformed escape whose "hex digits" are half a multi-byte char. Slicing the
+    /// `&str` here panics; reading the bytes does not. The assertion is secondary —
+    /// that this returns at all is the point.
+    #[test]
+    fn a_malformed_escape_across_a_char_boundary_does_not_panic() {
+        let (path, _) = file_url_target("file:///tmp/%aé.rs").unwrap();
+        assert_eq!(path, Path::new("/tmp/%aé.rs"));
     }
 
     #[test]
