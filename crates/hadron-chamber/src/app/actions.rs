@@ -708,6 +708,84 @@ impl Chamber {
                 }
                 true
             }
+            "status" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let target = if args.trim().is_empty() { None } else { Some(args.trim()) };
+                let body = crate::text::status_body(
+                    &self.view.roster,
+                    self.view.global_mode,
+                    target,
+                    &repo_root,
+                );
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "mode" => {
+                let Some((mode, seat_target)) = crate::text::parse_mode_arg(args) else {
+                    eprintln!("chamber: `/mode` usage: `/mode <ask|write|auto|bypass> [@seat]`");
+                    return true;
+                };
+                if let Some(target) = seat_target {
+                    let target_id = super::mentions::seat_by_mention(&self.view.roster, target).map(|r| r.id.clone());
+                    if let Some(id) = target_id {
+                        self.set_quark_mode(&id, mode, cx);
+                    } else {
+                        eprintln!("chamber: `/mode` target quark not found: {target}");
+                    }
+                } else {
+                    self.append_and_reload(
+                        Event::new(Actor::Human, None, Kind::ModeSet { mode }),
+                        cx,
+                    );
+                }
+                true
+            }
+            "whoami" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let body = crate::text::whoami_body(&self.view.roster, &repo_root, &self.path);
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "nucleus" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                // The ONE resolver. `/nucleus` must report the same number the prompt
+                // builder enforces, or the command becomes a second opinion on the
+                // budget — which is the drift the resolve-once change existed to stop.
+                let budget_bytes = hadron_gluon::nucleus_status::resolve_budget_bytes(&self.team);
+                let body = crate::text::nucleus_body(&repo_root, budget_bytes);
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "health" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let lock_path = self.path.parent().unwrap_or(std::path::Path::new(".hadron")).join("gluon.lock");
+                let daemon_pid = std::fs::read_to_string(&lock_path)
+                    .ok()
+                    .and_then(|c| c.trim().parse::<u32>().ok());
+                let pid_alive = daemon_pid.map_or(false, |pid| {
+                    let proc_root = std::path::Path::new("/proc");
+                    if !proc_root.is_dir() {
+                        true
+                    } else {
+                        std::fs::read_to_string(proc_root.join(pid.to_string()).join("comm"))
+                            .map_or(false, |c| c.trim() == "hadron-gluon")
+                    }
+                });
+                let trees_dir = hadron_gluon::worktree::trees_dir(&repo_root);
+                let wt_count = std::fs::read_dir(&trees_dir)
+                    .map(|rd| rd.filter_map(Result::ok).filter(|e| e.path().is_dir()).count())
+                    .unwrap_or(0);
+                let body = crate::text::health_body(daemon_pid, pid_alive, &repo_root, wt_count);
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "sessions" => {
+                let sessions_dir = self.sessions_dir();
+                let sessions = crate::model::list_sessions(&sessions_dir);
+                let body = crate::text::sessions_body(&sessions);
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
             _ => {
                 // If it contains a slash, it's probably a path. 
                 // Return false to let it pass through as a normal message.

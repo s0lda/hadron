@@ -115,6 +115,12 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "learn-std-model-global", detail: "Add a standing law across every repo you run Hadron in", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "gate-status", detail: "Show which branch the merge gate is running, since when, and time left", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "abandon", detail: "Archive-tag then discard a quark's pending branch (e.g. /abandon @acp-claude, then /abandon @acp-claude confirm to force)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "status", detail: "Show status (permission mode, current-field session tokens, quota, branch state) for a seat or global", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "mode", detail: "Set permission mode (ask, write, auto, bypass) for a seat or global default", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "whoami", detail: "Show active orchestrator, workspace root, and field path", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "nucleus", detail: "Show nucleus index size vs resolved budget, lesson count, notes count, and index path", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "health", detail: "Show daemon PID, daemon process state, repo root, and worktree count", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "sessions", detail: "List archived sessions with labels", arity: Arity::None, arg: ArgSource::None, listed: true },
 ];
 
 /// A short kebab-case id for a lesson line: the first few words, lowercased,
@@ -379,6 +385,198 @@ pub fn skills_body(rows: &[(&str, Option<&str>, Option<&str>)]) -> String {
         }
     }
     out.push_str("\nThe engine picks the skill from your task text — the phrase above selects it.\n");
+    out
+}
+
+/// Parse `/mode` arguments into `(Mode, Option<seat_name>)`.
+pub fn parse_mode_arg(args: &str) -> Option<(hadron_lattice::Mode, Option<&str>)> {
+    let parts: Vec<&str> = args.trim().split_whitespace().collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let parse_mode = |s: &str| match s.to_lowercase().as_str() {
+        "ask" => Some(hadron_lattice::Mode::Ask),
+        "write" => Some(hadron_lattice::Mode::Write),
+        "auto" => Some(hadron_lattice::Mode::Auto),
+        "bypass" => Some(hadron_lattice::Mode::Bypass),
+        _ => None,
+    };
+
+    if parts.len() == 1 {
+        let mode = parse_mode(parts[0])?;
+        Some((mode, None))
+    } else {
+        if let Some(mode) = parse_mode(parts[0]) {
+            let seat = parts[1].trim_start_matches('@');
+            Some((mode, if seat.is_empty() { None } else { Some(seat) }))
+        } else if let Some(mode) = parse_mode(parts[1]) {
+            let seat = parts[0].trim_start_matches('@');
+            Some((mode, if seat.is_empty() { None } else { Some(seat) }))
+        } else {
+            None
+        }
+    }
+}
+
+/// Format status output for `/status`.
+pub fn status_body(
+    roster: &[crate::model::RosterRow],
+    global_mode: hadron_lattice::Mode,
+    target: Option<&str>,
+    repo_root: &std::path::Path,
+) -> String {
+    let mut out = String::from("**System & Seat Status**\n\n");
+    out.push_str(&format!("- **Global Permission Mode**: `{:?}`\n", global_mode));
+    out.push_str("- **Token Window**: CURRENT-FIELD window (tokens in active field.jsonl)\n\n");
+
+    let targets: Vec<&crate::model::RosterRow> = if let Some(t) = target {
+        let trimmed = t.trim_start_matches('@');
+        roster
+            .iter()
+            .filter(|r| r.id.eq_ignore_ascii_case(trimmed) || r.display_name.as_deref().map_or(false, |d| d.eq_ignore_ascii_case(trimmed)))
+            .collect()
+    } else {
+        roster.iter().filter(|r| r.adopted).collect()
+    };
+
+    if targets.is_empty() {
+        if let Some(t) = target {
+            out.push_str(&format!("No seat on roster matches `{t}`.\n"));
+        } else {
+            out.push_str("No adopted seats on roster.\n");
+        }
+    } else {
+        for r in targets {
+            let mode_str = if r.mode_is_override {
+                format!("`{:?}` (override)", r.mode)
+            } else {
+                format!("`{:?}` (inherited)", r.mode)
+            };
+            let wt_path = hadron_gluon::worktree::trees_dir(repo_root).join(&r.id);
+            let branch_str = if wt_path.exists() {
+                let base = hadron_gluon::worktree::default_branch(repo_root);
+                match crate::vcs::commits_ahead(&wt_path, &base) {
+                    Some(n) => format!("{n} commit(s) ahead of `{base}`"),
+                    None => "worktree active".to_string(),
+                }
+            } else {
+                "no worktree".to_string()
+            };
+            out.push_str(&format!(
+                "- **@{}** ({}) — mode: {}, session tokens: {} (CURRENT-FIELD window), branch: {}\n",
+                r.id,
+                r.display_name.as_deref().unwrap_or(&r.id),
+                mode_str,
+                r.tokens,
+                branch_str,
+            ));
+        }
+    }
+    out
+}
+
+/// Format `/whoami` output.
+pub fn whoami_body(
+    roster: &[crate::model::RosterRow],
+    repo_root: &std::path::Path,
+    field_path: &std::path::Path,
+) -> String {
+    let orchestrator = roster
+        .iter()
+        .find(|r| r.flavor == Some(hadron_lattice::Flavor::Orchestrator))
+        .map(|r| format!("@{} ({})", r.id, r.display_name.as_deref().unwrap_or(&r.id)))
+        .unwrap_or_else(|| "@orchestrator".to_string());
+
+    format!(
+        "**Whoami**\n\n\
+         - **Orchestrator**: {}\n\
+         - **Workspace Root**: `{}`\n\
+         - **Field Path**: `{}`\n",
+        orchestrator,
+        repo_root.display(),
+        field_path.display()
+    )
+}
+
+/// Format `/nucleus` output.
+pub fn nucleus_body(workspace_root: &std::path::Path, budget_bytes: usize) -> String {
+    let index_path = workspace_root.join(".hadron").join("nucleus").join("index.md");
+    let notes_dir = workspace_root.join(".hadron").join("nucleus").join("notes");
+
+    let (index_bytes, lessons_count) = if let Ok(content) = std::fs::read_to_string(&index_path) {
+        let bytes = content.len();
+        let lessons = content.lines().filter(|l| l.trim_start().starts_with("- ")).count();
+        (bytes, lessons)
+    } else {
+        (0, 0)
+    };
+
+    let notes_count = std::fs::read_dir(&notes_dir)
+        .map(|rd| {
+            rd.filter_map(Result::ok)
+                .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+                .count()
+        })
+        .unwrap_or(0);
+
+    let pct = if budget_bytes > 0 {
+        (index_bytes as f64 / budget_bytes as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    format!(
+        "**Nucleus Index**\n\n\
+         - **Index Path**: `{}`\n\
+         - **Size**: {} B / {} B ({:.1}% of resolved budget)\n\
+         - **Lessons**: {}\n\
+         - **Notes**: {}\n",
+        index_path.display(),
+        index_bytes,
+        budget_bytes,
+        pct,
+        lessons_count,
+        notes_count
+    )
+}
+
+/// Format `/health` output.
+pub fn health_body(
+    daemon_pid: Option<u32>,
+    pid_alive: bool,
+    repo_root: &std::path::Path,
+    worktree_count: usize,
+) -> String {
+    let daemon_str = match daemon_pid {
+        Some(pid) if pid_alive => format!("`{pid}` (running, `hadron-gluon`)"),
+        Some(pid) => format!("`{pid}` (dead/stale PID)"),
+        None => "none (stopped)".to_string(),
+    };
+
+    format!(
+        "**System Health**\n\n\
+         - **Daemon PID**: {}\n\
+         - **Repo Root**: `{}`\n\
+         - **Worktrees**: {}\n",
+        daemon_str,
+        repo_root.display(),
+        worktree_count
+    )
+}
+
+/// Format `/sessions` output.
+pub fn sessions_body(sessions: &[crate::model::SessionInfo]) -> String {
+    if sessions.is_empty() {
+        return "No archived sessions found.".to_string();
+    }
+    let mut out = format!("**Archived Sessions ({})**\n\n", sessions.len());
+    for s in sessions {
+        if let Some(name) = &s.name {
+            out.push_str(&format!("- `{}` — *{}*\n", s.id, name));
+        } else {
+            out.push_str(&format!("- `{}`\n", s.id));
+        }
+    }
     out
 }
 
@@ -1429,6 +1627,73 @@ mod tests {
         ];
         let names: Vec<_> = all.iter().map(|t| t.as_str()).collect();
         assert_eq!(names, ["user", "feedback", "project", "reference"]);
+    }
+
+    #[test]
+    fn parse_mode_arg_parses_global_and_seat_modes() {
+        assert_eq!(parse_mode_arg("write"), Some((hadron_lattice::Mode::Write, None)));
+        assert_eq!(
+            parse_mode_arg("bypass @acp-claude"),
+            Some((hadron_lattice::Mode::Bypass, Some("acp-claude")))
+        );
+        assert_eq!(
+            parse_mode_arg("@Sonnet auto"),
+            Some((hadron_lattice::Mode::Auto, Some("Sonnet")))
+        );
+        assert_eq!(parse_mode_arg("invalid"), None);
+        assert_eq!(parse_mode_arg(""), None);
+    }
+
+    #[test]
+    fn status_body_labels_current_field_window() {
+        let body = status_body(&[], hadron_lattice::Mode::Ask, None, std::path::Path::new("/tmp"));
+        assert!(body.contains("CURRENT-FIELD window"));
+        assert!(body.contains("Global Permission Mode"));
+    }
+
+    #[test]
+    fn whoami_body_formats_paths_and_orchestrator() {
+        let body = whoami_body(
+            &[],
+            std::path::Path::new("/workspace"),
+            std::path::Path::new("/workspace/.hadron/field.jsonl"),
+        );
+        assert!(body.contains("Workspace Root"));
+        assert!(body.contains("/workspace"));
+        assert!(body.contains("/workspace/.hadron/field.jsonl"));
+    }
+
+    #[test]
+    fn nucleus_body_uses_resolved_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let nucleus_dir = dir.path().join(".hadron").join("nucleus");
+        std::fs::create_dir_all(&nucleus_dir).unwrap();
+        std::fs::write(nucleus_dir.join("index.md"), "- [test](notes/test.md) — hook\n").unwrap();
+        let body = nucleus_body(dir.path(), 64 * 1024);
+        assert!(body.contains("65536 B"));
+        assert!(body.contains("Lessons"));
+    }
+
+    #[test]
+    fn health_body_formats_running_or_stopped_daemon() {
+        let body_live = health_body(Some(1234), true, std::path::Path::new("/repo"), 2);
+        assert!(body_live.contains("`1234` (running, `hadron-gluon`)"));
+        assert!(body_live.contains("Worktrees**: 2"));
+
+        let body_dead = health_body(None, false, std::path::Path::new("/repo"), 0);
+        assert!(body_dead.contains("none (stopped)"));
+    }
+
+    #[test]
+    fn sessions_body_formats_session_list() {
+        let sessions = vec![
+            crate::model::SessionInfo { id: "20260726_010000".into(), name: Some("test-session".into()) },
+            crate::model::SessionInfo { id: "20260726_020000".into(), name: None },
+        ];
+        let body = sessions_body(&sessions);
+        assert!(body.contains("20260726_010000"));
+        assert!(body.contains("test-session"));
+        assert!(body.contains("20260726_020000"));
     }
 }
 
