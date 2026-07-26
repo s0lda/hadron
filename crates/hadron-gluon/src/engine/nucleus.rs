@@ -174,19 +174,22 @@ pub(super) fn build_invariants(workspace_root: &std::path::Path, requested: &[St
     combined.push_str(STANDARD_MODEL.trim());
     combined.push('\n');
 
-    // Standing laws, right after the Standard Model and before the invariant
+    // Standard laws, right after the Standard Model and before the invariant
     // tiers — a law pinned via `/learn-std-model[-global]` is unconditional, the
-    // same as the Standard Model itself, not an opt-in named rule.
+    // same as the Standard Model itself, not an opt-in named rule. The heading
+    // wording matches `text::COMMANDS`' gloss for those two commands ("standard
+    // law"): the human types the command and reads the heading, and two spellings
+    // of one concept read as two features.
     if let Some(path) = global_laws_path() {
         if let Ok(body) = fs::read_to_string(&path) {
             if !body.trim().is_empty() {
-                combined.push_str(&format!("\n# Your standing laws\n{}\n", body.trim()));
+                combined.push_str(&format!("\n# Your standard laws\n{}\n", body.trim()));
             }
         }
     }
     if let Ok(body) = fs::read_to_string(repo_laws_path(workspace_root)) {
         if !body.trim().is_empty() {
-            combined.push_str(&format!("\n# This project's standing laws\n{}\n", body.trim()));
+            combined.push_str(&format!("\n# This project's standard laws\n{}\n", body.trim()));
         }
     }
 

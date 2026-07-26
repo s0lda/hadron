@@ -2005,10 +2005,10 @@ fn repo_laws_are_appended_right_after_the_standard_model() {
     fs::write(nucleus.join("laws.md"), "- Never merge on a red gate.\n").unwrap();
 
     let (text, _) = build_invariants(ws.path(), &[]);
-    assert!(text.contains("# This project's standing laws"));
+    assert!(text.contains("# This project's standard laws"));
     assert!(text.contains("Never merge on a red gate."));
 
-    let laws_pos = text.find("standing laws").unwrap();
+    let laws_pos = text.find("standard laws").unwrap();
     let model_pos = text.find("# The Standard Model").unwrap();
     assert!(model_pos < laws_pos, "the Standard Model must still come first");
 }
@@ -2019,7 +2019,7 @@ fn repo_laws_are_appended_right_after_the_standard_model() {
 fn no_laws_file_means_no_laws_section() {
     let ws = tempdir().unwrap();
     let (text, _) = build_invariants(ws.path(), &[]);
-    assert!(!text.contains("standing laws"));
+    assert!(!text.contains("standard laws"));
 }
 
 /// The whole point, driven end to end: a task that says "execute the plan" must
