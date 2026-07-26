@@ -99,6 +99,7 @@ Hadron uses particle physics as a cohesive mental model for multi-agent operatin
 | **Nucleus** | Shared persistent single-source-of-truth knowledge base | The dense, stable core |
 | **Flavor** | A quark's role in the swarm (Orchestrator, Worker) | Quark flavors (up, down, charm...) |
 | **Energy & Ledger** | Real-time token spend tracking and SQLite quotas | Conservation of energy & energy states |
+| **Excited / Ground** | A quark mid-turn / idle — the presence states | Exciting a field produces a particle |
 | **Standard Model** | Non-negotiable base system invariants (`standard_model.md`) | Fundamental laws of physics |
 
 ---
