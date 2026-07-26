@@ -1096,17 +1096,7 @@ impl Chamber {
             }
             ContextMenuAction::OpenInEditor(path) => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                let full_path = repo_root.join(path);
-
-                #[cfg(target_os = "macos")]
-                let default_cmd = "open";
-                #[cfg(target_os = "windows")]
-                let default_cmd = "explorer";
-                #[cfg(target_os = "linux")]
-                let default_cmd = "xdg-open";
-
-                let editor = std::env::var("EDITOR").unwrap_or_else(|_| default_cmd.to_string());
-                let _ = std::process::Command::new(&editor).arg(&full_path).spawn();
+                self.open_in_editor(&repo_root.join(path), None);
             }
             ContextMenuAction::OpenInFolder(path) => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
@@ -1128,6 +1118,38 @@ impl Chamber {
             }
         }
         cx.notify();
+    }
+
+    /// Open `path` (optionally at `line`) in the editor the human picked in Settings.
+    ///
+    /// The single home of "which program opens a source file": the file tree's
+    /// context menu and a clicked `file://` link in a chat message both land here, so
+    /// the setting cannot mean two different things on the two surfaces. An unset
+    /// choice — or a `Custom` command that is blank — resolves to `None` from
+    /// [`crate::sys::editor_argv`] and falls through to the platform opener, which is
+    /// exactly the behaviour that existed before the setting did.
+    pub(super) fn open_in_editor(&self, path: &std::path::Path, line: Option<u32>) {
+        #[cfg(target_os = "macos")]
+        let platform_opener = "open";
+        #[cfg(target_os = "windows")]
+        let platform_opener = "explorer";
+        #[cfg(target_os = "linux")]
+        let platform_opener = "xdg-open";
+
+        let spawned = match crate::sys::editor_argv(&self.prefs.editor, path, line) {
+            Some((program, args)) => std::process::Command::new(&program).args(&args).spawn().map_err(|e| {
+                format!("{program}: {e}")
+            }),
+            None => std::process::Command::new(platform_opener)
+                .arg(path)
+                .spawn()
+                .map_err(|e| format!("{platform_opener}: {e}")),
+        };
+        // Rule 8: an editor that is configured but not installed is the likeliest
+        // failure here, and silently doing nothing reads to the human as a dead click.
+        if let Err(e) = spawned {
+            eprintln!("chamber: could not open {}: {e}", path.display());
+        }
     }
 
     /// Answer an outstanding permission request by appending a human

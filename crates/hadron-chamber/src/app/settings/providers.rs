@@ -38,6 +38,15 @@ impl super::Chamber {
                 self.nucleus_budget_ladder(cx),
             ))
             .child(settings_field(
+                "Code editor",
+                Some(
+                    "Which program opens a file you click \u{2014} a file:// link in a message, \
+                     or \"Open in editor\" in the file tree. System default hands it to the \
+                     desktop (xdg-open), which is how you end up in Vim.",
+                ),
+                self.editor_ladder(cx),
+            ))
+            .child(settings_field(
                 "Close Gluon on Exit",
                 Some("Terminate the hadron-gluon daemon when the Chamber window closes."),
                 Switch::new("close-gluon-on-exit")
@@ -49,6 +58,47 @@ impl super::Chamber {
                     }))
                     .into_any_element(),
             ))
+    }
+
+    /// The code-editor picker. Same direct-write chip row as the nucleus budget
+    /// ladder below, over [`crate::sys::EDITOR_LADDER`] — and like that one, the UI
+    /// offers the ladder while a hand-edited `chamber.json` may carry a
+    /// `Custom` command. A `Custom` choice therefore has no chip to highlight; the
+    /// row shows none selected rather than silently pretending it is `System`.
+    pub(super) fn editor_ladder(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let mut row = h_flex().gap_1p5().flex_wrap();
+        for choice in crate::sys::EDITOR_LADDER {
+            let selected = choice == self.prefs.editor;
+            let pick = choice.clone();
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("editor-{}", choice.label())))
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .border_1()
+                    .text_xs()
+                    .cursor_pointer()
+                    .when(selected, |d| {
+                        d.bg(theme::accent())
+                            .border_color(theme::accent())
+                            .text_color(theme::text())
+                    })
+                    .when(!selected, |d| {
+                        d.bg(theme::bg_surface())
+                            .border_color(theme::border())
+                            .text_color(theme::text_secondary())
+                            .hover(|s| s.bg(theme::bg_surface_raised()))
+                    })
+                    .child(choice.label().to_string())
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.prefs.editor = pick.clone();
+                        let _ = config::save(&this.prefs);
+                        cx.notify();
+                    })),
+            );
+        }
+        row.into_any_element()
     }
 
     /// The nucleus index budget picker: a fixed ladder (16/32/64/128 KiB), not a

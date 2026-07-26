@@ -864,6 +864,26 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
     let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
     app.run(move |cx: &mut App| {
         gpui_component::init(cx);
+        // A `file://` link in a chat message is a SOURCE FILE, not a document for the
+        // desktop to guess about: without this it reaches `xdg-open` and lands in
+        // whatever the system association says (Vim, here). Declining anything that
+        // is not a local file keeps `https://` links going to the browser.
+        //
+        // The choice is re-read from disk per click rather than captured here: the
+        // Settings picker writes `chamber.json` on click, so reading it at click time
+        // keeps ONE home for the setting instead of a second cached copy that could
+        // drift. A click is rare and the file is tiny.
+        gpui_component::text::set_link_handler(|url| {
+            let Some((path, line)) = crate::sys::file_url_target(url) else {
+                return false;
+            };
+            match crate::sys::editor_argv(&config::load().editor, &path, line) {
+                Some((program, args)) => std::process::Command::new(&program).args(&args).spawn().is_ok(),
+                // `System` (or a blank custom command) has no opinion — let the
+                // platform opener have it, which is the pre-existing behaviour.
+                None => false,
+            }
+        });
         Theme::change(ThemeMode::Dark, None, cx);
         // Probed before the theme block below, which holds `cx` mutably. Logged because
         // this bug is invisible from inside the app — the only symptom is flat bold.
