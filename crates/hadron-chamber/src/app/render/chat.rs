@@ -478,11 +478,7 @@ impl super::Chamber {
         let summary_chip = turn_summary_parts(&self.view.messages, m).and_then(|(duration_secs, num_tools)| {
             if duration_secs > 0 || num_tools > 0 {
                 let mut parts = Vec::new();
-                if duration_secs == 0 {
-                    parts.push("thought for <1s".to_string());
-                } else {
-                    parts.push(format!("thought for {}s", duration_secs));
-                }
+                parts.push(format!("thought for {}", format_duration(duration_secs)));
                 if num_tools > 0 {
                     parts.push(format!("ran {} tool{}", num_tools, if num_tools == 1 { "" } else { "s" }));
                 }
@@ -760,6 +756,24 @@ pub(super) fn turn_summary_parts(
     Some((duration_secs, num_tools))
 }
 
+/// Format turn duration in seconds to human-friendly strings like "<1s", "5s", "1m 02s", "2m 34s", "1h 02m 05s".
+pub(super) fn format_duration(secs: i64) -> String {
+    if secs < 1 {
+        return "<1s".to_string();
+    }
+    let hours = secs / 3600;
+    let mins = (secs % 3600) / 60;
+    let s = secs % 60;
+
+    if hours > 0 {
+        format!("{}h {:02}m {:02}s", hours, mins, s)
+    } else if mins > 0 {
+        format!("{}m {:02}s", mins, s)
+    } else {
+        format!("{}s", s)
+    }
+}
+
 #[cfg(test)]
 mod turn_summary_tests {
     use super::turn_summary_parts;
@@ -815,6 +829,18 @@ mod turn_summary_tests {
         let (duration, tools) = turn_summary_parts(&msgs, m).expect("summary parts found");
         assert_eq!(duration, 15, "turn duration should be 15 seconds, not 0");
         assert_eq!(tools, 1, "should count 1 tool");
+    }
+
+    #[test]
+    fn formats_duration_human_friendly() {
+        use super::format_duration;
+        assert_eq!(format_duration(0), "<1s");
+        assert_eq!(format_duration(5), "5s");
+        assert_eq!(format_duration(60), "1m 00s");
+        assert_eq!(format_duration(62), "1m 02s");
+        assert_eq!(format_duration(154), "2m 34s");
+        assert_eq!(format_duration(530), "8m 50s");
+        assert_eq!(format_duration(3725), "1h 02m 05s");
     }
 }
 
