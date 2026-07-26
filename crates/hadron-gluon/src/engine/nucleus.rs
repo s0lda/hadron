@@ -50,18 +50,12 @@ fn legacy_memory_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
 #[cfg(test)]
 pub(crate) use crate::nucleus_status::BUDGET_BYTES as NUCLEUS_INDEX_BUDGET;
 
-/// Whether an index line names a lesson, in EITHER shape the index has had.
-///
-/// The pointer form — `- [slug](notes/slug.md) — hook` — is what the chamber writes
-/// now (`text::learn_line`); the bold form — `- **slug** — lesson` — is what every
-/// line written before the migration looks like, and those files are on disk in
-/// projects nobody is going to rewrite by hand. A counter that knew only one shape
-/// would report `0 lesson(s)` for a full index, which is a lie in the one place a
-/// quark cannot check: the summary it is shown INSTEAD of the index.
-fn is_lesson_line(line: &str) -> bool {
-    let line = line.trim_start();
-    line.starts_with("- **") || line.starts_with("- [")
-}
+// "What is a lesson line" lives in `nucleus_status`, next to the budget, because the
+// CHAMBER needs the same predicate for `/nucleus` and cannot reach into `engine`.
+// It was private here and `/nucleus` grew its own looser `starts_with("- ")`, which
+// counted the index preamble's prose bullets as lessons — a second opinion on the one
+// number a quark is shown instead of the index.
+use crate::nucleus_status::is_lesson_line;
 
 /// A few hundred bytes: one heading per `## ` section in the index, with a count
 /// of lessons under it. What the quark sees instead of the full index when the

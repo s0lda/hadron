@@ -505,7 +505,12 @@ pub fn nucleus_body(workspace_root: &std::path::Path, budget_bytes: usize) -> St
 
     let (index_bytes, lessons_count) = if let Ok(content) = std::fs::read_to_string(&index_path) {
         let bytes = content.len();
-        let lessons = content.lines().filter(|l| l.trim_start().starts_with("- ")).count();
+        // The ENGINE's predicate, not a local one — `/nucleus` and the over-budget
+        // summary must agree on what counts, or the command is a second opinion.
+        let lessons = content
+            .lines()
+            .filter(|l| hadron_gluon::nucleus_status::is_lesson_line(l))
+            .count();
         (bytes, lessons)
     } else {
         (0, 0)
@@ -1672,6 +1677,33 @@ mod tests {
         let body = nucleus_body(dir.path(), 64 * 1024);
         assert!(body.contains("65536 B"));
         assert!(body.contains("Lessons"));
+    }
+
+    /// `/nucleus` must count lessons the way the ENGINE counts them, or the number it
+    /// prints is a second opinion on "what is a lesson line". The engine's predicate
+    /// (`nucleus_status::is_lesson_line`) accepts only the two pointer shapes — `- [` and
+    /// `- **`. A plain `- ` bullet is prose: the index preamble has several, and counting
+    /// them told the reader there were more lessons than the prompt would ever deliver.
+    #[test]
+    fn nucleus_body_counts_only_what_the_engine_calls_a_lesson() {
+        let dir = tempfile::tempdir().unwrap();
+        let nucleus_dir = dir.path().join(".hadron").join("nucleus");
+        std::fs::create_dir_all(&nucleus_dir).unwrap();
+        std::fs::write(
+            nucleus_dir.join("index.md"),
+            "# Memory index\n\n\
+             - The index lives at `.hadron/nucleus/index.md` — prose, not a lesson.\n\
+             - Notes live in `notes/` — also prose.\n\n\
+             ## A section\n\n\
+             - [one](notes/one.md) — hook\n\
+             - **two** — the older shape, still counted\n",
+        )
+        .unwrap();
+        let body = nucleus_body(dir.path(), 32 * 1024);
+        assert!(
+            body.contains("**Lessons**: 2"),
+            "two pointer lines and two prose bullets must count as 2, got:\n{body}"
+        );
     }
 
     #[test]

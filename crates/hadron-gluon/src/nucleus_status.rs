@@ -24,6 +24,26 @@ pub fn resolve_budget_bytes(team: &Team) -> usize {
         .unwrap_or(BUDGET_BYTES)
 }
 
+/// Whether an index line names a lesson, in EITHER shape the index has had.
+///
+/// The pointer form — `- [slug](notes/slug.md) — hook` — is what the chamber writes
+/// now (`text::learn_line`); the bold form — `- **slug** — lesson` — is what every
+/// line written before the migration looks like, and those files are on disk in
+/// projects nobody is going to rewrite by hand. A counter that knew only one shape
+/// would report `0 lesson(s)` for a full index, which is a lie in the one place a
+/// quark cannot check: the summary it is shown INSTEAD of the index.
+///
+/// **Public, and here rather than in `engine::nucleus`, because there are two
+/// counters.** The engine's `tag_manifest` counts lessons per section for the
+/// over-budget summary; the chamber's `/nucleus` counts them for the human. A plain
+/// `- ` prefix is NOT enough — the index preamble opens with prose bullets ("The
+/// index lives at…", "Notes live in…"), and the looser predicate counted those,
+/// so `/nucleus` reported four more lessons than the prompt would ever deliver.
+pub fn is_lesson_line(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with("- **") || line.starts_with("- [")
+}
+
 /// Whether `.hadron/nucleus/index.md` under `workspace_root` currently exceeds
 /// `budget_bytes` — the RESOLVED budget (see [`resolve_budget_bytes`]), not always
 /// [`BUDGET_BYTES`]: a caller that hardcoded the default here would drift from a
