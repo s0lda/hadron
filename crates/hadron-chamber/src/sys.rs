@@ -200,11 +200,245 @@ pub fn read_workspace_file(repo_root: &Path, file_path: &str) -> Option<String> 
     }
 }
 
+/// Which program opens a source file the human clicked — a chat message's
+/// `file://` link, or the file tree's "Open in editor".
+///
+/// `System` means "let the platform decide" (`xdg-open`/`open`/`explorer`), which
+/// is what happened before this existed: it resolves through the desktop's own
+/// association, so a `.rs` file on a box where that association is Vim opens Vim.
+///
+/// Not a strict ladder. The Settings picker offers the named variants only, but a
+/// hand-edited `chamber.json` may carry `{"Custom": "kate -l {line} {file}"}` and it
+/// is honoured — the same tolerance `Team::nucleus_index_budget_kb` has.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum EditorChoice {
+    #[default]
+    System,
+    Zed,
+    VsCode,
+    Cursor,
+    Sublime,
+    /// A whitespace-separated command line. `{file}` and `{line}` are substituted
+    /// where they appear; with no `{file}` the path is appended as the last argument.
+    Custom(String),
+}
+
+impl EditorChoice {
+    /// The label the Settings picker shows. Also the SSOT for the offered ladder's
+    /// order, so a new variant cannot be added without deciding how it reads.
+    pub fn label(&self) -> &str {
+        match self {
+            Self::System => "System default",
+            Self::Zed => "Zed",
+            Self::VsCode => "VS Code",
+            Self::Cursor => "Cursor",
+            Self::Sublime => "Sublime Text",
+            Self::Custom(_) => "Custom",
+        }
+    }
+}
+
+/// The variants the Settings picker offers, in order. `Custom` is deliberately
+/// absent: it has no one value to click, and is reachable by hand-editing.
+pub const EDITOR_LADDER: [EditorChoice; 5] = [
+    EditorChoice::System,
+    EditorChoice::Zed,
+    EditorChoice::VsCode,
+    EditorChoice::Cursor,
+    EditorChoice::Sublime,
+];
+
+/// Split a `file://` URL into the path it names and the line it points at.
+///
+/// `None` for **any other scheme** — that is the whole point: an `https://` link in a
+/// chat message must keep going to the browser, so the caller falls back to the
+/// platform opener rather than handing a URL to a code editor.
+///
+/// Understands the two fragment spellings a human writes by hand (`#L332`, `#332`)
+/// and percent-decodes the path, because a URL is where `%20` comes from.
+pub fn file_url_target(url: &str) -> Option<(std::path::PathBuf, Option<u32>)> {
+    let rest = url.strip_prefix("file://")?;
+    // `file:///path` (empty authority) is the only form we accept; a host would name
+    // another machine, and we cannot open a file there.
+    let rest = if rest.starts_with('/') { rest } else { return None };
+
+    let (path, fragment) = match rest.split_once('#') {
+        Some((p, f)) => (p, Some(f)),
+        None => (rest, None),
+    };
+    let line = fragment
+        .map(|f| f.trim_start_matches(['L', 'l']))
+        .and_then(|f| f.parse::<u32>().ok())
+        .filter(|n| *n > 0);
+
+    Some((std::path::PathBuf::from(percent_decode(path)), line))
+}
+
+/// Minimal `%XX` decoder — enough for a filesystem path in a URL, and not worth a
+/// dependency. A malformed escape is left verbatim rather than dropped, so a literal
+/// `%` in a filename survives a round trip.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The program and arguments that open `path` (optionally at `line`) in `choice`.
+///
+/// `None` means **"no opinion — use the platform opener"**, which is exactly what
+/// `EditorChoice::System` wants and what a caller already has code for. Every editor
+/// spells "at line N" differently, so folding the line into the args here is the
+/// reason this function exists rather than a bare program name.
+pub fn editor_argv(choice: &EditorChoice, path: &Path, line: Option<u32>) -> Option<(String, Vec<String>)> {
+    let file = path.to_string_lossy().to_string();
+    let at_line = |sep: &str| match line {
+        Some(n) => format!("{file}{sep}{n}"),
+        None => file.clone(),
+    };
+
+    let (program, args) = match choice {
+        EditorChoice::System => return None,
+        EditorChoice::Zed => ("zed", vec![at_line(":")]),
+        EditorChoice::VsCode => ("code", vec!["--goto".to_string(), at_line(":")]),
+        EditorChoice::Cursor => ("cursor", vec!["--goto".to_string(), at_line(":")]),
+        EditorChoice::Sublime => ("subl", vec![at_line(":")]),
+        EditorChoice::Custom(cmd) => {
+            let mut parts = cmd.split_whitespace().map(str::to_string).collect::<Vec<_>>();
+            let program = if parts.is_empty() { return None } else { parts.remove(0) };
+            let had_file = parts.iter().any(|p| p.contains("{file}"));
+            let line_text = line.map(|n| n.to_string()).unwrap_or_default();
+            for part in &mut parts {
+                *part = part.replace("{file}", &file).replace("{line}", &line_text);
+            }
+            if !had_file {
+                parts.push(file);
+            }
+            return Some((program, parts));
+        }
+    };
+    Some((program.to_string(), args))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    // -- file_url_target: what a clicked link actually carries --
+
+    /// The exact shape a quark posts into the field.
+    #[test]
+    fn a_file_url_with_a_line_fragment_yields_both() {
+        let (path, line) = file_url_target("file:///home/j/src/app/mod.rs#L332").unwrap();
+        assert_eq!(path, Path::new("/home/j/src/app/mod.rs"));
+        assert_eq!(line, Some(332));
+    }
+
+    #[test]
+    fn a_file_url_without_a_fragment_has_no_line() {
+        let (path, line) = file_url_target("file:///tmp/a.rs").unwrap();
+        assert_eq!(path, Path::new("/tmp/a.rs"));
+        assert_eq!(line, None);
+    }
+
+    #[test]
+    fn a_bare_number_fragment_is_a_line_too() {
+        assert_eq!(file_url_target("file:///tmp/a.rs#12").unwrap().1, Some(12));
+    }
+
+    /// A `#section-heading` anchor is not a line, and must not become one.
+    #[test]
+    fn a_non_numeric_fragment_is_not_a_line() {
+        assert_eq!(file_url_target("file:///tmp/a.md#install").unwrap().1, None);
+    }
+
+    #[test]
+    fn a_percent_encoded_path_is_decoded() {
+        let (path, _) = file_url_target("file:///tmp/my%20notes.md").unwrap();
+        assert_eq!(path, Path::new("/tmp/my notes.md"));
+    }
+
+    /// The hard requirement: a web link must fall through to the browser, never
+    /// reach a code editor.
+    #[test]
+    fn a_web_url_is_not_a_file_target() {
+        assert!(file_url_target("https://example.com/a.rs").is_none());
+        assert!(file_url_target("http://example.com").is_none());
+        assert!(file_url_target("mailto:a@b.c").is_none());
+        // A host component names another machine — we cannot open its files.
+        assert!(file_url_target("file://otherbox/tmp/a.rs").is_none());
+    }
+
+    // -- editor_argv: each editor spells "at line N" its own way --
+
+    #[test]
+    fn system_has_no_opinion_so_the_platform_opener_stays() {
+        assert_eq!(editor_argv(&EditorChoice::System, Path::new("/tmp/a.rs"), Some(9)), None);
+    }
+
+    #[test]
+    fn zed_takes_a_colon_suffix() {
+        let (prog, args) = editor_argv(&EditorChoice::Zed, Path::new("/tmp/a.rs"), Some(332)).unwrap();
+        assert_eq!(prog, "zed");
+        assert_eq!(args, vec!["/tmp/a.rs:332"]);
+    }
+
+    #[test]
+    fn vscode_and_cursor_need_the_goto_flag() {
+        let (prog, args) = editor_argv(&EditorChoice::VsCode, Path::new("/tmp/a.rs"), Some(7)).unwrap();
+        assert_eq!((prog.as_str(), args), ("code", vec!["--goto".to_string(), "/tmp/a.rs:7".to_string()]));
+        let (prog, args) = editor_argv(&EditorChoice::Cursor, Path::new("/tmp/a.rs"), None).unwrap();
+        assert_eq!((prog.as_str(), args), ("cursor", vec!["--goto".to_string(), "/tmp/a.rs".to_string()]));
+    }
+
+    /// No line means no `:N` suffix — `zed /tmp/a.rs:` would be a path that does not exist.
+    #[test]
+    fn no_line_means_no_suffix() {
+        let (_, args) = editor_argv(&EditorChoice::Zed, Path::new("/tmp/a.rs"), None).unwrap();
+        assert_eq!(args, vec!["/tmp/a.rs"]);
+    }
+
+    #[test]
+    fn a_custom_command_substitutes_placeholders() {
+        let choice = EditorChoice::Custom("kate -l {line} {file}".to_string());
+        let (prog, args) = editor_argv(&choice, Path::new("/tmp/a.rs"), Some(4)).unwrap();
+        assert_eq!((prog.as_str(), args), ("kate", vec!["-l".to_string(), "4".to_string(), "/tmp/a.rs".to_string()]));
+    }
+
+    /// A custom command that never mentions `{file}` still gets the path — otherwise
+    /// it would open the editor on nothing.
+    #[test]
+    fn a_custom_command_without_a_placeholder_appends_the_path() {
+        let choice = EditorChoice::Custom("emacs".to_string());
+        let (prog, args) = editor_argv(&choice, Path::new("/tmp/a.rs"), Some(4)).unwrap();
+        assert_eq!((prog.as_str(), args), ("emacs", vec!["/tmp/a.rs".to_string()]));
+    }
+
+    #[test]
+    fn a_blank_custom_command_falls_back_to_the_platform() {
+        assert_eq!(editor_argv(&EditorChoice::Custom("   ".into()), Path::new("/tmp/a.rs"), None), None);
+    }
+
+    /// The picker's ladder and the labels are one decision, not two.
+    #[test]
+    fn every_offered_choice_has_a_label() {
+        let labels: Vec<&str> = EDITOR_LADDER.iter().map(|c| c.label()).collect();
+        assert_eq!(labels, vec!["System default", "Zed", "VS Code", "Cursor", "Sublime Text"]);
+        assert_eq!(EditorChoice::default(), EditorChoice::System);
+    }
 
     #[test]
     fn file_tree_listing_and_opening_work() {

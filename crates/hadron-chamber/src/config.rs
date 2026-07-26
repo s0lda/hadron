@@ -58,6 +58,12 @@ pub struct ChamberPrefs {
     /// Per-quark identity overrides, keyed by quark id.
     #[serde(default)]
     pub quarks: BTreeMap<String, Identity>,
+    /// Which program opens a source file the human clicks — both a chat message's
+    /// `file://` link and the file tree's "Open in editor". Defaults to
+    /// [`crate::sys::EditorChoice::System`], which is the pre-existing behaviour
+    /// (the desktop's own association, i.e. whatever `xdg-open` picks).
+    #[serde(default)]
+    pub editor: crate::sys::EditorChoice,
 }
 
 fn default_true() -> bool {
@@ -99,6 +105,7 @@ impl Default for ChamberPrefs {
             window_bounds: None,
             human: Identity::default(),
             quarks: BTreeMap::new(),
+            editor: crate::sys::EditorChoice::default(),
         }
     }
 }
@@ -181,6 +188,7 @@ mod tests {
                 image_path: Some("/tmp/me.png".into()),
             },
             quarks,
+            editor: crate::sys::EditorChoice::Zed,
         };
         let json = serde_json::to_string(&prefs).unwrap();
         let back: ChamberPrefs = serde_json::from_str(&json).unwrap();
