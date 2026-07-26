@@ -575,6 +575,8 @@ impl Chamber {
         // The Configured Providers list is every ADOPTED quark (resolved), so a
         // migrated repo whose seats are now overrides still lists them.
         let providers = configured_providers(&resolve_team(&team, &global));
+        // Resolved before `team` moves into the struct literal below.
+        let nucleus_index_budget_bytes = hadron_gluon::nucleus_status::resolve_budget_bytes(&team);
 
         // The real secret backend: the OS credential store, via the same
         // `KeyringStore` the daemon uses (`hadron_gluon::secrets`) — same service
@@ -687,7 +689,10 @@ impl Chamber {
             completion_scroll: ScrollHandle::new(),
             last_live_activities: std::collections::HashMap::new(),
             last_gluon_running: true,
-            nucleus_over_budget: hadron_gluon::nucleus_status::index_over_budget(&repo_root),
+            nucleus_over_budget: hadron_gluon::nucleus_status::index_over_budget(
+                &repo_root,
+                nucleus_index_budget_bytes,
+            ),
             gluon_stopped_notice: false,
         };
         chamber.update_active_plan();

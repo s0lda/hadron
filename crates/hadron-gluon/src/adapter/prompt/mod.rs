@@ -165,7 +165,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         p.push_str("# What the swarm has learned (nucleus index)\n");
         if projection.nucleus_index.trim().is_empty() {
             p.push_str("_Empty — nothing has been recorded here yet._\n\n");
-        } else if projection.nucleus_index.len() > crate::engine::nucleus::NUCLEUS_INDEX_BUDGET {
+        } else if projection.nucleus_index.len() > projection.nucleus_index_budget_bytes {
             let manifest = crate::engine::nucleus::tag_manifest(&projection.nucleus_index);
             // Say that this is a substitute BEFORE printing it. The index reached 46 KB
             // against a 32 KB budget and every quark was handed these counts under the

@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::providers::{nucleus_budget_kb_for, NUCLEUS_BUDGET_LADDER_KB};
 
 /// First free seat id: the conventional one, else `<base>-2`, `-3`, … A second
 /// seat of the same provider is a real, wanted thing (same vendor, different
@@ -28,6 +29,15 @@ impl super::Chamber {
                 Input::new(&self.settings_max_exchanges).w_full().into_any_element(),
             ))
             .child(settings_field(
+                "Nucleus index budget",
+                Some(
+                    "How big .hadron/nucleus/index.md may grow before a quark is shown \
+                     counts instead of the index. Bigger buys more shared lessons at the \
+                     cost of context every quark pays on every turn.",
+                ),
+                self.nucleus_budget_ladder(cx),
+            ))
+            .child(settings_field(
                 "Close Gluon on Exit",
                 Some("Terminate the hadron-gluon daemon when the Chamber window closes."),
                 Switch::new("close-gluon-on-exit")
@@ -39,6 +49,47 @@ impl super::Chamber {
                     }))
                     .into_any_element(),
             ))
+    }
+
+    /// The nucleus index budget picker: a fixed ladder (16/32/64/128 KiB), not a
+    /// free-text field — a hand-edited `team.json` may still carry any other
+    /// positive value (`Team::nucleus_index_budget_kb` stays a plain `Option<usize>`
+    /// for that reason), but the UI only ever offers this ladder. Writes directly on
+    /// click and saves, the same direct-write shape as the identity color swatches —
+    /// no separate `Entity<InputState>` + commit round-trip needed for four buttons.
+    pub(super) fn nucleus_budget_ladder(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current = nucleus_budget_kb_for(&self.team);
+        let mut row = h_flex().gap_1p5();
+        for kb in NUCLEUS_BUDGET_LADDER_KB {
+            let selected = kb == current;
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("nucleus-budget-{kb}")))
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .border_1()
+                    .text_xs()
+                    .cursor_pointer()
+                    .when(selected, |d| {
+                        d.bg(theme::accent())
+                            .border_color(theme::accent())
+                            .text_color(theme::text())
+                    })
+                    .when(!selected, |d| {
+                        d.bg(theme::bg_surface())
+                            .border_color(theme::border())
+                            .text_color(theme::text_secondary())
+                            .hover(|s| s.bg(theme::bg_surface_raised()))
+                    })
+                    .child(format!("{kb} KiB"))
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.team.nucleus_index_budget_kb = Some(kb);
+                        this.save_repo_team(cx);
+                    })),
+            );
+        }
+        row.into_any_element()
     }
 
     pub(super) fn providers_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {

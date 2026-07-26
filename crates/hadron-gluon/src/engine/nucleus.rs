@@ -42,6 +42,12 @@ fn legacy_memory_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
 /// not spending on the task. It is also the wrong thing to grow: the index is a
 /// routing table (one line per lesson) and the detail belongs in `notes/`, which the
 /// engine never loads. A file that outgrows this has stopped being an index.
+///
+/// The shipped DEFAULT only — production code enforces the RESOLVED (possibly
+/// configured) budget carried on `Projection::nucleus_index_budget_bytes` instead
+/// (see `Engine::nucleus_index_budget_bytes`), so this re-export is `#[cfg(test)]`:
+/// nothing outside a test fixture should still be reading the unconfigurable default.
+#[cfg(test)]
 pub(crate) use crate::nucleus_status::BUDGET_BYTES as NUCLEUS_INDEX_BUDGET;
 
 /// Whether an index line names a lesson, in EITHER shape the index has had.

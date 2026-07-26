@@ -187,6 +187,15 @@ pub(crate) fn learn_line(slug: &str, hook: &str) -> String {
     format!("- [{slug}](notes/{slug}.md) — {hook}\n")
 }
 
+/// Whether appending `new_line` to an index currently `current_len` bytes would push
+/// it past `budget_bytes`. Pure, so `/learn`'s write-time refusal (`app/actions.rs`)
+/// can be unit-tested without touching disk. The budget is checked when the prompt
+/// is READ (`prompt::build`); nothing checked it when a line was APPENDED — this is
+/// the write-time half, closing the gap a reader alone can only report, never prevent.
+pub(crate) fn would_exceed_index_budget(current_len: usize, new_line: &str, budget_bytes: usize) -> bool {
+    current_len + new_line.len() > budget_bytes
+}
+
 /// The note itself: frontmatter, then the fact. `description` is a **retrieval key**,
 /// not a summary — its only job is letting a quark decide whether to open the file,
 /// which is what keeps the index short enough to always send.
@@ -1349,6 +1358,27 @@ mod tests {
             "- [always-run-cargo-fmt-before](notes/always-run-cargo-fmt-before.md) — \
              Always run cargo fmt before commit\n"
         );
+    }
+
+    // -- would_exceed_index_budget: /learn's write-time refusal --
+
+    #[test]
+    fn would_exceed_index_budget_is_false_comfortably_under() {
+        assert!(!would_exceed_index_budget(100, "- [x](notes/x.md) — short\n", 1000));
+    }
+
+    #[test]
+    fn would_exceed_index_budget_is_true_when_the_append_crosses_the_line() {
+        assert!(would_exceed_index_budget(995, "123456\n", 1000));
+    }
+
+    #[test]
+    fn would_exceed_index_budget_is_false_at_exactly_the_budget() {
+        // Landing exactly on the budget is not OVER it — `>` not `>=`, matching
+        // `index_over_budget`'s own `len() > budget_bytes` check.
+        let line = "1234567890\n"; // 11 bytes
+        assert_eq!(line.len(), 11);
+        assert!(!would_exceed_index_budget(989, line, 1000));
     }
 
     /// The whole failure this format exists to prevent: `.hadron/nucleus/index.md`

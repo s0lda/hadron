@@ -324,6 +324,7 @@ mod tests {
             nucleus_index: String::new(),
             nucleus_index_path: std::path::PathBuf::new(),
             nucleus_index_truncated: false,
+            nucleus_index_budget_bytes: hadron_lattice::DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES,
             nucleus_notes_dir: std::path::PathBuf::new(),
             git_diff: String::new(),
             cwd,

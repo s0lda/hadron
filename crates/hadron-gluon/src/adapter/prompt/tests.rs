@@ -29,6 +29,7 @@ fn projection(task: &str) -> Projection {
         nucleus_index: String::new(),
         nucleus_index_path: std::path::PathBuf::new(),
         nucleus_index_truncated: false,
+        nucleus_index_budget_bytes: hadron_lattice::DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES,
         nucleus_notes_dir: std::path::PathBuf::new(),
         git_diff: String::new(),
         isolated: true,
@@ -523,6 +524,43 @@ fn a_truncated_nucleus_index_says_so() {
 
     let p = build(&proj, &QuarkId::new("agy"));
     assert!(p.contains("index above is CUT"));
+}
+
+/// The budget the prompt enforces is whatever `Projection::nucleus_index_budget_bytes`
+/// carries, not always the shipped default — an index well under the 32 KiB default
+/// but over a smaller CONFIGURED budget must still degrade to counts. This is the
+/// whole point of threading the resolved value through rather than reading a
+/// hardcoded constant at the call site.
+#[test]
+fn a_configured_smaller_budget_is_enforced_even_under_the_default() {
+    let mut proj = projection("x");
+    proj.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
+    proj.nucleus_index_budget_bytes = 64;
+    proj.nucleus_index = "- [a-lesson](notes/a-lesson.md) — well under the 32 KiB shipped default\n".into();
+    assert!(proj.nucleus_index.len() > 64, "fixture must exceed the configured budget");
+    assert!(
+        proj.nucleus_index.len() < crate::engine::nucleus::NUCLEUS_INDEX_BUDGET,
+        "fixture must stay under the shipped default, to prove it's the configured value that fired"
+    );
+
+    let p = build(&proj, &QuarkId::new("agy"));
+    assert!(p.contains("COUNTS, not lessons"), "a smaller configured budget must still be enforced");
+}
+
+/// Symmetric case: a larger configured budget must let an index PAST the shipped
+/// default through in full.
+#[test]
+fn a_configured_larger_budget_admits_an_index_past_the_default() {
+    let mut proj = projection("x");
+    proj.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
+    proj.nucleus_index_budget_bytes = 128 * 1024;
+    let big = "- [x](notes/x.md) — ".to_string()
+        + &"a".repeat(crate::engine::nucleus::NUCLEUS_INDEX_BUDGET + 1000);
+    proj.nucleus_index = big.clone();
+
+    let p = build(&proj, &QuarkId::new("agy"));
+    assert!(!p.contains("COUNTS, not lessons"), "a larger configured budget must admit the full index");
+    assert!(p.contains(&big));
 }
 
 #[test]

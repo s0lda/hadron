@@ -532,6 +532,7 @@ impl super::Engine {
         Projection {
             nucleus_index,
             nucleus_index_truncated,
+            nucleus_index_budget_bytes: self.nucleus_index_budget_bytes,
             nucleus_index_path,
             nucleus_notes_dir: nucleus_notes_dir(&workspace_root),
             task: task_desc,

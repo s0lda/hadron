@@ -46,6 +46,15 @@ pub struct Team {
     pub roster: Vec<SeatOverride>,
     #[serde(default)]
     pub max_exchanges: Option<usize>,
+    /// Repo policy for [`crate::Projection::nucleus_index_budget_bytes`] — how big
+    /// `.hadron/nucleus/index.md` may grow before it is over budget, in KiB. `Option`
+    /// and tolerant of a hand-edited team.json the same way `max_exchanges` is;
+    /// absent (or `0`) falls back to the shipped default
+    /// (`nucleus_status::BUDGET_BYTES`, 32 KiB). Not a strict enum: the Settings UI
+    /// offers a fixed ladder (16/32/64/128), but a hand-edited file with any other
+    /// positive value is honoured, not rejected.
+    #[serde(default)]
+    pub nucleus_index_budget_kb: Option<usize>,
 }
 
 impl Team {
@@ -144,5 +153,6 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
         quarks,
         roster: Vec::new(),
         max_exchanges: repo.max_exchanges,
+        nucleus_index_budget_kb: repo.nucleus_index_budget_kb,
     }
 }
