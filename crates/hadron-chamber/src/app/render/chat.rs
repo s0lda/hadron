@@ -749,11 +749,11 @@ pub(super) fn turn_summary_parts(
     }
     let start_time = messages
         .iter()
-        .take_while(|x| x.ts <= m.ts)
-        .rfind(|x| x.from == m.from && x.kind_label == "status" && x.body == "excited")
+        .rev()
+        .find(|x| x.ts <= m.ts && x.from == m.from && x.kind_label == "status" && x.body == "excited")
         .map(|x| x.ts)
         .or_else(|| turn_events.iter().map(|x| x.ts).min())?;
-    let duration_secs = (m.ts - start_time).num_seconds().max(0);
+    let duration_secs = m.ts.signed_duration_since(start_time).num_seconds().max(0);
     let num_commands = turn_events.iter().filter(|x| x.kind_label == "command").count();
     let num_edits = turn_events.iter().filter(|x| x.kind_label == "edit").count();
     let num_tools = num_commands + num_edits;
