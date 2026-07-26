@@ -66,10 +66,20 @@ fn line_matches_task_or_pinned(line: &str, lower_task: &str) -> bool {
     if line.contains("[pinned]") {
         return true;
     }
-    if !line.trim_start().starts_with("- **") {
+    let Some(slug) = index_line_slug(line) else {
         return false;
-    }
+    };
     let lower_line = line.to_lowercase();
+    // A slug is kebab-case and a task is prose, so comparing them verbatim only ever
+    // fires when the human typed the slug itself — which is to say never. Matching the
+    // hyphens as spaces too is what makes this net catch anything at all: a task about
+    // "the merge gate" now surfaces `the-merge-gate`.
+    let lower_slug = slug.to_lowercase();
+    if !lower_slug.is_empty()
+        && (lower_task.contains(&lower_slug) || lower_task.contains(&lower_slug.replace('-', " ")))
+    {
+        return true;
+    }
     if let Some(start) = lower_line.find("[tag:") {
         if let Some(end) = lower_line[start..].find(']') {
             let tag = &lower_line[start + 5..start + end];
@@ -78,18 +88,29 @@ fn line_matches_task_or_pinned(line: &str, lower_task: &str) -> bool {
             }
         }
     }
-    if let Some(start) = lower_line.find("**") {
-        if let Some(end) = lower_line[start + 2..].find("**") {
-            let slug = &lower_line[start + 2..start + 2 + end];
-            if !slug.is_empty() && lower_task.contains(slug) {
-                return true;
-            }
-        }
-    }
     if lower_task.contains(&lower_line) {
         return true;
     }
     false
+}
+
+/// The slug an index line names, in **either** index shape — `- **slug** — hook`
+/// (pre-`c449aef`) or `- [slug](notes/slug.md) — hook` (current). `None` means the
+/// line is not an index entry at all (a heading, prose, a blank).
+///
+/// Both shapes on purpose, and this is the second call site of that coupling, not the
+/// first: `tag_manifest` counted only `- **` and would have reported `0 lesson(s)` for
+/// a full index the moment the format changed. That one was caught and fixed in the
+/// migration commit; **this one was not**, so from `c449aef` until now the over-budget
+/// path substituted counts and then re-added a relevant-lessons list that could never
+/// match anything — the whole safety net under the budget cliff, silently dead. A
+/// user's un-migrated index must keep working too, which is why neither shape wins.
+fn index_line_slug(line: &str) -> Option<&str> {
+    let rest = line.trim_start();
+    if let Some(r) = rest.strip_prefix("- [") {
+        return r.split(']').next();
+    }
+    rest.strip_prefix("- **")?.split("**").next()
 }
 
 /// Build the full Markdown prompt handed to a quark's CLI for one turn.

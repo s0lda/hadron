@@ -613,3 +613,29 @@ fn measure_and_build_agree_on_section_boundaries() {
     let total = b.standard_model + b.invariants + b.nucleus_digest + b.nucleus_index + b.task + b.field_window;
     assert!(total <= built.len());
 }
+
+/// The safety net under the budget cliff was silently disabled by the index migration.
+/// Over budget, the prompt substitutes counts for the index and then re-adds the lines
+/// that match the task — `line_matches_task_or_pinned`. That filter required a line to
+/// start `- **`, the OLD index shape. `c449aef` moved every line to
+/// `- [slug](notes/slug.md) — hook` and fixed `tag_manifest`'s identical coupling, but
+/// not this one, so a quark past the budget got counts and an EMPTY relevant-lessons
+/// list: zero lessons, no partial recovery.
+#[test]
+fn a_pointer_line_still_matches_the_task_it_names() {
+    let lower = "the merge gate keeps hanging on a rebase".to_lowercase();
+    assert!(
+        super::line_matches_task_or_pinned(
+            "- [the-merge-gate](notes/the-merge-gate.md) — a hung suite in the target project",
+            &lower
+        ),
+        "a pointer line whose slug appears in the task must still be surfaced"
+    );
+    // The old shape has to keep working — a user's index may not be migrated.
+    assert!(super::line_matches_task_or_pinned("- **the-merge-gate** — a hung suite", &lower));
+    // And an unrelated lesson must NOT be dragged in.
+    assert!(!super::line_matches_task_or_pinned(
+        "- [gpui-hsla-takes-normalised-hue-not-degrees](notes/x.md) — hue clamps to 0..1",
+        &lower
+    ));
+}
