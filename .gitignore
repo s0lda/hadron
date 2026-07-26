@@ -24,3 +24,6 @@ assets/screenshots/
 # Python bytecode from the Antigravity SDK adapter (crates/hadron-gluon/scripts/)
 __pycache__/
 *.pyc
+
+# Spellcheck dictionary files
+codebook.toml
