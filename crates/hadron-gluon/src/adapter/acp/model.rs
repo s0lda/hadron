@@ -3,36 +3,99 @@ use std::str::FromStr;
 use hadron_lattice::Mode;
 
 use agent_client_protocol::schema::v1::{
-    InitializeRequest, NewSessionRequest, PermissionOptionKind, SessionConfigId,
-    SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigSelectOptions,
+    InitializeRequest, NewSessionRequest, PermissionOptionKind, RequestPermissionRequest,
+    SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigSelectOptions, ToolKind,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, ConnectionTo};
 
 use crate::adapter::registry::AcpTarget;
 
-/// Translate the resolved permission mode into an answer to ACP's *blocking*
-/// `session/request_permission`.
+/// What a blocking `session/request_permission` is actually asking to do.
+///
+/// The posture alone is not enough to answer: **Write** means "edits auto-approve;
+/// every command asks you", so the answer depends on whether the tool is an edit —
+/// and, since edits are meant to travel through hadron-forge, on *which* edit path
+/// it is. Three classes is the whole distinction the ladder needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RequestClass {
+    /// The agent's own file-writing tools (`Edit`, `Write`, `fs/write_text_file`, …).
+    NativeEdit,
+    /// A `hadron_forge_*` MCP call: jailed to the worktree, hash-checked, and the
+    /// sanctioned way for a quark to change a file.
+    Forge,
+    /// Everything else — a shell command, a fetch, another MCP server's tool.
+    Other,
+}
+
+/// Classify the request so [`permission_choice`] can answer it.
+///
+/// A forge call is recognised by **name**, because that is the only signal it
+/// carries: `claude-agent-acp` gives MCP tools no special case, so its
+/// `toolInfoFromToolUse` default arm reports `title` = the raw wire name
+/// (`mcp__hadron-forge-mcp__hadron_forge_edit`) and `kind` = `other`.
+pub(super) fn classify_request(req: &RequestPermissionRequest) -> RequestClass {
+    if is_native_edit_request(req) {
+        return RequestClass::NativeEdit;
+    }
+    match &req.tool_call.fields.title {
+        Some(title) if title.contains("hadron_forge_") => RequestClass::Forge,
+        _ => RequestClass::Other,
+    }
+}
+
+/// Translate the turn's posture and the request's class into an answer to ACP's
+/// *blocking* `session/request_permission`.
 ///
 /// This is deliberately the **narrow** version. ACP can express real per-tool,
 /// human-in-the-loop gating (the agent blocks until we answer, and the options carry
 /// `AllowAlways` / `RejectAlways` — the trust-on-first-use kinds the CLI path cannot
 /// express). Wiring that to hadron's field-driven grant flow is a separate piece of
 /// work, because the human's answer arrives asynchronously via the field while the
-/// JSON-RPC call is held open. Until then we answer from the turn's posture alone:
+/// JSON-RPC call is held open. Until then we answer from the posture and the class:
 ///
-/// - **Ask / Write** → reject. The quark may talk, not act unattended.
+/// - **A native edit** → reject, in every posture. Edits belong to hadron-forge,
+///   which is jailed to the quark's worktree and rejects a stale hash; the agent's
+///   own writer is neither.
+/// - **Ask** → reject everything. The quark may talk, not act.
+/// - **Write** → allow a forge call, refuse a command. This is the rung's own
+///   promise ("Edits auto-approve; every command asks you"), and the seat used to
+///   honour neither half: it rejected forge too, leaving the sanctioned edit path
+///   usable only in the postures where a native write already sails through unasked.
 /// - **Auto / Bypass** → allow once.
 ///
 /// `AllowAlways` is never selected: remembering a grant is the field's job, and this
 /// function has no way to record one. Erring toward `*_once` keeps the blast radius
 /// of a mistake to a single tool call.
-pub(super) fn permission_choice(mode: Mode) -> PermissionOptionKind {
-    match mode {
-        Mode::Ask | Mode::Write => PermissionOptionKind::RejectOnce,
-        Mode::Auto | Mode::Bypass => PermissionOptionKind::AllowOnce,
+pub(super) fn permission_choice(mode: Mode, class: RequestClass) -> PermissionOptionKind {
+    use PermissionOptionKind::{AllowOnce, RejectOnce};
+    match (class, mode) {
+        (RequestClass::NativeEdit, _) => RejectOnce,
+        (_, Mode::Ask) => RejectOnce,
+        (RequestClass::Forge, _) => AllowOnce,
+        (RequestClass::Other, Mode::Write) => RejectOnce,
+        (RequestClass::Other, _) => AllowOnce,
     }
+}
+
+/// True when the request is the agent asking to write a file with its **own**
+/// tooling rather than through hadron-forge.
+pub(super) fn is_native_edit_request(req: &RequestPermissionRequest) -> bool {
+    let fields = &req.tool_call.fields;
+    if matches!(fields.kind, Some(ToolKind::Edit)) {
+        return true;
+    }
+    if let Some(title) = &fields.title {
+        let name = title.trim();
+        if matches!(
+            name,
+            "Edit" | "Write" | "MultiEdit" | "NotebookEdit" | "fs/write_text_file" | "write_file"
+        ) {
+            return true;
+        }
+    }
+    false
 }
 
 /// One model the seated agent says it can actually run: the id that goes on the wire,
