@@ -1181,12 +1181,14 @@ impl Chamber {
         self.append_and_reload(hadron_gatekeeper::grant_remembering(&pending), cx);
     }
 
-    /// Cycle the global default permission mode (Ask → Write → Auto → Ask) by
-    /// appending a global `ModeSet`. The daemon honours it next tick. Like the
-    /// per-quark chip, the click cycle never escalates INTO `Bypass` — for the
-    /// whole swarm that is `/mode bypass` with no target (`actions.rs:736`).
+    /// Cycle the global default permission mode through the FULL ladder
+    /// (Ask → Write → Auto → Bypass → Ask) by appending a global `ModeSet`. The daemon
+    /// honours it next tick. Unlike the per-quark chip — which clamps at `Auto` so a
+    /// stray click cannot hand one worker unattended access — the global chip is the
+    /// human's own posture control, so it reaches `Bypass`. `/mode bypass` with no
+    /// target is the equivalent typed path (`actions.rs:736`).
     pub(super) fn cycle_global_mode(&mut self, cx: &mut Context<Self>) {
-        let next = next_mode(self.view.global_mode);
+        let next = next_global_mode(self.view.global_mode);
         self.append_and_reload(
             Event::new(Actor::Human, None, Kind::ModeSet { mode: next }),
             cx,
