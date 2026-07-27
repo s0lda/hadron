@@ -724,9 +724,11 @@ impl super::Chamber {
                         } else {
                             let mut builder = gpui::PathBuilder::stroke(px(2.0));
                             builder.move_to(gpui::point(x1, y1));
-                            builder.curve_to(
+                            let mid_y = y1 + (y2 - y1) / 2.0;
+                            builder.cubic_bezier_to(
                                 gpui::point(x2, y2),
-                                gpui::point(x1, y1 + (y2 - y1) / 2.0),
+                                gpui::point(x1, mid_y),
+                                gpui::point(x2, mid_y),
                             );
                             if let Ok(path) = builder.build() {
                                 window.paint_path(path, color);
