@@ -712,7 +712,7 @@ impl super::Chamber {
                         let y1 = bounds.origin.y;
                         let x2 = bounds.origin.x + px((lane.to_col as f32) * LANE_W + LANE_W / 2.0);
                         let y2 = bounds.origin.y + h;
-                        let color = gpui::rgb(LANE_COLORS[lane.from_col % LANE_COLORS.len()]);
+                        let color = gpui::rgb(LANE_COLORS[Self::lane_color_index(lane) % LANE_COLORS.len()]);
 
                         if lane.from_col == lane.to_col {
                             let line_w = px(2.0);
@@ -766,6 +766,15 @@ impl super::Chamber {
                 .w(px(gutter_w))
                 .h(px(row_h)),
             )
+    }
+
+    /// Determine the color lane index for a lane segment.
+    /// For vertical lines (from_col == to_col), uses from_col.
+    /// For diagonal connectors (merges or branch creation), uses max(from_col, to_col)
+    /// so that a branch connecting to/from main (col 0) is colored with the subbranch's color
+    /// (e.g. blue for col 1) rather than main's color (green for col 0).
+    pub(super) fn lane_color_index(lane: &crate::vcs::LaneSeg) -> usize {
+        lane.from_col.max(lane.to_col)
     }
 
     /// Collapse each run of consecutive connector rows into a single strip carrying the
@@ -1087,5 +1096,18 @@ mod tests {
         let out = Chamber::collapse_connectors(rows);
         assert_eq!(out.len(), 3);
         assert!(out[2].hash.is_none());
+    }
+
+    #[test]
+    fn lane_color_index_uses_subbranch_color_for_diagonal_connectors() {
+        use crate::vcs::LaneSeg;
+        // Main trunk (col 0) -> green (0)
+        assert_eq!(Chamber::lane_color_index(&LaneSeg { from_col: 0, to_col: 0 }), 0);
+        // Branch 1 trunk (col 1) -> blue (1)
+        assert_eq!(Chamber::lane_color_index(&LaneSeg { from_col: 1, to_col: 1 }), 1);
+        // Merge connector (main col 0 -> branch col 1) -> blue (1)
+        assert_eq!(Chamber::lane_color_index(&LaneSeg { from_col: 0, to_col: 1 }), 1);
+        // Creation connector (branch col 1 -> main col 0) -> blue (1)
+        assert_eq!(Chamber::lane_color_index(&LaneSeg { from_col: 1, to_col: 0 }), 1);
     }
 }
