@@ -59,7 +59,7 @@ impl Chamber {
                 .background_executor()
                 .spawn(async move {
                     let out = Command::new("git")
-                        .args(["ls-remote", "--tags", "https://github.com/hadron-swarm/hadron"])
+                        .args(["ls-remote", "--tags", "https://github.com/s0lda/hadron"])
                         .output();
                     match out {
                         Ok(o) if o.status.success() => {
