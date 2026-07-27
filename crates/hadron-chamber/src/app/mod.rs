@@ -82,6 +82,8 @@ use input::split_leading_commands;
 
 mod terminal;
 mod reload;
+mod update;
+pub use update::UpdateState;
 
 actions!(
     chamber,
@@ -326,6 +328,7 @@ struct Chamber {
     _lock_file: Option<std::fs::File>,
     git_statuses: std::collections::HashMap<String, crate::vcs::GitStatus>,
     completion_files: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    pub(super) update_state: UpdateState,
     file_tree_open: Option<(String, String)>,
     file_tree_expanded: std::collections::HashSet<String>,
     terminal: Option<crate::pty::PtyTerminal>,
@@ -696,6 +699,7 @@ impl Chamber {
                 nucleus_index_budget_bytes,
             ),
             gluon_stopped_notice: false,
+            update_state: UpdateState::default(),
         };
         chamber.update_active_plan();
         chamber
