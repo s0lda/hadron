@@ -114,6 +114,12 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
             let rename = view.clone();
             let settings = view.clone();
             let about = view.clone();
+            let check_update = view.clone();
+            let update_label = match &view.read(cx).update_state {
+                crate::app::UpdateState::Available { version, .. } => format!("Update to v{}…", version),
+                crate::app::UpdateState::Checking => "Checking for Updates…".to_string(),
+                _ => "Check for Updates…".to_string(),
+            };
             menu.item(
                 PopupMenuItem::new("Open Workspace").on_click(move |_, _, cx| {
                     open_workspace.update(cx, |this, cx| this.open_workspace(cx));
@@ -131,6 +137,11 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
                     },
                 ),
             )
+            .item(PopupMenuItem::new(update_label).on_click(move |_, _, cx| {
+                check_update.update(cx, |this, cx| {
+                    this.check_for_updates(cx);
+                });
+            }))
             .separator()
             .item(
                 PopupMenuItem::new("New Session").on_click(move |_, window, cx| {
