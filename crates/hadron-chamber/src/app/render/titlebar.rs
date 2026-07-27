@@ -173,13 +173,32 @@ impl super::Chamber {
     }
 
     pub(super) fn update_pill(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let (label, tip) = match &self.update_state {
+        let (label, tip, bg_color, icon) = match &self.update_state {
             UpdateState::Available { version, .. } => (
                 format!("v{} Available", version),
                 format!("Hadron v{} is available. Click to update.", version),
+                theme::accent(),
+                IconName::ArrowUp,
             ),
-            UpdateState::Checking => ("Checking...".to_string(), "Checking for updates...".to_string()),
-            _ => return None,
+            UpdateState::Checking => (
+                "Checking...".to_string(),
+                "Checking for updates...".to_string(),
+                theme::accent(),
+                IconName::ArrowUp,
+            ),
+            UpdateState::UpToDate => (
+                format!("v{} (Up to date)", env!("CARGO_PKG_VERSION")),
+                format!("Hadron v{} is up to date.", env!("CARGO_PKG_VERSION")),
+                theme::bg_surface_raised(),
+                IconName::CircleCheck,
+            ),
+            UpdateState::Failed(msg) => (
+                "Update Check Failed".to_string(),
+                format!("Could not check for updates: {}", msg),
+                theme::danger(),
+                IconName::Info,
+            ),
+            UpdateState::Idle => return None,
         };
 
         Some(
@@ -191,7 +210,7 @@ impl super::Chamber {
                 .px_2()
                 .py_0p5()
                 .rounded_full()
-                .bg(theme::accent())
+                .bg(bg_color)
                 .text_xs()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(theme::text())
@@ -201,7 +220,7 @@ impl super::Chamber {
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.trigger_update_flow(window, cx);
                 }))
-                .child(Icon::new(IconName::ArrowUp).small())
+                .child(Icon::new(icon).small())
                 .child(label)
                 .tooltip(move |window, cx| Tooltip::new(SharedString::from(tip.clone())).build(window, cx)),
         )

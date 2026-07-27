@@ -137,11 +137,6 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
                     },
                 ),
             )
-            .item(PopupMenuItem::new(update_label).on_click(move |_, _, cx| {
-                check_update.update(cx, |this, cx| {
-                    this.check_for_updates(cx);
-                });
-            }))
             .separator()
             .item(
                 PopupMenuItem::new("New Session").on_click(move |_, window, cx| {
@@ -204,6 +199,11 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
                     settings.update(cx, |this, cx| this.open_settings(window, cx));
                 }),
             )
+            .item(PopupMenuItem::new(update_label).on_click(move |_, _, cx| {
+                check_update.update(cx, |this, cx| {
+                    this.check_for_updates(cx);
+                });
+            }))
             .item(
                 PopupMenuItem::new("About Hadron").on_click(move |_, _, cx| {
                     about.update(cx, |this, cx| {
