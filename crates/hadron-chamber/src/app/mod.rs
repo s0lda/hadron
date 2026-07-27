@@ -702,6 +702,7 @@ impl Chamber {
             update_state: UpdateState::default(),
         };
         chamber.update_active_plan();
+        chamber.check_for_updates(cx);
         chamber
     }
 
