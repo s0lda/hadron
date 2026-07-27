@@ -17,32 +17,26 @@ impl Default for UpdateState {
     }
 }
 
-pub fn parse_remote_update_info(remote_ref: &str, current_version: &str) -> UpdateState {
-    let trimmed = remote_ref.trim();
+pub fn parse_remote_update_info(remote_output: &str, current_version: &str) -> UpdateState {
+    let trimmed = remote_output.trim();
     if trimmed.is_empty() {
-        return UpdateState::Failed("Empty output from remote query".into());
-    }
-
-    // Split tag or commit sha from ls-remote output (e.g. "a1b2c3d4... refs/tags/v0.1.1" or "a1b2c3d4... HEAD")
-    let parts: Vec<&str> = trimmed.split_whitespace().collect();
-    if parts.is_empty() {
-        return UpdateState::Failed("Invalid remote format".into());
-    }
-
-    let remote_commit = parts[0];
-    let tag_name = parts.get(1).and_then(|r| r.strip_prefix("refs/tags/"));
-
-    if let Some(tag) = tag_name {
-        let version = tag.strip_prefix('v').unwrap_or(tag);
-        if version != current_version {
-            return UpdateState::Available {
-                version: version.to_string(),
-                commit: Some(remote_commit[..7.min(remote_commit.len())].to_string()),
-            };
-        }
-    } else if !current_version.is_empty() {
-        // Fallback for commit sha comparisons
         return UpdateState::UpToDate;
+    }
+
+    for line in trimmed.lines().rev() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+            if let Some(tag) = parts[1].strip_prefix("refs/tags/") {
+                let version = tag.strip_prefix('v').unwrap_or(tag);
+                if version != current_version {
+                    let commit = Some(parts[0][..7.min(parts[0].len())].to_string());
+                    return UpdateState::Available {
+                        version: version.to_string(),
+                        commit,
+                    };
+                }
+            }
+        }
     }
 
     UpdateState::UpToDate
@@ -59,13 +53,12 @@ impl Chamber {
                 .background_executor()
                 .spawn(async move {
                     let out = Command::new("git")
-                        .args(["ls-remote", "--tags", "https://github.com/s0lda/hadron"])
+                        .args(["ls-remote", "https://github.com/s0lda/hadron", "HEAD", "refs/tags/*"])
                         .output();
                     match out {
                         Ok(o) if o.status.success() => {
                             let text = String::from_utf8_lossy(&o.stdout);
-                            let latest = text.lines().last().unwrap_or_default();
-                            parse_remote_update_info(latest, current_version)
+                            parse_remote_update_info(&text, current_version)
                         }
                         _ => UpdateState::Failed("Could not query update repository".into()),
                     }
@@ -112,6 +105,6 @@ mod tests {
     #[test]
     fn test_parse_remote_update_info_empty() {
         let state = parse_remote_update_info("", "0.1.0");
-        assert!(matches!(state, UpdateState::Failed(_)));
+        assert_eq!(state, UpdateState::UpToDate);
     }
 }
