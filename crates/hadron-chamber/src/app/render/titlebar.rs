@@ -35,7 +35,9 @@ impl super::Chamber {
                     .flex_shrink_0()
                     .items_center()
                     .pl(px(8.0))
-                    .child(menu_button(&cx.entity())),
+                    .gap_2()
+                    .child(menu_button(&cx.entity()))
+                    .children(self.update_pill(cx)),
             )
             .child(drag_region("drag-c"))
             .child(
@@ -168,5 +170,40 @@ impl super::Chamber {
             .child(Icon::new(IconName::Settings).small())
             .when(!icon_only, |this| this.child("Settings"))
             .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx)))
+    }
+
+    pub(super) fn update_pill(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let (label, tip) = match &self.update_state {
+            UpdateState::Available { version, .. } => (
+                format!("v{} Available", version),
+                format!("Hadron v{} is available. Click to update.", version),
+            ),
+            UpdateState::Checking => ("Checking...".to_string(), "Checking for updates...".to_string()),
+            _ => return None,
+        };
+
+        Some(
+            div()
+                .id("update-pill")
+                .flex()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .py_0p5()
+                .rounded_full()
+                .bg(theme::accent())
+                .text_xs()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(theme::text())
+                .cursor_pointer()
+                .hover(|s| s.opacity(0.85))
+                .active(|s| s.opacity(0.7))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.trigger_update_flow(window, cx);
+                }))
+                .child(Icon::new(IconName::ArrowUp).small())
+                .child(label)
+                .tooltip(move |window, cx| Tooltip::new(SharedString::from(tip.clone())).build(window, cx)),
+        )
     }
 }
