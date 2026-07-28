@@ -733,3 +733,68 @@ fn a_relative_program_without_token_explains_itself_when_there_is_no_checkout() 
 
 
 
+/// The wizard's own copy of the rule above. A preset that cannot boot in THIS
+/// installation must reach the human as an unclickable row with a reason, not as a
+/// clickable row that seats a quark which then dies at turn time, minutes later, in
+/// the field — where nobody connects it to the button they pressed.
+///
+/// `command: None` is the existing "listed but greyed out" signal, so this asserts the
+/// reason lands too, and that entries which DO resolve are left alone.
+#[test]
+fn a_preset_that_cannot_resolve_here_is_listed_but_not_seatable() {
+    let mut entries = vec![
+        CatalogueEntry {
+            vendor: "agy".into(),
+            name: "Antigravity".into(),
+            description: "Google Antigravity (Gemini), via the bundled ACP bridge".into(),
+            command: Some((
+                format!("{REPO_ROOT_TOKEN}/scripts/venv/bin/python"),
+                vec![format!("{REPO_ROOT_TOKEN}/scripts/agy_acp.py")],
+            )),
+            proven: false,
+        },
+        CatalogueEntry {
+            vendor: "claude".into(),
+            name: "Claude Code (ACP)".into(),
+            description: "Anthropic Claude Code, over ACP".into(),
+            command: Some(("npx".into(), vec!["-y".into(), "@scope/pkg".into()])),
+            proven: true,
+        },
+    ];
+    // The installed case: nothing repo-anchored resolves.
+    QuarkKind::mark_unseatable(&mut entries, |t| t.resolved_from(std::path::Path::new("/")).is_ok());
+
+    assert!(entries[0].command.is_none(), "an unresolvable preset must not be seatable");
+    assert!(
+        entries[0].description.contains("source checkout"),
+        "the greyed row must say why, got: {}",
+        entries[0].description
+    );
+    assert!(entries[1].command.is_some(), "an npx preset needs no checkout and must survive");
+    assert_eq!(entries[1].description, "Anthropic Claude Code, over ACP");
+}
+
+/// The negative control for the guard above: from a real checkout the agy row is
+/// seatable, so `mark_unseatable` cannot be quietly greying out everything.
+#[test]
+fn the_agy_preset_is_still_seatable_from_a_checkout() {
+    let agy = QuarkKind::available_agents()
+        .into_iter()
+        .find(|e| e.vendor == "agy")
+        .expect("agy is in the catalogue");
+    assert!(agy.command.is_some(), "the test binary lives in a checkout, so agy must resolve");
+}
+
+/// An ACP seat whose boot command cannot resolve must be refused where the seat is
+/// BUILT, not where it takes a turn: the seating loops in `cli.rs` report and skip a
+/// seat that fails to build, so one line of stderr replaces an errored turn per
+/// dispatch, forever. (Jake's global `team.json` seats `acp-agy` for every project;
+/// in a project with no checkout it errored on every single turn.)
+#[test]
+fn an_acp_seat_that_resolves_still_builds() {
+    let s = acp_seat("acp-claude", "claude");
+    assert!(matches!(QuarkKind::from_seat(&s), Ok(QuarkKind::Acp(_))));
+    // And the repo-anchored one still builds here, because here IS a checkout.
+    let s = acp_seat("acp-agy", "agy");
+    assert!(matches!(QuarkKind::from_seat(&s), Ok(QuarkKind::Acp(_))));
+}
