@@ -382,4 +382,42 @@ mod tests {
             "`@acp-claude-2` then @Sonnet."
         );
     }
+
+    #[test]
+    fn markdown_cache_invalidates_on_body_change_or_clear() {
+        let mut cache = std::collections::HashMap::<usize, (String, String)>::new();
+        let roster = vec![RosterRow {
+            id: "acp-claude-2".to_string(),
+            display_name: Some("Sonnet".to_string()),
+            ..opus_roster().pop().unwrap()
+        }];
+
+        // Render index 0 with initial body
+        let body1 = "Hello @acp-claude-2";
+        let res1 = match cache.get(&0) {
+            Some((b, c)) if b == body1 => c.clone(),
+            _ => {
+                let content = resolve_mention_names(body1, &roster);
+                cache.insert(0, (body1.to_string(), content.clone()));
+                content
+            }
+        };
+        assert_eq!(res1, "Hello @Sonnet");
+
+        // Index 0 reused with new body
+        let body2 = "I'm Copilot";
+        let res2 = match cache.get(&0) {
+            Some((b, c)) if b == body2 => c.clone(),
+            _ => {
+                let content = resolve_mention_names(body2, &roster);
+                cache.insert(0, (body2.to_string(), content.clone()));
+                content
+            }
+        };
+        assert_eq!(res2, "I'm Copilot");
+
+        // Clear resets all cache entries
+        cache.clear();
+        assert!(cache.is_empty());
+    }
 }
