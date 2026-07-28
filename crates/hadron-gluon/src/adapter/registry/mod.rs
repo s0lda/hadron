@@ -24,6 +24,16 @@ use presets::ACP_AGENTS;
 /// substitution has one home and covers all three.
 pub const REPO_ROOT_TOKEN: &str = "{repo}";
 
+/// The token for "the user's Hadron directory" (`~/.hadron`), resolved by
+/// [`AcpTarget::resolved`] the same way as [`REPO_ROOT_TOKEN`] — but against
+/// [`hadron_lattice::user_hadron_dir`], which needs no git and exists on every
+/// install. `{repo}` only works from a source checkout (the files it names live in
+/// the repository, and `cargo install` ships binaries only); `{hadron}` is how a
+/// boot command names a path that a vendored/materialized asset can actually be
+/// written to and found at on an installed build — see the agy bridge preset and
+/// `notes/anchoring-a-boot-command-does-not-ship-it.md`.
+pub const USER_HOME_TOKEN: &str = "{hadron}";
+
 /// One row of the add-quark catalogue the chamber renders, from whichever source knows
 /// the agent best.
 ///
@@ -108,12 +118,20 @@ impl ResolvedAcpTarget {
     }
 }
 
-/// A part that names a file relative to the checkout: it has a separator, but is neither
-/// absolute, nor `{repo}`-anchored, nor `~`-anchored (the shell would expand that).
+/// A part that names a file relative to nothing: it has a separator, but is neither
+/// absolute, nor `{repo}`-anchored, nor `{hadron}`-anchored, nor `~`-anchored (the
+/// shell would expand that).
+///
+/// **Both tokens must be exempted here, not just substituted later.** This check runs
+/// on the raw, pre-substitution string in more than one place (the seat-time guard
+/// added in `0b8e9c05`, `mark_unseatable`'s resolvability probe) — a `{hadron}/…`
+/// program that reached here without the carve-out would be misclassified as
+/// "relative to the checkout" and refused, even though it never needed one.
 fn is_repo_relative(part: &str) -> bool {
     part.contains('/')
         && !part.starts_with('/')
         && !part.starts_with(REPO_ROOT_TOKEN)
+        && !part.starts_with(USER_HOME_TOKEN)
         && !part.starts_with('~')
 }
 
@@ -188,6 +206,38 @@ impl AcpTarget {
             .any(|s| s.contains(REPO_ROOT_TOKEN))
     }
 
+    /// Whether any part of this boot command names [`USER_HOME_TOKEN`].
+    pub fn needs_home_root(&self) -> bool {
+        std::iter::once(&self.program)
+            .chain(self.args.iter())
+            .any(|s| s.contains(USER_HOME_TOKEN))
+    }
+
+    /// This target with [`USER_HOME_TOKEN`] substituted for the user's Hadron
+    /// directory — unlike [`Self::anchored_by`]'s `{repo}` handling, this never
+    /// requires a source checkout, so it runs unconditionally before that logic
+    /// rather than sharing its git-backed root lookup. Errs rather than passing the
+    /// token through to `spawn`: a program still containing a literal `{hadron}`
+    /// would be a worse version of the same ENOENT, naming a path no human wrote.
+    fn resolve_home_token(&self) -> anyhow::Result<AcpTarget> {
+        if !self.needs_home_root() {
+            return Ok(self.clone());
+        }
+        let home = hadron_lattice::user_hadron_dir().ok_or_else(|| {
+            anyhow::anyhow!(
+                "boot command {:?} names {USER_HOME_TOKEN}, but the user's home \
+                 directory could not be resolved — neither $HOME nor %USERPROFILE% is set",
+                self.command_line()
+            )
+        })?;
+        let home_str = home.to_string_lossy().to_string();
+        Ok(AcpTarget {
+            program: self.program.replace(USER_HOME_TOKEN, &home_str),
+            args: self.args.iter().map(|a| a.replace(USER_HOME_TOKEN, &home_str)).collect(),
+            env: self.env.clone(),
+        })
+    }
+
     /// Whether any part is a path written relative to the checkout — a part that names
     /// a file (it has a separator) but is neither absolute nor already `{repo}`-anchored.
     ///
@@ -225,7 +275,8 @@ impl AcpTarget {
     /// [`Self::resolved`], with the search origin injected so a test can exercise the
     /// installed case (no checkout above the binary) without installing anything.
     pub fn resolved_from(&self, near: &std::path::Path) -> anyhow::Result<ResolvedAcpTarget> {
-        self.anchored_by(near, || {
+        let this = self.resolve_home_token()?;
+        this.anchored_by(near, || {
             crate::snapshot::main_repo_root(near).map_err(|e| e.to_string())
         })
     }
@@ -309,9 +360,10 @@ impl AcpTarget {
     }
 
     pub fn resolved(&self) -> anyhow::Result<ResolvedAcpTarget> {
+        let this = self.resolve_home_token()?;
         let exe = std::env::current_exe()?;
         let near = exe.parent().unwrap_or(&exe).to_path_buf();
-        self.anchored_by(&near, Self::installed_repo_root)
+        this.anchored_by(&near, Self::installed_repo_root)
     }
 
 

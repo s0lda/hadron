@@ -326,8 +326,14 @@ impl Chamber {
         // An ACP quark's Model field is a dropdown of what the agent actually offers, so
         // (re-)probe it on open. Anything else clears the probe and keeps the text field.
         match &target {
-            SettingsTarget::Quark(id) => self.start_acp_model_probe(&id.clone(), cx),
-            _ => self.acp_model_probe = None,
+            SettingsTarget::Quark(id) => {
+                self.start_acp_model_probe(&id.clone(), cx);
+                self.start_agy_bridge_provision(&id.clone(), cx);
+            }
+            _ => {
+                self.acp_model_probe = None;
+                self.agy_bridge_probe = None;
+            }
         }
         cx.notify();
     }

@@ -59,8 +59,8 @@ mod providers;
 use providers::{
     cli_seat_from, configured_providers, custom_cli_vendor_is_valid, migrate_legacy_ids,
     migrate_repo_to_catalogue, parse_max_exchanges, prompt_channel_from, AcpModelProbe,
-    AcpModelState, AgentDescriptor, CliChannelChoice, ConfiguredQuark, ProviderState,
-    SettingsTarget, WizardState, DEFAULT_SECRET_VAR,
+    AcpModelState, AgentDescriptor, AgyBridgeProbe, AgyBridgeState, CliChannelChoice,
+    ConfiguredQuark, ProviderState, SettingsTarget, WizardState, DEFAULT_SECRET_VAR,
 };
 
 mod widgets;
@@ -322,6 +322,12 @@ struct Chamber {
     /// Offered-model probe for the ACP quark whose Settings are open — drives the model
     /// dropdown. `None` for a non-ACP target or before the first probe. See `providers`.
     acp_model_probe: Option<AcpModelProbe>,
+    /// In-progress `agy` ACP bridge venv provisioning for the seat whose Settings are
+    /// open, if any. `None` for any other kind of seat, before the first attempt, or
+    /// once already provisioned — see `start_agy_bridge_provision`. This runs off the
+    /// seating path: seating only checks the boot command's paths are well-formed
+    /// (`AcpTarget::resolved`), never that the venv actually exists on disk.
+    agy_bridge_probe: Option<AgyBridgeProbe>,
     /// Every workspace entry with its ignored flag; drives the file tree. Gitignored
     /// entries are flagged `true` (rendered muted) and wholly-ignored dirs are collapsed.
     file_tree_paths: Vec<(String, bool)>,
@@ -676,6 +682,7 @@ impl Chamber {
             providers,
             wizard_state: WizardState::None,
             acp_model_probe: None,
+            agy_bridge_probe: None,
             file_tree_paths: files,
             _lock_file: lock_file,
             git_statuses: crate::vcs::get_git_statuses(&repo_root),
