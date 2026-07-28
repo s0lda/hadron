@@ -247,8 +247,8 @@ struct Chamber {
     chat_message_ixs: Vec<usize>,
     /// Scroll position for each of the three tabs.
     chat_scrolls: [ScrollHandle; 4],
-    /// Cache of parsed Markdown to HTML, keyed by message index
-    parsed_markdown: std::cell::RefCell<std::collections::HashMap<usize, String>>,
+    /// Cache of parsed Markdown to HTML, keyed by message index, storing (raw_body, resolved_content)
+    parsed_markdown: std::cell::RefCell<std::collections::HashMap<usize, (String, String)>>,
     /// A debounced window-bounds save is already in flight, so a drag (which
     /// re-renders every frame) coalesces into one write instead of one per frame.
     bounds_save_pending: bool,

@@ -54,6 +54,7 @@ impl Chamber {
         self.chat_message_ixs = crate::model::chat_message_indices(&self.view.messages);
         self.chat_list_state.reset(self.chat_message_ixs.len());
         self.log_list_state.reset(self.view.messages.len());
+        self.parsed_markdown.borrow_mut().clear();
     }
 
     /// Re-project the field and bring `chat_list_state`/`log_list_state`/

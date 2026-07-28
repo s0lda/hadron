@@ -421,10 +421,14 @@ impl super::Chamber {
         roster: &[crate::model::RosterRow],
     ) -> impl IntoElement {
         let mut cache = self.parsed_markdown.borrow_mut();
-        let content = cache
-            .entry(ix)
-            .or_insert_with(|| resolve_mention_names(body, roster))
-            .clone();
+        let content = match cache.get(&ix) {
+            Some((cached_body, cached_content)) if cached_body == body => cached_content.clone(),
+            _ => {
+                let content = resolve_mention_names(body, roster);
+                cache.insert(ix, (body.to_string(), content.clone()));
+                content
+            }
+        };
 
         div().text_size(px(13.65)).child(
             gpui_component::text::TextView::markdown((view, ix), content)
