@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use alacritty_terminal::event::VoidListener;
-use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::Flags;
@@ -234,6 +234,25 @@ impl PtyTerminal {
 
     pub fn size(&self) -> (usize, usize) {
         (self.cols, self.rows)
+    }
+
+    /// Scroll the viewport by `lines` (positive = up into history, negative = down towards bottom).
+    pub fn scroll(&self, lines: i32) {
+        if lines == 0 {
+            return;
+        }
+        if let Ok(mut term) = self.term.lock() {
+            term.scroll_display(Scroll::Delta(lines));
+        }
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// Reset scroll position to the bottom of the active screen.
+    pub fn scroll_to_bottom(&self) {
+        if let Ok(mut term) = self.term.lock() {
+            term.scroll_display(Scroll::Bottom);
+        }
+        self.dirty.store(true, Ordering::Relaxed);
     }
 
     /// Map a viewport cell (row/col from the top-left of the visible screen) to a
@@ -585,6 +604,37 @@ mod tests {
         assert!(
             term.selection_text().is_none(),
             "clearing the selection should leave nothing selected"
+        );
+    }
+
+    #[test]
+    fn terminal_scrollback_scrolling() {
+        let dir = tempdir().unwrap();
+        let mut term = PtyTerminal::new(dir.path(), 40, 5).unwrap();
+        // Print 20 lines to overflow the 5-row screen
+        term.send_input(b"for i in $(seq 1 20); do echo \"LINE_$i\"; done\n");
+        wait_for(&term, |s| s.plain_text().contains("LINE_20"));
+
+        let bottom_snap = term.snapshot();
+        assert!(
+            bottom_snap.plain_text().contains("LINE_20"),
+            "bottom view should contain LINE_20"
+        );
+
+        // Scroll up into history
+        term.scroll(10);
+        let scrolled_snap = term.snapshot();
+        assert!(
+            scrolled_snap.plain_text().contains("LINE_1"),
+            "scrolled up view should contain earlier lines like LINE_1"
+        );
+
+        // Scroll back to bottom
+        term.scroll_to_bottom();
+        let reset_snap = term.snapshot();
+        assert!(
+            reset_snap.plain_text().contains("LINE_20"),
+            "reset to bottom view should contain LINE_20 again"
         );
     }
 }
