@@ -2,11 +2,22 @@ use std::process::Command;
 use gpui::{Context, Window};
 use super::Chamber;
 
+pub const CARGO_INSTALL_ARGV: &[&str] = &[
+    "cargo",
+    "install",
+    "--locked",
+    "--git",
+    "https://github.com/s0lda/hadron.git",
+    "hadron",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateState {
     Idle,
     Checking,
     Available { version: String, commit: Option<String> },
+    Installing { version: String },
+    Installed { version: String },
     UpToDate,
     Failed(String),
 }
@@ -42,8 +53,42 @@ pub fn parse_remote_update_info(remote_output: &str, current_version: &str) -> U
     UpdateState::UpToDate
 }
 
+pub fn perform_cargo_install(target_version: &str) -> UpdateState {
+    let out = Command::new(CARGO_INSTALL_ARGV[0])
+        .args(&CARGO_INSTALL_ARGV[1..])
+        .output();
+
+    match out {
+        Ok(o) if o.status.success() => UpdateState::Installed {
+            version: target_version.to_string(),
+        },
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            let lines: Vec<&str> = stderr.lines().collect();
+            let tail = if lines.len() > 5 {
+                lines[lines.len() - 5..].join("\n")
+            } else {
+                stderr.trim().to_string()
+            };
+            let msg = if tail.trim().is_empty() {
+                format!("cargo install exited with status {}", o.status)
+            } else {
+                tail
+            };
+            UpdateState::Failed(msg)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => UpdateState::Failed(
+            "Cargo is not installed or not on PATH. Run manually: cargo install --locked --git https://github.com/s0lda/hadron.git hadron".into(),
+        ),
+        Err(e) => UpdateState::Failed(format!("Failed to run cargo: {}", e)),
+    }
+}
+
 impl Chamber {
     pub(super) fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.update_state, UpdateState::Installing { .. }) {
+            return;
+        }
         self.update_state = UpdateState::Checking;
         cx.notify();
 
@@ -74,13 +119,48 @@ impl Chamber {
     }
 
     pub(super) fn trigger_update_flow(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.check_for_updates(cx);
+        match &self.update_state {
+            UpdateState::Available { version, .. } => {
+                let target_version = version.clone();
+                self.update_state = UpdateState::Installing {
+                    version: target_version.clone(),
+                };
+                cx.notify();
+
+                cx.spawn(async move |this, cx| {
+                    let state = cx
+                        .background_executor()
+                        .spawn(async move { perform_cargo_install(&target_version) })
+                        .await;
+
+                    let _ = this.update(cx, |chamber, cx| {
+                        chamber.update_state = state;
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            UpdateState::Installing { .. } => {
+                // Idempotent against double clicks while installation is in progress.
+            }
+            _ => {
+                self.check_for_updates(cx);
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_cargo_install_argv_matches_readme_spec() {
+        assert_eq!(
+            CARGO_INSTALL_ARGV,
+            &["cargo", "install", "--locked", "--git", "https://github.com/s0lda/hadron.git", "hadron"]
+        );
+    }
 
     #[test]
     fn test_parse_remote_update_info_available_tag() {
@@ -108,3 +188,4 @@ mod tests {
         assert_eq!(state, UpdateState::UpToDate);
     }
 }
+
