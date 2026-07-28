@@ -289,20 +289,29 @@ impl AcpTarget {
     /// roster reconcile and — through [`QuarkKind::available_agents`] — from the
     /// chamber's provider-wizard render fn, which runs on every frame. `current_exe`
     /// cannot move under a running process, so one answer is the only answer there is.
-    fn installed_repo_root() -> &'static Result<std::path::PathBuf, String> {
-        static ROOT: std::sync::OnceLock<Result<std::path::PathBuf, String>> =
-            std::sync::OnceLock::new();
-        ROOT.get_or_init(|| {
-            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-            let near = exe.parent().unwrap_or(&exe);
-            crate::snapshot::main_repo_root(near).map_err(|e| e.to_string())
-        })
+    ///
+    /// **Only a success is cached.** `main_repo_root` goes through `git_with_env`, which
+    /// returns `Err` on a `GIT_DEADLINE` timeout — a thing a loaded box under a
+    /// concurrent swarm can produce. Caching that would refuse every repo-anchored ACP
+    /// seat for the rest of the process's life, in a real checkout, over one blip. The
+    /// cost of not caching it is a `git rev-parse` per lookup on a build where there is
+    /// genuinely no checkout, and `anchored_by` only looks at all for a target that
+    /// needs a root — in the catalogue, one row.
+    fn installed_repo_root() -> Result<std::path::PathBuf, String> {
+        static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        if let Some(root) = ROOT.get() {
+            return Ok(root.clone());
+        }
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let near = exe.parent().unwrap_or(&exe);
+        let root = crate::snapshot::main_repo_root(near).map_err(|e| e.to_string())?;
+        Ok(ROOT.get_or_init(|| root).clone())
     }
 
     pub fn resolved(&self) -> anyhow::Result<ResolvedAcpTarget> {
         let exe = std::env::current_exe()?;
         let near = exe.parent().unwrap_or(&exe).to_path_buf();
-        self.anchored_by(&near, || Self::installed_repo_root().clone())
+        self.anchored_by(&near, Self::installed_repo_root)
     }
 
 
