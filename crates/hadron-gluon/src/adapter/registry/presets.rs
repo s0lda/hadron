@@ -66,12 +66,15 @@ pub(super) const ACP_AGENTS: &[AcpAgentSpec] = &[
         vendor: "agy",
         name: "Antigravity (SDK)",
         // The ONLY preset that names a path rather than a program on `PATH`, because
-        // the bridge is a script in this repo rather than a published CLI. It must be
-        // written `{repo}`-anchored: a bare relative path is resolved by `execve`
-        // against the SPAWNING PROCESS's cwd, which is whatever directory the human
-        // launched the chamber from — see `AcpTarget::resolved`.
-        program: "{repo}/crates/hadron-gluon/scripts/venv/bin/python",
-        args: &["{repo}/crates/hadron-gluon/scripts/agy_acp.py"],
+        // the bridge is a script rather than a published CLI. Written `{hadron}`-
+        // anchored, NOT `{repo}`-anchored: the script and its venv are materialized
+        // under `~/.hadron/bridges/agy` (`adapter::bridge`) precisely so this preset
+        // works on an installed (`cargo install`) build with no source checkout — see
+        // `notes/anchoring-a-boot-command-does-not-ship-it.md`. A bare relative path
+        // would resolve by `execve` against the SPAWNING PROCESS's cwd — see
+        // `AcpTarget::resolved`.
+        program: "{hadron}/bridges/agy/venv/bin/python",
+        args: &["{hadron}/bridges/agy/agy_acp.py"],
         proven: false,
     },
     // ── Best-effort presets from docs/research/acp-providers.md (all unproven) ──

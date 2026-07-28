@@ -215,6 +215,23 @@ pub(super) enum AcpModelState {
     Unavailable(String),
 }
 
+/// Backs an in-progress `agy` ACP bridge venv provisioning, keyed by seat `id` the
+/// same way [`AcpModelProbe`] is — a provisioning attempt that finishes after the
+/// human has moved off the seat must not write into whatever is open now.
+pub(super) struct AgyBridgeProbe {
+    pub id: String,
+    pub state: AgyBridgeState,
+}
+
+pub(super) enum AgyBridgeState {
+    /// Running `python3 -m venv` + `pip install google-antigravity` off the UI thread.
+    Provisioning,
+    Ready,
+    /// The venv couldn't be created — a short human-readable reason (e.g. `python3`
+    /// missing, or the install failed).
+    Failed(String),
+}
+
 /// Default env-var name the per-quark API-key field offers when a seat has not
 /// declared any `secret_env` yet (the common case: Antigravity's `GEMINI_API_KEY`).
 pub(super) const DEFAULT_SECRET_VAR: &str = "GEMINI_API_KEY";

@@ -59,6 +59,86 @@ impl super::Chamber {
         .detach();
     }
 
+    /// Provision the `agy` ACP bridge's venv for `id`, off the UI thread — a no-op
+    /// (clearing any stale probe) for any seat that isn't an `agy` ACP seat, or one
+    /// whose venv already exists. This is deliberately NOT part of seating
+    /// (`QuarkKind::from_seat`/`AcpTarget::resolved`): that only checks the boot
+    /// command's paths are well-formed, never that the venv is actually on disk, so a
+    /// minutes-long `pip install` here can never block seating or dispatch — see task
+    /// 1c in `.hadron/docs/plans/2026-07-28-shippable-bridge-and-self-update.md`.
+    /// Mirrors [`Self::start_acp_model_probe`]'s shape: a probe that resolves after the
+    /// human has moved to another quark is dropped rather than mis-applied.
+    pub(super) fn start_agy_bridge_provision(&mut self, id: &str, cx: &mut Context<Self>) {
+        let is_agy_acp = resolve_team(&self.team, &self.global)
+            .get(&QuarkId::new(id))
+            .map(|s| s.transport == hadron_lattice::Transport::Acp && s.vendor == "agy")
+            .unwrap_or(false);
+        if !is_agy_acp || hadron_gluon::adapter::bridge::is_provisioned() {
+            self.agy_bridge_probe = None;
+            return;
+        }
+        let id = id.to_string();
+        self.agy_bridge_probe =
+            Some(AgyBridgeProbe { id: id.clone(), state: AgyBridgeState::Provisioning });
+        cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                // Blocking subprocesses (`python3 -m venv`, `pip install`), off the UI
+                // thread — a cold install must not freeze the window.
+                let result = cx
+                    .background_spawn(async move {
+                        hadron_gluon::adapter::bridge::materialize_script()?;
+                        hadron_gluon::adapter::bridge::provision_venv()
+                    })
+                    .await;
+                this.update(&mut cx, |this, cx| {
+                    // Only the still-open probe may write its result.
+                    if !matches!(&this.agy_bridge_probe, Some(p) if p.id == id) {
+                        return;
+                    }
+                    let state = match result {
+                        Ok(_) => AgyBridgeState::Ready,
+                        Err(e) => AgyBridgeState::Failed(e.to_string()),
+                    };
+                    this.agy_bridge_probe = Some(AgyBridgeProbe { id, state });
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// A small status note for an in-progress/failed `agy` bridge venv provisioning —
+    /// `None` when there is nothing worth saying (no probe open, or it already
+    /// succeeded — a working bridge needs no announcement).
+    pub(super) fn agy_bridge_status_row(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let probe = self.agy_bridge_probe.as_ref()?;
+        let (msg, is_error) = match &probe.state {
+            AgyBridgeState::Provisioning => {
+                ("Setting up the Antigravity bridge (python venv)…".to_string(), false)
+            }
+            AgyBridgeState::Ready => return None,
+            AgyBridgeState::Failed(reason) => (format!("Bridge setup failed: {reason}"), true),
+        };
+        let base = div().text_xs().text_color(theme::text_muted());
+        Some(if is_error {
+            // Click-to-copy, same reasoning as the model-probe error note: a failure
+            // reason (e.g. a `pip install` stderr tail) is often longer than the panel.
+            let full = msg.clone();
+            base.id("agy-bridge-note")
+                .cursor_pointer()
+                .hover(|s| s.text_color(theme::text_secondary()))
+                .child(format!("{msg}  ·  click to copy"))
+                .on_click(cx.listener(move |_this, _, _window, cx| {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(full.clone()));
+                }))
+                .into_any_element()
+        } else {
+            base.child(msg).into_any_element()
+        })
+    }
+
     /// The ACP Model **dropdown**: the agent's offered models as clickable chips, with a
     /// "Default" chip (blank → the agent's own current model, which the daemon leaves
     /// alone). Shows a "Detecting…" note while probing and, if the probe failed or the

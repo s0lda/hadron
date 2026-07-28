@@ -572,7 +572,9 @@ fn the_bundled_snapshot_parses_and_carries_claude() {
 /// resolved against whatever directory the human launched the chamber from. Launching
 /// from `target/release` made the `agy` seat's interpreter miss and every turn died with
 /// a bare `No such file or directory (os error 2)`. A path in this repo is written
-/// `{repo}`-anchored; anything else must be a bare program name found on `PATH`.
+/// `{repo}`-anchored; a path under the user's Hadron directory (materialized assets, not
+/// checkout files) is written `{hadron}`-anchored; anything else must be a bare program
+/// name found on `PATH`.
 #[test]
 fn no_preset_boot_command_is_cwd_relative() {
     for a in ACP_AGENTS {
@@ -584,9 +586,9 @@ fn no_preset_boot_command_is_cwd_relative() {
                 continue; // an npm scoped package (`@scope/pkg`), never opened as a path
             }
             assert!(
-                part.starts_with(REPO_ROOT_TOKEN) || part.starts_with('/'),
+                part.starts_with(REPO_ROOT_TOKEN) || part.starts_with(USER_HOME_TOKEN) || part.starts_with('/'),
                 "{}'s boot command names the relative path {part:?} — anchor it with \
-                 {REPO_ROOT_TOKEN} or it resolves against the spawning process's cwd",
+                 {REPO_ROOT_TOKEN} or {USER_HOME_TOKEN} or it resolves against the spawning process's cwd",
                 a.vendor
             );
         }
@@ -612,6 +614,40 @@ fn resolved_expands_the_repo_token_across_program_and_args() {
     assert_eq!(r.args()[0], "--flag", "a non-path arg must pass through untouched");
     assert!(std::path::Path::new(&r.args()[1]).is_absolute());
     assert_eq!(r.env(), t.env.as_slice(), "resolution must not disturb the resolved secret env");
+}
+
+/// `{hadron}` needs no git checkout at all — unlike `{repo}`, it resolves against
+/// [`hadron_lattice::user_hadron_dir`], so a target naming only that token must resolve
+/// from anywhere, including a directory with no repo above it whatsoever.
+#[test]
+fn resolved_expands_the_hadron_token_across_program_and_args() {
+    let t = AcpTarget {
+        program: format!("{USER_HOME_TOKEN}/bridges/agy/venv/bin/python"),
+        args: vec!["--flag".to_string(), format!("{USER_HOME_TOKEN}/bridges/agy/agy_acp.py")],
+        env: vec![("GEMINI_API_KEY".to_string(), "sekrit".to_string())],
+    };
+    assert!(t.needs_home_root());
+    assert!(!t.needs_repo_root());
+
+    let r = t
+        .resolved_from(std::path::Path::new("/"))
+        .expect("{hadron} needs no checkout, so this must resolve even from /");
+    assert!(!r.command_line().contains(USER_HOME_TOKEN), "left a token in {:?}", r.command_line());
+    assert!(std::path::Path::new(r.program()).is_absolute(), "{:?} is not absolute", r.program());
+    assert!(r.program().ends_with("/bridges/agy/venv/bin/python"));
+    assert_eq!(r.args()[0], "--flag", "a non-path arg must pass through untouched");
+    assert!(std::path::Path::new(&r.args()[1]).is_absolute());
+    assert_eq!(r.env(), t.env.as_slice(), "resolution must not disturb the resolved secret env");
+}
+
+/// The carve-out the plan calls out by name (`registry/mod.rs`'s `is_repo_relative`): a
+/// part naming `{hadron}` must never be misclassified as "relative to the checkout" —
+/// it is anchored to the user's home directory, which needs no checkout at all. Without
+/// this carve-out a `{hadron}/…` program would be refused by the seat-time guard
+/// (`0b8e9c05`) even though it never needed a source checkout.
+#[test]
+fn a_hadron_anchored_part_is_not_repo_relative() {
+    assert!(!is_repo_relative(&format!("{USER_HOME_TOKEN}/bridges/agy/agy_acp.py")));
 }
 
 /// A command with no token is spawned exactly as written — `npx`, `gemini`, a seat's own
@@ -669,17 +705,23 @@ fn an_npm_package_spec_is_never_anchored() {
 }
 
 /// The one preset this all exists for: it must resolve to the real interpreter and the
-/// real script. Guards the whole chain — token, substitution, and the paths landing where
-/// the preset says they are.
+/// real script — with **no checkout at all**, unlike the old `{repo}`-anchored preset.
+/// Guards the whole chain — token, substitution, and the paths landing where the
+/// preset says they are.
 ///
-/// The script is tracked, so its absence is always a failure. The **venv is gitignored**,
-/// so a checkout that has never run the bootstrap legitimately has none — asserting it
-/// exists unconditionally would encode this machine's state in a gate that every quark
-/// must pass. Checked when it is there, skipped with a reason when it is not.
+/// The script is [`materialize_script`](crate::adapter::bridge::materialize_script)d
+/// here so its existence is always checked, not skipped — that's exactly what a real
+/// seat build does (task 1c calls it alongside seating), so it costs nothing to also
+/// do in the test. The **venv is never provisioned here** (that needs a live
+/// `pip install` — forbidden in a unit test), so a machine that has never run the
+/// bootstrap legitimately has none: checked when it is there, skipped with a reason
+/// when it is not.
 #[test]
 fn the_agy_preset_resolves_to_files_that_exist() {
     let t = AcpTarget::for_vendor("agy").expect("agy is in the catalogue");
-    let r = t.resolved().expect("resolvable from the test binary");
+    let r = t.resolved().expect("{hadron} needs no git checkout at all to resolve");
+
+    crate::adapter::bridge::materialize_script().expect("materializing the bridge script");
     assert!(std::path::Path::new(&r.args()[0]).exists(), "no bridge script at {:?}", r.args()[0]);
 
     let python = std::path::Path::new(r.program());

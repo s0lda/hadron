@@ -162,6 +162,7 @@ impl super::Chamber {
                         Some("Per-repo override; blank inherits the shared catalogue default."),
                         model_field,
                     ))
+                    .when_some(self.agy_bridge_status_row(cx), |v, row| v.child(row))
                     .child(settings_field(
                         "Effort",
                         Some("How much reasoning effort this quark spends per turn."),
