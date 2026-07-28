@@ -176,9 +176,21 @@ impl super::Chamber {
         let (label, tip, bg_color, icon) = match &self.update_state {
             UpdateState::Available { version, .. } => (
                 format!("v{} Available", version),
-                format!("Hadron v{} is available. Click to update.", version),
+                format!("Hadron v{} is available. Click to install update.", version),
                 theme::accent(),
                 IconName::ArrowUp,
+            ),
+            UpdateState::Installing { version } => (
+                format!("Installing v{}...", version),
+                format!("Installing Hadron v{} in background...", version),
+                theme::accent(),
+                IconName::ArrowUp,
+            ),
+            UpdateState::Installed { version } => (
+                format!("v{} Installed (Restart Needed)", version),
+                format!("Hadron v{} installed. Please restart both hadron-chamber and hadron-gluon daemon.", version),
+                theme::accent(),
+                IconName::CircleCheck,
             ),
             UpdateState::Checking => (
                 "Checking...".to_string(),
@@ -193,8 +205,8 @@ impl super::Chamber {
                 IconName::CircleCheck,
             ),
             UpdateState::Failed(msg) => (
-                "Update Check Failed".to_string(),
-                format!("Could not check for updates: {}", msg),
+                "Update Failed".to_string(),
+                format!("Could not update: {}", msg),
                 theme::danger(),
                 IconName::Info,
             ),

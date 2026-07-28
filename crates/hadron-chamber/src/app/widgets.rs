@@ -117,6 +117,8 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
             let check_update = view.clone();
             let update_label = match &view.read(cx).update_state {
                 crate::app::UpdateState::Available { version, .. } => format!("Update to v{}…", version),
+                crate::app::UpdateState::Installing { version } => format!("Installing v{}…", version),
+                crate::app::UpdateState::Installed { version } => format!("v{} Installed (Restart Hadron)", version),
                 crate::app::UpdateState::Checking => "Checking for Updates…".to_string(),
                 _ => "Check for Updates…".to_string(),
             };
@@ -199,9 +201,9 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
                     settings.update(cx, |this, cx| this.open_settings(window, cx));
                 }),
             )
-            .item(PopupMenuItem::new(update_label).on_click(move |_, _, cx| {
+            .item(PopupMenuItem::new(update_label).on_click(move |_, window, cx| {
                 check_update.update(cx, |this, cx| {
-                    this.check_for_updates(cx);
+                    this.trigger_update_flow(window, cx);
                 });
             }))
             .item(
