@@ -338,11 +338,28 @@ fn every_catalogued_acp_agent_resolves_to_its_boot_command() {
         let target = AcpTarget::for_vendor(a.vendor)
             .unwrap_or_else(|| panic!("{} is in the catalogue but will not resolve", a.vendor));
         assert_eq!(target.program, a.program);
-        assert_eq!(
-            QuarkKind::from_seat(&acp_seat("q", a.vendor)).unwrap(),
-            QuarkKind::Acp(target),
-            "a catalogued ACP seat needs no command of its own"
-        );
+        let built = QuarkKind::from_seat(&acp_seat("q", a.vendor));
+        // Every preset but `agy` names a program on `PATH`, so a seat on it builds with
+        // no command of its own. `agy` names a file — the vendored bridge interpreter —
+        // and seating now REFUSES one that is not on disk, so on a machine that has
+        // never provisioned the bridge that seat legitimately does not build. Asserting
+        // the error rather than skipping it keeps both halves of the rule pinned.
+        if std::path::Path::new(&target.program.replace(USER_HOME_TOKEN, "/x")).is_absolute() {
+            match built {
+                Ok(k) => assert_eq!(k, QuarkKind::Acp(target)),
+                Err(e) => assert!(
+                    e.to_string().contains("does not exist"),
+                    "{} may only fail for an absent file, got: {e}",
+                    a.vendor
+                ),
+            }
+        } else {
+            assert_eq!(
+                built.unwrap(),
+                QuarkKind::Acp(target),
+                "a catalogued ACP seat needs no command of its own"
+            );
+        }
     }
     assert!(AcpTarget::for_vendor("no-such-agent").is_none());
 }
@@ -710,9 +727,10 @@ fn an_npm_package_spec_is_never_anchored() {
 /// preset says they are.
 ///
 /// The script is [`materialize_script`](crate::adapter::bridge::materialize_script)d
-/// here so its existence is always checked, not skipped — that's exactly what a real
-/// seat build does (task 1c calls it alongside seating), so it costs nothing to also
-/// do in the test. The **venv is never provisioned here** (that needs a live
+/// here so its existence is always checked, not skipped. (Nothing on the SEATING path
+/// materializes it — the chamber's Settings page is the only caller; seating merely
+/// refuses a seat whose interpreter is absent.) The **venv is never provisioned here**
+/// (that needs a live
 /// `pip install` — forbidden in a unit test), so a machine that has never run the
 /// bootstrap legitimately has none: checked when it is there, skipped with a reason
 /// when it is not.
@@ -836,7 +854,26 @@ fn the_agy_preset_is_still_seatable_from_a_checkout() {
 fn an_acp_seat_that_resolves_still_builds() {
     let s = acp_seat("acp-claude", "claude");
     assert!(matches!(QuarkKind::from_seat(&s), Ok(QuarkKind::Acp(_))));
-    // And the repo-anchored one still builds here, because here IS a checkout.
-    let s = acp_seat("acp-agy", "agy");
+}
+
+/// Resolving proves a boot command is well-FORMED, not that anything is on disk.
+/// `{hadron}` always resolves, so without this the `agy` seat would seat on a build
+/// whose bridge venv has never been provisioned and then die with a bare ENOENT once
+/// per dispatch — the failure the `{repo}` guard exists to stop, reached by the other
+/// token. One skipped seat and one legible line instead.
+#[test]
+fn an_acp_seat_whose_program_is_absolute_and_absent_is_refused_at_seating() {
+    let mut s = acp_seat("acp-ghost", "mystery");
+    s.command = Some(AcpCommand {
+        program: "/nonexistent/hadron/bridges/agy/venv/bin/python".into(),
+        args: vec!["/nonexistent/agy_acp.py".into()],
+    });
+    let err = QuarkKind::from_seat(&s).unwrap_err().to_string();
+    assert!(err.contains("/nonexistent/hadron/bridges/agy/venv/bin/python"), "must name it: {err}");
+    assert!(err.contains("does not exist"), "must say what is wrong: {err}");
+
+    // A program with no separator is PATH-resolved by `execve` and must NOT be stat'd.
+    let mut s = acp_seat("acp-npx", "mystery");
+    s.command = Some(AcpCommand { program: "npx".into(), args: vec!["@scope/pkg".into()] });
     assert!(matches!(QuarkKind::from_seat(&s), Ok(QuarkKind::Acp(_))));
 }

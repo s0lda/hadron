@@ -539,7 +539,29 @@ impl QuarkKind {
                 // and skip a seat that fails to build (`cli.rs`), so the swarm's idea of
                 // its team stops claiming a quark that cannot boot. Resolved again at
                 // `AcpSession::boot`: this is the early check, not the gate.
-                target.resolved()?;
+                let resolved = target.resolved()?;
+                // Resolving proves the path is well-FORMED, not that anything is there.
+                // `{hadron}` always resolves — every install has a home directory — so
+                // an `agy` seat on a build whose bridge venv has never been provisioned
+                // would seat happily and then die with a bare ENOENT once per dispatch,
+                // forever: exactly the failure `{repo}`'s guard above was added to stop.
+                // Only an ABSOLUTE program is checked; a bare `npx` is resolved against
+                // `PATH` by `execve` and must not be stat'd here.
+                //
+                // Deliberately NOT in `resolved()`: that also backs the add-quark
+                // wizard's availability probe (`mark_unseatable`), and greying the row
+                // out on a machine with no venv would leave no way to create the seat
+                // whose Settings page is the only thing that provisions one.
+                let program = std::path::Path::new(resolved.program());
+                if program.is_absolute() && !program.exists() {
+                    anyhow::bail!(
+                        "seat '{}' boots {} — that file does not exist. For the `agy` \
+                         bridge, open Settings and select the seat to provision it \
+                         (`adapter::bridge`); otherwise correct the seat's `command`.",
+                        seat.id.as_str(),
+                        program.display()
+                    );
+                }
                 Ok(QuarkKind::Acp(target))
             }
             Transport::Sdk => anyhow::bail!(
