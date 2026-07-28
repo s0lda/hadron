@@ -225,10 +225,23 @@ impl AcpTarget {
     /// [`Self::resolved`], with the search origin injected so a test can exercise the
     /// installed case (no checkout above the binary) without installing anything.
     pub fn resolved_from(&self, near: &std::path::Path) -> anyhow::Result<ResolvedAcpTarget> {
+        self.anchored_by(near, || {
+            crate::snapshot::main_repo_root(near).map_err(|e| e.to_string())
+        })
+    }
+
+    /// [`Self::resolved_from`] with the root lookup supplied, so [`Self::resolved`] can
+    /// memoise it. `lookup` is called only when this target actually needs a root — an
+    /// `npx` seat must not pay for a git subprocess it has no use for.
+    fn anchored_by(
+        &self,
+        near: &std::path::Path,
+        lookup: impl FnOnce() -> Result<std::path::PathBuf, String>,
+    ) -> anyhow::Result<ResolvedAcpTarget> {
         if !self.needs_repo_root() && !self.has_repo_relative_part() {
             return Ok(ResolvedAcpTarget(self.clone()));
         }
-        let root = match crate::snapshot::main_repo_root(near) {
+        let root = match lookup() {
             Ok(root) => Some(root),
             // A `{repo}` token or a relative program path requires a source checkout.
             // A relative arg may be an npm package spec (`@scope/pkg`), which can work
@@ -270,10 +283,26 @@ impl AcpTarget {
         Ok(ResolvedAcpTarget(anchored))
     }
 
+    /// The main checkout above THIS binary, looked up once per process.
+    ///
+    /// `main_repo_root` shells out to git, and [`Self::resolved`] is called from the
+    /// roster reconcile and — through [`QuarkKind::available_agents`] — from the
+    /// chamber's provider-wizard render fn, which runs on every frame. `current_exe`
+    /// cannot move under a running process, so one answer is the only answer there is.
+    fn installed_repo_root() -> &'static Result<std::path::PathBuf, String> {
+        static ROOT: std::sync::OnceLock<Result<std::path::PathBuf, String>> =
+            std::sync::OnceLock::new();
+        ROOT.get_or_init(|| {
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            let near = exe.parent().unwrap_or(&exe);
+            crate::snapshot::main_repo_root(near).map_err(|e| e.to_string())
+        })
+    }
+
     pub fn resolved(&self) -> anyhow::Result<ResolvedAcpTarget> {
         let exe = std::env::current_exe()?;
-        let near = exe.parent().unwrap_or(&exe);
-        self.resolved_from(near)
+        let near = exe.parent().unwrap_or(&exe).to_path_buf();
+        self.anchored_by(&near, || Self::installed_repo_root().clone())
     }
 
 
@@ -359,7 +388,37 @@ impl QuarkKind {
                 }),
             }
         }
+        Self::mark_unseatable(&mut out, |t| t.resolved().is_ok());
         out
+    }
+
+    /// Drop the command of any entry whose boot command cannot resolve in THIS
+    /// installation, so the wizard greys it out and says why.
+    ///
+    /// The `agy` bridge boots a python interpreter and a script that live in the Hadron
+    /// repository, and `cargo install` ships binaries only: from an installed build the
+    /// row is real but unseatable. Offering it anyway seated a quark that failed at turn
+    /// time, minutes later, in the field — nowhere near the human who clicked it.
+    ///
+    /// `command: None` is the signal the wizard already has (a registry `binary` entry
+    /// uses it), so this adds a reason, not a mechanism. Availability is DERIVED from
+    /// [`AcpTarget::resolved`] rather than declared on the preset — one home for the rule.
+    ///
+    /// `resolvable` is injected for the same reason [`AcpTarget::resolved_from`] takes a
+    /// search origin: a test in this checkout always HAS a repo root, so the installed
+    /// case is unreachable otherwise.
+    fn mark_unseatable(entries: &mut [CatalogueEntry], resolvable: impl Fn(&AcpTarget) -> bool) {
+        for entry in entries.iter_mut() {
+            let Some((program, args)) = entry.command.clone() else { continue };
+            let target = AcpTarget { program, args, env: Vec::new() };
+            if !resolvable(&target) {
+                entry.description =
+                    "needs a Hadron source checkout — the files it boots are not installed \
+                     by `cargo install`"
+                        .to_string();
+                entry.command = None;
+            }
+        }
     }
 
     /// The secret env-var NAMES a vendor needs supplied (via the OS keychain — see
@@ -412,6 +471,14 @@ impl QuarkKind {
                         seat.id.as_str()
                     )
                 })?;
+                // Fail at SEATING, not at turn time. A boot command that cannot resolve
+                // in this installation — the `agy` bridge lives in the repository and
+                // `cargo install` ships binaries only — used to seat fine and then error
+                // every single turn, once per dispatch, forever. The seating loops report
+                // and skip a seat that fails to build (`cli.rs`), so the swarm's idea of
+                // its team stops claiming a quark that cannot boot. Resolved again at
+                // `AcpSession::boot`: this is the early check, not the gate.
+                target.resolved()?;
                 Ok(QuarkKind::Acp(target))
             }
             Transport::Sdk => anyhow::bail!(
