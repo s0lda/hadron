@@ -82,6 +82,7 @@ impl super::Chamber {
         if is_paste {
             if let Some(clipboard) = cx.read_from_clipboard() {
                 if let Some(text) = clipboard.text() {
+                    term.scroll_to_bottom();
                     term.send_input(text.as_bytes());
                     cx.notify();
                 }
@@ -122,6 +123,35 @@ impl super::Chamber {
             }
         }
 
+        // Support Shift+PageUp / Shift+PageDown or Shift+Up / Shift+Down for terminal scrollback
+        if m.shift {
+            let (_, rows) = term.size();
+            let page_lines = rows.saturating_sub(2).max(1) as i32;
+            match ks.key.as_str() {
+                "pageup" => {
+                    term.scroll(page_lines);
+                    cx.notify();
+                    return;
+                }
+                "pagedown" => {
+                    term.scroll(-page_lines);
+                    cx.notify();
+                    return;
+                }
+                "up" => {
+                    term.scroll(1);
+                    cx.notify();
+                    return;
+                }
+                "down" => {
+                    term.scroll(-1);
+                    cx.notify();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         let bytes: Vec<u8> = match ks.key.as_str() {
             "enter" => vec![b'\r'],
             "backspace" => vec![0x7f],
@@ -159,8 +189,9 @@ impl super::Chamber {
                 }
             }
         };
-        // Typing dismisses any mouse selection, as a real terminal does.
+        // Typing dismisses any mouse selection and resets scroll to bottom, as a real terminal does.
         term.selection_clear();
+        term.scroll_to_bottom();
         term.send_input(&bytes);
         cx.notify();
     }

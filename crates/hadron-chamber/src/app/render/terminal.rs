@@ -163,6 +163,20 @@ impl super::Chamber {
                             }
                         }
                     }))
+                    .on_scroll_wheel(cx.listener(|this, ev: &gpui::ScrollWheelEvent, _window, cx| {
+                        if let Some(term) = &this.terminal {
+                            let lines = match ev.delta {
+                                gpui::ScrollDelta::Lines(delta) => (delta.y * 3.0) as i32,
+                                gpui::ScrollDelta::Pixels(delta) => {
+                                    (f32::from(delta.y) / TERM_CELL_H * 3.0) as i32
+                                }
+                            };
+                            if lines != 0 {
+                                term.scroll(lines);
+                                cx.notify();
+                            }
+                        }
+                    }))
                     .on_key_down(cx.listener(Self::on_terminal_key))
                     .child(size_probe)
                     .child(grid);
