@@ -97,10 +97,9 @@ impl super::Chamber {
             hadron_lattice::Transport::Cli => "hadron-adapter".to_string(),
             hadron_lattice::Transport::Sdk => "unsupported — use ACP or CLI".to_string(),
         };
-        let model_str = if roster_row.model.is_empty() {
-            "—".to_string()
-        } else {
-            roster_row.model.clone()
+        let model_str = match roster_row.model_label() {
+            label if label.is_empty() => "—".to_string(),
+            label => label,
         };
         let transport_str = match roster_row.transport {
             hadron_lattice::Transport::Cli => "CLI (one-shot)",

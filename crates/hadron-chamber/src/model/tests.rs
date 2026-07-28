@@ -336,6 +336,28 @@
         assert_eq!(targets, vec!["opus".to_string(), "gemini".to_string()]);
     }
 
+    /// An empty `model` means two different things by transport, and the roster must not
+    /// render them the same. A CLI seat with no `--model` has *deferred* to the tool's own
+    /// config — a real, nameable state — whereas an ACP seat with no model genuinely has
+    /// nothing to show. Guards the one home for that rule so the roster row and the Stats
+    /// table cannot drift apart.
+    #[test]
+    fn an_empty_model_reads_as_cli_default_only_for_a_cli_seat() {
+        use hadron_lattice::Transport;
+
+        let cli = roster_entry("agy", Transport::Cli);
+        assert!(cli.model.is_empty(), "fixture precondition");
+        assert_eq!(cli.model_label(), "CLI default");
+
+        let acp = roster_entry("opus", Transport::Acp);
+        assert!(acp.model_label().is_empty(), "an ACP seat keeps the caller's own placeholder");
+
+        let pinned = RosterRow { model: "opus[1m]".to_string(), ..roster_entry("opus", Transport::Acp) };
+        assert_eq!(pinned.model_label(), "opus[1m]", "a configured model is shown verbatim");
+        let pinned_cli = RosterRow { model: "Gemini 3.1 Pro (High)".to_string(), ..roster_entry("agy", Transport::Cli) };
+        assert_eq!(pinned_cli.model_label(), "Gemini 3.1 Pro (High)", "never overrides a real value");
+    }
+
     /// Process Manager rows: the daemon first (from the caller's live probe), then
     /// every *adopted* seat with a real status and only the control actions that
     /// mechanism actually supports — restart only for an enabled ACP seat, and the
