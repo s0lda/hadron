@@ -28,29 +28,48 @@ impl Default for UpdateState {
     }
 }
 
-pub fn parse_remote_update_info(remote_output: &str, current_version: &str) -> UpdateState {
-    let trimmed = remote_output.trim();
-    if trimmed.is_empty() {
-        return UpdateState::UpToDate;
-    }
+/// The numeric components of a `v`-prefixed release tag, or `None` for anything else.
+///
+/// **This repo's tags are not all releases.** `/abandon` writes an archive ref for every
+/// branch it discards (`archive/<slug>`, see the branch-deletion invariant), and there
+/// are several already. Without this filter, one `git push --tags` would make the update
+/// pill offer "update to version archive/cli-agy-auto-update-20260727" and a click would
+/// run `cargo install` against whatever `main` happened to be.
+///
+/// Returning the components rather than the string is what lets the caller order them
+/// NUMERICALLY: `git ls-remote` sorts its output lexicographically, under which
+/// `v0.10.0` sorts before `v0.9.0`, so "the last line" is not "the newest release".
+fn release_version(tag: &str) -> Option<Vec<u64>> {
+    // `git ls-remote` emits a peeled `refs/tags/v1.0^{}` line beside each annotated tag.
+    let tag = tag.strip_suffix("^{}").unwrap_or(tag);
+    let rest = tag.strip_prefix('v')?;
+    let parts: Vec<u64> = rest.split('.').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+    (!parts.is_empty()).then_some(parts)
+}
 
-    for line in trimmed.lines().rev() {
+pub fn parse_remote_update_info(remote_output: &str, current_version: &str) -> UpdateState {
+    let current = release_version(&format!("v{current_version}"));
+    let mut newest: Option<(Vec<u64>, String, String)> = None;
+
+    for line in remote_output.trim().lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 {
-            if let Some(tag) = parts[1].strip_prefix("refs/tags/") {
-                let version = tag.strip_prefix('v').unwrap_or(tag);
-                if version != current_version {
-                    let commit = Some(parts[0][..7.min(parts[0].len())].to_string());
-                    return UpdateState::Available {
-                        version: version.to_string(),
-                        commit,
-                    };
-                }
-            }
+        let [sha, refname, ..] = parts[..] else { continue };
+        let Some(tag) = refname.strip_prefix("refs/tags/") else { continue };
+        let Some(key) = release_version(tag) else { continue };
+        if newest.as_ref().is_none_or(|(best, _, _)| key > *best) {
+            let version = tag.trim_end_matches("^{}").trim_start_matches('v').to_string();
+            newest = Some((key, version, sha[..7.min(sha.len())].to_string()));
         }
     }
 
-    UpdateState::UpToDate
+    match newest {
+        // Strictly newer only. `!=` offered a *downgrade* to anyone running a build ahead
+        // of the newest tag — every developer working from a checkout.
+        Some((key, version, sha)) if current.as_ref().is_none_or(|c| key > *c) => {
+            UpdateState::Available { version, commit: Some(sha) }
+        }
+        _ => UpdateState::UpToDate,
+    }
 }
 
 /// The install command, built in one place so a test can inspect it without running it.
@@ -189,6 +208,47 @@ mod tests {
             .map(|(_, v)| v);
         assert_eq!(prompt, Some(Some(std::ffi::OsStr::new("0"))));
         assert_eq!(cmd.get_program(), std::ffi::OsStr::new("cargo"));
+    }
+
+    /// `/abandon` writes an `archive/<slug>` tag for every branch it discards, and this
+    /// repo already has several. One `git push --tags` and a non-release tag would have
+    /// been offered as a version — with a `cargo install` behind the click.
+    #[test]
+    fn a_non_release_tag_is_never_offered_as_an_update() {
+        let out = "aaaaaaaaaaaa\trefs/tags/archive/cli-agy-auto-update-20260727\n\
+                   bbbbbbbbbbbb\trefs/tags/archive/acp-claude-01KYB03ZAW\n\
+                   cccccccccccc\tHEAD";
+        assert_eq!(parse_remote_update_info(out, "0.1.0"), UpdateState::UpToDate);
+    }
+
+    /// `git ls-remote` sorts lexicographically, under which `v0.10.0` precedes `v0.9.0`.
+    /// Taking the last line would have offered 0.9.0 as the upgrade from 0.10.0's repo.
+    #[test]
+    fn the_newest_release_is_chosen_numerically_not_lexicographically() {
+        let out = "aaaaaaaaaaaa\trefs/tags/v0.10.0\nbbbbbbbbbbbb\trefs/tags/v0.9.0";
+        assert_eq!(
+            parse_remote_update_info(out, "0.1.0"),
+            UpdateState::Available { version: "0.10.0".into(), commit: Some("aaaaaaa".into()) }
+        );
+    }
+
+    /// A developer running a build ahead of the newest tag was offered a DOWNGRADE,
+    /// because the old check was `!=` rather than "strictly newer".
+    #[test]
+    fn a_tag_older_than_the_running_build_is_not_an_update() {
+        let out = "aaaaaaaaaaaa\trefs/tags/v0.1.0";
+        assert_eq!(parse_remote_update_info(out, "0.2.0"), UpdateState::UpToDate);
+    }
+
+    /// An annotated tag emits a peeled `^{}` line beside itself; both must read as one
+    /// version, and neither may leak `^{}` into what the pill shows.
+    #[test]
+    fn an_annotated_tags_peeled_line_is_the_same_version() {
+        let out = "aaaaaaaaaaaa\trefs/tags/v0.2.0\nbbbbbbbbbbbb\trefs/tags/v0.2.0^{}";
+        match parse_remote_update_info(out, "0.1.0") {
+            UpdateState::Available { version, .. } => assert_eq!(version, "0.2.0"),
+            other => panic!("expected an update, got {other:?}"),
+        }
     }
 
     #[test]
