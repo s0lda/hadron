@@ -714,3 +714,22 @@ fn a_repo_anchored_preset_explains_itself_when_there_is_no_checkout() {
     );
 }
 
+#[test]
+fn a_relative_program_without_token_explains_itself_when_there_is_no_checkout() {
+    let target = AcpTarget {
+        program: "crates/hadron-gluon/scripts/venv/bin/python".to_string(),
+        args: vec!["crates/hadron-gluon/scripts/agy_acp.py".to_string()],
+        env: Default::default(),
+    };
+    let err = target
+        .resolved_from(std::path::Path::new("/"))
+        .expect_err("no checkout root exists above /");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("only works from a source checkout"),
+        "the error must explain that relative paths require a source checkout, got: {msg}"
+    );
+}
+
+
+

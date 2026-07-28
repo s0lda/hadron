@@ -230,31 +230,30 @@ impl AcpTarget {
         }
         let root = match crate::snapshot::main_repo_root(near) {
             Ok(root) => Some(root),
-            // Only a `{repo}` token makes the root mandatory. A relative part may be an
-            // npm scoped package (`@scope/pkg`) rather than a path, and those must keep
-            // working outside a git checkout — the guard below still catches a program
-            // that really is a path.
-            Err(e) if self.needs_repo_root() => {
+            // A `{repo}` token or a relative program path requires a source checkout.
+            // A relative arg may be an npm package spec (`@scope/pkg`), which can work
+            // outside a git checkout if the program itself is not repo-relative.
+            Err(e) if self.needs_repo_root() || is_repo_relative(&self.program) => {
                 return Err(anyhow::anyhow!(
-                    "boot command {:?} names {REPO_ROOT_TOKEN}, so it only works from a source \
+                    "boot command {:?} names a repository-relative path, so it only works from a source \
                      checkout: the files it boots live in the repository and are not installed \
                      by `cargo install`. Searched from {}: {e}",
                     self.command_line(),
                     near.display()
-                ))
+                ));
             }
             Err(_) => None,
         };
-        let anchored = match root {
+        let anchored = match &root {
             Some(root) => {
-                let root = root.to_string_lossy().to_string();
+                let root_str = root.to_string_lossy().to_string();
                 AcpTarget {
                     // A program holding a separator is opened as a path by `execve`, so
                     // anchoring it is always right: relative, it cannot work at all.
-                    program: anchor(&self.program, &root, false),
+                    program: anchor(&self.program, &root_str, false),
                     // An arg is only a path if it names one that exists — otherwise it is
                     // a flag, a URL or an npm package spec, and must pass through whole.
-                    args: self.args.iter().map(|a| anchor(a, &root, true)).collect(),
+                    args: self.args.iter().map(|a| anchor(a, &root_str, true)).collect(),
                     env: self.env.clone(),
                 }
             }
