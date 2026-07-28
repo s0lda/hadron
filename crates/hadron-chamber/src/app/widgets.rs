@@ -365,12 +365,12 @@ pub(super) fn roster_row(
         format!("{}: {}", act.doing.label(), act.detail).into()
     } else if needs_activity_placeholder(effective_state, r.adopted, r.enabled, has_activity) {
         "working…".into()
-    } else if r.vendor.is_empty() && r.model.is_empty() {
+    } else if r.vendor.is_empty() && r.model_label().is_empty() {
         label.into()
-    } else if r.model.is_empty() {
+    } else if r.model_label().is_empty() {
         format!("{} · {}", transport_label, cap(&r.vendor)).into()
     } else {
-        format!("{} · {} · {}", transport_label, cap(&r.vendor), cap(&r.model)).into()
+        format!("{} · {} · {}", transport_label, cap(&r.vendor), cap(&r.model_label())).into()
     };
 
     let unknown_str = if r.unknown_turns > 0 {

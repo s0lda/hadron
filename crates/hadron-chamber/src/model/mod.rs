@@ -139,6 +139,30 @@ pub struct RosterRow {
     pub unknown_turns: u32,
 }
 
+impl RosterRow {
+    /// What to display for this seat's model.
+    ///
+    /// An empty `model` on a **CLI** seat is not "unknown" — it means the seat passes
+    /// no `--model`, so the tool's own config decides (for `agy`, that is
+    /// `~/.gemini/antigravity-cli/settings.json`). Hadron cannot read the value back:
+    /// `agy` writes the model it actually used only to its private per-invocation log,
+    /// never to stdout/stderr, so the CLI adapter has nothing to capture. Saying
+    /// "CLI default" states the true situation; a dash reads as broken.
+    ///
+    /// Still empty for a non-CLI seat with no configured model — callers keep their own
+    /// placeholder for that. SSOT for the rule, so the roster row and the Stats table
+    /// cannot drift.
+    pub fn model_label(&self) -> String {
+        if !self.model.is_empty() {
+            self.model.clone()
+        } else if self.transport == hadron_lattice::Transport::Cli {
+            "CLI default".to_string()
+        } else {
+            String::new()
+        }
+    }
+}
+
 /// The reboots `/clear` must append after truncating the field: one per resident
 /// (ACP) quark, so every live agent re-boots into the fresh session instead of
 /// carrying pre-clear context. The field-is-session model means a cleared field
