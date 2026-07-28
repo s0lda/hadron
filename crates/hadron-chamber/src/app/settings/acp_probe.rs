@@ -73,7 +73,23 @@ impl super::Chamber {
             .get(&QuarkId::new(id))
             .map(|s| s.transport == hadron_lattice::Transport::Acp && s.vendor == "agy")
             .unwrap_or(false);
-        if !is_agy_acp || hadron_gluon::adapter::bridge::is_provisioned() {
+        if !is_agy_acp {
+            self.agy_bridge_probe = None;
+            return;
+        }
+        // Refresh the script BEFORE the already-provisioned early return. It is a byte
+        // compare and a write only when they differ, and it is the only thing that
+        // carries a Hadron upgrade's new bridge into `~/.hadron`. Behind the return, a
+        // machine that provisioned once would run the version of the script it first
+        // installed for the rest of time, which is the opposite of what 1b is for.
+        if let Err(e) = hadron_gluon::adapter::bridge::materialize_script() {
+            self.agy_bridge_probe = Some(AgyBridgeProbe {
+                id: id.to_string(),
+                state: AgyBridgeState::Failed(e.to_string()),
+            });
+            return;
+        }
+        if hadron_gluon::adapter::bridge::is_provisioned() {
             self.agy_bridge_probe = None;
             return;
         }
