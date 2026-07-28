@@ -53,10 +53,24 @@ pub fn parse_remote_update_info(remote_output: &str, current_version: &str) -> U
     UpdateState::UpToDate
 }
 
+/// The install command, built in one place so a test can inspect it without running it.
+///
+/// `cargo install --git` shells out to **git**, and a GUI process has no terminal: a
+/// private/renamed remote, or an expired credential helper, makes git ask for a password
+/// on stdin and wait for an answer that can never come — the pill would read
+/// "Installing…" forever with no way to cancel. Nulling stdin and setting
+/// `GIT_TERMINAL_PROMPT=0` turns that hang into a fast, legible failure. `hadron-gluon`
+/// learned the same thing the hard way (`snapshot::git_with_env`).
+fn install_command() -> Command {
+    let mut cmd = Command::new(CARGO_INSTALL_ARGV[0]);
+    cmd.args(&CARGO_INSTALL_ARGV[1..])
+        .stdin(std::process::Stdio::null())
+        .env("GIT_TERMINAL_PROMPT", "0");
+    cmd
+}
+
 pub fn perform_cargo_install(target_version: &str) -> UpdateState {
-    let out = Command::new(CARGO_INSTALL_ARGV[0])
-        .args(&CARGO_INSTALL_ARGV[1..])
-        .output();
+    let out = install_command().output();
 
     match out {
         Ok(o) if o.status.success() => UpdateState::Installed {
@@ -160,6 +174,21 @@ mod tests {
             CARGO_INSTALL_ARGV,
             &["cargo", "install", "--locked", "--git", "https://github.com/s0lda/hadron.git", "hadron"]
         );
+    }
+
+    /// A credential prompt from the `git` that `cargo install --git` drives would wait
+    /// forever behind a GUI with no terminal, leaving the pill stuck on "Installing…".
+    /// (Stdio has no getter, so the `Stdio::null()` half of that pair is not asserted
+    /// here — only the env var is observable.)
+    #[test]
+    fn the_install_command_can_never_wait_on_a_credential_prompt() {
+        let cmd = install_command();
+        let prompt = cmd
+            .get_envs()
+            .find(|(k, _)| *k == std::ffi::OsStr::new("GIT_TERMINAL_PROMPT"))
+            .map(|(_, v)| v);
+        assert_eq!(prompt, Some(Some(std::ffi::OsStr::new("0"))));
+        assert_eq!(cmd.get_program(), std::ffi::OsStr::new("cargo"));
     }
 
     #[test]
