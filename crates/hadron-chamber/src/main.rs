@@ -38,6 +38,13 @@ fn main() {
     let no_daemon = args.iter().any(|a| a == "--no-daemon");
     let path = resolve_field_path(&args);
 
+    // Read BEFORE an update can run. `cargo install` replaces the binary by rename, which
+    // unlinks the inode this process is executing, and `/proc/self/exe` then reads back as
+    // `<path> (deleted)` — a path that does not exist. Captured here it is just the path,
+    // and by the time the restart uses it the new binary is sitting at it.
+    #[cfg(feature = "gui")]
+    let own_exe = std::env::current_exe();
+
     let mut chamber_lock_file = None;
     // The gluon child we spawn ourselves (gui only), kept only so we can reap it on
     // exit — the kill itself goes by PID, uniformly, whether we spawned the daemon or
@@ -154,11 +161,13 @@ fn main() {
         // Blocks until the window closes.
         app::run(path, chamber_lock_file);
 
+        let restarting = app::update::restart_after_update_requested();
+
         // On exit, honour the user's preference: kill the daemon when enabled. We
         // terminate by PID either way — spawned-by-us or attached-to-existing — so the
         // toggle behaves identically. SIGTERM (not SIGKILL) lets gluon flush the field
         // and drop its lock cleanly before it exits.
-        if config::load().close_gluon_on_exit {
+        if should_close_gluon(config::load().close_gluon_on_exit, restarting) {
             if let Some(pid) = gluon_pid {
                 // The PID may have come out of `gluon.lock`, which outlives the daemon
                 // that wrote it — so check the kernel still calls that process a
@@ -192,6 +201,32 @@ fn main() {
                      wrote no PID to gluon.lock (likely a daemon from an older build). \
                      Rebuild and restart hadron-gluon so it records its PID."
                 );
+            }
+        }
+
+        if restarting {
+            // The successor decides whether to spawn a daemon by trying `gluon.lock`'s
+            // flock, and the kernel only drops that when the old daemon's process is
+            // gone. Relaunching straight after the SIGTERM would race it: the new
+            // chamber would see the lock still held, attach to a daemon that is on its
+            // way out, and come up with no swarm at all.
+            #[cfg(unix)]
+            if let Some(pid) = gluon_pid {
+                if !wait_for_process_exit(std::path::Path::new(PROC_ROOT), pid, GLUON_EXIT_WAIT) {
+                    eprintln!(
+                        "hadron-chamber: hadron-gluon (PID {}) is still running after {:?}; \
+                         restarting anyway — the new chamber will attach to it rather than \
+                         spawn a daemon on the new build.",
+                        pid, GLUON_EXIT_WAIT
+                    );
+                }
+            }
+            match &own_exe {
+                Ok(exe) => relaunch(exe, &args[1..]),
+                Err(e) => eprintln!(
+                    "hadron-chamber: update installed, but this process could not find its own \
+                     executable to restart into ({e}). Start Hadron again by hand."
+                ),
             }
         }
     }
@@ -258,6 +293,67 @@ fn pid_names_a_live_gluon(proc_root: &std::path::Path, pid: u32) -> bool {
     match std::fs::read_to_string(proc_root.join(pid.to_string()).join("comm")) {
         Ok(comm) => comm.trim() == GLUON_COMM,
         Err(_) => false,
+    }
+}
+
+/// Whether the daemon is stopped as the chamber exits.
+///
+/// `close_gluon_on_exit` is the human's standing preference for an ordinary close, and it
+/// is off by default — but a restart-after-update is not an ordinary close. The daemon is
+/// the binary that was just replaced, and leaving it up would mean an updated chamber
+/// talking to a daemon from the previous release, which is the one arrangement the
+/// update was supposed to end.
+#[cfg(feature = "gui")]
+fn should_close_gluon(preference: bool, restarting_after_update: bool) -> bool {
+    preference || restarting_after_update
+}
+
+/// How long the restart waits for the daemon it just SIGTERMed to actually be gone.
+#[cfg(all(unix, feature = "gui"))]
+const GLUON_EXIT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Block until `pid` is no longer a live `hadron-gluon`, or the deadline passes.
+/// `true` means it is gone. Bounded, because a daemon that ignores SIGTERM must delay
+/// the restart, never cancel it.
+#[cfg(all(unix, feature = "gui"))]
+fn wait_for_process_exit(
+    proc_root: &std::path::Path,
+    pid: u32,
+    deadline: std::time::Duration,
+) -> bool {
+    let start = std::time::Instant::now();
+    loop {
+        if !pid_names_a_live_gluon(proc_root, pid) {
+            return true;
+        }
+        if start.elapsed() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// Become the newly-installed binary, with the arguments this process was given.
+///
+/// `exec` rather than spawn-and-exit: it keeps the PID and hands the successor a machine
+/// with no second chamber on it, so `chamber.lock` cannot be contended by our own corpse.
+/// That lock was moved into `app::run` and dropped when it returned, which is what
+/// released it — not the exec.
+#[cfg(feature = "gui")]
+fn relaunch(exe: &std::path::Path, args: &[String]) {
+    eprintln!("hadron-chamber: restarting into the updated binary at {:?}...", exe);
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(args);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Only returns on failure.
+        let e = cmd.exec();
+        eprintln!("hadron-chamber: could not restart into {:?}: {e}. Start Hadron again by hand.", exe);
+    }
+    #[cfg(not(unix))]
+    if let Err(e) = cmd.spawn() {
+        eprintln!("hadron-chamber: could not restart into {:?}: {e}. Start Hadron again by hand.", exe);
     }
 }
 
@@ -536,5 +632,49 @@ mod tests {
                 std::process::id()
             ));
         }
+    }
+
+    /// `close_gluon_on_exit` is off by default, and under that preference an
+    /// update-restart would have left the *old* daemon running against a new chamber —
+    /// exactly the split the update exists to end. A restart overrides the preference;
+    /// nothing else does.
+    #[test]
+    fn a_restart_after_an_update_closes_the_daemon_whatever_the_preference_says() {
+        assert!(should_close_gluon(false, true), "a restart must stop the old daemon");
+        assert!(should_close_gluon(true, true));
+        assert!(should_close_gluon(true, false), "the preference still holds on its own");
+        assert!(
+            !should_close_gluon(false, false),
+            "an ordinary close with the preference off must leave the daemon alone"
+        );
+    }
+
+    /// The successor decides whether to spawn a daemon from `gluon.lock`'s flock, which
+    /// the kernel holds until the old daemon's process is really gone — so the restart
+    /// waits for it. Bounded: a daemon that ignores SIGTERM delays the relaunch, it may
+    /// never cancel it.
+    #[cfg(unix)]
+    #[test]
+    fn the_restart_waits_for_the_daemon_to_go_but_never_forever() {
+        let proc_root = tempfile::tempdir().unwrap();
+        let dir = proc_root.path().join("2001");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("comm"), "hadron-gluon\n").unwrap();
+
+        let start = std::time::Instant::now();
+        assert!(
+            !wait_for_process_exit(
+                proc_root.path(),
+                2001,
+                std::time::Duration::from_millis(300)
+            ),
+            "a daemon that never exits must be reported as still running"
+        );
+        assert!(start.elapsed() >= std::time::Duration::from_millis(300), "it must actually wait");
+        assert!(start.elapsed() < std::time::Duration::from_secs(5), "and must not hang");
+
+        // Gone: returns at once.
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(wait_for_process_exit(proc_root.path(), 2001, GLUON_EXIT_WAIT));
     }
 }

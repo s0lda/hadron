@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use gpui::{Context, Window};
 use super::Chamber;
 
@@ -177,6 +179,34 @@ fn failure_message(status: &str, stderr: &str, log: Option<&Path>) -> String {
     }
 }
 
+/// How long the finished pill stays on screen before the window goes away. An update
+/// that vanished the moment it succeeded would read as a crash — this is the only reason
+/// the restart is not immediate.
+const RESTART_GRACE: Duration = Duration::from_secs(2);
+
+/// Set exactly once, by the install that succeeded, and read by `main` after the window
+/// has closed. A `static` because the two ends are on opposite sides of `app::run`:
+/// `Chamber` does not outlive the window, and `main` owns the daemon teardown that has
+/// to happen *between* the quit and the relaunch.
+static RESTART_AFTER_UPDATE: AtomicBool = AtomicBool::new(false);
+
+/// Whether the chamber quit in order to come back on the newly-installed binary, as
+/// opposed to a human closing the window. `main` uses it for both halves of the restart:
+/// stopping the daemon (which is still the *old* build) and relaunching.
+pub fn restart_after_update_requested() -> bool {
+    RESTART_AFTER_UPDATE.load(Ordering::SeqCst)
+}
+
+/// The one state that warrants a restart.
+///
+/// A restart is destructive — it stops the daemon, and with it every turn in flight — so
+/// it may only ever follow an install that actually finished. `Failed` in particular
+/// leaves the running binary untouched, and restarting into it would cost the human a
+/// swarm for nothing.
+fn warrants_restart(state: &UpdateState) -> bool {
+    matches!(state, UpdateState::Installed { .. })
+}
+
 /// The tag naming release `version` — the inverse of [`release_version`], which is what
 /// makes "compare the parsed version, then install the tag it came from" sound. Exact
 /// because `release_version` only admits `v` + dot-separated integers, so there is
@@ -269,16 +299,48 @@ impl Chamber {
                         .spawn(async move { perform_cargo_install(&target_version) })
                         .await;
 
+                    let restart = warrants_restart(&state);
                     let _ = this.update(cx, |chamber, cx| {
                         chamber.update_state = state;
                         cx.notify();
                     });
+
+                    // The installed binary is on disk but this process is still the old
+                    // one, and so is the daemon it spawned — a fact the pill could only
+                    // ever *ask* the human to act on, and which cost a manual kill every
+                    // time. Quitting here is what makes the update take effect: `main`
+                    // stops the daemon and relaunches once the window is down.
+                    //
+                    // The flag is raised INSIDE the same update as the quit, and only if
+                    // that update succeeds. Raised beforehand it could outlive a failed
+                    // quit — an app already shutting down when the install landed — and
+                    // `main`, which reads it after `app::run` returns, would then relaunch
+                    // a chamber the human had deliberately closed.
+                    if restart {
+                        cx.background_executor().timer(RESTART_GRACE).await;
+                        let quit = this.update(cx, |_chamber, cx| {
+                            RESTART_AFTER_UPDATE.store(true, Ordering::SeqCst);
+                            cx.quit();
+                        });
+                        if quit.is_err() {
+                            eprintln!(
+                                "hadron-chamber: the update is installed, but this chamber was \
+                                 already shutting down and could not restart itself. Start \
+                                 Hadron again to run the new build."
+                            );
+                        }
+                    }
                 })
                 .detach();
             }
             UpdateState::Installing { .. } => {
                 // Idempotent against double clicks while installation is in progress.
             }
+            // Inert for the same reason, one step later: the pill stays clickable during
+            // `RESTART_GRACE`, and without this arm a click would fall through to
+            // `check_for_updates` and overwrite the state with `Checking` — leaving the
+            // human looking at "Checking…" when the window disappears a second later.
+            UpdateState::Installed { .. } => {}
             _ => {
                 self.check_for_updates(cx);
             }
@@ -425,6 +487,24 @@ mod tests {
         match parse_remote_update_info(out, "0.1.0") {
             UpdateState::Available { version, .. } => assert_eq!(version, "0.2.0"),
             other => panic!("expected an update, got {other:?}"),
+        }
+    }
+
+    /// The restart stops the daemon and every turn on it, so it must follow *only* an
+    /// install that finished. `Failed` is the one that matters: it leaves the running
+    /// binary exactly as it was, and restarting into it would cost a swarm for nothing.
+    #[test]
+    fn only_a_finished_install_warrants_a_restart() {
+        assert!(warrants_restart(&UpdateState::Installed { version: "0.1.2".into() }));
+        for state in [
+            UpdateState::Idle,
+            UpdateState::Checking,
+            UpdateState::UpToDate,
+            UpdateState::Available { version: "0.1.2".into(), commit: None },
+            UpdateState::Installing { version: "0.1.2".into() },
+            UpdateState::Failed("boom".into()),
+        ] {
+            assert!(!warrants_restart(&state), "{state:?} must not restart the chamber");
         }
     }
 
