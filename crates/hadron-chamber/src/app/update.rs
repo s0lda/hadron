@@ -80,16 +80,48 @@ pub fn parse_remote_update_info(remote_output: &str, current_version: &str) -> U
 /// "Installing…" forever with no way to cancel. Nulling stdin and setting
 /// `GIT_TERMINAL_PROMPT=0` turns that hang into a fast, legible failure. `hadron-gluon`
 /// learned the same thing the hard way (`snapshot::git_with_env`).
-fn install_command() -> Command {
-    let mut cmd = Command::new(CARGO_INSTALL_ARGV[0]);
-    cmd.args(&CARGO_INSTALL_ARGV[1..])
+/// `tag` is pinned with `--tag`, and that is not decoration: without it
+/// `cargo install --git` builds the default branch's HEAD, so the pill would advertise
+/// a release version and install whatever `main` happened to be at click time. The flag
+/// goes BEFORE the package spec — `cargo` reads the last positional as the package, and
+/// a `--tag` appended after it is read as a second package name.
+fn install_argv(tag: &str) -> Vec<String> {
+    let (pkg, head) = CARGO_INSTALL_ARGV
+        .split_last()
+        .expect("CARGO_INSTALL_ARGV carries at least a program and a package");
+    let mut argv: Vec<String> = head.iter().map(|s| s.to_string()).collect();
+    argv.push("--tag".into());
+    argv.push(tag.into());
+    argv.push(pkg.to_string());
+    argv
+}
+
+/// What to type when the pill cannot run cargo itself — the same argv, so the advice
+/// and the click can never install different things.
+fn manual_install_hint(tag: &str) -> String {
+    install_argv(tag).join(" ")
+}
+
+fn install_command(tag: &str) -> Command {
+    let argv = install_argv(tag);
+    let mut cmd = Command::new(&argv[0]);
+    cmd.args(&argv[1..])
         .stdin(std::process::Stdio::null())
         .env("GIT_TERMINAL_PROMPT", "0");
     cmd
 }
 
+/// The tag naming release `version` — the inverse of [`release_version`], which is what
+/// makes "compare the parsed version, then install the tag it came from" sound. Exact
+/// because `release_version` only admits `v` + dot-separated integers, so there is
+/// never a second `v` or a suffix to lose.
+fn release_tag(version: &str) -> String {
+    format!("v{version}")
+}
+
 pub fn perform_cargo_install(target_version: &str) -> UpdateState {
-    let out = install_command().output();
+    let tag = release_tag(target_version);
+    let out = install_command(&tag).output();
 
     match out {
         Ok(o) if o.status.success() => UpdateState::Installed {
@@ -110,9 +142,13 @@ pub fn perform_cargo_install(target_version: &str) -> UpdateState {
             };
             UpdateState::Failed(msg)
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => UpdateState::Failed(
-            "Cargo is not installed or not on PATH. Run manually: cargo install --locked --git https://github.com/s0lda/hadron.git hadron".into(),
-        ),
+        // The manual fallback is DERIVED from the command we would have run, tag and
+        // all. Spelled out by hand it drifted the moment `--tag` was added, and advice
+        // that installs something other than what the pill offered is worse than none.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => UpdateState::Failed(format!(
+            "Cargo is not installed or not on PATH. Run manually: {}",
+            manual_install_hint(&tag)
+        )),
         Err(e) => UpdateState::Failed(format!("Failed to run cargo: {}", e)),
     }
 }
@@ -201,13 +237,39 @@ mod tests {
     /// here — only the env var is observable.)
     #[test]
     fn the_install_command_can_never_wait_on_a_credential_prompt() {
-        let cmd = install_command();
+        let cmd = install_command("v0.1.0");
         let prompt = cmd
             .get_envs()
             .find(|(k, _)| *k == std::ffi::OsStr::new("GIT_TERMINAL_PROMPT"))
             .map(|(_, v)| v);
         assert_eq!(prompt, Some(Some(std::ffi::OsStr::new("0"))));
         assert_eq!(cmd.get_program(), std::ffi::OsStr::new("cargo"));
+    }
+
+    /// The pill advertises a TAG and must install that tag. Without `--tag`,
+    /// `cargo install --git` builds the default branch's HEAD, so the moment `main`
+    /// moves past the release the click installs code the offered version never named.
+    #[test]
+    fn the_install_pins_the_tag_it_offered() {
+        let cmd = install_command("v0.1.1");
+        let args: Vec<String> =
+            cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        let at = args.iter().position(|a| a == "--tag").expect("no --tag in {args:?}");
+        assert_eq!(args[at + 1], "v0.1.1", "the tag must follow the flag");
+        // `cargo install` reads the LAST positional as the package spec; a `--tag`
+        // appended after it would be read as a second package name.
+        assert_eq!(args.last().map(String::as_str), Some("hadron"));
+    }
+
+    /// `release_tag` is `release_version`'s inverse, and the pill's correctness rests on
+    /// that: it parses a tag into a version to compare, then rebuilds the tag to install.
+    #[test]
+    fn a_release_tag_round_trips_through_the_version_it_parses_to() {
+        for tag in ["v0.1.0", "v0.1.1", "v1.0", "v10.20.30"] {
+            assert!(release_version(tag).is_some(), "{tag} should parse");
+            let version = tag.trim_start_matches('v');
+            assert_eq!(release_tag(version), tag);
+        }
     }
 
     /// `/abandon` writes an `archive/<slug>` tag for every branch it discards, and this
