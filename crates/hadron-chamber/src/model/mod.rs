@@ -9,8 +9,11 @@ use hadron_gatekeeper::{global_mode, has_override, resolve_mode, Mode};
 use hadron_lattice::{Actor, Event, Kind, QuarkId, QuarkState, Team};
 
 mod stats;
+mod tasks;
 #[cfg(test)]
 mod tests;
+
+pub use tasks::SwarmTask;
 
 /// Wall-clock of an event, to the second.
 ///
@@ -434,6 +437,8 @@ pub struct ChamberView {
     /// An outstanding permission request awaiting the human's Approve/Deny, if any.
     /// The UI renders this as a toast; `None` means nothing to decide.
     pub pending_permission: Option<hadron_gatekeeper::PendingPermission>,
+    /// The swarm's live task feed — see [`tasks::swarm_tasks`]. Newest-first.
+    pub tasks: Vec<SwarmTask>,
 }
 
 fn actor_str(a: &Actor) -> String {
@@ -675,6 +680,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
         roster,
         global_mode: global_mode(events),
         pending_permission: hadron_gatekeeper::any_pending_permission(events),
+        tasks: tasks::swarm_tasks(events),
     }
 }
 
