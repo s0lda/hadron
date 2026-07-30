@@ -166,12 +166,16 @@ impl super::Chamber {
                     .child(settings_field(
                         "Effort",
                         Some("How much reasoning effort this quark spends per turn."),
-                        self.session_select(
-                            "effort",
-                            &self.settings_effort,
-                            &["low", "medium", "high"],
-                            cx,
-                        ),
+                        if acp_quark {
+                            self.acp_effort_select(cx)
+                        } else {
+                            self.session_select(
+                                "effort",
+                                &self.settings_effort,
+                                &["low", "medium", "high"],
+                                cx,
+                            )
+                        },
                     ))
                     // The permission ladder: how much authority the human delegates to
                     // this quark (Ask → Bypass). Stored on the field as a per-quark

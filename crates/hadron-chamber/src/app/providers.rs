@@ -203,15 +203,12 @@ pub(super) struct AcpModelProbe {
 }
 
 pub(super) enum AcpModelState {
-    /// Booting the agent to read back the models it advertises on `session/new`.
+    /// Booting the agent to read back the config it advertises on `session/new`.
     Probing,
-    /// The agent's offered models (wire value + label) and its current/default pick.
-    Ready {
-        models: Vec<hadron_gluon::adapter::acp::AcpModel>,
-        current: String,
-    },
-    /// The agent could not be probed, or advertises no model picker at all. The string
-    /// is a short human note; the dropdown still offers "Default" (the agent's choice).
+    /// Every selector (model, effort, mode, …) the one boot turned up.
+    Ready { selectors: hadron_gluon::adapter::acp::AcpSelectors },
+    /// The agent could not be probed, or advertises no selectors at all. The string
+    /// is a short human note; the dropdowns still offer "Inherit" (the agent's choice).
     Unavailable(String),
 }
 
