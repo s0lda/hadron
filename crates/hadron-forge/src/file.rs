@@ -156,6 +156,12 @@ fn resolve(root: &Root, rel_path: &str, need_write: bool) -> Result<PathBuf, For
     if path.is_absolute() {
         // The ONLY way out of the worktree, and only into a root the seat named.
         // With no external roots granted this is the pre-existing hard refusal.
+        //
+        // This branch deliberately returns BEFORE the lexical `..` loop below:
+        // canonicalisation is what guards it, and it is strictly stronger (it also
+        // resolves symlinks, which a component scan cannot). Do not "restore" the
+        // loop here — `external_roots::a_traversal_out_of_an_allowed_external_root`
+        // and `..._symlink_...` are the guards that this holds.
         let (canonical_existing, resolved) = canonicalize_allowing_missing(path)?;
         return match root.external_for(&canonical_existing, need_write) {
             Some(_) => Ok(resolved),
