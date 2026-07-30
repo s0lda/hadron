@@ -55,6 +55,21 @@ impl ForgeMcpServer {
             nucleus_root: Root::new(nucleus_root),
         }
     }
+
+    /// Grant external roots to the **project** root only.
+    ///
+    /// `nucleus_root` is deliberately left alone: the nucleus jail answers a different
+    /// question ("which knowledge directory") and widening it would be a second, silent
+    /// escape hatch nobody asked for.
+    pub fn allowing_external(
+        mut self,
+        roots: impl IntoIterator<Item = hadron_forge::file::ExternalRoot>,
+    ) -> Self {
+        for root in roots {
+            self.root = self.root.allowing(root);
+        }
+        self
+    }
 }
 
 /// What every forge tool answers with: a flag, the payload, and — when it
