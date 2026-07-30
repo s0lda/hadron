@@ -41,7 +41,7 @@ use hadron_lattice::{
 };
 
 use crate::config::{self, ChamberPrefs, Identity};
-use crate::model::{self, ChamberView, MessageRow, RosterRow, StatsWindow};
+use crate::model::{self, ChamberView, MessageRow, RosterRow, StatsWindow, SwarmTask, TaskState};
 use crate::theme;
 
 mod mentions;
@@ -69,7 +69,7 @@ use widgets::{
     fallback_pick_image, format_num, frame_corner_radii, kind_icon, kv_row, log_row,
     markdown_style, menu_button, mode_color, mode_hint, mode_label, mode_tag, next_global_mode,
     next_mode, panel_eyebrow, progress_meter, roster_row, session_card, settings_field,
-    settings_field_stacked, stat_tile, text_button,
+    settings_field_stacked, stat_tile, task_row, text_button,
 };
 
 mod actions;
@@ -233,6 +233,8 @@ struct Chamber {
     pub(super) git_graph_list: gpui::ListState,
     /// Scroll position of the Plan tracker pane.
     plan_scroll: ScrollHandle,
+    /// Scroll position of the Tasks pane.
+    tasks_scroll: ScrollHandle,
     pub(super) plan_collapsed_tasks: std::collections::HashSet<String>,
     pub(super) last_plan_path: Option<String>,
     pub(super) last_incomplete_task: Option<String>,
@@ -640,6 +642,7 @@ impl Chamber {
             git_graph_max_lanes: 1,
             git_graph_list,
             plan_scroll: ScrollHandle::new(),
+            tasks_scroll: ScrollHandle::new(),
             plan_collapsed_tasks: std::collections::HashSet::new(),
             last_plan_path: None,
             last_incomplete_task: None,
