@@ -196,7 +196,21 @@ fn advertised_options() -> Vec<SessionConfigOption> {
         SessionConfigKind::Boolean(SessionConfigBoolean::new(false)),
     );
 
-    vec![mode, fast, model]
+    let effort = SessionConfigOption::new(
+        "effort",
+        "Thinking effort",
+        SessionConfigKind::Select(SessionConfigSelect::new(
+            "medium",
+            vec![
+                SessionConfigSelectOption::new("low", "Low"),
+                SessionConfigSelectOption::new("medium", "Medium"),
+                SessionConfigSelectOption::new("high", "High"),
+            ],
+        )),
+    )
+    .category(SessionConfigOptionCategory::ThoughtLevel);
+
+    vec![mode, fast, model, effort]
 }
 
 /// The model picker is found by **category**, not by guessing the option's id — an
@@ -208,6 +222,19 @@ fn the_model_selector_is_found_by_category_not_by_name() {
     assert_eq!(s.config_id.to_string(), "model");
     assert_eq!(s.current, "claude-sonnet-4-5");
     assert_eq!(s.available.len(), 3, "the Mode select and the boolean are not models");
+}
+
+/// One boot must turn up every selector the agent advertised, not just the model —
+/// so Settings can render effort and mode from the same probe instead of a second
+/// one.
+#[test]
+fn one_probe_returns_every_selector_the_agent_advertised() {
+    let opts = advertised_options();
+    let sel = super::model::selectors_from(&opts);
+    assert!(sel.model.is_some(), "Model category advertised");
+    let effort = sel.effort.expect("ThoughtLevel category advertised");
+    assert!(effort.available.iter().any(|m| m.value == "high"));
+    assert!(sel.mode.is_some(), "Mode category advertised");
 }
 
 /// An agent that offers no model selector is not an error — it just cannot be
