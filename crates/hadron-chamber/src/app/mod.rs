@@ -82,7 +82,7 @@ use input::split_leading_commands;
 
 mod terminal;
 mod reload;
-mod update;
+pub mod update;
 pub use update::UpdateState;
 
 actions!(
