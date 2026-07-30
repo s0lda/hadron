@@ -1,4 +1,5 @@
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 use gpui::{Context, Window};
 use super::Chamber;
 
@@ -82,33 +83,98 @@ pub fn parse_remote_update_info(remote_output: &str, current_version: &str) -> U
 /// learned the same thing the hard way (`snapshot::git_with_env`).
 /// `tag` is pinned with `--tag`, and that is not decoration: without it
 /// `cargo install --git` builds the default branch's HEAD, so the pill would advertise
-/// a release version and install whatever `main` happened to be at click time. The flag
+/// a release version and install whatever `main` happened to be at click time. Every flag
 /// goes BEFORE the package spec — `cargo` reads the last positional as the package, and
 /// a `--tag` appended after it is read as a second package name.
-fn install_argv(tag: &str) -> Vec<String> {
+fn install_argv(tag: &str, build_dir: Option<&Path>) -> Vec<String> {
     let (pkg, head) = CARGO_INSTALL_ARGV
         .split_last()
         .expect("CARGO_INSTALL_ARGV carries at least a program and a package");
     let mut argv: Vec<String> = head.iter().map(|s| s.to_string()).collect();
     argv.push("--tag".into());
     argv.push(tag.into());
+    if let Some(dir) = build_dir {
+        argv.push("--target-dir".into());
+        argv.push(dir.to_string_lossy().into_owned());
+    }
     argv.push(pkg.to_string());
     argv
 }
 
-/// What to type when the pill cannot run cargo itself — the same argv, so the advice
-/// and the click can never install different things.
+/// What to type when the pill cannot run cargo itself — the same argv, minus the private
+/// build directory, which is the click's business and not a human's. Everything that
+/// decides *what gets installed* is still shared, so the advice and the click can never
+/// install different things.
 fn manual_install_hint(tag: &str) -> String {
-    install_argv(tag).join(" ")
+    install_argv(tag, None).join(" ")
+}
+
+/// Where an update leaves its build tree and its log: `~/.hadron/update/`.
+///
+/// Both halves exist because a *failed* click used to leave nothing behind but rubbish.
+/// `cargo install` builds in a fresh temp directory under `TMPDIR` and abandons it where
+/// it died, so on 2026-07-30 four failed attempts left 6.3 GB of half-built workspace on
+/// a 12 GB tmpfs — and, because each retry got a *new* temp directory, every one of them
+/// restarted the 2,110-crate build from scratch. One stable, disk-backed directory fixes
+/// both: nothing accumulates, and a retry after an interrupted attempt is incremental.
+fn update_dir() -> Option<PathBuf> {
+    Some(hadron_lattice::user_hadron_dir()?.join("update"))
+}
+
+fn update_build_dir() -> Option<PathBuf> {
+    Some(update_dir()?.join("build"))
+}
+
+/// The full transcript of the last install attempt — the thing there was no such file as
+/// when the update first failed and the question was "check the cargo install logs".
+pub fn update_log_path() -> Option<PathBuf> {
+    Some(update_dir()?.join("install.log"))
 }
 
 fn install_command(tag: &str) -> Command {
-    let argv = install_argv(tag);
+    let argv = install_argv(tag, update_build_dir().as_deref());
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..])
         .stdin(std::process::Stdio::null())
         .env("GIT_TERMINAL_PROMPT", "0");
     cmd
+}
+
+/// Write the whole attempt down before reducing it to something pill-sized. Best effort:
+/// a log we could not write must not turn a successful install into a failed one, so
+/// every error here is deliberately discarded and the caller is told by the `Option`.
+fn write_install_log(command: &str, out: &Output) -> Option<PathBuf> {
+    let path = update_log_path()?;
+    std::fs::create_dir_all(path.parent()?).ok()?;
+    let body = format!(
+        "$ {}\n{}\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
+        command,
+        out.status,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    std::fs::write(&path, body).ok()?;
+    Some(path)
+}
+
+/// The pill fits a few lines; a `cargo install` failure is hundreds. Keep the tail — the
+/// part that names the error — and point at the log for the rest.
+fn failure_message(status: &str, stderr: &str, log: Option<&Path>) -> String {
+    let lines: Vec<&str> = stderr.lines().collect();
+    let tail = if lines.len() > 5 {
+        lines[lines.len() - 5..].join("\n")
+    } else {
+        stderr.trim().to_string()
+    };
+    let head = if tail.trim().is_empty() {
+        format!("cargo install exited with {status}")
+    } else {
+        tail
+    };
+    match log {
+        Some(p) => format!("{head}\n\nFull log: {}", p.display()),
+        None => head,
+    }
 }
 
 /// The tag naming release `version` — the inverse of [`release_version`], which is what
@@ -121,25 +187,26 @@ fn release_tag(version: &str) -> String {
 
 pub fn perform_cargo_install(target_version: &str) -> UpdateState {
     let tag = release_tag(target_version);
-    let out = install_command(&tag).output();
+    let mut cmd = install_command(&tag);
+    // Debug-formatted from the `Command` itself, so the log's first line is what actually
+    // ran — `--target-dir` and all — rather than a hand-kept copy of it.
+    let shown = format!("{cmd:?}");
+    let out = cmd.output();
 
     match out {
-        Ok(o) if o.status.success() => UpdateState::Installed {
-            version: target_version.to_string(),
-        },
+        Ok(o) if o.status.success() => {
+            write_install_log(&shown, &o);
+            UpdateState::Installed {
+                version: target_version.to_string(),
+            }
+        }
         Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            let lines: Vec<&str> = stderr.lines().collect();
-            let tail = if lines.len() > 5 {
-                lines[lines.len() - 5..].join("\n")
-            } else {
-                stderr.trim().to_string()
-            };
-            let msg = if tail.trim().is_empty() {
-                format!("cargo install exited with status {}", o.status)
-            } else {
-                tail
-            };
+            let log = write_install_log(&shown, &o);
+            let msg = failure_message(
+                &o.status.to_string(),
+                &String::from_utf8_lossy(&o.stderr),
+                log.as_deref(),
+            );
             UpdateState::Failed(msg)
         }
         // The manual fallback is DERIVED from the command we would have run, tag and
@@ -259,6 +326,54 @@ mod tests {
         // `cargo install` reads the LAST positional as the package spec; a `--tag`
         // appended after it would be read as a second package name.
         assert_eq!(args.last().map(String::as_str), Some("hadron"));
+    }
+
+    /// Cargo's own temp target directory is created under `TMPDIR` and **abandoned where
+    /// it died**: four failed clicks on 2026-07-30 left `/tmp/cargo-install*` dirs holding
+    /// 6.3 GB of a 12 GB tmpfs, and every retry started the 2,110-crate build from zero.
+    /// A stable directory under `~/.hadron` is both the leak fix and the retry fix.
+    #[test]
+    fn the_install_builds_where_a_retry_can_resume_from() {
+        let Some(build) = update_build_dir() else { return };
+        let cmd = install_command("v0.1.1");
+        let args: Vec<String> =
+            cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        let at = args.iter().position(|a| a == "--target-dir").expect("no --target-dir");
+        assert_eq!(args[at + 1], build.to_string_lossy());
+        assert!(!build.starts_with("/tmp"), "the build must not land on a tmpfs: {build:?}");
+    }
+
+    /// The hint is pasted into a human's shell, so it carries only what a human needs:
+    /// the private build directory is the click's business, not theirs. This is the one
+    /// deliberate difference between the hint and the command — everything that decides
+    /// *what gets installed* (`--locked`, `--git`, `--tag`, the package) is still shared.
+    #[test]
+    fn the_manual_hint_is_a_command_a_human_can_paste() {
+        let hint = manual_install_hint("v0.1.1");
+        assert_eq!(
+            hint,
+            "cargo install --locked --git https://github.com/s0lda/hadron.git --tag v0.1.1 hadron"
+        );
+    }
+
+    /// The pill has room for a few lines and a `cargo install` failure is hundreds. Until
+    /// now the rest was simply dropped — asked to "check the cargo install logs" after a
+    /// failed update, there were none to check.
+    #[test]
+    fn a_failure_names_the_log_that_holds_the_rest_of_it() {
+        let stderr = (1..=40).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let msg = failure_message("exit status: 101", &stderr, Some(Path::new("/tmp/i.log")));
+        assert!(msg.contains("line 40"), "the tail must survive: {msg}");
+        assert!(msg.contains("/tmp/i.log"), "the log must be named: {msg}");
+        assert!(!msg.contains("line 1\n"), "only the tail belongs in a pill: {msg}");
+    }
+
+    /// A cargo that dies without a word (killed, or gone from PATH mid-run) left the pill
+    /// saying nothing at all; the status is then the only fact there is.
+    #[test]
+    fn a_silent_failure_still_says_something() {
+        let msg = failure_message("signal: 9 (SIGKILL)", "   \n", None);
+        assert!(msg.contains("signal: 9"), "{msg}");
     }
 
     /// `release_tag` is `release_version`'s inverse, and the pill's correctness rests on

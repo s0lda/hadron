@@ -182,7 +182,18 @@ impl super::Chamber {
             ),
             UpdateState::Installing { version } => (
                 format!("Installing v{}...", version),
-                format!("Installing Hadron v{} in background...", version),
+                // A cold build of the workspace is minutes long, and a pill that says
+                // only "in background" for that long reads as hung — it was killed and
+                // retried four times on 2026-07-30. Naming the log gives it somewhere
+                // to be watched from.
+                match crate::app::update::update_log_path() {
+                    Some(p) => format!(
+                        "Installing Hadron v{} in background (a few minutes). Log: {}",
+                        version,
+                        p.display()
+                    ),
+                    None => format!("Installing Hadron v{} in background...", version),
+                },
                 theme::accent(),
                 IconName::ArrowUp,
             ),
