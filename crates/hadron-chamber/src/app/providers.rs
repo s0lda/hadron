@@ -107,6 +107,7 @@ pub(super) fn cli_seat_from(
         secret_env: Vec::new(),
         energy_limit: None,
         deny_skills: vec![],
+        external_roots: vec![],
     };
     seat.normalize_vendor();
     // SSOT: the same `<transport>-<vendor>` builder the ACP save path uses, just off

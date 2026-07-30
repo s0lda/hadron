@@ -1285,3 +1285,34 @@ mod enabled_tests {
         }
     }
 }
+
+#[test]
+fn external_roots_serde_round_trip_and_default_to_none() {
+    // A seat written before the field existed reads as "no external access at all",
+    // which is the off state — there is no separate `Off` rung to get wrong.
+    let legacy = r#"{"id":"a","vendor":"claude","model":"opus","flavor":"worker"}"#;
+    let legacy: Seat = serde_json::from_str(legacy).unwrap();
+    assert!(legacy.external_roots.is_empty());
+    assert!(
+        !serde_json::to_string(&legacy).unwrap().contains("external_roots"),
+        "an empty allowlist must not grow a key in team.json"
+    );
+
+    let mut s = seat("a", "claude", "opus", Flavor::Worker);
+    s.external_roots = vec![
+        ExternalRootSpec { path: "/home/x/.hadron/sessions".into(), writable: false },
+        ExternalRootSpec { path: "/home/x/dev/other".into(), writable: true },
+    ];
+    let back: Seat = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+    assert_eq!(back.external_roots, s.external_roots);
+    assert!(!back.external_roots[0].writable);
+    assert!(back.external_roots[1].writable);
+}
+
+#[test]
+fn same_agent_rebuilds_on_an_external_root_change() {
+    let a = seat("a", "claude", "opus", Flavor::Worker);
+    let mut b = a.clone();
+    b.external_roots = vec![ExternalRootSpec { path: "/tmp".into(), writable: true }];
+    assert!(!a.same_agent(&b), "granting a root must re-seat, not silently apply later");
+}

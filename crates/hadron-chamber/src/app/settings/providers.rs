@@ -656,6 +656,9 @@ impl super::Chamber {
                                         secret_env: Vec::new(),
                                         energy_limit: None,
                                         deny_skills: vec![],
+                                        // A brand-new seat reaches nothing outside its
+                                        // worktree until a human grants it a root.
+                                        external_roots: vec![],
                                     };
                                     // `vendor` is already pure (Task 3's re-keyed preset list), so this
                                     // is a no-op today — left in as a defensive strip in case a vendor
