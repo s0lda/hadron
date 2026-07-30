@@ -5411,3 +5411,62 @@ async fn a_mention_less_follow_up_is_appended_and_never_erases_the_instruction()
     );
     assert!(claude.1.task.contains("thanks"), "the follow-up was dropped: {:?}", claude.1.task);
 }
+
+/// A dispatch leaves a RECORD in the field, not just a side effect.
+///
+/// Before this, a task's brief and its result were two unrelated `Message`s with
+/// nothing linking them: the engine re-derived "who was asked to do what" from the
+/// message text on every pass (`unaddressed_message_targets`) and wrote nothing down.
+/// `Kind::Assign` already existed, was already an `is_turn_request`, and was
+/// constructed nowhere (`the-assign-invariants-seam-is-dead`). The engine now appends
+/// one per assignment, addressed to the quark it dispatched, carrying the resolved
+/// task — which is what the chamber's task feed reads as a title (`model/tasks.rs`).
+///
+/// It is written by `Actor::Gluon` with `answers` set to the assignment it records, so
+/// `continued_assignment` recognises it as a CONTINUATION: `driver_for` finds it as the
+/// most recent task-bearing event addressed to the quark and must keep the original
+/// assignment ULID, or the next turn would cut a fresh branch and strand this one.
+#[tokio::test]
+async fn a_dispatch_writes_one_assign_record_per_assignment() {
+    let dir = tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+    seed_human_message(&field, "agy", "hello");
+    let driving_id = read_events(&field).unwrap()[0].id;
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(MockQuark::scripted(
+            QuarkId::new("agy"),
+            Flavor::Worker,
+            vec![Some("done".into())],
+        ))],
+        8,
+    );
+    engine.run_until_quiesce().await.unwrap();
+
+    let assigns: Vec<Event> = read_events(&field)
+        .unwrap()
+        .into_iter()
+        .filter(|e| matches!(e.kind, Kind::Assign { .. }))
+        .collect();
+    assert_eq!(assigns.len(), 1, "exactly one Assign per assignment: {assigns:?}");
+    let a = &assigns[0];
+    assert_eq!(a.from, Actor::Gluon, "the record is the engine's, not the quark's");
+    assert_eq!(a.to.as_ref(), Some(&QuarkId::new("agy")), "addressed to the dispatched quark");
+    assert_eq!(a.answers, Some(driving_id), "answers the assignment, so it continues it");
+    match &a.kind {
+        Kind::Assign { task, .. } => assert_eq!(task, "hello", "carries the resolved task"),
+        other => panic!("not an Assign: {other:?}"),
+    }
+
+    // A second quiesce with nothing new must not write a second record for the same
+    // assignment — the Assign is itself an `is_turn_request`, so a duplicate per pass
+    // would be a dispatch record that re-dispatches.
+    engine.run_until_quiesce().await.unwrap();
+    let after = read_events(&field)
+        .unwrap()
+        .iter()
+        .filter(|e| matches!(e.kind, Kind::Assign { .. }))
+        .count();
+    assert_eq!(after, 1, "no second record for the same assignment");
+}

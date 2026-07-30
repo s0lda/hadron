@@ -340,6 +340,44 @@ impl super::Engine {
                         tree.as_ref().map(|t| t.wt.path.clone()),
                     );
 
+                    // The DISPATCH RECORD. Who was asked to do what was, until now, only
+                    // ever re-derived from message text on each pass
+                    // (`unaddressed_message_targets`) and never written down, so a brief
+                    // and its result were two unrelated `Message`s with nothing linking
+                    // them. `Kind::Assign` already existed and was constructed nowhere.
+                    //
+                    // Written by `Actor::Gluon` with `answers` = the assignment, so
+                    // `continued_assignment` reads it as a CONTINUATION: `driver_for`
+                    // finds it as the newest task-bearing event addressed to the quark,
+                    // and without that stamp the next turn would take the record's own
+                    // ULID as a new assignment and cut a fresh branch over the live one.
+                    //
+                    // One per assignment, never one per pass: an `Assign` is itself an
+                    // `is_turn_request`, so a duplicate would be a dispatch record that
+                    // re-dispatches. Appended after the projection is built, so the quark
+                    // never reads its own record back as a second instruction.
+                    if let Some(driver) = driver.as_ref() {
+                        let already_recorded = events.iter().any(|e| {
+                            e.to.as_ref() == Some(&target)
+                                && matches!(e.kind, Kind::Assign { .. })
+                                && e.answers == Some(driver.assignment)
+                        });
+                        if !already_recorded {
+                            self.append(
+                                Event::new(
+                                    Actor::Gluon,
+                                    Some(target.clone()),
+                                    Kind::Assign {
+                                        task: driver.task.clone(),
+                                        invariants: driver.invariants.clone(),
+                                    },
+                                )
+                                .with_answers(driver.assignment),
+                            )
+                            .await?;
+                        }
+                    }
+
                     // Announce the excitation *before* the turn runs, so the chamber can
                     // show the quark working while it works. The adapter only returns at
                     // the end of a turn, so without this the field is silent for the whole
