@@ -111,6 +111,28 @@ pub struct Seat {
     /// never gets `writing-plans`). Matched against `skills::select`'s chosen name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deny_skills: Vec<String>,
+    /// Directories **outside** this quark's worktree that its forge tools may reach.
+    ///
+    /// Empty by default, and empty **is** the off state — there is no `Off` rung on
+    /// `Mode` and none is needed. Per seat, never global: elevating one quark must not
+    /// elevate the swarm. Enforced in `hadron-forge`'s `resolve_jailed_path`, which
+    /// canonicalises each entry once and compares with `starts_with`; a path here is a
+    /// *request*, and a root that does not exist on disk is dropped at spawn.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_roots: Vec<ExternalRootSpec>,
+}
+
+/// One granted external directory, as written in `team.json`.
+///
+/// `writable` is the whole ladder: absent/false is read-only, which covers every case
+/// observed so far (reading `~/.hadron/sessions/`, a sibling repo) at a fraction of the
+/// risk. The enforcement type is `hadron_forge::file::ExternalAccess`; this is only the
+/// wire shape, so `hadron-lattice` does not have to depend on the forge crate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternalRootSpec {
+    pub path: std::path::PathBuf,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub writable: bool,
 }
 
 /// `true`. Serde needs a function, and an absent `enabled` must mean *on* — a seat
@@ -143,7 +165,7 @@ impl Seat {
     /// a field to `Seat` without deciding which side of this line it falls on will not
     /// compile.
     pub fn same_agent(&self, other: &Seat) -> bool {
-        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env, energy_limit, deny_skills } = self;
+        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env, energy_limit, deny_skills, external_roots } = self;
         id == &other.id
             && vendor == &other.vendor
             && model == &other.model
@@ -159,6 +181,7 @@ impl Seat {
             && secret_env == &other.secret_env
             && energy_limit == &other.energy_limit
             && deny_skills == &other.deny_skills
+            && external_roots == &other.external_roots
     }
 
     /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
@@ -182,6 +205,7 @@ impl Seat {
             secret_env: Vec::new(),
             energy_limit: None,
             deny_skills: vec![],
+            external_roots: vec![],
         }
     }
 

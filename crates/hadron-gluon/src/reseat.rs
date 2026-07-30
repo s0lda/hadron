@@ -169,6 +169,7 @@ mod tests {
             secret_env: Vec::new(),
             energy_limit: None,
             deny_skills: vec![],
+            external_roots: vec![],
         };
         let mut desired = running.clone();
         desired.quarks.push(new_seat.clone());
@@ -227,6 +228,7 @@ mod tests {
             secret_env: Vec::new(),
             energy_limit: None,
             deny_skills: vec![],
+            external_roots: vec![],
         };
         let running = team(&[seat(&["-y", "old-agent"])]);
         let desired = team(&[seat(&["-y", "new-agent"])]);
@@ -258,6 +260,7 @@ mod enabled_tests {
             secret_env: Vec::new(),
             energy_limit: None,
             deny_skills: vec![],
+            external_roots: vec![],
         }
     }
     fn team(seats: &[Seat]) -> Team {

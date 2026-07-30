@@ -482,6 +482,7 @@
                     secret_env: Vec::new(),
                     energy_limit: None,
                     deny_skills: vec![],
+                    external_roots: vec![],
                 },
                 Seat {
                     id: QuarkId::new("opus"),
@@ -501,6 +502,7 @@
                     secret_env: Vec::new(),
                     energy_limit: None,
                     deny_skills: vec![],
+                    external_roots: vec![],
                 },
             ],
             roster: vec![],
