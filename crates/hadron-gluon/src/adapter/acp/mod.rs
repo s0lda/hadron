@@ -57,9 +57,10 @@ use session::{AcpSession, LiveFeed};
 // public path. `turn_spend`/`SpendWatermark` were likewise `pub` at
 // `hadron_gluon::adapter::acp::` before the split; re-exporting keeps that path
 // (and brings `SpendWatermark` into scope for the struct field below).
-// `AcpSelectors`/`probe_selectors` are the new render-only surface Task 1 adds:
-// one boot, every selector the agent advertised, not just the model.
-pub use model::{probe, probe_selector, probe_selectors, AcpModel, AcpSelectors};
+// `AcpSelectors`/`probe_selectors`/`ModelSelector` are the new render-only surface
+// Task 1 adds: one boot, every selector the agent advertised, not just the model —
+// the chamber names `ModelSelector` directly in its shared chip-row helper.
+pub use model::{probe, probe_selector, probe_selectors, AcpModel, AcpSelectors, ModelSelector};
 pub use spend::{turn_spend, SpendWatermark};
 
 pub struct AcpQuark {

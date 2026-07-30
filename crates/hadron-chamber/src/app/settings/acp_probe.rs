@@ -10,11 +10,12 @@ impl super::Chamber {
             .unwrap_or(false)
     }
 
-    /// Re-probe the ACP agent backing `id` for the models it offers, parking the result
-    /// in `acp_model_probe` for the Settings dropdown. A no-op (clears the probe) for a
-    /// non-ACP quark or a seat with no bootable command — those keep the free-text field.
-    /// The boot runs off the UI thread; a probe that resolves after the human has moved
-    /// to another quark is dropped (the id no longer matches), so it can't cross-populate.
+    /// Re-probe the ACP agent backing `id` for every config selector it offers (model,
+    /// effort, mode, …), parking the result in `acp_model_probe` for the Settings
+    /// dropdowns. A no-op (clears the probe) for a non-ACP quark or a seat with no
+    /// bootable command — those keep the free-text/static fields. The boot runs off the
+    /// UI thread; a probe that resolves after the human has moved to another quark is
+    /// dropped (the id no longer matches), so it can't cross-populate.
     pub(super) fn start_acp_model_probe(&mut self, id: &str, cx: &mut Context<Self>) {
         let target = resolve_team(&self.team, &self.global)
             .get(&QuarkId::new(id))
@@ -32,7 +33,7 @@ impl super::Chamber {
                 // window (mirrors the Connect wizard's probe).
                 let result = cx
                     .background_spawn(async move {
-                        hadron_gluon::adapter::acp::probe_selector(&target)
+                        hadron_gluon::adapter::acp::probe_selectors(&target)
                     })
                     .await;
                 this.update(&mut cx, |this, cx| {
@@ -41,13 +42,10 @@ impl super::Chamber {
                         return;
                     }
                     let state = match result {
-                        Ok(Some(sel)) => AcpModelState::Ready {
-                            models: sel.available,
-                            current: sel.current,
-                        },
-                        Ok(None) => {
+                        Ok(sel) if sel.model.is_none() && sel.effort.is_none() => {
                             AcpModelState::Unavailable("this agent offers no model picker".into())
                         }
+                        Ok(sel) => AcpModelState::Ready { selectors: sel },
                         Err(e) => AcpModelState::Unavailable(format!("couldn't detect models: {e}")),
                     };
                     this.acp_model_probe = Some(AcpModelProbe { id, state });
@@ -155,55 +153,66 @@ impl super::Chamber {
         })
     }
 
-    /// The ACP Model **dropdown**: the agent's offered models as clickable chips, with a
-    /// "Default" chip (blank → the agent's own current model, which the daemon leaves
-    /// alone). Shows a "Detecting…" note while probing and, if the probe failed or the
-    /// agent offers no picker, just the always-safe "Default". Clicking a chip writes the
-    /// wire value into `settings_model` and commits — the same path the text field used.
-    pub(super) fn acp_model_select(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let current_model = self.settings_model.read(cx).value().trim().to_string();
-        // (label, value-to-store, selected). The blank chip is "Inherit" — an empty seat
-        // model, which `commit_settings_inputs` resolves to the shared catalogue default.
-        // That is a different thing from the agent's *own* current model (marked "·
-        // default" among the offered chips below), so it gets its own honest label.
-        let mut chips: Vec<(String, String, bool)> =
-            vec![("Inherit".to_string(), String::new(), current_model.is_empty())];
-        // (message, is_error). An error note is click-to-copy: a failed probe's
-        // reason is often longer than the panel is wide, so the human must be able
-        // to lift the whole thing rather than read a truncated head.
-        let mut note: Option<(String, bool)> = None;
+    /// The status note shared by every probed selector row (model, effort, …) — they
+    /// all come from the one boot in `start_acp_model_probe`, so "detecting" and "the
+    /// probe failed" mean the same thing regardless of which field is being rendered.
+    fn probe_note(&self) -> Option<(String, bool)> {
         match self.acp_model_probe.as_ref().map(|p| &p.state) {
-            Some(AcpModelState::Probing) => note = Some(("Detecting models…".into(), false)),
-            Some(AcpModelState::Ready { models, current }) => {
-                for m in models {
-                    // The agent's current pick is the "Default" the blank chip resolves to,
-                    // so annotate it rather than let it look like a separate option.
-                    let label = if &m.value == current {
-                        format!("{} · default", m.label)
-                    } else {
-                        m.label.clone()
-                    };
-                    let selected = current_model.eq_ignore_ascii_case(&m.value);
-                    chips.push((label, m.value.clone(), selected));
-                }
-            }
-            Some(AcpModelState::Unavailable(msg)) => note = Some((msg.clone(), true)),
-            None => {}
+            Some(AcpModelState::Probing) => Some(("Detecting…".into(), false)),
+            Some(AcpModelState::Unavailable(msg)) => Some((msg.clone(), true)),
+            _ => None,
         }
-        // A model the seat pinned that the agent didn't offer still shows, selected — so
-        // an edit made before this feature (or against a changed lineup) is never hidden.
-        if !current_model.is_empty()
-            && !chips.iter().any(|(_, v, _)| v.eq_ignore_ascii_case(&current_model))
+    }
+
+    /// A live, ACP-probed selector as clickable chips, with an `empty_label` chip for
+    /// the blank/inherit value. Shared by the Model and Effort rows — same behaviour,
+    /// different selector and field: the leading inherit chip, a "· default" annotation
+    /// on the agent's own current pick, a fallback chip for a pinned value the agent no
+    /// longer offers, and a click-to-copy note while probing or on failure. Clicking a
+    /// chip writes the wire value into `field` and commits — the same path the text
+    /// field used.
+    pub(super) fn selector_chips(
+        &self,
+        selector: Option<&hadron_gluon::adapter::acp::ModelSelector>,
+        field: &Entity<InputState>,
+        id_prefix: &'static str,
+        empty_label: &'static str,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let current_value = field.read(cx).value().trim().to_string();
+        // (label, value-to-store, selected). The blank chip inherits — an empty seat
+        // value, which `commit_settings_inputs` resolves to the shared catalogue
+        // default. That is a different thing from the agent's *own* current pick
+        // (marked "· default" among the offered chips below), so it gets its own
+        // honest label.
+        let mut chips: Vec<(String, String, bool)> =
+            vec![(empty_label.to_string(), String::new(), current_value.is_empty())];
+        if let Some(sel) = selector {
+            for m in &sel.available {
+                let label = if m.value == sel.current {
+                    format!("{} · default", m.label)
+                } else {
+                    m.label.clone()
+                };
+                let selected = current_value.eq_ignore_ascii_case(&m.value);
+                chips.push((label, m.value.clone(), selected));
+            }
+        }
+        // A value the seat pinned that the agent didn't offer still shows, selected —
+        // so an edit made before this feature (or against a changed lineup) is never
+        // hidden.
+        if !current_value.is_empty()
+            && !chips.iter().any(|(_, v, _)| v.eq_ignore_ascii_case(&current_value))
         {
-            chips.push((current_model.clone(), current_model.clone(), true));
+            chips.push((current_value.clone(), current_value.clone(), true));
         }
 
         let mut row = h_flex().gap_1p5().flex_wrap();
         for (ix, (label, store, selected)) in chips.into_iter().enumerate() {
-            let f = self.settings_model.clone();
+            let f = field.clone();
             row = row.child(
                 div()
-                    .id(SharedString::from(format!("acp-model-{ix}")))
+                    .id(SharedString::from(format!("{id_prefix}-{ix}")))
                     .px_2()
                     .py_0p5()
                     .rounded_md()
@@ -231,14 +240,14 @@ impl super::Chamber {
         }
 
         let mut col = v_flex().gap_1p5().child(row);
-        if let Some((msg, is_error)) = note {
+        if let Some((msg, is_error)) = self.probe_note() {
             let base = div().text_xs().text_color(theme::text_muted());
             let note_el = if is_error {
                 // Click-to-copy the full reason — a probe failure is often longer
                 // than the panel, so lift the whole thing to the clipboard rather
                 // than leave the human squinting at a truncated head.
                 let full = msg.clone();
-                base.id("acp-model-note")
+                base.id(SharedString::from(format!("{id_prefix}-note")))
                     .cursor_pointer()
                     .hover(|s| s.text_color(theme::text_secondary()))
                     .child(format!("{msg}  ·  click to copy"))
@@ -252,5 +261,27 @@ impl super::Chamber {
             col = col.child(note_el);
         }
         col.into_any_element()
+    }
+
+    /// The ACP Model **dropdown**: the agent's offered models as clickable chips, with
+    /// an "Inherit" chip (blank → the agent's own current model, which the daemon
+    /// leaves alone).
+    pub(super) fn acp_model_select(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let selector = match self.acp_model_probe.as_ref().map(|p| &p.state) {
+            Some(AcpModelState::Ready { selectors }) => selectors.model.as_ref(),
+            _ => None,
+        };
+        self.selector_chips(selector, &self.settings_model, "acp-model", "Inherit", cx)
+    }
+
+    /// The ACP Effort **dropdown** — same probe, same chip behaviour as
+    /// [`Self::acp_model_select`], over the agent's advertised `ThoughtLevel` options
+    /// instead of `Model`.
+    pub(super) fn acp_effort_select(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let selector = match self.acp_model_probe.as_ref().map(|p| &p.state) {
+            Some(AcpModelState::Ready { selectors }) => selectors.effort.as_ref(),
+            _ => None,
+        };
+        self.selector_chips(selector, &self.settings_effort, "acp-effort", "Inherit", cx)
     }
 }
