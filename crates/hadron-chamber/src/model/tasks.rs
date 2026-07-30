@@ -137,6 +137,28 @@ mod tests {
         assert_eq!(swarm_tasks(&evs).len(), 2);
     }
 
+    /// The engine writes a `Kind::Assign` per dispatch (`engine/run.rs`), addressed to
+    /// the quark and carrying the resolved task. It is the dispatch record, so its
+    /// `task` — not a message body — is what the feed titles the row with.
+    #[test]
+    fn an_assign_record_titles_the_task_from_its_own_task_string() {
+        let evs = vec![
+            Event::new(
+                Actor::Gluon,
+                Some(QuarkId::new("sonnet")),
+                Kind::Assign {
+                    task: "Build the Tasks tab. Reuse the widgets.".to_string(),
+                    invariants: vec![],
+                },
+            ),
+            msg(Actor::Quark(QuarkId::new("sonnet")), None, "Done."),
+        ];
+        let tasks = swarm_tasks(&evs);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].title, "Build the Tasks tab.");
+        assert!(matches!(tasks[0].state, TaskState::Done));
+    }
+
     #[test]
     fn a_long_body_is_trimmed_to_a_title() {
         let long = "x".repeat(200);
