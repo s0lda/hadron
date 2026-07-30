@@ -604,6 +604,9 @@ pub struct QuarkSpec {
     /// Skill names this seat must NEVER be handed (hard lock). Matched against
     /// `skills::select`'s chosen name.
     pub deny_skills: Vec<String>,
+    /// Directories outside the worktree this seat's forge tools may reach (see
+    /// `Seat::external_roots`). Empty = the jail is exactly what it always was.
+    pub external_roots: Vec<hadron_lattice::ExternalRootSpec>,
 }
 
 /// Enforce the naming contract: ids must be non-empty, whitespace-free, path- and
@@ -695,7 +698,8 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
                 .with_commands(commands)
                 .with_env(env)
                 .with_energy_limit(energy_limit)
-                .with_deny_skills(deny_skills),
+                .with_deny_skills(deny_skills)
+                .with_external_roots(spec.external_roots),
         ),
     };
     Ok(quark)
@@ -723,6 +727,7 @@ pub fn build_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore)
         env: seat.resolve_env(store).into(),
         energy_limit: seat.energy_limit,
         deny_skills: seat.deny_skills.clone(),
+        external_roots: seat.external_roots.clone(),
     })
 }
 
@@ -748,7 +753,8 @@ pub fn build_seat_watched(
                 .with_commands(seat.commands.clone())
                 .with_env(seat.resolve_env(store))
                 .with_energy_limit(seat.energy_limit)
-                .with_deny_skills(seat.deny_skills.clone()),
+                .with_deny_skills(seat.deny_skills.clone())
+                .with_external_roots(seat.external_roots.clone()),
         ));
     }
     build_seat(seat, store)

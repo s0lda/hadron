@@ -104,6 +104,11 @@ pub struct AcpQuark {
     prompt_cost_dir: Option<PathBuf>,
     energy_limit: Option<u32>,
     deny_skills: Vec<String>,
+    /// Directories outside this quark's worktree its forge tools may reach. Empty by
+    /// default; handed to `hadron-forge-mcp` as `--external-root` flags at boot, so a
+    /// change to the seat only takes effect on the next session (a re-seat), never
+    /// mid-conversation.
+    external_roots: Vec<hadron_lattice::ExternalRootSpec>,
 }
 
 impl AcpQuark {
@@ -127,7 +132,15 @@ impl AcpQuark {
             prompt_cost_dir: None,
             energy_limit: None,
             deny_skills: Vec::new(),
+            external_roots: Vec::new(),
         }
+    }
+
+    /// Grant this quark the seat's external roots. Chained like the other `with_*`
+    /// builders so `from_seat` stays one expression.
+    pub fn with_external_roots(mut self, roots: Vec<hadron_lattice::ExternalRootSpec>) -> Self {
+        self.external_roots = roots;
+        self
     }
 
     /// Set the energy limit.

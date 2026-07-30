@@ -312,6 +312,7 @@ impl super::AcpQuark {
         live: Option<LiveFeed>,
         quota_dir: Option<PathBuf>,
         env: Vec<(String, String)>,
+        external_roots: Vec<hadron_lattice::ExternalRootSpec>,
     ) -> anyhow::Result<AcpSession> {
         let (turns_tx, mut turns_rx) = tokio::sync::mpsc::unbounded_channel::<TurnRequest>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<()>>();
@@ -499,7 +500,7 @@ impl super::AcpQuark {
                             let mcp_servers = vec![
                                 McpServer::Stdio(
                                     McpServerStdio::new("hadron-forge-mcp", forge_exe)
-                                        .args(vec![cwd.to_string_lossy().to_string()]),
+                                        .args(forge_mcp_args(&cwd, &external_roots)),
                                 ),
                                 McpServer::Stdio(
                                     McpServerStdio::new("context7", "npx")
@@ -703,6 +704,7 @@ impl super::AcpQuark {
                 self.live.clone(),
                 self.quota_dir.clone(),
                 self.env.0.clone(),
+                self.external_roots.clone(),
             )?);
         }
         let session = self.session.as_ref().expect("just booted");
@@ -777,5 +779,26 @@ impl super::AcpQuark {
 
         Ok(TurnOutcome { message, permission: None, usage })
     }
+}
+
+/// The argv `hadron-forge-mcp` is spawned with: the quark's worktree, then one
+/// flag pair per granted external root.
+///
+/// Pure, and tested as such, because the spawn itself only happens inside a live
+/// ACP handshake — the argv IS the whole contract between the seat's allowlist and
+/// the jail that enforces it, and an empty allowlist must reproduce the old single
+/// argument byte for byte.
+pub(super) fn forge_mcp_args(
+    cwd: &std::path::Path,
+    external: &[hadron_lattice::ExternalRootSpec],
+) -> Vec<String> {
+    let mut args = vec![cwd.to_string_lossy().to_string()];
+    for root in external {
+        args.push(
+            if root.writable { "--external-root-rw" } else { "--external-root" }.to_string(),
+        );
+        args.push(root.path.to_string_lossy().to_string());
+    }
+    args
 }
 

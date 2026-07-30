@@ -1269,3 +1269,28 @@ fn native_edit_request_is_detected_and_rejected() {
         "a command that merely mentions forge is not a forge call",
     );
 }
+
+#[test]
+fn a_seat_with_no_external_roots_spawns_forge_exactly_as_before() {
+    let args = super::session::forge_mcp_args(std::path::Path::new("/wt"), &[]);
+    assert_eq!(args, vec!["/wt".to_string()]);
+}
+
+#[test]
+fn a_granted_root_reaches_forge_as_a_flag_carrying_its_access() {
+    let roots = vec![
+        hadron_lattice::ExternalRootSpec { path: "/a/read".into(), writable: false },
+        hadron_lattice::ExternalRootSpec { path: "/a/write".into(), writable: true },
+    ];
+    let args = super::session::forge_mcp_args(std::path::Path::new("/wt"), &roots);
+    assert_eq!(
+        args,
+        vec![
+            "/wt".to_string(),
+            "--external-root".to_string(),
+            "/a/read".to_string(),
+            "--external-root-rw".to_string(),
+            "/a/write".to_string(),
+        ]
+    );
+}
