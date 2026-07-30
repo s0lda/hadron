@@ -3,16 +3,85 @@ use crate::block::{annotate_lang, short_hash};
 use crate::edit::{apply_edit_lang, EditOutcome, HashedEdit};
 use crate::lang::{lang_for_path, Lang};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Root(PathBuf);
+/// What a quark may do inside one **external** root — a directory outside its own
+/// worktree that a seat has explicitly been granted.
+///
+/// There is no `None` rung: "not allowed" is the root not being in the list at all,
+/// so a disallowed root is unrepresentable rather than a third variant every match
+/// has to remember to handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalAccess {
+    ReadOnly,
+    ReadWrite,
+}
 
-impl Root {
-    pub fn new(p: impl Into<PathBuf>) -> Self {
-        Self(p.into())
+/// One directory outside the worktree that this quark may reach.
+///
+/// The path is canonicalised **once, here**, and the constructor is the only way to
+/// build one — so a symlinked or relative entry can never reach the comparison in
+/// [`Root::resolve`], and a root that does not exist is refused up front rather than
+/// silently never matching.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalRoot {
+    canonical: PathBuf,
+    access: ExternalAccess,
+}
+
+impl ExternalRoot {
+    pub fn new(path: impl AsRef<Path>, access: ExternalAccess) -> Result<Self, ForgeError> {
+        let canonical = path
+            .as_ref()
+            .canonicalize()
+            .map_err(|e| ForgeError::Io(format!("external root {:?}: {e}", path.as_ref())))?;
+        Ok(Self { canonical, access })
     }
 
     pub fn path(&self) -> &Path {
-        &self.0
+        &self.canonical
+    }
+
+    pub fn access(&self) -> ExternalAccess {
+        self.access
+    }
+}
+
+/// The worktree a quark's tools are jailed to, plus any external roots it was
+/// explicitly granted. `external` is **empty by default**: `Root::new` alone is the
+/// pre-existing behaviour, byte for byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Root {
+    path: PathBuf,
+    external: Vec<ExternalRoot>,
+}
+
+impl Root {
+    pub fn new(p: impl Into<PathBuf>) -> Self {
+        Self { path: p.into(), external: Vec::new() }
+    }
+
+    /// Grant one external root. Chained from `new`, so the common case reads as one
+    /// expression and the ungranted case stays the default.
+    pub fn allowing(mut self, root: ExternalRoot) -> Self {
+        self.external.push(root);
+        self
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn external_roots(&self) -> &[ExternalRoot] {
+        &self.external
+    }
+
+    /// The one external root `canonical` falls under, if any, given the access needed.
+    /// A read-only root answers `None` for a write, which is what makes the ladder a
+    /// property of the root rather than of the caller.
+    fn external_for(&self, canonical: &Path, need_write: bool) -> Option<&ExternalRoot> {
+        self.external.iter().find(|r| {
+            canonical.starts_with(&r.canonical)
+                && (!need_write || r.access == ExternalAccess::ReadWrite)
+        })
     }
 }
 
@@ -44,42 +113,65 @@ pub struct EditReport {
     pub blocks: String,
 }
 
+/// Canonicalise `full_path`, tolerating a tail that does not exist yet.
+///
+/// Returns the **canonical existing prefix** (every symlink in it resolved) and the
+/// full resolved path. Splitting this out is what lets the worktree branch and the
+/// external-root branch share one answer to "where does this path really point" —
+/// two copies of this walk is exactly how a symlink escape gets reintroduced.
+fn canonicalize_allowing_missing(full_path: &Path) -> Result<(PathBuf, PathBuf), ForgeError> {
+    if full_path.exists() {
+        let canonical = full_path.canonicalize().map_err(|e| ForgeError::Io(e.to_string()))?;
+        return Ok((canonical.clone(), canonical));
+    }
+    let mut existing_ancestor = full_path;
+    let mut missing_suffix: Vec<&std::ffi::OsStr> = Vec::new();
+    while !existing_ancestor.exists() {
+        missing_suffix.push(existing_ancestor.file_name().ok_or(ForgeError::OutsideRoot)?);
+        existing_ancestor = existing_ancestor.parent().ok_or(ForgeError::OutsideRoot)?;
+    }
+    let canonical_existing =
+        existing_ancestor.canonicalize().map_err(|e| ForgeError::Io(e.to_string()))?;
+    let mut resolved = canonical_existing.clone();
+    for segment in missing_suffix.into_iter().rev() {
+        resolved.push(segment);
+    }
+    Ok((canonical_existing, resolved))
+}
+
+/// Resolve a path for **reading**. An absolute path is refused unless it lands inside
+/// an external root this `Root` was granted.
 pub fn resolve_jailed_path(root: &Root, rel_path: &str) -> Result<PathBuf, ForgeError> {
+    resolve(root, rel_path, false)
+}
+
+/// Resolve a path for **writing**. Identical to [`resolve_jailed_path`] inside the
+/// worktree; outside it, only a `ReadWrite` external root answers.
+pub fn resolve_jailed_path_for_write(root: &Root, rel_path: &str) -> Result<PathBuf, ForgeError> {
+    resolve(root, rel_path, true)
+}
+
+fn resolve(root: &Root, rel_path: &str, need_write: bool) -> Result<PathBuf, ForgeError> {
     let path = Path::new(rel_path);
     if path.is_absolute() {
-        return Err(ForgeError::OutsideRoot);
+        // The ONLY way out of the worktree, and only into a root the seat named.
+        // With no external roots granted this is the pre-existing hard refusal.
+        let (canonical_existing, resolved) = canonicalize_allowing_missing(path)?;
+        return match root.external_for(&canonical_existing, need_write) {
+            Some(_) => Ok(resolved),
+            None => Err(ForgeError::OutsideRoot),
+        };
     }
     for component in path.components() {
         if matches!(component, std::path::Component::ParentDir) {
             return Err(ForgeError::OutsideRoot);
         }
     }
-    let canonical_root = root.0.canonicalize().map_err(|e| ForgeError::Io(e.to_string()))?;
-    let full_path = root.0.join(rel_path);
-    if full_path.exists() {
-        let canonical_full = full_path.canonicalize().map_err(|e| ForgeError::Io(e.to_string()))?;
-        if !canonical_full.starts_with(&canonical_root) {
-            return Err(ForgeError::OutsideRoot);
-        }
-        return Ok(canonical_full);
-    }
-    // No component of `full_path` need exist yet — walk up to the deepest
-    // ancestor that DOES, canonicalize only that (resolving any symlink in
-    // the existing prefix), and require it stay inside root before trusting
-    // the remaining, still-lexical segments.
-    let mut existing_ancestor = full_path.as_path();
-    let mut missing_suffix: Vec<&std::ffi::OsStr> = Vec::new();
-    while !existing_ancestor.exists() {
-        missing_suffix.push(existing_ancestor.file_name().ok_or(ForgeError::OutsideRoot)?);
-        existing_ancestor = existing_ancestor.parent().ok_or(ForgeError::OutsideRoot)?;
-    }
-    let canonical_existing = existing_ancestor.canonicalize().map_err(|e| ForgeError::Io(e.to_string()))?;
+    let canonical_root = root.path().canonicalize().map_err(|e| ForgeError::Io(e.to_string()))?;
+    let full_path = root.path().join(rel_path);
+    let (canonical_existing, resolved) = canonicalize_allowing_missing(&full_path)?;
     if !canonical_existing.starts_with(&canonical_root) {
         return Err(ForgeError::OutsideRoot);
-    }
-    let mut resolved = canonical_existing;
-    for segment in missing_suffix.into_iter().rev() {
-        resolved.push(segment);
     }
     Ok(resolved)
 }
@@ -100,7 +192,7 @@ pub fn apply_block_edit(
     target_hash: &str,
     new_text: &str,
 ) -> Result<EditReport, ForgeError> {
-    let full_path = resolve_jailed_path(root, rel_path)?;
+    let full_path = resolve_jailed_path_for_write(root, rel_path)?;
     let lang = lang_for_path(rel_path);
     if lang == Lang::Opaque {
         return Err(ForgeError::NotHashable);
@@ -125,7 +217,7 @@ pub fn create_file(
     rel_path: &str,
     content: &str,
 ) -> Result<EditReport, ForgeError> {
-    let full_path = resolve_jailed_path(root, rel_path)?;
+    let full_path = resolve_jailed_path_for_write(root, rel_path)?;
     if full_path.exists() {
         return Err(ForgeError::Rejected(format!("file {rel_path} already exists")));
     }
@@ -145,7 +237,7 @@ pub fn write_file_cas(
     content: &str,
     expected_hash: Option<&str>,
 ) -> Result<EditReport, ForgeError> {
-    let full_path = resolve_jailed_path(root, rel_path)?;
+    let full_path = resolve_jailed_path_for_write(root, rel_path)?;
     if let Some(expected) = expected_hash {
         let current = std::fs::read_to_string(&full_path).map_err(|_| ForgeError::NotFound)?;
         let cur_hash = short_hash(&current);
@@ -170,7 +262,7 @@ pub fn delete_file_cas(
     rel_path: &str,
     expected_hash: Option<&str>,
 ) -> Result<(), ForgeError> {
-    let full_path = resolve_jailed_path(root, rel_path)?;
+    let full_path = resolve_jailed_path_for_write(root, rel_path)?;
     if !full_path.exists() {
         return Err(ForgeError::NotFound);
     }
@@ -246,6 +338,85 @@ mod tests {
             apply_block_edit(&root, "/etc/passwd", "abc", "x"),
             Err(ForgeError::OutsideRoot)
         ));
+    }
+
+    /// A root with one external root allowed, plus the outside dir it names.
+    fn root_with_external(access: ExternalAccess) -> (tempfile::TempDir, tempfile::TempDir, Root) {
+        let inside = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let root =
+            Root::new(inside.path()).allowing(ExternalRoot::new(outside.path(), access).unwrap());
+        (inside, outside, root)
+    }
+
+    #[test]
+    fn an_absolute_path_is_still_refused_when_no_external_root_is_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret"), "s").unwrap();
+        let root = Root::new(dir.path());
+        let target = outside.path().join("secret");
+        assert!(matches!(
+            resolve_jailed_path(&root, target.to_str().unwrap()),
+            Err(ForgeError::OutsideRoot)
+        ));
+    }
+
+    #[test]
+    fn a_read_inside_an_allowed_external_root_resolves() {
+        let (_inside, outside, root) = root_with_external(ExternalAccess::ReadOnly);
+        std::fs::write(outside.path().join("note.md"), "hi").unwrap();
+        let target = outside.path().join("note.md");
+        let resolved = resolve_jailed_path(&root, target.to_str().unwrap());
+        assert!(resolved.is_ok(), "expected Ok, got {resolved:?}");
+    }
+
+    #[test]
+    fn a_read_only_external_root_refuses_a_write() {
+        let (_inside, outside, root) = root_with_external(ExternalAccess::ReadOnly);
+        std::fs::write(outside.path().join("note.md"), "hi").unwrap();
+        let target = outside.path().join("note.md");
+        assert!(matches!(
+            resolve_jailed_path_for_write(&root, target.to_str().unwrap()),
+            Err(ForgeError::OutsideRoot)
+        ));
+    }
+
+    #[test]
+    fn a_writable_external_root_accepts_a_write() {
+        let (_inside, outside, root) = root_with_external(ExternalAccess::ReadWrite);
+        let target = outside.path().join("new.md");
+        let resolved = resolve_jailed_path_for_write(&root, target.to_str().unwrap());
+        assert!(resolved.is_ok(), "expected Ok, got {resolved:?}");
+    }
+
+    #[test]
+    fn a_traversal_out_of_an_allowed_external_root_is_refused() {
+        let (_inside, outside, root) = root_with_external(ExternalAccess::ReadWrite);
+        // `<outside>/../` climbs above the allowed root; canonicalisation must catch it.
+        let target = outside.path().join("..").join("escaped.md");
+        assert!(matches!(
+            resolve_jailed_path(&root, target.to_str().unwrap()),
+            Err(ForgeError::OutsideRoot)
+        ));
+    }
+
+    #[test]
+    fn a_symlink_out_of_an_allowed_external_root_is_refused() {
+        let (_inside, outside, root) = root_with_external(ExternalAccess::ReadWrite);
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(elsewhere.path(), outside.path().join("link")).unwrap();
+        let target = outside.path().join("link").join("deep").join("out.rs");
+        assert!(matches!(
+            resolve_jailed_path(&root, target.to_str().unwrap()),
+            Err(ForgeError::OutsideRoot)
+        ));
+    }
+
+    #[test]
+    fn an_external_root_that_does_not_exist_is_refused_at_construction() {
+        let missing = std::path::Path::new("/nonexistent-hadron-external-root");
+        assert!(ExternalRoot::new(missing, ExternalAccess::ReadOnly).is_err());
     }
 
     #[test]
