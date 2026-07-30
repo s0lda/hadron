@@ -10,6 +10,48 @@ use crate::field::read_events;
 
 use super::*;
 
+/// Resolve once `quark` has gone quiet for `deadline`, and never before — the
+/// watchdog's clock, and the whole reason [`TURN_DEADLINE`] is not a wall-clock cap.
+///
+/// A "sign of life" is a fresh entry in `<field-dir>/live/<quark>.json`, the file the
+/// adapter already overwrites on every thought chunk and tool call
+/// (`hadron_lattice::live`) — this reuses the swarm's existing liveness signal rather
+/// than inventing a second one, so anything the chamber's Live card can see, the
+/// watchdog can see.
+///
+/// **The start of the turn counts as a sign of life.** A transport that publishes
+/// nothing at all — every CLI seat, since `build_seat_watched` only calls `.watching()`
+/// on the ACP branch — therefore expires at exactly `deadline`, bit-identical to the
+/// flat timeout this replaced. The change can only ever *extend* a turn, never shorten
+/// one, which is what makes it safe to land on the dispatch path.
+///
+/// Returns how long the silence lasted, so the error can say it.
+async fn until_silent(
+    live_dir: &std::path::Path,
+    quark: &QuarkId,
+    deadline: std::time::Duration,
+) -> std::time::Duration {
+    // Poll well inside `live::STALE_AFTER_SECS`, or a write could go stale between
+    // two ticks and never be seen. Derived from the deadline so a test with a tiny
+    // one exercises this same path rather than a code branch of its own.
+    let tick = (deadline / 4).min(std::time::Duration::from_secs(30)).max(std::time::Duration::from_millis(10));
+    let mut last_sign = std::time::Instant::now();
+    let mut newest_seen: Option<chrono::DateTime<chrono::Utc>> = None;
+    loop {
+        tokio::time::sleep(tick).await;
+        if let Some(activity) = hadron_lattice::live::read(live_dir, quark, chrono::Utc::now()) {
+            if newest_seen.is_none_or(|seen| activity.at > seen) {
+                newest_seen = Some(activity.at);
+                last_sign = std::time::Instant::now();
+            }
+        }
+        let silent_for = last_sign.elapsed();
+        if silent_for >= deadline {
+            return silent_for;
+        }
+    }
+}
+
 impl super::Engine {
     fn format_error_message(&self, quark_id: &QuarkId, err: &anyhow::Error) -> String {
         let orchestrator = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator);
@@ -397,6 +439,7 @@ impl super::Engine {
                     let turn_tree = tree.clone();
                     let assignment = driver.as_ref().map(|d| d.assignment);
                     let deadline = self.turn_deadline;
+                    let live_dir = hadron_lattice::live::live_dir(&self.field_path);
                     let abort = turns.spawn(async move {
                         let mut quark = quark.lock().await;
                         // THE WATCHDOG. A turn that never resolves — its CLI process
@@ -410,22 +453,24 @@ impl super::Engine {
                         // existing failed-turn arm below: `Status{Error}`, out of
                         // `in_flight`, excitable again by the next message.
                         //
-                        // The lock is acquired OUTSIDE the timeout on purpose: the
-                        // deadline measures the turn, not the wait for a turn slot.
-                        let outcome = match tokio::time::timeout(
-                            deadline,
-                            quark.excite(projection),
-                        )
-                        .await
-                        {
-                            Ok(outcome) => outcome,
-                            Err(_) => Err(anyhow::anyhow!(
-                                "turn exceeded deadline with no terminal status: {} was excited \
-                                 for {}s and its turn never returned (process gone, or hung with \
-                                 no outcome); the engine is ending the turn on its behalf",
-                                turn_id.as_str(),
-                                deadline.as_secs(),
-                            )),
+                        // The lock is acquired OUTSIDE the deadline on purpose: it
+                        // measures the turn, not the wait for a turn slot. And it
+                        // measures SILENCE, not elapsed time — see `until_silent`.
+                        let outcome = tokio::select! {
+                            biased;
+                            outcome = quark.excite(projection) => outcome,
+                            silent_for = until_silent(&live_dir, &turn_id, deadline) => Err(
+                                anyhow::anyhow!(
+                                    "turn hit the silence deadline with no terminal status: {} \
+                                     produced no sign of life for {}s (process gone, or hung with \
+                                     no outcome); the engine is ending the turn on its behalf. A \
+                                     turn that is still working publishes activity and is never \
+                                     reaped — if this fired on healthy work, that quark's \
+                                     transport publishes nothing (CLI seats do not).",
+                                    turn_id.as_str(),
+                                    silent_for.as_secs().max(deadline.as_secs()),
+                                )
+                            ),
                         };
                         (turn_id, turn_tree, assignment, outcome)
                     });

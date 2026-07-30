@@ -461,6 +461,72 @@ async fn a_turn_whose_process_dies_without_an_outcome_is_ended_by_the_watchdog()
     );
 }
 
+/// The watchdog measures SILENCE, not elapsed time. A turn that is genuinely
+/// working — publishing mid-turn activity into `<field-dir>/live/` — must survive
+/// far past the deadline, or a long-but-healthy turn is killed and its work lost.
+///
+/// Observed live 2026-07-30: a real `acp-claude` turn running a long comparison
+/// suite was reaped at 1800s with the message "was excited for 1800s and its turn
+/// never returned", while it was in fact still working.
+#[tokio::test]
+async fn a_turn_that_keeps_publishing_activity_outlives_the_deadline() {
+    struct ChattyQuark {
+        live_dir: std::path::PathBuf,
+    }
+    #[async_trait::async_trait]
+    impl Quark for ChattyQuark {
+        fn id(&self) -> QuarkId {
+            QuarkId::new("agy")
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+            // Works for 10x the deadline, saying so the whole time.
+            for _ in 0..20 {
+                hadron_lattice::live::publish(
+                    &self.live_dir,
+                    &hadron_lattice::live::Activity::new(
+                        QuarkId::new("agy"),
+                        hadron_lattice::live::Doing::Working,
+                        "still running the suite",
+                    ),
+                )
+                .unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Ok(TurnOutcome {
+                message: Some("suite green".into()),
+                permission: None,
+                usage: Default::default(),
+            })
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+    seed_human_message(&field, "agy", "run the long suite");
+    let live_dir = hadron_lattice::live::live_dir(&field);
+    std::fs::create_dir_all(&live_dir).unwrap();
+
+    let mut engine = Engine::new(field.clone(), vec![Box::new(ChattyQuark { live_dir })], 8)
+        .with_turn_deadline(Duration::from_millis(100));
+
+    tokio::time::timeout(Duration::from_secs(10), engine.run_until_quiesce())
+        .await
+        .expect("no wedge")
+        .expect("a turn that is visibly working must not be reaped");
+
+    let events = read_events(&field).unwrap();
+    assert!(
+        has_kind(&events, |k| matches!(k, Kind::Message { body } if body == "suite green")),
+        "the turn ran to completion despite outliving the deadline many times over"
+    );
+}
+
 /// Seed a mode-set event into the field before serving. `to = None` sets the
 /// global default; `Some(quark)` sets a per-quark override.
 fn seed_mode(field: &std::path::Path, to: Option<&str>, mode: hadron_gatekeeper::Mode) {

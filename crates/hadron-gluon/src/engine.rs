@@ -48,13 +48,27 @@ const FIELD_POLL: std::time::Duration = std::time::Duration::from_millis(150);
 /// no `Error`, and no re-dispatch. A quark whose turn dies without writing a
 /// terminal status is lost forever.
 ///
-/// **30 minutes.** Sized to be *loose*, not tight: a real coding turn here
-/// legitimately runs for many minutes (a quark that reads a crate, edits, and runs
-/// `cargo test --workspace` can burn ten-plus), and killing a healthy turn is
-/// strictly worse than the wedge this guards — the work is lost AND the human is
-/// lied to. 30 min is comfortably past any turn we have observed while still
-/// bounding the wedge to something a human notices once, not something that eats an
-/// afternoon. Override per-engine with [`Engine::with_turn_deadline`].
+/// **It measures SILENCE, not elapsed time.** 30 minutes of a turn producing no sign
+/// of life, where a sign of life is a fresh `<field-dir>/live/<quark>.json` — the file
+/// the adapter already overwrites on every thought chunk and tool call. A turn that is
+/// visibly working is never reaped, however long it runs; `run::until_silent` is the
+/// clock and its doc explains why.
+///
+/// It was a flat wall-clock cap until 2026-07-30, and the paragraph that used to sit
+/// here argued 30 minutes was "comfortably past any turn we have observed" — then a
+/// real `acp-claude` turn running a long comparison suite was killed at exactly 1800s
+/// while still working, losing the work and reporting it as a hang. Its own next
+/// sentence had already named that outcome as strictly worse than the wedge it guards.
+/// Sizing a wall-clock number is the wrong lever: no value is both loose enough for
+/// the longest healthy turn and tight enough to notice a dead one.
+///
+/// **Two things this deliberately does not do.** A quark whose transport publishes no
+/// activity at all — every CLI seat, since `build_seat_watched` only calls
+/// `.watching()` on the ACP branch — still expires at exactly this duration, identical
+/// to the old behaviour; the change can only extend a turn, never shorten one. And a
+/// turn that keeps publishing forever is never reaped: a quark in a visible loop is a
+/// human's `/clear`, not the watchdog's business. Override per-engine with
+/// [`Engine::with_turn_deadline`].
 pub const TURN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 /// The event that drives a turn: the *assignment*. Its ULID names the quark's
