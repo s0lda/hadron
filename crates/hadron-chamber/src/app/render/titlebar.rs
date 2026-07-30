@@ -198,8 +198,13 @@ impl super::Chamber {
                 IconName::ArrowUp,
             ),
             UpdateState::Installed { version } => (
-                format!("v{} Installed (Restart Needed)", version),
-                format!("Hadron v{} installed. Please restart both hadron-chamber and hadron-gluon daemon.", version),
+                format!("v{} installed — restarting…", version),
+                format!(
+                    "Hadron v{} is installed. The chamber is stopping the daemon and \
+                     relaunching itself on the new build — this window will reappear in \
+                     a moment.",
+                    version
+                ),
                 theme::accent(),
                 IconName::CircleCheck,
             ),
