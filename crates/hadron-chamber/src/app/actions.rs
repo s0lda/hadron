@@ -959,7 +959,7 @@ impl Chamber {
         cx.notify();
     }
 
-    /// Cycle the right rail's tab (Terminal/Files/Changes/Plan) by `delta`, wrapping.
+    /// Cycle the right rail's tab (Terminal/Files/Changes/Plan/Tasks) by `delta`, wrapping.
     pub(super) fn cycle_inspector_tab(&mut self, delta: isize, cx: &mut Context<Self>) {
         let n = RightRailTab::ALL.len() as isize;
         let cur = self.right_rail_tab.index() as isize;

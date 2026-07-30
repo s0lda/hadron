@@ -817,6 +817,66 @@ pub(super) fn empty_hint(text: &'static str) -> impl IntoElement {
     div().text_sm().text_color(theme::text_muted()).child(text)
 }
 
+/// A swarm task's state badge — `Working` (info blue, still in flight) or `Done`
+/// (success green). Mirrors [`mode_tag`]/[`effort_tag`]'s outlined-chip shape.
+pub(super) fn task_state_tag(state: TaskState) -> gpui::AnyElement {
+    let (tag, label) = match state {
+        TaskState::Working => (Tag::info(), "Working"),
+        TaskState::Done => (Tag::success(), "Done"),
+    };
+    tag.xsmall()
+        .outline()
+        .child(div().text_xs().child(label))
+        .into_any_element()
+}
+
+/// One row in the Tasks tab: who it's addressed to, its title, and a state chip —
+/// same dense layout as [`log_row`], swapping the kind column for the state tag.
+pub(super) fn task_row(t: &SwarmTask) -> impl IntoElement {
+    let time = t
+        .asked_at
+        .with_timezone(&chrono::Local)
+        .format("%H:%M:%S")
+        .to_string();
+    h_flex()
+        .w_full()
+        .items_start()
+        .gap_3()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .hover(|s| s.bg(theme::glass_highlight()))
+        .child(
+            div()
+                .flex_none()
+                .w(px(58.0))
+                .text_xs()
+                .font_family("Cascadia Code")
+                .text_color(theme::text_muted())
+                .child(time),
+        )
+        .child(
+            div()
+                .flex_none()
+                .w(px(92.0))
+                .text_xs()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(theme::text())
+                .truncate()
+                .child(t.to.clone()),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_xs()
+                .text_color(theme::text_secondary())
+                .truncate()
+                .child(t.title.clone()),
+        )
+        .child(div().flex_none().child(task_state_tag(t.state)))
+}
+
 /// A single row in the compact activity Log: time · actor · kind · body, tabular and dense
 /// so the Log reads like a console rather than a second chat. Body truncates to one line —
 /// the Chat tab is where a message is read in full.

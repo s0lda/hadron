@@ -13,7 +13,7 @@ mod tasks;
 #[cfg(test)]
 mod tests;
 
-pub use tasks::SwarmTask;
+pub use tasks::{SwarmTask, TaskState};
 
 /// Wall-clock of an event, to the second.
 ///

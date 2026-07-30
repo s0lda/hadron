@@ -782,6 +782,39 @@ impl super::Chamber {
                     )
                     .into_any_element()
             }
+            RightRailTab::Tasks => {
+                let list = if self.view.tasks.is_empty() {
+                    div().p_4().child(empty_hint("No swarm tasks yet.")).into_any_element()
+                } else {
+                    let mut col = v_flex().gap_1().p_2().w_full();
+                    for t in &self.view.tasks {
+                        col = col.child(task_row(t));
+                    }
+                    col.into_any_element()
+                };
+
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .child(
+                        div()
+                            .id("tasks-scroll")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.tasks_scroll)
+                            .text_sm()
+                            .text_color(theme::text())
+                            .child(list),
+                    )
+                    .child(
+                        div().absolute().top_0().bottom_0().right_0().child(
+                            Scrollbar::vertical(&self.tasks_scroll)
+                                .scrollbar_show(ScrollbarShow::Always),
+                        ),
+                    )
+                    .into_any_element()
+            }
         };
 
         let card = v_flex()

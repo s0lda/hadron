@@ -129,15 +129,20 @@ pub(super) enum RightRailTab {
     Git,
     Changes,
     Plan,
+    /// The live swarm task feed — a projection over the field (`ChamberView.tasks`),
+    /// beside `Plan` rather than replacing it: `Plan` is the human-authored `.md`,
+    /// this is who's working on what right now.
+    Tasks,
 }
 
 impl RightRailTab {
-    pub(super) const ALL: [RightRailTab; 5] = [
+    pub(super) const ALL: [RightRailTab; 6] = [
         RightRailTab::Terminal,
         RightRailTab::FileTree,
         RightRailTab::Git,
         RightRailTab::Changes,
         RightRailTab::Plan,
+        RightRailTab::Tasks,
     ];
 
     pub(super) fn index(self) -> usize {
@@ -147,6 +152,7 @@ impl RightRailTab {
             RightRailTab::Git => 2,
             RightRailTab::Changes => 3,
             RightRailTab::Plan => 4,
+            RightRailTab::Tasks => 5,
         }
     }
 
@@ -161,6 +167,7 @@ impl RightRailTab {
             RightRailTab::Git => "Git",
             RightRailTab::Changes => "Changes",
             RightRailTab::Plan => "Plan",
+            RightRailTab::Tasks => "Tasks",
         }
     }
 }
