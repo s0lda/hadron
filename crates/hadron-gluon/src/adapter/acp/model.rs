@@ -247,13 +247,36 @@ pub fn probe(target: &AcpTarget) -> anyhow::Result<String> {
     })
 }
 
+/// Every config selector one ACP boot turned up. Split out from the boot so it is
+/// unit-testable without a live agent.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AcpSelectors {
+    pub model: Option<ModelSelector>,
+    pub effort: Option<ModelSelector>,
+    pub mode: Option<ModelSelector>,
+}
+
+pub fn selectors_from(options: &[SessionConfigOption]) -> AcpSelectors {
+    AcpSelectors {
+        model: model_selector(options),
+        effort: effort_selector(options),
+        mode: mode_selector(options),
+    }
+}
+
+/// Same single boot as [`probe_selector`], but keeps every selector the agent
+/// advertised instead of dropping all but the model.
+pub fn probe_selectors(target: &AcpTarget) -> anyhow::Result<AcpSelectors> {
+    let (_name, opts) = probe_session(target)?;
+    Ok(selectors_from(&opts))
+}
+
 /// The agent's advertised **model selector** — the offered models plus its current
 /// (default) pick — or `None` when the agent offers no model picker. Same boot as
 /// [`probe`]; the chamber re-probes with this each time an ACP quark's Settings open,
 /// so the model dropdown reflects the agent's live lineup rather than a cached guess.
 pub fn probe_selector(target: &AcpTarget) -> anyhow::Result<Option<ModelSelector>> {
-    let (_name, opts) = probe_session(target)?;
-    Ok(model_selector(&opts))
+    Ok(probe_selectors(target)?.model)
 }
 
 use super::session::acp_stdio_descriptor;
