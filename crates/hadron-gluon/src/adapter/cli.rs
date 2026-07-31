@@ -6,7 +6,6 @@ use hadron_lattice::{
 use std::path::PathBuf;
 
 use crate::adapter::runner::{reply_to_outcome, CliInvocation, CliRunner, RedactedEnv};
-use crate::engine::Lane;
 use crate::quark::Quark;
 
 /// Linux's hard cap on a **single** argv element (`MAX_ARG_STRLEN` = 32 pages =
@@ -135,7 +134,6 @@ pub struct CliQuark<R: CliRunner> {
     /// the full projection. Re-sending context is merely expensive; resuming a
     /// conversation that does not exist would silently answer the wrong question.
     resident: bool,
-    lane: Lane,
     runner: R,
     energy_limit: Option<u32>,
     deny_skills: Vec<String>,
@@ -150,7 +148,6 @@ impl<R: CliRunner> CliQuark<R> {
             model: model.into(),
             spec,
             resident: false,
-            lane: Lane::Work,
             runner,
             roles: Vec::new(),
             exclusive: false,
@@ -159,34 +156,6 @@ impl<R: CliRunner> CliQuark<R> {
             energy_limit: None,
             deny_skills: Vec::new(),
         }
-    }
-
-    /// Set the execution lane for this quark.
-    pub(crate) fn for_lane(mut self, lane: Lane) -> Self {
-        self.lane = lane;
-        self
-    }
-
-    /// Set the energy limit.
-    /// Mark this instance as an orchestrator seat's **chat lane** (`Engine`'s `Lanes`),
-    /// which makes it stateless: it never resumes a conversation and always re-sends
-    /// the field window.
-    ///
-    /// It does that by clearing `spec.resume` rather than adding a second flag, and
-    /// that is the whole point. `resident` and `spec.resume` are already read together
-    /// in both places that matter — the resume flag in [`Self::invocation`] and the
-    /// field-window drop in `excite` — so a lane with `ResumeMode::None` is correct at
-    /// both sites through the logic that is already there. A parallel `is_chat_lane`
-    /// bool would have to be consulted at both, and a third site added later would
-    /// forget it (the failure in nucleus `a-fix-that-guards-the-preset-does-not-guard-the-seat`,
-    /// which this repo has now paid for twice).
-    ///
-    /// Why it must exist: a `ResumeMode::Continue` CLI (`agy`) resumes ONE conversation
-    /// per working directory. Two lanes both passing `--continue` would interleave into
-    /// it, and each would read the other's turns as its own history.
-    pub fn as_chat_lane(mut self) -> Self {
-        self.become_chat_lane();
-        self
     }
 
     pub fn with_energy_limit(mut self, limit: Option<u32>) -> Self {
@@ -308,10 +277,6 @@ impl<R: CliRunner> Quark for CliQuark<R> {
     fn energy_limit(&self) -> Option<u32> {
         self.energy_limit
     }
-    fn set_lane(&mut self, lane: Lane) {
-        self.lane = lane;
-    }
-
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let mode = turn.mode;
         let cwd = turn.cwd.clone();
@@ -321,8 +286,7 @@ impl<R: CliRunner> Quark for CliQuark<R> {
         // Only true when this CLI actually supports resuming (`spec.resume` is not
         // `None`) — a generic CLI with no resume flag never gets to drop context it
         // has no way to recall.
-        let resuming =
-            self.resident && !matches!(self.spec.resume, ResumeMode::None) && self.lane == Lane::Work;
+        let resuming = self.resident && !matches!(self.spec.resume, ResumeMode::None);
         let turn = if resuming { without_field_window(turn) } else { turn };
         // The argv guard only applies when the spec says the prompt rides as one
         // argv element with no stdin fallback (`execve` rejects an over-long one
@@ -335,9 +299,7 @@ impl<R: CliRunner> Quark for CliQuark<R> {
         };
         let result = self.runner.run(self.invocation(prompt, mode, cwd)).await?;
         // Only a turn that actually ran leaves a conversation behind to resume.
-        if self.lane == Lane::Work {
-            self.resident = true;
-        }
+        self.resident = true;
         Ok(reply_to_outcome(&result))
     }
 }
@@ -586,8 +548,9 @@ mod tests {
 
         // A chat lane instance on the same seat never resumes or sets resident.
         let chat_runner = FakeRunner::with_stdout(vec!["chat 1", "chat 2"]);
-        let mut chat_q = CliQuark::new(QuarkId::new("agy"), Flavor::Orchestrator, "", CliSpec::agy(), chat_runner)
-            .for_lane(Lane::Chat);
+        let mut chat_q =
+            CliQuark::new(QuarkId::new("agy"), Flavor::Orchestrator, "", CliSpec::agy(), chat_runner);
+        chat_q.become_chat_lane();
 
         let mut chat_turn = projection_mode("chat task", Mode::Bypass);
         chat_turn.field_window = vec![Event::new(
@@ -609,8 +572,8 @@ mod tests {
             "chat lane turn 2 also does not resume"
         );
         assert!(
-            !chat_q.resident(),
-            "chat lane turn never marks its quark resident"
+            chat_recorded[1].args[1].contains("CHAT-TRANSCRIPT-LINE"),
+            "a stateless chat lane must keep re-sending the field it cannot recall"
         );
     }
 
@@ -627,8 +590,9 @@ mod tests {
     #[tokio::test]
     async fn a_chat_lane_never_resumes_the_work_lanes_conversation() {
         let runner = FakeRunner::with_stdout(vec!["one", "two"]);
-        let mut q = CliQuark::new(QuarkId::new("agy"), Flavor::Orchestrator, "", CliSpec::agy(), runner)
-            .as_chat_lane();
+        let mut q =
+            CliQuark::new(QuarkId::new("agy"), Flavor::Orchestrator, "", CliSpec::agy(), runner);
+        q.become_chat_lane();
 
         let mut first = projection_mode("first task", Mode::Bypass);
         first.field_window = vec![Event::new(
