@@ -206,13 +206,51 @@ impl super::Engine {
                                 // anything. Only a genuinely new `Message` appended
                                 // since dispatch (`message_arrived_since`) is.
                                 let since = dispatched_at_len.get(&key).copied().unwrap_or(0);
-                                if self.message_arrived_since(&events, &target, since)
-                                    && self
-                                        .cancel_slots
-                                        .get(&key)
-                                        .is_some_and(|slot| slot.request_cancel())
-                                {
-                                    cancel_requested.insert(key, std::time::Instant::now());
+                                let slot = self.cancel_slots.get(&key).cloned();
+                                if let Some(slot) = slot {
+                                    if self.message_arrived_since(&events, &target, since) {
+                                        // Commit whatever this turn has written but not
+                                        // yet committed BEFORE asking it to stop (Task 5
+                                        // of `.hadron/docs/plans/2026-07-31-responsive-
+                                        // orchestrator.md`): a cancel that never resolves
+                                        // and falls through to the deadline abort above
+                                        // never reaches `finish_turn`'s own commit, so an
+                                        // interrupted turn with dirty, unversioned work
+                                        // would otherwise strand its branch behind
+                                        // `BlockReason::DirtyWorktree` forever — nothing
+                                        // else in the dispatch loop commits on a quark's
+                                        // behalf. Best-effort: a commit failure here must
+                                        // not stop the cancel itself from being requested.
+                                        if let Some(root) = self.repo_root.clone() {
+                                            let wt_dir =
+                                                crate::worktree::trees_dir(&root).join(target.as_str());
+                                            if let Some(branch) =
+                                                crate::worktree::current_branch(&wt_dir)
+                                            {
+                                                let wt = crate::worktree::Worktree {
+                                                    quark: target.clone(),
+                                                    path: wt_dir,
+                                                    branch,
+                                                };
+                                                if crate::worktree::is_dirty(&wt.path).unwrap_or(false) {
+                                                    let msg = format!(
+                                                        "{}: WIP snapshot before graceful interrupt",
+                                                        target.as_str()
+                                                    );
+                                                    if let Err(e) = crate::worktree::commit_turn(&wt, &msg) {
+                                                        eprintln!(
+                                                            "  {} failed to snapshot its dirty worktree \
+                                                             before interrupt: {e:#}",
+                                                            target.as_str()
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if slot.request_cancel() {
+                                            cancel_requested.insert(key, std::time::Instant::now());
+                                        }
+                                    }
                                 }
                             }
                         }
