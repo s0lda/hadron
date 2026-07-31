@@ -829,6 +829,39 @@ pub fn uninterruptible_cli_notice(target: &str) -> String {
     )
 }
 
+/// Extract target handles from all line-start `@mentions` in `text`.
+///
+/// Ignores lines inside fenced code blocks (```) and bold `**@` mentions, matching the router's rule.
+pub fn line_start_mentions(text: &str) -> Vec<&str> {
+    let mut targets = Vec::new();
+    let mut in_fence = false;
+    let fenced = text
+        .lines()
+        .filter(|l| l.trim_start().starts_with("```"))
+        .count()
+        % 2
+        == 0;
+
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if fenced && trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix('@') {
+            let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+            let (target, _) = rest.split_at(end);
+            if !target.is_empty() {
+                targets.push(target);
+            }
+        }
+    }
+    targets
+}
+
 /// The chat message a skill command posts, or `None` when the human gave it no
 /// task of their own.
 ///
@@ -1508,8 +1541,20 @@ mod tests {
     #[test]
     fn uninterruptible_cli_notice_formats_clearly() {
         let msg = uninterruptible_cli_notice("agy");
-        assert!(msg.contains("@agy is a CLI seat currently mid-turn"));
+        assert!(msg.contains("agy is a CLI seat currently mid-turn"));
         assert!(msg.contains("cannot be interrupted"));
+    }
+
+    #[test]
+    fn line_start_mentions_filters_fences_bold_and_mid_sentence() {
+        assert_eq!(line_start_mentions("@agy fix the router"), vec!["agy"]);
+        assert_eq!(line_start_mentions("  @Sonnet  do this"), vec!["Sonnet"]);
+        assert_eq!(line_start_mentions("contact @agy for info"), Vec::<&str>::new());
+        assert_eq!(line_start_mentions("**@agy** fix the router"), Vec::<&str>::new());
+        assert_eq!(
+            line_start_mentions("```\n@agy fix the router\n```"),
+            Vec::<&str>::new()
+        );
     }
 
     /// The message is posted as `Actor::Human`, so every word in it is attributed

@@ -51,6 +51,14 @@ fn multibyte_char_straddling_a_candidate_length_does_not_panic() {
     assert_eq!(parse_addressee(body, &roster(), None, &[]), None);
 }
 
+#[test]
+fn fenced_code_blocks_and_midsentence_do_not_route() {
+    let r = roster();
+    assert_eq!(parse_addressee("@worker fix the router", &r, None, &[]), Some(QuarkId::new("worker")));
+    assert_eq!(parse_addressee("contact @worker for info", &r, None, &[]), None);
+    assert_eq!(parse_addressee("```\n@worker fix the router\n```", &r, None, &[]), None);
+}
+
 /// The escalation path: a worker addresses the ROLE, and it lands on whoever
 /// holds it — no worker ever hardcodes an orchestrator's id.
 #[test]
