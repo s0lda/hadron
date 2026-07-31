@@ -221,6 +221,44 @@ impl super::Engine {
         })
     }
 
+    /// Whether a genuinely new `Message` addressed to or mentioning `target` has
+    /// landed in `events[since_len..]` — Task 4's answer to "is this in-flight turn
+    /// still just running, or does something new want this seat's attention?"
+    ///
+    /// **Why not just re-check `pending_targets`.** A turn's own dispatch record
+    /// (`Kind::Assign`, `to: Some(target)`) is itself unanswered for as long as the
+    /// turn runs — that is what makes `next_pending` correctly keep calling the seat
+    /// "pending" every single pass, and a plain `in_flight` skip has always absorbed
+    /// that as a no-op. Reusing `pending_targets`'s resolution for the cancel
+    /// decision would treat that same self-reference as "someone wants to interrupt
+    /// this," firing a cancel on every poll tick of every turn, forever.
+    ///
+    /// `Kind::Message` only, not `is_turn_request`'s full set: `Assign` and
+    /// `PermissionGrant` are dispatch machinery the engine writes about a turn
+    /// already running, never a fresh human or peer ask. Excludes the target's own
+    /// messages (a quark does not interrupt itself) and, for an addressed event,
+    /// requires `to == target` exactly — an event addressed elsewhere is not this
+    /// seat's business even if its body happens to name it.
+    pub(super) fn message_arrived_since(&self, events: &[Event], target: &QuarkId, since_len: usize) -> bool {
+        let preons = self.loaded_preons();
+        events.get(since_len..).unwrap_or_default().iter().any(|e| {
+            let Kind::Message { body } = &e.kind else { return false };
+            if e.from == Actor::Quark(target.clone()) {
+                return false;
+            }
+            if let Some(to) = &e.to {
+                return to == target;
+            }
+            match &e.from {
+                Actor::Human => self.human_addressees(body).contains(target),
+                Actor::Quark(sender) => {
+                    parse_all_addressees(body, &self.roster, Some(sender), &preons).contains(target)
+                }
+                Actor::Gluon => parse_all_addressees(body, &self.roster, None, &preons).contains(target),
+            }
+        })
+    }
+
     /// Everyone the field is currently waiting on, in dispatch order: the explicit
     /// addressee / hand-off first (`next_pending`), then every unserved addressee of
     /// the latest unaddressed human message. The `String` is the `fallback_task` —

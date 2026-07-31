@@ -1283,6 +1283,23 @@ fn seed_human_message(path: &std::path::Path, to: &str, body: &str) {
     .unwrap();
 }
 
+/// An UNADDRESSED (`to: None`) human message naming `to` by `@mention`, routed
+/// through `unaddressed_message_targets`'s precise `.answers`-stamp check
+/// (`has_answered`) rather than `next_pending`'s older positional "answered =
+/// spoke after" reading that an ADDRESSED message (`seed_human_message`) still
+/// goes through. Needed whenever a test seeds a second message while its
+/// target is already mid-turn: an addressed message would be silently
+/// swallowed the moment the first turn's own reply lands after it in the
+/// field — a real, pre-existing gap unrelated to whatever the test is
+/// actually exercising.
+fn seed_unaddressed_mention(path: &std::path::Path, to: &str, body: &str) {
+    append_event(
+        path,
+        &Event::new(Actor::Human, None, Kind::Message { body: format!("@{to} {body}") }),
+    )
+    .unwrap();
+}
+
 /// A temp git repo with one commit so HEAD exists (for git-safety tests).
 fn git_init_repo() -> tempfile::TempDir {
     let dir = tempdir().unwrap();
@@ -5925,4 +5942,219 @@ async fn a_dispatch_writes_one_assign_record_per_assignment() {
         .filter(|e| matches!(e.kind, Kind::Assign { .. }))
         .count();
     assert_eq!(after, 1, "no second record for the same assignment");
+}
+
+/// **Task 4, Step 1 of the responsive-orchestrator plan — the regression
+/// guard.** A quark whose transport never fills its [`crate::quark::CancelSlot`]
+/// (every CLI seat, and any ACP quark that never overrides
+/// [`crate::quark::Quark::attach_cancel_slot`]) is unaffected by Task 4: a
+/// second message arriving while it is in flight is still simply queued
+/// behind the running turn, exactly as before that task existed. Proven by
+/// timing, not by inspecting engine internals: if the first turn were cut
+/// short by a phantom cancel, the two sequential holds below would not both
+/// run to completion and total elapsed time would fall well short of `2 *
+/// hold`.
+#[tokio::test]
+async fn a_busy_quark_with_no_cancel_slot_is_not_interrupted() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct SlowQuark {
+        id: QuarkId,
+        excite_count: Arc<AtomicUsize>,
+        hold: Duration,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for SlowQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        // `attach_cancel_slot` deliberately NOT overridden — this quark relies
+        // on the trait's default no-op, so the engine's slot for it is never
+        // filled. That is the whole point of this test.
+        async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+            self.excite_count.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(self.hold).await;
+            Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+    let hold = Duration::from_millis(300);
+    let excite_count = Arc::new(AtomicUsize::new(0));
+
+    append_event(
+        &path,
+        &Event::new(
+            Actor::Quark(QuarkId::new("reporter")),
+            Some(QuarkId::new("seat")),
+            Kind::Message { body: "first task".into() },
+        ),
+    )
+    .unwrap();
+
+    let mid_flight = {
+        let path = path.clone();
+        let excite_count = excite_count.clone();
+        tokio::spawn(async move {
+            for _ in 0..200 {
+                if excite_count.load(Ordering::SeqCst) >= 1 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            seed_unaddressed_mention(&path, "seat", "second, urgent task");
+        })
+    };
+
+    let mut engine = Engine::new(
+        path.clone(),
+        vec![Box::new(SlowQuark { id: QuarkId::new("seat"), excite_count: excite_count.clone(), hold })],
+        10,
+    );
+
+    let started = std::time::Instant::now();
+    engine.run_until_quiesce().await.unwrap();
+    mid_flight.await.unwrap();
+
+    assert_eq!(excite_count.load(Ordering::SeqCst), 2, "both messages must have run their own full turn");
+    assert!(
+        started.elapsed() >= 2 * hold - Duration::from_millis(50),
+        "elapsed {:?} is well under 2x the hold — the first turn was cut short, \
+         meaning something interrupted a quark whose cancel slot was never filled",
+        started.elapsed()
+    );
+}
+
+/// **Task 4, Step 2 of the responsive-orchestrator plan.** A quark whose
+/// transport DOES fill its [`crate::quark::CancelSlot`] (the ACP shape, via
+/// [`crate::quark::Quark::attach_cancel_slot`]) is interrupted rather than
+/// queued: a message arriving while it is mid-turn requests exactly one
+/// graceful cancel, the interrupted turn resolves (short of its full hold),
+/// and the new message gets its own turn once the cancel lands.
+#[tokio::test]
+async fn a_busy_quark_with_a_cancel_slot_is_interrupted_by_a_new_message() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    struct CancellableQuark {
+        id: QuarkId,
+        cancel_count: Arc<AtomicUsize>,
+        cancelled: Arc<AtomicBool>,
+        excite_count: Arc<AtomicUsize>,
+        hold: Duration,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for CancellableQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        fn attach_cancel_slot(&mut self, slot: crate::quark::CancelSlot) {
+            let cancel_count = self.cancel_count.clone();
+            let cancelled = self.cancelled.clone();
+            slot.set(Some(Arc::new(move || {
+                cancel_count.fetch_add(1, Ordering::SeqCst);
+                cancelled.store(true, Ordering::SeqCst);
+                true
+            })));
+        }
+        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+            self.excite_count.fetch_add(1, Ordering::SeqCst);
+            self.cancelled.store(false, Ordering::SeqCst);
+            let deadline = tokio::time::Instant::now() + self.hold;
+            loop {
+                if self.cancelled.load(Ordering::SeqCst) {
+                    return Ok(TurnOutcome { message: None, permission: None, usage: Default::default() });
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Ok(TurnOutcome {
+                        message: Some(format!("done: {}", turn.task)),
+                        permission: None,
+                        usage: Default::default(),
+                    });
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+    let hold = Duration::from_millis(1500);
+
+    append_event(
+        &path,
+        &Event::new(
+            Actor::Quark(QuarkId::new("reporter")),
+            Some(QuarkId::new("seat")),
+            Kind::Message { body: "first task".into() },
+        ),
+    )
+    .unwrap();
+
+    let cancel_count = Arc::new(AtomicUsize::new(0));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let excite_count = Arc::new(AtomicUsize::new(0));
+
+    let mid_flight = {
+        let path = path.clone();
+        let excite_count = excite_count.clone();
+        tokio::spawn(async move {
+            for _ in 0..200 {
+                if excite_count.load(Ordering::SeqCst) >= 1 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            // Give the first turn a moment to be genuinely mid-flight, not
+            // caught at the very instant it started.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            seed_unaddressed_mention(&path, "seat", "second, urgent task");
+        })
+    };
+
+    let mut engine = Engine::new(
+        path.clone(),
+        vec![Box::new(CancellableQuark {
+            id: QuarkId::new("seat"),
+            cancel_count: cancel_count.clone(),
+            cancelled: cancelled.clone(),
+            excite_count: excite_count.clone(),
+            hold,
+        })],
+        10,
+    );
+
+    let started = std::time::Instant::now();
+    tokio::time::timeout(Duration::from_secs(8), engine.run_until_quiesce())
+        .await
+        .expect("the busy turn should have been interrupted well within 8s, not run its full hold twice")
+        .unwrap();
+    mid_flight.await.unwrap();
+
+    assert_eq!(cancel_count.load(Ordering::SeqCst), 1, "exactly one cancel request for the interrupted turn");
+    assert!(
+        started.elapsed() < hold + hold / 2,
+        "elapsed {:?} suggests the first turn ran to completion instead of being cancelled",
+        started.elapsed()
+    );
+
+    let events = read_events(&path).unwrap();
+    assert!(
+        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("done: @seat second, urgent task"))),
+        "the second message must have been re-dispatched and completed after the cancel resolved: {events:?}"
+    );
 }

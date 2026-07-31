@@ -1,6 +1,49 @@
 use async_trait::async_trait;
 use hadron_lattice::{EnergyState, Flavor, Projection, QuarkId, TurnOutcome};
 
+/// A closure a filled [`CancelSlot`] calls to ask its current session to
+/// gracefully cancel an in-flight turn. `Fn`, not `FnMut`: the same slot may
+/// be read concurrently by the engine while the quark that filled it is busy.
+type CancelFn = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// A cancel handle for whichever session (if any) currently occupies a seat's
+/// lane. Handed to a quark ONCE, at seating, via [`Quark::attach_cancel_slot`]
+/// — the exact calling convention [`Quark::become_chat_lane`] already
+/// established. The quark fills it with a live cancel closure whenever it has
+/// something cancellable (e.g. a booted resident session) and clears it when
+/// it does not; the engine keeps its own clone and reads through THAT, never
+/// through the quark's own lock — the whole reason this exists (Task 4 of
+/// `.hadron/docs/plans/2026-07-31-responsive-orchestrator.md`): a turn holds
+/// that lock for its entire duration, so a cancel routed through the quark
+/// itself would wait for the very turn it exists to interrupt.
+///
+/// `Clone`: the engine's copy and the quark's copy share the SAME inner cell
+/// on purpose — whichever side calls `set`, the other's `request_cancel` sees
+/// it immediately, no re-attaching needed.
+#[derive(Clone, Default)]
+pub struct CancelSlot(std::sync::Arc<std::sync::Mutex<Option<CancelFn>>>);
+
+impl CancelSlot {
+    /// Fill or clear the slot's live cancel handle. `None` — an idle or
+    /// never-booted transport — is what makes [`CancelSlot::request_cancel`]
+    /// report `false`: an empty slot has nothing to cancel.
+    pub fn set(&self, f: Option<CancelFn>) {
+        *self.0.lock().unwrap() = f;
+    }
+
+    /// Ask whatever currently occupies the slot to cancel gracefully. `false`
+    /// with no effect when the slot is empty — nothing booted, or (every CLI
+    /// seat) a transport that never fills it, by construction: `Quark`'s
+    /// default `attach_cancel_slot` is a no-op, so a CLI quark is never even
+    /// handed a slot to fill in the first place.
+    pub fn request_cancel(&self) -> bool {
+        match &*self.0.lock().unwrap() {
+            Some(f) => f(),
+            None => false,
+        }
+    }
+}
+
 /// A citizen of the field. The gluon never knows whether this is a CLI harness,
 /// a native API worker, or a future ACP/MCP adapter — only this contract.
 #[async_trait]
@@ -78,6 +121,16 @@ pub trait Quark: Send {
     /// is single-conversation only if it says so, and forgetting to implement this cannot
     /// silently corrupt a conversation that does not exist.
     fn become_chat_lane(&mut self) {}
+    /// Hand this quark a [`CancelSlot`] to fill whenever it has something an
+    /// in-flight turn can be gracefully cancelled through. Called once, at
+    /// seating, before any turn runs — same convention as
+    /// [`Quark::become_chat_lane`].
+    ///
+    /// Defaults to a no-op: a transport with no graceful-cancel primitive
+    /// (every CLI seat) simply never overrides this, so it is never even
+    /// handed a slot to fill — the slot's absence IS "this seat cannot be
+    /// interrupted", no separate predicate needed.
+    fn attach_cancel_slot(&mut self, _slot: CancelSlot) {}
     /// Run one turn against a projection and return the field message (if any).
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome>;
 

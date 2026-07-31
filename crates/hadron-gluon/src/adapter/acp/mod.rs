@@ -109,6 +109,10 @@ pub struct AcpQuark {
     /// change to the seat only takes effect on the next session (a re-seat), never
     /// mid-conversation.
     external_roots: Vec<hadron_lattice::ExternalRootSpec>,
+    /// The engine's handle for a graceful mid-turn cancel (Task 4). `None` until
+    /// `attach_cancel_slot` is called at seating; kept in sync with `session` by
+    /// `sync_cancel_slot`, called everywhere `session`'s identity changes.
+    cancel_slot: Option<crate::quark::CancelSlot>,
 }
 
 impl AcpQuark {
@@ -133,6 +137,7 @@ impl AcpQuark {
             energy_limit: None,
             deny_skills: Vec::new(),
             external_roots: Vec::new(),
+            cancel_slot: None,
         }
     }
 
@@ -212,6 +217,23 @@ impl AcpQuark {
     pub fn running_model(&self) -> Option<String> {
         self.session.as_ref()?.model.lock().unwrap().clone()
     }
+
+    /// Keep `cancel_slot`'s content in sync with whatever session (if any) is
+    /// currently open. There is no single choke point for `self.session`
+    /// changing identity — `run_turn` sets it to `None` on three separate
+    /// failure paths, plus the boot and the field-clear reset — so this is
+    /// called after each, rather than duplicating the fill/clear logic at
+    /// every site (Task 4).
+    pub(super) fn sync_cancel_slot(&self) {
+        let Some(slot) = &self.cancel_slot else { return };
+        match &self.session {
+            Some(session) => {
+                let session = session.clone();
+                slot.set(Some(std::sync::Arc::new(move || session.request_cancel())));
+            }
+            None => slot.set(None),
+        }
+    }
 }
 
 #[async_trait]
@@ -252,6 +274,10 @@ impl Quark for AcpQuark {
     fn has_forge_tools(&self) -> bool {
         true
     }
+    fn attach_cancel_slot(&mut self, slot: crate::quark::CancelSlot) {
+        self.cancel_slot = Some(slot);
+        self.sync_cancel_slot();
+    }
 
     /// The turn ends the moment this returns, however it returns. Clearing the live
     /// feed here — rather than on the happy path inside [`AcpQuark::run_turn`] — is
@@ -275,5 +301,6 @@ impl Quark for AcpQuark {
     /// A no-op if no session is open, so it is safe to call on an idle quark.
     fn reset_session(&mut self) {
         self.session = None;
+        self.sync_cancel_slot();
     }
 }

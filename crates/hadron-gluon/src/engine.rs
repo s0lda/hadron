@@ -110,6 +110,18 @@ const FIELD_POLL: std::time::Duration = std::time::Duration::from_millis(150);
 /// [`Engine::with_turn_deadline`].
 pub const TURN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
+/// How long the dispatch loop waits for a requested graceful cancel (a filled
+/// [`crate::quark::CancelSlot`]) to actually resolve a turn before giving up on
+/// it and falling through to the old destructive abort-and-reset path.
+///
+/// Sized from the Task 2 probe: a real `session/cancel` round-trip resolved in
+/// ~20ms. Five seconds is generous margin for that same round-trip under load,
+/// while staying two orders of magnitude under [`TURN_DEADLINE`] — a cancel
+/// that has not landed by then is not "slow", it is a transport that ignored
+/// the request, and the old path (which every seat without a cancel slot
+/// already relies on) is the correct fallback, not a longer wait.
+pub const CANCEL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// The event that drives a turn: the *assignment*. Its ULID names the quark's
 /// branch (`quark/<id>/<assignment>`), and its body is the task on the projection —
 /// one event, one source of truth, so the branch a quark commits to and the task it
@@ -469,6 +481,13 @@ pub struct Engine {
     /// `workspace_root` fresh at each call site that needs it
     /// ([`Engine::loaded_preons`]), same as the repo skills dir.
     global_preons_dir: Option<PathBuf>,
+    /// Task 4's cancel handles, one per **seated lane** (not per in-flight turn —
+    /// contrast `abort_handles` in `run.rs`, which is turn-scoped and local).
+    /// Populated at seating (`new`, `seat`, `seat_chat_lane`) via
+    /// `Quark::attach_cancel_slot`, removed at `unseat`. The dispatch loop reads
+    /// a slot through its own clone — never the quark's `Mutex` a running turn
+    /// holds for its whole duration, which is the entire reason this exists.
+    cancel_slots: HashMap<(QuarkId, Lane), crate::quark::CancelSlot>,
 }
 
 /// Parse the DO-NOT-ACTIVATE toggle from `HADRON_NO_HUMAN_MODE`. Read ONCE, at
@@ -524,9 +543,16 @@ impl Engine {
             .filter(|q| q.resident())
             .map(|q| q.id())
             .collect();
+        let mut cancel_slots = HashMap::new();
         let quarks = quarks
             .into_iter()
-            .map(|q| (q.id(), Lanes { work: Arc::new(AsyncMutex::new(q)) as SharedQuark, chat: None }))
+            .map(|mut q| {
+                let id = q.id();
+                let slot = crate::quark::CancelSlot::default();
+                q.attach_cancel_slot(slot.clone());
+                cancel_slots.insert((id.clone(), Lane::Work), slot);
+                (id, Lanes { work: Arc::new(AsyncMutex::new(q)) as SharedQuark, chat: None })
+            })
             .collect();
         Engine {
             field_path,
@@ -551,6 +577,7 @@ impl Engine {
             global_skills_dir: None,
             // Same hermetic default, same reason — see `global_preons_dir`'s field doc.
             global_preons_dir: None,
+            cancel_slots,
         }
     }
 
@@ -583,7 +610,7 @@ impl Engine {
     /// [`Engine::run_until_quiesce`] borrows the engine mutably for its entire duration
     /// and only returns once every spawned turn has been *joined*, so a re-seat racing
     /// a running turn does not compile.
-    pub fn seat(&mut self, quark: Box<dyn Quark>) {
+    pub fn seat(&mut self, mut quark: Box<dyn Quark>) {
         let id = quark.id();
         let resident = quark.resident();
         let card = QuarkCard {
@@ -613,6 +640,13 @@ impl Engine {
         } else {
             self.resident.remove(&id);
         }
+        // The cancel slot for this (id, Work) pair survives a replacement — reused,
+        // not rebuilt, exactly like the chat lane instance just below. Handing the
+        // NEW quark the SAME slot is safe: `attach_cancel_slot` re-syncs it
+        // immediately, overwriting whatever the old instance last left there.
+        let slot = self.cancel_slots.entry((id.clone(), Lane::Work)).or_default().clone();
+        quark.attach_cancel_slot(slot);
+
         // A replacement's chat lane, if it has one, survives if the replacement is also an Orchestrator;
         // if the replacement is a Worker, the chat lane is cleared. A brand-new seat starts with no chat lane;
         // `seat_chat_lane` is how one is attached.
@@ -642,10 +676,13 @@ impl Engine {
     /// point). A no-op (`false`) for an id that is not seated: a chat lane
     /// with no work lane to route `Work` traffic to makes no sense.
     pub fn seat_chat_lane(&mut self, id: &QuarkId, mut quark: Box<dyn Quark>) -> bool {
-        let Some(lanes) = self.quarks.get_mut(id) else {
+        if !self.quarks.contains_key(id) {
             return false;
-        };
+        }
         quark.become_chat_lane();
+        let slot = self.cancel_slots.entry((id.clone(), Lane::Chat)).or_default().clone();
+        quark.attach_cancel_slot(slot);
+        let lanes = self.quarks.get_mut(id).expect("checked above");
         lanes.chat = Some(Arc::new(AsyncMutex::new(quark)));
         true
     }
@@ -658,6 +695,8 @@ impl Engine {
     pub fn unseat(&mut self, id: &QuarkId) -> bool {
         self.roster.retain(|c| &c.id != id);
         self.resident.remove(id);
+        self.cancel_slots.remove(&(id.clone(), Lane::Work));
+        self.cancel_slots.remove(&(id.clone(), Lane::Chat));
         self.quarks.remove(id).is_some()
     }
 
