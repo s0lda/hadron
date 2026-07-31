@@ -639,7 +639,7 @@ impl Engine {
         let Some(lanes) = self.quarks.get_mut(id) else {
             return false;
         };
-        quark.set_lane(Lane::Chat);
+        quark.become_chat_lane();
         lanes.chat = Some(Arc::new(AsyncMutex::new(quark)));
         true
     }
