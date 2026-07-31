@@ -96,7 +96,7 @@ impl super::Chamber {
         // Task 7 Step 2: Inform the human if they typed at a mid-turn CLI seat that cannot be interrupted
         let live_dir = hadron_lattice::live::live_dir(&self.path);
         let now = chrono::Utc::now();
-        let target_mention = crate::text::split_target(&text).0;
+        let line_mentions = crate::text::line_start_mentions(&text);
 
         let mut uninterruptible_notices = Vec::new();
         for r in &self.view.roster {
@@ -107,10 +107,11 @@ impl super::Chamber {
                     || hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), now).is_some();
 
                 if is_busy {
-                    let is_addressed = target_mention.map_or(false, |m| m == r.id || r.display_name.as_deref() == Some(m))
-                        || text.contains(&format!("@{}", r.id))
-                        || r.display_name.as_ref().map_or(false, |dn| text.contains(&format!("@{}", dn)))
-                        || text.contains("@team");
+                    let is_addressed = line_mentions.iter().any(|m| {
+                        m.eq_ignore_ascii_case(&r.id)
+                            || r.display_name.as_deref().is_some_and(|dn| m.eq_ignore_ascii_case(dn))
+                            || m.eq_ignore_ascii_case("team")
+                    });
 
                     if is_addressed {
                         let name = r.display_name.as_deref().unwrap_or(&r.id).to_string();

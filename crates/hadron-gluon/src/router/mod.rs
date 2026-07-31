@@ -263,8 +263,23 @@ pub fn parse_addressee(
     sender: Option<&QuarkId>,
     preons: &[Preon],
 ) -> Option<QuarkId> {
+    let mut in_fence = false;
+    let fenced = body
+        .lines()
+        .filter(|l| l.trim_start().starts_with("```"))
+        .count()
+        % 2
+        == 0;
+
     for line in body.lines() {
         let trimmed = line.trim_start();
+        if fenced && trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
         let rest = if let Some(r) = trimmed.strip_prefix('@') {
             r
         } else if let Some(r) = trimmed.strip_prefix("**@") {
@@ -297,8 +312,23 @@ pub fn parse_all_addressees(
     preons: &[Preon],
 ) -> Vec<QuarkId> {
     let mut out = Vec::new();
+    let mut in_fence = false;
+    let fenced = body
+        .lines()
+        .filter(|l| l.trim_start().starts_with("```"))
+        .count()
+        % 2
+        == 0;
+
     for line in body.lines() {
         let trimmed = line.trim_start();
+        if fenced && trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
         let rest = if let Some(r) = trimmed.strip_prefix('@') {
             r
         } else if let Some(r) = trimmed.strip_prefix("**@") {
