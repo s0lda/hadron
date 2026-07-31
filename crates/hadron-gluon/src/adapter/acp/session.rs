@@ -255,6 +255,7 @@ pub(super) struct AcpSession {
     /// checks this FIRST so a cancel with nothing running is reported `false`
     /// rather than silently queued for whatever turn starts next.
     pub(super) in_turn: Arc<std::sync::atomic::AtomicBool>,
+    pub(super) live: Option<LiveFeed>,
 }
 
 impl AcpSession {
@@ -269,7 +270,14 @@ impl AcpSession {
         if !self.in_turn.load(std::sync::atomic::Ordering::Relaxed) {
             return false;
         }
-        self.cancels.send(()).is_ok()
+        if self.cancels.send(()).is_ok() {
+            if let Some(live) = &self.live {
+                live.publish(Doing::Thinking, "interrupting…");
+            }
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -390,10 +398,12 @@ impl super::AcpQuark {
         // opens) and one for the failure path (kept out here, fired if the pump dies
         // before it ever gets that far).
         let boot_tx = ready_tx.clone();
+        let pump_live = live.clone();
 
         std::thread::Builder::new()
             .name("hadron-acp".to_string())
             .spawn(move || {
+                let live = pump_live;
                 let outcome: anyhow::Result<()> = async_io::block_on(async move {
                     // NEVER format `agent_source` into an error: it carries the
                     // resolved secret values. `display_command` is the safe stand-in.
@@ -731,7 +741,7 @@ impl super::AcpQuark {
         // `recv` errors only if the thread died without reporting — surface that as a
         // boot failure rather than hanging.
         match ready_rx.recv() {
-            Ok(Ok(())) => Ok(AcpSession { turns: turns_tx, mode, model, cancels: cancels_tx, in_turn }),
+            Ok(Ok(())) => Ok(AcpSession { turns: turns_tx, mode, model, cancels: cancels_tx, in_turn, live }),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(anyhow::anyhow!(
                 "the ACP agent ({}) exited before opening a session",
