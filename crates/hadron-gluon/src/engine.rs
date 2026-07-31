@@ -28,9 +28,48 @@ mod tests;
 
 /// A quark, shareable across concurrent turns. The `Mutex` is what lets a single
 /// quark's `&mut self` turn move into a spawned task while the dispatch loop keeps
-/// running — and it is *also* the belt to the `in_flight` set's braces: a quark can
+/// running — and it is *also* the belt to the `in_flight` set's braces: a lane can
 /// only ever run one turn at a time.
 type SharedQuark = Arc<AsyncMutex<Box<dyn Quark>>>;
+
+/// Which of an orchestrator seat's two turn slots a dispatch targets. Every
+/// non-orchestrator seat only ever runs on `Work` — a seat with no chat lane
+/// always resolves to `Work` regardless of who sent the message. See Task 6
+/// Step 4 of `.hadron/docs/plans/2026-07-31-responsive-orchestrator.md` for
+/// why a seat keeps ONE `QuarkId` and up to two lanes instead of two ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Lane {
+    Work,
+    Chat,
+}
+
+/// One seat's runtime instances: always a work lane, and a chat lane only for
+/// an orchestrator-flavoured seat that has been given one via
+/// [`Engine::seat_chat_lane`]. Two lanes, one `QuarkId` — every id-keyed
+/// lookup (roster, mention parsing, the energy ledger, `live/<id>.json`)
+/// stays untouched by the chat lane's existence.
+///
+/// **How the chat lane learns what the work lane is doing (Task 6 Step 6):**
+/// it doesn't, specially — both lanes are separate `Quark` instances with
+/// separate conversations/context, but they read the identical `field.jsonl`
+/// through `projection_for` like every other seat, so the chat lane sees the
+/// work lane's `Excited`/reply events (and everyone else's) the normal way.
+/// No side-channel between the two instances exists or is planned; the field
+/// is the one shared source of truth.
+#[derive(Clone)]
+struct Lanes {
+    work: SharedQuark,
+    chat: Option<SharedQuark>,
+}
+
+impl Lanes {
+    fn get(&self, lane: Lane) -> Option<&SharedQuark> {
+        match lane {
+            Lane::Work => Some(&self.work),
+            Lane::Chat => self.chat.as_ref(),
+        }
+    }
+}
 
 /// How often the dispatch loop re-reads the field while turns are in flight, so a
 /// message arriving mid-turn reaches a free quark instead of queueing behind the
@@ -345,7 +384,7 @@ mod nucleus_tests {
 /// when the field has no pending work **and** no turn is still in flight.
 pub struct Engine {
     field_path: PathBuf,
-    quarks: HashMap<QuarkId, SharedQuark>,
+    quarks: HashMap<QuarkId, Lanes>,
     roster: Vec<QuarkCard>,
     max_exchanges: usize,
     /// Resolved from repo policy (`Team::nucleus_index_budget_kb`) the same way
@@ -487,7 +526,7 @@ impl Engine {
             .collect();
         let quarks = quarks
             .into_iter()
-            .map(|q| (q.id(), Arc::new(AsyncMutex::new(q)) as SharedQuark))
+            .map(|q| (q.id(), Lanes { work: Arc::new(AsyncMutex::new(q)) as SharedQuark, chat: None }))
             .collect();
         Engine {
             field_path,
@@ -574,7 +613,34 @@ impl Engine {
         } else {
             self.resident.remove(&id);
         }
-        self.quarks.insert(id, Arc::new(AsyncMutex::new(quark)));
+        // A replacement's chat lane, if it has one, survives — only the work
+        // lane instance changes. A brand-new seat starts with no chat lane;
+        // `seat_chat_lane` is how one is attached.
+        let work: SharedQuark = Arc::new(AsyncMutex::new(quark));
+        match self.quarks.get_mut(&id) {
+            Some(lanes) => lanes.work = work,
+            None => {
+                self.quarks.insert(id, Lanes { work, chat: None });
+            }
+        }
+    }
+
+    /// Give an already-seated seat a second, **chat-only** lane instance —
+    /// the ACP-orchestrator-specific half of Task 6 (Step 4). Built through
+    /// the same construction path as the work lane (the caller, `cli.rs`'s
+    /// seating loop, calls `registry::build_seat_watched` a second time for
+    /// an `Flavor::Orchestrator` card); this method only attaches the result.
+    ///
+    /// Deliberately does NOT touch `roster` or `resident` — the chat lane is
+    /// invisible to every id-keyed lookup by design (Task 6 Step 4's whole
+    /// point). A no-op (`false`) for an id that is not seated: a chat lane
+    /// with no work lane to route `Work` traffic to makes no sense.
+    pub fn seat_chat_lane(&mut self, id: &QuarkId, quark: Box<dyn Quark>) -> bool {
+        let Some(lanes) = self.quarks.get_mut(id) else {
+            return false;
+        };
+        lanes.chat = Some(Arc::new(AsyncMutex::new(quark)));
+        true
     }
 
     /// Remove a quark from the live roster. `true` if it was seated.

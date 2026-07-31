@@ -39,8 +39,8 @@ impl super::Engine {
     pub(super) async fn service_reboots(
         &mut self,
         events: &[Event],
-        in_flight: &mut HashSet<QuarkId>,
-        abort_handles: &mut HashMap<QuarkId, AbortHandle>,
+        in_flight: &mut HashSet<(QuarkId, super::Lane)>,
+        abort_handles: &mut HashMap<(QuarkId, super::Lane), AbortHandle>,
     ) -> anyhow::Result<Vec<QuarkId>> {
         let mut grounded: Vec<QuarkId> = Vec::new();
 
@@ -76,7 +76,7 @@ impl super::Engine {
             if let Some(seen) = &mut self.serviced_reboots {
                 seen.insert(id);
             }
-            let Some(quark) = self.quarks.get(&target).cloned() else {
+            let Some(lanes) = self.quarks.get(&target).cloned() else {
                 eprintln!(
                     "gluon: reboot for unseated quark {} — ignored",
                     target.as_str()
@@ -84,10 +84,19 @@ impl super::Engine {
                 continue;
             };
 
-            if in_flight.remove(&target) {
-                if let Some(handle) = abort_handles.remove(&target) {
-                    handle.abort();
+            // A reboot targets the whole SEAT, not one lane — abort whichever of its
+            // (up to two) lanes are in flight, and ground once if either was.
+            let mut was_in_flight = false;
+            for lane in [super::Lane::Work, super::Lane::Chat] {
+                let key = (target.clone(), lane);
+                if in_flight.remove(&key) {
+                    if let Some(handle) = abort_handles.remove(&key) {
+                        handle.abort();
+                    }
+                    was_in_flight = true;
                 }
+            }
+            if was_in_flight {
                 self.append(Event::new(
                     Actor::Quark(target.clone()),
                     None,
@@ -97,9 +106,12 @@ impl super::Engine {
                 grounded.push(target.clone());
             }
 
-            // Reaps a resident session (idempotent). The `lock().await` waits for a
-            // just-aborted turn to drop its guard before we take it.
-            quark.lock().await.reset_session();
+            // Reaps each lane's resident session (idempotent). The `lock().await`
+            // waits for a just-aborted turn to drop its guard before we take it.
+            lanes.work.lock().await.reset_session();
+            if let Some(chat) = &lanes.chat {
+                chat.lock().await.reset_session();
+            }
             eprintln!("gluon: force-restarted quark {}", target.as_str());
         }
 

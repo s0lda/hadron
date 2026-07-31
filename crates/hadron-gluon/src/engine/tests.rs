@@ -2883,21 +2883,15 @@ async fn a_message_arriving_mid_turn_is_dispatched_without_waiting() {
     );
 }
 
-/// **Task 6, Step 1 of the responsive-orchestrator plan — the regression guard,
-/// written before the feature.** A second human message to a quark that is
-/// already mid-turn must, for an `Orchestrator`-flavoured seat, be able to start
-/// running *while the first turn is still going* (Jake's "orchestrator never
-/// blocks"). A `Worker`-flavoured seat keeps today's behaviour: its second turn
-/// does not start until the first resolves.
-///
-/// **This test is EXPECTED TO FAIL today (RED).** `in_flight` is a bare
-/// `HashSet<QuarkId>` (`run.rs:132`), so a second turn for the SAME `QuarkId`
-/// literally cannot start while the first is in flight, for either flavour —
-/// there is no lane split yet. The orchestrator assertion below fails until
-/// Task 6 lands; the worker assertion already passes and must keep passing.
+/// **Task 6, Step 1 of the responsive-orchestrator plan.** A second human
+/// message to a quark that is already mid-turn must, for an
+/// `Orchestrator`-flavoured seat that has been given a chat lane
+/// (`Engine::seat_chat_lane`), be able to start running on that lane *while
+/// the work lane is still going* (Jake's "orchestrator never blocks"). A
+/// `Worker`-flavoured seat — which never gets a chat lane — keeps today's
+/// behaviour exactly: its second turn does not start until the first
+/// resolves.
 #[tokio::test]
-#[ignore = "Task 6 Step 4 is blocked on an architecture decision (second-lane seating); \
-            un-ignore once that lands, see the field report on quark/acp-claude-2/01KYWNHK6XFGW77SHCH21SM1A6"]
 async fn a_busy_orchestrator_can_take_a_second_turn_but_a_busy_worker_cannot() {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -2935,14 +2929,28 @@ async fn a_busy_orchestrator_can_take_a_second_turn_but_a_busy_worker_cannot() {
     }
 
     /// Runs the scenario for one flavour and reports whether the second turn
-    /// overlapped the first.
+    /// overlapped the first. An orchestrator gets a chat-lane instance
+    /// sharing the same atomics as the work lane, so "overlapped" is
+    /// detectable across either instance; a worker gets no chat lane at all.
     async fn overlapped_for(flavor: Flavor) -> bool {
         let dir = tempdir().unwrap();
         let path = dir.path().join("field.jsonl");
-        seed_human_message(&path, "seat", "first, slow task");
+        // Quark-authored on purpose (Task 6 Step 5: "everything else" routes to Work) —
+        // a hand-off/self-delegated task, not a human ask, so it lands on the work lane
+        // and leaves the chat lane free for the human message below.
+        append_event(
+            &path,
+            &Event::new(
+                Actor::Quark(QuarkId::new("reporter")),
+                Some(QuarkId::new("seat")),
+                Kind::Message { body: "first, slow task".into() },
+            ),
+        )
+        .unwrap();
 
         let first_turn_running = Arc::new(AtomicBool::new(false));
         let overlapped = Arc::new(AtomicBool::new(false));
+        let call_count = Arc::new(AtomicUsize::new(0));
         let mid_flight = {
             let path = path.clone();
             let running = first_turn_running.clone();
@@ -2957,18 +2965,32 @@ async fn a_busy_orchestrator_can_take_a_second_turn_but_a_busy_worker_cannot() {
             })
         };
 
+        let is_orchestrator = flavor == Flavor::Orchestrator;
         let mut engine = Engine::new(
             path.clone(),
             vec![Box::new(SlowCountingQuark {
                 id: QuarkId::new("seat"),
-                flavor,
-                call_count: Arc::new(AtomicUsize::new(0)),
+                flavor: flavor.clone(),
+                call_count: call_count.clone(),
                 first_turn_running: first_turn_running.clone(),
                 second_call_overlapped_first: overlapped.clone(),
                 hold: std::time::Duration::from_millis(500),
             })],
             10,
         );
+        if is_orchestrator {
+            engine.seat_chat_lane(
+                &QuarkId::new("seat"),
+                Box::new(SlowCountingQuark {
+                    id: QuarkId::new("seat"),
+                    flavor,
+                    call_count,
+                    first_turn_running,
+                    second_call_overlapped_first: overlapped.clone(),
+                    hold: std::time::Duration::from_millis(500),
+                }),
+            );
+        }
         engine.run_until_quiesce().await.unwrap();
         mid_flight.await.unwrap();
         overlapped.load(Ordering::SeqCst)
@@ -2976,7 +2998,8 @@ async fn a_busy_orchestrator_can_take_a_second_turn_but_a_busy_worker_cannot() {
 
     assert!(
         overlapped_for(Flavor::Orchestrator).await,
-        "a busy orchestrator's second message must start before the first turn resolves (Task 6)"
+        "a busy orchestrator's second message must start on its chat lane before the \
+         work lane's turn resolves (Task 6)"
     );
     assert!(
         !overlapped_for(Flavor::Worker).await,
@@ -2989,11 +3012,7 @@ async fn a_busy_orchestrator_can_take_a_second_turn_but_a_busy_worker_cannot() {
 /// something only `AcpQuark` gets. `CliSpec::generic` has `ResumeMode::None`,
 /// so this exercises no resume semantics (that is Task 6a's job); it only
 /// proves the engine-level in_flight gate, which is transport-agnostic.
-///
-/// **Also EXPECTED TO FAIL today**, for the identical reason as above.
 #[tokio::test]
-#[ignore = "Task 6 Step 4 is blocked on an architecture decision (second-lane seating); \
-            un-ignore once that lands, see the field report on quark/acp-claude-2/01KYWNHK6XFGW77SHCH21SM1A6"]
 async fn a_busy_cli_backed_orchestrator_can_take_a_second_turn() {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -3024,7 +3043,17 @@ async fn a_busy_cli_backed_orchestrator_can_take_a_second_turn() {
 
     let dir = tempdir().unwrap();
     let path = dir.path().join("field.jsonl");
-    seed_human_message(&path, "cliseat", "first, slow task");
+    // Quark-authored, same reason as the mock-quark test above: "everything else"
+    // (Task 6 Step 5) routes to Work, leaving the chat lane free for the human ask.
+    append_event(
+        &path,
+        &Event::new(
+            Actor::Quark(QuarkId::new("reporter")),
+            Some(QuarkId::new("cliseat")),
+            Kind::Message { body: "first, slow task".into() },
+        ),
+    )
+    .unwrap();
 
     let first_turn_running = Arc::new(AtomicBool::new(false));
     let overlapped = Arc::new(AtomicBool::new(false));
@@ -3042,20 +3071,34 @@ async fn a_busy_cli_backed_orchestrator_can_take_a_second_turn() {
         })
     };
 
-    let quark = crate::adapter::cli::CliQuark::new(
+    let call_count = Arc::new(AtomicUsize::new(0));
+    let work = crate::adapter::cli::CliQuark::new(
         QuarkId::new("cliseat"),
         Flavor::Orchestrator,
         "",
         hadron_lattice::CliSpec::generic("true".to_string(), vec![]),
         SlowRunner {
-            call_count: Arc::new(AtomicUsize::new(0)),
+            call_count: call_count.clone(),
+            first_turn_running: first_turn_running.clone(),
+            second_call_overlapped_first: overlapped.clone(),
+            hold: std::time::Duration::from_millis(500),
+        },
+    );
+    let chat = crate::adapter::cli::CliQuark::new(
+        QuarkId::new("cliseat"),
+        Flavor::Orchestrator,
+        "",
+        hadron_lattice::CliSpec::generic("true".to_string(), vec![]),
+        SlowRunner {
+            call_count,
             first_turn_running: first_turn_running.clone(),
             second_call_overlapped_first: overlapped.clone(),
             hold: std::time::Duration::from_millis(500),
         },
     );
 
-    let mut engine = Engine::new(path.clone(), vec![Box::new(quark)], 10);
+    let mut engine = Engine::new(path.clone(), vec![Box::new(work)], 10);
+    engine.seat_chat_lane(&QuarkId::new("cliseat"), Box::new(chat));
     engine.run_until_quiesce().await.unwrap();
     mid_flight.await.unwrap();
 
@@ -4357,8 +4400,8 @@ fn seating_a_new_quark_leaves_the_others_byte_for_byte_untouched() {
     let dir = tempdir().unwrap();
     let mut engine = engine_with(&["opus", "agy"], dir.path());
 
-    let opus_before = engine.quarks.get(&QuarkId::new("opus")).unwrap().clone();
-    let agy_before = engine.quarks.get(&QuarkId::new("agy")).unwrap().clone();
+    let opus_before = engine.quarks.get(&QuarkId::new("opus")).unwrap().work.clone();
+    let agy_before = engine.quarks.get(&QuarkId::new("agy")).unwrap().work.clone();
 
     engine.seat(Box::new(MockQuark::scripted(
         QuarkId::new("acp-claude"),
@@ -4368,11 +4411,11 @@ fn seating_a_new_quark_leaves_the_others_byte_for_byte_untouched() {
 
     assert_eq!(engine.seated_count(), 3, "the new seat joined the live roster");
     assert!(
-        Arc::ptr_eq(&opus_before, engine.quarks.get(&QuarkId::new("opus")).unwrap()),
+        Arc::ptr_eq(&opus_before, &engine.quarks.get(&QuarkId::new("opus")).unwrap().work),
         "opus was rebuilt by a re-seat that had nothing to do with it"
     );
     assert!(
-        Arc::ptr_eq(&agy_before, engine.quarks.get(&QuarkId::new("agy")).unwrap()),
+        Arc::ptr_eq(&agy_before, &engine.quarks.get(&QuarkId::new("agy")).unwrap().work),
         "agy was rebuilt by a re-seat that had nothing to do with it"
     );
 }
@@ -4465,13 +4508,13 @@ async fn disabling_keeps_the_very_same_instance_and_re_enabling_uses_it() {
         12,
     );
     let id = QuarkId::new("agy");
-    let before = engine.quarks.get(&id).unwrap().clone();
+    let before = engine.quarks.get(&id).unwrap().work.clone();
 
     engine.set_enabled(&id, false);
     assert!(!engine.is_enabled(&id));
     assert_eq!(engine.seated_count(), 1, "disabling must not unseat");
     assert!(
-        Arc::ptr_eq(&before, engine.quarks.get(&id).unwrap()),
+        Arc::ptr_eq(&before, &engine.quarks.get(&id).unwrap().work),
         "the instance was rebuilt by a mere disable — an ACP session would have died here"
     );
     assert!(engine.roster.iter().any(|c| c.id == id), "still on the roster, so @mentions still resolve");
@@ -4479,7 +4522,7 @@ async fn disabling_keeps_the_very_same_instance_and_re_enabling_uses_it() {
     // Switched back on, it answers — and it is still the SAME quark, which is why
     // its scripted reply (consumed by nobody, because it never ran) is still queued.
     engine.set_enabled(&id, true);
-    assert!(Arc::ptr_eq(&before, engine.quarks.get(&id).unwrap()));
+    assert!(Arc::ptr_eq(&before, &engine.quarks.get(&id).unwrap().work));
 
     seed_human_message(&field, "agy", "you there?");
     engine.run_until_quiesce().await.unwrap();
@@ -5025,7 +5068,7 @@ fn a_newly_seated_quark_is_on_the_roster_the_router_reads() {
 fn replacing_a_seat_actually_swaps_the_instance() {
     let dir = tempdir().unwrap();
     let mut engine = engine_with(&["agy"], dir.path());
-    let before = engine.quarks.get(&QuarkId::new("agy")).unwrap().clone();
+    let before = engine.quarks.get(&QuarkId::new("agy")).unwrap().work.clone();
 
     engine.seat(Box::new(MockQuark::scripted(
         QuarkId::new("agy"),
@@ -5040,7 +5083,7 @@ fn replacing_a_seat_actually_swaps_the_instance() {
         "a replaced seat must not appear on the roster twice"
     );
     assert!(
-        !Arc::ptr_eq(&before, engine.quarks.get(&QuarkId::new("agy")).unwrap()),
+        !Arc::ptr_eq(&before, &engine.quarks.get(&QuarkId::new("agy")).unwrap().work),
         "a changed seat kept its old instance — the old model would keep answering"
     );
 }
@@ -5222,8 +5265,8 @@ async fn a_reboot_before_the_baseline_is_ignored_but_one_after_it_resets_the_idl
         vec![Box::new(ResettableQuark { id: QuarkId::new("q"), was_reset: was_reset.clone() })],
         10,
     );
-    let mut in_flight: HashSet<QuarkId> = HashSet::new();
-    let mut handles: HashMap<QuarkId, AbortHandle> = HashMap::new();
+    let mut in_flight: HashSet<(QuarkId, Lane)> = HashSet::new();
+    let mut handles: HashMap<(QuarkId, Lane), AbortHandle> = HashMap::new();
 
     // Pre-boot reboot: swallowed by the baseline.
     append_event(&field, &Event::new(Actor::Human, Some(QuarkId::new("q")), Kind::Reboot)).unwrap();
@@ -5260,8 +5303,8 @@ async fn a_reboot_appended_after_a_clear_truncation_still_resets_the_quark() {
         vec![Box::new(ResettableQuark { id: QuarkId::new("q"), was_reset: was_reset.clone() })],
         10,
     );
-    let mut in_flight: HashSet<QuarkId> = HashSet::new();
-    let mut handles: HashMap<QuarkId, AbortHandle> = HashMap::new();
+    let mut in_flight: HashSet<(QuarkId, Lane)> = HashSet::new();
+    let mut handles: HashMap<(QuarkId, Lane), AbortHandle> = HashMap::new();
 
     // Some pre-clear history, then baseline over it (services nothing).
     append_event(&field, &Event::new(Actor::Human, Some(QuarkId::new("q")), Kind::Reboot)).unwrap();

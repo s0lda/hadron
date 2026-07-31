@@ -270,6 +270,24 @@ impl super::Engine {
         task_text.as_deref().is_some_and(|t| crate::router::task_names_card_specifically(t, card, &preons))
     }
 
+    /// Which lane a dispatch to `target` belongs on (Task 6, Step 5). A seat with
+    /// no chat lane — every non-orchestrator seat, and an orchestrator seat that
+    /// has not been given one via [`Engine::seat_chat_lane`] — always resolves to
+    /// `Work`, which is what keeps this a no-op for every seat outside Task 6's
+    /// scope. For a seat that HAS a chat lane, a message whose driving event is
+    /// human-authored routes to `Chat`; everything else (a quark hand-off, a
+    /// worker's report) routes to `Work`.
+    pub(super) fn lane_for(&self, events: &[Event], target: &QuarkId, driver: Option<&Driver>) -> Lane {
+        let has_chat_lane = self.quarks.get(target).is_some_and(|lanes| lanes.chat.is_some());
+        if !has_chat_lane {
+            return Lane::Work;
+        }
+        let from_human = driver
+            .and_then(|d| events.iter().find(|e| e.id == d.assignment))
+            .is_some_and(|e| e.from == Actor::Human);
+        if from_human { Lane::Chat } else { Lane::Work }
+    }
+
     /// The event that drives this turn — the *assignment*. Its `Ulid` names the
     /// quark's branch, so every turn of one assignment (including a turn resumed
     /// after a permission pause) resolves the **same** ULID and lands back in the
