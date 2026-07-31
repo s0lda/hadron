@@ -426,6 +426,11 @@ pub struct Engine {
     /// The watchdog: how long an excited turn may run before the engine writes its
     /// terminal status *for* it. See [`TURN_DEADLINE`].
     turn_deadline: std::time::Duration,
+    /// How long the dispatch loop waits for a requested graceful cancel to
+    /// resolve before falling through to the destructive abort path. See
+    /// [`CANCEL_DEADLINE`]; overridable the same way [`Self::turn_deadline`] is,
+    /// for a test that needs the fallback to fire quickly.
+    cancel_deadline: std::time::Duration,
     /// Quarks that are seated but **switched off**. They keep their instance (an ACP
     /// seat keeps its resident subprocess and its conversation); they are simply never
     /// excited. Absent from this set = participating, so a quark seated by any path
@@ -567,6 +572,7 @@ impl Engine {
             merge: None,
             field_lock: Arc::new(AsyncMutex::new(())),
             turn_deadline: TURN_DEADLINE,
+            cancel_deadline: CANCEL_DEADLINE,
             disabled: HashSet::new(),
             resident,
             serviced_reboots: None,
@@ -771,6 +777,14 @@ impl Engine {
     /// misconfiguration, not a feature.
     pub fn with_turn_deadline(mut self, deadline: std::time::Duration) -> Self {
         self.turn_deadline = deadline;
+        self
+    }
+
+    /// Override the cancel-fallback [deadline](CANCEL_DEADLINE). Tests use a tiny
+    /// one to exercise the deadline-abort path without waiting out the real 5s;
+    /// production takes the default.
+    pub fn with_cancel_deadline(mut self, deadline: std::time::Duration) -> Self {
+        self.cancel_deadline = deadline;
         self
     }
 

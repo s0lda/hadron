@@ -106,6 +106,14 @@ impl super::Engine {
         // pending every pass it runs) would look identical to a fresh interrupting
         // message. Kept in lockstep with `in_flight`, same as `cancel_requested`.
         let mut dispatched_at_len: HashMap<(QuarkId, Lane), usize> = HashMap::new();
+        // Which assignment each in-flight turn was dispatched for — so the
+        // CANCEL_DEADLINE fallback's `ground` call (Task 9, Defect 2) can stamp
+        // `answers` on the abandoned turn's OWN assignment, not leave it unstamped.
+        // An unstamped Ground falls into `has_answered`'s "legacy: it spoke after
+        // the message" arm, which reads as answering EVERY earlier unaddressed
+        // message — including the very message that caused the interrupt, silently
+        // swallowing it. Kept in lockstep with `in_flight`, same as `cancel_requested`.
+        let mut dispatched_assignment: HashMap<(QuarkId, Lane), Option<ulid::Ulid>> = HashMap::new();
         // The assignment rides along with the turn so that `finish_turn` can stamp
         // `answers` on what the turn emits. Without it, "has this quark answered the
         // human?" degenerates into "has it said anything since?", which silently eats
@@ -146,6 +154,8 @@ impl super::Engine {
                     cancel_requested.remove(&(target.clone(), Lane::Chat));
                     dispatched_at_len.remove(&(target.clone(), Lane::Work));
                     dispatched_at_len.remove(&(target.clone(), Lane::Chat));
+                    dispatched_assignment.remove(&(target.clone(), Lane::Work));
+                    dispatched_assignment.remove(&(target.clone(), Lane::Chat));
                 }
 
                 for (target, fallback_task) in self.pending_targets(&events) {
@@ -185,13 +195,39 @@ impl super::Engine {
                                 // restart, so the still-unanswered message gets a
                                 // fresh turn on the next pass instead of waiting out
                                 // `TURN_DEADLINE`.
-                                if requested_at.elapsed() >= CANCEL_DEADLINE {
-                                    if let Some(handle) = abort_handles.remove(&key) {
-                                        handle.abort();
-                                    }
-                                    in_flight.remove(&key);
+                                if requested_at.elapsed() >= self.cancel_deadline {
+                                    let abandoned_assignment =
+                                        dispatched_assignment.get(&key).copied().flatten();
+                                    Self::abort_in_flight(&key, &mut in_flight, &mut abort_handles);
                                     cancel_requested.remove(&key);
                                     dispatched_at_len.remove(&key);
+                                    dispatched_assignment.remove(&key);
+                                    // Grounds the abandoned assignment BEFORE
+                                    // taking the quark's lock below — Defect 2 of
+                                    // Task 9 (`.hadron/docs/plans/2026-07-31-
+                                    // responsive-orchestrator.md`): without this,
+                                    // `next_pending` kept finding the old
+                                    // dispatch record unanswered and re-excited
+                                    // the quark onto the STALE task instead of
+                                    // the message that interrupted it. Stamped
+                                    // with the abandoned assignment specifically
+                                    // (not left unanswered/None) — an unstamped
+                                    // Ground reads as answering EVERY earlier
+                                    // message via `has_answered`'s legacy
+                                    // fallback, which silently swallowed the very
+                                    // message that caused the interrupt.
+                                    self.ground(&target, abandoned_assignment).await?;
+                                    // `quark.lock().await` right after an abort,
+                                    // exactly like `service_reboots` already
+                                    // does and documents: `abort()` only marks
+                                    // the task, it does not synchronously drop
+                                    // its `MutexGuard`, but this task's own
+                                    // `.await` here cooperatively yields until
+                                    // the aborted task is next polled and drops
+                                    // it — bounded by the runtime's own
+                                    // scheduling, not a deadlock (Task 9 Step 4;
+                                    // confirmed, not just assumed, by this
+                                    // task's own passing test).
                                     let quark =
                                         self.quarks.get(&target).and_then(|lanes| lanes.get(lane)).cloned();
                                     if let Some(quark) = quark {
@@ -598,6 +634,7 @@ impl super::Engine {
                         (turn_id, lane, turn_tree, assignment, outcome)
                     });
                     dispatched_at_len.insert((target.clone(), lane), events.len());
+                    dispatched_assignment.insert((target.clone(), lane), assignment);
                     abort_handles.insert((target.clone(), lane), abort);
                     in_flight.insert((target, lane));
                     exchanges += 1;
@@ -651,6 +688,7 @@ impl super::Engine {
                     abort_handles.remove(&(target.clone(), lane));
                     cancel_requested.remove(&(target.clone(), lane));
                     dispatched_at_len.remove(&(target.clone(), lane));
+                    dispatched_assignment.remove(&(target.clone(), lane));
                     if let Err(err) =
                         self.finish_turn(&target, outcome, tree.as_ref(), assignment).await
                     {
@@ -666,6 +704,7 @@ impl super::Engine {
                     abort_handles.remove(&(target.clone(), lane));
                     cancel_requested.remove(&(target.clone(), lane));
                     dispatched_at_len.remove(&(target.clone(), lane));
+                    dispatched_assignment.remove(&(target.clone(), lane));
                     let err_msg = self.format_error_message(&target, &err);
                     let _ = self
                         .append(
@@ -703,6 +742,7 @@ impl super::Engine {
                     abort_handles.clear();
                     cancel_requested.clear();
                     dispatched_at_len.clear();
+                    dispatched_assignment.clear();
                     for (target, _lane) in std::mem::take(&mut in_flight) {
                         let _ = self
                             .append(Event::new(

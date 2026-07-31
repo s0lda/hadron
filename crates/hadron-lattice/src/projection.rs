@@ -155,6 +155,16 @@ pub struct TurnOutcome {
     /// [`crate::TokenSpend::fresh`] — the single totaller — to get a figure.
     #[serde(default, skip_serializing_if = "crate::Usage::is_empty")]
     pub usage: crate::Usage,
+    /// Whether this turn ended because it was asked to stop mid-work (a graceful
+    /// cancel), rather than because it finished. **The one fact `finish_turn` must
+    /// not infer from `message.is_none()`**: a quark can legitimately produce no
+    /// reply on a turn nobody interrupted, and treating that the same as "cut off
+    /// mid-sentence" is what let an interrupted turn read as a completed
+    /// assignment and reach the merge gate. `false` by default — every transport
+    /// that never overrides [`crate::Quark::attach_cancel_slot`] (a CLI seat) can
+    /// never produce `true`, since nothing ever asks it to stop early.
+    #[serde(default)]
+    pub cancelled: bool,
 }
 
 #[cfg(test)]
@@ -252,7 +262,7 @@ mod tests {
     fn turn_outcome_default_is_empty() {
         assert_eq!(
             TurnOutcome::default(),
-            TurnOutcome { message: None, permission: None, usage: Default::default() }
+            TurnOutcome { message: None, permission: None, usage: Default::default() , ..Default::default()}
         );
     }
 }

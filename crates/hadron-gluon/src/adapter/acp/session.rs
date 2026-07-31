@@ -864,7 +864,16 @@ impl super::AcpQuark {
             }
         };
 
-        Ok(TurnOutcome { message, permission: None, usage })
+        // `message.is_none()` alone cannot tell "cut off mid-work" apart from
+        // "genuinely finished with nothing to say" (`StopReason::EndTurn` with
+        // empty text lands here too) — Task 9 of `.hadron/docs/plans/2026-07-31-
+        // responsive-orchestrator.md`: `finish_turn` used to infer completion from
+        // an absent message, so a graceful cancel read as a hand-back to the
+        // human and could reach the merge gate. `cancelled` carries the fact
+        // explicitly, straight from the one place that actually knows it.
+        let cancelled = matches!(reply.stop, StopReason::Cancelled);
+
+        Ok(TurnOutcome { message, permission: None, usage, cancelled, ..Default::default() })
     }
 }
 
