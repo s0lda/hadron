@@ -425,10 +425,13 @@ fn reset_session_drops_the_session_and_stays_rebootable() {
     );
     // Stand in a live session (a dummy pump handle) without booting a real agent.
     let (turns_tx, _turns_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (cancels_tx, _cancels_rx) = tokio::sync::mpsc::unbounded_channel();
     q.session = Some(AcpSession {
         turns: turns_tx,
         mode: Arc::new(Mutex::new(Mode::Ask)),
         model: Arc::new(Mutex::new(None)),
+        cancels: cancels_tx,
+        in_turn: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
     assert!(q.session.is_some(), "precondition: a session is open");
 
@@ -438,6 +441,50 @@ fn reset_session_drops_the_session_and_stays_rebootable() {
     // Idempotent: a second reset on an already-idle quark is a no-op, not a panic.
     q.reset_session();
     assert!(q.session.is_none());
+}
+
+/// **Task 3, Step 2 of the responsive-orchestrator plan.** A cancel requested
+/// while no turn is in flight must report `false` and leave the session
+/// completely undisturbed — no `session/cancel` signal sent for a pump that
+/// isn't in the middle of anything.
+#[test]
+fn a_cancel_with_no_turn_in_flight_is_a_no_op() {
+    let (turns_tx, _turns_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (cancels_tx, mut cancels_rx) = tokio::sync::mpsc::unbounded_channel();
+    let session = AcpSession {
+        turns: turns_tx,
+        mode: Arc::new(Mutex::new(Mode::Ask)),
+        model: Arc::new(Mutex::new(None)),
+        cancels: cancels_tx,
+        in_turn: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+
+    assert!(!session.request_cancel(), "no turn is in flight — must report false");
+    assert!(
+        cancels_rx.try_recv().is_err(),
+        "must not send a cancel signal when nothing is in flight"
+    );
+}
+
+/// The other side: a turn genuinely in flight reports `true` and the pump
+/// actually receives the signal — the send half of the seam Task 4 depends on.
+#[test]
+fn a_cancel_with_a_turn_in_flight_signals_the_pump() {
+    let (turns_tx, _turns_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (cancels_tx, mut cancels_rx) = tokio::sync::mpsc::unbounded_channel();
+    let session = AcpSession {
+        turns: turns_tx,
+        mode: Arc::new(Mutex::new(Mode::Ask)),
+        model: Arc::new(Mutex::new(None)),
+        cancels: cancels_tx,
+        in_turn: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+    };
+
+    assert!(session.request_cancel(), "a turn is in flight — must report true");
+    assert!(
+        cancels_rx.try_recv().is_ok(),
+        "the pump must receive the cancel signal"
+    );
 }
 
 fn projection() -> Projection {

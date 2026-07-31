@@ -8,7 +8,7 @@ use hadron_lattice::{
 };
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, InitializeRequest, McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind, PlanEntryStatus,
+    CancelNotification, ContentBlock, InitializeRequest, McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind, PlanEntryStatus,
     PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SelectedPermissionOutcome, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
     StopReason, TextContent, ToolCall, ToolCallContent, ToolCallUpdate, ToolKind, Usage as AcpUsage,
@@ -245,6 +245,32 @@ pub(super) struct AcpSession {
     /// not the one the seat asked for. `None` means the agent advertised no selector,
     /// so we genuinely do not know. Absent is not "the default"; it is unknown.
     pub(super) model: Arc<Mutex<Option<String>>>,
+    /// Signalled to ask the pump to send ACP's own `session/cancel` for whatever
+    /// `session/prompt` is currently in flight. Mirrors `turns`: a channel in,
+    /// serviced from inside the pump thread — never a cloned `cx` driven from a
+    /// foreign runtime (see "Why a channel and not a cloned `cx`" in the plan).
+    pub(super) cancels: tokio::sync::mpsc::UnboundedSender<()>,
+    /// Whether a turn is currently in flight — the same flag the notification
+    /// handler already gates itself on (`in_turn` in `boot`). `request_cancel`
+    /// checks this FIRST so a cancel with nothing running is reported `false`
+    /// rather than silently queued for whatever turn starts next.
+    pub(super) in_turn: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl AcpSession {
+    /// Ask the pump to cancel whatever `session/prompt` is in flight, via ACP's
+    /// own `session/cancel` — graceful, not `reset_session`: the session and its
+    /// context stay alive, only the current turn is asked to stop.
+    ///
+    /// Returns `false` with no effect when no turn is in flight (or the pump is
+    /// gone) — a cancel with nothing to cancel must never queue up and land on
+    /// whatever turn starts next.
+    pub(super) fn request_cancel(&self) -> bool {
+        if !self.in_turn.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
+        self.cancels.send(()).is_ok()
+    }
 }
 
 /// A quark backed by a resident ACP agent.
@@ -315,6 +341,7 @@ impl super::AcpQuark {
         external_roots: Vec<hadron_lattice::ExternalRootSpec>,
     ) -> anyhow::Result<AcpSession> {
         let (turns_tx, mut turns_rx) = tokio::sync::mpsc::unbounded_channel::<TurnRequest>();
+        let (cancels_tx, mut cancels_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<()>>();
 
         let mode = Arc::new(Mutex::new(Mode::default()));
@@ -323,6 +350,13 @@ impl super::AcpQuark {
         // What the agent says it is running, written once at boot by the pump.
         let model = Arc::new(Mutex::new(None::<String>));
         let pump_model = Arc::clone(&model);
+
+        // Whether a turn is in flight — read by `AcpSession::request_cancel` (outside
+        // the pump thread) and written by the pump itself, so — unlike before — it
+        // must be created out HERE and cloned in, not built fresh inside the `move`
+        // closure below.
+        let in_turn = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pump_in_turn = Arc::clone(&in_turn);
 
         // `display_command` is what ever appears in a diagnostic — the bare command
         // line, no secrets. `agent_source` is the JSON stdio descriptor actually
@@ -366,8 +400,9 @@ impl super::AcpQuark {
                     let agent = AcpAgent::from_str(&agent_source)
                         .map_err(|e| anyhow::anyhow!("bad ACP command {display_command:?}: {e}"))?;
 
-                    let in_turn = Arc::new(std::sync::atomic::AtomicBool::new(false));
-                    let pump_in_turn = Arc::clone(&in_turn);
+                    // `pump_in_turn` is the SAME `Arc` `AcpSession::request_cancel` reads —
+                    // moved in from outside the thread now, not built fresh in here.
+                    let in_turn = Arc::clone(&pump_in_turn);
 
                     let connect = agent_client_protocol::Client
                         .builder()
@@ -621,17 +656,45 @@ impl super::AcpQuark {
                             // connection stays open across turns, and each turn is
                             // just another `session/prompt` on the same `sid`.
                             while let Some(turn) = turns_rx.recv().await {
+                                // Drain a stale cancel left over from the PREVIOUS turn's
+                                // tail: `request_cancel` checks `in_turn` before sending,
+                                // but the send can still land in the narrow window after
+                                // the previous turn cleared `in_turn` and before this
+                                // `recv()` returned. Undrained, it would fire on a turn it
+                                // was never meant for.
+                                while cancels_rx.try_recv().is_ok() {}
+
                                 pump_transcript.lock().unwrap().clear();
                                 *pump_context.lock().unwrap() = None;
                                 pump_in_turn.store(true, std::sync::atomic::Ordering::Relaxed);
 
-                                let sent = cx
+                                let prompt_fut = cx
                                     .send_request(PromptRequest::new(
                                         sid.clone(),
                                         vec![ContentBlock::Text(TextContent::new(turn.prompt))],
                                     ))
-                                    .block_task()
-                                    .await;
+                                    .block_task();
+                                tokio::pin!(prompt_fut);
+
+                                // Race the in-flight prompt against a cancel signal. A
+                                // cancel sends ACP's own `session/cancel` (graceful — the
+                                // agent unwinds and resolves the SAME request with
+                                // `StopReason::Cancelled`) and then keeps looping, still
+                                // awaiting `prompt_fut` — it is never dropped. Dropping it
+                                // is the destructive `reset_session` path this is meant to
+                                // replace.
+                                let sent = loop {
+                                    tokio::select! {
+                                        result = &mut prompt_fut => break result,
+                                        signal = cancels_rx.recv() => {
+                                            if signal.is_some() {
+                                                let _ = cx.send_notification(
+                                                    CancelNotification::new(sid.clone()),
+                                                );
+                                            }
+                                        }
+                                    }
+                                };
 
                                 pump_in_turn.store(false, std::sync::atomic::Ordering::Relaxed);
 
@@ -668,7 +731,7 @@ impl super::AcpQuark {
         // `recv` errors only if the thread died without reporting — surface that as a
         // boot failure rather than hanging.
         match ready_rx.recv() {
-            Ok(Ok(())) => Ok(AcpSession { turns: turns_tx, mode, model }),
+            Ok(Ok(())) => Ok(AcpSession { turns: turns_tx, mode, model, cancels: cancels_tx, in_turn }),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(anyhow::anyhow!(
                 "the ACP agent ({}) exited before opening a session",
