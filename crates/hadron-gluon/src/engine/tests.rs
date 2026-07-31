@@ -2883,6 +2883,185 @@ async fn a_message_arriving_mid_turn_is_dispatched_without_waiting() {
     );
 }
 
+/// **Task 6, Step 1 of the responsive-orchestrator plan — the regression guard,
+/// written before the feature.** A second human message to a quark that is
+/// already mid-turn must, for an `Orchestrator`-flavoured seat, be able to start
+/// running *while the first turn is still going* (Jake's "orchestrator never
+/// blocks"). A `Worker`-flavoured seat keeps today's behaviour: its second turn
+/// does not start until the first resolves.
+///
+/// **This test is EXPECTED TO FAIL today (RED).** `in_flight` is a bare
+/// `HashSet<QuarkId>` (`run.rs:132`), so a second turn for the SAME `QuarkId`
+/// literally cannot start while the first is in flight, for either flavour —
+/// there is no lane split yet. The orchestrator assertion below fails until
+/// Task 6 lands; the worker assertion already passes and must keep passing.
+#[tokio::test]
+async fn a_busy_orchestrator_can_take_a_second_turn_but_a_busy_worker_cannot() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    struct SlowCountingQuark {
+        id: QuarkId,
+        flavor: Flavor,
+        call_count: Arc<AtomicUsize>,
+        first_turn_running: Arc<AtomicBool>,
+        second_call_overlapped_first: Arc<AtomicBool>,
+        hold: std::time::Duration,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for SlowCountingQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            self.flavor.clone()
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+            let n = self.call_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if n == 1 {
+                self.first_turn_running.store(true, Ordering::SeqCst);
+                tokio::time::sleep(self.hold).await;
+                self.first_turn_running.store(false, Ordering::SeqCst);
+            } else if self.first_turn_running.load(Ordering::SeqCst) {
+                self.second_call_overlapped_first.store(true, Ordering::SeqCst);
+            }
+            Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
+        }
+    }
+
+    /// Runs the scenario for one flavour and reports whether the second turn
+    /// overlapped the first.
+    async fn overlapped_for(flavor: Flavor) -> bool {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+        seed_human_message(&path, "seat", "first, slow task");
+
+        let first_turn_running = Arc::new(AtomicBool::new(false));
+        let overlapped = Arc::new(AtomicBool::new(false));
+        let mid_flight = {
+            let path = path.clone();
+            let running = first_turn_running.clone();
+            tokio::spawn(async move {
+                for _ in 0..200 {
+                    if running.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+                seed_human_message(&path, "seat", "second, urgent question");
+            })
+        };
+
+        let mut engine = Engine::new(
+            path.clone(),
+            vec![Box::new(SlowCountingQuark {
+                id: QuarkId::new("seat"),
+                flavor,
+                call_count: Arc::new(AtomicUsize::new(0)),
+                first_turn_running: first_turn_running.clone(),
+                second_call_overlapped_first: overlapped.clone(),
+                hold: std::time::Duration::from_millis(500),
+            })],
+            10,
+        );
+        engine.run_until_quiesce().await.unwrap();
+        mid_flight.await.unwrap();
+        overlapped.load(Ordering::SeqCst)
+    }
+
+    assert!(
+        overlapped_for(Flavor::Orchestrator).await,
+        "a busy orchestrator's second message must start before the first turn resolves (Task 6)"
+    );
+    assert!(
+        !overlapped_for(Flavor::Worker).await,
+        "a busy worker's second message must still wait for the running turn to finish"
+    );
+}
+
+/// **Task 6, Step 2.** The same regression guard as above, but against a real
+/// `CliQuark` rather than a bare `Quark` mock — the lane split must not be
+/// something only `AcpQuark` gets. `CliSpec::generic` has `ResumeMode::None`,
+/// so this exercises no resume semantics (that is Task 6a's job); it only
+/// proves the engine-level in_flight gate, which is transport-agnostic.
+///
+/// **Also EXPECTED TO FAIL today**, for the identical reason as above.
+#[tokio::test]
+async fn a_busy_cli_backed_orchestrator_can_take_a_second_turn() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    struct SlowRunner {
+        call_count: Arc<AtomicUsize>,
+        first_turn_running: Arc<AtomicBool>,
+        second_call_overlapped_first: Arc<AtomicBool>,
+        hold: std::time::Duration,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::adapter::runner::CliRunner for SlowRunner {
+        async fn run(
+            &self,
+            _inv: crate::adapter::runner::CliInvocation,
+        ) -> anyhow::Result<crate::adapter::runner::CliResult> {
+            let n = self.call_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if n == 1 {
+                self.first_turn_running.store(true, Ordering::SeqCst);
+                tokio::time::sleep(self.hold).await;
+                self.first_turn_running.store(false, Ordering::SeqCst);
+            } else if self.first_turn_running.load(Ordering::SeqCst) {
+                self.second_call_overlapped_first.store(true, Ordering::SeqCst);
+            }
+            Ok(crate::adapter::runner::CliResult { stdout: "done".into(), exit: 0 })
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+    seed_human_message(&path, "cliseat", "first, slow task");
+
+    let first_turn_running = Arc::new(AtomicBool::new(false));
+    let overlapped = Arc::new(AtomicBool::new(false));
+    let mid_flight = {
+        let path = path.clone();
+        let running = first_turn_running.clone();
+        tokio::spawn(async move {
+            for _ in 0..200 {
+                if running.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            seed_human_message(&path, "cliseat", "second, urgent question");
+        })
+    };
+
+    let quark = crate::adapter::cli::CliQuark::new(
+        QuarkId::new("cliseat"),
+        Flavor::Orchestrator,
+        "",
+        hadron_lattice::CliSpec::generic("true".to_string(), vec![]),
+        SlowRunner {
+            call_count: Arc::new(AtomicUsize::new(0)),
+            first_turn_running: first_turn_running.clone(),
+            second_call_overlapped_first: overlapped.clone(),
+            hold: std::time::Duration::from_millis(500),
+        },
+    );
+
+    let mut engine = Engine::new(path.clone(), vec![Box::new(quark)], 10);
+    engine.run_until_quiesce().await.unwrap();
+    mid_flight.await.unwrap();
+
+    assert!(
+        overlapped.load(Ordering::SeqCst),
+        "a busy CLI-backed orchestrator's second message must start before the first \
+         turn resolves — a lane split written only against AcpQuark would miss this"
+    );
+}
+
 /// Writes one file into whatever directory it is told it works in, then replies.
 /// It records the `cwd` it was handed, so a test can prove two concurrent quarks
 /// were pointed at *different* directories — the property the whole plan exists
