@@ -6158,3 +6158,178 @@ async fn a_busy_quark_with_a_cancel_slot_is_interrupted_by_a_new_message() {
         "the second message must have been re-dispatched and completed after the cancel resolved: {events:?}"
     );
 }
+
+/// **Task 5 of the responsive-orchestrator plan.** A cancel fired against a
+/// quark whose worktree has uncommitted edits must not leave those edits
+/// stranded — a dirty tree blocks the merge gate with
+/// `BlockReason::DirtyWorktree` forever, since nothing else in the dispatch
+/// loop ever commits on the quark's behalf (nucleus `uncommitted-work-dies`).
+///
+/// **Why the assertion is the commit's ORDERING, not just its existence.**
+/// `finish_turn`'s own `commit_turn` call (`engine/turn.rs:299`) already
+/// commits whatever is dirty once a turn resolves — including a gracefully
+/// cancelled one, whose `outcome.message` is `None`. So "is the tree clean
+/// after the interrupt" is true even on `main` *before* this task, purely
+/// because that fallback commit runs, and a test that only checked
+/// `is_dirty()` would never go red. What Task 5 actually changes is WHEN the
+/// commit happens: the plan calls for it **before** the cancel is requested,
+/// so this test has the cancel closure itself check whether the tree was
+/// already clean at the moment it fires — a fact only true once the engine
+/// commits ahead of `request_cancel`, not after.
+#[tokio::test]
+async fn an_interrupted_turn_commits_its_dirty_worktree_before_the_cancel_is_requested() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct WritesThenCancellableQuark {
+        id: QuarkId,
+        cwd: Arc<Mutex<Option<PathBuf>>>,
+        cancelled: Arc<AtomicBool>,
+        tree_was_clean_when_cancel_requested: Arc<AtomicBool>,
+        interrupted_branch: Arc<Mutex<Option<String>>>,
+        excite_count: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for WritesThenCancellableQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        fn attach_cancel_slot(&mut self, slot: crate::quark::CancelSlot) {
+            let cancelled = self.cancelled.clone();
+            let cwd = self.cwd.clone();
+            let tree_was_clean = self.tree_was_clean_when_cancel_requested.clone();
+            let interrupted_branch = self.interrupted_branch.clone();
+            slot.set(Some(Arc::new(move || {
+                if let Some(path) = cwd.lock().unwrap().clone() {
+                    if let Ok(dirty) = crate::worktree::is_dirty(&path) {
+                        tree_was_clean.store(!dirty, Ordering::SeqCst);
+                    }
+                    *interrupted_branch.lock().unwrap() = crate::worktree::current_branch(&path);
+                }
+                cancelled.store(true, Ordering::SeqCst);
+                true
+            })));
+        }
+        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+            *self.cwd.lock().unwrap() = Some(turn.cwd.clone());
+            // Only the FIRST call is the long, interruptible one — a resumed
+            // turn (dispatched after the cancel) must finish quickly so the
+            // test does not wait out a second full hold with nothing left to
+            // interrupt it.
+            let n = self.excite_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if n > 1 {
+                return Ok(TurnOutcome {
+                    message: Some(format!("resumed, diff has wip.txt: {}", turn.git_diff.contains("wip.txt"))),
+                    permission: None,
+                    usage: Default::default(),
+                });
+            }
+            std::fs::write(turn.cwd.join("wip.txt"), "half-finished work\n")?;
+            self.cancelled.store(false, Ordering::SeqCst);
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                if self.cancelled.load(Ordering::SeqCst) {
+                    return Ok(TurnOutcome { message: None, permission: None, usage: Default::default() });
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Ok(TurnOutcome {
+                        message: Some("finished uninterrupted".into()),
+                        permission: None,
+                        usage: Default::default(),
+                    });
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }
+    }
+
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    append_event(
+        &field,
+        &Event::new(
+            Actor::Quark(QuarkId::new("reporter")),
+            Some(QuarkId::new("seat")),
+            Kind::Message { body: "first task".into() },
+        ),
+    )
+    .unwrap();
+
+    let cwd = Arc::new(Mutex::new(None));
+    let tree_was_clean_when_cancel_requested = Arc::new(AtomicBool::new(false));
+
+    let mid_flight = {
+        let field = field.clone();
+        let cwd = cwd.clone();
+        tokio::spawn(async move {
+            for _ in 0..400 {
+                if cwd.lock().unwrap().is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            // Give `excite` a moment past writing the file before interrupting.
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            seed_unaddressed_mention(&field, "seat", "second, urgent task");
+        })
+    };
+
+    let interrupted_branch = Arc::new(Mutex::new(None));
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(WritesThenCancellableQuark {
+            id: QuarkId::new("seat"),
+            cwd: cwd.clone(),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            tree_was_clean_when_cancel_requested: tree_was_clean_when_cancel_requested.clone(),
+            interrupted_branch: interrupted_branch.clone(),
+            excite_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        })],
+        10,
+    )
+    .with_git(root.clone());
+
+    tokio::time::timeout(Duration::from_secs(8), engine.run_until_quiesce())
+        .await
+        .expect("the interrupted turn should resolve well within 8s")
+        .unwrap();
+    mid_flight.await.unwrap();
+
+    assert!(
+        tree_was_clean_when_cancel_requested.load(Ordering::SeqCst),
+        "the worktree was still dirty at the moment the cancel was requested — the WIP \
+         snapshot must be committed BEFORE `request_cancel`, not left to `finish_turn`'s \
+         own fallback commit after the turn resolves"
+    );
+
+    let trees = crate::worktree::list(&root).unwrap();
+    let wt = trees.iter().find(|w| w.quark == QuarkId::new("seat")).expect("seat's worktree must still exist");
+    assert!(!crate::worktree::is_dirty(&wt.path).unwrap(), "the worktree must end up clean");
+
+    // Step 3: the snapshot is durably reachable, not merely uncommitted-then-
+    // discarded. A second, unrelated message drives a genuinely NEW
+    // assignment (its own ULID, its own branch — correct: "second, urgent
+    // task" is not a continuation of "first task"), so the interrupted
+    // branch is no longer the worktree's checked-out one by the time this
+    // runs. That is a separate question from Task 5's own scope (does an
+    // interrupt ever strand dirty work) — the answer here is no: the commit
+    // survives as a real ref, independently of what the next dispatch does.
+    let old_branch = interrupted_branch.lock().unwrap().clone().expect("cancel must have observed a branch");
+    let out = std::process::Command::new("git")
+        .args(["-C", root.to_str().unwrap(), "show", &format!("{old_branch}:wip.txt")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "the WIP snapshot on the interrupted branch `{old_branch}` must remain reachable: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
