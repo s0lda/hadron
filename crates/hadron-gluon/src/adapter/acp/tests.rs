@@ -432,6 +432,7 @@ fn reset_session_drops_the_session_and_stays_rebootable() {
         model: Arc::new(Mutex::new(None)),
         cancels: cancels_tx,
         in_turn: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        live: None,
     });
     assert!(q.session.is_some(), "precondition: a session is open");
 
@@ -457,6 +458,7 @@ fn a_cancel_with_no_turn_in_flight_is_a_no_op() {
         model: Arc::new(Mutex::new(None)),
         cancels: cancels_tx,
         in_turn: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        live: None,
     };
 
     assert!(!session.request_cancel(), "no turn is in flight — must report false");
@@ -478,6 +480,7 @@ fn a_cancel_with_a_turn_in_flight_signals_the_pump() {
         model: Arc::new(Mutex::new(None)),
         cancels: cancels_tx,
         in_turn: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        live: None,
     };
 
     assert!(session.request_cancel(), "a turn is in flight — must report true");

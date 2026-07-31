@@ -83,7 +83,7 @@ impl super::Chamber {
         // The daemon resolves addressees from the body, so ONE message can address
         // several quarks ("@opus do X and @agy do Y") — each is fanned out in turn.
         // (Stripping a single leading mention into `to` would drop the others.)
-        let ev = Event::new(Actor::Human, None, Kind::Message { body: text });
+        let ev = Event::new(Actor::Human, None, Kind::Message { body: text.clone() });
         if let Err(e) = io::append_event(&self.path, &ev) {
             eprintln!("chamber: failed to append steering message: {e}");
             return;
@@ -92,6 +92,41 @@ impl super::Chamber {
         input.update(cx, |state, cx| state.set_value("", window, cx));
         let events = io::read_events(&self.path).unwrap_or_default();
         self.sync_view(&events);
+
+        // Task 7 Step 2: Inform the human if they typed at a mid-turn CLI seat that cannot be interrupted
+        let live_dir = hadron_lattice::live::live_dir(&self.path);
+        let now = chrono::Utc::now();
+        let target_mention = crate::text::split_target(&text).0;
+
+        let mut uninterruptible_notices = Vec::new();
+        for r in &self.view.roster {
+            if r.transport == hadron_lattice::Transport::Cli
+                && r.flavor != Some(hadron_lattice::Flavor::Orchestrator)
+            {
+                let is_busy = matches!(r.state, QuarkState::Excited | QuarkState::Thinking)
+                    || hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), now).is_some();
+
+                if is_busy {
+                    let is_addressed = target_mention.map_or(false, |m| m == r.id || r.display_name.as_deref() == Some(m))
+                        || text.contains(&format!("@{}", r.id))
+                        || r.display_name.as_ref().map_or(false, |dn| text.contains(&format!("@{}", dn)))
+                        || text.contains("@team");
+
+                    if is_addressed {
+                        let name = r.display_name.as_deref().unwrap_or(&r.id).to_string();
+                        uninterruptible_notices.push(name);
+                    }
+                }
+            }
+        }
+
+        for name in uninterruptible_notices {
+            self.post_chat_message(
+                Actor::Gluon,
+                crate::text::uninterruptible_cli_notice(&name),
+                cx,
+            );
+        }
 
         // The human just spoke — always snap to their new message.
         for scroll in &self.chat_scrolls {

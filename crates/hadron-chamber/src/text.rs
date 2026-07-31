@@ -822,6 +822,13 @@ pub fn split_target(args: &str) -> (Option<&str>, &str) {
     }
 }
 
+/// Body for a Gluon chat notice when a human types at a busy CLI seat mid-turn.
+pub fn uninterruptible_cli_notice(target: &str) -> String {
+    format!(
+        "@{target} is a CLI seat currently mid-turn and cannot be interrupted — your message will be picked up when its turn completes."
+    )
+}
+
 /// The chat message a skill command posts, or `None` when the human gave it no
 /// task of their own.
 ///
@@ -1496,6 +1503,13 @@ mod tests {
         assert_eq!(split_target("@ fix the router"), (None, "fix the router"));
         // A lone `@` has no text after it at all.
         assert_eq!(split_target("@"), (None, ""));
+    }
+
+    #[test]
+    fn uninterruptible_cli_notice_formats_clearly() {
+        let msg = uninterruptible_cli_notice("agy");
+        assert!(msg.contains("@agy is a CLI seat currently mid-turn"));
+        assert!(msg.contains("cannot be interrupted"));
     }
 
     /// The message is posted as `Actor::Human`, so every word in it is attributed
