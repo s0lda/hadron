@@ -83,7 +83,7 @@ impl crate::quark::Quark for PermissionQuark {
         self.tasks.lock().unwrap().push(turn.task.clone());
         self.calls += 1;
         if self.calls == 1 {
-            Ok(TurnOutcome { message: None, permission: Some(self.ask.clone()), usage: Default::default() })
+            Ok(TurnOutcome { message: None, permission: Some(self.ask.clone()), ..Default::default()})
         } else {
             // Resumed: a denial is the SAME resume as a grant (the engine never
             // inspects `approved` — see `finish_turn`'s permission block) — it is
@@ -104,7 +104,7 @@ impl crate::quark::Quark for PermissionQuark {
                 })
                 .unwrap_or(false);
             let message = if denied { format!("{} refused", self.reply) } else { self.reply.clone() };
-            Ok(TurnOutcome { message: Some(message), permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some(message), permission: None, ..Default::default()})
         }
     }
 }
@@ -181,7 +181,7 @@ impl crate::quark::Quark for ModeSpyQuark {
     }
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         self.seen.lock().unwrap().push(turn.mode);
-        Ok(TurnOutcome { message: Some("ok".into()), permission: None, usage: Default::default() })
+        Ok(TurnOutcome { message: Some("ok".into()), permission: None, ..Default::default()})
     }
 }
 
@@ -336,7 +336,7 @@ async fn failing_quark_turn_sends_error_message_to_orchestrator() {
             Ok(TurnOutcome {
                 message: Some("acknowledged".into()),
                 permission: None,
-                usage: Default::default(),
+                ..Default::default()
             })
         }
     }
@@ -409,7 +409,7 @@ async fn a_turn_whose_process_dies_without_an_outcome_is_ended_by_the_watchdog()
             Ok(TurnOutcome {
                 message: Some("back from the dead".into()),
                 permission: None,
-                usage: Default::default(),
+                ..Default::default()
             })
         }
     }
@@ -501,7 +501,7 @@ async fn a_turn_that_keeps_publishing_activity_outlives_the_deadline() {
             Ok(TurnOutcome {
                 message: Some("suite green".into()),
                 permission: None,
-                usage: Default::default(),
+                ..Default::default()
             })
         }
     }
@@ -621,7 +621,7 @@ async fn multi_mention_message_fans_out_to_each_named_quark() {
             self.seen.lock().unwrap().push(format!("{}:{}", self.id, turn.task));
             // Reply with no @mention → hand back, so the loop advances to the
             // next unserved addressee rather than a hand-off chain.
-            Ok(TurnOutcome { message: Some(format!("{} done", self.id)), permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some(format!("{} done", self.id)), permission: None, ..Default::default()})
         }
     }
 
@@ -819,7 +819,7 @@ impl crate::quark::Quark for GrantingOrchestrator {
                 Kind::PermissionGrant { approved: self.approved, remember: false },
             ),
         )?;
-        Ok(TurnOutcome { message: Some("adjudicated".into()), permission: None, usage: Default::default() })
+        Ok(TurnOutcome { message: Some("adjudicated".into()), permission: None, ..Default::default()})
     }
 }
 
@@ -1213,7 +1213,7 @@ async fn orchestrator_slash_commands_in_finish_turn() {
             Ok(TurnOutcome {
                 message: msg,
                 permission: None,
-                usage: Default::default(),
+                ..Default::default()
             })
         }
     }
@@ -1372,7 +1372,7 @@ async fn projection_carries_nucleus_digest() {
         }
         async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
             assert!(turn.nucleus_digest.contains("## map.md"));
-            Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some("done".into()), permission: None, ..Default::default()})
         }
     }
 
@@ -1411,7 +1411,7 @@ async fn nucleus_digest_renders_from_a_real_features_file() {
         }
         async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
             assert!(turn.nucleus_digest.contains("Login"), "got: {:?}", turn.nucleus_digest);
-            Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some("done".into()), permission: None, ..Default::default()})
         }
     }
 
@@ -1495,7 +1495,7 @@ async fn unaddressed_human_message_routes_to_the_orchestrator() {
         }
         async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
             self.seen.lock().unwrap().push(turn.task.clone());
-            Ok(TurnOutcome { message: Some("I've got it.".into()), permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some("I've got it.".into()), permission: None, ..Default::default()})
         }
     }
     let seen = Arc::new(Mutex::new(vec![]));
@@ -1578,7 +1578,7 @@ async fn a_message_sent_while_the_quark_is_working_is_not_lost() {
             Ok(TurnOutcome {
                 message: Some(format!("done with {}", turn.task)),
                 permission: None,
-                usage: Default::default(),
+                ..Default::default()
             })
         }
     }
@@ -1678,7 +1678,7 @@ async fn bypass_mode_skips_backstop() {
             } else {
                 None
             };
-            Ok(TurnOutcome { message, permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message, permission: None, ..Default::default()})
         }
     }
 
@@ -1741,6 +1741,7 @@ async fn engine_blocks_depleted_quarks_and_records_usage() {
                     },
                     ..Default::default()
                 },
+                ..Default::default()
             })
         }
     }
@@ -1787,6 +1788,7 @@ impl Quark for SpenderQuark {
                 spend: hadron_lattice::TokenSpend { input: Some(60), output: Some(40), ..Default::default() },
                 ..Default::default()
             },
+            ..Default::default()
         })
     }
 }
@@ -1947,7 +1949,7 @@ async fn the_shared_nucleus_index_actually_reaches_a_quarks_projection() {
             Ok(TurnOutcome {
                 message: Some("done".into()),
                 permission: None,
-                usage: Default::default(),
+                ..Default::default()
             })
         }
     }
@@ -2182,7 +2184,7 @@ async fn a_quark_handed_its_own_plan_is_told_to_hand_verification_to_a_peer() {
             Ok(TurnOutcome {
                 message: Some("done".into()),
                 permission: None,
-                usage: Default::default(),
+                ..Default::default()
             })
         }
     }
@@ -2203,7 +2205,7 @@ async fn a_quark_handed_its_own_plan_is_told_to_hand_verification_to_a_peer() {
             Ok(TurnOutcome {
                 message: Some("idle".into()),
                 permission: None,
-                usage: Default::default(),
+                ..Default::default()
             })
         }
     }
@@ -2258,7 +2260,7 @@ async fn an_ordinary_task_gets_no_skill_and_no_extra_prompt() {
             Ok(TurnOutcome {
                 message: Some("done".into()),
                 permission: None,
-                usage: Default::default(),
+                ..Default::default()
             })
         }
     }
@@ -2324,7 +2326,7 @@ async fn engine_loads_repo_skills() {
                 "the custom skill must also be named in the index/header:\n{}",
                 turn.invariants
             );
-            Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some("done".into()), permission: None, ..Default::default()})
         }
     }
 
@@ -2386,7 +2388,7 @@ async fn engine_uses_injected_global_skills_dir() {
                 "the global skill must also be named in the index/header:\n{}",
                 turn.invariants
             );
-            Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some("done".into()), permission: None, ..Default::default()})
         }
     }
 
@@ -2446,7 +2448,7 @@ async fn engine_routes_a_repo_preon() {
                 "the preon-addressed message must reach the role holder's turn:\n{}",
                 turn.task
             );
-            Ok(TurnOutcome { message: Some("reviewed".into()), permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some("reviewed".into()), permission: None, ..Default::default()})
         }
     }
 
@@ -2517,7 +2519,7 @@ async fn engine_injects_invariants() {
                 turn.available_invariants,
                 vec!["always".to_string(), "rust_style".to_string(), "unrequested".to_string()]
             );
-            Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some("done".into()), permission: None, ..Default::default()})
         }
     }
 
@@ -2559,7 +2561,7 @@ impl crate::quark::Quark for OverlapQuark {
         self.running.store(true, Ordering::SeqCst);
         tokio::time::sleep(self.hold).await;
         self.running.store(false, Ordering::SeqCst);
-        Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
+        Ok(TurnOutcome { message: Some("done".into()), permission: None, ..Default::default()})
     }
 }
 
@@ -2941,7 +2943,7 @@ async fn a_busy_orchestrator_can_take_a_second_turn_but_a_busy_worker_cannot() {
             } else if self.first_turn_running.load(Ordering::SeqCst) {
                 self.second_call_overlapped_first.store(true, Ordering::SeqCst);
             }
-            Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some("done".into()), permission: None, ..Default::default()})
         }
     }
 
@@ -3320,7 +3322,7 @@ impl crate::quark::Quark for WriterQuark {
         Ok(TurnOutcome {
             message: Some(format!("{} wrote {}", self.id.as_str(), self.file)),
             permission: None,
-            usage: Default::default(),
+            ..Default::default()
         })
     }
 }
@@ -3608,7 +3610,7 @@ impl crate::quark::Quark for RecordingWriter {
         Ok(TurnOutcome {
             message: Some(reply),
             permission: None,
-            usage: Default::default(),
+            ..Default::default()
         })
     }
 }
@@ -3950,7 +3952,7 @@ impl crate::quark::Quark for ReportingWriter {
         Ok(TurnOutcome {
             message: Some(self.reply.to_string()),
             permission: None,
-            usage: Default::default(),
+            ..Default::default()
         })
     }
 }
@@ -4290,7 +4292,7 @@ impl Quark for OrchestratorDelegatingWriter {
         Ok(TurnOutcome {
             message: Some(format!("@{} please work on this", self.delegate_to)),
             permission: None,
-            usage: Default::default(),
+            ..Default::default()
         })
     }
 }
@@ -4752,7 +4754,7 @@ impl crate::quark::Quark for RoledQuark {
         EnergyState::Available
     }
     async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
-        Ok(TurnOutcome { message: Some(self.reply.clone()), permission: None, usage: Default::default() })
+        Ok(TurnOutcome { message: Some(self.reply.clone()), permission: None, ..Default::default()})
     }
 }
 
@@ -5221,6 +5223,7 @@ impl Quark for SpendingQuark {
                 },
                 ..Default::default()
             },
+            ..Default::default()
         })
     }
 }
@@ -5390,7 +5393,7 @@ impl crate::quark::Quark for ResettableQuark {
         EnergyState::Available
     }
     async fn excite(&mut self, _t: Projection) -> anyhow::Result<TurnOutcome> {
-        Ok(TurnOutcome { message: Some("ok".into()), permission: None, usage: Default::default() })
+        Ok(TurnOutcome { message: Some("ok".into()), permission: None, ..Default::default()})
     }
     fn reset_session(&mut self) {
         self.was_reset.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -5426,7 +5429,7 @@ impl crate::quark::Quark for RebootingSlowQuark {
         .unwrap();
         tokio::time::sleep(self.hold).await;
         // Only reached if the abort never happened — the assertion catches it.
-        Ok(TurnOutcome { message: Some("SLOW DONE".into()), permission: None, usage: Default::default() })
+        Ok(TurnOutcome { message: Some("SLOW DONE".into()), permission: None, ..Default::default()})
     }
     fn reset_session(&mut self) {
         self.was_reset.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -5638,7 +5641,7 @@ async fn gluon_notification_to_orchestrator_resolves_gluon_driver_and_does_not_l
         fn energy(&self) -> EnergyState { EnergyState::Available }
         async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
             self.turns.lock().unwrap().push(turn.task);
-            Ok(TurnOutcome { message: Some("handled error notification".into()), permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some("handled error notification".into()), permission: None, ..Default::default()})
         }
     }
 
@@ -5981,7 +5984,7 @@ async fn a_busy_quark_with_no_cancel_slot_is_not_interrupted() {
         async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
             self.excite_count.fetch_add(1, Ordering::SeqCst);
             tokio::time::sleep(self.hold).await;
-            Ok(TurnOutcome { message: Some("done".into()), permission: None, usage: Default::default() })
+            Ok(TurnOutcome { message: Some("done".into()), permission: None, ..Default::default()})
         }
     }
 
@@ -6077,13 +6080,13 @@ async fn a_busy_quark_with_a_cancel_slot_is_interrupted_by_a_new_message() {
             let deadline = tokio::time::Instant::now() + self.hold;
             loop {
                 if self.cancelled.load(Ordering::SeqCst) {
-                    return Ok(TurnOutcome { message: None, permission: None, usage: Default::default() });
+                    return Ok(TurnOutcome { message: None, permission: None, ..Default::default()});
                 }
                 if tokio::time::Instant::now() >= deadline {
                     return Ok(TurnOutcome {
                         message: Some(format!("done: {}", turn.task)),
                         permission: None,
-                        usage: Default::default(),
+                        ..Default::default()
                     });
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -6227,7 +6230,7 @@ async fn an_interrupted_turn_commits_its_dirty_worktree_before_the_cancel_is_req
                 return Ok(TurnOutcome {
                     message: Some(format!("resumed, diff has wip.txt: {}", turn.git_diff.contains("wip.txt"))),
                     permission: None,
-                    usage: Default::default(),
+                    ..Default::default()
                 });
             }
             std::fs::write(turn.cwd.join("wip.txt"), "half-finished work\n")?;
@@ -6235,13 +6238,13 @@ async fn an_interrupted_turn_commits_its_dirty_worktree_before_the_cancel_is_req
             let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
             loop {
                 if self.cancelled.load(Ordering::SeqCst) {
-                    return Ok(TurnOutcome { message: None, permission: None, usage: Default::default() });
+                    return Ok(TurnOutcome { message: None, permission: None, ..Default::default()});
                 }
                 if tokio::time::Instant::now() >= deadline {
                     return Ok(TurnOutcome {
                         message: Some("finished uninterrupted".into()),
                         permission: None,
-                        usage: Default::default(),
+                        ..Default::default()
                     });
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -6331,5 +6334,170 @@ async fn an_interrupted_turn_commits_its_dirty_worktree_before_the_cancel_is_req
         out.status.success(),
         "the WIP snapshot on the interrupted branch `{old_branch}` must remain reachable: {}",
         String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// **Task 9, Defect 1.** A turn that resolves with `TurnOutcome.cancelled == true`
+/// must never reach the merge gate — even though its `message` is `None`, which
+/// is the exact shape `assignment_complete` reads as "hands back to the human,
+/// done". Before the fix, an interrupted turn's dirty-but-now-committed branch
+/// (Task 5) would be gated, tested, and — with a green suite — fast-forwarded
+/// onto `base`, landing work whose own content was discarded by the cancel
+/// (Task 2's probe). Asserted on the gate never running (`OrderRecordingRunner`
+/// stays empty) and the branch never landing (`base` HEAD unmoved), not on a
+/// log line.
+#[tokio::test]
+async fn a_cancelled_turn_never_reaches_the_merge_gate() {
+    struct CancelledOutcomeQuark {
+        id: QuarkId,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for CancelledOutcomeQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+            // Simulates exactly what `AcpSession::run_turn` now reports for a
+            // real `StopReason::Cancelled` resolution: no message, and the fact
+            // stated explicitly rather than left to be inferred.
+            std::fs::write(turn.cwd.join("half-done.txt"), "cut off mid-work\n")?;
+            Ok(TurnOutcome { message: None, cancelled: true, ..Default::default() })
+        }
+    }
+
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("seat"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@seat do something".into() }),
+    )
+    .unwrap();
+
+    let base_before = crate::snapshot::git(&root, &["rev-parse", "HEAD"]).unwrap();
+    let calls = Arc::new(Mutex::new(Vec::new()));
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(CancelledOutcomeQuark { id: QuarkId::new("seat") })],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(OrderRecordingRunner(calls.clone())));
+
+    engine.run_until_quiesce().await.unwrap();
+
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "the merge gate ran ({:?}) on a turn that resolved cancelled",
+        calls.lock().unwrap()
+    );
+    let base_after = crate::snapshot::git(&root, &["rev-parse", "HEAD"]).unwrap();
+    assert_eq!(base_before, base_after, "a cancelled turn's branch must never land");
+}
+
+/// **Task 9, Defect 2.** A graceful cancel that never resolves in time must
+/// still ground the abandoned turn when the deadline fallback aborts it —
+/// otherwise `next_pending` keeps finding the old dispatch record unanswered
+/// and re-excites the quark onto the STALE task, instead of the message that
+/// actually interrupted it. Uses `with_cancel_deadline` to make the fallback
+/// fire in milliseconds rather than the real 5s.
+#[tokio::test]
+async fn a_deadline_abandoned_turn_is_grounded_not_left_stale() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct IgnoresCancelQuark {
+        id: QuarkId,
+        excite_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for IgnoresCancelQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        fn attach_cancel_slot(&mut self, slot: crate::quark::CancelSlot) {
+            // Acknowledges the request (`true`) but nothing in `excite` below
+            // ever checks it — simulating a transport whose graceful cancel
+            // never actually lands, forcing the CANCEL_DEADLINE fallback.
+            slot.set(Some(Arc::new(|| true)));
+        }
+        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+            let n = self.excite_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if n == 1 {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                return Ok(TurnOutcome { message: Some("finished uninterrupted".into()), ..Default::default() });
+            }
+            Ok(TurnOutcome { message: Some(format!("resumed on: {}", turn.task)), ..Default::default() })
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+    append_event(
+        &path,
+        &Event::new(
+            Actor::Quark(QuarkId::new("reporter")),
+            Some(QuarkId::new("seat")),
+            Kind::Message { body: "first task".into() },
+        ),
+    )
+    .unwrap();
+
+    let excite_count = Arc::new(AtomicUsize::new(0));
+    let mid_flight = {
+        let path = path.clone();
+        let excite_count = excite_count.clone();
+        tokio::spawn(async move {
+            for _ in 0..400 {
+                if excite_count.load(Ordering::SeqCst) >= 1 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            seed_unaddressed_mention(&path, "seat", "second, urgent task");
+        })
+    };
+
+    let mut engine = Engine::new(
+        path.clone(),
+        vec![Box::new(IgnoresCancelQuark { id: QuarkId::new("seat"), excite_count: excite_count.clone() })],
+        10,
+    )
+    .with_cancel_deadline(Duration::from_millis(50));
+
+    tokio::time::timeout(Duration::from_secs(8), engine.run_until_quiesce())
+        .await
+        .expect("the deadline fallback should have unstuck this well within 8s")
+        .unwrap();
+    mid_flight.await.unwrap();
+
+    let events = read_events(&path).unwrap();
+    assert!(
+        !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("resumed on: first task"))),
+        "the quark was re-excited onto the ABANDONED assignment before the interrupting \
+         message — without grounding, `next_pending` still finds the old dispatch record \
+         unanswered and redispatches it first: {events:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(&e.kind, Kind::Message { body }
+            if body.contains("resumed on: @seat second, urgent task"))),
+        "the quark was never re-excited onto the interrupting message at all: {events:?}"
     );
 }

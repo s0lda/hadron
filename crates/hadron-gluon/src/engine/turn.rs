@@ -75,6 +75,13 @@ impl super::Engine {
         // wrong the first time two quarks answer at once. Stamped here, at the single
         // place a turn's events are written, so they cannot disagree.
         let turn = ulid::Ulid::new();
+        // A cancelled turn is not a completed one (Task 9 of `.hadron/docs/plans/
+        // 2026-07-31-responsive-orchestrator.md`): `addressee`'s `None` arm below
+        // means "hands back to the human, done" as much as it means "was cut off
+        // mid-work" — an absent message cannot tell the two apart, and
+        // `assignment_complete` used to read a cancelled turn as the former. Read
+        // once, straight off the fact the adapter reported, not re-derived.
+        let cancelled = outcome.cancelled;
         // Loaded once for the whole turn-completion, not once per `parse_addressee`
         // call below — both calls resolve mentions in the SAME reply/turn, so one
         // fresh read of the preons corpus covers both.
@@ -326,7 +333,13 @@ impl super::Engine {
             // Keying on this rather than mention-absence alone is Task 6: before it, a
             // worker's `@orchestrator`-addressed completion never gated, so its branch
             // stranded every turn while the swarm believed it had landed.
-            if self.assignment_complete(target, addressee.as_ref())
+            //
+            // `!cancelled` first, and separate from `assignment_complete`: a cancelled
+            // turn's `addressee` is `None` for the same structural reason a genuine
+            // hand-back's is (no message to parse an `@mention` from), so
+            // `assignment_complete` alone cannot exclude it — Task 9.
+            if !cancelled
+                && self.assignment_complete(target, addressee.as_ref())
                 && self.merge.is_some()
                 && self.merge_gate(target, t).await?
             {
