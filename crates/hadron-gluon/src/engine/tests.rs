@@ -3109,6 +3109,170 @@ async fn a_busy_cli_backed_orchestrator_can_take_a_second_turn() {
     );
 }
 
+#[tokio::test]
+async fn a_reseat_retains_the_orchestrators_chat_lane() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    struct ReseatSlowRunner {
+        call_count: Arc<AtomicUsize>,
+        first_turn_running: Arc<AtomicBool>,
+        second_call_overlapped_first: Arc<AtomicBool>,
+        hold: std::time::Duration,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::adapter::runner::CliRunner for ReseatSlowRunner {
+        async fn run(
+            &self,
+            _inv: crate::adapter::runner::CliInvocation,
+        ) -> anyhow::Result<crate::adapter::runner::CliResult> {
+            let n = self.call_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if n == 1 {
+                self.first_turn_running.store(true, Ordering::SeqCst);
+                tokio::time::sleep(self.hold).await;
+                self.first_turn_running.store(false, Ordering::SeqCst);
+            } else if self.first_turn_running.load(Ordering::SeqCst) {
+                self.second_call_overlapped_first.store(true, Ordering::SeqCst);
+            }
+            Ok(crate::adapter::runner::CliResult { stdout: "done".into(), exit: 0 })
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+
+    append_event(
+        &path,
+        &Event::new(
+            Actor::Quark(QuarkId::new("reporter")),
+            Some(QuarkId::new("cliseat")),
+            Kind::Message { body: "first, slow task".into() },
+        ),
+    )
+    .unwrap();
+
+    let first_turn_running = Arc::new(AtomicBool::new(false));
+    let overlapped = Arc::new(AtomicBool::new(false));
+    let mid_flight = {
+        let path = path.clone();
+        let running = first_turn_running.clone();
+        tokio::spawn(async move {
+            for _ in 0..200 {
+                if running.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            seed_human_message(&path, "cliseat", "second, urgent question");
+        })
+    };
+
+    let call_count = Arc::new(AtomicUsize::new(0));
+    let work = crate::adapter::cli::CliQuark::new(
+        QuarkId::new("cliseat"),
+        Flavor::Orchestrator,
+        "",
+        hadron_lattice::CliSpec::generic("true".to_string(), vec![]),
+        ReseatSlowRunner {
+            call_count: call_count.clone(),
+            first_turn_running: first_turn_running.clone(),
+            second_call_overlapped_first: overlapped.clone(),
+            hold: std::time::Duration::from_millis(500),
+        },
+    );
+    let chat = crate::adapter::cli::CliQuark::new(
+        QuarkId::new("cliseat"),
+        Flavor::Orchestrator,
+        "",
+        hadron_lattice::CliSpec::generic("true".to_string(), vec![]),
+        ReseatSlowRunner {
+            call_count: call_count.clone(),
+            first_turn_running: first_turn_running.clone(),
+            second_call_overlapped_first: overlapped.clone(),
+            hold: std::time::Duration::from_millis(500),
+        },
+    );
+
+    let mut engine = Engine::new(path.clone(), vec![Box::new(work)], 10);
+    engine.seat_chat_lane(&QuarkId::new("cliseat"), Box::new(chat));
+
+    let replacement_work = crate::adapter::cli::CliQuark::new(
+        QuarkId::new("cliseat"),
+        Flavor::Orchestrator,
+        "",
+        hadron_lattice::CliSpec::generic("true".to_string(), vec![]),
+        ReseatSlowRunner {
+            call_count: call_count.clone(),
+            first_turn_running: first_turn_running.clone(),
+            second_call_overlapped_first: overlapped.clone(),
+            hold: std::time::Duration::from_millis(500),
+        },
+    );
+    let replacement_chat = crate::adapter::cli::CliQuark::new(
+        QuarkId::new("cliseat"),
+        Flavor::Orchestrator,
+        "",
+        hadron_lattice::CliSpec::generic("true".to_string(), vec![]),
+        ReseatSlowRunner {
+            call_count: call_count.clone(),
+            first_turn_running: first_turn_running.clone(),
+            second_call_overlapped_first: overlapped.clone(),
+            hold: std::time::Duration::from_millis(500),
+        },
+    );
+
+    engine.seat(Box::new(replacement_work));
+    engine.seat_chat_lane(&QuarkId::new("cliseat"), Box::new(replacement_chat));
+
+    engine.run_until_quiesce().await.unwrap();
+    mid_flight.await.unwrap();
+
+    assert!(
+        overlapped.load(Ordering::SeqCst),
+        "a reseated orchestrator must retain its chat lane and allow non-blocking concurrent chat turns"
+    );
+}
+
+#[tokio::test]
+async fn a_reseat_clears_chat_lane_when_orchestrator_becomes_worker() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+
+    let work = crate::adapter::cli::CliQuark::new(
+        QuarkId::new("cliseat"),
+        Flavor::Orchestrator,
+        "",
+        hadron_lattice::CliSpec::generic("true".to_string(), vec![]),
+        crate::adapter::runner::FakeRunner::with_stdout(vec!["ok"]),
+    );
+    let chat = crate::adapter::cli::CliQuark::new(
+        QuarkId::new("cliseat"),
+        Flavor::Orchestrator,
+        "",
+        hadron_lattice::CliSpec::generic("true".to_string(), vec![]),
+        crate::adapter::runner::FakeRunner::with_stdout(vec!["ok"]),
+    );
+
+    let mut engine = Engine::new(path, vec![Box::new(work)], 10);
+    engine.seat_chat_lane(&QuarkId::new("cliseat"), Box::new(chat));
+
+    assert!(engine.quarks.get(&QuarkId::new("cliseat")).unwrap().chat.is_some());
+
+    let worker_replacement = crate::adapter::cli::CliQuark::new(
+        QuarkId::new("cliseat"),
+        Flavor::Worker,
+        "",
+        hadron_lattice::CliSpec::generic("true".to_string(), vec![]),
+        crate::adapter::runner::FakeRunner::with_stdout(vec!["ok"]),
+    );
+    engine.seat(Box::new(worker_replacement));
+
+    assert!(
+        engine.quarks.get(&QuarkId::new("cliseat")).unwrap().chat.is_none(),
+        "reseating an orchestrator as a worker must clear the chat lane"
+    );
+}
+
 /// Writes one file into whatever directory it is told it works in, then replies.
 /// It records the `cwd` it was handed, so a test can prove two concurrent quarks
 /// were pointed at *different* directories — the property the whole plan exists

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use hadron_lattice::{
-    Event, QuarkCard, QuarkId,
+    Event, Flavor, QuarkCard, QuarkId,
 };
 use tokio::sync::Mutex as AsyncMutex;
 use ulid::Ulid;
@@ -613,12 +613,18 @@ impl Engine {
         } else {
             self.resident.remove(&id);
         }
-        // A replacement's chat lane, if it has one, survives — only the work
-        // lane instance changes. A brand-new seat starts with no chat lane;
+        // A replacement's chat lane, if it has one, survives if the replacement is also an Orchestrator;
+        // if the replacement is a Worker, the chat lane is cleared. A brand-new seat starts with no chat lane;
         // `seat_chat_lane` is how one is attached.
+        let flavor = quark.flavor();
         let work: SharedQuark = Arc::new(AsyncMutex::new(quark));
         match self.quarks.get_mut(&id) {
-            Some(lanes) => lanes.work = work,
+            Some(lanes) => {
+                lanes.work = work;
+                if flavor != Flavor::Orchestrator {
+                    lanes.chat = None;
+                }
+            }
             None => {
                 self.quarks.insert(id, Lanes { work, chat: None });
             }
