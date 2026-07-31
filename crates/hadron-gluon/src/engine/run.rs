@@ -92,6 +92,20 @@ impl super::Engine {
         // out the 30-minute deadline. Kept in lockstep with `in_flight`: inserted at
         // spawn, removed the instant a turn joins or is rebooted.
         let mut abort_handles: HashMap<(QuarkId, Lane), AbortHandle> = HashMap::new();
+        // When a graceful cancel was requested for an in-flight turn, and when — so a
+        // second poll tick does not re-request it (the point of the slot is ONE
+        // cancel per interruption, not a cancel every 150ms until it resolves), and
+        // so a request that never resolves can be bounded against `CANCEL_DEADLINE`
+        // rather than left to wait out `TURN_DEADLINE`. Cleared wherever the matching
+        // `in_flight` entry is: both `join_next` arms below, and the deadline
+        // fallback itself.
+        let mut cancel_requested: HashMap<(QuarkId, Lane), std::time::Instant> = HashMap::new();
+        // How many events existed when each in-flight turn was dispatched — the
+        // boundary `message_arrived_since` measures "new" against. Without it, a
+        // turn's own dispatch record (`pending_targets` legitimately still calls it
+        // pending every pass it runs) would look identical to a fresh interrupting
+        // message. Kept in lockstep with `in_flight`, same as `cancel_requested`.
+        let mut dispatched_at_len: HashMap<(QuarkId, Lane), usize> = HashMap::new();
         // The assignment rides along with the turn so that `finish_turn` can stamp
         // `answers` on what the turn emits. Without it, "has this quark answered the
         // human?" degenerates into "has it said anything since?", which silently eats
@@ -124,6 +138,15 @@ impl super::Engine {
                 let rebooted = self
                     .service_reboots(&events, &mut in_flight, &mut abort_handles)
                     .await?;
+                // A force-restarted seat's turn is gone whether or not a cancel was
+                // pending for it — drop the bookkeeping so it cannot outlive the
+                // `in_flight` entry it described.
+                for target in &rebooted {
+                    cancel_requested.remove(&(target.clone(), Lane::Work));
+                    cancel_requested.remove(&(target.clone(), Lane::Chat));
+                    dispatched_at_len.remove(&(target.clone(), Lane::Work));
+                    dispatched_at_len.remove(&(target.clone(), Lane::Chat));
+                }
 
                 for (target, fallback_task) in self.pending_targets(&events) {
                     // Resolved once, up front, so the in_flight check below and the
@@ -142,7 +165,57 @@ impl super::Engine {
                     // was appended after this `events` snapshot, so on THIS snapshot the
                     // answered message still reads as pending — dispatching now would
                     // re-excite the very turn we just aborted. Next read sees the Ground.
-                    if in_flight.contains(&(target.clone(), lane)) || rebooted.contains(&target) {
+                    let key = (target.clone(), lane);
+                    if in_flight.contains(&key) || rebooted.contains(&target) {
+                        // A newly-pending message for a seat that is already working:
+                        // interrupt it instead of leaving the message queued behind a
+                        // turn that may run for a long time (Task 4 of
+                        // `.hadron/docs/plans/2026-07-31-responsive-orchestrator.md`).
+                        // Only reachable when `in_flight` itself holds `key` — a
+                        // seat caught by the `rebooted` half of the condition was
+                        // already cleared from `in_flight` by `service_reboots` on
+                        // THIS pass, so there is nothing here left to cancel.
+                        if in_flight.contains(&key) {
+                            if let Some(requested_at) = cancel_requested.get(&key).copied() {
+                                // Already asked once — bound the wait. A transport
+                                // that ignores `session/cancel` (or has none) must
+                                // not wedge this seat for the message's sake; fall
+                                // through to the same destructive abort-and-reset
+                                // `service_reboots` already uses for a human force-
+                                // restart, so the still-unanswered message gets a
+                                // fresh turn on the next pass instead of waiting out
+                                // `TURN_DEADLINE`.
+                                if requested_at.elapsed() >= CANCEL_DEADLINE {
+                                    if let Some(handle) = abort_handles.remove(&key) {
+                                        handle.abort();
+                                    }
+                                    in_flight.remove(&key);
+                                    cancel_requested.remove(&key);
+                                    dispatched_at_len.remove(&key);
+                                    let quark =
+                                        self.quarks.get(&target).and_then(|lanes| lanes.get(lane)).cloned();
+                                    if let Some(quark) = quark {
+                                        quark.lock().await.reset_session();
+                                    }
+                                }
+                            } else {
+                                // `pending_targets` resurfaces THIS turn's own still-
+                                // open dispatch record every pass it runs — that is
+                                // exactly what the plain `in_flight` skip has always
+                                // absorbed as a no-op, and is not a reason to cancel
+                                // anything. Only a genuinely new `Message` appended
+                                // since dispatch (`message_arrived_since`) is.
+                                let since = dispatched_at_len.get(&key).copied().unwrap_or(0);
+                                if self.message_arrived_since(&events, &target, since)
+                                    && self
+                                        .cancel_slots
+                                        .get(&key)
+                                        .is_some_and(|slot| slot.request_cancel())
+                                {
+                                    cancel_requested.insert(key, std::time::Instant::now());
+                                }
+                            }
+                        }
                         continue;
                     }
 
@@ -486,6 +559,7 @@ impl super::Engine {
                         };
                         (turn_id, lane, turn_tree, assignment, outcome)
                     });
+                    dispatched_at_len.insert((target.clone(), lane), events.len());
                     abort_handles.insert((target.clone(), lane), abort);
                     in_flight.insert((target, lane));
                     exchanges += 1;
@@ -537,6 +611,8 @@ impl super::Engine {
                 Ok((target, lane, tree, assignment, Ok(outcome))) => {
                     in_flight.remove(&(target.clone(), lane));
                     abort_handles.remove(&(target.clone(), lane));
+                    cancel_requested.remove(&(target.clone(), lane));
+                    dispatched_at_len.remove(&(target.clone(), lane));
                     if let Err(err) =
                         self.finish_turn(&target, outcome, tree.as_ref(), assignment).await
                     {
@@ -550,6 +626,8 @@ impl super::Engine {
                     // quark reads as forever-working. Its siblings keep running.
                     in_flight.remove(&(target.clone(), lane));
                     abort_handles.remove(&(target.clone(), lane));
+                    cancel_requested.remove(&(target.clone(), lane));
+                    dispatched_at_len.remove(&(target.clone(), lane));
                     let err_msg = self.format_error_message(&target, &err);
                     let _ = self
                         .append(
@@ -585,6 +663,8 @@ impl super::Engine {
                     // JoinError alone, so ground every quark still in flight rather than
                     // strand one Excited, and abort.
                     abort_handles.clear();
+                    cancel_requested.clear();
+                    dispatched_at_len.clear();
                     for (target, _lane) in std::mem::take(&mut in_flight) {
                         let _ = self
                             .append(Event::new(

@@ -235,6 +235,13 @@ pub(super) struct TurnReply {
 /// The live connection: a handle onto the pump thread. Dropping it drops the
 /// channel, which ends the pump's loop, which tears down the connection and reaps
 /// the agent subprocess.
+///
+/// `Clone`: every field is already a `Sender`/`Arc` — cloning shares the same
+/// pump, never spawns a second one. This is what lets `sync_cancel_slot`
+/// (Task 4) hand a `CancelSlot` a cheap clone to call `request_cancel` through,
+/// without going anywhere near the `Mutex<Box<dyn Quark>>` that wraps the
+/// whole `AcpQuark` for the duration of a turn.
+#[derive(Clone)]
 pub(super) struct AcpSession {
     pub(super) turns: tokio::sync::mpsc::UnboundedSender<TurnRequest>,
     /// The permission posture the pump should apply, swapped in before each turn.
@@ -780,6 +787,10 @@ impl super::AcpQuark {
                 self.external_roots.clone(),
             )?);
         }
+        // The session is guaranteed `Some` from here on (freshly booted, or already
+        // open) — sync once, rather than at both the reset-on-empty-window branch
+        // and the boot branch separately.
+        self.sync_cancel_slot();
         let session = self.session.as_ref().expect("just booted");
 
         // The posture the permission handler will apply for this turn.
@@ -794,6 +805,7 @@ impl super::AcpQuark {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         if session.turns.send(TurnRequest { prompt, reply: reply_tx }).is_err() {
             self.session = None;
+            self.sync_cancel_slot();
             anyhow::bail!("the ACP agent's session is gone (it will re-boot on the next turn)");
         }
 
@@ -801,6 +813,7 @@ impl super::AcpQuark {
             Ok(reply) => reply,
             Err(_) => {
                 self.session = None;
+                self.sync_cancel_slot();
                 anyhow::bail!("the ACP agent died mid-turn (it will re-boot on the next turn)");
             }
         };
@@ -810,6 +823,7 @@ impl super::AcpQuark {
             Ok(r) => r,
             Err(e) => {
                 self.session = None;
+                self.sync_cancel_slot();
                 return Err(e);
             }
         };
