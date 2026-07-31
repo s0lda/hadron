@@ -168,6 +168,27 @@ impl<R: CliRunner> CliQuark<R> {
     }
 
     /// Set the energy limit.
+    /// Mark this instance as an orchestrator seat's **chat lane** (`Engine`'s `Lanes`),
+    /// which makes it stateless: it never resumes a conversation and always re-sends
+    /// the field window.
+    ///
+    /// It does that by clearing `spec.resume` rather than adding a second flag, and
+    /// that is the whole point. `resident` and `spec.resume` are already read together
+    /// in both places that matter — the resume flag in [`Self::invocation`] and the
+    /// field-window drop in `excite` — so a lane with `ResumeMode::None` is correct at
+    /// both sites through the logic that is already there. A parallel `is_chat_lane`
+    /// bool would have to be consulted at both, and a third site added later would
+    /// forget it (the failure in nucleus `a-fix-that-guards-the-preset-does-not-guard-the-seat`,
+    /// which this repo has now paid for twice).
+    ///
+    /// Why it must exist: a `ResumeMode::Continue` CLI (`agy`) resumes ONE conversation
+    /// per working directory. Two lanes both passing `--continue` would interleave into
+    /// it, and each would read the other's turns as its own history.
+    pub fn as_chat_lane(mut self) -> Self {
+        self.become_chat_lane();
+        self
+    }
+
     pub fn with_energy_limit(mut self, limit: Option<u32>) -> Self {
         self.energy_limit = limit;
         self
@@ -252,6 +273,14 @@ impl<R: CliRunner> CliQuark<R> {
 
 #[async_trait]
 impl<R: CliRunner> Quark for CliQuark<R> {
+    /// A chat lane is made stateless by clearing `spec.resume`, not by a parallel flag.
+    /// `resident` and `spec.resume` are already read together at both sites that matter —
+    /// the resume flag in [`CliQuark::invocation`] and the field-window drop in
+    /// [`Quark::excite`] — so `ResumeMode::None` is correct at both through logic that is
+    /// already there, and a site added later cannot forget to consult a second bool.
+    fn become_chat_lane(&mut self) {
+        self.spec.resume = ResumeMode::None;
+    }
     fn id(&self) -> QuarkId {
         self.id.clone()
     }
@@ -582,6 +611,45 @@ mod tests {
         assert!(
             !chat_q.resident(),
             "chat lane turn never marks its quark resident"
+        );
+    }
+
+    /// **The chat lane must not steal the work lane's conversation.** An orchestrator
+    /// seat runs two `CliQuark` instances (`Engine`'s `Lanes`). A `ResumeMode::Continue`
+    /// CLI — which is what `agy` is — resumes ONE conversation, scoped per working
+    /// directory, so if both lanes passed `--continue` they would interleave into it and
+    /// each would read the other's turns as its own history. The chat lane is therefore
+    /// stateless by construction: no resume flag, ever, and the full field window every
+    /// turn (which is correct for it — its turns are short by design).
+    ///
+    /// The inverse of `a_resumed_turn_continues_the_session_and_stops_resending_the_field`
+    /// above, same fixture, one call different.
+    #[tokio::test]
+    async fn a_chat_lane_never_resumes_the_work_lanes_conversation() {
+        let runner = FakeRunner::with_stdout(vec!["one", "two"]);
+        let mut q = CliQuark::new(QuarkId::new("agy"), Flavor::Orchestrator, "", CliSpec::agy(), runner)
+            .as_chat_lane();
+
+        let mut first = projection_mode("first task", Mode::Bypass);
+        first.field_window = vec![Event::new(
+            Actor::Human,
+            None,
+            Kind::Message { body: "MEMORABLE-TRANSCRIPT-LINE".into() },
+        )];
+        let mut second = first.clone();
+        second.task = "second task".into();
+
+        q.excite(first).await.unwrap();
+        q.excite(second).await.unwrap();
+
+        let recorded = q.runner.recorded.lock().unwrap();
+        assert!(
+            !recorded.iter().any(|inv| inv.args.iter().any(|a| a == "--continue")),
+            "a chat lane resumed a conversation it does not own"
+        );
+        assert!(
+            recorded[1].args[1].contains("MEMORABLE-TRANSCRIPT-LINE"),
+            "a stateless lane must keep re-sending the field it has no way to recall"
         );
     }
 
