@@ -65,6 +65,21 @@ pub trait Quark: Send {
     fn has_forge_tools(&self) -> bool {
         false
     }
+    /// Tell this instance it is an orchestrator seat's **chat lane** rather than its work
+    /// lane (`Engine`'s `Lanes`). Called once, at seating, before any turn runs.
+    ///
+    /// Defaults to a **no-op**, which is correct for every transport that keeps no
+    /// cross-turn conversation of its own: two ACP lanes are two independent
+    /// `session/new` sessions (proved by the Task 1 probe), so neither can tread on the
+    /// other and there is nothing to tell them. Only a CLI seat with
+    /// `ResumeMode::Continue` — `agy` — has a single per-working-directory conversation
+    /// that two lanes would interleave into, and `CliQuark` overrides this to make its
+    /// chat lane stateless.
+    ///
+    /// A default-no-op rather than a required method on purpose: a transport added later
+    /// is single-conversation only if it says so, and forgetting to implement this cannot
+    /// silently corrupt a conversation that does not exist.
+    fn become_chat_lane(&mut self) {}
     /// Run one turn against a projection and return the field message (if any).
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome>;
 

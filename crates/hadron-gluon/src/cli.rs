@@ -498,7 +498,12 @@ pub async fn run() {
             continue;
         }
         match registry::build_seat_watched(seat, &live_dir, &secret_store) {
-            Ok(chat) => {
+            Ok(mut chat) => {
+                // Tell it that it IS the chat lane before it ever runs a turn. A no-op
+                // for ACP (two sessions are independent), but a CLI seat with
+                // `ResumeMode::Continue` would otherwise `--continue` the work lane's
+                // one per-working-directory conversation and interleave into it.
+                chat.become_chat_lane();
                 engine.seat_chat_lane(&seat.id, chat);
                 eprintln!("  {} — chat lane seated (never blocks on a busy work lane)", seat.id.as_str());
             }
