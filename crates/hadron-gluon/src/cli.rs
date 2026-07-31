@@ -489,6 +489,22 @@ pub async fn run() {
             eprintln!("  {} is seated but DISABLED — it will not take turns", seat.id.as_str());
         }
     }
+    // Give every orchestrator-flavoured seat a second, chat-only lane (Task 6 Step 4
+    // of the responsive-orchestrator plan) — built through the SAME construction path
+    // as the work lane above, so it gets an identical adapter/config. A build failure
+    // here is non-fatal: the seat still runs, just on today's single-lane behaviour.
+    for seat in &team.quarks {
+        if seat.flavor != Flavor::Orchestrator {
+            continue;
+        }
+        match registry::build_seat_watched(seat, &live_dir, &secret_store) {
+            Ok(chat) => {
+                engine.seat_chat_lane(&seat.id, chat);
+                eprintln!("  {} — chat lane seated (never blocks on a busy work lane)", seat.id.as_str());
+            }
+            Err(e) => eprintln!("  {} — could not seat a chat lane: {e:#}", seat.id.as_str()),
+        }
+    }
 
     eprintln!(
         "hadron-gluon ({mode_label}) watching {}",

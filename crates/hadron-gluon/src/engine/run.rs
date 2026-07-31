@@ -82,18 +82,23 @@ impl super::Engine {
     /// idle while it is mid-thought.
     pub async fn run_until_quiesce(&mut self) -> anyhow::Result<()> {
         let mut exchanges = 0usize;
-        let mut in_flight: HashSet<QuarkId> = HashSet::new();
+        // Keyed by (seat, lane), not bare `QuarkId`: a seat with a chat lane can have
+        // its `Work` and `Chat` slots in flight at once — that concurrency is Task 6's
+        // whole point. Every non-orchestrator seat only ever inserts `Work`, so this is
+        // byte-for-byte the old single-lane behaviour for every seat without a chat lane.
+        let mut in_flight: HashSet<(QuarkId, Lane)> = HashSet::new();
         // The abort handle for each in-flight turn, so the human's force-restart
         // ([`Kind::Reboot`]) can kill a wedged quark's turn *now* instead of waiting
         // out the 30-minute deadline. Kept in lockstep with `in_flight`: inserted at
         // spawn, removed the instant a turn joins or is rebooted.
-        let mut abort_handles: HashMap<QuarkId, AbortHandle> = HashMap::new();
+        let mut abort_handles: HashMap<(QuarkId, Lane), AbortHandle> = HashMap::new();
         // The assignment rides along with the turn so that `finish_turn` can stamp
         // `answers` on what the turn emits. Without it, "has this quark answered the
         // human?" degenerates into "has it said anything since?", which silently eats
         // any message the human sends while the quark is already working.
         let mut turns: JoinSet<(
             QuarkId,
+            Lane,
             Option<TurnTree>,
             Option<ulid::Ulid>,
             anyhow::Result<TurnOutcome>,
@@ -121,15 +126,23 @@ impl super::Engine {
                     .await?;
 
                 for (target, fallback_task) in self.pending_targets(&events) {
-                    // One turn per quark at a time. A quark that becomes pending again
-                    // while it is running is picked up on a later pass (its reply, or
-                    // the event that re-addressed it, is still in the field).
+                    // Resolved once, up front, so the in_flight check below and the
+                    // worktree/branch logic further down (which used to call
+                    // `driver_for` a second time) always agree on the same driver.
+                    let driver =
+                        self.driver_for(&events, &target, fallback_task.as_ref().map(|t| t.task.as_str()));
+                    let lane = self.lane_for(&events, &target, driver.as_ref());
+
+                    // One turn per (quark, lane) at a time. A quark that becomes
+                    // pending again while its lane is running is picked up on a later
+                    // pass (its reply, or the event that re-addressed it, is still in
+                    // the field).
                     //
                     // `rebooted` guards the just-force-restarted quarks: their `Ground`
                     // was appended after this `events` snapshot, so on THIS snapshot the
                     // answered message still reads as pending — dispatching now would
                     // re-excite the very turn we just aborted. Next read sees the Ground.
-                    if in_flight.contains(&target) || rebooted.contains(&target) {
+                    if in_flight.contains(&(target.clone(), lane)) || rebooted.contains(&target) {
                         continue;
                     }
 
@@ -223,16 +236,15 @@ impl super::Engine {
                         }
                     }
 
-                    let Some(quark) = self.quarks.get(&target).cloned() else {
-                        first_err =
-                            Some(anyhow::anyhow!("no such quark on roster: {}", target.as_str()));
+                    // `driver` was already resolved above (for the lane check) — reused
+                    // here so the branch/worktree logic below agrees with it.
+                    let Some(quark) = self.quarks.get(&target).and_then(|lanes| lanes.get(lane)).cloned() else {
+                        first_err = Some(anyhow::anyhow!(
+                            "no such quark/lane on roster: {} ({lane:?})",
+                            target.as_str()
+                        ));
                         break;
                     };
-
-                    // The assignment that drives this turn. Its ULID names the branch,
-                    // and its body is the task — resolved ONCE, so both agree.
-                    let driver =
-                        self.driver_for(&events, &target, fallback_task.as_ref().map(|t| t.task.as_str()));
 
                     // Worktree discipline (on iff `with_git`): the quark works in its
                     // own checkout, on its own branch, and never in the human's tree.
@@ -472,10 +484,10 @@ impl super::Engine {
                                 )
                             ),
                         };
-                        (turn_id, turn_tree, assignment, outcome)
+                        (turn_id, lane, turn_tree, assignment, outcome)
                     });
-                    abort_handles.insert(target.clone(), abort);
-                    in_flight.insert(target);
+                    abort_handles.insert((target.clone(), lane), abort);
+                    in_flight.insert((target, lane));
                     exchanges += 1;
                     spawned_any = true;
                 }
@@ -522,9 +534,9 @@ impl super::Engine {
             };
 
             match joined {
-                Ok((target, tree, assignment, Ok(outcome))) => {
-                    in_flight.remove(&target);
-                    abort_handles.remove(&target);
+                Ok((target, lane, tree, assignment, Ok(outcome))) => {
+                    in_flight.remove(&(target.clone(), lane));
+                    abort_handles.remove(&(target.clone(), lane));
                     if let Err(err) =
                         self.finish_turn(&target, outcome, tree.as_ref(), assignment).await
                     {
@@ -533,11 +545,11 @@ impl super::Engine {
                         }
                     }
                 }
-                Ok((target, _, _, Err(err))) => {
+                Ok((target, lane, _, _, Err(err))) => {
                     // A failed turn must still leave a terminal status behind, or the
                     // quark reads as forever-working. Its siblings keep running.
-                    in_flight.remove(&target);
-                    abort_handles.remove(&target);
+                    in_flight.remove(&(target.clone(), lane));
+                    abort_handles.remove(&(target.clone(), lane));
                     let err_msg = self.format_error_message(&target, &err);
                     let _ = self
                         .append(
@@ -573,7 +585,7 @@ impl super::Engine {
                     // JoinError alone, so ground every quark still in flight rather than
                     // strand one Excited, and abort.
                     abort_handles.clear();
-                    for target in std::mem::take(&mut in_flight) {
+                    for (target, _lane) in std::mem::take(&mut in_flight) {
                         let _ = self
                             .append(Event::new(
                                 Actor::Quark(target),
