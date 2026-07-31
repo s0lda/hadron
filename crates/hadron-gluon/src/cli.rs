@@ -227,6 +227,14 @@ fn apply_reseat(
                 // while switched off must not start answering; and one switched back on
                 // must not inherit a stale disabled flag from the id it replaced.
                 engine.set_enabled(&seat.id, seat.enabled);
+                if seat.flavor == Flavor::Orchestrator {
+                    match registry::build_seat_watched(seat, live_dir, store) {
+                        Ok(chat) => {
+                            engine.seat_chat_lane(&seat.id, chat);
+                        }
+                        Err(e) => eprintln!("  {} — could not seat a chat lane on reseat: {e:#}", seat.id.as_str()),
+                    }
+                }
                 out.quarks.push(seat.clone());
                 eprintln!(
                     "  seated {} — {} · {} ({:?})",
@@ -493,19 +501,26 @@ pub async fn run() {
     // of the responsive-orchestrator plan) — built through the SAME construction path
     // as the work lane above, so it gets an identical adapter/config. A build failure
     // here is non-fatal: the seat still runs, just on today's single-lane behaviour.
-    for seat in &team.quarks {
-        if seat.flavor != Flavor::Orchestrator {
-            continue;
-        }
-        match registry::build_seat_watched(seat, &live_dir, &secret_store) {
-            Ok(chat) => {
-                // `seat_chat_lane` calls `become_chat_lane` itself — it is the only way a
-                // chat lane is ever attached, so telling the instance here as well would
-                // be a second site to keep in step for no coverage gained.
-                engine.seat_chat_lane(&seat.id, chat);
-                eprintln!("  {} — chat lane seated (never blocks on a busy work lane)", seat.id.as_str());
+    if team.is_empty() {
+        engine.seat_chat_lane(
+            &QuarkId::new("claude"),
+            Box::new(DemoQuark::new("claude", Flavor::Orchestrator, "Claude")),
+        );
+    } else {
+        for seat in &team.quarks {
+            if seat.flavor != Flavor::Orchestrator {
+                continue;
             }
-            Err(e) => eprintln!("  {} — could not seat a chat lane: {e:#}", seat.id.as_str()),
+            match registry::build_seat_watched(seat, &live_dir, &secret_store) {
+                Ok(chat) => {
+                    // `seat_chat_lane` calls `become_chat_lane` itself — it is the only way a
+                    // chat lane is ever attached, so telling the instance here as well would
+                    // be a second site to keep in step for no coverage gained.
+                    engine.seat_chat_lane(&seat.id, chat);
+                    eprintln!("  {} — chat lane seated (never blocks on a busy work lane)", seat.id.as_str());
+                }
+                Err(e) => eprintln!("  {} — could not seat a chat lane: {e:#}", seat.id.as_str()),
+            }
         }
     }
 
