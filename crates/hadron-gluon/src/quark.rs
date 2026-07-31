@@ -58,6 +58,8 @@ pub trait Quark: Send {
     fn resident(&self) -> bool {
         false
     }
+    /// Set which execution lane this quark instance serves (Work vs Chat).
+    fn set_lane(&mut self, _lane: crate::engine::Lane) {}
     /// Whether this quark has Hadron Forge MCP tools attached (e.g. resident ACP sessions).
     /// Defaults to `false` — CLI transports do not attach forge tools.
     fn has_forge_tools(&self) -> bool {

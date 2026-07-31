@@ -6,6 +6,7 @@ use hadron_lattice::{
 use std::path::PathBuf;
 
 use crate::adapter::runner::{reply_to_outcome, CliInvocation, CliRunner, RedactedEnv};
+use crate::engine::Lane;
 use crate::quark::Quark;
 
 /// Linux's hard cap on a **single** argv element (`MAX_ARG_STRLEN` = 32 pages =
@@ -134,6 +135,7 @@ pub struct CliQuark<R: CliRunner> {
     /// the full projection. Re-sending context is merely expensive; resuming a
     /// conversation that does not exist would silently answer the wrong question.
     resident: bool,
+    lane: Lane,
     runner: R,
     energy_limit: Option<u32>,
     deny_skills: Vec<String>,
@@ -148,6 +150,7 @@ impl<R: CliRunner> CliQuark<R> {
             model: model.into(),
             spec,
             resident: false,
+            lane: Lane::Work,
             runner,
             roles: Vec::new(),
             exclusive: false,
@@ -156,6 +159,12 @@ impl<R: CliRunner> CliQuark<R> {
             energy_limit: None,
             deny_skills: Vec::new(),
         }
+    }
+
+    /// Set the execution lane for this quark.
+    pub(crate) fn for_lane(mut self, lane: Lane) -> Self {
+        self.lane = lane;
+        self
     }
 
     /// Set the energy limit.
@@ -270,6 +279,9 @@ impl<R: CliRunner> Quark for CliQuark<R> {
     fn energy_limit(&self) -> Option<u32> {
         self.energy_limit
     }
+    fn set_lane(&mut self, lane: Lane) {
+        self.lane = lane;
+    }
 
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let mode = turn.mode;
@@ -280,7 +292,8 @@ impl<R: CliRunner> Quark for CliQuark<R> {
         // Only true when this CLI actually supports resuming (`spec.resume` is not
         // `None`) — a generic CLI with no resume flag never gets to drop context it
         // has no way to recall.
-        let resuming = self.resident && !matches!(self.spec.resume, ResumeMode::None);
+        let resuming =
+            self.resident && !matches!(self.spec.resume, ResumeMode::None) && self.lane == Lane::Work;
         let turn = if resuming { without_field_window(turn) } else { turn };
         // The argv guard only applies when the spec says the prompt rides as one
         // argv element with no stdin fallback (`execve` rejects an over-long one
@@ -293,7 +306,9 @@ impl<R: CliRunner> Quark for CliQuark<R> {
         };
         let result = self.runner.run(self.invocation(prompt, mode, cwd)).await?;
         // Only a turn that actually ran leaves a conversation behind to resume.
-        self.resident = true;
+        if self.lane == Lane::Work {
+            self.resident = true;
+        }
         Ok(reply_to_outcome(&result))
     }
 }
@@ -538,6 +553,35 @@ mod tests {
         assert!(
             !resumed_prompt.contains("MEMORABLE-TRANSCRIPT-LINE"),
             "a resumed turn re-sent the transcript agy already has"
+        );
+
+        // A chat lane instance on the same seat never resumes or sets resident.
+        let chat_runner = FakeRunner::with_stdout(vec!["chat 1", "chat 2"]);
+        let mut chat_q = CliQuark::new(QuarkId::new("agy"), Flavor::Orchestrator, "", CliSpec::agy(), chat_runner)
+            .for_lane(Lane::Chat);
+
+        let mut chat_turn = projection_mode("chat task", Mode::Bypass);
+        chat_turn.field_window = vec![Event::new(
+            Actor::Human,
+            None,
+            Kind::Message { body: "CHAT-TRANSCRIPT-LINE".into() },
+        )];
+
+        chat_q.excite(chat_turn.clone()).await.unwrap();
+        chat_q.excite(chat_turn).await.unwrap();
+
+        let chat_recorded = chat_q.runner.recorded.lock().unwrap();
+        assert!(
+            !chat_recorded[0].args.iter().any(|a| a == "--continue"),
+            "chat lane turn 1 does not resume"
+        );
+        assert!(
+            !chat_recorded[1].args.iter().any(|a| a == "--continue"),
+            "chat lane turn 2 also does not resume"
+        );
+        assert!(
+            !chat_q.resident(),
+            "chat lane turn never marks its quark resident"
         );
     }
 

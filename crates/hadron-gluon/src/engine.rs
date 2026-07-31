@@ -38,7 +38,7 @@ type SharedQuark = Arc<AsyncMutex<Box<dyn Quark>>>;
 /// Step 4 of `.hadron/docs/plans/2026-07-31-responsive-orchestrator.md` for
 /// why a seat keeps ONE `QuarkId` and up to two lanes instead of two ids.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum Lane {
+pub enum Lane {
     Work,
     Chat,
 }
@@ -635,10 +635,11 @@ impl Engine {
     /// invisible to every id-keyed lookup by design (Task 6 Step 4's whole
     /// point). A no-op (`false`) for an id that is not seated: a chat lane
     /// with no work lane to route `Work` traffic to makes no sense.
-    pub fn seat_chat_lane(&mut self, id: &QuarkId, quark: Box<dyn Quark>) -> bool {
+    pub fn seat_chat_lane(&mut self, id: &QuarkId, mut quark: Box<dyn Quark>) -> bool {
         let Some(lanes) = self.quarks.get_mut(id) else {
             return false;
         };
+        quark.set_lane(Lane::Chat);
         lanes.chat = Some(Arc::new(AsyncMutex::new(quark)));
         true
     }
