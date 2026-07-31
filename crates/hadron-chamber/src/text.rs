@@ -823,9 +823,16 @@ pub fn split_target(args: &str) -> (Option<&str>, &str) {
 }
 
 /// Body for a Gluon chat notice when a human types at a busy CLI seat mid-turn.
+///
+/// **The seat is named WITHOUT an `@` sigil, deliberately.** This is posted as
+/// `Actor::Gluon` with `to: None`, and per the "Printing Without Waking the Swarm"
+/// invariant that only avoids costing a turn while no LINE of the body begins with
+/// `@` — `unaddressed_message_targets` resolves addressees out of the body. An
+/// opening `@agy …` would dispatch a turn to the very seat this notice exists to
+/// say is busy, queued behind the human's own message, so the seat runs twice.
 pub fn uninterruptible_cli_notice(target: &str) -> String {
     format!(
-        "@{target} is a CLI seat currently mid-turn and cannot be interrupted — your message will be picked up when its turn completes."
+        "{target} is a CLI seat currently mid-turn and cannot be interrupted — your message will be picked up when its turn completes."
     )
 }
 
@@ -1538,11 +1545,25 @@ mod tests {
         assert_eq!(split_target("@"), (None, ""));
     }
 
+    /// **This notice must not wake the seat it is about.** It is posted as
+    /// `Actor::Gluon` with `to: None`, and the "Printing Without Waking the Swarm"
+    /// invariant is precise about what that buys: nothing, if any LINE of the body
+    /// begins with `@`. `unaddressed_message_targets` resolves addressees found in
+    /// the body, so a notice opening `@agy …` dispatches a turn to the very seat it
+    /// has just told the human is busy — on top of the human's own message, so the
+    /// seat is queued twice.
+    ///
+    /// The seat is still named, because a notice that does not say WHICH seat is
+    /// useless; it just may not be named at the start of a line with a sigil.
     #[test]
-    fn uninterruptible_cli_notice_formats_clearly() {
+    fn uninterruptible_cli_notice_names_the_seat_without_waking_it() {
         let msg = uninterruptible_cli_notice("agy");
-        assert!(msg.contains("agy is a CLI seat currently mid-turn"));
+        assert!(msg.contains("agy"), "the notice must say which seat it is about");
         assert!(msg.contains("cannot be interrupted"));
+        assert!(
+            !msg.lines().any(|l| l.trim_start().starts_with('@')),
+            "a Gluon notice whose line starts with @ dispatches a turn to that seat: {msg:?}"
+        );
     }
 
     #[test]
