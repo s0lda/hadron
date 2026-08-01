@@ -245,6 +245,8 @@ struct Chamber {
     plan_scroll: ScrollHandle,
     /// Scroll position of the Tasks pane.
     tasks_scroll: ScrollHandle,
+    /// Timeline scrub instant for the Tasks tab. `None` means live.
+    pub(super) task_scrub: Option<chrono::DateTime<chrono::Utc>>,
     pub(super) plan_collapsed_tasks: std::collections::HashSet<String>,
     pub(super) last_plan_path: Option<String>,
     pub(super) last_incomplete_task: Option<String>,
@@ -670,6 +672,7 @@ impl Chamber {
             git_graph_list,
             plan_scroll: ScrollHandle::new(),
             tasks_scroll: ScrollHandle::new(),
+            task_scrub: None,
             plan_collapsed_tasks: std::collections::HashSet::new(),
             last_plan_path: None,
             last_incomplete_task: None,
