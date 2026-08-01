@@ -277,7 +277,7 @@ impl FakeRunner {
         Self::new(
             stdouts
                 .into_iter()
-                .map(|s| CliResult { stdout: s.to_string(), exit: 0 })
+                .map(|s| CliResult { stdout: s.to_string(), exit: 0, usage: None })
                 .collect(),
         )
     }
@@ -304,9 +304,9 @@ mod tests {
 
     #[test]
     fn reply_maps_stdout_to_message() {
-        let some = reply_to_outcome(&CliResult { stdout: "  hello  ".into(), exit: 0 });
+        let some = reply_to_outcome(&CliResult { stdout: "  hello  ".into(), exit: 0, usage: None });
         assert_eq!(some.message.as_deref(), Some("hello"));
-        let none = reply_to_outcome(&CliResult { stdout: "   \n ".into(), exit: 0 });
+        let none = reply_to_outcome(&CliResult { stdout: "   \n ".into(), exit: 0, usage: None });
         assert_eq!(none.message, None);
     }
 
