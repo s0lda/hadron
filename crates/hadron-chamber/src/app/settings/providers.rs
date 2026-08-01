@@ -91,9 +91,10 @@ impl super::Chamber {
                     .text_xs()
                     .cursor_pointer()
                     .when(selected, |d| {
-                        d.bg(widgets::mode_color(mode))
+                        d.bg(theme::glass_card())
                             .border_color(widgets::mode_color(mode))
-                            .text_color(theme::text())
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(widgets::mode_color(mode))
                     })
                     .when(!selected, |d| {
                         d.bg(theme::bg_surface())
@@ -141,9 +142,10 @@ impl super::Chamber {
                     .text_xs()
                     .cursor_pointer()
                     .when(selected, |d| {
-                        d.bg(theme::accent())
+                        d.bg(theme::glass_card())
                             .border_color(theme::accent())
-                            .text_color(theme::text())
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::accent())
                     })
                     .when(!selected, |d| {
                         d.bg(theme::bg_surface())
@@ -183,9 +185,10 @@ impl super::Chamber {
                     .text_xs()
                     .cursor_pointer()
                     .when(selected, |d| {
-                        d.bg(theme::accent())
+                        d.bg(theme::glass_card())
                             .border_color(theme::accent())
-                            .text_color(theme::text())
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::accent())
                     })
                     .when(!selected, |d| {
                         d.bg(theme::bg_surface())
@@ -867,10 +870,16 @@ impl super::Chamber {
                             .rounded_md()
                             .cursor_pointer()
                             .when(stdin_selected, |d| {
-                                d.bg(theme::accent()).text_color(theme::text())
+                                d.bg(theme::glass_card())
+                                    .border_1()
+                                    .border_color(theme::accent())
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::accent())
                             })
                             .when(!stdin_selected, |d| {
-                                d.text_color(theme::text_secondary())
+                                d.border_1()
+                                    .border_color(theme::border())
+                                    .text_color(theme::text_secondary())
                                     .hover(|s| s.bg(theme::bg_surface_raised()))
                             })
                             .child("Stdin")
@@ -887,10 +896,16 @@ impl super::Chamber {
                             .rounded_md()
                             .cursor_pointer()
                             .when(!stdin_selected, |d| {
-                                d.bg(theme::accent()).text_color(theme::text())
+                                d.bg(theme::glass_card())
+                                    .border_1()
+                                    .border_color(theme::accent())
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::accent())
                             })
                             .when(stdin_selected, |d| {
-                                d.text_color(theme::text_secondary())
+                                d.border_1()
+                                    .border_color(theme::border())
+                                    .text_color(theme::text_secondary())
                                     .hover(|s| s.bg(theme::bg_surface_raised()))
                             })
                             .child("Argv flag")
