@@ -208,27 +208,31 @@ impl super::Chamber {
                     }),
             );
 
-        // Subdued telemetry line: tokens / active duration & detail + effort + mode
-        let tokens_formatted = if r.tokens > 0 {
+        // Telemetry line: Context window usage (or token count) + active working duration (no stage labels)
+        let ctx_opt = self.latest_context(&r.id);
+        let context_str = if let Some(ctx) = ctx_opt {
+            format!(
+                "Ctx {:.0}% · {} / {}",
+                ctx.used_percentage,
+                format_num(ctx.used_tokens as u64),
+                format_num(ctx.context_window_size as u64),
+            )
+        } else if r.tokens > 0 {
             format!("{} tok", format_num(r.tokens as u64))
         } else {
             "0 tok".to_string()
         };
 
-        let activity_str = if let Some(act) = &activity {
+        let telemetry_str = if let Some(act) = &activity {
             let elapsed_secs = (chrono::Utc::now() - act.at).num_seconds().max(0);
             let time_str = if elapsed_secs >= 60 {
                 format!("{}m {}s", elapsed_secs / 60, elapsed_secs % 60)
             } else {
                 format!("{}s", elapsed_secs)
             };
-            if !act.detail.is_empty() {
-                format!("{} · {} ({})", time_str, tokens_formatted, act.detail)
-            } else {
-                format!("{} · {}", time_str, tokens_formatted)
-            }
+            format!("{} · {}", time_str, context_str)
         } else {
-            tokens_formatted
+            context_str
         };
 
         let telemetry_row = h_flex()
@@ -240,7 +244,7 @@ impl super::Chamber {
             .child(
                 div()
                     .truncate()
-                    .child(activity_str),
+                    .child(telemetry_str),
             )
             .child(
                 h_flex()

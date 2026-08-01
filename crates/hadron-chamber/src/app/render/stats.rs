@@ -7,7 +7,7 @@ impl super::Chamber {
     /// `rfind(last row)` lands on one of those and reports "no context" even when a
     /// reading exists earlier this window — which is why the Current gauge showed for
     /// some quarks and not others.
-    fn latest_context(&self, qid: &str) -> Option<&hadron_lattice::ContextUsage> {
+    pub(super) fn latest_context(&self, qid: &str) -> Option<&hadron_lattice::ContextUsage> {
         latest_context(&self.view.messages, qid)
     }
 
