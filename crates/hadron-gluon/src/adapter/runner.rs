@@ -52,6 +52,8 @@ pub struct CliInvocation {
     /// — carried through to `Command::env()` and NOWHERE else. Wrapped in
     /// `RedactedEnv` so this struct's derived `Debug` cannot leak a value.
     pub env: RedactedEnv,
+    /// Optional streaming spec.
+    pub stream: Option<hadron_lattice::StreamSpec>,
 }
 
 /// The result of one invocation. Kept CLI-agnostic: session ids and other
@@ -61,6 +63,7 @@ pub struct CliInvocation {
 pub struct CliResult {
     pub stdout: String,
     pub exit: i32,
+    pub usage: Option<hadron_lattice::TokenSpend>,
 }
 
 /// The single seam where a subprocess is spawned. Faked in tests; real only in
@@ -75,9 +78,9 @@ pub trait CliRunner: Send + Sync {
 pub fn reply_to_outcome(result: &CliResult) -> TurnOutcome {
     let trimmed = result.stdout.trim();
     if trimmed.is_empty() {
-        TurnOutcome { message: None, permission: None, ..Default::default()}
+        TurnOutcome { message: None, permission: None, usage: result.usage, ..Default::default() }
     } else {
-        TurnOutcome { message: Some(trimmed.to_string()), permission: None, ..Default::default()}
+        TurnOutcome { message: Some(trimmed.to_string()), permission: None, usage: result.usage, ..Default::default() }
     }
 }
 
@@ -147,31 +150,104 @@ impl CliRunner for ProcessRunner {
             res?; // close stdin so the CLI proceeds
         }
 
-        let output_res = child.wait_with_output().await;
-        if let Some(pid) = pid {
-            crate::proc::unregister(pid);
-        }
-        let output = output_res?;
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        if let Some(stream_spec) = &inv.stream {
+            use tokio::io::AsyncBufReadExt;
+            let mut usage = None;
+            let mut stdout_accumulated = String::new();
+            if let Some(stdout_pipe) = child.stdout.take() {
+                let mut reader = tokio::io::BufReader::new(stdout_pipe).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    match &stream_spec.format {
+                        hadron_lattice::StreamFormat::AgyStreamJson => {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                                if let Some(event) = v.get("event").and_then(|e| e.as_str()) {
+                                    if event == "agent_response" {
+                                        if let Some(delta) = v.get("text_delta").and_then(|t| t.as_str()) {
+                                            stdout_accumulated.push_str(delta);
+                                        }
+                                    } else if event == "result" {
+                                        if stdout_accumulated.is_empty() {
+                                            if let Some(resp) = v.get("response").and_then(|r| r.as_str()) {
+                                                stdout_accumulated.push_str(resp);
+                                            }
+                                        }
+                                        if let Some(u) = v.get("usage") {
+                                            let in_tok = u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
+                                            let out_tok = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
+                                            let think_tok = u.get("thinking_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
+                                            let cache_read = u.get("cache_read_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
+                                            // Note: thinking_tokens is folded into output because thinking/reasoning generation spends output token budget on LLM inference.
+                                            usage = Some(hadron_lattice::TokenSpend {
+                                                input: in_tok,
+                                                output: out_tok + think_tok,
+                                                cache_read,
+                                                cache_write: 0,
+                                            });
+                                        }
+                                    }
+                                } else if let Some(delta) = v.get("text_delta").and_then(|t| t.as_str()) {
+                                    stdout_accumulated.push_str(delta);
+                                }
+                            }
+                        }
+                        hadron_lattice::StreamFormat::Ndjson { text_delta_path, input_tokens_path, output_tokens_path } => {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                                if let Some(path) = text_delta_path {
+                                    if let Some(delta) = v.pointer(path).and_then(|t| t.as_str()) {
+                                        stdout_accumulated.push_str(delta);
+                                    }
+                                }
+                                let in_tok = input_tokens_path.as_ref().and_then(|p| v.pointer(p)).and_then(|n| n.as_u64()).unwrap_or(0) as u32;
+                                let out_tok = output_tokens_path.as_ref().and_then(|p| v.pointer(p)).and_then(|n| n.as_u64()).unwrap_or(0) as u32;
+                                if in_tok > 0 || out_tok > 0 {
+                                    usage = Some(hadron_lattice::TokenSpend {
+                                        input: in_tok,
+                                        output: out_tok,
+                                        cache_read: 0,
+                                        cache_write: 0,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let status = child.wait().await?;
+            if let Some(pid) = pid {
+                crate::proc::unregister(pid);
+            }
+            if !status.success() {
+                let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".to_string());
+                return Err(anyhow::anyhow!("{} exited with {code}", inv.program));
+            }
+            Ok(CliResult { stdout: stdout_accumulated, exit: status.code().unwrap_or(0), usage })
+        } else {
+            let output_res = child.wait_with_output().await;
+            if let Some(pid) = pid {
+                crate::proc::unregister(pid);
+            }
+            let output = output_res?;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-        // A nonzero exit is a real failure (expired auth, rate-limit, bad flag).
-        // Surface stderr as the error rather than silently returning empty stdout
-        // — otherwise the loop just stalls with no diagnostic signal.
-        if !output.status.success() {
-            let code = output
-                .status
-                .code()
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "signal".to_string());
-            return Err(anyhow::anyhow!(
-                "{} exited with {code}: {}",
-                inv.program,
-                stderr.trim()
-            ));
-        }
+            // A nonzero exit is a real failure (expired auth, rate-limit, bad flag).
+            // Surface stderr as the error rather than silently returning empty stdout
+            // — otherwise the loop just stalls with no diagnostic signal.
+            if !output.status.success() {
+                let code = output
+                    .status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "signal".to_string());
+                return Err(anyhow::anyhow!(
+                    "{} exited with {code}: {}",
+                    inv.program,
+                    stderr.trim()
+                ));
+            }
 
-        Ok(CliResult { stdout, exit: output.status.code().unwrap_or(0) })
+            Ok(CliResult { stdout, exit: output.status.code().unwrap_or(0), usage: None })
+        }
     }
 }
 
