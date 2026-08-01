@@ -359,12 +359,14 @@ struct Chamber {
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
-    _settings_subs: [Subscription; 7],
+    _settings_subs: [Subscription; 10],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
     /// Offered-model probe for the ACP quark whose Settings are open — drives the model
     /// dropdown. `None` for a non-ACP target or before the first probe. See `providers`.
     acp_model_probe: Option<AcpModelProbe>,
+    /// Filter text for the Settings Model list of an ACP quark — see `model_picker_list`.
+    acp_model_filter: Entity<InputState>,
     /// Offered-model probe for the `Transport::Http` quark whose Settings are open —
     /// mirrors `acp_model_probe`. `None` for a non-Http target or before the first
     /// probe. See `start_http_model_probe`.
@@ -372,6 +374,8 @@ struct Chamber {
     /// Filter text for the Settings Model list of the open Http quark — see
     /// `local_model_filter` above (same widget, different consumer).
     http_model_filter: Entity<InputState>,
+    /// Filter text for the Settings Model list of general/CLI quarks.
+    general_model_filter: Entity<InputState>,
     /// In-progress `agy` ACP bridge venv provisioning for the seat whose Settings are
     /// open, if any. `None` for any other kind of seat, before the first attempt, or
     /// once already provisioned — see `start_agy_bridge_provision`. This runs off the
@@ -510,6 +514,8 @@ impl Chamber {
         let local_api_key = cx.new(|cx| InputState::new(window, cx).masked(true).placeholder("sk-… (write-only)"));
         let local_model_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter models…"));
         let http_model_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter models…"));
+        let acp_model_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter models…"));
+        let general_model_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter models…"));
         let custom_cli_model = cx.new(|cx| InputState::new(window, cx).placeholder("model name (optional)"));
         let custom_cli_flag = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. --prompt (blank = positional)"));
         let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
@@ -524,6 +530,15 @@ impl Chamber {
             // Re-render the add-quark wizard on every keystroke so the preset list
             // re-filters live as the search box is typed into.
             cx.subscribe_in(&preset_filter, window, |_, _, _: &InputEvent, _, cx| {
+                cx.notify()
+            }),
+            cx.subscribe_in(&acp_model_filter, window, |_, _, _: &InputEvent, _, cx| {
+                cx.notify()
+            }),
+            cx.subscribe_in(&http_model_filter, window, |_, _, _: &InputEvent, _, cx| {
+                cx.notify()
+            }),
+            cx.subscribe_in(&general_model_filter, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
             }),
             // Same reason: the custom-CLI form's "Save" button is only wired up once
@@ -758,8 +773,10 @@ impl Chamber {
             providers,
             wizard_state: WizardState::None,
             acp_model_probe: None,
+            acp_model_filter,
             http_model_probe: None,
             http_model_filter,
+            general_model_filter,
             agy_bridge_probe: None,
             file_tree_paths: files,
             _lock_file: lock_file,

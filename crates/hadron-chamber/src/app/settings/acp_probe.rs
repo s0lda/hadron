@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use super::*;
 
 impl super::Chamber {
@@ -264,15 +266,52 @@ impl super::Chamber {
         col.into_any_element()
     }
 
-    /// The ACP Model **dropdown**: the agent's offered models as clickable chips, with
-    /// an "Inherit" chip (blank → the agent's own current model, which the daemon
-    /// leaves alone).
+    /// The ACP Model **select**: the agent's offered models in the shared searchable
+    /// dropdown list component, with an "Inherit" row (blank → catalogue default).
     pub(super) fn acp_model_select(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let selector = match self.acp_model_probe.as_ref().map(|p| &p.state) {
-            Some(AcpModelState::Ready { selectors }) => selectors.model.as_ref(),
-            _ => None,
+        let models = match self.acp_model_probe.as_ref().map(|p| &p.state) {
+            Some(AcpModelState::Ready { selectors }) => selectors
+                .model
+                .as_ref()
+                .map(|sel| sel.available.iter().map(|m| m.value.clone()).collect())
+                .unwrap_or_default(),
+            _ => Vec::new(),
         };
-        self.selector_chips(selector, &self.settings_model, "acp-model", "Inherit", cx)
+        let selected = self.settings_model.read(cx).value().trim().to_string();
+        let field = self.settings_model.clone();
+        let list = self.model_picker_list(
+            &models,
+            &selected,
+            &self.acp_model_filter,
+            "acp-model",
+            "Inherit",
+            Rc::new(move |this: &mut Self, value: String, window: &mut Window, cx: &mut Context<Self>| {
+                field.update(cx, |s, cx| s.set_value(value.clone(), window, cx));
+                this.commit_settings_inputs(cx);
+                cx.notify();
+            }),
+            cx,
+        );
+
+        let mut col = v_flex().gap_1p5().child(list);
+        if let Some((msg, is_error)) = self.probe_note() {
+            let base = div().text_xs().text_color(theme::text_muted());
+            let note_el = if is_error {
+                let full = msg.clone();
+                base.id("acp-model-note")
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(theme::text_secondary()))
+                    .child(format!("{msg}  ·  click to copy"))
+                    .on_click(cx.listener(move |_this, _, _window, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(full.clone()));
+                    }))
+                    .into_any_element()
+            } else {
+                base.child(msg).into_any_element()
+            };
+            col = col.child(note_el);
+        }
+        col.into_any_element()
     }
 
     /// The ACP Effort **dropdown** — same probe, same chip behaviour as

@@ -160,7 +160,7 @@ impl super::Chamber {
                     } else if http_quark {
                         self.http_model_select(cx)
                     } else {
-                        Input::new(&self.settings_model).w_full().into_any_element()
+                        self.general_model_select(cx)
                     };
                     v.child(settings_field(
                         "Model",

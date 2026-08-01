@@ -73,6 +73,21 @@ impl super::Chamber {
             ));
         }
 
+        let raw_query = filter.read(cx).value().trim().to_string();
+        if !raw_query.is_empty()
+            && !models.iter().any(|m| m.eq_ignore_ascii_case(&raw_query))
+            && !selected.eq_ignore_ascii_case(&raw_query)
+        {
+            rows = rows.child(self.model_picker_row(
+                format!("Use custom: \"{raw_query}\""),
+                raw_query,
+                false,
+                format!("{id_prefix}-custom"),
+                on_pick.clone(),
+                cx,
+            ));
+        }
+
         let count = format!("{} of {} model(s)", filtered.len(), models.len());
 
         v_flex()
