@@ -1344,3 +1344,60 @@ fn a_granted_root_reaches_forge_as_a_flag_carrying_its_access() {
         ]
     );
 }
+
+/// **The bubble used to flicker.** The live file is a single overwritten slot, so a
+/// tool call landing after a message chunk erased `full` and the chamber's chat draft
+/// vanished until the next chunk arrived — which is what Jake saw as "the preview did
+/// not land". The draft belongs to the TURN, so every activity carries it, and it is
+/// dropped at both edges of the turn so a stale reply never reappears next turn.
+#[test]
+fn a_tool_call_after_a_message_chunk_keeps_the_draft_alive() {
+    let dir = quota_tmp_dir();
+    let quark = QuarkId::new("acp-claude");
+    let feed = super::session::LiveFeed {
+        dir: dir.clone(),
+        quark: quark.clone(),
+        last: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        draft: std::sync::Arc::new(std::sync::Mutex::new(None)),
+    };
+    let read = || hadron_lattice::live::read(&dir, &quark, Utc::now()).expect("published");
+
+    feed.set_active(true);
+    feed.publish_draft("Half a sentence");
+    assert_eq!(read().full.as_deref(), Some("Half a sentence"));
+
+    // `Doing::Working` is forced past the throttle, so this is the exact overwrite
+    // that used to drop the draft.
+    feed.publish(Doing::Working, "Editing engine.rs");
+    let after = read();
+    assert_eq!(after.detail, "Editing engine.rs", "the Live card still shows the tool");
+    assert_eq!(after.full.as_deref(), Some("Half a sentence"), "the bubble survives it");
+
+    // A fresh turn starts blank, whichever edge cleared it.
+    feed.set_active(false);
+    feed.set_active(true);
+    feed.publish(Doing::Working, "Reading mod.rs");
+    assert_eq!(read().full, None, "last turn's reply must not reappear");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A quark that never speaks still publishes tool activity with no draft — the
+/// negative control for the test above, and the "tool use stays in the Live card"
+/// half of the split (`Activity::new` sets no `full`).
+#[test]
+fn an_activity_with_no_reply_yet_carries_no_draft() {
+    let dir = quota_tmp_dir();
+    let quark = QuarkId::new("acp-claude");
+    let feed = super::session::LiveFeed {
+        dir: dir.clone(),
+        quark: quark.clone(),
+        last: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        draft: std::sync::Arc::new(std::sync::Mutex::new(None)),
+    };
+    feed.publish(Doing::Working, "Editing engine.rs");
+    let act = hadron_lattice::live::read(&dir, &quark, Utc::now()).expect("published");
+    assert_eq!(act.full, None);
+    let _ = std::fs::remove_dir_all(&dir);
+}

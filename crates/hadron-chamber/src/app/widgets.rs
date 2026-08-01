@@ -329,10 +329,12 @@ pub(super) const DRAFT_TAIL_CHARS: usize = 1200;
 /// Every quark whose reply is currently streaming in: `(quark id, text so far)`,
 /// from the same live files [`active_quarks`] reads.
 ///
-/// The draft rides `Activity::full`, which only [`hadron_lattice::live::Activity::speaking`]
-/// sets — so a thought, a tool call and a plan step all correctly yield nothing here
-/// and stay in the Live card, which is the whole point of the split: **messages to the
-/// chat, tool use to the live view**.
+/// The draft rides `Activity::full`. The publisher carries it on every activity for as
+/// long as the turn lasts — a tool call that dropped it would take the bubble down with
+/// it, since the live file is one overwritten slot — while `detail` still describes what
+/// the quark is doing. So the split holds: **the reply goes to the chat, the tool titles
+/// stay in the Live card**, and an activity from a quark that has not spoken yet carries
+/// no `full` and yields nothing here.
 ///
 /// Shows the **tail** when a reply outgrows [`DRAFT_TAIL_CHARS`]: text is arriving at
 /// the end, so the end is what a human is reading. `live` is injected for the same

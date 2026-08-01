@@ -175,6 +175,7 @@ impl AcpQuark {
             quark: self.id.clone(),
             last: std::sync::Arc::new(std::sync::Mutex::new(None)),
             active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            draft: std::sync::Arc::new(std::sync::Mutex::new(None)),
         });
         self
     }

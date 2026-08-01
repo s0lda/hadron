@@ -301,6 +301,12 @@ pub(super) struct LiveFeed {
     pub(super) quark: QuarkId,
     pub(super) last: Arc<Mutex<Option<Instant>>>,
     pub(super) active: Arc<std::sync::atomic::AtomicBool>,
+    /// The reply so far, for as long as this turn lasts. Held here rather than read
+    /// back off the last-written activity because the live file is a single
+    /// overwritten slot: a tool call publishes right after a message chunk and would
+    /// otherwise erase the draft, which is exactly what made the chat bubble flicker
+    /// in and out instead of growing.
+    pub(super) draft: Arc<Mutex<Option<String>>>,
 }
 
 impl LiveFeed {
@@ -308,11 +314,15 @@ impl LiveFeed {
     /// it is the one update the human is actually reading.
     const THROTTLE: std::time::Duration = std::time::Duration::from_millis(200);
 
+    /// Both edges of a turn. The draft is dropped either way: it belongs to the turn
+    /// that produced it, and carrying it into the next one would show the chamber a
+    /// bubble of last turn's reply.
     pub(super) fn set_active(&self, active: bool) {
         self.active.store(active, std::sync::atomic::Ordering::Relaxed);
+        *self.draft.lock().unwrap() = None;
     }
 
-    fn publish(&self, doing: Doing, detail: &str) {
+    pub(super) fn publish(&self, doing: Doing, detail: &str) {
         self.emit(doing, |quark| Activity::new(quark, doing, detail));
     }
 
@@ -325,7 +335,8 @@ impl LiveFeed {
     /// set), which matters more here: an agent emits a chunk every few tokens and this
     /// payload GROWS, so an unthrottled version would rewrite an ever-larger file
     /// hundreds of times a turn.
-    fn publish_draft(&self, message: &str) {
+    pub(super) fn publish_draft(&self, message: &str) {
+        *self.draft.lock().unwrap() = Some(message.to_string());
         self.emit(Doing::Speaking, |quark| Activity::speaking(quark, message));
     }
 
@@ -333,6 +344,10 @@ impl LiveFeed {
     /// throttle must allow it, and a failed write must never kill a turn — this is a
     /// view, not the record. `build` is a closure so the (potentially large) draft is
     /// only materialised once the throttle has said yes.
+    ///
+    /// Every activity carries the turn's draft, not just the speaking one: the live
+    /// file is one overwritten slot, so an activity that dropped it would take the
+    /// chat bubble down with it until the next chunk arrived.
     fn emit(&self, doing: Doing, build: impl FnOnce(QuarkId) -> Activity) {
         if !self.active.load(std::sync::atomic::Ordering::Relaxed) {
             return;
@@ -346,7 +361,11 @@ impl LiveFeed {
                 _ => *last = Some(now),
             }
         }
-        let _ = live::publish(&self.dir, &build(self.quark.clone()));
+        let mut activity = build(self.quark.clone());
+        if activity.full.is_none() {
+            activity.full = self.draft.lock().unwrap().clone();
+        }
+        let _ = live::publish(&self.dir, &activity);
     }
 
     pub(super) fn clear(&self) {
