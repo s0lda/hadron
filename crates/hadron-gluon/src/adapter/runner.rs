@@ -319,6 +319,7 @@ mod tests {
                 stdin: "hello world".into(),
                 cwd: std::env::temp_dir(),
                 env: RedactedEnv::default(),
+                stream: None,
             })
             .await
             .unwrap();
@@ -339,6 +340,7 @@ mod tests {
                 stdin: String::new(),
                 cwd: PathBuf::from("/definitely/not/a/real/directory"),
                 env: RedactedEnv::default(),
+                stream: None,
             })
             .await
             .expect_err("a missing cwd must fail the spawn");
@@ -367,6 +369,7 @@ mod tests {
                 stdin: String::new(),
                 cwd: want.clone(),
                 env: RedactedEnv::default(),
+                stream: None,
             })
             .await
             .unwrap();
@@ -383,6 +386,7 @@ mod tests {
                 stdin: String::new(),
                 cwd: std::env::temp_dir(),
                 env: RedactedEnv::default(),
+                stream: None,
             })
             .await
             .unwrap_err();
@@ -404,6 +408,7 @@ mod tests {
                 stdin: String::new(),
                 cwd: std::env::temp_dir(),
                 env: RedactedEnv(vec![("SECRET_VAR".into(), "s3cr3t-payload".into())]),
+                stream: None,
             })
             .await
             .unwrap();
@@ -420,6 +425,7 @@ mod tests {
                 stdin: "a".into(),
                 cwd: PathBuf::from("/tmp"),
                 env: RedactedEnv::default(),
+                stream: None,
             })
             .await
             .unwrap();
@@ -430,6 +436,7 @@ mod tests {
                 stdin: "b".into(),
                 cwd: PathBuf::from("/tmp"),
                 env: RedactedEnv::default(),
+                stream: None,
             })
             .await
             .unwrap();
@@ -455,10 +462,64 @@ mod tests {
             stdin: String::new(),
             cwd: PathBuf::from("/tmp"),
             env: RedactedEnv(vec![("GEMINI_API_KEY".into(), secret_value.into())]),
+            stream: None,
         };
         let debug = format!("{inv:?}");
         assert!(!debug.contains(secret_value), "the secret VALUE leaked into Debug: {debug}");
         assert!(debug.contains("GEMINI_API_KEY"), "the var NAME should still be visible: {debug}");
         assert!(debug.contains("<redacted>"), "must say the value was redacted, not just omit it: {debug}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_runner_parses_agy_stream_json() {
+        let stream_ndjson = concat!(
+            "{\"event\":\"init\",\"session\":\"s1\"}\n",
+            "{\"event\":\"agent_response\",\"text_delta\":\"Hello \"}\n",
+            "{\"event\":\"agent_response\",\"text_delta\":\"world\"}\n",
+            "{\"event\":\"result\",\"response\":\"Hello world\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"thinking_tokens\":2,\"cache_read_tokens\":1}}\n"
+        );
+        let out = ProcessRunner
+            .run(CliInvocation {
+                program: "echo".into(),
+                args: vec!["-n".into(), stream_ndjson.into()],
+                stdin: String::new(),
+                cwd: std::env::temp_dir(),
+                env: RedactedEnv::default(),
+                stream: Some(hadron_lattice::StreamSpec {
+                    format: hadron_lattice::StreamFormat::AgyStreamJson,
+                    flags: vec![],
+                }),
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.stdout, "Hello world");
+        let u = out.usage.expect("usage spend parsed");
+        assert_eq!(u.input, 10);
+        // Note: thinking_tokens (2) is folded into output (5 + 2 = 7) because thinking/reasoning spends output token budget
+        assert_eq!(u.output, 7);
+        assert_eq!(u.cache_read, 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore]
+    async fn live_test_agy_stream_json() {
+        let spec = hadron_lattice::StreamSpec {
+            format: hadron_lattice::StreamFormat::AgyStreamJson,
+            flags: vec!["--output-format".into(), "stream-json".into()],
+        };
+        let out = ProcessRunner
+            .run(CliInvocation {
+                program: "agy".into(),
+                args: vec!["-p".into(), "reply with OK".into(), "--output-format".into(), "stream-json".into()],
+                stdin: String::new(),
+                cwd: std::env::temp_dir(),
+                env: RedactedEnv::default(),
+                stream: Some(spec),
+            })
+            .await
+            .unwrap();
+        assert!(!out.stdout.is_empty(), "live agy stream-json should return stdout");
     }
 }
