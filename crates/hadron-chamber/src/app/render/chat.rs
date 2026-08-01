@@ -1067,7 +1067,7 @@ mod milestone_3_tests {
 
         assert_eq!(ChatTab::Chat.label(), "Chat");
         assert_eq!(ChatTab::Log.label(), "Event Log");
-        assert_eq!(ChatTab::Stats.label(), "Timeline");
+        assert_eq!(ChatTab::Stats.label(), "Stats");
 
         let n = ChatTab::ALL.len() as isize;
         let mut cur = ChatTab::Chat.index() as isize;
