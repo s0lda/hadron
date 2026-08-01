@@ -866,40 +866,59 @@ impl super::Chamber {
                     .into_any_element()
             }
             RightRailTab::Tasks => {
-                let list = if self.view.tasks.is_empty() {
-                    div().p_4().child(empty_hint("No swarm tasks yet.")).into_any_element()
+                let now = chrono::Utc::now();
+                let render_now = self.task_scrub.unwrap_or(now);
+
+                let scrubber = self.task_timeline_scrubber(now, cx);
+
+                let tasks_to_render: Vec<&crate::model::SwarmTask> = if let Some(at) = self.task_scrub {
+                    model::tasks::tasks_at(&self.view.tasks, at)
                 } else {
-                    // One clock for the whole list, so every row's elapsed time is
-                    // measured against the same instant.
-                    let now = chrono::Utc::now();
+                    self.view.tasks.iter().collect()
+                };
+
+                let list = if tasks_to_render.is_empty() {
+                    let hint = if self.task_scrub.is_some() {
+                        "No swarm tasks active at this scrubbed time."
+                    } else {
+                        "No swarm tasks yet."
+                    };
+                    div().p_4().child(empty_hint(hint)).into_any_element()
+                } else {
                     let mut col = v_flex().gap_1().p_2().w_full();
-                    for t in &self.view.tasks {
+                    for t in tasks_to_render {
                         let to = self.resolve_identity(&t.to);
                         let from = self.resolve_identity(&t.from);
-                        col = col.child(task_row(t, now, &to, &from.name));
+                        col = col.child(task_row(t, render_now, &to, &from.name));
                     }
                     col.into_any_element()
                 };
 
-                div()
+                v_flex()
                     .flex_1()
                     .min_h_0()
-                    .relative()
+                    .child(scrubber)
                     .child(
                         div()
-                            .id("tasks-scroll")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.tasks_scroll)
-                            .text_sm()
-                            .text_color(theme::text())
-                            .child(list),
-                    )
-                    .child(
-                        div().absolute().top_0().bottom_0().right_0().child(
-                            Scrollbar::vertical(&self.tasks_scroll)
-                                .scrollbar_show(ScrollbarShow::Always),
-                        ),
+                            .flex_1()
+                            .min_h_0()
+                            .relative()
+                            .child(
+                                div()
+                                    .id("tasks-scroll")
+                                    .size_full()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.tasks_scroll)
+                                    .text_sm()
+                                    .text_color(theme::text())
+                                    .child(list),
+                            )
+                            .child(
+                                div().absolute().top_0().bottom_0().right_0().child(
+                                    Scrollbar::vertical(&self.tasks_scroll)
+                                        .scrollbar_show(ScrollbarShow::Always),
+                                ),
+                            ),
                     )
                     .into_any_element()
             }
@@ -933,6 +952,146 @@ impl super::Chamber {
             // single pane of glass floating on it. A second fill would stack with the
             // card's translucent glass and hide the field; the p_2 gutter shows it.
             .child(card)
+    }
+
+    fn task_timeline_scrubber(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let span_bounds = model::tasks::span(&self.view.tasks, now);
+        let Some((start_time, end_time)) = span_bounds else {
+            return div().into_any_element();
+        };
+
+        let span_ms = (end_time - start_time).num_milliseconds().max(1) as f64;
+        let current_at = self.task_scrub.unwrap_or(now);
+        let is_scrubbing = self.task_scrub.is_some();
+
+        let live_pill = if is_scrubbing {
+            div()
+                .id("task-scrub-live-pill")
+                .px_2()
+                .py_0p5()
+                .rounded_full()
+                .cursor_pointer()
+                .bg(theme::accent())
+                .text_color(theme::field_base())
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_xs()
+                .child("Live")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.task_scrub = None;
+                    cx.notify();
+                }))
+                .into_any_element()
+        } else {
+            div()
+                .px_2()
+                .py_0p5()
+                .text_xs()
+                .text_color(gpui::rgb(0x34d399))
+                .font_weight(gpui::FontWeight::BOLD)
+                .child("● Live")
+                .into_any_element()
+        };
+
+        let time_label = div()
+            .text_xs()
+            .text_color(theme::text_muted())
+            .font_family("Cascadia Code")
+            .child(current_at.format("%H:%M:%S").to_string());
+
+        let header = h_flex()
+            .w_full()
+            .justify_between()
+            .items_center()
+            .px_3()
+            .py_1()
+            .child(live_pill)
+            .child(time_label);
+
+        let task_ticks: Vec<f32> = self
+            .view
+            .tasks
+            .iter()
+            .map(|t| {
+                let ms = (t.asked_at - start_time).num_milliseconds() as f64;
+                ((ms / span_ms).clamp(0.0, 1.0)) as f32
+            })
+            .collect();
+
+        let current_pct = (((current_at - start_time).num_milliseconds() as f64 / span_ms)
+            .clamp(0.0, 1.0)) as f32;
+
+        let track_bounds_cell = std::rc::Rc::new(std::cell::Cell::new(gpui::Bounds::default()));
+        let track_paint = track_bounds_cell.clone();
+        let track_click = track_bounds_cell.clone();
+
+        let track_canvas = gpui::canvas(
+            move |bounds, _, _| bounds,
+            move |bounds, _, window, _cx| {
+                track_paint.set(bounds);
+                let w = bounds.size.width;
+                let h = bounds.size.height;
+
+                let bg_quad = gpui::Bounds {
+                    origin: bounds.origin,
+                    size: bounds.size,
+                };
+                window.paint_quad(gpui::fill(bg_quad, theme::bg_base()).corner_radii(px(4.0)));
+
+                let tick_color = theme::text_muted();
+                for &tick_pct in &task_ticks {
+                    let tx = bounds.origin.x + w * tick_pct;
+                    let tick_bounds = gpui::Bounds {
+                        origin: gpui::point(tx, bounds.origin.y),
+                        size: gpui::size(px(1.5), h),
+                    };
+                    window.paint_quad(gpui::fill(tick_bounds, tick_color));
+                }
+
+                let handle_x = bounds.origin.x + w * current_pct;
+                let handle_w = px(3.0);
+                let handle_bounds = gpui::Bounds {
+                    origin: gpui::point(handle_x - handle_w / 2.0, bounds.origin.y),
+                    size: gpui::size(handle_w, h),
+                };
+                window.paint_quad(gpui::fill(handle_bounds, theme::accent()).corner_radii(px(1.5)));
+            },
+        )
+        .size_full();
+
+        let track_interactive = div()
+            .id("task-scrub-track")
+            .w_full()
+            .h(px(12.0))
+            .cursor_pointer()
+            .child(track_canvas)
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
+                    let bounds = track_click.get();
+                    if bounds.size.width > px(0.0) {
+                        let rel_x = (event.position.x - bounds.origin.x).max(px(0.0));
+                        let pct = (rel_x / bounds.size.width).clamp(0.0, 1.0) as f64;
+                        let scrub_ms = (pct * span_ms) as i64;
+                        let scrub_at = start_time + chrono::Duration::milliseconds(scrub_ms);
+                        this.task_scrub = Some(scrub_at);
+                        cx.notify();
+                    }
+                }),
+            );
+
+        v_flex()
+            .w_full()
+            .px_3()
+            .pb_2()
+            .border_b_1()
+            .border_color(theme::border())
+            .child(header)
+            .child(track_interactive)
+            .into_any_element()
     }
 }
 
