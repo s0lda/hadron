@@ -365,6 +365,11 @@ mod tests {
             glass_highlight().a < 0.25,
             "Glass highlight rim must be low-alpha white (<25%)"
         );
+        // The dropdown/menu surface. The fork's `Select` fills its popup from a
+        // theme token, so anything less than fully opaque here lets the panel
+        // underneath read through the open model list.
+        assert_eq!(popover().a, 1.0, "Popover surface must be opaque");
+        assert_eq!(modal_surface().a, 1.0, "Modal surface must be opaque");
     }
 }
 
