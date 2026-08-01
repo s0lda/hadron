@@ -16,6 +16,60 @@ pub(super) fn unique_seat_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String
 }
 
 impl super::Chamber {
+    /// Connect = GET the vendor's model-list endpoint, off the UI thread — a slow
+    /// or unreachable local server must not freeze the window. Mirrors
+    /// `start_acp_model_probe`'s exact shape (a method, not an inline closure —
+    /// GPUI's `Fn`-bound `cx.listener` closure fights the borrow checker over a
+    /// nested `cx.spawn` in ways a plain method body does not).
+    pub(super) fn start_local_provider_probe(
+        &mut self,
+        vendor: hadron_gluon::adapter::local::LocalVendor,
+        base_url: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.wizard_state = WizardState::LocalProvider(vendor, ProviderState::Connecting);
+        cx.notify();
+
+        let target = hadron_gluon::adapter::local::HttpTarget { vendor, base_url };
+        cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_spawn(async move { hadron_gluon::adapter::local::fetch_models(&target) })
+                    .await
+                    .map_err(|e| e.to_string());
+
+                this.update(&mut cx, |this, cx| {
+                    // Only the still-open probe may write its result — the human may have
+                    // backed out of this wizard entirely while the request was in flight.
+                    if !matches!(&this.wizard_state, WizardState::LocalProvider(v, _) if *v == vendor) {
+                        return;
+                    }
+                    this.wizard_state = WizardState::LocalProvider(
+                        vendor,
+                        match result {
+                            Ok(models) if !models.is_empty() => {
+                                let ids: Vec<String> = models.into_iter().map(|m| m.id).collect();
+                                let first = ids[0].clone();
+                                this.local_models = ids;
+                                this.local_selected_model = Some(first.clone());
+                                ProviderState::Ready { model: first }
+                            }
+                            Ok(_) => ProviderState::Failed(format!(
+                                "connected, but {} has no models loaded",
+                                vendor.display_name()
+                            )),
+                            Err(e) => ProviderState::Failed(e),
+                        },
+                    );
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     pub(super) fn general_settings_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
@@ -347,6 +401,64 @@ impl super::Chamber {
                     .collect();
 
                 let mut list = v_flex().gap_2();
+
+                // Ollama / LM Studio: keyless local HTTP servers, pinned at the top since
+                // they need no install check and no boot-and-probe — just a Connect button
+                // against a server that's either already running or isn't.
+                for vendor in
+                    [hadron_gluon::adapter::local::LocalVendor::Ollama, hadron_gluon::adapter::local::LocalVendor::LmStudio]
+                {
+                    if !filter.is_empty() && !vendor.display_name().to_lowercase().contains(&filter) {
+                        continue;
+                    }
+                    list = list.child(
+                        h_flex()
+                            .id(SharedString::from(format!("preset-local-{}", vendor.code())))
+                            .items_center()
+                            .justify_between()
+                            .px_3()
+                            .py_2()
+                            .rounded_lg()
+                            .bg(theme::bg_surface())
+                            .border_1()
+                            .border_color(theme::border())
+                            .hover(|s| s.bg(theme::bg_surface_raised()))
+                            .cursor_pointer()
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_base()
+                                            .text_color(theme::text())
+                                            .child(vendor.display_name()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::text_muted())
+                                            .child(format!("Connect over HTTP \u{2014} {}", vendor.default_base_url())),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text_muted())
+                                    .child("Connect \u{2192}"),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.local_base_url.update(cx, |s, cx| {
+                                    s.set_value(vendor.default_base_url(), window, cx)
+                                });
+                                this.local_models = Vec::new();
+                                this.local_selected_model = None;
+                                this.wizard_state =
+                                    WizardState::LocalProvider(vendor, ProviderState::NotConnected);
+                                cx.notify();
+                            })),
+                    );
+                }
+
                 for entry in entries {
                     let command_line = entry
                         .command
@@ -1038,6 +1150,167 @@ impl super::Chamber {
                         }))
                     }),
                 )
+            }
+
+            WizardState::LocalProvider(vendor, state) => {
+                let vendor = *vendor;
+                let state_ui = match state {
+                    ProviderState::Connecting => v_flex()
+                        .gap_4()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text_muted())
+                                .child("Connecting..."),
+                        )
+                        .into_any_element(),
+                    ProviderState::NotConnected => v_flex()
+                        .gap_4()
+                        .child(settings_field_stacked(
+                            "Base URL",
+                            Input::new(&self.local_base_url).into_any_element(),
+                        ))
+                        .child(text_button("local-connect-btn", "Connect").on_click(cx.listener(
+                            move |this, _, _window, cx| {
+                                let typed = this.local_base_url.read(cx).value().trim().to_string();
+                                let base_url =
+                                    if typed.is_empty() { vendor.default_base_url().to_string() } else { typed };
+                                this.start_local_provider_probe(vendor, base_url, cx);
+                            },
+                        )))
+                        .into_any_element(),
+                    // A keyless local server has no auth flow to complete.
+                    ProviderState::NeedsAuth(_) => div().into_any_element(),
+                    ProviderState::Ready { model } => {
+                        let selected = self.local_selected_model.clone().unwrap_or_else(|| model.clone());
+                        let mut picker = h_flex().gap_2().flex_wrap();
+                        for id in self.local_models.clone() {
+                            let is_selected = id == selected;
+                            let id_for_click = id.clone();
+                            picker = picker.child(
+                                div()
+                                    .id(SharedString::from(format!("local-model-{id}")))
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .when(is_selected, |d| {
+                                        d.bg(theme::glass_card())
+                                            .border_1()
+                                            .border_color(theme::accent())
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(theme::accent())
+                                    })
+                                    .when(!is_selected, |d| {
+                                        d.border_1()
+                                            .border_color(theme::border())
+                                            .text_color(theme::text_secondary())
+                                            .hover(|s| s.bg(theme::bg_surface_raised()))
+                                    })
+                                    .child(id.clone())
+                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                        this.local_selected_model = Some(id_for_click.clone());
+                                        cx.notify();
+                                    })),
+                            );
+                        }
+                        let typed = self.local_base_url.read(cx).value().trim().to_string();
+                        let base_url =
+                            if typed.is_empty() { vendor.default_base_url().to_string() } else { typed };
+                        v_flex()
+                            .gap_4()
+                            .child(div().text_color(theme::accent()).child(format!(
+                                "Connected \u{2014} {} model(s) found",
+                                self.local_models.len()
+                            )))
+                            .child(settings_field_stacked("Model", picker.into_any_element()))
+                            .child(text_button("save-local-provider", "Save Provider").on_click(
+                                cx.listener(move |this, _, _window, cx| {
+                                    let model = this.local_selected_model.clone().unwrap_or_default();
+                                    if model.is_empty() {
+                                        return;
+                                    }
+                                    let base_id = hadron_lattice::Transport::Http.conventional_id(vendor.code());
+                                    let seat_id = {
+                                        let taken = |id: &str| {
+                                            this.providers.iter().any(|p| p.id == id)
+                                                || this.global.quarks.iter().any(|s| s.id.as_str() == id)
+                                                || this.team.quarks.iter().any(|s| s.id.as_str() == id)
+                                                || this.team.roster.iter().any(|o| o.id.as_str() == id)
+                                        };
+                                        unique_seat_id(&base_id, &taken)
+                                    };
+
+                                    this.providers.push(ConfiguredQuark {
+                                        id: seat_id.clone(),
+                                        transport: "http".to_string(),
+                                        state: ProviderState::Ready { model: model.clone() },
+                                    });
+
+                                    let seat = hadron_lattice::Seat {
+                                        id: hadron_lattice::QuarkId::new(&seat_id),
+                                        display_name: None,
+                                        vendor: vendor.code().to_string(),
+                                        model,
+                                        flavor: hadron_lattice::Flavor::Worker,
+                                        transport: hadron_lattice::Transport::Http,
+                                        command: None,
+                                        cli: None,
+                                        enabled: true,
+                                        effort: None,
+                                        mode_config: None,
+                                        roles: vec![],
+                                        exclusive: false,
+                                        commands: hadron_lattice::SeatCommands::default(),
+                                        secret_env: Vec::new(),
+                                        energy_limit: None,
+                                        deny_skills: vec![],
+                                        external_roots: vec![],
+                                        http_base_url: Some(base_url.clone()),
+                                    };
+                                    this.add_configured_quark(seat, cx);
+
+                                    this.wizard_state = WizardState::None;
+                                    cx.notify();
+                                }),
+                            ))
+                            .into_any_element()
+                    }
+                    ProviderState::Failed(err) => v_flex()
+                        .gap_4()
+                        .child(div().text_color(theme::text_secondary()).child(err.clone()))
+                        .child(text_button("local-retry", "Try Again").on_click(cx.listener(
+                            move |this, _, _window, cx| {
+                                this.wizard_state = WizardState::LocalProvider(vendor, ProviderState::NotConnected);
+                                cx.notify();
+                            },
+                        )))
+                        .into_any_element(),
+                };
+
+                v_flex()
+                    .size_full()
+                    .gap_4()
+                    .child(text_button("back-local-provider", "← Back").on_click(cx.listener(
+                        |this, _, _window, cx| {
+                            this.wizard_state = WizardState::PickPreset;
+                            cx.notify();
+                        },
+                    )))
+                    .child(
+                        div()
+                            .text_lg()
+                            .text_color(theme::text())
+                            .child(vendor.display_name().to_string()),
+                    )
+                    .child(
+                        div()
+                            .id("local-provider-form-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(state_ui),
+                    )
             }
         }
     }
