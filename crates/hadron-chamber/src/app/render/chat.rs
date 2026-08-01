@@ -31,7 +31,7 @@ impl super::Chamber {
                     .px_3()
                     .py_2()
                     .rounded_lg()
-                    .bg(theme::glass_surface())
+                    .bg(theme::glass_card())
                     .border_1()
                     .border_color(identity.color.opacity(0.5))
                     .child(
@@ -109,28 +109,40 @@ impl super::Chamber {
         });
 
         let selected = self.chat_tab;
-        let tabs = TabBar::new("chat-tabs")
-            .segmented()
-            // Flat #101010 so the segmented bar dissolves into the field (Jake's request).
-            .bg(theme::field_base())
-            .selected_index(selected.index())
+        let tabs = h_flex()
+            .id("chat-capsule-tabs")
+            .items_center()
+            .gap_1()
+            .p_1()
+            .rounded_full()
+            .bg(theme::glass_card())
+            .border_1()
+            .border_color(theme::glass_highlight())
             .children(ChatTab::ALL.map(|t| {
-                // The active tab reads as a dark cutout; give its label the pink
-                // accent so the selection is unmistakable. Inactive tabs keep the
-                // default muted label.
-                if t.index() == selected.index() {
-                    Tab::new().child(
-                        div()
+                let is_selected = t.index() == selected.index();
+                let label = t.label();
+                let ix = t.index();
+                div()
+                    .id(("chat-tab-pill", ix))
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .when(is_selected, |s| {
+                        s.bg(theme::glass_highlight())
                             .text_color(theme::accent())
-                            .child(t.label().to_string()),
-                    )
-                } else {
-                    Tab::new().label(t.label())
-                }
-            }))
-            .on_click(cx.listener(|this, ix: &usize, _window, cx| {
-                this.chat_tab = ChatTab::from_index(*ix);
-                cx.notify();
+                            .font_weight(gpui::FontWeight::BOLD)
+                    })
+                    .when(!is_selected, |s| {
+                        s.text_color(theme::text_muted())
+                            .hover(|h| h.text_color(theme::text()))
+                    })
+                    .text_xs()
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.chat_tab = ChatTab::from_index(ix);
+                        cx.notify();
+                    }))
             }));
 
         let header = h_flex()
@@ -187,7 +199,8 @@ impl super::Chamber {
             matches!(selected, ChatTab::Chat).then(|| {
                 v_flex()
                     .flex_none()
-                    .m_4()
+                    .mx_4()
+                    .mb_3()
                     // Anchor for the completion card, which is `.absolute()` above.
                     .relative()
                     // The focused Input binds Up/Down/Escape at the deepest node, so
@@ -220,74 +233,90 @@ impl super::Chamber {
                     .when_some(live_card, |el, card| el.child(card))
                     .child({
                         let is_focused = self.input.read(cx).focus_handle(cx).is_focused(window);
-                        h_flex()
-                            .px_1()
-                            .rounded_lg()
-                            .bg(theme::field_base())
-                            // A hairline border lifts the field off the card behind it
-                            // — the modern outlined-input look, using the shared token.
+                        v_flex()
+                            .w_full()
+                            .p_2()
+                            .rounded_xl()
+                            .bg(theme::glass_card())
                             .border_1()
                             .border_color(if is_focused {
-                                theme::accent_soft()
+                                theme::accent_soft().into()
                             } else {
-                                theme::border()
+                                theme::glass_highlight()
                             })
+                            .shadow_lg()
                             .child(
                                 Input::new(&self.input)
                                     .appearance(false)
                                     .bordered(false)
                                     .focus_bordered(false),
                             )
-                    })
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .justify_between()
-                            .mt_2()
-                            .items_center()
                             .child(
                                 h_flex()
-                                    .gap_2()
+                                    .w_full()
+                                    .justify_between()
+                                    .mt_2()
                                     .items_center()
                                     .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(theme::text_muted())
-                                            .child("Global Mode:"),
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(
+                                                div()
+                                                    .id("global-mode")
+                                                    .cursor_pointer()
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.cycle_global_mode(cx)
+                                                    }))
+                                                    .tooltip(|window, cx| {
+                                                        Tooltip::new(
+                                                            "Permission mode — F6 or click to cycle",
+                                                        )
+                                                        .build(window, cx)
+                                                    })
+                                                    .child(mode_tag(self.view.global_mode, false)),
+                                            )
+                                            .child(
+                                                Button::new("picker-quark")
+                                                    .ghost()
+                                                    .small()
+                                                    .label("@ Quark")
+                                                    .on_click(cx.listener(|this, _, window, cx| {
+                                                        this.insert_completion_trigger("@", window, cx);
+                                                    })),
+                                            )
+                                            .child(
+                                                Button::new("picker-file")
+                                                    .ghost()
+                                                    .small()
+                                                    .label("@ File")
+                                                    .on_click(cx.listener(|this, _, window, cx| {
+                                                        this.insert_completion_trigger("@", window, cx);
+                                                    })),
+                                            ),
                                     )
                                     .child(
-                                        div()
-                                            .id("global-mode")
-                                            .cursor_pointer()
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.cycle_global_mode(cx)
-                                            }))
-                                            .tooltip(|window, cx| {
-                                                Tooltip::new(
-                                                    // F6, not Shift+Tab: `shift-tab` was
-                                                    // abandoned as the CycleMode chord (the
-                                                    // text input claims it for OutdentInline),
-                                                    // and the tooltip kept the dead one.
-                                                    // `app/mod.rs::default_key_bindings` is
-                                                    // the truth.
-                                                    "Permission mode — F6 or click to cycle",
-                                                )
-                                                .build(window, cx)
-                                            })
-                                            // This chip IS the global mode selector, so it
-                                            // must always show the live ASK/WRITE/AUTO/BYPASS,
-                                            // never "Default". `is_default = false` does that
-                                            // (the grey "Default" chip is only for a per-quark
-                                            // roster row with no override).
-                                            .child(mode_tag(self.view.global_mode, false)),
+                                        h_flex()
+                                            .gap_3()
+                                            .items_center()
+                                            .child(
+                                                div().text_xs().text_color(theme::text_muted()).child(
+                                                    crate::vcs::format_working_dir(&self.path),
+                                                ),
+                                            )
+                                            .child(
+                                                Button::new("submit-prompt")
+                                                    .primary()
+                                                    .small()
+                                                    .label("Send")
+                                                    .on_click(cx.listener(|this, _, window, cx| {
+                                                        let input_entity = this.input.clone();
+                                                        this.on_input_submit(&input_entity, &InputEvent::PressEnter { shift: false, secondary: false }, window, cx);
+                                                    })),
+                                            ),
                                     ),
                             )
-                            .child(
-                                div().text_xs().text_color(theme::text_muted()).child(
-                                    crate::vcs::format_working_dir(&self.path),
-                                ),
-                            ),
-                    )
+                    })
             });
 
         // The floating chat card: darker + rounded, inset from the lighter
@@ -631,14 +660,114 @@ impl super::Chamber {
                             }),
                     )
                     .when_some(summary_chip, |this, chip| this.child(chip))
-                    .child(self.severity_card(
-                        m.severity,
-                        "chat-md",
-                        ix,
-                        &m.body,
-                        roster,
-                        gpui::px(12.0),
-                    )),
+                    .child(if m.kind_label == "edit" {
+                        self.ast_diff_card(&m.body).into_any_element()
+                    } else {
+                        self.severity_card(
+                            m.severity,
+                            "chat-md",
+                            ix,
+                            &m.body,
+                            roster,
+                            gpui::px(12.0),
+                        )
+                        .into_any_element()
+                    }),
+            )
+    }
+
+    /// Insert a completion trigger character (such as `@`) at the current input cursor position.
+    pub(super) fn insert_completion_trigger(
+        &mut self,
+        trigger: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let value = self.input.read(cx).value().to_string();
+        let mut cursor = self.input.read(cx).cursor().min(value.len());
+        while cursor > 0 && !value.is_char_boundary(cursor) {
+            cursor -= 1;
+        }
+        let new_value = format!("{}{}{}", &value[..cursor], trigger, &value[cursor..]);
+        let new_cursor = cursor + trigger.len();
+        self.input.update(cx, |state, cx| {
+            state.set_value(new_value, window, cx);
+            state.set_selected_range(new_cursor..new_cursor, cx);
+        });
+        window.focus(&self.input.focus_handle(cx), cx);
+        self.recompute_completion(cx);
+        cx.notify();
+    }
+
+    /// Render an embedded AST Forge Edit-by-Hash diff card displaying target file path, 8-character blake3 hash badge, and code diff preview.
+    pub(super) fn ast_diff_card(&self, body: &str) -> impl IntoElement {
+        let file_path = body
+            .lines()
+            .next()
+            .and_then(|line| {
+                if line.contains("path") || line.contains('/') || line.contains('.') {
+                    Some(line.trim())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or("AST Edit");
+
+        let hash_badge = hadron_forge::block::short_hash(body);
+
+        v_flex()
+            .w_full()
+            .rounded_lg()
+            .bg(theme::glass_card())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .overflow_hidden()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .px_3()
+                    .py_1p5()
+                    .bg(theme::glass_surface())
+                    .border_b_1()
+                    .border_color(theme::glass_highlight())
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::text())
+                                    .child(file_path.to_string()),
+                            )
+                            .child(
+                                div()
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .bg(theme::accent_soft())
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(theme::accent())
+                                    .child(format!("blake3:{}", hash_badge)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child("Edit-by-Hash"),
+                    ),
+            )
+            .child(
+                div()
+                    .p_3()
+                    .text_xs()
+                    .font_family("Cascadia Code")
+                    .text_color(theme::text_secondary())
+                    .child(body.to_string()),
             )
     }
 
@@ -917,4 +1046,145 @@ mod turn_summary_tests {
         assert_eq!(format_duration(3725), "1h 02m 05s");
     }
 }
+
+#[cfg(test)]
+mod milestone_3_tests {
+    use crate::app::tabs::ChatTab;
+
+    #[test]
+    fn test_chat_tab_navigation() {
+        assert_eq!(ChatTab::Chat.index(), 0);
+        assert_eq!(ChatTab::Log.index(), 1);
+        assert_eq!(ChatTab::Stats.index(), 2);
+
+        assert_eq!(ChatTab::from_index(0), ChatTab::Chat);
+        assert_eq!(ChatTab::from_index(1), ChatTab::Log);
+        assert_eq!(ChatTab::from_index(2), ChatTab::Stats);
+        assert_eq!(ChatTab::from_index(99), ChatTab::Chat);
+
+        assert_eq!(ChatTab::Chat.label(), "Chat");
+        assert_eq!(ChatTab::Log.label(), "Event Log");
+        assert_eq!(ChatTab::Stats.label(), "Timeline");
+
+        let n = ChatTab::ALL.len() as isize;
+        let mut cur = ChatTab::Chat.index() as isize;
+        cur = (cur + 1).rem_euclid(n);
+        assert_eq!(ChatTab::from_index(cur as usize), ChatTab::Log);
+
+        cur = (cur + 1).rem_euclid(n);
+        assert_eq!(ChatTab::from_index(cur as usize), ChatTab::Stats);
+
+        cur = (cur + 1).rem_euclid(n);
+        assert_eq!(ChatTab::from_index(cur as usize), ChatTab::Chat);
+
+        cur = (cur - 1).rem_euclid(n);
+        assert_eq!(ChatTab::from_index(cur as usize), ChatTab::Stats);
+    }
+
+    #[test]
+    fn test_chat_tab_edge_cases_and_extreme_cycling() {
+        let n = ChatTab::ALL.len() as isize;
+
+        // Large positive delta cycle (100 steps)
+        let cur = ChatTab::Chat.index() as isize;
+        let next_tab = ChatTab::from_index((cur + 100).rem_euclid(n) as usize);
+        assert_eq!(next_tab, ChatTab::Log); // 100 % 3 = 1 -> Log
+
+        // Large negative delta cycle (-100 steps)
+        let prev_tab = ChatTab::from_index((cur - 100).rem_euclid(n) as usize);
+        assert_eq!(prev_tab, ChatTab::Stats); // -100 % 3 = 2 -> Stats
+
+        // Index out of bounds values default safely to ChatTab::Chat
+        assert_eq!(ChatTab::from_index(usize::MAX), ChatTab::Chat);
+        assert_eq!(ChatTab::from_index(3), ChatTab::Chat);
+        assert_eq!(ChatTab::from_index(42), ChatTab::Chat);
+    }
+
+    #[test]
+    fn test_ast_diff_card_rendering() {
+        let sample_code = "pub fn calculate_hash() -> u64 { 42 }";
+        let hash = hadron_forge::block::short_hash(sample_code);
+        assert_eq!(hash.len(), 8, "blake3 hash digest badge length must be 8 hex chars");
+
+        let blocks = hadron_forge::block::parse_blocks(sample_code);
+        assert!(!blocks.is_empty(), "Should parse AST blocks");
+        assert_eq!(blocks[0].hash.len(), 8);
+    }
+
+    #[test]
+    fn test_ast_diff_short_hash_determinism_and_edge_cases() {
+        // Empty string
+        let empty_hash = hadron_forge::block::short_hash("");
+        assert_eq!(empty_hash.len(), 8);
+        assert!(empty_hash.chars().all(|c| c.is_ascii_hexdigit()));
+
+        // Determinism check
+        let code = "fn hello_world() {\n    println!(\"Hello, Hadron!\");\n}";
+        let hash1 = hadron_forge::block::short_hash(code);
+        let hash2 = hadron_forge::block::short_hash(code);
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash1.len(), 8);
+
+        // Sensitivity check
+        let code_modified = "fn hello_world() {\n    println!(\"Hello, Hadron!\"); \n}";
+        let hash_mod = hadron_forge::block::short_hash(code_modified);
+        assert_ne!(hash1, hash_mod);
+
+        // Multi-byte UTF-8 string
+        let utf8_code = "fn 🔬_quantum_core() { // ⚛️\n}";
+        let hash_utf8 = hadron_forge::block::short_hash(utf8_code);
+        assert_eq!(hash_utf8.len(), 8);
+    }
+
+    #[test]
+    fn test_completion_overlay_filtering() {
+        use crate::text::{extract_completion_query, completion_candidates, CompletionTrigger};
+
+        let (trig, query, start) = extract_completion_query("hello @acp", 10).expect("extract mention");
+        assert_eq!(trig, CompletionTrigger::Mention);
+        assert_eq!(query, "acp");
+        assert_eq!(start, 6);
+
+        let (trig, query, start) = extract_completion_query("/resume session", 15).expect("extract arg");
+        assert_eq!(trig, CompletionTrigger::Arg(crate::text::ArgSource::Session));
+        assert_eq!(query, "session");
+        assert_eq!(start, 8);
+
+        let quarks = vec![("acp-agy".to_string(), Some("AGY Quark".to_string()))];
+        let files = vec!["src/app/render/chat.rs".to_string()];
+        let sessions = vec![];
+
+        let comp = completion_candidates("@acp", 4, &quarks, &files, &sessions).expect("candidates");
+        assert!(!comp.candidates.is_empty());
+        assert_eq!(comp.candidates[0].detail, "Quark");
+
+        let comp_files = completion_candidates("@src", 4, &quarks, &files, &sessions).expect("file candidates");
+        assert!(!comp_files.candidates.is_empty());
+        assert_eq!(comp_files.candidates[0].detail, "File");
+    }
+
+    #[test]
+    fn test_completion_overlay_selection_bounds_clamping() {
+        // Test selection index clamping logic used by move_completion_selection
+        let candidates_count = 3;
+        let max = candidates_count as isize - 1;
+
+        let mut selected: isize = 0;
+        // Move up from 0 -> stays 0
+        selected = (selected - 1).clamp(0, max);
+        assert_eq!(selected, 0);
+
+        // Move down twice: 0 -> 1 -> 2
+        selected = (selected + 1).clamp(0, max);
+        assert_eq!(selected, 1);
+        selected = (selected + 1).clamp(0, max);
+        assert_eq!(selected, 2);
+
+        // Move down past end -> clamps at max (2)
+        selected = (selected + 1).clamp(0, max);
+        assert_eq!(selected, 2);
+    }
+}
+
+
 

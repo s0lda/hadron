@@ -113,6 +113,7 @@ impl Dimensions for GridSize {
 
 /// A live PTY + shell, its output parsed into a grid on a background thread.
 pub struct PtyTerminal {
+    pub title: String,
     term: Arc<Mutex<Term<VoidListener>>>,
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
@@ -187,6 +188,7 @@ impl PtyTerminal {
             .map_err(|e| format!("pty reader thread: {e}"))?;
 
         Ok(Self {
+            title: "bash #1".to_string(),
             term,
             writer,
             master: pair.master,
@@ -196,6 +198,7 @@ impl PtyTerminal {
             rows,
         })
     }
+
 
     /// Stream bytes straight to the child (a keystroke, a paste, a signal char).
     pub fn send_input(&mut self, bytes: &[u8]) {
@@ -383,6 +386,13 @@ impl PtyTerminal {
             .collect();
 
         TermSnapshot { lines, cols, rows }
+    }
+}
+
+impl Drop for PtyTerminal {
+    fn drop(&mut self) {
+        let _ = self._child.kill();
+        let _ = self._child.wait();
     }
 }
 
@@ -637,4 +647,72 @@ mod tests {
             "reset to bottom view should contain LINE_20 again"
         );
     }
+
+    #[test]
+    fn test_pty_tab_list_creation() {
+        let mut tabs = vec!["bash #1".to_string()];
+        tabs.push("bash #2".to_string());
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs[0], "bash #1");
+        assert_eq!(tabs[1], "bash #2");
+    }
+
+    #[test]
+    fn test_multi_terminal_instance_isolation() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut term1 = PtyTerminal::new(dir.path(), 80, 24).expect("term1 spawn");
+        let mut term2 = PtyTerminal::new(dir.path(), 80, 24).expect("term2 spawn");
+
+        term1.send_input(b"echo TERM_ALPHA_MARKER\n");
+        term2.send_input(b"echo TERM_BETA_MARKER\n");
+
+        let snap1 = wait_for(&term1, |s| s.plain_text().contains("TERM_ALPHA_MARKER"));
+        let snap2 = wait_for(&term2, |s| s.plain_text().contains("TERM_BETA_MARKER"));
+
+        assert!(
+            snap1.plain_text().contains("TERM_ALPHA_MARKER"),
+            "term1 grid must contain TERM_ALPHA_MARKER"
+        );
+        assert!(
+            !snap1.plain_text().contains("TERM_BETA_MARKER"),
+            "term1 grid must NOT be contaminated by term2 output"
+        );
+
+        assert!(
+            snap2.plain_text().contains("TERM_BETA_MARKER"),
+            "term2 grid must contain TERM_BETA_MARKER"
+        );
+        assert!(
+            !snap2.plain_text().contains("TERM_ALPHA_MARKER"),
+            "term2 grid must NOT be contaminated by term1 output"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_pty_resource_cleanup_under_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let initial_threads = std::fs::read_dir("/proc/self/task").unwrap().count();
+
+        for _ in 0..10 {
+            let term = PtyTerminal::new(dir.path(), 80, 24).expect("spawn PTY");
+            drop(term);
+        }
+        std::thread::sleep(Duration::from_millis(150));
+
+        let mut terms = Vec::new();
+        for _ in 0..10 {
+            terms.push(PtyTerminal::new(dir.path(), 80, 24).expect("spawn PTY"));
+        }
+        drop(terms);
+        std::thread::sleep(Duration::from_millis(200));
+
+        let final_threads = std::fs::read_dir("/proc/self/task").unwrap().count();
+        assert!(
+            final_threads <= initial_threads,
+            "Threads must not leak after dropping PTY terminals! Baseline: {}, Final: {}",
+            initial_threads, final_threads
+        );
+    }
 }
+

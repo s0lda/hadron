@@ -40,10 +40,8 @@ path = "src/bin/hadron-forge-mcp.rs"
 
 [dependencies]
 hadron-lattice = { path = "../hadron-lattice" }
-# The provider list the wizard renders is a view of the daemon's ACP catalogue —
-# and since `cli::run`, the daemon's whole entrypoint as well.
+hadron-forge = { path = "../hadron-forge" }
 hadron-gluon = { path = "../hadron-gluon" }
-# Carried only so this package can ship the `hadron-forge-mcp` bin target.
 hadron-forge-mcp = { path = "../hadron-forge-mcp" }
 hadron-gatekeeper = { path = "../hadron-gatekeeper" }
 # Only the two bin shims need a runtime; the chamber itself is not async.

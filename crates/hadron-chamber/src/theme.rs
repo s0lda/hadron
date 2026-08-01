@@ -19,11 +19,16 @@
 //! named token, not a raw hex.
 #![allow(dead_code)]
 
-use gpui::{rgb, rgba, Rgba};
+use gpui::{rgb, rgba, Hsla, Rgba};
 
 use hadron_lattice::QuarkState;
 
 // --- the ambient field: a flat black housing (the frosted-glass-on-black look) ---
+/// Layer 0 (Canvas Base): Ultra-dark cosmic obsidian canvas base fill (`#090B10`).
+pub fn canvas_base() -> Hsla {
+    rgb(0x090b10).into()
+}
+
 /// The near-black base — the opaque tone painted behind the rounded corners and the dark
 /// end of the field wash. Must NOT be translucent (it is the window fill; translucency
 /// here would show the desktop, not the field). Just off pure black so the rounded corners
@@ -55,7 +60,7 @@ pub fn glow_green() -> Rgba {
     rgba(0x2fcf8a1a) // available — bottom-left
 }
 
-// --- surfaces (recessed → raised) --- white frosted glass over the black field.
+// --- surfaces (recessed → raised) --- borderless glass surface hierarchy over cosmic obsidian base.
 /// Recessed inner surface (deepest wells). The least white in the ladder, so the black
 /// field shows through most and it reads as the deepest well.
 pub fn bg_base() -> Rgba {
@@ -73,17 +78,51 @@ pub fn bg_elevated() -> Rgba {
     rgba(0xffffff1a) // ~0.10 white — lifted chrome, the brightest frost in the ladder
 }
 
-/// The fill for the raised panels (chat + right rail cards): **white frosted glass** — a
-/// low-alpha white that frosts the black field to a subtle dark glass (it does NOT go
-/// opaque-white), seating the light text cleanly while catching the [`glass_highlight`] rim.
-pub fn glass_surface() -> Rgba {
-    rgba(0xffffff12) // ~0.07 white over black
+/// Layer 1 (Panels & Rails): Translucent glass containers (`#111520e6` at 85% opacity).
+pub fn glass_surface() -> Hsla {
+    rgba(0x111520e6).into()
 }
 
-/// The clean white rim around a glass panel — a low-alpha white that reads as the lit edge
-/// of glass, not a hard seam.
-pub fn glass_highlight() -> Rgba {
-    rgba(0xffffff33) // ~0.20 white
+/// Layer 2 (Floating Cards & Modals): Elevated glass cards (`#181E2Ce6` at 85% opacity).
+pub fn glass_card() -> Hsla {
+    rgba(0x181e2ce6).into()
+}
+
+/// Highlights / rims: Subtle 1px highlight rim (`rgba(255, 255, 255, 0.06)`).
+pub fn glass_highlight() -> Hsla {
+    rgba(0xffffff0f).into()
+}
+
+// --- vector status halo indicators ---
+/// Active status halo (Cyan `#00e5ff`) for tool execution / active state.
+pub fn halo_active() -> Hsla {
+    rgb(0x00e5ff).into()
+}
+
+/// Reasoning status halo (Violet `#aa00ff`) for reasoning / thinking state.
+pub fn halo_reasoning() -> Hsla {
+    rgb(0xaa00ff).into()
+}
+
+/// Idle status halo (Emerald `#22c55e`) for ground / waiting / available state.
+pub fn halo_idle() -> Hsla {
+    rgb(0x22c55e).into()
+}
+
+/// Error status halo (Red `#ef4444`) for blocked / error state.
+pub fn halo_error() -> Hsla {
+    rgb(0xef4444).into()
+}
+
+/// Resolves the 8px GPU-native vector status halo indicator color for a given `QuarkState`.
+pub fn halo_dot(state: QuarkState) -> Hsla {
+    match state {
+        QuarkState::Ground => halo_idle(),
+        QuarkState::Excited => halo_active(),
+        QuarkState::Thinking => halo_reasoning(),
+        QuarkState::Waiting => halo_idle(),
+        QuarkState::Blocked | QuarkState::Error => halo_error(),
+    }
 }
 
 /// The fill for a **focused modal** (Settings card, Processes overlay, app menu) — opaque,
@@ -233,3 +272,100 @@ pub fn actor_hue(actor: &str) -> Rgba {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{rgb, rgba, Hsla};
+
+    #[test]
+    fn test_canvas_base_token() {
+        let base = canvas_base();
+        let expected: Hsla = rgb(0x090b10).into();
+        assert_eq!(base, expected);
+        assert_eq!(base.a, 1.0);
+    }
+
+    #[test]
+    fn test_glass_surface_token() {
+        let surface = glass_surface();
+        let expected: Hsla = rgba(0x111520e6).into();
+        assert_eq!(surface, expected);
+    }
+
+    #[test]
+    fn test_glass_card_token() {
+        let card = glass_card();
+        let expected: Hsla = rgba(0x181e2ce6).into();
+        assert_eq!(card, expected);
+    }
+
+    #[test]
+    fn test_glass_highlight_token() {
+        let highlight = glass_highlight();
+        let expected: Hsla = rgba(0xffffff0f).into();
+        assert_eq!(highlight, expected);
+    }
+
+    #[test]
+    fn test_halo_color_tokens() {
+        assert_eq!(halo_active(), Hsla::from(rgb(0x00e5ff)));
+        assert_eq!(halo_reasoning(), Hsla::from(rgb(0xaa00ff)));
+        assert_eq!(halo_idle(), Hsla::from(rgb(0x22c55e)));
+        assert_eq!(halo_error(), Hsla::from(rgb(0xef4444)));
+    }
+
+    #[test]
+    fn test_halo_dot_mapping() {
+        assert_eq!(halo_dot(QuarkState::Excited), halo_active());
+        assert_eq!(halo_dot(QuarkState::Thinking), halo_reasoning());
+        assert_eq!(halo_dot(QuarkState::Ground), halo_idle());
+        assert_eq!(halo_dot(QuarkState::Waiting), halo_idle());
+        assert_eq!(halo_dot(QuarkState::Blocked), halo_error());
+        assert_eq!(halo_dot(QuarkState::Error), halo_error());
+    }
+
+    #[test]
+    fn test_glass_elevation_hierarchy() {
+        let base = canvas_base();
+        let surface = glass_surface();
+        let card = glass_card();
+
+        assert_ne!(base, surface, "Canvas base and glass surface must be distinct");
+        assert_ne!(surface, card, "Glass surface and glass card must be distinct");
+        assert_ne!(base, card, "Canvas base and glass card must be distinct");
+    }
+
+    #[test]
+    fn test_halo_colors_mutually_distinct() {
+        let active = halo_active();
+        let reasoning = halo_reasoning();
+        let idle = halo_idle();
+        let error = halo_error();
+
+        assert_ne!(active, reasoning);
+        assert_ne!(active, idle);
+        assert_ne!(active, error);
+        assert_ne!(reasoning, idle);
+        assert_ne!(reasoning, error);
+        assert_ne!(idle, error);
+    }
+
+    #[test]
+    fn test_translucency_invariants() {
+        assert_eq!(canvas_base().a, 1.0, "Canvas base must be opaque");
+        assert!(
+            glass_surface().a > 0.8 && glass_surface().a < 0.95,
+            "Glass surface must be ~85-90% opacity"
+        );
+        assert!(
+            glass_card().a > 0.8 && glass_card().a < 0.95,
+            "Glass card must be ~85-90% opacity"
+        );
+        assert!(
+            glass_highlight().a < 0.1,
+            "Glass highlight rim must be low-alpha white (<10%)"
+        );
+    }
+}
+

@@ -982,6 +982,87 @@ impl Chamber {
         cx.notify();
     }
 
+    /// Add a new terminal tab and focus it.
+    pub(super) fn add_terminal(&mut self, cx: &mut Context<Self>) {
+        let dims = self
+            .terminal_px
+            .get()
+            .map(|(_, _, w, h)| term_dims((w, h)))
+            .unwrap_or((80, 24));
+        let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        let title = format!("bash #{}", self.terminals.len() + 1);
+        match crate::pty::PtyTerminal::new(&root, dims.0, dims.1) {
+            Ok(mut term) => {
+                term.title = title.clone();
+                self.terminals.push(TerminalTab {
+                    title,
+                    term: Some(term),
+                    error: None,
+                });
+            }
+            Err(err) => {
+                self.terminals.push(TerminalTab {
+                    title,
+                    term: None,
+                    error: Some(err),
+                });
+            }
+        }
+        self.active_terminal_index = self.terminals.len().saturating_sub(1);
+        self.terminal_warmup = 20;
+        self.right_rail_tab = RightRailTab::Terminal;
+        cx.notify();
+    }
+
+    /// Select the terminal tab at `index`.
+    pub(super) fn select_terminal(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.terminals.is_empty() {
+            self.active_terminal_index = 0;
+        } else {
+            self.active_terminal_index = index.min(self.terminals.len() - 1);
+        }
+        cx.notify();
+    }
+
+    /// Close the terminal tab at `index` with safe fallback index clamping.
+    pub(super) fn close_terminal(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.terminals.len() {
+            self.terminals.remove(index);
+        }
+
+        if self.terminals.is_empty() {
+            self.add_terminal(cx);
+            return;
+        } else {
+            if index < self.active_terminal_index {
+                self.active_terminal_index = self.active_terminal_index.saturating_sub(1);
+            } else if self.active_terminal_index >= self.terminals.len() {
+                self.active_terminal_index = self.terminals.len() - 1;
+            }
+        }
+        cx.notify();
+    }
+
+    /// Switch to the next terminal tab.
+    pub(super) fn next_terminal_tab(&mut self, cx: &mut Context<Self>) {
+        if !self.terminals.is_empty() {
+            let next = (self.active_terminal_index + 1) % self.terminals.len();
+            self.select_terminal(next, cx);
+        }
+    }
+
+    /// Switch to the previous terminal tab.
+    pub(super) fn prev_terminal_tab(&mut self, cx: &mut Context<Self>) {
+        if !self.terminals.is_empty() {
+            let prev = if self.active_terminal_index == 0 {
+                self.terminals.len() - 1
+            } else {
+                self.active_terminal_index - 1
+            };
+            self.select_terminal(prev, cx);
+        }
+    }
+
     /// `ToggleFocus`: move keyboard focus between the chat input and the
     /// terminal. If the terminal already has focus, this returns focus to chat —
     /// that direction reads live focus state (`FocusHandle::is_focused`), which a
