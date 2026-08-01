@@ -296,6 +296,42 @@ fn an_addressed_message_arriving_mid_turn_is_not_swallowed_by_a_reply_to_an_earl
     );
 }
 
+/// A completed `Kind::Assign` dispatch record must not be read as pending forever.
+/// `Assign` is stamped `.answers = driver.assignment` (a CONTINUATION marker, not a
+/// reply to itself), and the turn's `Ground` answers that SAME assignment — never the
+/// Assign event's own freshly-minted id. Using the Assign event's own id as the
+/// correlation key made `has_answered` search for a stamp nothing ever writes, so a
+/// finished assignment stayed "pending" and the engine re-excited the quark on every
+/// single dispatch pass — a live infinite-redispatch hang that took the workspace gate
+/// past its 900s timeout.
+#[test]
+fn a_completed_assign_record_is_not_pending_forever() {
+    let worker = QuarkId::new("worker");
+    let assignment = ulid::Ulid::new();
+
+    let assign = Event::new(
+        Actor::Gluon,
+        Some(worker.clone()),
+        Kind::Assign { task: "write w.txt".into(), invariants: vec![] },
+    )
+    .with_answers(assignment);
+
+    let mut grounded = Event::new(
+        Actor::Quark(worker.clone()),
+        None,
+        Kind::Status { state: QuarkState::Ground },
+    );
+    grounded.answers = Some(assignment);
+
+    let events = vec![assign, grounded];
+
+    assert_eq!(
+        next_pending(&events),
+        None,
+        "Ground answers the SAME assignment the Assign record carries — must quiesce"
+    );
+}
+
 #[test]
 fn parse_addressee_matches_a_line_starting_mention() {
     // A delegation begins a line (optionally indented).

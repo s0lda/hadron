@@ -41,7 +41,18 @@ pub fn next_pending(events: &[Event]) -> Option<QuarkId> {
         .enumerate()
         .rev()
         .filter(|(_, e)| e.to.is_some() && is_turn_request(e))
-        .map(|(idx, e)| (idx, e.id, e.to.clone().unwrap()))
+        // A request's own correlation key is `e.answers` when it carries one, not its
+        // own freshly-minted `e.id`. `Kind::Assign` is the case that matters: it is
+        // stamped `.answers = driver.assignment` (a CONTINUATION marker, see its call
+        // site's doc comment), and the `Ground`/reply that later completes the turn
+        // answers that SAME assignment — never the Assign event's own id, which no
+        // other event ever references. Using `e.id` here made `has_answered` search
+        // for a stamp nothing would ever write, so a completed assignment's own
+        // dispatch record stayed "pending" forever and the quark was re-excited on
+        // every single pass — a live hang, caught by the workspace gate hitting its
+        // 900s timeout. A plain `Kind::Message{to: Some(_)}` with no `.answers` of its
+        // own (a fresh top-level request) falls back to `e.id`, unchanged from before.
+        .map(|(idx, e)| (idx, e.answers.unwrap_or(e.id), e.to.clone().unwrap()))
         .find(|(idx, msg_id, target)| !has_answered(&events[idx + 1..], target, *msg_id))
         .map(|(_, _, target)| target)
 }
