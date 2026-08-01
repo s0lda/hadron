@@ -1,5 +1,97 @@
 use super::*;
 
+/// One entry in the in-app Changelog overlay, newest first.
+///
+/// `date: None` is the *only* way to say "unreleased" — the version and the badge
+/// used to be two independent arguments, and 0.1.4 shipped to users still wearing
+/// the "Unreleased" badge because the release bumped one and not the other.
+struct Release {
+    version: &'static str,
+    /// `None` renders the "Unreleased" badge; `Some` renders the release date.
+    date: Option<&'static str>,
+    added: &'static [&'static str],
+    changed: &'static [&'static str],
+    fixed: &'static [&'static str],
+}
+
+/// A hand-written summary of `docs/CHANGELOG.md` — shorter lines, same releases.
+/// `tests::the_top_overlay_release_matches_the_changelog_and_the_shipped_version`
+/// fails the gate when the newest entry here drifts from the changelog or from
+/// the version this binary was built at.
+const RELEASES: &[Release] = &[
+    Release {
+        version: "0.1.5",
+        date: Some("2026-08-02"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "The in-app Changelog dates the shipped release instead of badging it Unreleased",
+        ],
+    },
+    Release {
+        version: "0.1.4",
+        date: Some("2026-08-02"),
+        added: &[
+            "Ollama, LM Studio & Cloud OpenAI-compatible HTTP providers over Transport::Http",
+            "Add-Quark wizard rows for HTTP providers with keyring API key support",
+            "Searchable model picker with pinned Default row in wizard and Settings",
+            "CLI seats stream their step/tool feed, so the Live card moves during a CLI turn",
+            "@-file completion offers gitignored paths, with an icon and path on each row",
+        ],
+        changed: &[],
+        fixed: &[
+            "Enabled rustls-tls on reqwest so cloud endpoints connect over HTTPS",
+            "Fixed LM Studio /v1 endpoint path handling and error response parsing",
+            "Restored Make Orchestrator context menu action for Worker quarks",
+            "The model dropdown and Settings modal paint on opaque surfaces, not glass",
+            "Ollama and OpenRouter seats are wired to live_dir, so they show in the Live card",
+            "Auto-scroll chat input on paste of large text blocks",
+        ],
+    },
+    Release {
+        version: "0.1.3",
+        date: Some("2026-07-27"),
+        added: &[
+            "Unified Swarm Command Deck UI redesign with floating capsule tab bars",
+            "/Command picker chip selection alongside @Quark and @File mentions",
+            "Task time scrubbing and live merge-gate heartbeats",
+            "Live streamed replies directly in chat while tool activity stays in Live card",
+        ],
+        changed: &["Obsidian Graphite theme, soft amethyst accents, and metallic pastel git graph"],
+        fixed: &[],
+    },
+    Release {
+        version: "0.1.2",
+        date: Some("2026-07-26"),
+        added: &[
+            "Graceful turn cancellation & mid-turn interruption for resident ACP sessions",
+            "Automatic Chamber restart after successful self-update",
+            "Silence-based turn watchdog (TURN_DEADLINE)",
+            "Dedicated orchestrator chat lane preserved across reseats",
+        ],
+        changed: &[],
+        fixed: &["Snapshot worktrees on turn interruption to avoid stranding uncommitted edits"],
+    },
+    Release {
+        version: "0.1.1",
+        date: Some("2026-07-25"),
+        added: &[],
+        changed: &[],
+        fixed: &["Self-update workflow installs the exact released tag offered"],
+    },
+    Release {
+        version: "0.1.0",
+        date: Some("2026-07-24"),
+        added: &[
+            "Multi-quark swarm orchestration daemon (hadron-gluon)",
+            "Lattice IPC data layer and ACP adapter engine",
+            "Native GPUI Chamber desktop application",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+];
+
 impl super::Chamber {
     /// The completion card: rows floating just above the message box, spanning the
     /// input's full width. It is a normal render-tree descendant — `.absolute()`
@@ -288,7 +380,7 @@ impl super::Chamber {
 
     /// The Changelog overlay modal displaying release history back to v0.1.0.
     pub(super) fn changelog_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let render_section = |version: &'static str, date: &'static str, is_unreleased: bool, added: &[&'static str], changed: &[&'static str], fixed: &[&'static str]| {
+        let render_section = |release: &'static Release| {
             let mut sec = v_flex().gap_2().pb_4().border_b_1().border_color(theme::border());
 
             let mut header = h_flex().items_center().gap_2();
@@ -297,28 +389,23 @@ impl super::Chamber {
                     .text_base()
                     .font_weight(gpui::FontWeight::BOLD)
                     .text_color(theme::text())
-                    .child(format!("v{}", version)),
+                    .child(format!("v{}", release.version)),
             );
-            if is_unreleased {
-                header = header.child(
-                    div()
-                        .px_2()
-                        .py_0p5()
-                        .rounded_full()
-                        .bg(theme::accent_soft())
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(theme::accent())
-                        .child("Unreleased"),
-                );
-            } else {
-                header = header.child(
-                    div()
-                        .text_xs()
-                        .text_color(theme::text_muted())
-                        .child(date),
-                );
-            }
+            header = header.child(match release.date {
+                Some(date) => div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(date),
+                None => div()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_full()
+                    .bg(theme::accent_soft())
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(theme::accent())
+                    .child("Unreleased"),
+            });
             sec = sec.child(header);
 
             let render_group = |title: &'static str, items: &[&'static str]| {
@@ -355,13 +442,13 @@ impl super::Chamber {
                 Some(grp)
             };
 
-            if let Some(grp) = render_group("Added", added) {
+            if let Some(grp) = render_group("Added", release.added) {
                 sec = sec.child(grp);
             }
-            if let Some(grp) = render_group("Changed", changed) {
+            if let Some(grp) = render_group("Changed", release.changed) {
                 sec = sec.child(grp);
             }
-            if let Some(grp) = render_group("Fixed", fixed) {
+            if let Some(grp) = render_group("Fixed", release.fixed) {
                 sec = sec.child(grp);
             }
 
@@ -447,75 +534,7 @@ impl super::Chamber {
                             .overflow_y_scroll()
                             .gap_4()
                             .pr_1()
-                            .child(render_section(
-                                "0.1.4",
-                                "Unreleased",
-                                true,
-                                &[
-                                    "Ollama, LM Studio & Cloud OpenAI-compatible HTTP providers over Transport::Http",
-                                    "Add-Quark wizard rows for HTTP providers with keyring API key support",
-                                    "Searchable model picker with pinned Default row in wizard and Settings",
-                                ],
-                                &[],
-                                &[
-                                    "Enabled rustls-tls on reqwest so cloud endpoints connect over HTTPS",
-                                    "Fixed LM Studio /v1 endpoint path handling and error response parsing",
-                                    "Restored Make Orchestrator context menu action for Worker quarks",
-                                    "Auto-scroll chat input on paste of large text blocks",
-                                ],
-                            ))
-                            .child(render_section(
-                                "0.1.3",
-                                "2026-07-27",
-                                false,
-                                &[
-                                    "Unified Swarm Command Deck UI redesign with floating capsule tab bars",
-                                    "/Command picker chip selection alongside @Quark and @File mentions",
-                                    "Task time scrubbing and live merge-gate heartbeats",
-                                    "Live streamed replies directly in chat while tool activity stays in Live card",
-                                ],
-                                &[
-                                    "Obsidian Graphite theme, soft amethyst accents, and metallic pastel git graph",
-                                ],
-                                &[],
-                            ))
-                            .child(render_section(
-                                "0.1.2",
-                                "2026-07-26",
-                                false,
-                                &[
-                                    "Graceful turn cancellation & mid-turn interruption for resident ACP sessions",
-                                    "Automatic Chamber restart after successful self-update",
-                                    "Silence-based turn watchdog (TURN_DEADLINE)",
-                                    "Dedicated orchestrator chat lane preserved across reseats",
-                                ],
-                                &[],
-                                &[
-                                    "Snapshot worktrees on turn interruption to avoid stranding uncommitted edits",
-                                ],
-                            ))
-                            .child(render_section(
-                                "0.1.1",
-                                "2026-07-25",
-                                false,
-                                &[],
-                                &[],
-                                &[
-                                    "Self-update workflow installs the exact released tag offered",
-                                ],
-                            ))
-                            .child(render_section(
-                                "0.1.0",
-                                "2026-07-24",
-                                false,
-                                &[
-                                    "Multi-quark swarm orchestration daemon (hadron-gluon)",
-                                    "Lattice IPC data layer and ACP adapter engine",
-                                    "Native GPUI Chamber desktop application",
-                                ],
-                                &[],
-                                &[],
-                            )),
+                            .children(RELEASES.iter().map(render_section)),
                     )
                     .child(
                         h_flex()
@@ -960,5 +979,37 @@ impl super::Chamber {
                     .child(sep())
                     .child(item("menu-quit", "Quit Hadron", |_t, _w, cx| cx.quit(), cx)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RELEASES;
+
+    /// `RELEASES` is a hand-written mirror of `docs/CHANGELOG.md`, and it drifted: the
+    /// 0.1.4 release bumped the changelog and the version but not the overlay, so the
+    /// installed build showed its own shipped release badged "Unreleased". Nothing but
+    /// this test links the three, so it asserts all three agree on the newest release.
+    #[test]
+    fn the_top_overlay_release_matches_the_changelog_and_the_shipped_version() {
+        const CHANGELOG: &str = include_str!("../../../../../docs/CHANGELOG.md");
+
+        let header = CHANGELOG
+            .lines()
+            .find(|line| line.starts_with("## ["))
+            .expect("docs/CHANGELOG.md has a `## [x.y.z] - DATE` release header");
+        let (version, date) = header
+            .trim_start_matches("## [")
+            .split_once("] - ")
+            .expect("the newest changelog entry is dated, not `[Unreleased]`");
+
+        let top = &RELEASES[0];
+        assert_eq!(top.version, version, "overlay's newest release vs docs/CHANGELOG.md");
+        assert_eq!(top.date, Some(date.trim()), "overlay's release date vs docs/CHANGELOG.md");
+        assert_eq!(
+            top.version,
+            env!("CARGO_PKG_VERSION"),
+            "overlay's newest release vs the version this binary was built at",
+        );
     }
 }
