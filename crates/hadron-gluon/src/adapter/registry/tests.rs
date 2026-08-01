@@ -421,6 +421,73 @@ fn build_seat_watched_carries_roles_onto_an_acp_quark() {
     assert!(q.exclusive(), "exclusive never reached the ACP quark");
 }
 
+/// **The CLI half of `build_seat_watched`'s new branch, end to end.** A CLI seat
+/// whose `cli.stream` is `Some` must come back `.watching()`-wired: a real turn
+/// (a plain `sh` subprocess standing in for a streaming CLI — cheap, no network,
+/// same reasoning as `runner.rs`'s ProcessRunner tests) publishes its draft into
+/// `live_dir` mid-turn and leaves it clear once the turn ends, same as the ACP
+/// case above. A `cli.stream: None` seat, by contrast, is untouched — it takes
+/// the ordinary `build_seat` fallback and publishes nothing, ever.
+#[tokio::test]
+async fn build_seat_watched_wires_a_streaming_cli_seat_and_leaves_a_plain_one_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = seat("agy-stream", "agy");
+    let mut cli = CliSpec::agy();
+    cli.stream = Some(hadron_lattice::StreamSpec {
+        args: vec![],
+        format: hadron_lattice::StreamFormat::AgyStreamJson,
+    });
+    // Stand in for the real `agy` binary with a tiny shell script emitting the
+    // agy stream-json shape — proves the wiring, not the vendor.
+    cli.program = "sh".to_string();
+    cli.args = vec![
+        "-c".to_string(),
+        "printf '%s\\n' \
+         '{\"event\":\"step_update\",\"step_update\":{\"step_type\":\"agent_response\",\"text_delta\":\"hi\"}}' \
+         '{\"event\":\"result\",\"result\":{\"response\":\"hi there\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}'"
+            .to_string(),
+    ];
+    cli.prompt = hadron_lattice::PromptChannel::Stdin;
+    cli.resume = hadron_lattice::ResumeMode::None;
+    cli.timeout = None;
+    cli.argv_guard = false;
+    s.cli = Some(cli);
+
+    let mut q = build_seat_watched(&s, dir.path(), &store()).unwrap();
+    let t = hadron_lattice::Projection {
+        isolated: true,
+        task: "say hi".into(),
+        invariants: String::new(),
+        available_invariants: vec![],
+        nucleus_digest: String::new(),
+        live_activities: vec![],
+        roster: vec![],
+        field_window: vec![],
+        field_truncated: false,
+        nucleus_index: String::new(),
+        nucleus_index_path: std::path::PathBuf::new(),
+        nucleus_index_truncated: false,
+        nucleus_index_budget_bytes: hadron_lattice::DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES,
+        nucleus_notes_dir: std::path::PathBuf::new(),
+        git_diff: String::new(),
+        cwd: std::env::temp_dir(),
+        mode: hadron_lattice::Mode::default(),
+        role_body: None,
+        active_skill: None,
+        named_specifically: true,
+        has_forge_tools: false,
+    };
+    let outcome = q.excite(t).await.expect("streaming CLI turn");
+
+    assert_eq!(outcome.message.as_deref(), Some("hi there"), "reply is the stream's parsed final text");
+    assert_eq!(outcome.usage.spend.input, Some(1));
+    assert_eq!(
+        hadron_lattice::live::read(dir.path(), &QuarkId::new("agy-stream"), chrono::Utc::now()),
+        None,
+        "a finished streaming CLI turn must leave no activity behind, same as ACP"
+    );
+}
+
 /// The command allow/deny carry path's build-time seam: a seat's `commands`
 /// must reach the quark `build_seat` constructs, the same way `roles`/
 /// `exclusive` already do (see `build_seat_carries_the_seats_roles_onto_the_quark`).

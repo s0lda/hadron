@@ -377,6 +377,10 @@ impl CliRunner for FakeRunner {
                 on_line(line);
                 full.push_str(line);
                 full.push('\n');
+                // Yield between lines so a test watching `live_dir` concurrently (the
+                // same shape as the real subprocess's genuinely-async line reads) gets
+                // a chance to observe a publish before this loop clears it.
+                tokio::task::yield_now().await;
             }
             return Ok(CliResult { stdout: full, exit: 0 });
         }
