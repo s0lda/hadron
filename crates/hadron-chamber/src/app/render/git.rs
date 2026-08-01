@@ -32,24 +32,40 @@ impl super::Chamber {
     /// without leaving the chamber.
     pub(super) fn git_tab_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.git_subtab;
-        let subtabs = TabBar::new("git-subtabs")
-            .segmented()
+        let subtabs = h_flex()
+            .id("git-capsule-subtabs")
+            .items_center()
+            .gap_1()
+            .p_1()
+            .rounded_full()
             .bg(theme::glass_card())
-            .selected_index(selected.index())
+            .border_1()
+            .border_color(theme::glass_highlight())
             .children(GitSubtab::ALL.map(|t| {
-                if t.index() == selected.index() {
-                    Tab::new().child(
-                        div()
+                let is_selected = t.index() == selected.index();
+                let label = t.label();
+                let ix = t.index();
+                div()
+                    .id(("git-subtab-pill", ix))
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .when(is_selected, |s| {
+                        s.bg(theme::glass_highlight())
                             .text_color(theme::accent())
-                            .child(t.label().to_string()),
-                    )
-                } else {
-                    Tab::new().label(t.label())
-                }
-            }))
-            .on_click(cx.listener(|this, ix: &usize, _window, cx| {
-                this.git_subtab = GitSubtab::from_index(*ix);
-                cx.notify();
+                            .font_weight(gpui::FontWeight::BOLD)
+                    })
+                    .when(!is_selected, |s| {
+                        s.text_color(theme::text_muted())
+                            .hover(|h| h.text_color(theme::text()))
+                    })
+                    .text_xs()
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.git_subtab = GitSubtab::from_index(ix);
+                        cx.notify();
+                    }))
             }));
 
         // The Graph subtab virtualizes its own rows, so it owns its scrolling: a

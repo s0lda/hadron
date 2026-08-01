@@ -384,24 +384,40 @@ impl super::Chamber {
         // Section tabs keep the panel short: the header stays pinned (you always see
         // whose panel this is), and one section shows at a time below it.
         let info_selected = self.info_tab;
-        let info_tabs = TabBar::new("info-tabs")
-            .segmented()
+        let info_tabs = h_flex()
+            .id("info-capsule-tabs")
+            .items_center()
+            .gap_1()
+            .p_1()
+            .rounded_full()
             .bg(theme::glass_card())
-            .selected_index(info_selected.index())
+            .border_1()
+            .border_color(theme::glass_highlight())
             .children(InfoTab::ALL.map(|t| {
-                if t.index() == info_selected.index() {
-                    Tab::new().child(
-                        div()
+                let is_selected = t.index() == info_selected.index();
+                let label = t.label();
+                let ix = t.index();
+                div()
+                    .id(("info-tab-pill", ix))
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .when(is_selected, |s| {
+                        s.bg(theme::glass_highlight())
                             .text_color(theme::accent())
-                            .child(t.label().to_string()),
-                    )
-                } else {
-                    Tab::new().label(t.label())
-                }
-            }))
-            .on_click(cx.listener(|this, ix: &usize, _window, cx| {
-                this.info_tab = InfoTab::from_index(*ix);
-                cx.notify();
+                            .font_weight(gpui::FontWeight::BOLD)
+                    })
+                    .when(!is_selected, |s| {
+                        s.text_color(theme::text_muted())
+                            .hover(|h| h.text_color(theme::text()))
+                    })
+                    .text_xs()
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.info_tab = InfoTab::from_index(ix);
+                        cx.notify();
+                    }))
             }));
 
         let body = match info_selected {
@@ -518,32 +534,41 @@ impl super::Chamber {
     /// once — the info panel overlays the chat pane), so their element ids never collide.
     pub(super) fn stats_window_tabs(&self, id: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.stats_window;
-        let sel_ix = StatsWindow::ALL
-            .iter()
-            .position(|w| *w == selected)
-            .unwrap_or(0);
         h_flex().child(
-            TabBar::new(id)
-                .segmented()
+            h_flex()
+                .id(id)
+                .items_center()
+                .gap_1()
+                .p_1()
+                .rounded_full()
                 .bg(theme::glass_card())
-                .selected_index(sel_ix)
+                .border_1()
+                .border_color(theme::glass_highlight())
                 .children(StatsWindow::ALL.map(|w| {
-                    if w == selected {
-                        Tab::new().child(
-                            div()
+                    let is_selected = w == selected;
+                    let label = w.label();
+                    let target_window = w;
+                    div()
+                        .id(SharedString::from(format!("{id}-pill-{}", w.label())))
+                        .px_3()
+                        .py_1()
+                        .rounded_full()
+                        .cursor_pointer()
+                        .when(is_selected, |s| {
+                            s.bg(theme::glass_highlight())
                                 .text_color(theme::accent())
-                                .child(w.label().to_string()),
-                        )
-                    } else {
-                        Tab::new().label(w.label())
-                    }
-                }))
-                .on_click(cx.listener(|this, ix: &usize, _window, cx| {
-                    this.stats_window = StatsWindow::ALL
-                        .get(*ix)
-                        .copied()
-                        .unwrap_or(StatsWindow::Current);
-                    cx.notify();
+                                .font_weight(gpui::FontWeight::BOLD)
+                        })
+                        .when(!is_selected, |s| {
+                            s.text_color(theme::text_muted())
+                                .hover(|h| h.text_color(theme::text()))
+                        })
+                        .text_xs()
+                        .child(label)
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            this.stats_window = target_window;
+                            cx.notify();
+                        }))
                 }))
         )
     }
