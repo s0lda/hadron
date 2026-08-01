@@ -1130,10 +1130,20 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             t.tokens.scrollbar_thumb_hover = gpui::Hsla::from(gpui::rgba(0xffffffa0)).into();
             // Subtle dark window frame (Zed-style CSD border), matching the UI.
             t.window_border = rgb(0x2a2b2c).into();
-            // Root paints this behind everything; transparent so our rounded
-            // window frame (crate::window_frame) shows the shadow through the
-            // corners instead of a square fill.
-            t.tokens.background = gpui::hsla(0.0, 0.0, 0.0, 0.0).into();
+            // `tokens.background` must stay OPAQUE. It is ONE token with several
+            // consumers in the fork, and the one that matters here is the `Select`
+            // popup: `select.rs` fills its dropdown with `.bg(tokens.background)`
+            // (NOT `tokens.popover`, which is what the name suggests and what the
+            // local fork checkout — which does not build this binary — was edited to
+            // use). Zeroing this token therefore made every model dropdown a
+            // see-through pane: the settings panel's own Effort/Permission/Roles
+            // chips read straight through the open list, which is exactly the
+            // "barely possible to read the list" report. It was zeroed so the
+            // rounded window frame (`crate::window_frame`) showed through the
+            // corners instead of a square fill — a requirement of the window ROOT
+            // alone, now stated at the root itself (`Root::new(..).bg(..)` below)
+            // rather than by blanking a token nine other widgets paint with.
+            t.tokens.background = gpui::Hsla::from(theme::popover()).into();
             // ONE family, never a comma list — see `font_family_with_a_real_bold`.
             t.font_family = ui_font;
         }
@@ -1210,7 +1220,17 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
                         cx,
                     )
                 });
-                cx.new(|cx| Root::new(chamber, window, cx).bordered(false))
+                // `Root` fills its bounds with `tokens.background`; we need it to
+                // paint nothing so `crate::window_frame`'s rounded corners show the
+                // shadow through instead of a square fill. Said HERE, on the one
+                // element that wants it, because `Root::render` applies its
+                // `StyleRefinement` after that `.bg(..)` — the token itself has to
+                // stay opaque for the fork's `Select` popups (see the palette block).
+                cx.new(|cx| {
+                    Root::new(chamber, window, cx)
+                        .bordered(false)
+                        .bg(gpui::transparent_black())
+                })
             })
             .expect("failed to open window");
         })
