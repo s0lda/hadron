@@ -425,8 +425,9 @@ async fn stream_chat(
 /// The minimum gap between two published draft updates — mirrors
 /// `adapter::acp::session::LiveFeed::THROTTLE` (private to that module), so a
 /// local model streaming a chunk every few tokens doesn't rewrite the live file
-/// hundreds of times a turn.
-const PUBLISH_THROTTLE: Duration = Duration::from_millis(200);
+/// hundreds of times a turn. `pub(crate)`: `adapter::cli::CliQuark`'s own
+/// streaming path reuses this exact constant rather than duplicating it (SSOT).
+pub(crate) const PUBLISH_THROTTLE: Duration = Duration::from_millis(200);
 
 /// A quark backed by an HTTP server (Ollama, LM Studio, or a cloud OpenAI-compatible
 /// endpoint). Single-shot, like
