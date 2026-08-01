@@ -114,4 +114,24 @@ impl super::Chamber {
         }
         col.into_any_element()
     }
+
+    /// A general Model select component for any seat (e.g. CLI seats) using the shared
+    /// searchable model picker list component.
+    pub(super) fn general_model_select(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let selected = self.settings_model.read(cx).value().trim().to_string();
+        let field = self.settings_model.clone();
+        self.model_picker_list(
+            &[],
+            &selected,
+            &self.general_model_filter,
+            "general-model",
+            "Inherit",
+            Rc::new(move |this: &mut Self, value: String, window: &mut Window, cx: &mut Context<Self>| {
+                field.update(cx, |s, cx| s.set_value(value.clone(), window, cx));
+                this.commit_settings_inputs(cx);
+                cx.notify();
+            }),
+            cx,
+        )
+    }
 }
