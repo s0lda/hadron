@@ -15,7 +15,6 @@ impl super::Chamber {
     /// in `http_model_probe` for the Settings picker. A no-op (clears the probe)
     /// for a non-Http quark or a seat whose vendor doesn't resolve to a target.
     /// Mirrors [`Self::start_acp_model_probe`]'s shape exactly — a method, not an
-    /// inline closure (the `cx-listener-nested-spawn-wants-a-method` note), and a
     /// probe that resolves after the human has moved to another quark is dropped.
     pub(super) fn start_http_model_probe(&mut self, id: &str, cx: &mut Context<Self>) {
         let target = resolve_team(&self.team, &self.global)
@@ -77,13 +76,19 @@ impl super::Chamber {
             _ => Vec::new(),
         };
         let selected = self.settings_model.read(cx).value().trim().to_string();
-        let delegate = create_model_delegate("Inherit", &models, Some(&selected));
-        self.http_model_select_state.update(cx, |s, cx| {
-            s.set_items(delegate, window, cx);
-            if !selected.is_empty() {
-                s.set_selected_value(&selected.into(), window, cx);
-            }
-        });
+        let key = (selected.clone(), models.clone());
+        if self.http_model_select_key.as_ref() != Some(&key) {
+            self.http_model_select_key = Some(key);
+            let delegate = create_model_delegate("Inherit", &models, Some(&selected));
+            self.http_model_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                if !selected.is_empty() {
+                    s.set_selected_value(&selected.into(), window, cx);
+                } else {
+                    s.set_selected_value(&"".into(), window, cx);
+                }
+            });
+        }
 
         let mut col = v_flex().gap_1p5().child(
             Select::new(&self.http_model_select_state)
@@ -113,13 +118,18 @@ impl super::Chamber {
     /// A general Model select component for any seat (e.g. CLI seats) using native Select.
     pub(super) fn general_model_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let selected = self.settings_model.read(cx).value().trim().to_string();
-        let delegate = create_model_delegate("Inherit", &[], Some(&selected));
-        self.general_model_select_state.update(cx, |s, cx| {
-            s.set_items(delegate, window, cx);
-            if !selected.is_empty() {
-                s.set_selected_value(&selected.into(), window, cx);
-            }
-        });
+        if self.general_model_select_key.as_ref() != Some(&selected) {
+            self.general_model_select_key = Some(selected.clone());
+            let delegate = create_model_delegate("Inherit", &[], Some(&selected));
+            self.general_model_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                if !selected.is_empty() {
+                    s.set_selected_value(&selected.into(), window, cx);
+                } else {
+                    s.set_selected_value(&"".into(), window, cx);
+                }
+            });
+        }
         Select::new(&self.general_model_select_state)
             .placeholder("Select model...")
             .search_placeholder("Search models...")

@@ -54,6 +54,7 @@ impl super::Chamber {
                                 let first = ids[0].clone();
                                 this.local_models = ids;
                                 this.local_selected_model = Some(first.clone());
+                                cx.notify();
                                 ProviderState::Ready { model: first }
                             }
                             Ok(_) => ProviderState::Failed(format!(
@@ -1320,15 +1321,23 @@ impl super::Chamber {
 
     pub(super) fn wizard_model_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let selected = self.local_selected_model.clone();
-        let delegate = create_model_delegate("Default", &self.local_models, selected.as_deref());
-        self.wizard_model_select_state.update(cx, |s, cx| {
-            s.set_items(delegate, window, cx);
-            if let Some(ref sel) = selected {
-                if !sel.is_empty() {
-                    s.set_selected_value(&sel.clone().into(), window, cx);
+        let key = (selected.clone(), self.local_models.clone());
+        if self.wizard_model_select_key.as_ref() != Some(&key) {
+            self.wizard_model_select_key = Some(key);
+            let delegate = create_model_delegate("Default", &self.local_models, selected.as_deref());
+            self.wizard_model_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                if let Some(ref sel) = selected {
+                    if !sel.is_empty() {
+                        s.set_selected_value(&sel.clone().into(), window, cx);
+                    } else {
+                        s.set_selected_value(&"".into(), window, cx);
+                    }
+                } else {
+                    s.set_selected_value(&"".into(), window, cx);
                 }
-            }
-        });
+            });
+        }
         Select::new(&self.wizard_model_select_state)
             .placeholder("Select model...")
             .search_placeholder("Search models...")

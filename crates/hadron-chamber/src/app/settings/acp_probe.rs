@@ -15,7 +15,6 @@ impl super::Chamber {
     /// dropdowns. A no-op (clears the probe) for a non-ACP quark or a seat with no
     /// bootable command — those keep the free-text/static fields. The boot runs off the
     /// UI thread; a probe that resolves after the human has moved to another quark is
-    /// dropped (the id no longer matches), so it can't cross-populate.
     pub(super) fn start_acp_model_probe(&mut self, id: &str, cx: &mut Context<Self>) {
         let target = resolve_team(&self.team, &self.global)
             .get(&QuarkId::new(id))
@@ -58,11 +57,6 @@ impl super::Chamber {
     }
 
     /// Provision the `agy` ACP bridge's venv for `id`, off the UI thread — a no-op
-    /// (clearing any stale probe) for any seat that isn't an `agy` ACP seat, or one
-    /// whose venv already exists. This is deliberately NOT part of seating
-    /// (`QuarkKind::from_seat`/`AcpTarget::resolved`): that only checks the boot
-    /// command's paths are well-formed, never that the venv is actually on disk, so a
-    /// minutes-long `pip install` here can never block seating or dispatch — see task
     /// 1c in `.hadron/docs/plans/2026-07-28-shippable-bridge-and-self-update.md`.
     /// Mirrors [`Self::start_acp_model_probe`]'s shape: a probe that resolves after the
     /// human has moved to another quark is dropped rather than mis-applied.
@@ -276,13 +270,19 @@ impl super::Chamber {
             _ => Vec::new(),
         };
         let selected = self.settings_model.read(cx).value().trim().to_string();
-        let delegate = create_model_delegate("Inherit", &models, Some(&selected));
-        self.acp_model_select_state.update(cx, |s, cx| {
-            s.set_items(delegate, window, cx);
-            if !selected.is_empty() {
-                s.set_selected_value(&selected.into(), window, cx);
-            }
-        });
+        let key = (selected.clone(), models.clone());
+        if self.acp_model_select_key.as_ref() != Some(&key) {
+            self.acp_model_select_key = Some(key);
+            let delegate = create_model_delegate("Inherit", &models, Some(&selected));
+            self.acp_model_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                if !selected.is_empty() {
+                    s.set_selected_value(&selected.into(), window, cx);
+                } else {
+                    s.set_selected_value(&"".into(), window, cx);
+                }
+            });
+        }
 
         let mut col = v_flex().gap_1p5().child(
             Select::new(&self.acp_model_select_state)

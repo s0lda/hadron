@@ -366,16 +366,20 @@ struct Chamber {
     acp_model_probe: Option<AcpModelProbe>,
     /// Native SelectState dropdown for Settings Model list of an ACP quark.
     acp_model_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    acp_model_select_key: Option<(String, Vec<String>)>,
     /// Offered-model probe for the `Transport::Http` quark whose Settings are open —
     /// mirrors `acp_model_probe`. `None` for a non-Http target or before the first
     /// probe. See `start_http_model_probe`.
     http_model_probe: Option<HttpModelProbe>,
     /// Native SelectState dropdown for Settings Model list of an Http quark.
     http_model_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    http_model_select_key: Option<(String, Vec<String>)>,
     /// Native SelectState dropdown for Settings Model list of general/CLI quarks.
     general_model_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    general_model_select_key: Option<String>,
     /// Native SelectState dropdown for wizard's model list.
     wizard_model_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    wizard_model_select_key: Option<(Option<String>, Vec<String>)>,
     /// In-progress `agy` ACP bridge venv provisioning for the seat whose Settings are
     /// open, if any. `None` for any other kind of seat, before the first attempt, or
     /// once already provisioned — see `start_agy_bridge_provision`. This runs off the
@@ -799,10 +803,14 @@ impl Chamber {
             wizard_state: WizardState::None,
             acp_model_probe: None,
             acp_model_select_state,
+            acp_model_select_key: None,
             http_model_probe: None,
             http_model_select_state,
+            http_model_select_key: None,
             general_model_select_state,
+            general_model_select_key: None,
             wizard_model_select_state,
+            wizard_model_select_key: None,
             agy_bridge_probe: None,
             file_tree_paths: files,
             _lock_file: lock_file,
