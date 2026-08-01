@@ -191,6 +191,35 @@ pub struct CliSpec {
     /// stdin, so the whole prompt rides as one argv element, which Linux caps).
     #[serde(default)]
     pub argv_guard: bool,
+    /// Optional streaming output configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<StreamSpec>,
+}
+
+/// Streaming output configuration for a one-shot CLI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamSpec {
+    /// The stream format / protocol (e.g. `AgyStreamJson` or `Ndjson`).
+    pub format: StreamFormat,
+    /// Additional CLI flags needed to activate streaming (e.g. `["--output-format", "stream-json"]`).
+    #[serde(default)]
+    pub flags: Vec<String>,
+}
+
+/// The structure / format of lines emitted during streaming.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StreamFormat {
+    /// `agy`'s native stream-json NDJSON protocol.
+    AgyStreamJson,
+    /// Generic NDJSON carrying JSON path selectors for text deltas and usage.
+    Ndjson {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text_delta_path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input_tokens_path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_tokens_path: Option<String>,
+    },
 }
 
 impl CliSpec {
@@ -221,6 +250,7 @@ impl CliSpec {
                 bypass: vec!["--dangerously-skip-permissions".to_string()],
             },
             argv_guard: true,
+            stream: None,
         }
     }
 
@@ -249,6 +279,7 @@ impl CliSpec {
                 bypass: mediation_args,
             },
             argv_guard: false,
+            stream: None,
         }
     }
 
@@ -277,6 +308,7 @@ impl CliSpec {
                 bypass: mediation_args,
             },
             argv_guard: false,
+            stream: None,
         }
     }
 
@@ -307,6 +339,7 @@ impl CliSpec {
             timeout: None,
             posture: PostureMap::default(),
             argv_guard: false,
+            stream: None,
         }
     }
 }

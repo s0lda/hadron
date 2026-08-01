@@ -1096,6 +1096,7 @@ mod cli_spec_tests {
                 bypass: vec!["--bypass".into()],
             },
             argv_guard: true,
+            stream: None,
         };
         let json = serde_json::to_string(&spec).unwrap();
         let back: CliSpec = serde_json::from_str(&json).unwrap();
