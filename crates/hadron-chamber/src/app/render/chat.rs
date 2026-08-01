@@ -311,6 +311,24 @@ impl super::Chamber {
                                                      .on_click(cx.listener(|this, _, window, cx| {
                                                          this.insert_completion_trigger("@", window, cx);
                                                      })),
+                                             )
+                                             .child(
+                                                 div()
+                                                     .id("picker-command")
+                                                     .px_2()
+                                                     .py_0p5()
+                                                     .rounded_md()
+                                                     .bg(theme::glass_card())
+                                                     .border_1()
+                                                     .border_color(theme::glass_highlight())
+                                                     .text_xs()
+                                                     .text_color(theme::text_muted())
+                                                     .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
+                                                     .cursor_pointer()
+                                                     .child("/Command")
+                                                     .on_click(cx.listener(|this, _, window, cx| {
+                                                         this.insert_completion_trigger("/", window, cx);
+                                                     })),
                                              ),
                                     )
                                     .child(
