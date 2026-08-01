@@ -227,7 +227,9 @@ impl<R: CliRunner> CliQuark<R> {
                 args.push(self.model.clone());
             }
         }
-        args.extend(self.spec.posture.for_mode(mode).iter().cloned());
+        if let Some(stream) = &self.spec.stream {
+            args.extend(stream.flags.iter().cloned());
+        }
 
         // The seat's resolved secrets, plus the shared build env so a `cargo` the
         // quark runs itself lands in the main checkout's warm `target/` instead of
@@ -236,7 +238,14 @@ impl<R: CliRunner> CliQuark<R> {
         let mut env = crate::worktree::shared_build_env(&cwd);
         env.extend(self.env.iter().cloned());
 
-        CliInvocation { program: self.spec.program.clone(), args, stdin, cwd, env: env.into() }
+        CliInvocation {
+            program: self.spec.program.clone(),
+            args,
+            stdin,
+            cwd,
+            env: env.into(),
+            stream: self.spec.stream.clone(),
+        }
     }
 }
 
