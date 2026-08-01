@@ -797,6 +797,7 @@ impl super::Chamber {
                                         // A brand-new seat reaches nothing outside its
                                         // worktree until a human grants it a root.
                                         external_roots: vec![],
+                                        http_base_url: None,
                                     };
                                     // `vendor` is already pure (Task 3's re-keyed preset list), so this
                                     // is a no-op today — left in as a defensive strip in case a vendor

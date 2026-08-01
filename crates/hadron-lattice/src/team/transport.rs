@@ -33,18 +33,25 @@ pub enum Transport {
     /// targets, so every provider is reached over CLI or ACP instead. `from_seat`
     /// rejects an `sdk` seat; do not present it as a build in progress.
     Sdk,
+    /// A local HTTP server on the user's own machine (Ollama, LM Studio) — keyless,
+    /// no subprocess, no protocol handshake. Distinct from [`Transport::Sdk`]: that
+    /// variant is reserved-unsupported for METERED API keys, which is a different
+    /// off-roadmap reason than "this is a bare localhost HTTP endpoint with no
+    /// authentication at all".
+    Http,
 }
 
 impl Transport {
-    /// The short wire/id code: `"cli"` / `"acp"` / `"sdk"`. SSOT for every place that
-    /// needs the bare transport word — the `<transport>-<vendor>` id prefix
-    /// ([`id_follows_convention`]) and the chamber's roster/provider display both read
-    /// this instead of repeating the match.
+    /// The short wire/id code: `"cli"` / `"acp"` / `"sdk"` / `"http"`. SSOT for every
+    /// place that needs the bare transport word — the `<transport>-<vendor>` id
+    /// prefix ([`id_follows_convention`]) and the chamber's roster/provider display
+    /// both read this instead of repeating the match.
     pub fn code(&self) -> &'static str {
         match self {
             Transport::Cli => "cli",
             Transport::Acp => "acp",
             Transport::Sdk => "sdk",
+            Transport::Http => "http",
         }
     }
 

@@ -28,6 +28,7 @@ tokio = { version = "1", features = [
     "time",
     "sync",
     "signal",
+    "net",
 ] }
 agent-client-protocol = { version = "1.2.0", features = ["unstable_end_turn_token_usage"] }
 futures = "0.3"
@@ -35,6 +36,11 @@ async-io = "2"
 chrono = "0.4.45"
 keyring = { version = "4.1.5", default-features = false, features = ["v1"] }
 libc = "0.2"
+# Local HTTP transport (Ollama / LM Studio): both are plain `http://localhost`, so no
+# TLS backend is enabled — a keyless localhost seat has no use for one. `blocking` is
+# for the chamber's Connect-button model-list probe, which (like the ACP probe it
+# mirrors) runs off a plain background thread with no tokio reactor of its own.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "blocking"] }
 
 [dev-dependencies]
 chrono = "0.4.45"
