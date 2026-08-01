@@ -906,7 +906,17 @@ pub(super) fn task_state_tag(state: TaskState) -> gpui::AnyElement {
 /// That column is the whole point of the tab: a task with no elapsed time next to it
 /// cannot distinguish "started a second ago" from "wedged twenty minutes ago", which
 /// is the one question this list exists to answer.
-pub(super) fn task_row(t: &SwarmTask, now: chrono::DateTime<chrono::Utc>) -> impl IntoElement {
+///
+/// `to` and `from` are resolved by the CALLER through `Chamber::resolve_identity`, which
+/// is the one place a display name and a colour come from — nucleus
+/// `presence-dot-was-computed-in-three-places` and `mentions-render-raw-id-not-display-name`.
+/// `SwarmTask` carries raw seat ids (`acp-claude-2`), never the name a human reads.
+pub(super) fn task_row(
+    t: &SwarmTask,
+    now: chrono::DateTime<chrono::Utc>,
+    to: &ResolvedIdentity,
+    from_name: &str,
+) -> impl IntoElement {
     let time = t
         .asked_at
         .with_timezone(&chrono::Local)
@@ -936,9 +946,20 @@ pub(super) fn task_row(t: &SwarmTask, now: chrono::DateTime<chrono::Utc>) -> imp
                 .w(px(92.0))
                 .text_xs()
                 .font_weight(gpui::FontWeight::BOLD)
-                .text_color(theme::text())
+                .text_color(to.color)
                 .truncate()
-                .child(t.to.clone()),
+                .child(to.name.clone()),
+        )
+        // Who asked, quieter than who is on it: the answer matters (a task the human
+        // asked for reads differently from one a quark handed out) but never first.
+        .child(
+            div()
+                .flex_none()
+                .w(px(76.0))
+                .text_xs()
+                .text_color(theme::text_muted())
+                .truncate()
+                .child(format!("← {from_name}")),
         )
         .child(
             div()

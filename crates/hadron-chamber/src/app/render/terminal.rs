@@ -794,7 +794,9 @@ impl super::Chamber {
                     let now = chrono::Utc::now();
                     let mut col = v_flex().gap_1().p_2().w_full();
                     for t in &self.view.tasks {
-                        col = col.child(task_row(t, now));
+                        let to = self.resolve_identity(&t.to);
+                        let from = self.resolve_identity(&t.from);
+                        col = col.child(task_row(t, now, &to, &from.name));
                     }
                     col.into_any_element()
                 };
