@@ -38,18 +38,26 @@ fn path_as_u32(value: &Value, path: &str) -> Option<u32> {
 pub struct StreamAccumulator {
     format: StreamFormat,
     draft: String,
+    status: String,
     final_text: Option<String>,
     spend: TokenSpend,
 }
 
 impl StreamAccumulator {
     pub fn new(format: StreamFormat) -> Self {
-        StreamAccumulator { format, draft: String::new(), final_text: None, spend: TokenSpend::default() }
+        StreamAccumulator {
+            format,
+            draft: String::new(),
+            status: String::new(),
+            final_text: None,
+            spend: TokenSpend::default(),
+        }
     }
 
-    /// Feed one stdout line. Returns whether it carried new delta text — malformed
-    /// JSON and lines with no matching field are simply skipped (most lines in a
-    /// real stream are bookkeeping, not text), never an error.
+    /// Feed one stdout line. Returns whether it moved anything a watcher should see
+    /// — new delta text, or a new step/tool the quark started. Malformed JSON and
+    /// lines carrying neither are simply skipped (most lines in a real stream are
+    /// bookkeeping), never an error.
     pub fn on_line(&mut self, line: &str) -> bool {
         let line = line.trim();
         if line.is_empty() {
@@ -101,11 +109,33 @@ impl StreamAccumulator {
     fn on_agy_line(&mut self, value: &Value) -> bool {
         match value.get("event").and_then(Value::as_str) {
             Some("step_update") => {
-                let Some(delta) = path_as_str(value, "step_update.text_delta") else { return false };
-                if delta.is_empty() {
-                    return false;
+                if let Some(delta) = path_as_str(value, "step_update.text_delta") {
+                    if !delta.is_empty() {
+                        self.draft.push_str(delta);
+                        return true;
+                    }
                 }
-                self.draft.push_str(delta);
+                // **Why a step with no text still counts.** Measured live on
+                // 2026-08-01: `agy --print --output-format stream-json` emits
+                // `text_delta` exactly ONCE, on the final `state:"DONE"`
+                // `agent_response` step — there is no token-by-token text at all.
+                // Publishing only on a delta therefore left the Live card reading
+                // `working…` for the whole turn and flashing the finished reply for
+                // one throttle window before `live::clear`, which is precisely the
+                // "your stream still doesn't work" the human saw. What IS
+                // incremental is the step feed: `state:"ACTIVE"` tool steps naming
+                // `view_file`, `run_command`, … So the tool name (else the step
+                // type) becomes the status line, and that is what streams.
+                let Some(step) = value.get("step_update") else { return false };
+                let label = step
+                    .get("tool_name")
+                    .and_then(Value::as_str)
+                    .or_else(|| step.get("step_type").and_then(Value::as_str));
+                let Some(label) = label else { return false };
+                if label == self.status {
+                    return false; // the same step going ACTIVE → DONE says nothing new
+                }
+                self.status = label.to_string();
                 true
             }
             Some("result") => {
@@ -131,6 +161,12 @@ impl StreamAccumulator {
     /// show after `on_line` returns `true`.
     pub fn draft(&self) -> &str {
         &self.draft
+    }
+
+    /// The last step or tool the stream named — what the Live card shows while the
+    /// draft is still empty. Empty until a step names one.
+    pub fn status(&self) -> &str {
+        &self.status
     }
 
     /// Consume the accumulator: the final message (the format's own final-text
@@ -169,7 +205,11 @@ mod tests {
                 deltas += 1;
             }
         }
-        assert_eq!(deltas, 2, "only the two agent_response lines carry a delta");
+        assert_eq!(
+            deltas, 3,
+            "the two agent_response deltas, plus the `user_input` step naming a new status; \
+             `init` carries neither"
+        );
         assert_eq!(acc.draft(), "A git rebase moves commits.");
 
         let (message, spend) = acc.finish();
@@ -192,14 +232,51 @@ mod tests {
     fn unparseable_and_delta_free_lines_are_skipped_not_errors() {
         let mut acc = agy();
         assert!(!acc.on_line("not json at all"));
-        assert!(!acc.on_line(r#"{"event":"step_update","step_update":{"step_type":"tool"}}"#));
         assert!(!acc.on_line(""));
+        assert!(!acc.on_line(r#"{"event":"step_update"}"#), "a step_update with no step at all");
+        assert!(!acc.on_line(r#"{"event":"step_update","step_update":{"state":"DONE"}}"#), "no tool_name, no step_type");
         assert!(!acc.on_line(r#"{"event":"result","result":{"response":"Canonical final message","usage":{"input_tokens":100,"output_tokens":25}}}"#));
         let (message, spend) = acc.finish();
         assert_eq!(message.as_deref(), Some("Canonical final message"));
         assert_eq!(spend.input, Some(100));
         assert_eq!(spend.output, Some(25), "thinking_tokens are folded into output");
         assert_eq!(spend.cache_read, None);
+    }
+
+    /// **The bug the human actually saw.** Captured verbatim from a live
+    /// `agy --print --output-format stream-json` run on 2026-08-01: the ONLY
+    /// `text_delta` in the whole stream is on the last `agent_response` step, so a
+    /// watcher that publishes only on deltas has nothing to show for the entire
+    /// turn — `working…`, then the finished answer. The tool steps in between are
+    /// the incremental signal, and they must be publish-worthy.
+    #[test]
+    fn a_stream_whose_text_only_arrives_at_the_end_still_reports_its_tools() {
+        let mut acc = agy();
+        let lines = [
+            r#"{"event":"init","conversation_id":"abc"}"#,
+            r#"{"event":"step_update","step_update":{"step_index":0,"state":"DONE","step_type":"user_input"}}"#,
+            r#"{"event":"step_update","step_update":{"step_index":3,"state":"ACTIVE","step_type":"tool","tool_name":"view_file"}}"#,
+            r#"{"event":"step_update","step_update":{"step_index":3,"state":"DONE","step_type":"tool","tool_name":"view_file"}}"#,
+            r#"{"event":"step_update","step_update":{"step_index":4,"state":"ACTIVE","step_type":"tool","tool_name":"run_command"}}"#,
+        ];
+        let published: Vec<&str> = lines
+            .iter()
+            .filter(|l| acc.on_line(l))
+            .map(|_| "")
+            .collect();
+        assert_eq!(
+            published.len(),
+            3,
+            "user_input, view_file and run_command each move the card; view_file going ACTIVE→DONE does not"
+        );
+        assert_eq!(acc.status(), "run_command", "the card shows the tool running now");
+        assert!(acc.draft().is_empty(), "not one delta arrived — that is the point");
+
+        // …and the single end-of-turn delta still becomes the reply.
+        assert!(acc.on_line(
+            r#"{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"Hello! Greetings user!"}}"#
+        ));
+        assert_eq!(acc.draft(), "Hello! Greetings user!");
     }
 
     #[test]

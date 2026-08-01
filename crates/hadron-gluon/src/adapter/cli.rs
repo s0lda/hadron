@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use hadron_lattice::live::{self, Activity};
+use hadron_lattice::live::{self, Activity, Doing};
 use hadron_lattice::{
     Actor, CliSpec, EnergyState, Event, Flavor, Kind, Mode, Projection, PromptChannel, QuarkId,
     ResumeMode, SeatCommands, StreamSpec, TurnOutcome, Usage,
@@ -248,9 +248,6 @@ impl<R: CliRunner> CliQuark<R> {
                 args.push(self.model.clone());
             }
         }
-        if let Some(stream) = &self.spec.stream {
-            args.extend(stream.flags.iter().cloned());
-        }
         args.extend(self.spec.posture.for_mode(mode).iter().cloned());
 
         // The seat's resolved secrets, plus the shared build env so a `cargo` the
@@ -288,7 +285,16 @@ impl<R: CliRunner> CliQuark<R> {
             let due = last_publish.is_none_or(|t: Instant| t.elapsed() >= PUBLISH_THROTTLE);
             if due {
                 last_publish = Some(Instant::now());
-                let _ = live::publish(dir, &Activity::speaking(quark_id.clone(), acc.draft()));
+                // Text once there is any; until then the step/tool the stream last
+                // named, so a CLI that reports its work before it reports its words
+                // (agy does — see `cli_stream::on_agy_line`) still shows a moving
+                // Live card instead of a motionless `working…`.
+                let activity = if acc.draft().is_empty() {
+                    Activity::new(quark_id.clone(), Doing::Working, acc.status())
+                } else {
+                    Activity::speaking(quark_id.clone(), acc.draft())
+                };
+                let _ = live::publish(dir, &activity);
             }
         };
         let run_result = self.runner.run_streaming(inv, &mut on_line).await;
@@ -848,9 +854,14 @@ mod tests {
         assert_eq!(outcome.usage.spend.cache_read, Some(3));
 
         let recorded = q.runner.recorded.lock().unwrap();
-        assert!(
-            recorded[0].args.windows(2).any(|w| w == ["--output-format", "stream-json"]),
-            "stream.args must ride on the invocation: {:?}",
+        // Exactly ONCE, not merely present: `invocation` appended `stream.flags`
+        // twice — before the prompt and again before the posture flags — so every
+        // real `agy` turn was spawned with `--output-format stream-json` duplicated.
+        // `any()` could not see it.
+        assert_eq!(
+            recorded[0].args.windows(2).filter(|w| *w == ["--output-format", "stream-json"]).count(),
+            1,
+            "stream.flags must ride on the invocation exactly once: {:?}",
             recorded[0].args
         );
     }
