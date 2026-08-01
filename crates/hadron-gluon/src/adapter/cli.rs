@@ -461,7 +461,9 @@ mod tests {
     #[tokio::test]
     async fn truncation_drops_the_oldest_field_and_says_so() {
         let runner = FakeRunner::with_stdout(vec!["ok"]);
-        let mut q = CliQuark::new(QuarkId::new("agy"), Flavor::Worker, "", CliSpec::agy(), runner);
+        let mut spec = CliSpec::agy();
+        spec.stream = None;
+        let mut q = CliQuark::new(QuarkId::new("agy"), Flavor::Worker, "", spec, runner);
 
         let mut p = huge_projection(200, 2000);
         // Bookend the window: the oldest event must go, the newest must survive.
@@ -491,7 +493,9 @@ mod tests {
     #[tokio::test]
     async fn a_normal_prompt_is_not_touched() {
         let runner = FakeRunner::with_stdout(vec!["ok"]);
-        let mut q = CliQuark::new(QuarkId::new("agy"), Flavor::Worker, "", CliSpec::agy(), runner);
+        let mut spec = CliSpec::agy();
+        spec.stream = None;
+        let mut q = CliQuark::new(QuarkId::new("agy"), Flavor::Worker, "", spec, runner);
         let p = huge_projection(3, 100);
         let want = crate::adapter::prompt::build(&p, &QuarkId::new("agy"));
 
@@ -525,11 +529,13 @@ mod tests {
     async fn agy_runs_print_mode_and_maps_reply() {
         let runner = FakeRunner::with_stdout(vec!["UI complete. @claude back to you."]);
         // Display-name model id, as `agy models` reports them.
+        let mut spec = CliSpec::agy();
+        spec.stream = None;
         let mut q = CliQuark::new(
             QuarkId::new("agy"),
             Flavor::Worker,
             "Gemini 3.1 Pro (High)",
-            CliSpec::agy(),
+            spec,
             runner,
         );
 
@@ -587,7 +593,9 @@ mod tests {
     #[tokio::test]
     async fn a_resumed_turn_continues_the_session_and_stops_resending_the_field() {
         let runner = FakeRunner::with_stdout(vec!["one", "two"]);
-        let mut q = CliQuark::new(QuarkId::new("agy"), Flavor::Worker, "", CliSpec::agy(), runner);
+        let mut spec = CliSpec::agy();
+        spec.stream = None;
+        let mut q = CliQuark::new(QuarkId::new("agy"), Flavor::Worker, "", spec.clone(), runner);
 
         let mut first = projection_mode("first task", Mode::Bypass);
         first.field_window = vec![Event::new(
@@ -616,7 +624,7 @@ mod tests {
         // A chat lane instance on the same seat never resumes or sets resident.
         let chat_runner = FakeRunner::with_stdout(vec!["chat 1", "chat 2"]);
         let mut chat_q =
-            CliQuark::new(QuarkId::new("agy"), Flavor::Orchestrator, "", CliSpec::agy(), chat_runner);
+            CliQuark::new(QuarkId::new("agy"), Flavor::Orchestrator, "", spec.clone(), chat_runner);
         chat_q.become_chat_lane();
 
         let mut chat_turn = projection_mode("chat task", Mode::Bypass);
@@ -657,8 +665,10 @@ mod tests {
     #[tokio::test]
     async fn a_chat_lane_never_resumes_the_work_lanes_conversation() {
         let runner = FakeRunner::with_stdout(vec!["one", "two"]);
+        let mut spec = CliSpec::agy();
+        spec.stream = None;
         let mut q =
-            CliQuark::new(QuarkId::new("agy"), Flavor::Orchestrator, "", CliSpec::agy(), runner);
+            CliQuark::new(QuarkId::new("agy"), Flavor::Orchestrator, "", spec, runner);
         q.become_chat_lane();
 
         let mut first = projection_mode("first task", Mode::Bypass);
@@ -851,7 +861,8 @@ mod tests {
     #[tokio::test]
     async fn a_non_streaming_seat_is_unaffected_by_the_stream_field_existing() {
         let runner = FakeRunner::with_stdout(vec!["plain reply"]);
-        let spec = CliSpec::agy(); // stream: None
+        let mut spec = CliSpec::agy();
+        spec.stream = None;
         let mut q = CliQuark::new(QuarkId::new("agy"), Flavor::Worker, "", spec, runner);
 
         let outcome = q.excite(projection("say hi")).await.unwrap();
