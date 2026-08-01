@@ -226,6 +226,9 @@ impl super::Chamber {
                             cx.stop_propagation();
                         }
                     }))
+                    .on_action(cx.listener(|this, _: &Paste, window, cx| {
+                        this.on_input_paste(window, cx);
+                    }))
                     .when(self.completion.is_some(), |el| {
                         el.child(self.completion_card_overlay(cx))
                     })

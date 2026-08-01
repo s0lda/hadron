@@ -21,7 +21,7 @@ use gpui_component::avatar::Avatar;
 // badge removed
 use gpui_component::chart::AreaChart;
 use gpui_component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
-use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
+use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp, Paste};
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
 use gpui_component::resizable::{h_resizable, resizable_panel};
