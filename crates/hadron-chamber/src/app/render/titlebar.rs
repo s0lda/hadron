@@ -173,10 +173,11 @@ impl super::Chamber {
     }
 
     pub(super) fn update_pill(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let (label, tip, bg_color, icon) = match &self.update_state {
+        let (label, tip, bg_color, text_color, icon) = match &self.update_state {
             UpdateState::Available { version, .. } => (
                 format!("v{} Available", version),
                 format!("Hadron v{} is available. Click to install update.", version),
+                theme::bg_surface_raised(),
                 theme::accent(),
                 IconName::ArrowUp,
             ),
@@ -194,7 +195,8 @@ impl super::Chamber {
                     ),
                     None => format!("Installing Hadron v{} in background...", version),
                 },
-                theme::accent(),
+                theme::accent_soft(),
+                theme::text(),
                 IconName::ArrowUp,
             ),
             UpdateState::Installed { version } => (
@@ -205,24 +207,28 @@ impl super::Chamber {
                      a moment.",
                     version
                 ),
+                theme::accent_soft(),
                 theme::accent(),
                 IconName::CircleCheck,
             ),
             UpdateState::Checking => (
                 "Checking...".to_string(),
                 "Checking for updates...".to_string(),
-                theme::accent(),
+                theme::bg_surface_raised(),
+                theme::text_muted(),
                 IconName::ArrowUp,
             ),
             UpdateState::UpToDate => (
                 format!("v{} (Up to date)", env!("CARGO_PKG_VERSION")),
                 format!("Hadron v{} is up to date.", env!("CARGO_PKG_VERSION")),
                 theme::bg_surface_raised(),
+                theme::text_muted(),
                 IconName::CircleCheck,
             ),
             UpdateState::Failed(msg) => (
                 "Update Failed".to_string(),
                 format!("Could not update: {}", msg),
+                theme::bg_surface_raised(),
                 theme::danger(),
                 IconName::Info,
             ),
@@ -241,7 +247,7 @@ impl super::Chamber {
                 .bg(bg_color)
                 .text_xs()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(theme::text())
+                .text_color(text_color)
                 .cursor_pointer()
                 .hover(|s| s.opacity(0.85))
                 .active(|s| s.opacity(0.7))
