@@ -178,13 +178,12 @@ pub fn text_muted() -> Rgba {
 
 // --- accents (the energy gradient) ---
 pub fn accent() -> Rgba {
-    rgb(0xec4899) // pink — active / addressed
+    rgb(0xc084fc) // soft amethyst — active / addressed
 }
-/// A muted, low-alpha pink for chrome that should whisper rather than shout —
-/// the focused chat-input border. Full-strength `accent()` reads as a hot
-/// highlight; this keeps the same hue as a subtle tint instead.
+/// A muted, low-alpha amethyst for chrome that should whisper rather than shout —
+/// the focused chat-input border.
 pub fn accent_soft() -> Rgba {
-    rgba(0xec489966) // ~0.40 alpha pink
+    rgba(0xc084fc66) // ~0.40 alpha amethyst
 }
 pub fn accent_secondary() -> Rgba {
     rgb(0xa855f7) // purple — thinking
@@ -192,7 +191,7 @@ pub fn accent_secondary() -> Rgba {
 pub fn danger() -> Rgba {
     rgb(0xef4444) // red — close-button hover
 }
-/// Markdown link colour in chat — light blue (sky), distinct from the pink accent.
+/// Markdown link colour in chat — light blue (sky), distinct from the amethyst accent.
 pub fn link() -> Rgba {
     rgb(0x7dd3fc) // sky-300
 }
@@ -207,7 +206,7 @@ pub fn link_active() -> Rgba {
 pub fn quark_state(state: QuarkState) -> Rgba {
     match state {
         QuarkState::Ground => rgb(0x9ca2ad),   // neutral grey
-        QuarkState::Excited => rgb(0xec4899),  // pink — active
+        QuarkState::Excited => rgb(0xc084fc),  // soft amethyst — active
         QuarkState::Thinking => rgb(0xa855f7), // purple
         QuarkState::Waiting => rgb(0xfbbf24),  // amber
         QuarkState::Blocked | QuarkState::Error => rgb(0xf87171), // red

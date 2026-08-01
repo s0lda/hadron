@@ -23,7 +23,7 @@ pub(super) struct ResolvedIdentity {
 /// legible on the dark surfaces.
 pub(super) const IDENTITY_SWATCHES: [u32; 14] = [
     0xf5f5f6, // near-white (the human's default)
-    0xec4899, // pink
+    0xc084fc, // amethyst
     0xa855f7, // purple
     0x60a5fa, // blue
     0x34d399, // green

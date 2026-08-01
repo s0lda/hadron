@@ -990,17 +990,17 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             // handle transparent directly rather than reading this token, so `border`
             // can go back to a real, visible value for everyone else.
             t.border = theme::border().into();
-            t.drag_border = rgb(0xec4899).into();
+            t.drag_border = theme::accent().into();
             // Stock dark theme's `input`/`selection`/`list_active` are deep blues
             // (`#1d4ed8`-family) that never got re-themed, which is the "blue tint" in
             // the Settings/Processes/File-Tree surfaces — `input` in particular sat only
             // two hex steps from `modal_surface()`, so a Settings text field was nearly
             // invisible against its own card. Re-anchor all three to the chamber's own
-            // neutral/pink ramp so nothing on these panels still carries the fork's
+            // neutral/amethyst ramp so nothing on these panels still carries the fork's
             // stock accent.
             t.input = theme::border().into();
-            t.selection = gpui::rgba(0xec489966).into();
-            t.list_active = gpui::rgba(0xec489933).into();
+            t.selection = theme::accent_soft().into();
+            t.list_active = gpui::rgba(0xc084fc33).into();
             t.list_active_border = theme::accent().into();
             // Markdown inline code blocks use `accent` for background in gpui-component.
             // Override it to a very soft white overlay so it's slightly brighter than the background.
