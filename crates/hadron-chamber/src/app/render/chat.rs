@@ -145,21 +145,31 @@ impl super::Chamber {
         // the input (and the whole layout) off the bottom. The hover scrollbar is
         // an absolute sibling of the scrolled content (not a child of it, or it
         // would scroll away), reading the same handle.
+        let tab_start =
+            std::env::var_os("HADRON_FRAME_TIMING").is_some().then(std::time::Instant::now);
+        let tab_content = match selected {
+            ChatTab::Chat => self.chat_view(cx).into_any_element(),
+            ChatTab::Log => self.log_view(cx).into_any_element(),
+            ChatTab::Stats => div()
+                .id("session-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.chat_scrolls[selected.index()])
+                .child(self.stats_view(cx))
+                .into_any_element(),
+        };
+        if let Some(start) = tab_start {
+            hadron_lattice::term::info(
+                hadron_lattice::term::Source::Chamber,
+                &format!("frame render tab {}: {:?}", selected.label(), start.elapsed()),
+            );
+        }
+
         let scroll_container = div()
             .id("chat-body-scroll")
             .size_full()
             .relative()
-            .child(match selected {
-                ChatTab::Chat => self.chat_view(cx).into_any_element(),
-                ChatTab::Log => self.log_view(cx).into_any_element(),
-                ChatTab::Stats => div()
-                    .id("session-scroll")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.chat_scrolls[selected.index()])
-                    .child(self.stats_view(cx))
-                    .into_any_element(),
-            });
+            .child(tab_content);
 
         let body = div()
             .relative()

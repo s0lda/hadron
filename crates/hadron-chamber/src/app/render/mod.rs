@@ -17,6 +17,8 @@ mod overlays;
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let frame_start =
+            std::env::var_os("HADRON_FRAME_TIMING").is_some().then(std::time::Instant::now);
         // Drain a path chosen from the native avatar picker. The picker task runs
         // without a `Window`, so it parks the path here; `render` has the window and
         // is the first place `set_value` can apply it. Committing persists it so the
@@ -126,7 +128,14 @@ impl Render for Chamber {
 
         let wrapped_content = crate::window_frame::window_frame(window, cx, content);
 
-        div().size_full().child(wrapped_content).into_any_element()
+        let res = div().size_full().child(wrapped_content).into_any_element();
+        if let Some(start) = frame_start {
+            hadron_lattice::term::info(
+                hadron_lattice::term::Source::Chamber,
+                &format!("frame render total: {:?}", start.elapsed()),
+            );
+        }
+        res
     }
 }
 
