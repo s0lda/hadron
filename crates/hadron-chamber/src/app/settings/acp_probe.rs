@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use super::*;
 
 impl super::Chamber {
@@ -268,7 +266,7 @@ impl super::Chamber {
 
     /// The ACP Model **select**: the agent's offered models in the shared searchable
     /// dropdown list component, with an "Inherit" row (blank → catalogue default).
-    pub(super) fn acp_model_select(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(super) fn acp_model_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let models = match self.acp_model_probe.as_ref().map(|p| &p.state) {
             Some(AcpModelState::Ready { selectors }) => selectors
                 .model
@@ -278,22 +276,19 @@ impl super::Chamber {
             _ => Vec::new(),
         };
         let selected = self.settings_model.read(cx).value().trim().to_string();
-        let field = self.settings_model.clone();
-        let list = self.model_picker_list(
-            &models,
-            &selected,
-            &self.acp_model_filter,
-            "acp-model",
-            "Inherit",
-            Rc::new(move |this: &mut Self, value: String, window: &mut Window, cx: &mut Context<Self>| {
-                field.update(cx, |s, cx| s.set_value(value.clone(), window, cx));
-                this.commit_settings_inputs(cx);
-                cx.notify();
-            }),
-            cx,
-        );
+        let delegate = create_model_delegate("Inherit", &models, Some(&selected));
+        self.acp_model_select_state.update(cx, |s, cx| {
+            s.set_items(delegate, window, cx);
+            if !selected.is_empty() {
+                s.set_selected_value(&selected.into(), window, cx);
+            }
+        });
 
-        let mut col = v_flex().gap_1p5().child(list);
+        let mut col = v_flex().gap_1p5().child(
+            Select::new(&self.acp_model_select_state)
+                .placeholder("Select model...")
+                .search_placeholder("Search models..."),
+        );
         if let Some((msg, is_error)) = self.probe_note() {
             let base = div().text_xs().text_color(theme::text_muted());
             let note_el = if is_error {

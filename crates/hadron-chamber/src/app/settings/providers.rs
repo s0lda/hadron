@@ -261,7 +261,7 @@ impl super::Chamber {
         row.into_any_element()
     }
 
-    pub(super) fn providers_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn providers_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.wizard_state {
             WizardState::None => {
                 let mut list = v_flex().gap_3();
@@ -1197,22 +1197,8 @@ impl super::Chamber {
                     }
                     // A keyless local server has no auth flow to complete.
                     ProviderState::NeedsAuth(_) => div().into_any_element(),
-                    ProviderState::Ready { model } => {
-                        let selected = self.local_selected_model.clone().unwrap_or_else(|| model.clone());
-                        let picker = self.model_picker_list(
-                            &self.local_models,
-                            &selected,
-                            &self.local_model_filter,
-                            "local-model",
-                            "Default",
-                            std::rc::Rc::new(
-                                |this: &mut Self, value: String, _window: &mut Window, cx: &mut Context<Self>| {
-                                    this.local_selected_model = Some(value);
-                                    cx.notify();
-                                },
-                            ),
-                            cx,
-                        );
+                    ProviderState::Ready { model: _ } => {
+                        let picker = self.wizard_model_select(window, cx);
                         let typed = self.local_base_url.read(cx).value().trim().to_string();
                         let base_url =
                             if typed.is_empty() { vendor.default_base_url().to_string() } else { typed };
@@ -1330,5 +1316,22 @@ impl super::Chamber {
                     )
             }
         }
+    }
+
+    pub(super) fn wizard_model_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let selected = self.local_selected_model.clone();
+        let delegate = create_model_delegate("Default", &self.local_models, selected.as_deref());
+        self.wizard_model_select_state.update(cx, |s, cx| {
+            s.set_items(delegate, window, cx);
+            if let Some(ref sel) = selected {
+                if !sel.is_empty() {
+                    s.set_selected_value(&sel.clone().into(), window, cx);
+                }
+            }
+        });
+        Select::new(&self.wizard_model_select_state)
+            .placeholder("Select model...")
+            .search_placeholder("Search models...")
+            .into_any_element()
     }
 }

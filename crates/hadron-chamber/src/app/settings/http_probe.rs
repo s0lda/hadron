@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use super::*;
 
 impl super::Chamber {
@@ -73,28 +71,25 @@ impl super::Chamber {
     /// searchable list, with an "Inherit" row (blank — no per-repo override).
     /// Blank stays editable/committable through `commit_settings_inputs` exactly as
     /// the free-text field was, so nothing regresses if the probe fails.
-    pub(super) fn http_model_select(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(super) fn http_model_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let models = match self.http_model_probe.as_ref().map(|p| &p.state) {
             Some(HttpModelState::Ready { models }) => models.clone(),
             _ => Vec::new(),
         };
         let selected = self.settings_model.read(cx).value().trim().to_string();
-        let field = self.settings_model.clone();
-        let list = self.model_picker_list(
-            &models,
-            &selected,
-            &self.http_model_filter,
-            "http-model",
-            "Inherit",
-            Rc::new(move |this: &mut Self, value: String, window: &mut Window, cx: &mut Context<Self>| {
-                field.update(cx, |s, cx| s.set_value(value.clone(), window, cx));
-                this.commit_settings_inputs(cx);
-                cx.notify();
-            }),
-            cx,
-        );
+        let delegate = create_model_delegate("Inherit", &models, Some(&selected));
+        self.http_model_select_state.update(cx, |s, cx| {
+            s.set_items(delegate, window, cx);
+            if !selected.is_empty() {
+                s.set_selected_value(&selected.into(), window, cx);
+            }
+        });
 
-        let mut col = v_flex().gap_1p5().child(list);
+        let mut col = v_flex().gap_1p5().child(
+            Select::new(&self.http_model_select_state)
+                .placeholder("Select model...")
+                .search_placeholder("Search models..."),
+        );
         if let Some((msg, is_error)) = self.http_probe_note() {
             let base = div().text_xs().text_color(theme::text_muted());
             let note_el = if is_error {
@@ -115,23 +110,19 @@ impl super::Chamber {
         col.into_any_element()
     }
 
-    /// A general Model select component for any seat (e.g. CLI seats) using the shared
-    /// searchable model picker list component.
-    pub(super) fn general_model_select(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// A general Model select component for any seat (e.g. CLI seats) using native Select.
+    pub(super) fn general_model_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let selected = self.settings_model.read(cx).value().trim().to_string();
-        let field = self.settings_model.clone();
-        self.model_picker_list(
-            &[],
-            &selected,
-            &self.general_model_filter,
-            "general-model",
-            "Inherit",
-            Rc::new(move |this: &mut Self, value: String, window: &mut Window, cx: &mut Context<Self>| {
-                field.update(cx, |s, cx| s.set_value(value.clone(), window, cx));
-                this.commit_settings_inputs(cx);
-                cx.notify();
-            }),
-            cx,
-        )
+        let delegate = create_model_delegate("Inherit", &[], Some(&selected));
+        self.general_model_select_state.update(cx, |s, cx| {
+            s.set_items(delegate, window, cx);
+            if !selected.is_empty() {
+                s.set_selected_value(&selected.into(), window, cx);
+            }
+        });
+        Select::new(&self.general_model_select_state)
+            .placeholder("Select model...")
+            .search_placeholder("Search models...")
+            .into_any_element()
     }
 }
