@@ -227,10 +227,7 @@ impl super::Chamber {
                     .p_5()
                     .gap_4()
                     .rounded(INNER_RADIUS)
-                    // Flat #101010 field colour — opaque, so the field can't bleed
-                    // through, and matches the About dialog to the solid background
-                    // (Jake's request). Settings/app-menu still use modal_surface.
-                    .bg(theme::field_base())
+                    .bg(theme::glass_card())
                     .border_1()
                     .border_color(theme::glass_highlight())
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // swallow inner clicks
@@ -456,7 +453,7 @@ impl super::Chamber {
             .p_4()
             .gap_4()
             .rounded(INNER_RADIUS)
-            .bg(theme::modal_surface())
+            .bg(theme::glass_card())
             .border_1()
             .border_color(theme::glass_highlight())
             .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // swallow inner clicks
@@ -670,7 +667,7 @@ impl super::Chamber {
                     .p_2()
                     .gap_0p5()
                     .rounded(INNER_RADIUS)
-                    .bg(theme::modal_surface())
+                    .bg(theme::glass_card())
                     .border_1()
                     .border_color(theme::glass_highlight())
                     // Swallow clicks inside the panel so they don't hit the dismiss backdrop.

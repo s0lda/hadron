@@ -240,7 +240,7 @@ impl super::Chamber {
                             .bg(theme::glass_card())
                             .border_1()
                             .border_color(if is_focused {
-                                theme::accent_soft().into()
+                                gpui::rgba(0xffffff38).into()
                             } else {
                                 theme::glass_highlight()
                             })

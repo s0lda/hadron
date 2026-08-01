@@ -8,9 +8,7 @@ impl super::Chamber {
 
         let tabs = TabBar::new("right-rail-tabs")
             .segmented()
-            // Flat #101010 so the segmented bar dissolves into the field instead of
-            // sitting on a now-invisible lighter fill (Jake's request).
-            .bg(theme::field_base())
+            .bg(theme::glass_card())
             .selected_index(selected.index())
             .children(RightRailTab::ALL.map(|t| {
                 if t.index() == selected.index() {

@@ -278,7 +278,7 @@ impl super::Chamber {
             .overflow_hidden()
             // Opaque: a focused settings modal shouldn't let the bright field bleed through
             // (it read as too transparent). Solid, not glass — shared with the info panel.
-            .bg(theme::modal_surface())
+            .bg(theme::glass_card())
             .border_1()
             .border_color(theme::glass_highlight())
             .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // swallow inner clicks
