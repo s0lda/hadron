@@ -164,30 +164,38 @@ impl CliRunner for ProcessRunner {
                     match &stream_spec.format {
                         hadron_lattice::StreamFormat::AgyStreamJson => {
                             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
-                                if let Some(event) = v.get("event").and_then(|e| e.as_str()) {
-                                    if event == "agent_response" {
-                                        if let Some(delta) = v.get("text_delta").and_then(|t| t.as_str()) {
-                                            stdout_accumulated.push_str(delta);
-                                        }
-                                    } else if event == "result" {
-                                        if stdout_accumulated.is_empty() {
-                                            if let Some(resp) = v.get("response").and_then(|r| r.as_str()) {
-                                                stdout_accumulated.push_str(resp);
+                                let evt = v.get("event").and_then(|e| e.as_str());
+                                if evt == Some("agent_response") {
+                                    if let Some(delta) = v.get("text_delta").and_then(|t| t.as_str()) {
+                                        stdout_accumulated.push_str(delta);
+                                    }
+                                } else if evt == Some("step_update") {
+                                    if let Some(su) = v.get("step_update") {
+                                        if su.get("step_type").and_then(|s| s.as_str()) == Some("agent_response") {
+                                            if let Some(delta) = su.get("text_delta").and_then(|t| t.as_str()) {
+                                                stdout_accumulated.push_str(delta);
                                             }
                                         }
-                                        if let Some(u) = v.get("usage") {
-                                            let in_tok = u.get("input_tokens").and_then(|n| n.as_u64()).map(|n| n as u32);
-                                            let out_tok = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
-                                            let think_tok = u.get("thinking_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
-                                            let cache_read = u.get("cache_read_tokens").and_then(|n| n.as_u64()).map(|n| n as u32);
-                                            // Note: thinking_tokens is folded into output because thinking/reasoning generation spends output token budget on LLM inference.
-                                            usage = Some(hadron_lattice::TokenSpend {
-                                                input: in_tok,
-                                                output: Some(out_tok + think_tok),
-                                                cache_read,
-                                                cache_write: None,
-                                            });
+                                    }
+                                } else if evt == Some("result") {
+                                    let res_obj = v.get("result").unwrap_or(&v);
+                                    if stdout_accumulated.is_empty() {
+                                        if let Some(resp) = res_obj.get("response").and_then(|r| r.as_str()) {
+                                            stdout_accumulated.push_str(resp);
                                         }
+                                    }
+                                    if let Some(u) = res_obj.get("usage") {
+                                        let in_tok = u.get("input_tokens").and_then(|n| n.as_u64()).map(|n| n as u32);
+                                        let out_tok = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
+                                        let think_tok = u.get("thinking_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
+                                        let cache_read = u.get("cache_read_tokens").and_then(|n| n.as_u64()).map(|n| n as u32);
+                                        // Note: thinking_tokens is folded into output because thinking/reasoning generation spends output token budget on LLM inference.
+                                        usage = Some(hadron_lattice::TokenSpend {
+                                            input: in_tok,
+                                            output: Some(out_tok + think_tok),
+                                            cache_read,
+                                            cache_write: None,
+                                        });
                                     }
                                 } else if let Some(delta) = v.get("text_delta").and_then(|t| t.as_str()) {
                                     stdout_accumulated.push_str(delta);
