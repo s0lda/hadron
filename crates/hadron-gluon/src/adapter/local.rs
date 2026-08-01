@@ -553,6 +553,21 @@ mod tests {
         assert!(fetch_models(&target).is_err());
     }
 
+    #[test]
+    fn an_https_endpoint_is_reached_over_tls_not_refused_for_its_scheme() {
+        // Guards reqwest's `rustls-tls` feature: with no TLS backend compiled in, every
+        // `https://` URL fails before a socket is opened with "invalid URL, scheme is not
+        // http" — which is what broke the cloud (OpenRouter) seats. Nothing listens on
+        // port 1, so the request must still fail; it must fail as a CONNECTION failure.
+        let target = HttpTarget {
+            vendor: HttpVendor::OpenAiCompatible,
+            base_url: "https://127.0.0.1:1".to_string(),
+            api_key: Some("sk-test".to_string()),
+        };
+        let err = format!("{:#}", fetch_models(&target).unwrap_err());
+        assert!(!err.contains("scheme is not http"), "no TLS backend compiled in: {err}");
+    }
+
     #[tokio::test]
     async fn stream_chat_accumulates_ollama_ndjson_deltas() {
         let base = serve_once(

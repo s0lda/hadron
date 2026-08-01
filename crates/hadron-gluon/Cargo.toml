@@ -40,7 +40,11 @@ libc = "0.2"
 # TLS backend is enabled — a keyless localhost seat has no use for one. `blocking` is
 # for the chamber's Connect-button model-list probe, which (like the ACP probe it
 # mirrors) runs off a plain background thread with no tokio reactor of its own.
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "blocking"] }
+# `rustls-tls` is not optional: without a TLS backend reqwest refuses every `https://`
+# URL outright ("invalid URL, scheme is not http"), which broke every cloud
+# OpenAI-compatible seat (OpenRouter et al.) while the keyless localhost vendors kept
+# working. rustls over the bundled webpki roots, so there is no system OpenSSL dep.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "blocking", "rustls-tls"] }
 
 [dev-dependencies]
 chrono = "0.4.45"
