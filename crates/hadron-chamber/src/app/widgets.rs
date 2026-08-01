@@ -373,6 +373,7 @@ fn draft_tail(text: &str) -> String {
 /// One roster entry, styled as a presence list-item: the resolved avatar with a
 /// status [`Badge`] dot, a display name, and a one-word presence subtitle, with a
 /// tooltip on hover.
+#[allow(dead_code)]
 pub(super) fn roster_row(
     id: &ResolvedIdentity,
     r: &RosterRow,

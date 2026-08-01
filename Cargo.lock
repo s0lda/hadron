@@ -2895,6 +2895,7 @@ dependencies = [
  "gpui-component",
  "gpui-component-assets",
  "gpui_platform",
+ "hadron-forge",
  "hadron-forge-mcp",
  "hadron-gatekeeper",
  "hadron-gluon",

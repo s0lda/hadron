@@ -61,11 +61,82 @@ impl super::Chamber {
 
         let content = match selected {
             RightRailTab::Terminal => {
-                // The live grid: one styled row per terminal line, each line a
-                // few coalesced same-colour runs (not one element per cell — this
-                // box CPU-rasterises every frame). The block cursor is an inverted
-                // cell baked into the snapshot.
-                let grid: gpui::AnyElement = if let Some(term) = &self.terminal {
+                let sub_tab_bar = h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .px_2()
+                    .py_1()
+                    .bg(theme::glass_surface())
+                    .border_b_1()
+                    .border_color(theme::glass_highlight())
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .children(self.terminals.iter().enumerate().map(|(ix, tab)| {
+                                let is_active = ix == self.active_terminal_index;
+                                let bg_color = if is_active {
+                                    theme::glass_card()
+                                } else {
+                                    theme::canvas_base()
+                                };
+                                let text_col = if is_active {
+                                    theme::accent()
+                                } else {
+                                    theme::text_muted()
+                                };
+
+                                h_flex()
+                                    .id(SharedString::from(format!("terminal-tab-{ix}")))
+                                    .items_center()
+                                    .gap_1()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .bg(bg_color)
+                                    .text_xs()
+                                    .text_color(text_col)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                        this.select_terminal(ix, cx);
+                                    }))
+                                    .child(tab.title.clone())
+                                    .child(
+                                        div()
+                                            .id(SharedString::from(format!("close-terminal-tab-{ix}")))
+                                            .px_1()
+                                            .rounded_sm()
+                                            .hover(|s| s.bg(theme::glass_highlight()))
+                                            .text_color(theme::text_muted())
+                                            .child("×")
+                                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                                this.close_terminal(ix, cx);
+                                            })),
+                                    )
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("add-terminal-tab")
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(theme::glass_card())
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .hover(|s| s.text_color(theme::text()))
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                this.add_terminal(cx);
+                            }))
+                            .child("+"),
+                    );
+
+                let active_term = self.active_terminal();
+                let active_err = self.active_terminal_error();
+
+                let grid: gpui::AnyElement = if let Some(term) = active_term {
                     let snap = term.snapshot();
                     let mut lines = v_flex()
                         .font_family("Cascadia Code")
@@ -85,7 +156,7 @@ impl super::Chamber {
                                     div()
                                         .text_color(gpui::rgb(pack_rgb(run.fg)))
                                         .bg(gpui::rgb(pack_rgb(run.bg)))
-                                        .child(run.text.clone())
+                                        .child(run.text.clone()),
                                 );
                             }
                         }
@@ -96,10 +167,7 @@ impl super::Chamber {
                     }
                     lines.into_any_element()
                 } else {
-                    let msg = self
-                        .terminal_error
-                        .as_deref()
-                        .unwrap_or("starting shell…");
+                    let msg = active_err.unwrap_or("starting shell…");
                     div()
                         .flex_1()
                         .p_3()
@@ -110,8 +178,6 @@ impl super::Chamber {
                         .into_any_element()
                 };
 
-                // A paint-time probe: report the screen's pixel bounds so the pump
-                // loop can size the PTY to fit. It paints nothing.
                 let px_cell = self.terminal_px.clone();
                 let size_probe = gpui::canvas(
                     move |bounds, _, _| {
@@ -127,8 +193,6 @@ impl super::Chamber {
                 .absolute()
                 .size_full();
 
-                // The terminal "screen": a focusable dark surface. Clicking focuses
-                // it; while focused, keystrokes stream to the PTY (`on_terminal_key`).
                 let screen = div()
                     .id("terminal-screen")
                     .track_focus(&self.terminal_focus)
@@ -141,15 +205,12 @@ impl super::Chamber {
                     .border_1()
                     .border_color(theme::border())
                     .bg(theme::term_bg())
-                    // Mouse-down focuses the screen and anchors a text selection
-                    // (double/triple-click widen to word/line); dragging extends it,
-                    // and copy (`on_terminal_key`) reads it back via `selection_text`.
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, ev: &gpui::MouseDownEvent, window, cx| {
                             window.focus(&this.terminal_focus, cx);
                             if let (Some(term), Some((row, col, right))) =
-                                (this.terminal.as_ref(), this.terminal_cell_at(ev.position))
+                                (this.active_terminal(), this.terminal_cell_at(ev.position))
                             {
                                 term.selection_start(row, col, right, ev.click_count);
                                 cx.notify();
@@ -159,7 +220,7 @@ impl super::Chamber {
                     .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _window, cx| {
                         if ev.pressed_button == Some(MouseButton::Left) {
                             if let (Some(term), Some((row, col, right))) =
-                                (this.terminal.as_ref(), this.terminal_cell_at(ev.position))
+                                (this.active_terminal(), this.terminal_cell_at(ev.position))
                             {
                                 term.selection_update(row, col, right);
                                 cx.notify();
@@ -167,7 +228,7 @@ impl super::Chamber {
                         }
                     }))
                     .on_scroll_wheel(cx.listener(|this, ev: &gpui::ScrollWheelEvent, _window, cx| {
-                        if let Some(term) = &this.terminal {
+                        if let Some(term) = this.active_terminal() {
                             let lines = match ev.delta {
                                 gpui::ScrollDelta::Lines(delta) => (delta.y * 3.0) as i32,
                                 gpui::ScrollDelta::Pixels(delta) => {
@@ -186,10 +247,10 @@ impl super::Chamber {
 
                 v_flex()
                     .flex_1()
-                    // Without min-height:0 this flex child grows to the terminal grid's
-                    // content height and spills past the container's bottom edge.
                     .min_h_0()
                     .p_3()
+                    .gap_2()
+                    .child(sub_tab_bar)
                     .child(screen)
                     .into_any_element()
             }
@@ -853,5 +914,174 @@ impl super::Chamber {
             // single pane of glass floating on it. A second fill would stack with the
             // card's translucent glass and hide the field; the p_2 gutter shows it.
             .child(card)
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalTabState {
+    pub titles: Vec<String>,
+    pub active_index: usize,
+}
+
+impl Default for TerminalTabState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[allow(dead_code)]
+impl TerminalTabState {
+    pub fn new() -> Self {
+        Self {
+            titles: Vec::new(),
+            active_index: 0,
+        }
+    }
+
+    pub fn add_tab(&mut self, title: impl Into<String>) -> usize {
+        self.titles.push(title.into());
+        self.active_index = self.titles.len().saturating_sub(1);
+        self.active_index
+    }
+
+    pub fn select_tab(&mut self, index: usize) -> bool {
+        if index < self.titles.len() {
+            self.active_index = index;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn close_tab(&mut self, closing_index: usize) -> Option<usize> {
+        if closing_index >= self.titles.len() {
+            return None;
+        }
+
+        self.titles.remove(closing_index);
+        if self.titles.is_empty() {
+            self.active_index = 0;
+        } else if closing_index < self.active_index {
+            self.active_index = self.active_index.saturating_sub(1);
+        } else if self.active_index >= self.titles.len() {
+            self.active_index = self.titles.len() - 1;
+        }
+        Some(self.active_index)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_terminal_tab_addition_and_auto_focus() {
+        let mut state = TerminalTabState::new();
+        assert_eq!(state.titles.len(), 0);
+
+        let idx0 = state.add_tab("bash #1");
+        assert_eq!(idx0, 0);
+        assert_eq!(state.active_index, 0);
+
+        let idx1 = state.add_tab("bash #2");
+        assert_eq!(idx1, 1);
+        assert_eq!(state.active_index, 1, "Adding tab #2 must auto-focus index 1");
+        assert_eq!(state.titles.len(), 2);
+    }
+
+    #[test]
+    fn test_terminal_tab_selection_valid_and_out_of_bounds() {
+        let mut state = TerminalTabState::new();
+        state.add_tab("bash #1");
+        state.add_tab("bash #2");
+        state.add_tab("bash #3");
+
+        assert_eq!(state.active_index, 2);
+
+        // Select valid index 0
+        assert!(state.select_tab(0));
+        assert_eq!(state.active_index, 0);
+
+        // Select valid index 1
+        assert!(state.select_tab(1));
+        assert_eq!(state.active_index, 1);
+
+        // Select invalid index 99 -> must return false and preserve active_index=1
+        assert!(!state.select_tab(99));
+        assert_eq!(state.active_index, 1, "Out of bounds selection must not corrupt active_index");
+    }
+
+    #[test]
+    fn test_close_middle_active_tab_fallback() {
+        let mut state = TerminalTabState::new();
+        state.add_tab("tab 0");
+        state.add_tab("tab 1");
+        state.add_tab("tab 2");
+
+        state.select_tab(1); // Active tab is "tab 1"
+        let new_active = state.close_tab(1);
+
+        assert_eq!(new_active, Some(1));
+        assert_eq!(state.titles.len(), 2);
+        assert_eq!(state.titles[0], "tab 0");
+        assert_eq!(state.titles[1], "tab 2");
+        assert_eq!(state.active_index, 1, "Active index remains 1, now pointing to 'tab 2'");
+    }
+
+    #[test]
+    fn test_close_tail_active_tab_fallback() {
+        let mut state = TerminalTabState::new();
+        state.add_tab("tab 0");
+        state.add_tab("tab 1");
+        state.add_tab("tab 2");
+
+        state.select_tab(2); // Active tab is tail (index 2)
+        let new_active = state.close_tab(2);
+
+        assert_eq!(new_active, Some(1));
+        assert_eq!(state.titles.len(), 2);
+        assert_eq!(state.active_index, 1, "Closing tail tab decrements active_index to new tail (1)");
+    }
+
+    #[test]
+    fn test_close_preceding_tab_adjusts_active_index() {
+        let mut state = TerminalTabState::new();
+        state.add_tab("tab 0");
+        state.add_tab("tab 1");
+        state.add_tab("tab 2");
+
+        state.select_tab(2); // Active is "tab 2" at index 2
+        state.close_tab(0);  // Close preceding tab "tab 0"
+
+        assert_eq!(state.titles.len(), 2);
+        assert_eq!(state.titles[1], "tab 2");
+        assert_eq!(state.active_index, 1, "Active index shifted from 2 to 1 to track 'tab 2'");
+    }
+
+    #[test]
+    fn test_close_following_tab_preserves_active_index() {
+        let mut state = TerminalTabState::new();
+        state.add_tab("tab 0");
+        state.add_tab("tab 1");
+        state.add_tab("tab 2");
+
+        state.select_tab(0); // Active is "tab 0" at index 0
+        state.close_tab(2);  // Close following tab "tab 2"
+
+        assert_eq!(state.titles.len(), 2);
+        assert_eq!(state.active_index, 0, "Active index remains 0");
+    }
+
+    #[test]
+    fn test_close_last_remaining_tab_safe_fallback() {
+        let mut state = TerminalTabState::new();
+        state.add_tab("tab 0");
+
+        let new_active = state.close_tab(0);
+
+        assert_eq!(new_active, Some(0));
+        assert_eq!(state.titles.len(), 0);
+        assert_eq!(state.active_index, 0, "Active index remains 0 when vector becomes empty");
     }
 }

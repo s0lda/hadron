@@ -141,7 +141,7 @@ impl super::Chamber {
     }
     /// Rebuild the completion card from the input's current text and cursor.
     /// Sets `self.completion` to `None` when no `@`/`:`/`/` query is live.
-    fn recompute_completion(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn recompute_completion(&mut self, cx: &mut Context<Self>) {
         let state = self.input.read(cx);
         let text = state.value().to_string();
         let cursor = state.cursor();

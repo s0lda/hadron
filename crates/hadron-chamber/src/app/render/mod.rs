@@ -106,6 +106,13 @@ impl Render for Chamber {
             .on_action(
                 cx.listener(|this, _: &ToggleProcessManager, _, cx| this.toggle_process_manager(cx)),
             )
+            .on_action(cx.listener(|this, _: &NewTerminalTab, _, cx| this.add_terminal(cx)))
+            .on_action(cx.listener(|this, _: &CloseTerminalTab, _, cx| {
+                let active = this.active_terminal_index;
+                this.close_terminal(active, cx);
+            }))
+            .on_action(cx.listener(|this, _: &NextTerminalTab, _, cx| this.next_terminal_tab(cx)))
+            .on_action(cx.listener(|this, _: &PrevTerminalTab, _, cx| this.prev_terminal_tab(cx)))
             .relative()
             .size_full()
             .overflow_hidden()

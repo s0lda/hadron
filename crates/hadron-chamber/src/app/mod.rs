@@ -68,7 +68,7 @@ use widgets::{
     active_quarks, control_button, drag_region, effective_presence_state, effort_tag, empty_hint,
     fallback_pick_image, format_num, frame_corner_radii, kind_icon, kv_row, log_row,
     markdown_style, menu_button, mode_color, mode_hint, mode_label, mode_tag, next_global_mode,
-    next_mode, panel_eyebrow, progress_meter, roster_row, session_card, settings_field,
+    next_mode, panel_eyebrow, progress_meter, session_card, settings_field,
     settings_field_stacked, stat_tile, streaming_drafts, task_row, text_button,
 };
 
@@ -101,6 +101,10 @@ actions!(
         OpenMenu,
         ToggleFocus,
         ToggleProcessManager,
+        NewTerminalTab,
+        CloseTerminalTab,
+        NextTerminalTab,
+        PrevTerminalTab,
     ]
 );
 
@@ -149,6 +153,12 @@ struct CompletionCard {
     candidates: Vec<crate::text::Candidate>,
     /// The highlighted row (Up/Down move it, Enter/click accept it).
     selected: usize,
+}
+
+pub(super) struct TerminalTab {
+    pub title: String,
+    pub term: Option<crate::pty::PtyTerminal>,
+    pub error: Option<String>,
 }
 
 struct Chamber {
@@ -350,8 +360,8 @@ struct Chamber {
     pub(super) update_state: UpdateState,
     file_tree_open: Option<(String, String)>,
     file_tree_expanded: std::collections::HashSet<String>,
-    terminal: Option<crate::pty::PtyTerminal>,
-    terminal_error: Option<String>,
+    pub(super) terminals: Vec<TerminalTab>,
+    pub(super) active_terminal_index: usize,
     /// Keyboard focus for the terminal grid — keystrokes flow to the PTY only
     /// while this holds focus.
     terminal_focus: FocusHandle,
@@ -711,8 +721,8 @@ impl Chamber {
             completion_files,
             file_tree_open: None,
             file_tree_expanded: std::collections::HashSet::new(),
-            terminal: None,
-            terminal_error: None,
+            terminals: Vec::new(),
+            active_terminal_index: 0,
             terminal_focus: cx.focus_handle(),
             terminal_px: std::rc::Rc::new(std::cell::Cell::new(None)),
             terminal_warmup: 0,
@@ -778,6 +788,25 @@ impl Chamber {
         ResolvedIdentity { name, color, image }
     }
 
+    pub(super) fn active_terminal(&self) -> Option<&crate::pty::PtyTerminal> {
+        self.terminals
+            .get(self.active_terminal_index)
+            .and_then(|tab| tab.term.as_ref())
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn active_terminal_mut(&mut self) -> Option<&mut crate::pty::PtyTerminal> {
+        let idx = self.active_terminal_index;
+        self.terminals
+            .get_mut(idx)
+            .and_then(|tab| tab.term.as_mut())
+    }
+
+    pub(super) fn active_terminal_error(&self) -> Option<&str> {
+        self.terminals
+            .get(self.active_terminal_index)
+            .and_then(|tab| tab.error.as_deref())
+    }
 }
 
 /// Every chord the chamber binds at startup. A free function (not an inline
@@ -805,9 +834,12 @@ fn default_key_bindings() -> Vec<KeyBinding> {
         // Both are scoped: the text input's key context claims neither.
         KeyBinding::new("f10", OpenMenu, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-m", OpenMenu, Some(KEY_CONTEXT)),
-        // Chat input <-> terminal focus toggle (`ctrl-tab` / `ctrl-``).
-        // Global so it fires from either side.
-        KeyBinding::new("ctrl-tab", ToggleFocus, None),
+        // Multi-terminal PTY shortcuts
+        KeyBinding::new("ctrl-shift-t", NewTerminalTab, None),
+        KeyBinding::new("ctrl-shift-w", CloseTerminalTab, None),
+        KeyBinding::new("ctrl-tab", NextTerminalTab, None),
+        KeyBinding::new("ctrl-shift-tab", PrevTerminalTab, None),
+        // Chat input <-> terminal focus toggle (`ctrl-``).
         KeyBinding::new("ctrl-`", ToggleFocus, None),
     ]
 }

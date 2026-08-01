@@ -11,7 +11,7 @@ pub(super) enum Rail {
 }
 
 /// The views over the field, selected by the chat column's segmented tabs.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ChatTab {
     /// The conversation — human/quark messages, styled like a chat.
     Chat,
@@ -46,8 +46,8 @@ impl ChatTab {
     pub(super) fn label(self) -> &'static str {
         match self {
             ChatTab::Chat => "Chat",
-            ChatTab::Log => "Log",
-            ChatTab::Stats => "Stats",
+            ChatTab::Log => "Event Log",
+            ChatTab::Stats => "Timeline",
         }
     }
 }

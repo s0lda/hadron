@@ -13,21 +13,31 @@ impl super::Chamber {
         // until the first frame has measured it).
         let dims = self.terminal_px.get().map(|(_, _, w, h)| term_dims((w, h)));
 
-        if self.terminal.is_none() {
+        if self.terminals.is_empty() {
             match dims {
                 Some((cols, rows)) => {
                     let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                    let title = "bash #1".to_string();
                     match crate::pty::PtyTerminal::new(&root, cols, rows) {
-                        Ok(term) => {
-                            self.terminal = Some(term);
-                            self.terminal_error = None;
+                        Ok(mut term) => {
+                            term.title = title.clone();
+                            self.terminals.push(TerminalTab {
+                                title,
+                                term: Some(term),
+                                error: None,
+                            });
+                            self.active_terminal_index = 0;
                             // The panel is still settling its width as the window
                             // opens; keep re-measuring so we track it to the final
                             // size (see `terminal_warmup`).
                             self.terminal_warmup = 20;
                         }
                         Err(err) => {
-                            self.terminal_error = Some(err);
+                            self.terminals.push(TerminalTab {
+                                title,
+                                term: None,
+                                error: Some(err),
+                            });
                         }
                     }
                 }
@@ -38,7 +48,9 @@ impl super::Chamber {
             cx.notify();
             return;
         }
-        if let Some(term) = &mut self.terminal {
+
+        let active_ix = self.active_terminal_index;
+        if let Some(term) = self.terminals.get_mut(active_ix).and_then(|tab| tab.term.as_mut()) {
             if let Some((cols, rows)) = dims {
                 if term.size() != (cols, rows) {
                     // The measured size moved (the window is still opening, or the
@@ -70,7 +82,8 @@ impl super::Chamber {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(term) = &mut self.terminal else {
+        let active_ix = self.active_terminal_index;
+        let Some(term) = self.terminals.get_mut(active_ix).and_then(|tab| tab.term.as_mut()) else {
             return;
         };
         let ks = &event.keystroke;
