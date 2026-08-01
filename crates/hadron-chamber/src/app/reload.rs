@@ -232,8 +232,7 @@ impl super::Chamber {
             // thread that blocked mouse/keyboard dispatch for the whole scan.
             if let Some(scan) = scan {
                 if scan.files != self.file_tree_paths {
-                    // Autocomplete offers only real, editable files — never muted gitignored
-                    // entries — mirroring the filter in `new`.
+                    // Gitignored entries included, mirroring `new` — see the note there.
                     *self.completion_files.borrow_mut() = scan
                         .files
                         .iter()

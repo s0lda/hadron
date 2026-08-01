@@ -1049,6 +1049,28 @@ pub struct Completions {
 /// pointless — the user narrows with a query.
 pub const MAX_CANDIDATES: usize = 50;
 
+/// One file row: the bare name on the left (`📄 @chat.rs`), the path it will insert
+/// on the right, so a list of same-named files is still told apart. A trailing `/`
+/// marks a directory — the tree collapses a wholly-gitignored one to a single row,
+/// so `📁 @target/` is a real candidate, not a stray.
+///
+/// The two `@`-file loops below built this inline and identically; one home for it.
+fn file_candidate(file: &str) -> Candidate {
+    let is_dir = file.ends_with('/');
+    let bare = file.trim_end_matches('/');
+    let name = std::path::Path::new(bare)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(bare);
+    let icon = if is_dir { "📁" } else { "📄" };
+    let slash = if is_dir { "/" } else { "" };
+    Candidate {
+        label: format!("{icon} @{name}{slash}"),
+        detail: file.to_string(),
+        new_text: format!("@{file} "),
+    }
+}
+
 /// Build the completion rows for the trigger immediately before `cursor`, or `None`
 /// when there is no live trigger (so the card closes).
 ///
@@ -1100,23 +1122,7 @@ pub fn completion_candidates(
                     break;
                 }
                 if query_lower.is_empty() || file.to_lowercase().contains(&query_lower) {
-                    let is_dir = file.ends_with('/');
-                    let icon = if is_dir { "📁" } else { "📄" };
-                    let bare_name = file.trim_end_matches('/');
-                    let file_name = std::path::Path::new(bare_name)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(bare_name);
-                    let label = if is_dir {
-                        format!("{icon} @{file_name}/")
-                    } else {
-                        format!("{icon} @{file_name}")
-                    };
-                    out.push(Candidate {
-                        label,
-                        detail: file.clone(),
-                        new_text: format!("@{file} "),
-                    });
+                    out.push(file_candidate(file));
                 }
             }
         }
@@ -1270,23 +1276,7 @@ pub fn completion_candidates(
                     break;
                 }
                 if f_query.is_empty() || file.to_lowercase().contains(f_query) {
-                    let is_dir = file.ends_with('/');
-                    let icon = if is_dir { "📁" } else { "📄" };
-                    let bare_name = file.trim_end_matches('/');
-                    let file_name = std::path::Path::new(bare_name)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(bare_name);
-                    let label = if is_dir {
-                        format!("{icon} @{file_name}/")
-                    } else {
-                        format!("{icon} @{file_name}")
-                    };
-                    out.push(Candidate {
-                        label,
-                        detail: file.clone(),
-                        new_text: format!("@{file} "),
-                    });
+                    out.push(file_candidate(file));
                 }
             }
         }
