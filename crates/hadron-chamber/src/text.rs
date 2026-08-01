@@ -1100,9 +1100,21 @@ pub fn completion_candidates(
                     break;
                 }
                 if query_lower.is_empty() || file.to_lowercase().contains(&query_lower) {
+                    let is_dir = file.ends_with('/');
+                    let icon = if is_dir { "📁" } else { "📄" };
+                    let bare_name = file.trim_end_matches('/');
+                    let file_name = std::path::Path::new(bare_name)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(bare_name);
+                    let label = if is_dir {
+                        format!("{icon} @{file_name}/")
+                    } else {
+                        format!("{icon} @{file_name}")
+                    };
                     out.push(Candidate {
-                        label: format!("@{file}"),
-                        detail: "File".into(),
+                        label,
+                        detail: file.clone(),
                         new_text: format!("@{file} "),
                     });
                 }
@@ -1258,9 +1270,21 @@ pub fn completion_candidates(
                     break;
                 }
                 if f_query.is_empty() || file.to_lowercase().contains(f_query) {
+                    let is_dir = file.ends_with('/');
+                    let icon = if is_dir { "📁" } else { "📄" };
+                    let bare_name = file.trim_end_matches('/');
+                    let file_name = std::path::Path::new(bare_name)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(bare_name);
+                    let label = if is_dir {
+                        format!("{icon} @{file_name}/")
+                    } else {
+                        format!("{icon} @{file_name}")
+                    };
                     out.push(Candidate {
-                        label: format!("@{file}"),
-                        detail: "File".into(),
+                        label,
+                        detail: file.clone(),
                         new_text: format!("@{file} "),
                     });
                 }
@@ -1400,7 +1424,24 @@ mod tests {
         let files = vec!["src/app.rs".to_string(), "README.md".to_string()];
         let c = completion_candidates("@app", 4, &[], &files, &[]).expect("has rows");
         assert_eq!(c.candidates.len(), 1);
+        assert_eq!(c.candidates[0].label, "📄 @app.rs");
+        assert_eq!(c.candidates[0].detail, "src/app.rs");
         assert_eq!(c.candidates[0].new_text, "@src/app.rs ");
+    }
+
+    #[test]
+    fn file_completion_supports_gitignored_files_and_formats_label_and_detail() {
+        let files = vec!["target/debug/hadron".to_string(), "node_modules/".to_string()];
+        let c = completion_candidates("@target", 7, &[], &files, &[]).expect("has rows");
+        assert_eq!(c.candidates.len(), 1);
+        assert_eq!(c.candidates[0].label, "📄 @hadron");
+        assert_eq!(c.candidates[0].detail, "target/debug/hadron");
+        assert_eq!(c.candidates[0].new_text, "@target/debug/hadron ");
+
+        let c_dir = completion_candidates("@node", 5, &[], &files, &[]).expect("has rows");
+        assert_eq!(c_dir.candidates.len(), 1);
+        assert_eq!(c_dir.candidates[0].label, "📁 @node_modules/");
+        assert_eq!(c_dir.candidates[0].detail, "node_modules/");
     }
 
     #[test]

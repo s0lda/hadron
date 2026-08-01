@@ -1184,7 +1184,8 @@ mod milestone_3_tests {
 
         let comp_files = completion_candidates("@src", 4, &quarks, &files, &sessions).expect("file candidates");
         assert!(!comp_files.candidates.is_empty());
-        assert_eq!(comp_files.candidates[0].detail, "File");
+        assert_eq!(comp_files.candidates[0].label, "📄 @chat.rs");
+        assert_eq!(comp_files.candidates[0].detail, "src/app/render/chat.rs");
     }
 
     #[test]

@@ -473,7 +473,6 @@ impl Chamber {
         let completion_files = std::rc::Rc::new(std::cell::RefCell::new(
             files
                 .iter()
-                .filter(|(_, ignored)| !ignored)
                 .map(|(p, _)| p.clone())
                 .collect::<Vec<String>>(),
         ));
