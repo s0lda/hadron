@@ -386,6 +386,11 @@ struct Chamber {
     file_tree_open_scroll: ScrollHandle,
     completion_scroll: ScrollHandle,
     pub(super) last_live_activities: std::collections::HashMap<String, Option<hadron_lattice::live::Activity>>,
+    /// The merge gate's `live/gates/` heartbeats from the previous poll, so a gate
+    /// starting or finishing triggers a repaint the same way a quark's own live
+    /// activity does — the Tasks tab reads `live::gates` at render time and nothing
+    /// else would notice it changed (nucleus `live-activity-needs-notify-repaint`).
+    pub(super) last_gate_activities: Vec<hadron_lattice::live::Activity>,
     /// The `gluon.lock` flock reading from the previous poll — compared against the
     /// fresh reading each tick so a toast fires only on the running→stopped edge,
     /// not on every tick gluon happens to still be down. Starts optimistic (running)
@@ -735,6 +740,7 @@ impl Chamber {
             file_tree_open_scroll: ScrollHandle::new(),
             completion_scroll: ScrollHandle::new(),
             last_live_activities: std::collections::HashMap::new(),
+            last_gate_activities: Vec::new(),
             last_gluon_running: true,
             nucleus_over_budget: hadron_gluon::nucleus_status::index_over_budget(
                 &repo_root,

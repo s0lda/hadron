@@ -877,7 +877,18 @@ impl super::Chamber {
                     self.view.tasks.iter().collect()
                 };
 
-                let list = if tasks_to_render.is_empty() {
+                // A gate heartbeat has no history in the field (the plan's own rule:
+                // never write mid-gate progress to `field.jsonl`), so it only ever
+                // shows live — scrubbing to a past instant shows what the field
+                // recorded then, not what a gate happens to be doing right now.
+                let live_gate_rows: Vec<crate::model::SwarmTask> = if self.task_scrub.is_none() {
+                    let gates_dir = hadron_lattice::live::gates_dir(&self.path);
+                    model::tasks::live_rows(&gates_dir, now)
+                } else {
+                    Vec::new()
+                };
+
+                let list = if tasks_to_render.is_empty() && live_gate_rows.is_empty() {
                     let hint = if self.task_scrub.is_some() {
                         "No swarm tasks active at this scrubbed time."
                     } else {
@@ -886,6 +897,11 @@ impl super::Chamber {
                     div().p_4().child(empty_hint(hint)).into_any_element()
                 } else {
                     let mut col = v_flex().gap_1().p_2().w_full();
+                    for t in &live_gate_rows {
+                        let to = self.resolve_identity(&t.to);
+                        let from = self.resolve_identity(&t.from);
+                        col = col.child(task_row(t, render_now, &to, &from.name));
+                    }
                     for t in tasks_to_render {
                         let to = self.resolve_identity(&t.to);
                         let from = self.resolve_identity(&t.from);

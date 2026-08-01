@@ -133,6 +133,28 @@ pub fn tasks_at(tasks: &[SwarmTask], at: DateTime<Utc>) -> Vec<&SwarmTask> {
         .collect()
 }
 
+/// Merge-gate heartbeats, projected into the same row shape `swarm_tasks` yields so the
+/// Tasks tab can render both through one `task_row`. Unlike the rest of this module,
+/// NOT pure over `&[Event]`: a gate publishes to `live::gates_dir`, never to the field
+/// (see the Flight Recorder plan's "never write mid-gate progress to `field.jsonl`"),
+/// so `gates_dir` — the directory itself, not the field path — is read directly here.
+/// Only fresh heartbeats are returned (`live::gates`'s own `is_fresh` guard); a gate
+/// whose heartbeat has stopped must not read as one still running.
+pub fn live_rows(gates_dir: &std::path::Path, now: DateTime<Utc>) -> Vec<SwarmTask> {
+    hadron_lattice::live::gates(gates_dir, now)
+        .into_iter()
+        .map(|a| SwarmTask {
+            to: a.quark.as_str().to_string(),
+            from: "gate".to_string(),
+            title: a.detail.clone(),
+            body: a.detail,
+            state: TaskState::Working,
+            asked_at: a.started.unwrap_or(a.at),
+            done_at: None,
+        })
+        .collect()
+}
+
 /// The timeline boundaries spanning `tasks`: earliest `asked_at` to latest of (`done_at` or `now`).
 /// Returns `None` when `tasks` is empty.
 pub fn span(tasks: &[SwarmTask], now: DateTime<Utc>) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
@@ -581,6 +603,54 @@ mod tests {
         let (start, end) = span(&[task1, task2], now).unwrap();
         assert_eq!(start, t0);
         assert_eq!(end, now);
+    }
+
+    fn gates_tmp() -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "hadron-chamber-tasks-live-rows-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn a_fresh_gate_heartbeat_becomes_one_running_row() {
+        let dir = gates_tmp();
+        let now = Utc::now();
+        let started = now - chrono::Duration::seconds(12);
+        let activity = hadron_lattice::Activity::gating(
+            QuarkId::new("sonnet"),
+            "quark/sonnet/some-branch",
+            started,
+        );
+        hadron_lattice::live::publish_gate(&dir, "quark/sonnet/some-branch", &activity).unwrap();
+
+        let rows = live_rows(&dir, now);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].to, "sonnet");
+        assert_eq!(rows[0].title, "quark/sonnet/some-branch");
+        assert_eq!(rows[0].state, TaskState::Working);
+        assert_eq!(rows[0].asked_at, started);
+        assert_eq!(rows[0].done_at, None);
+    }
+
+    #[test]
+    fn a_stale_gate_heartbeat_becomes_no_row() {
+        let dir = gates_tmp();
+        let started = Utc::now();
+        let activity =
+            hadron_lattice::Activity::gating(QuarkId::new("agy"), "quark/agy/old", started);
+        hadron_lattice::live::publish_gate(&dir, "quark/agy/old", &activity).unwrap();
+
+        let long_after = started + chrono::Duration::seconds(200);
+        assert!(live_rows(&dir, long_after).is_empty());
+    }
+
+    #[test]
+    fn an_empty_gates_dir_is_no_rows() {
+        let dir = gates_tmp();
+        assert!(live_rows(&dir, Utc::now()).is_empty());
     }
 }
 
