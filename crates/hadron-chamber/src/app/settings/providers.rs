@@ -47,6 +47,15 @@ impl super::Chamber {
                 self.editor_ladder(cx),
             ))
             .child(settings_field(
+                "Default permission mode",
+                Some(
+                    "The mode a new session starts on. /clear wipes the field, which is \
+                     where the current mode lives \u{2014} without this it always came back \
+                     as Ask. Changing it does not touch the session you are in.",
+                ),
+                self.default_mode_ladder(cx),
+            ))
+            .child(settings_field(
                 "Close Gluon on Exit",
                 Some("Terminate the hadron-gluon daemon when the Chamber window closes."),
                 Switch::new("close-gluon-on-exit")
@@ -58,6 +67,58 @@ impl super::Chamber {
                     }))
                     .into_any_element(),
             ))
+    }
+
+    /// The default-permission-mode picker: the full [`MODE_LADDER`], each chip in its
+    /// own risk colour, with the selected mode's gloss underneath so the choice is not
+    /// just a label. Same direct-write-and-save shape as [`Self::editor_ladder`].
+    ///
+    /// Writes ONLY the preference — it deliberately appends no `ModeSet`, so choosing a
+    /// default never silently re-arms the session the human is already in. `/clear`
+    /// seeds it into the fresh field; the global chip (and `F6`) still owns *now*.
+    pub(super) fn default_mode_ladder(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current = self.prefs.default_mode;
+        let mut row = h_flex().gap_1p5().flex_wrap();
+        for mode in widgets::MODE_LADDER {
+            let selected = mode == current;
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("default-mode-{}", widgets::mode_label(mode))))
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .border_1()
+                    .text_xs()
+                    .cursor_pointer()
+                    .when(selected, |d| {
+                        d.bg(widgets::mode_color(mode))
+                            .border_color(widgets::mode_color(mode))
+                            .text_color(theme::text())
+                    })
+                    .when(!selected, |d| {
+                        d.bg(theme::bg_surface())
+                            .border_color(theme::border())
+                            .text_color(theme::text_secondary())
+                            .hover(|s| s.bg(theme::bg_surface_raised()))
+                    })
+                    .child(widgets::mode_label(mode).to_string())
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.prefs.default_mode = mode;
+                        let _ = config::save(&this.prefs);
+                        cx.notify();
+                    })),
+            );
+        }
+        v_flex()
+            .gap_1p5()
+            .child(row)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(widgets::mode_hint(current)),
+            )
+            .into_any_element()
     }
 
     /// The code-editor picker. Same direct-write chip row as the nucleus budget

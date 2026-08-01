@@ -313,6 +313,27 @@ impl LiveFeed {
     }
 
     fn publish(&self, doing: Doing, detail: &str) {
+        self.emit(doing, |quark| Activity::new(quark, doing, detail));
+    }
+
+    /// Publish the reply **as it streams**, so the chamber can render a provisional
+    /// chat bubble instead of leaving the human watching tool titles until the turn
+    /// ends. `message` is the accumulated transcript, not the latest chunk — the
+    /// live file is overwritten in place, so each publish must carry the whole thing.
+    ///
+    /// Throttled exactly like a thought chunk (`Doing::Speaking` is not in the forced
+    /// set), which matters more here: an agent emits a chunk every few tokens and this
+    /// payload GROWS, so an unthrottled version would rewrite an ever-larger file
+    /// hundreds of times a turn.
+    fn publish_draft(&self, message: &str) {
+        self.emit(Doing::Speaking, |quark| Activity::speaking(quark, message));
+    }
+
+    /// The shared gate both publishers pass through: the turn must be live, the
+    /// throttle must allow it, and a failed write must never kill a turn — this is a
+    /// view, not the record. `build` is a closure so the (potentially large) draft is
+    /// only materialised once the throttle has said yes.
+    fn emit(&self, doing: Doing, build: impl FnOnce(QuarkId) -> Activity) {
         if !self.active.load(std::sync::atomic::Ordering::Relaxed) {
             return;
         }
@@ -325,8 +346,7 @@ impl LiveFeed {
                 _ => *last = Some(now),
             }
         }
-        // A failed publish must never kill a turn: this is a view, not the record.
-        let _ = live::publish(&self.dir, &Activity::new(self.quark.clone(), doing, detail));
+        let _ = live::publish(&self.dir, &build(self.quark.clone()));
     }
 
     pub(super) fn clear(&self) {
@@ -436,10 +456,23 @@ impl super::AcpQuark {
                                         // so this is the only place a message exists.
                                         SessionUpdate::AgentMessageChunk(chunk) => {
                                             if let ContentBlock::Text(t) = chunk.content {
-                                                append_message_chunk(
-                                                    &mut transcript.lock().unwrap(),
-                                                    &t.text,
-                                                );
+                                                // Accumulate, then publish the running
+                                                // total as a DRAFT. The transcript is
+                                                // still what `run_turn` returns as the
+                                                // one real `Kind::Message`; this only
+                                                // lets the chamber show it arriving
+                                                // instead of after the fact. Held across
+                                                // the publish would deadlock nothing but
+                                                // does keep the lock over a file write,
+                                                // so the clone is taken and dropped first.
+                                                let draft = {
+                                                    let mut t_lock = transcript.lock().unwrap();
+                                                    append_message_chunk(&mut t_lock, &t.text);
+                                                    t_lock.clone()
+                                                };
+                                                if let Some(feed) = &live {
+                                                    feed.publish_draft(&draft);
+                                                }
                                             }
                                         }
                                         // Real context numbers, including the window SIZE
