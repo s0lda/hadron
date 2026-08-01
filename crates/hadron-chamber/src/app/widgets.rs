@@ -870,7 +870,7 @@ pub(super) fn mode_label(mode: Mode) -> &'static str {
 pub(super) fn mode_color(mode: Mode) -> gpui::Hsla {
     match mode {
         Mode::Ask => gpui::rgb(0x94a3b8).into(),    // slate — ask
-        Mode::Write => gpui::rgb(0x38bdf8).into(),   // sky cyan — write
+        Mode::Write => gpui::rgb(0x60a5fa).into(),   // soft sapphire blue — write
         Mode::Auto => gpui::rgb(0xc084fc).into(),    // soft amethyst — auto
         Mode::Bypass => gpui::rgb(0xf59e0b).into(),  // warm amber gold — bypass
     }
@@ -898,7 +898,7 @@ pub(super) fn empty_hint(text: &'static str) -> impl IntoElement {
 /// danger tags so a bad outcome cannot read as a green one.
 pub(super) fn task_state_tag(state: TaskState) -> gpui::AnyElement {
     let (color, label) = match state {
-        TaskState::Working => (gpui::rgb(0x38bdf8), "Working"),
+        TaskState::Working => (gpui::rgb(0x60a5fa), "Working"),
         TaskState::Done => (gpui::rgb(0x34d399), "Done"),
         TaskState::Blocked => (gpui::rgb(0xf59e0b), "Blocked"),
         TaskState::Failed => (gpui::rgb(0xf87171), "Failed"),

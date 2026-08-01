@@ -201,7 +201,7 @@ impl super::Chamber {
         // Signature brand motif: the four quark energies as a small constellation of dots,
         // echoing the field's corner glows.
         let quark_dots = h_flex().gap_1p5().items_center().children(
-            [0x38bdf8u32, 0xc084fc, 0x34d399, 0xfbbf24]
+            [0x60a5fau32, 0xc084fc, 0x34d399, 0xfbbf24]
                 .into_iter()
                 .map(|c| div().size(px(9.0)).rounded_full().bg(rgb(c)).into_any_element()),
         );
@@ -345,12 +345,12 @@ impl super::Chamber {
 
         let mut list = v_flex().gap_1p5();
         for row in rows {
-            // Determine dot color & presence label using Hadron SSOT theme presence logic
+            // Determine dot color & presence label using Hadron SSOT halo dot logic (matching Roster)
             let (dot, status_label) = if row.id == "gluon" {
                 if row.status == "Running" {
-                    (theme::presence(hadron_lattice::QuarkState::Ground), "Running".to_string())
+                    (theme::halo_idle(), "Running".to_string())
                 } else {
-                    (theme::presence(hadron_lattice::QuarkState::Error), "Stopped".to_string())
+                    (theme::halo_error(), "Stopped".to_string())
                 }
             } else if let Some(roster_row) = self.view.roster.iter().find(|r| r.id == row.id) {
                 let activity = hadron_lattice::live::read(
@@ -364,18 +364,18 @@ impl super::Chamber {
                     roster_row.enabled,
                     activity.is_some(),
                 );
-                if roster_row.adopted && roster_row.enabled {
+                if roster_row.enabled {
                     (
-                        theme::presence(effective_state),
+                        theme::halo_dot(effective_state),
                         theme::presence_label(effective_state).to_string(),
                     )
                 } else if !roster_row.adopted {
-                    (theme::presence_disabled(), "available".to_string())
+                    (gpui::rgb(0x71717a).into(), "available".to_string())
                 } else {
-                    (theme::presence_disabled(), "disabled".to_string())
+                    (gpui::rgb(0x71717a).into(), "disabled".to_string())
                 }
             } else {
-                (theme::presence_disabled(), row.status.clone())
+                (gpui::rgb(0x71717a).into(), row.status.clone())
             };
 
             let avatar_or_icon = if row.id == "gluon" {
