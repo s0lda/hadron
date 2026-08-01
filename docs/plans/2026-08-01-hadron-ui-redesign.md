@@ -1,6 +1,6 @@
 # Hadron UI Redesign Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Redesign `hadron-chamber` into "The Unified Swarm Command Deck"—a borderless glass desktop UI with zero-lag AI streaming, multi-terminal PTY inspector, and AST Forge diff visualization.
 
@@ -27,7 +27,7 @@
 - Consumes: GPUI `hsla`, `rgba`, `Element` utilities
 - Produces: `theme::canvas_base()`, `theme::glass_surface()`, `theme::glass_card()`, `theme::glass_highlight()`, `theme::halo_active()`, `theme::halo_reasoning()`
 
-- [ ] **Step 1: Write tests for theme color tokens**
+- [x] **Step 1: Write tests for theme color tokens**
 
 Add unit tests to `theme.rs`:
 ```rust
@@ -46,12 +46,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
 
 Run: `cargo test -p hadron-chamber --lib theme::tests::test_glass_theme_tokens`
 Expected: FAIL (missing `canvas_base`, `glass_card`, etc.)
 
-- [ ] **Step 3: Implement glass surface theme tokens in `theme.rs`**
+- [x] **Step 3: Implement glass surface theme tokens in `theme.rs`**
 
 Add token functions in `crates/hadron-chamber/src/theme.rs`:
 ```rust
@@ -80,12 +80,12 @@ pub fn halo_reasoning() -> gpui::Hsla {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cargo test -p hadron-chamber --lib theme::tests::test_glass_theme_tokens`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/hadron-chamber/src/theme.rs
@@ -104,7 +104,7 @@ git commit -m "feat(chamber): add borderless glass theme tokens and halo color u
 - Consumes: `theme::glass_surface()`, `theme::halo_active()`, `QuarkId`, `View`
 - Produces: `Chamber::roster_pane(&mut self, cx)` with borderless glass cards, status halos, and F6 security deck.
 
-- [ ] **Step 1: Write test for Quark status halo resolution**
+- [x] **Step 1: Write test for Quark status halo resolution**
 
 ```rust
 #[test]
@@ -113,24 +113,24 @@ fn test_quark_status_halo_color() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it passes**
+- [x] **Step 2: Run test to verify it passes**
 
 Run: `cargo test -p hadron-chamber --lib app::render::roster::tests`
 Expected: PASS
 
-- [ ] **Step 3: Refactor `roster_pane` to borderless glass cards**
+- [x] **Step 3: Refactor `roster_pane` to borderless glass cards**
 
 Update `crates/hadron-chamber/src/app/render/roster.rs` to render:
 1. Floating Worktree Chip header (`bg(theme::glass_card())`, `rounded_lg()`).
 2. Quark Fleet list using `theme::glass_surface()` with 8px vector halo indicators (no animated box shadows).
 3. Bottom F6 security posture pill (`ASK` / `WRITE` / `AUTO` / `BYPASS`).
 
-- [ ] **Step 4: Verify build clean**
+- [x] **Step 4: Verify build clean**
 
 Run: `cargo check -p hadron-chamber`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/hadron-chamber/src/app/render/roster.rs
@@ -149,11 +149,11 @@ git commit -m "feat(chamber): update left rail fleet roster with borderless glas
 - Consumes: `streaming_drafts`, `active_quarks`, `chat_pane`
 - Produces: `chat_pane` featuring floating capsule tabs (`Chat` | `Event Log` | `Timeline`), zero-lag plain text streaming cards, AST Forge diff cards, and floating 12px elevated command dock.
 
-- [ ] **Step 1: Verify draft streaming plain text card logic**
+- [x] **Step 1: Verify draft streaming plain text card logic**
 
 Check `chat.rs` line 55-68 to ensure plain text rendering is maintained for zero-lag streaming.
 
-- [ ] **Step 2: Refactor input deck to Floating Command Capsule**
+- [x] **Step 2: Refactor input deck to Floating Command Capsule**
 
 Update `chat_pane` in `crates/hadron-chamber/src/app/render/chat.rs`:
 ```rust
@@ -173,12 +173,12 @@ let input_capsule = v_flex()
     );
 ```
 
-- [ ] **Step 3: Run cargo check**
+- [x] **Step 3: Run cargo check**
 
 Run: `cargo check -p hadron-chamber`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add crates/hadron-chamber/src/app/render/chat.rs
@@ -198,7 +198,7 @@ git commit -m "feat(chamber): convert center deck to floating command capsule an
 - Consumes: `PtyState`, `terminal_pane`
 - Produces: Tabbed PTY terminal manager supporting `+` (new tab), tab switching, and `Ctrl+Shift+T` / `Ctrl+Shift+W` shortcuts.
 
-- [ ] **Step 1: Write test for PTY tab management state**
+- [x] **Step 1: Write test for PTY tab management state**
 
 In `crates/hadron-chamber/src/pty.rs`:
 ```rust
@@ -210,21 +210,21 @@ fn test_pty_tab_list_creation() {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it passes**
+- [x] **Step 2: Run test to verify it passes**
 
 Run: `cargo test -p hadron-chamber --lib pty::tests::test_pty_tab_list_creation`
 Expected: PASS
 
-- [ ] **Step 3: Add multi-terminal tab bar to `terminal_pane`**
+- [x] **Step 3: Add multi-terminal tab bar to `terminal_pane`**
 
 Update `crates/hadron-chamber/src/app/render/terminal.rs` to render terminal instance tab pills (`bash #1`, `npm run dev`) with `+` new tab button and close (`×`) actions.
 
-- [ ] **Step 4: Verify build clean**
+- [x] **Step 4: Verify build clean**
 
 Run: `cargo check -p hadron-chamber`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/hadron-chamber/src/pty.rs crates/hadron-chamber/src/app/render/terminal.rs
@@ -243,16 +243,16 @@ git commit -m "feat(chamber): implement multi-terminal PTY tabs in inspector pan
 - Consumes: `git_pane`, `stats_pane`
 - Produces: Borderless glass cards for Git Worktrees, Merge Gate test pipeline status, and zero-CPU token telemetry stats.
 
-- [ ] **Step 1: Update `git.rs` and `stats.rs` to use glass surfaces**
+- [x] **Step 1: Update `git.rs` and `stats.rs` to use glass surfaces**
 
 Replace 1px box borders in `git.rs` and `stats.rs` with `theme::glass_surface()` and `theme::glass_card()`.
 
-- [ ] **Step 2: Verify full crate build & unit tests**
+- [x] **Step 2: Verify full crate build & unit tests**
 
 Run: `cargo test -p hadron-chamber`
 Expected: PASS (all tests pass clean)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add crates/hadron-chamber/src/app/render/git.rs crates/hadron-chamber/src/app/render/stats.rs
@@ -266,17 +266,17 @@ git commit -m "feat(chamber): update Git Worktrees and Telemetry panels to borde
 **Files:**
 - Test: Entire workspace (`cargo check --workspace`, `cargo test --workspace`)
 
-- [ ] **Step 1: Run full workspace build check**
+- [x] **Step 1: Run full workspace build check**
 
 Run: `cargo check --workspace`
 Expected: PASS clean with exit code 0.
 
-- [ ] **Step 2: Run full workspace tests**
+- [x] **Step 2: Run full workspace tests**
 
 Run: `cargo test --workspace`
 Expected: PASS clean.
 
-- [ ] **Step 3: Commit final plan verification check**
+- [x] **Step 3: Commit final plan verification check**
 
 ```bash
 git add .
