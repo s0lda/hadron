@@ -230,6 +230,7 @@ impl<R: CliRunner> CliQuark<R> {
         if let Some(stream) = &self.spec.stream {
             args.extend(stream.flags.iter().cloned());
         }
+        args.extend(self.spec.posture.for_mode(mode).iter().cloned());
 
         // The seat's resolved secrets, plus the shared build env so a `cargo` the
         // quark runs itself lands in the main checkout's warm `target/` instead of
