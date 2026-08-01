@@ -860,7 +860,10 @@ fn font_family_with_a_real_bold(cx: &App) -> SharedString {
 /// Launch the chamber window against a field file path.
 pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>) {
     let Some(path) = field_path else {
-        eprintln!("usage: hadron-chamber <field.jsonl>");
+        hadron_lattice::term::info(
+            hadron_lattice::term::Source::Chamber,
+            "usage: hadron-chamber <field.jsonl>",
+        );
         return;
     };
     let field_path = PathBuf::from(&path);
@@ -922,7 +925,10 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
         // Probed before the theme block below, which holds `cx` mutably. Logged because
         // this bug is invisible from inside the app — the only symptom is flat bold.
         let ui_font = font_family_with_a_real_bold(cx);
-        eprintln!("chamber: UI font family {ui_font} (bold verified)");
+        hadron_lattice::term::info(
+            hadron_lattice::term::Source::Chamber,
+            &format!("UI font family {ui_font} (bold verified)"),
+        );
         // Align gpui-component's own component colors (titlebar, inputs, window
         // controls) to Jake's palette so they blend with our hand-drawn surfaces.
         {

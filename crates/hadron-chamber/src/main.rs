@@ -4,11 +4,11 @@
 
 mod model;
 
-// Layout persistence is used by the window; keep it compiled (and unit-tested)
-// in the default build, but don't warn when the headless binary ignores it.
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 mod config;
 mod vcs;
+
+use hadron_lattice::term::{self, Source};
 
 // Pure text logic, deliberately NOT behind `gui`: the emoji crash-guard tests must
 // run in `cargo test --workspace`, the gate we actually judge a change by.
@@ -82,7 +82,10 @@ fn main() {
                     if lock_res == 0 {
                         chamber_lock_file = Some(file);
                     } else {
-                        eprintln!("hadron-chamber: warning: another instance of chamber is already running.");
+                        term::warn(
+                            Source::Chamber,
+                            "warning: another instance of chamber is already running.",
+                        );
                     }
                 }
                 #[cfg(not(unix))]
@@ -91,7 +94,10 @@ fn main() {
                 }
             }
             Err(e) => {
-                eprintln!("hadron-chamber: warning: failed to open chamber lock file: {}", e);
+                term::warn(
+                    Source::Chamber,
+                    &format!("warning: failed to open chamber lock file: {e}"),
+                );
             }
         }
 
@@ -123,22 +129,25 @@ fn main() {
         }
 
         if gluon_running {
-            eprintln!("hadron-chamber: gluon is running.");
+            term::info(Source::Chamber, "gluon is running.");
             #[cfg(feature = "gui")]
             {
                 gluon_pid = read_lock_pid(&gluon_lock_path);
                 gluon_running_no_pid = gluon_pid.is_none();
             }
         } else {
-            eprintln!("hadron-chamber: gluon is not running.");
+            term::info(Source::Chamber, "gluon is not running.");
             // Single-command launch: bring the daemon up ourselves so the user only
             // runs the chamber. Headless (no gui) stays side-effect-free by design.
             #[cfg(feature = "gui")]
             if !no_daemon {
                 let gluon_bin = resolve_gluon_binary();
-                eprintln!(
-                    "hadron-chamber: auto-spawning daemon {:?} on field {:?}",
-                    gluon_bin, p
+                term::info(
+                    Source::Chamber,
+                    &format!(
+                        "auto-spawning daemon {:?} on field {:?}",
+                        gluon_bin, p
+                    ),
                 );
                 match std::process::Command::new(&gluon_bin).arg(p).spawn() {
                     Ok(child) => {
@@ -149,7 +158,10 @@ fn main() {
                         spawned_gluon = Some(child);
                     }
                     Err(e) => {
-                        eprintln!("hadron-chamber: failed to spawn hadron-gluon: {}", e)
+                        term::error(
+                            Source::Chamber,
+                            &format!("failed to spawn hadron-gluon: {e}"),
+                        )
                     }
                 }
             }
@@ -174,16 +186,22 @@ fn main() {
                 // `hadron-gluon` before signalling it.
                 #[cfg(unix)]
                 if pid_names_a_live_gluon(std::path::Path::new(PROC_ROOT), pid) {
-                    eprintln!("hadron-chamber: closing hadron-gluon (PID {}) on exit...", pid);
+                    term::info(
+                        Source::Chamber,
+                        &format!("closing hadron-gluon (PID {}) on exit...", pid),
+                    );
                     unsafe {
                         libc::kill(pid as libc::pid_t, libc::SIGTERM);
                     }
                 } else {
-                    eprintln!(
-                        "hadron-chamber: leaving PID {} alone on exit — it is not a live \
-                         hadron-gluon, so gluon.lock is stale and that PID may now belong \
-                         to an unrelated process.",
-                        pid
+                    term::warn(
+                        Source::Chamber,
+                        &format!(
+                            "leaving PID {} alone on exit — it is not a live \
+                             hadron-gluon, so gluon.lock is stale and that PID may now belong \
+                             to an unrelated process.",
+                            pid
+                        ),
                     );
                 }
                 // Reap the child if it was ours, so it does not linger as a zombie.
@@ -196,7 +214,8 @@ fn main() {
                 // A gluon holds the lock but recorded no PID, so we cannot target it.
                 // This is an older daemon build predating PID tracking — surface it
                 // instead of silently doing nothing.
-                eprintln!(
+                term::warn(
+                    Source::Chamber,
                     "hadron-chamber: 'close gluon on exit' is set, but the running hadron-gluon \
                      wrote no PID to gluon.lock (likely a daemon from an older build). \
                      Rebuild and restart hadron-gluon so it records its PID."
@@ -213,19 +232,25 @@ fn main() {
             #[cfg(unix)]
             if let Some(pid) = gluon_pid {
                 if !wait_for_process_exit(std::path::Path::new(PROC_ROOT), pid, GLUON_EXIT_WAIT) {
-                    eprintln!(
-                        "hadron-chamber: hadron-gluon (PID {}) is still running after {:?}; \
-                         restarting anyway — the new chamber will attach to it rather than \
-                         spawn a daemon on the new build.",
-                        pid, GLUON_EXIT_WAIT
+                    term::warn(
+                        Source::Chamber,
+                        &format!(
+                            "hadron-gluon (PID {}) is still running after {:?}; \
+                             restarting anyway — the new chamber will attach to it rather than \
+                             spawn a daemon on the new build.",
+                            pid, GLUON_EXIT_WAIT
+                        ),
                     );
                 }
             }
             match &own_exe {
                 Ok(exe) => relaunch(exe, &args[1..]),
-                Err(e) => eprintln!(
-                    "hadron-chamber: update installed, but this process could not find its own \
-                     executable to restart into ({e}). Start Hadron again by hand."
+                Err(e) => term::error(
+                    Source::Chamber,
+                    &format!(
+                        "update installed, but this process could not find its own \
+                         executable to restart into ({e}). Start Hadron again by hand."
+                    ),
                 ),
             }
         }
@@ -341,7 +366,10 @@ fn wait_for_process_exit(
 /// released it — not the exec.
 #[cfg(feature = "gui")]
 fn relaunch(exe: &std::path::Path, args: &[String]) {
-    eprintln!("hadron-chamber: restarting into the updated binary at {:?}...", exe);
+    term::info(
+        Source::Chamber,
+        &format!("restarting into the updated binary at {exe:?}..."),
+    );
     let mut cmd = std::process::Command::new(exe);
     cmd.args(args);
     #[cfg(unix)]
@@ -349,11 +377,17 @@ fn relaunch(exe: &std::path::Path, args: &[String]) {
         use std::os::unix::process::CommandExt;
         // Only returns on failure.
         let e = cmd.exec();
-        eprintln!("hadron-chamber: could not restart into {:?}: {e}. Start Hadron again by hand.", exe);
+        term::error(
+            Source::Chamber,
+            &format!("could not restart into {exe:?}: {e}. Start Hadron again by hand."),
+        );
     }
     #[cfg(not(unix))]
     if let Err(e) = cmd.spawn() {
-        eprintln!("hadron-chamber: could not restart into {:?}: {e}. Start Hadron again by hand.", exe);
+        term::error(
+            Source::Chamber,
+            &format!("could not restart into {exe:?}: {e}. Start Hadron again by hand."),
+        );
     }
 }
 
@@ -364,13 +398,16 @@ fn run_headless(path: Option<String>) {
             let events =
                 hadron_lattice::io::read_events(std::path::Path::new(&p)).unwrap_or_default();
             let view = model::project(&events);
-            println!(
-                "chamber: {} chat row(s), {} quark(s) on roster",
-                view.messages.len(),
-                view.roster.len()
+            term::out(
+                Source::Chamber,
+                &format!(
+                    "{} chat row(s), {} quark(s) on roster",
+                    view.messages.len(),
+                    view.roster.len()
+                ),
             );
         }
-        None => eprintln!("usage: hadron-chamber <field.jsonl>"),
+        None => term::info(Source::Chamber, "usage: hadron-chamber <field.jsonl>"),
     }
 }
 
