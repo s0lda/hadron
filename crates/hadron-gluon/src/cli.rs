@@ -127,14 +127,36 @@ fn resolve_team_path(explicit: Option<PathBuf>, field_path: &Path) -> Option<Pat
 /// a single table once startup knows each seat's final enabled/chat-lane state,
 /// instead of this function printing per-seat as it builds.
 ///
+/// `team_path` is whether a team file was **found**, not whether it was usable —
+/// the mock pair stands in only when there was no file at all. A file that WAS
+/// found and still resolves to nobody is a broken configuration, and answering it
+/// with fakes makes the swarm reply to the human with fabricated work: on
+/// 2026-08-01 a daemon too old to parse a catalogue carrying `"transport": "http"`
+/// degraded it to an empty catalogue, orphaned every repo `roster` override, and
+/// seated a fake "@Claude" that acknowledged a real instruction it never did.
+///
 /// `store` resolves each seat's `secret_env` names to values. // TODO(next task):
 /// swap `MemoryStore` for a real `KeyringStore` at the call site once one exists.
 fn seat_quarks(
     team: &Team,
+    team_path: Option<&Path>,
     live_dir: &Path,
     store: &dyn SecretStore,
 ) -> (Vec<Box<dyn Quark>>, &'static str, Vec<term::SeatRow>) {
     if team.is_empty() {
+        if let Some(p) = team_path {
+            term::error(
+                Source::Gluon,
+                &format!(
+                    "{} was found but resolves to NO seats — refusing to stand in mock quarks \
+                     for a real team. Usually the catalogue (~/.hadron/team.json) failed to \
+                     parse, so every roster override is an orphan (see the warnings above); \
+                     a build older than the file that describes it does exactly that.",
+                    p.display()
+                ),
+            );
+            return (Vec::new(), "no usable team", Vec::new());
+        }
         term::warn(
             Source::Gluon,
             "no usable team.json — running MOCK quarks: only '@claude' and '@agy' exist \
@@ -367,7 +389,8 @@ pub async fn run() {
     // Security note in the encrypted-secrets design doc.
     let secret_store = crate::secrets::KeyringStore::new();
 
-    let (quarks, mode_label, mut seat_rows) = seat_quarks(&team, &live_dir, &secret_store);
+    let (quarks, mode_label, mut seat_rows) =
+        seat_quarks(&team, team_path.as_deref(), &live_dir, &secret_store);
     if quarks.is_empty() {
         term::error(Source::Gluon, "team.json had no usable quarks; nothing to run.");
         std::process::exit(2);
@@ -897,7 +920,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = MemoryStore::new();
 
-        let (quarks, mode_label, rows) = seat_quarks(&team, dir.path(), &store);
+        let (quarks, mode_label, rows) = seat_quarks(&team, None, dir.path(), &store);
 
         assert_eq!(quarks.len(), 2, "both seats must build — neither is malformed");
         assert_eq!(mode_label, "live mode (real CLIs — real budget)");
@@ -910,5 +933,27 @@ mod tests {
         assert_eq!(table.len(), 2);
         assert!(table[0].contains("opus") && table[0].contains("opus-4.8"));
         assert!(table[1].contains("disabled"), "a disabled seat is a column, not a second line");
+    }
+
+    /// A team file that was FOUND but seats nobody must never be answered with the
+    /// mock pair: a fake '@Claude' acknowledging a real instruction is worse than a
+    /// daemon that refuses to start. Mocks are for the case there is no file at all.
+    #[test]
+    fn a_found_team_file_that_seats_nobody_is_refused_never_mocked() {
+        use hadron_lattice::secrets::MemoryStore;
+
+        let dir = tempdir().unwrap();
+        let store = MemoryStore::new();
+        let found = dir.path().join("team.json");
+
+        let (quarks, label, rows) =
+            seat_quarks(&Team::default(), Some(&found), dir.path(), &store);
+        assert!(quarks.is_empty(), "no seats, and no fakes standing in for them");
+        assert_eq!(label, "no usable team");
+        assert!(rows.is_empty());
+
+        let (mock, label, _) = seat_quarks(&Team::default(), None, dir.path(), &store);
+        assert_eq!(mock.len(), 2, "with no team file at all, the demo pair still stands");
+        assert_eq!(label, "mock mode");
     }
 }
