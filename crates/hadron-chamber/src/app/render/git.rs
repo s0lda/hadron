@@ -12,14 +12,14 @@ pub(super) enum DiffPanel {
 
 /// Lane colours, cycled by rail column, so the commit graph reads as coloured lanes
 /// rather than monochrome ASCII. Distinct on the near-black field.
-const LANE_COLORS: [u32; 6] = [0x34d399, 0x38bdf8, 0xfbbf24, 0xa78bfa, 0xfb7185, 0x2dd4bf];
+const LANE_COLORS: [u32; 6] = [0x34d399, 0x60a5fa, 0xf59e0b, 0xc084fc, 0x2dd4bf, 0xf87171];
 /// A commit that has landed in `main` (green) vs one still in flight (rose); a
 /// detached / unknown HEAD is neutral (it has no branch to be merged).
 const MERGED_COLOR: u32 = 0x34d399;
-const UNMERGED_COLOR: u32 = 0xfb7185;
+const UNMERGED_COLOR: u32 = 0xf87171;
 const NEUTRAL_COLOR: u32 = 0x94a3b8;
 const ADD_COLOR: u32 = 0x34d399;
-const DEL_COLOR: u32 = 0xfb7185;
+const DEL_COLOR: u32 = 0xf87171;
 /// One graph rail column width in px when painting vector lanes.
 const LANE_W: f32 = 16.0;
 /// Cap for a `--decorate` ref chip so it cannot squeeze the subject out.
