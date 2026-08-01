@@ -518,7 +518,7 @@ mod tests {
                 program: "agy".into(),
                 args: vec!["-p".into(), "reply with OK".into(), "--output-format".into(), "stream-json".into()],
                 stdin: String::new(),
-                cwd: std::env::temp_dir(),
+                cwd: std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir()),
                 env: RedactedEnv::default(),
                 stream: Some(spec),
             })
