@@ -268,6 +268,7 @@ impl CliRunner for ProcessRunner {
 #[cfg(test)]
 pub struct FakeRunner {
     replies: std::sync::Mutex<std::collections::VecDeque<CliResult>>,
+    stream_lines: std::sync::Mutex<std::collections::VecDeque<Vec<String>>>,
     pub recorded: std::sync::Mutex<Vec<CliInvocation>>,
 }
 
@@ -276,6 +277,15 @@ impl FakeRunner {
     pub fn new(replies: Vec<CliResult>) -> Self {
         FakeRunner {
             replies: std::sync::Mutex::new(replies.into_iter().collect()),
+            stream_lines: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            recorded: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn with_stream_lines(lines: Vec<Vec<String>>) -> Self {
+        FakeRunner {
+            replies: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            stream_lines: std::sync::Mutex::new(lines.into_iter().collect()),
             recorded: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -302,6 +312,38 @@ impl CliRunner for FakeRunner {
             .unwrap()
             .pop_front()
             .ok_or_else(|| anyhow::anyhow!("FakeRunner ran out of queued replies"))?;
+        Ok(reply)
+    }
+
+    async fn run_streaming(
+        &self,
+        inv: CliInvocation,
+        on_line: &mut (dyn for<'a> FnMut(&'a str) + Send),
+    ) -> anyhow::Result<CliResult> {
+        self.recorded.lock().unwrap().push(inv);
+        let queued = self.stream_lines.lock().unwrap().pop_front();
+        if let Some(lines) = queued {
+            let mut full = String::new();
+            for line in &lines {
+                on_line(line);
+                full.push_str(line);
+                full.push('\n');
+                // Yield between lines so a test watching `live_dir` concurrently (the
+                // same shape as the real subprocess's genuinely-async line reads) gets
+                // a chance to observe a publish before this loop clears it.
+                tokio::task::yield_now().await;
+            }
+            return Ok(CliResult { stdout: full, exit: 0, usage: None });
+        }
+        let reply = self
+            .replies
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow::anyhow!("FakeRunner ran out of queued replies"))?;
+        for line in reply.stdout.lines() {
+            on_line(line);
+        }
         Ok(reply)
     }
 }

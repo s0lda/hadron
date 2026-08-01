@@ -801,9 +801,12 @@ pub fn build_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore)
 /// As [`build_seat`], but the quark also publishes what it is doing mid-turn into
 /// `live_dir` (see `hadron_lattice::live`) so the chamber can render it.
 ///
-/// Only the ACP transport has a mid-turn stream to publish: the CLI adapters run a
-/// process to completion and hand back one blob, so there is nothing to watch until
-/// it is over. That is a fact about the transports, not an omission here.
+/// Two transports have a mid-turn stream to publish: ACP always (it is
+/// resident JSON-RPC), and a CLI seat only when its `CliSpec.stream` is `Some` —
+/// a plain CLI adapter runs its process to completion and hands back one blob,
+/// so there is nothing to watch until it is over. `Transport::Http` has its own
+/// stream too (`LocalQuark::watching`) but is not wired to `live_dir` here; that
+/// is a pre-existing gap this task does not touch.
 pub fn build_seat_watched(
     seat: &Seat,
     live_dir: &std::path::Path,
@@ -811,8 +814,8 @@ pub fn build_seat_watched(
 ) -> anyhow::Result<Box<dyn Quark>> {
     validate_quark_id(&seat.id)?;
     let kind = QuarkKind::from_seat(seat)?;
-    if let QuarkKind::Acp(target) = kind {
-        return Ok(Box::new(
+    match kind {
+        QuarkKind::Acp(target) => Ok(Box::new(
             AcpQuark::new(seat.id.clone(), seat.flavor.clone(), seat.model.clone(), seat.effort.clone(), seat.mode_config.clone(), target)
                 .watching(live_dir.to_path_buf())
                 .with_display_name(seat.display_name.clone())
@@ -822,8 +825,18 @@ pub fn build_seat_watched(
                 .with_energy_limit(seat.energy_limit)
                 .with_deny_skills(seat.deny_skills.clone())
                 .with_external_roots(seat.external_roots.clone()),
-        ));
+        )),
+        QuarkKind::Cli(cli_spec) if cli_spec.stream.is_some() => Ok(Box::new(
+            CliQuark::new(seat.id.clone(), seat.flavor.clone(), seat.model.clone(), cli_spec, ProcessRunner)
+                .watching(live_dir.to_path_buf())
+                .with_display_name(seat.display_name.clone())
+                .with_roles(seat.roles.clone(), seat.exclusive)
+                .with_commands(seat.commands.clone())
+                .with_env(seat.resolve_env(store))
+                .with_energy_limit(seat.energy_limit)
+                .with_deny_skills(seat.deny_skills.clone()),
+        )),
+        _ => build_seat(seat, store),
     }
-    build_seat(seat, store)
 }
 

@@ -1,10 +1,14 @@
 use async_trait::async_trait;
+use hadron_lattice::live::{self, Activity};
 use hadron_lattice::{
     Actor, CliSpec, EnergyState, Event, Flavor, Kind, Mode, Projection, PromptChannel, QuarkId,
-    ResumeMode, SeatCommands, TurnOutcome,
+    ResumeMode, SeatCommands, StreamSpec, TurnOutcome, Usage,
 };
 use std::path::PathBuf;
+use std::time::Instant;
 
+use crate::adapter::cli_stream::StreamAccumulator;
+use crate::adapter::local::PUBLISH_THROTTLE;
 use crate::adapter::runner::{reply_to_outcome, CliInvocation, CliRunner, RedactedEnv};
 use crate::quark::Quark;
 
@@ -137,6 +141,11 @@ pub struct CliQuark<R: CliRunner> {
     runner: R,
     energy_limit: Option<u32>,
     deny_skills: Vec<String>,
+    /// Where to publish mid-turn draft activity for a `spec.stream` seat. `None` =
+    /// nobody is watching (tests, and any quark this daemon is not watching) —
+    /// same shape as `adapter::local::LocalQuark::live_dir`. A `spec.stream: None`
+    /// seat never reads this: there is nothing to publish until the process exits.
+    live_dir: Option<PathBuf>,
 }
 
 impl<R: CliRunner> CliQuark<R> {
@@ -155,7 +164,16 @@ impl<R: CliRunner> CliQuark<R> {
             env: RedactedEnv::default(),
             energy_limit: None,
             deny_skills: Vec::new(),
+            live_dir: None,
         }
+    }
+
+    /// Stream this quark's mid-turn draft into `dir` (see `hadron_lattice::live`).
+    /// Only matters for a `spec.stream: Some(_)` seat — a non-streaming CLI seat
+    /// has nothing to publish until its process exits either way.
+    pub fn watching(mut self, dir: PathBuf) -> Self {
+        self.live_dir = Some(dir);
+        self
     }
 
     pub fn with_energy_limit(mut self, limit: Option<u32>) -> Self {
@@ -201,6 +219,9 @@ impl<R: CliRunner> CliQuark<R> {
     /// the posture flags for this turn's `mode`.
     fn invocation(&self, prompt: String, mode: Mode, cwd: PathBuf) -> CliInvocation {
         let mut args = self.spec.args.clone();
+        if let Some(stream) = &self.spec.stream {
+            args.extend(stream.args.iter().cloned());
+        }
         if self.resident {
             if let ResumeMode::Continue { flag } = &self.spec.resume {
                 args.push(flag.clone());
@@ -247,6 +268,36 @@ impl<R: CliRunner> CliQuark<R> {
             env: env.into(),
             stream: self.spec.stream.clone(),
         }
+    }
+
+    /// The streaming counterpart of a plain `runner.run(...)`: parses stdout line
+    /// by line per `stream.format`, throttle-publishing the accumulated draft into
+    /// `live_dir` exactly the way `adapter::local::LocalQuark::excite` does for an
+    /// HTTP seat (same `PUBLISH_THROTTLE`), and turns the final parsed
+    /// `(message, TokenSpend)` into a `TurnOutcome` once the subprocess exits.
+    async fn run_streaming(&mut self, inv: CliInvocation, stream: StreamSpec) -> anyhow::Result<TurnOutcome> {
+        let dir = self.live_dir.clone();
+        let quark_id = self.id.clone();
+        let mut acc = StreamAccumulator::new(stream.format);
+        let mut last_publish: Option<Instant> = None;
+        let mut on_line = |line: &str| {
+            if !acc.on_line(line) {
+                return;
+            }
+            let Some(dir) = &dir else { return };
+            let due = last_publish.is_none_or(|t: Instant| t.elapsed() >= PUBLISH_THROTTLE);
+            if due {
+                last_publish = Some(Instant::now());
+                let _ = live::publish(dir, &Activity::speaking(quark_id.clone(), acc.draft()));
+            }
+        };
+        let run_result = self.runner.run_streaming(inv, &mut on_line).await;
+        if let Some(dir) = &self.live_dir {
+            let _ = live::clear(dir, &self.id);
+        }
+        run_result?;
+        let (message, spend) = acc.finish();
+        Ok(TurnOutcome { message, usage: Usage { spend, ..Default::default() }, ..Default::default() })
     }
 }
 
@@ -307,10 +358,16 @@ impl<R: CliRunner> Quark for CliQuark<R> {
         } else {
             crate::adapter::prompt::build(&turn, &self.id)
         };
-        let result = self.runner.run(self.invocation(prompt, mode, cwd)).await?;
+        let invocation = self.invocation(prompt, mode, cwd);
+        let outcome = if let Some(stream) = self.spec.stream.clone() {
+            self.run_streaming(invocation, stream).await?
+        } else {
+            let result = self.runner.run(invocation).await?;
+            reply_to_outcome(&result)
+        };
         // Only a turn that actually ran leaves a conversation behind to resume.
         self.resident = true;
-        Ok(reply_to_outcome(&result))
+        Ok(outcome)
     }
 }
 
@@ -744,6 +801,112 @@ mod tests {
         assert!(
             second_prompt.contains("MEMORABLE-TRANSCRIPT-LINE"),
             "a no-resume CLI must keep re-sending context it has no way to recall"
+        );
+    }
+
+    // --- Streaming (`spec.stream: Some(_)`) tests: a CliQuark whose invocation
+    // gains the format's flags, whose reply is the parsed final text (not raw
+    // stdout), whose usage lands on TurnOutcome, and whose deltas reach the live
+    // feed exactly like `LocalQuark`'s. ---
+
+    fn agy_stream_spec() -> hadron_lattice::StreamSpec {
+        hadron_lattice::StreamSpec {
+            args: vec!["--output-format".to_string(), "stream-json".to_string()],
+            format: hadron_lattice::StreamFormat::AgyStreamJson,
+        }
+    }
+
+    /// A `spec.stream` seat must append the format's flags to the invocation, and
+    /// its reply must be the STREAM's parsed final text, not the raw joined stdout
+    /// (which is NDJSON, not a chat reply).
+    #[tokio::test]
+    async fn a_streaming_seat_appends_stream_flags_and_parses_the_final_reply() {
+        let lines = vec![
+            r#"{"event":"init","conversation_id":"abc"}"#,
+            r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"hi"}}"#,
+            r#"{"event":"result","result":{"response":"hi","usage":{"input_tokens":10,"output_tokens":2,"thinking_tokens":1,"cache_read_tokens":3,"total_tokens":12}}}"#,
+        ];
+        let runner = FakeRunner::with_stream_lines(lines);
+        let mut spec = CliSpec::agy();
+        spec.stream = Some(agy_stream_spec());
+        let mut q = CliQuark::new(QuarkId::new("agy"), Flavor::Worker, "", spec, runner);
+
+        let outcome = q.excite(projection("say hi")).await.unwrap();
+        assert_eq!(outcome.message.as_deref(), Some("hi"), "the reply is the parsed final text, not raw NDJSON");
+        assert_eq!(outcome.usage.spend.input, Some(10));
+        assert_eq!(outcome.usage.spend.output, Some(2));
+        assert_eq!(outcome.usage.spend.cache_read, Some(3));
+
+        let recorded = q.runner.recorded.lock().unwrap();
+        assert!(
+            recorded[0].args.windows(2).any(|w| w == ["--output-format", "stream-json"]),
+            "stream.args must ride on the invocation: {:?}",
+            recorded[0].args
+        );
+    }
+
+    /// `spec.stream: None` (every built-in preset today) must be entirely
+    /// unaffected: no stream flags, raw stdout is still the reply. The inverse of
+    /// the test above, guarding rule 4 (branch beside the old path, don't touch it).
+    #[tokio::test]
+    async fn a_non_streaming_seat_is_unaffected_by_the_stream_field_existing() {
+        let runner = FakeRunner::with_stdout(vec!["plain reply"]);
+        let spec = CliSpec::agy(); // stream: None
+        let mut q = CliQuark::new(QuarkId::new("agy"), Flavor::Worker, "", spec, runner);
+
+        let outcome = q.excite(projection("say hi")).await.unwrap();
+        assert_eq!(outcome.message.as_deref(), Some("plain reply"));
+        assert!(outcome.usage.is_empty(), "a non-streaming CLI reports no usage, same as before");
+
+        let recorded = q.runner.recorded.lock().unwrap();
+        assert!(!recorded[0].args.iter().any(|a| a == "--output-format"));
+    }
+
+    /// **The live-preview proof for a streaming CLI seat.** A `.watching(dir)`
+    /// quark must publish its draft mid-turn (not just at the end) and leave the
+    /// live dir clear once the turn is over — the same contract
+    /// `AcpQuark`/`LocalQuark` already prove, now true for a CLI seat too.
+    #[tokio::test]
+    async fn a_watched_streaming_seat_publishes_deltas_and_clears_on_finish() {
+        let dir = std::env::temp_dir().join(format!("hadron-cli-stream-test-{}", ulid::Ulid::new()));
+        let id = QuarkId::new("agy");
+        let lines = vec![
+            r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"partial"}}"#,
+            r#"{"event":"result","result":{"response":"partial done","usage":{"input_tokens":1,"output_tokens":1,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":2}}}"#,
+        ];
+        let runner = FakeRunner::with_stream_lines(lines);
+        let mut spec = CliSpec::agy();
+        spec.stream = Some(agy_stream_spec());
+        let mut q = CliQuark::new(id.clone(), Flavor::Worker, "", spec, runner).watching(dir.clone());
+
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let finished_clone = finished.clone();
+        let (watch_dir, watch_id) = (dir.clone(), id.clone());
+        let seen = tokio::spawn(async move {
+            let mut saw_it = false;
+            for _ in 0..200 {
+                if finished_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                if live::read(&watch_dir, &watch_id, chrono::Utc::now()).is_some() {
+                    saw_it = true;
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            saw_it
+        });
+
+        let outcome = q.excite(projection("say hi")).await.unwrap();
+        finished.store(true, std::sync::atomic::Ordering::Relaxed);
+        let saw_a_publish = seen.await.unwrap_or(false);
+
+        assert!(saw_a_publish, "the delta must reach live::publish mid-turn, not only after excite returns");
+        assert_eq!(outcome.message.as_deref(), Some("partial done"));
+        assert_eq!(
+            live::read(&dir, &id, chrono::Utc::now()),
+            None,
+            "a finished streaming turn must leave no activity behind, same as ACP/HTTP"
         );
     }
 }
