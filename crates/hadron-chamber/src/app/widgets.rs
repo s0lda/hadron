@@ -114,6 +114,7 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
             let rename = view.clone();
             let settings = view.clone();
             let about = view.clone();
+            let changelog = view.clone();
             let check_update = view.clone();
             let update_label = match &view.read(cx).update_state {
                 crate::app::UpdateState::Available { version, .. } => format!("Update to v{}…", version),
@@ -206,6 +207,14 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
                     this.trigger_update_flow(window, cx);
                 });
             }))
+            .item(
+                PopupMenuItem::new("Changelog").on_click(move |_, _, cx| {
+                    changelog.update(cx, |this, cx| {
+                        this.changelog_open = true;
+                        cx.notify();
+                    });
+                }),
+            )
             .item(
                 PopupMenuItem::new("About Hadron").on_click(move |_, _, cx| {
                     about.update(cx, |this, cx| {
