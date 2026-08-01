@@ -558,16 +558,26 @@ fn the_registry_replaces_an_unproven_bare_name_guess() {
     assert_eq!(program, "uvx", "the bare-name guess should have been replaced");
 }
 
-/// A `binary` agent has no command Hadron will synthesise, so the merge must *clear* our
-/// bare-name guess rather than leave one that cannot work. `None` is the honest answer,
-/// and what the wizard greys out.
+/// A `binary` agent has no command Hadron will **download**, but the row still
+/// documents the agent's own ACP argv — so the merge keeps our program (the CLI on
+/// `PATH`) and takes the publisher's args.
+///
+/// This REPLACES an earlier assertion that the merge must clear the guess to `None`.
+/// That was half right: a bare `goose` is genuinely broken, because an agent launched
+/// with no ACP flag starts its interactive TUI and never answers `initialize` (the
+/// `copilot` preset carries the same finding). But `None` greyed the row out as
+/// "Needs a manual command" with no way in the wizard to supply one — eight agents
+/// unusable to a human who had installed them. `goose acp` is what the publisher
+/// documents and is neither a guess nor a download.
 #[test]
-fn a_binary_registry_agent_clears_the_guessed_command() {
+fn a_binary_registry_agent_contributes_its_acp_args_not_a_download() {
     let goose = QuarkKind::available_agents()
         .into_iter()
         .find(|e| e.vendor == "goose")
         .expect("goose is in the catalogue");
-    assert_eq!(goose.command, None, "a binary-distribution agent must offer no command");
+    let (program, args) = goose.command.expect("goose keeps a bootable command");
+    assert_eq!(program, "goose", "the program stays OURS — we never run the archive's cmd");
+    assert_eq!(args, vec!["acp".to_string()], "the ACP subcommand comes from the publisher");
 }
 
 /// Nothing the presets knew about may vanish in the merge.
@@ -880,4 +890,77 @@ fn an_acp_seat_whose_program_is_absolute_and_absent_is_refused_at_seating() {
     let mut s = acp_seat("acp-npx", "mystery");
     s.command = Some(AcpCommand { program: "npx".into(), args: vec!["@scope/pkg".into()] });
     assert!(matches!(QuarkKind::from_seat(&s), Ok(QuarkKind::Acp(_))));
+}
+
+/// **The Copilot-listed-twice guard.** `available_agents` merges the published
+/// registry into the preset list keyed on vendor, and the old key was "the id with
+/// `-acp` stripped" — a guess that matched `claude-acp` and `pi-acp` and missed
+/// `github-copilot-cli`, `factory-droid`, `crow-cli`, `minion-code`, `mistral-vibe`,
+/// `qwen-code` and `auggie`. Each of those rendered as a SECOND wizard row for an
+/// agent already listed. `REGISTRY_ALIASES` states the mapping instead of guessing
+/// it; this test fails the next time a registry refresh introduces a mismatch.
+///
+/// Compares NORMALISED names (our presets suffix " (ACP)", the publisher does not),
+/// because the duplicate is visible to a human as two rows reading the same product —
+/// distinct vendor keys are exactly what the bug had.
+#[test]
+fn no_two_catalogue_rows_name_the_same_agent() {
+    let normalise = |s: &str| {
+        s.to_lowercase()
+            .replace("(acp)", "")
+            .replace(" cli", "")
+            .replace('-', " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let entries = QuarkKind::available_agents();
+    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for e in &entries {
+        let key = normalise(&e.name);
+        if let Some(first) = seen.insert(key.clone(), e.vendor.clone()) {
+            panic!(
+                "two catalogue rows both read as {key:?}: vendors {first:?} and {:?} — \
+                 add the registry id to REGISTRY_ALIASES",
+                e.vendor
+            );
+        }
+    }
+}
+
+/// **The "Needs a manual command" guard.** A registry row whose only distribution is
+/// `binary` resolves to `None` (Hadron does not download and execute a third-party
+/// archive). The merge used to assign that `None` straight over a preset's working
+/// command, so eight agents that ship a bare-CLI preset here — `goose`, `cursor`,
+/// `opencode`, `kimi`, `junie`, `poolside`, `stakpak`, `vtcode` — were listed as
+/// unclickable in the add-quark wizard even though we knew how to boot them.
+#[test]
+fn a_binary_only_registry_row_never_erases_a_preset_command() {
+    let entries = QuarkKind::available_agents();
+    for vendor in ["goose", "opencode", "vtcode", "kimi"] {
+        let entry = entries
+            .iter()
+            .find(|e| e.vendor == vendor)
+            .unwrap_or_else(|| panic!("{vendor} is in the preset catalogue"));
+        assert!(
+            entry.command.is_some(),
+            "{vendor} has a preset boot command; a binary-only registry row must not blank it"
+        );
+    }
+}
+
+/// The alias table is the SSOT for id→vendor, and `resolve_from_registry_data` must
+/// read it too — it did not, so `for_vendor("copilot")` found nothing while the
+/// wizard was busy listing Copilot twice.
+#[test]
+fn a_vendor_resolves_through_its_registry_alias() {
+    assert_eq!(vendor_for("github-copilot-cli"), "copilot");
+    assert_eq!(vendor_for("claude-acp"), "claude");
+    assert_eq!(vendor_for("goose"), "goose");
+
+    let registry = loader::bundled_registry().expect("the snapshot is compiled in");
+    let target = loader::resolve_from_registry_data(&registry, "copilot")
+        .expect("copilot resolves through its alias");
+    assert_eq!(target.program, "npx");
+    assert!(target.args.iter().any(|a| a.contains("@github/copilot")), "{:?}", target.args);
 }

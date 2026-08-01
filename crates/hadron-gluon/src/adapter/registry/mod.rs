@@ -12,7 +12,7 @@ pub use loader::{
     AcpRegistryData, AcpRegistryDistribution, RegistryError,
 };
 
-use presets::ACP_AGENTS;
+use presets::{ACP_AGENTS, REGISTRY_ALIASES};
 
 /// The token a boot command uses for "the main checkout's root", resolved by
 /// [`AcpTarget::resolved`] just before spawn.
@@ -376,6 +376,20 @@ impl AcpTarget {
     }
 }
 
+/// Our vendor key for a published registry id: an explicit [`REGISTRY_ALIASES`]
+/// entry, else the id with any `-acp` suffix stripped (`claude-acp` → `claude`),
+/// else the id itself.
+///
+/// The alias table comes FIRST because the suffix rule is a guess and the table is
+/// a fact — see [`REGISTRY_ALIASES`] for the six duplicate wizard rows it silently
+/// produced.
+fn vendor_for(registry_id: &str) -> &str {
+    if let Some((_, vendor)) = REGISTRY_ALIASES.iter().find(|(id, _)| *id == registry_id) {
+        return vendor;
+    }
+    registry_id.strip_suffix("-acp").unwrap_or(registry_id)
+}
+
 impl QuarkKind {
     /// The short human blurb for a first-class preset. Best-effort presets have none and
     /// fall back to their command line — or, once merged below, to the registry's own
@@ -425,7 +439,7 @@ impl QuarkKind {
             return out;
         };
         for agent in &registry.agents {
-            let vendor = agent.id.strip_suffix("-acp").unwrap_or(&agent.id);
+            let vendor = vendor_for(&agent.id);
             let blurb = agent.description.clone().unwrap_or_default();
             let command = loader::resolve_agent_command(agent)
                 .ok()
@@ -435,7 +449,27 @@ impl QuarkKind {
                 Some(existing) if existing.proven => {}
                 // Ours was a guess — take the publisher's command and blurb.
                 Some(existing) => {
-                    existing.command = command;
+                    match command {
+                        // The publisher ships an `npx`/`uvx` command: it beats our guess whole.
+                        Some(command) => existing.command = Some(command),
+                        // `binary`-only. We will not download and execute a third-party
+                        // archive, but the row still documents its ACP **argv**, so keep OUR
+                        // program (the CLI the human installs themselves) and adopt those
+                        // args. Eight agents — `goose`, `cursor`, `opencode`, `kimi`,
+                        // `junie`, `poolside`, `stakpak`, `vtcode` — were greyed out as
+                        // "Needs a manual command" despite the subcommand being published;
+                        // the bare name alone would have been worse than useless, since an
+                        // agent launched with no ACP flag starts its TUI and hangs on
+                        // `initialize`. Nothing published and nothing to synthesise leaves
+                        // our preset alone rather than blanking a command that may be right.
+                        None => {
+                            if let Some(args) = loader::binary_acp_args(agent).filter(|a| !a.is_empty()) {
+                                if let Some((program, _)) = existing.command.take() {
+                                    existing.command = Some((program, args));
+                                }
+                            }
+                        }
+                    }
                     if !blurb.is_empty() {
                         existing.description = blurb;
                     }

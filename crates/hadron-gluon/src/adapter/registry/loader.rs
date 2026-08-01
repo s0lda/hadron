@@ -141,15 +141,53 @@ pub fn resolve_agent_command(agent: &AcpRegistryAgent) -> Result<AcpTarget, Regi
     }
 }
 
+/// This platform's key in a `binary` distribution map (`linux-x86_64`,
+/// `darwin-aarch64`, `windows-x86_64`, …) — the registry's own naming, which is
+/// `<os>-<arch>` with macOS spelled `darwin`.
+fn platform_key() -> String {
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    format!("{os}-{}", std::env::consts::ARCH)
+}
+
+/// The **argv** a `binary`-distribution agent documents for ACP mode, without
+/// downloading anything: `goose` publishes `{"cmd": "./goose", "args": ["acp"]}`, so
+/// the subcommand is knowable even though the archive is not something Hadron will
+/// fetch and execute.
+///
+/// This exists because the alternative was worse in both directions. Offering a bare
+/// `goose` is a row that CONNECTS AND HANGS — an agent launched without its ACP flag
+/// starts its interactive TUI and never answers `initialize` (documented on the
+/// `copilot` preset, which was fixed the same way). Offering nothing greys out eight
+/// agents the human may well have installed themselves. Taking the publisher's args
+/// and keeping our own program name — the CLI on `PATH` — is the only option that is
+/// both honest and useful.
+///
+/// This platform's entry when present, else any entry: the args are the agent's own
+/// ACP subcommand and are identical across platforms in every row of the snapshot,
+/// while `cmd` (which we deliberately ignore — it points inside the archive) is not.
+pub fn binary_acp_args(agent: &AcpRegistryAgent) -> Option<Vec<String>> {
+    let map = agent.distribution.binary.as_ref()?.as_object()?;
+    let entry = map.get(&platform_key()).or_else(|| map.values().next())?;
+    let args = entry.get("args")?.as_array()?;
+    Some(args.iter().filter_map(|a| a.as_str().map(str::to_string)).collect())
+}
+
 /// Pure function: find and resolve an agent by id or vendor from `AcpRegistryData`.
 pub fn resolve_from_registry_data(
     data: &AcpRegistryData,
     id: &str,
 ) -> Result<AcpTarget, RegistryError> {
+    // `super::vendor_for` is the ONE place that maps a published registry id onto our
+    // vendor key. Re-spelling its `-acp`-stripping rule here is what let the two drift:
+    // `available_agents` and this lookup disagreed about `github-copilot-cli`, so the
+    // wizard listed Copilot twice and `for_vendor("copilot")` still found nothing.
     let agent = data
         .agents
         .iter()
-        .find(|a| a.id == id || a.id.strip_suffix("-acp").unwrap_or(&a.id) == id)
+        .find(|a| a.id == id || super::vendor_for(&a.id) == id)
         .ok_or_else(|| RegistryError::AgentNotFound(id.to_string()))?;
     resolve_agent_command(agent)
 }
