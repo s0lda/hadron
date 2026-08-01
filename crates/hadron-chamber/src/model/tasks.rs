@@ -10,6 +10,11 @@ pub struct SwarmTask {
     pub to: String,
     pub from: String,
     pub title: String,
+    /// The dispatch text this row was opened by, verbatim. Kept because the title it
+    /// yields is only a fallback: once the plan the dispatch names is on disk, the
+    /// caller upgrades the title with [`retitle_from_plan`]. The projection is pure
+    /// over `&[Event]` and never opens a file, so the plan arrives from outside.
+    pub body: String,
     pub state: TaskState,
     pub asked_at: DateTime<Utc>,
     pub done_at: Option<DateTime<Utc>>,
@@ -81,11 +86,16 @@ pub fn swarm_tasks(events: &[Event]) -> Vec<SwarmTask> {
                     if let Some(&ix) =
                         e.answers.as_ref().and_then(|a| by_event.get(&a.to_string()))
                     {
-                        tasks[ix].title = trim_title(task);
+                        tasks[ix].title = extracted_title(task);
+                        tasks[ix].body = task.clone();
                         continue;
                     }
                 }
-                let Some(title) = titled(&e.kind) else { continue };
+                let Some(raw) = raw_task_text(&e.kind) else { continue };
+                let title = extracted_title(raw);
+                if title.trim().is_empty() {
+                    continue;
+                }
                 let to_str = to.as_str().to_string();
                 open.insert(to_str.clone(), tasks.len());
                 by_event.insert(e.id.to_string(), tasks.len());
@@ -93,6 +103,7 @@ pub fn swarm_tasks(events: &[Event]) -> Vec<SwarmTask> {
                     to: to_str,
                     from: actor_label(&e.from),
                     title,
+                    body: raw.to_string(),
                     state: TaskState::Working,
                     asked_at: e.ts,
                     done_at: None,
@@ -131,17 +142,111 @@ fn actor_label(a: &Actor) -> String {
     }
 }
 
-/// The row's title, or `None` for a request that carries no task text — a
+/// Retitle every row whose dispatch names a task of `plan_path` with that task's own
+/// heading, taken from `plan_headings` — the `task_name`s of
+/// `app::mentions::parse_plan_tasks`, parsed by the caller and threaded in.
+///
+/// Two things this deliberately does not do. It does not read the plan: `model` is pure
+/// over `&[Event]` and the only caller (`Chamber::update_active_plan`) already has the
+/// content in hand. And it does not parse the plan itself — `parse_plan_tasks` is the
+/// one plan parser in the chamber and lives behind the `gui` feature, which `model` is
+/// not compiled under, so its *output* crosses the boundary rather than a second copy
+/// of it (Rule 2).
+///
+/// A row whose dispatch names no plan, names a *different* plan, or names no `Task N`
+/// keeps the title extracted from its prose. That last condition is what keeps a plan
+/// **discussion** from being retitled: mentioning a plan path is not naming a task in
+/// it (nucleus `plan-ref-discussion-masks-active-plans`).
+pub fn retitle_from_plan(tasks: &mut [SwarmTask], plan_path: &str, plan_headings: &[String]) {
+    for task in tasks.iter_mut() {
+        if let Some(heading) = plan_heading_for(&task.body, plan_path, plan_headings) {
+            task.title = trim_title(heading);
+        }
+    }
+}
+
+/// The heading of the plan task `body` dispatches, if it dispatches one of `plan_path`'s.
+fn plan_heading_for<'h>(
+    body: &str,
+    plan_path: &str,
+    plan_headings: &'h [String],
+) -> Option<&'h str> {
+    // Compare by file name: a dispatch may name the plan absolutely
+    // (`/home/Jake/dev/hadron/.hadron/docs/plans/….md`) while the active path is
+    // repo-relative, and both are the same file.
+    let named = hadron_gluon::skills::plan_ref(body)?;
+    if file_name_of(&named) != file_name_of(plan_path) {
+        return None;
+    }
+    let n = task_number(body)?;
+    plan_headings
+        .iter()
+        .find(|h| heading_is_task(h, n))
+        .map(String::as_str)
+}
+
+fn file_name_of(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// The `N` of the first `Task N` in `body`, ignoring the markdown around it.
+fn task_number(body: &str) -> Option<u32> {
+    let mut rest = body;
+    while let Some(ix) = rest.find("Task") {
+        let after = rest[ix + "Task".len()..].trim_start_matches(['*', '`', ' ']);
+        let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+        if !digits.is_empty() {
+            return digits.parse().ok();
+        }
+        rest = &rest[ix + "Task".len()..];
+    }
+    None
+}
+
+/// Does this plan heading (`Task 4: a task title that means something`) name task `n`?
+/// The digit run must end, or `Task 1` would answer for `Task 10`.
+fn heading_is_task(heading: &str, n: u32) -> bool {
+    task_number(heading) == Some(n) && heading.trim_start().starts_with("Task")
+}
+
+/// The row's title as read out of the dispatch prose itself — the fallback used until
+/// (and when) [`retitle_from_plan`] finds nothing better.
+fn extracted_title(raw: &str) -> String {
+    trim_title(&strip_dispatch_scaffolding(raw))
+}
+
+/// The text of a turn-request, or `None` for one that carries none — a
 /// `PermissionGrant`, which is a turn-request to the router but has nothing to show a
 /// human, and used to render as an empty line.
-fn titled(kind: &Kind) -> Option<String> {
-    let raw = match kind {
-        Kind::Message { body } => body.as_str(),
-        Kind::Assign { task, .. } => task.as_str(),
-        _ => return None,
-    };
-    let title = trim_title(raw);
-    (!title.trim().is_empty()).then_some(title)
+fn raw_task_text(kind: &Kind) -> Option<&str> {
+    match kind {
+        Kind::Message { body } => Some(body.as_str()),
+        Kind::Assign { task, .. } => Some(task.as_str()),
+        _ => None,
+    }
+}
+
+/// Drop the parts of a dispatch that say who and where rather than what: the leading
+/// `@mention` the router already turned into the row's `to`, the `Execute`/`Take` verb,
+/// and the `of <plan path>` that the plan column says anyway.
+fn strip_dispatch_scaffolding(raw: &str) -> String {
+    let mut s = raw.trim_start();
+    if let Some(rest) = s.strip_prefix('@') {
+        s = rest.split_once(char::is_whitespace).map_or("", |(_, tail)| tail).trim_start();
+    }
+    for verb in ["Execute ", "Take "] {
+        if let Some(rest) = s.strip_prefix(verb) {
+            s = rest.trim_start();
+            break;
+        }
+    }
+    let Some(path) = hadron_gluon::skills::plan_ref(s) else { return s.to_string() };
+    // The path as it was written, backticks and all — `plan_ref` trims those off.
+    let Some(at) = s.find(&path) else { return s.to_string() };
+    let head = s[..at].trim_end().trim_end_matches('`');
+    let tail = s[at + path.len()..].trim_start().trim_start_matches('`').trim_start();
+    let head = head.trim_end().strip_suffix(" of").unwrap_or(head).trim_end();
+    format!("{head} {tail}").trim().to_string()
 }
 
 /// The first sentence of `raw`, trimmed to [`TITLE_MAX_CHARS`] **characters**.
@@ -164,6 +269,87 @@ mod tests {
 
     fn msg(from: Actor, to: Option<&str>, body: &str) -> Event {
         Event::new(from, to.map(QuarkId::new), Kind::Message { body: body.to_string() })
+    }
+
+    /// The headings `app::mentions::parse_plan_tasks` yields for the plan the bodies
+    /// below actually name — copied from its `### Task N: …` lines, `#`s stripped.
+    fn plan_headings() -> Vec<String> {
+        vec![
+            "Task 1: `hadron_lattice::term` — one home for console output".to_string(),
+            "Task 2: convert `hadron-gluon` to it".to_string(),
+            "Task 8: the addressed message".to_string(),
+            "Task 10: the far one".to_string(),
+        ]
+    }
+
+    const PLAN: &str = ".hadron/docs/plans/2026-08-01-chamber-hover-tasks-console.md";
+
+    #[test]
+    fn a_dispatch_naming_a_plan_task_is_titled_by_that_tasks_heading() {
+        // A real dispatch body, as the field stores it.
+        let evs = vec![msg(
+            Actor::Quark(QuarkId::new("acp-claude")),
+            Some("cli-agy"),
+            "@cli-agy Execute **Task 8** of `.hadron/docs/plans/2026-08-01-chamber-hover-tasks-console.md` \
+             — new, appended to the end of the plan, and it is the last one.",
+        )];
+        let mut tasks = swarm_tasks(&evs);
+        retitle_from_plan(&mut tasks, PLAN, &plan_headings());
+        assert_eq!(tasks[0].title, "Task 8: the addressed message");
+    }
+
+    #[test]
+    fn a_dispatch_with_no_resolvable_plan_keeps_its_prose_stripped_of_scaffolding() {
+        let evs = vec![msg(
+            Actor::Quark(QuarkId::new("acp-claude")),
+            Some("cli-agy"),
+            "@cli-agy Execute **Task 8** of `.hadron/docs/plans/2026-08-01-chamber-hover-tasks-console.md` \
+             — new, appended to the end of the plan",
+        )];
+        let mut tasks = swarm_tasks(&evs);
+        // A different plan is the active one, so nothing resolves.
+        retitle_from_plan(&mut tasks, "docs/plans/other.md", &plan_headings());
+        assert_eq!(
+            tasks[0].title,
+            "**Task 8** — new, appended to the end of the plan",
+            "the leading @mention, the verb and the plan path all come off"
+        );
+    }
+
+    #[test]
+    fn a_plan_discussion_is_not_retitled_as_one_of_its_tasks() {
+        // Names the plan, dispatches none of its tasks — nucleus
+        // `plan-ref-discussion-masks-active-plans`.
+        let evs = vec![msg(
+            Actor::Human,
+            Some("acp-claude"),
+            "I did not tick the boxes in \
+             `.hadron/docs/plans/2026-08-01-chamber-hover-tasks-console.md` — they are stale",
+        )];
+        let mut tasks = swarm_tasks(&evs);
+        let before = tasks[0].title.clone();
+        retitle_from_plan(&mut tasks, PLAN, &plan_headings());
+        assert_eq!(tasks[0].title, before);
+    }
+
+    #[test]
+    fn task_one_does_not_answer_for_task_ten() {
+        let evs = vec![msg(Actor::Human, Some("sonnet"), "Execute **Task 10** of `{P}`".replace("{P}", PLAN).as_str())];
+        let mut tasks = swarm_tasks(&evs);
+        retitle_from_plan(&mut tasks, PLAN, &plan_headings());
+        assert_eq!(tasks[0].title, "Task 10: the far one");
+    }
+
+    #[test]
+    fn a_plan_heading_longer_than_the_limit_is_cut_on_a_char_boundary() {
+        // Invariant: *Char Boundary Safety* — the plan path still goes through
+        // `trim_title`, so a multi-byte heading cannot be sliced mid-character.
+        let heading = format!("Task 2: {}", "é".repeat(TITLE_MAX_CHARS + 20));
+        let evs = vec![msg(Actor::Human, Some("sonnet"), &format!("Execute **Task 2** of `{PLAN}`"))];
+        let mut tasks = swarm_tasks(&evs);
+        retitle_from_plan(&mut tasks, PLAN, &[heading]);
+        assert_eq!(tasks[0].title.chars().count(), TITLE_MAX_CHARS + 1, "cut plus the ellipsis");
+        assert!(tasks[0].title.ends_with('…'));
     }
 
     #[test]

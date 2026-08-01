@@ -9,7 +9,7 @@ use hadron_gatekeeper::{global_mode, has_override, resolve_mode, Mode};
 use hadron_lattice::{Actor, Event, Kind, QuarkId, QuarkState, Team};
 
 mod stats;
-mod tasks;
+pub mod tasks;
 #[cfg(test)]
 mod tests;
 

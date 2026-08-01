@@ -74,6 +74,16 @@ impl super::Chamber {
             }
             if let Some(content) = crate::sys::read_workspace_file(&repo, &rel_path) {
                 let tasks = parse_plan_tasks(&content);
+                // The Tasks tab titles a row by the plan task its dispatch names. The
+                // parse happens here, once per reload, rather than in `model` (which is
+                // pure over `&[Event]` and compiled without `gui`) or in the render
+                // pass (which runs on every hover — nucleus `a-render-fn-runs-on-every-hover`).
+                let headings: Vec<String> = tasks.iter().map(|(name, _)| name.clone()).collect();
+                crate::model::tasks::retitle_from_plan(
+                    &mut self.view.tasks,
+                    &rel_path,
+                    &headings,
+                );
                 Self::calculate_collapsed_tasks(
                     &tasks,
                     &mut self.plan_collapsed_tasks,
