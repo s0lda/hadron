@@ -20,6 +20,29 @@ pub(super) struct AcpAgentSpec {
     pub proven: bool,
 }
 
+/// Registry ids that name an agent we already carry a preset for under a
+/// different vendor key: `(registry id, our vendor)`.
+///
+/// [`super::QuarkKind::available_agents`] merges the published registry into the
+/// preset list keyed on **vendor**, and it used to derive that key by stripping a
+/// `-acp` suffix from the registry id. That rule matched `claude-acp`→`claude` and
+/// `pi-acp`→`pi` and nothing else, so every agent whose publisher spells its id
+/// differently from our vendor landed as a SECOND row: `github-copilot-cli`
+/// alongside `copilot` is the one Jake reported, and there were six.
+///
+/// Keyed by the registry id because that is the string that varies — the vendor is
+/// ours and stable. Guarded by `tests::no_two_catalogue_rows_name_the_same_agent`,
+/// which fails if a registry refresh introduces another mismatch.
+pub(super) const REGISTRY_ALIASES: &[(&str, &str)] = &[
+    ("github-copilot-cli", "copilot"),
+    ("factory-droid", "factory"),
+    ("crow-cli", "crow"),
+    ("minion-code", "minion"),
+    ("mistral-vibe", "mistral"),
+    ("qwen-code", "qwen"),
+    ("auggie", "augment"),
+];
+
 /// Every ACP agent with a built-in boot command. A seat may still override the
 /// command, and a seat on an unlisted provider must supply one.
 ///
