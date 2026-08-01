@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::providers::{nucleus_budget_kb_for, NUCLEUS_BUDGET_LADDER_KB};
+use crate::app::providers::{nucleus_budget_kb_for, CLOUD_API_KEY_VAR, NUCLEUS_BUDGET_LADDER_KB};
 
 /// First free seat id: the conventional one, else `<base>-2`, `-3`, … A second
 /// seat of the same provider is a real, wanted thing (same vendor, different
@@ -23,14 +23,15 @@ impl super::Chamber {
     /// nested `cx.spawn` in ways a plain method body does not).
     pub(super) fn start_local_provider_probe(
         &mut self,
-        vendor: hadron_gluon::adapter::local::LocalVendor,
+        vendor: hadron_gluon::adapter::local::HttpVendor,
         base_url: String,
+        api_key: Option<String>,
         cx: &mut Context<Self>,
     ) {
         self.wizard_state = WizardState::LocalProvider(vendor, ProviderState::Connecting);
         cx.notify();
 
-        let target = hadron_gluon::adapter::local::HttpTarget { vendor, base_url };
+        let target = hadron_gluon::adapter::local::HttpTarget { vendor, base_url, api_key };
         cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let mut cx = cx.clone();
             async move {
@@ -402,12 +403,15 @@ impl super::Chamber {
 
                 let mut list = v_flex().gap_2();
 
-                // Ollama / LM Studio: keyless local HTTP servers, pinned at the top since
-                // they need no install check and no boot-and-probe — just a Connect button
-                // against a server that's either already running or isn't.
-                for vendor in
-                    [hadron_gluon::adapter::local::LocalVendor::Ollama, hadron_gluon::adapter::local::LocalVendor::LmStudio]
-                {
+                // Ollama / LM Studio (keyless local HTTP servers) and the cloud
+                // OpenAI-compatible endpoint (keyed), pinned at the top since none of the
+                // three need an install check or a boot-and-probe — just a Connect button
+                // against a server that's either reachable or isn't.
+                for vendor in [
+                    hadron_gluon::adapter::local::HttpVendor::Ollama,
+                    hadron_gluon::adapter::local::HttpVendor::LmStudio,
+                    hadron_gluon::adapter::local::HttpVendor::OpenAiCompatible,
+                ] {
                     if !filter.is_empty() && !vendor.display_name().to_lowercase().contains(&filter) {
                         continue;
                     }
@@ -450,6 +454,10 @@ impl super::Chamber {
                                 this.local_base_url.update(cx, |s, cx| {
                                     s.set_value(vendor.default_base_url(), window, cx)
                                 });
+                                // A stale key from a previous Cloud attempt must not leak
+                                // into a fresh Ollama/LM Studio row (or into a different
+                                // cloud key the human is about to type).
+                                this.local_api_key.update(cx, |s, cx| s.set_value("", window, cx));
                                 this.local_models = Vec::new();
                                 this.local_selected_model = None;
                                 this.wizard_state =
@@ -1164,21 +1172,29 @@ impl super::Chamber {
                                 .child("Connecting..."),
                         )
                         .into_any_element(),
-                    ProviderState::NotConnected => v_flex()
-                        .gap_4()
-                        .child(settings_field_stacked(
+                    ProviderState::NotConnected => {
+                        let mut form = v_flex().gap_4().child(settings_field_stacked(
                             "Base URL",
                             Input::new(&self.local_base_url).into_any_element(),
-                        ))
-                        .child(text_button("local-connect-btn", "Connect").on_click(cx.listener(
+                        ));
+                        if vendor.requires_api_key() {
+                            form = form.child(settings_field_stacked(
+                                "API Key",
+                                Input::new(&self.local_api_key).into_any_element(),
+                            ));
+                        }
+                        form.child(text_button("local-connect-btn", "Connect").on_click(cx.listener(
                             move |this, _, _window, cx| {
                                 let typed = this.local_base_url.read(cx).value().trim().to_string();
                                 let base_url =
                                     if typed.is_empty() { vendor.default_base_url().to_string() } else { typed };
-                                this.start_local_provider_probe(vendor, base_url, cx);
+                                let api_key = this.local_api_key.read(cx).value().trim().to_string();
+                                let api_key = (!api_key.is_empty()).then_some(api_key);
+                                this.start_local_provider_probe(vendor, base_url, api_key, cx);
                             },
                         )))
-                        .into_any_element(),
+                        .into_any_element()
+                    }
                     // A keyless local server has no auth flow to complete.
                     ProviderState::NeedsAuth(_) => div().into_any_element(),
                     ProviderState::Ready { model } => {
@@ -1225,7 +1241,7 @@ impl super::Chamber {
                             )))
                             .child(settings_field_stacked("Model", picker.into_any_element()))
                             .child(text_button("save-local-provider", "Save Provider").on_click(
-                                cx.listener(move |this, _, _window, cx| {
+                                cx.listener(move |this, _, window, cx| {
                                     let model = this.local_selected_model.clone().unwrap_or_default();
                                     if model.is_empty() {
                                         return;
@@ -1240,6 +1256,24 @@ impl super::Chamber {
                                         };
                                         unique_seat_id(&base_id, &taken)
                                     };
+                                    let qid = hadron_lattice::QuarkId::new(&seat_id);
+
+                                    // The key itself never reaches `team.json` — write it to the
+                                    // keyring first (same store/order `set_settings_secret` uses)
+                                    // and only declare the VAR NAME on the seat if that succeeds.
+                                    let mut secret_env = Vec::new();
+                                    if vendor.requires_api_key() {
+                                        let api_key = this.local_api_key.read(cx).value().trim().to_string();
+                                        if !api_key.is_empty() {
+                                            match this.secret_store.set(&qid, CLOUD_API_KEY_VAR, &api_key) {
+                                                Ok(()) => secret_env.push(CLOUD_API_KEY_VAR.to_string()),
+                                                Err(e) => eprintln!(
+                                                    "chamber: failed to write API key to the OS credential \
+                                                     store: {e}"
+                                                ),
+                                            }
+                                        }
+                                    }
 
                                     this.providers.push(ConfiguredQuark {
                                         id: seat_id.clone(),
@@ -1248,7 +1282,7 @@ impl super::Chamber {
                                     });
 
                                     let seat = hadron_lattice::Seat {
-                                        id: hadron_lattice::QuarkId::new(&seat_id),
+                                        id: qid,
                                         display_name: None,
                                         vendor: vendor.code().to_string(),
                                         model,
@@ -1262,7 +1296,7 @@ impl super::Chamber {
                                         roles: vec![],
                                         exclusive: false,
                                         commands: hadron_lattice::SeatCommands::default(),
-                                        secret_env: Vec::new(),
+                                        secret_env,
                                         energy_limit: None,
                                         deny_skills: vec![],
                                         external_roots: vec![],
@@ -1270,6 +1304,9 @@ impl super::Chamber {
                                     };
                                     this.add_configured_quark(seat, cx);
 
+                                    // Write-only: never re-shown, same as the per-quark secret field.
+                                    this.local_api_key
+                                        .update(cx, |s, cx| s.set_value(String::new(), window, cx));
                                     this.wizard_state = WizardState::None;
                                     cx.notify();
                                 }),

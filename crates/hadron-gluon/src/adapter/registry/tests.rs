@@ -1,5 +1,5 @@
 use super::*;
-use hadron_lattice::secrets::MemoryStore;
+use hadron_lattice::secrets::{MemoryStore, SecretStore};
 use hadron_lattice::{AcpCommand, CliSpec};
 
 /// The Antigravity SDK needs a Gemini API key; OAuth/login agents need none.
@@ -963,4 +963,53 @@ fn a_vendor_resolves_through_its_registry_alias() {
         .expect("copilot resolves through its alias");
     assert_eq!(target.program, "npx");
     assert!(target.args.iter().any(|a| a.contains("@github/copilot")), "{:?}", target.args);
+}
+
+// -- Transport::Http: the cloud OpenAI-compatible vendor's api_key wiring --
+
+/// `attach_http_api_key` is what `build()`'s `Http` arm calls to turn a resolved
+/// `secret_env` value into `HttpTarget::api_key` — the seam that makes the wizard's
+/// saved key actually reach the `Authorization: Bearer` header at turn time.
+#[test]
+fn attach_http_api_key_uses_the_first_resolved_secret() {
+    let target = HttpTarget {
+        vendor: crate::adapter::local::HttpVendor::OpenAiCompatible,
+        base_url: "https://openrouter.ai/api/v1".to_string(),
+        api_key: None,
+    };
+    let resolved = attach_http_api_key(target, &[("API_KEY".to_string(), "sk-live-123".to_string())]);
+    assert_eq!(resolved.api_key, Some("sk-live-123".to_string()));
+}
+
+/// The keyless case — Ollama/LM Studio seats declare no `secret_env`, so `env` is
+/// empty and `api_key` must stay `None` rather than picking up something stray.
+#[test]
+fn attach_http_api_key_is_a_no_op_with_no_resolved_secrets() {
+    let target =
+        HttpTarget { vendor: crate::adapter::local::HttpVendor::Ollama, base_url: "http://localhost:11434".to_string(), api_key: None };
+    let resolved = attach_http_api_key(target, &[]);
+    assert_eq!(resolved.api_key, None);
+}
+
+/// End-to-end through `build_seat`: a `Transport::Http` seat on the cloud vendor,
+/// with its declared `secret_env` var resolved via the store — the same path the
+/// chamber-saved seat and the daemon both go through. `build_seat` returning `Ok`
+/// (rather than the "vendor Hadron does not know how to reach" error) proves
+/// `HttpVendor::parse("openai-compatible")` and the whole seat→`QuarkKind::Http`→
+/// `LocalQuark` chain compose for the new vendor, not just the local module alone.
+#[test]
+fn build_seat_resolves_the_cloud_vendor_and_wires_its_secret() {
+    let mut s = Seat {
+        transport: Transport::Http,
+        vendor: "openai-compatible".to_string(),
+        secret_env: vec!["API_KEY".to_string()],
+        ..seat("http-openai-compatible", "openai-compatible")
+    };
+    s.http_base_url = Some("https://openrouter.ai/api/v1".to_string());
+
+    let store = store();
+    store.set(&s.id, "API_KEY", "sk-live-456").unwrap();
+
+    let q = build_seat(&s, &store).unwrap();
+    assert_eq!(q.id(), QuarkId::new("http-openai-compatible"));
 }

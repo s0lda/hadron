@@ -26,18 +26,19 @@ pub enum Transport {
     Cli,
     /// A resident ACP agent spoken to over JSON-RPC on stdio.
     Acp,
-    /// Reserved, unsupported: a native per-provider SDK adapter. Kept nameable
-    /// (`sdk-agy`) so the transport axis stays first-class and the id namespace is
-    /// reserved, but a native SDK is NOT on the roadmap — the only providers a raw
-    /// SDK would reach are metered API keys, not the users-with-AI-plans path Hadron
-    /// targets, so every provider is reached over CLI or ACP instead. `from_seat`
-    /// rejects an `sdk` seat; do not present it as a build in progress.
+    /// Reserved, unsupported: a native per-provider SDK adapter (e.g. a bespoke
+    /// Anthropic/OpenAI SDK client). Kept nameable (`sdk-agy`) so the transport axis
+    /// stays first-class and the id namespace is reserved, but a native SDK is NOT
+    /// on the roadmap — CLI and ACP already reach the users-with-AI-plans providers
+    /// this project targets, and [`Transport::Http`] already reaches the
+    /// metered-API-key case over a wire format simple enough to need no
+    /// per-provider SDK. `from_seat` rejects an `sdk` seat; do not present it as a
+    /// build in progress.
     Sdk,
-    /// A local HTTP server on the user's own machine (Ollama, LM Studio) — keyless,
-    /// no subprocess, no protocol handshake. Distinct from [`Transport::Sdk`]: that
-    /// variant is reserved-unsupported for METERED API keys, which is a different
-    /// off-roadmap reason than "this is a bare localhost HTTP endpoint with no
-    /// authentication at all".
+    /// An HTTP server: a local one on the user's own machine (Ollama, LM Studio —
+    /// keyless), or a cloud OpenAI-compatible endpoint (OpenRouter, Groq, …), which
+    /// authenticates via `Seat.secret_env` + an `Authorization: Bearer` header. No
+    /// subprocess, no protocol handshake, in either case.
     Http,
 }
 

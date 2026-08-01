@@ -99,9 +99,12 @@ pub struct Seat {
     #[serde(default, skip_serializing_if = "SeatCommands::is_empty")]
     pub commands: SeatCommands,
     /// Names of environment variables whose VALUES are secrets kept in the OS
-    /// credential store (see `secrets::SecretStore`), injected into this seat's
-    /// spawned subprocess. Only the NAMES live here — never the values, which are
-    /// never written to `team.json`. Empty by default.
+    /// credential store (see `secrets::SecretStore`). For `Transport::Cli`/`Acp`,
+    /// injected into this seat's spawned subprocess; for `Transport::Http`, the
+    /// first resolved value is sent as the `Authorization: Bearer` header instead
+    /// (there is no subprocess to inject into — see `hadron_gluon::adapter::local`).
+    /// Only the NAMES live here — never the values, which are never written to
+    /// `team.json`. Empty by default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub secret_env: Vec<String>,
     /// Per-seat budget energy limit (token ceiling).
