@@ -124,6 +124,31 @@ pub fn swarm_tasks(events: &[Event]) -> Vec<SwarmTask> {
     tasks
 }
 
+/// Filter `tasks` to those that were in flight at `at`: `asked_at <= at` and
+/// (`done_at.is_none() || done_at > at`).
+pub fn tasks_at(tasks: &[SwarmTask], at: DateTime<Utc>) -> Vec<&SwarmTask> {
+    tasks
+        .iter()
+        .filter(|t| t.asked_at <= at && t.done_at.map_or(true, |ended| ended > at))
+        .collect()
+}
+
+/// The timeline boundaries spanning `tasks`: earliest `asked_at` to latest of (`done_at` or `now`).
+/// Returns `None` when `tasks` is empty.
+pub fn span(tasks: &[SwarmTask], now: DateTime<Utc>) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    if tasks.is_empty() {
+        return None;
+    }
+    let start = tasks.iter().map(|t| t.asked_at).min()?;
+    let end = tasks
+        .iter()
+        .map(|t| t.done_at.unwrap_or(now))
+        .chain(std::iter::once(now))
+        .max()?;
+    Some((start, end.max(start)))
+}
+
+
 /// What the completing event says the turn's outcome was. A `Message` is a reply, so
 /// it is `Done`; the terminal statuses carry their own verdict.
 fn outcome_of(kind: &Kind) -> TaskState {
@@ -472,4 +497,90 @@ mod tests {
         let evs = vec![msg(Actor::Human, Some("sonnet"), &long)];
         assert!(swarm_tasks(&evs)[0].title.chars().count() <= 81);
     }
+
+    #[test]
+    fn tasks_at_filters_to_in_flight_tasks_at_timestamp() {
+        let t0 = Utc::now();
+        let t1 = t0 + chrono::Duration::seconds(10);
+        let t2 = t0 + chrono::Duration::seconds(20);
+        let t3 = t0 + chrono::Duration::seconds(30);
+
+        let ended_before = SwarmTask {
+            to: "a".into(),
+            from: "human".into(),
+            title: "ended before".into(),
+            body: "".into(),
+            state: TaskState::Done,
+            asked_at: t0,
+            done_at: Some(t1),
+        };
+        let straddling = SwarmTask {
+            to: "b".into(),
+            from: "human".into(),
+            title: "straddling".into(),
+            body: "".into(),
+            state: TaskState::Done,
+            asked_at: t1,
+            done_at: Some(t3),
+        };
+        let started_after = SwarmTask {
+            to: "c".into(),
+            from: "human".into(),
+            title: "started after".into(),
+            body: "".into(),
+            state: TaskState::Working,
+            asked_at: t3,
+            done_at: None,
+        };
+
+        let tasks = vec![ended_before, straddling, started_after];
+
+        // At t2: ended_before is finished (t1 < t2), started_after is in future (t3 > t2).
+        let in_flight = tasks_at(&tasks, t2);
+        assert_eq!(in_flight.len(), 1);
+        assert_eq!(in_flight[0].title, "straddling");
+
+        // Boundary: asked_at == at (t1) -> straddling is in_flight (t1 <= t1 and t3 > t1)
+        let at_start = tasks_at(&tasks, t1);
+        assert!(at_start.iter().any(|t| t.title == "straddling"));
+        assert!(
+            !at_start.iter().any(|t| t.title == "ended before"),
+            "done_at == at is not in_flight"
+        );
+
+        // Boundary: done_at == at (t1 for ended_before) -> not in_flight
+        assert_eq!(tasks_at(&[tasks[0].clone()], t1).len(), 0);
+    }
+
+    #[test]
+    fn span_returns_timeline_bounds_or_none() {
+        let now = Utc::now();
+        assert_eq!(span(&[], now), None);
+
+        let t0 = now - chrono::Duration::seconds(100);
+        let t1 = now - chrono::Duration::seconds(50);
+        let task1 = SwarmTask {
+            to: "a".into(),
+            from: "human".into(),
+            title: "t1".into(),
+            body: "".into(),
+            state: TaskState::Done,
+            asked_at: t0,
+            done_at: Some(t1),
+        };
+        let task2 = SwarmTask {
+            to: "b".into(),
+            from: "human".into(),
+            title: "t2".into(),
+            body: "".into(),
+            state: TaskState::Working,
+            asked_at: t1,
+            done_at: None,
+        };
+
+        let (start, end) = span(&[task1, task2], now).unwrap();
+        assert_eq!(start, t0);
+        assert_eq!(end, now);
+    }
 }
+
