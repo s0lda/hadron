@@ -281,6 +281,16 @@ impl super::Chamber {
                 changed = true;
             }
 
+            // Gate heartbeats live outside the roster loop above (keyed by branch, not
+            // quark id — `live::gates_dir`), so the Tasks tab needs its own change
+            // detection to repaint when a gate starts, keeps running, or finishes.
+            let gates_dir = hadron_lattice::live::gates_dir(&self.path);
+            let gate_activities = hadron_lattice::live::gates(&gates_dir, chrono::Utc::now());
+            if gate_activities != self.last_gate_activities {
+                self.last_gate_activities = gate_activities;
+                changed = true;
+            }
+
             // Critical, must-notice event: gluon holds the daemon lock exclusively, so
             // a stopped daemon means no quark in the swarm can take a turn until it's
             // restarted. Fire the banner only on the running→stopped edge (not every
