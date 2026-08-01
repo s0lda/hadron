@@ -468,8 +468,9 @@ impl Chamber {
     ) -> Self {
         let repo_root = crate::vcs::repo_root_of(&path).to_path_buf();
         let files = crate::sys::list_workspace_files(&repo_root, &std::collections::HashSet::new());
-        // `@`-mention autocomplete only offers real, editable files — never the muted
-        // gitignored entries (collapsed build dirs etc.), so filter them out here.
+        // `@`-mention autocomplete offers gitignored entries too (`d4679265`): a
+        // wholly-ignored directory reaches us collapsed to one row (`target/`,
+        // `.hadron/`), so the list gains ~16 entries, not the 51k files under them.
         let completion_files = std::rc::Rc::new(std::cell::RefCell::new(
             files
                 .iter()
