@@ -237,7 +237,6 @@ impl super::Chamber {
                     *self.completion_files.borrow_mut() = scan
                         .files
                         .iter()
-                        .filter(|(_, ignored)| !ignored)
                         .map(|(p, _)| p.clone())
                         .collect();
                     self.file_tree_paths = scan.files;
