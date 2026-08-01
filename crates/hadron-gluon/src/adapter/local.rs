@@ -117,8 +117,22 @@ impl HttpTarget {
         Some(HttpTarget { vendor, base_url, api_key: None })
     }
 
+    /// Every request in this module goes through here, so this is the one place a
+    /// base URL is normalised — a literal-built `HttpTarget` (the chamber's Connect
+    /// probe builds one) cannot bypass it.
+    ///
+    /// LM Studio's OpenAI surface lives at `{host}/v1` and its API answers any other
+    /// path with **HTTP 200** and an `{"error": …}` body, so a base typed without
+    /// the suffix reads as a successful connection listing zero models rather than
+    /// as a wrong URL. Its `/v1` is a fixed part of the vendor's API, not a
+    /// deployment choice — unlike the cloud vendor, whose prefix differs per
+    /// provider (`/api/v1`, `/openai/v1`, …) and is therefore left exactly as typed.
     fn url(&self, path: &str) -> String {
-        format!("{}{path}", self.base_url.trim_end_matches('/'))
+        let base = self.base_url.trim_end_matches('/');
+        if self.vendor == HttpVendor::LmStudio && !base.ends_with("/v1") {
+            return format!("{base}/v1{path}");
+        }
+        format!("{base}{path}")
     }
 }
 
@@ -143,6 +157,24 @@ struct OllamaModelEntry {
 struct OpenAiModelsResponse {
     #[serde(default)]
     data: Vec<OpenAiModelEntry>,
+    /// An OpenAI-shaped server reports a bad path or a rejected key in the BODY
+    /// while still answering 200 (measured against LM Studio: `GET {host}/models`
+    /// → `200 {"error":"Unexpected endpoint or method. (GET /models)"}`). Reading
+    /// only `data` turned that into "connected, 0 models" — a green light on a
+    /// request that failed. Both shapes seen in the wild: a bare string, and
+    /// OpenAI's own `{"error": {"message": …}}`.
+    #[serde(default)]
+    error: Option<serde_json::Value>,
+}
+
+impl OpenAiModelsResponse {
+    fn error_message(&self) -> Option<String> {
+        let e = self.error.as_ref()?;
+        Some(match e.get("message").and_then(|m| m.as_str()).or_else(|| e.as_str()) {
+            Some(msg) => msg.to_string(),
+            None => e.to_string(),
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -171,6 +203,9 @@ pub fn fetch_models(target: &HttpTarget) -> anyhow::Result<Vec<LocalModel>> {
             let resp = req.send()?;
             anyhow::ensure!(resp.status().is_success(), "{} returned {}", target.vendor.display_name(), resp.status());
             let body: OpenAiModelsResponse = resp.json()?;
+            if let Some(msg) = body.error_message() {
+                anyhow::bail!("{} returned: {msg}", target.vendor.display_name());
+            }
             Ok(body.data.into_iter().map(|m| LocalModel { id: m.id }).collect())
         }
     }
