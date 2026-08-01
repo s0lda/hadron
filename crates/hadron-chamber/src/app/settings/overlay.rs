@@ -272,8 +272,8 @@ impl super::Chamber {
             .occlude()
             .w_full()
             .h_full()
-            .max_w(px(960.0))
-            .max_h(px(640.0))
+            .max_w(px(1080.0))
+            .max_h(px(720.0))
             .rounded(INNER_RADIUS)
             .overflow_hidden()
             // Opaque: a focused settings modal shouldn't let the bright field bleed through

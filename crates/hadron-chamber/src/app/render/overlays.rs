@@ -549,8 +549,9 @@ impl super::Chamber {
                     .text_xs()
                     .cursor_pointer()
                     .when(selected, |d| {
-                        d.bg(theme::bg_surface_raised())
+                        d.bg(theme::glass_card())
                             .border_color(theme::text_secondary())
+                            .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::text())
                     })
                     .when(!selected, |d| {
@@ -579,7 +580,10 @@ impl super::Chamber {
                     .text_xs()
                     .cursor_pointer()
                     .when(selected, |d| {
-                        d.bg(mode_color(m)).border_color(mode_color(m)).text_color(theme::text())
+                        d.bg(theme::glass_card())
+                            .border_color(mode_color(m))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(mode_color(m))
                     })
                     .when(!selected, |d| {
                         d.bg(theme::bg_surface())

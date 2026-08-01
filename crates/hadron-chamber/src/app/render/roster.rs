@@ -208,16 +208,25 @@ impl super::Chamber {
                     }),
             );
 
-        // Subdued telemetry line: tokens / activity + effort + mode
-        let tokens_formatted = format!("{} tokens", format_num(r.tokens as u64));
-        let activity_str = if let Some(act) = activity {
-            if act.detail.is_empty() {
-                act.doing.label().to_string()
+        // Subdued telemetry line: tokens / active duration & detail + effort + mode
+        let tokens_formatted = if r.tokens > 0 {
+            format!("{} tok", format_num(r.tokens as u64))
+        } else {
+            "0 tok".to_string()
+        };
+
+        let activity_str = if let Some(act) = &activity {
+            let elapsed_secs = (chrono::Utc::now() - act.at).num_seconds().max(0);
+            let time_str = if elapsed_secs >= 60 {
+                format!("{}m {}s", elapsed_secs / 60, elapsed_secs % 60)
             } else {
-                format!("{}: {}", act.doing.label(), act.detail)
+                format!("{}s", elapsed_secs)
+            };
+            if !act.detail.is_empty() {
+                format!("{} · {} ({})", time_str, tokens_formatted, act.detail)
+            } else {
+                format!("{} · {}", time_str, tokens_formatted)
             }
-        } else if crate::app::widgets::needs_activity_placeholder(effective_state, r.adopted, r.enabled, activity.is_some()) {
-            "working…".to_string()
         } else {
             tokens_formatted
         };
