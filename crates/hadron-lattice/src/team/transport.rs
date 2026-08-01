@@ -250,7 +250,10 @@ impl CliSpec {
                 bypass: vec!["--dangerously-skip-permissions".to_string()],
             },
             argv_guard: true,
-            stream: None,
+            stream: Some(StreamSpec {
+                format: StreamFormat::AgyStreamJson,
+                flags: vec!["--output-format".to_string(), "stream-json".to_string()],
+            }),
         }
     }
 

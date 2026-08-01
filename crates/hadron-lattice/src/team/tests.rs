@@ -1121,6 +1121,13 @@ mod cli_spec_tests {
         assert_eq!(spec.posture.write, vec!["--mode".to_string(), "accept-edits".to_string()]);
         assert_eq!(spec.posture.auto, vec!["--mode".to_string(), "accept-edits".to_string()]);
         assert_eq!(spec.posture.bypass, vec!["--dangerously-skip-permissions".to_string()]);
+        assert_eq!(
+            spec.stream,
+            Some(StreamSpec {
+                format: StreamFormat::AgyStreamJson,
+                flags: vec!["--output-format".to_string(), "stream-json".to_string()],
+            })
+        );
     }
 
     #[test]
