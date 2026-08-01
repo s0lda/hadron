@@ -32,12 +32,10 @@ use crate::preons::Preon;
 pub fn next_pending(events: &[Event]) -> Option<QuarkId> {
     events
         .iter()
-        .enumerate()
         .rev()
-        .filter(|(_, e)| e.to.is_some() && is_turn_request(e))
-        .map(|(idx, e)| (idx, e.to.clone().unwrap()))
-        .find(|(idx, target)| !events[idx + 1..].iter().any(|e| is_turn_completion(e, target)))
-        .map(|(_, target)| target)
+        .filter(|e| e.to.is_some() && is_turn_request(e))
+        .find(|e| !has_answered(events, e.to.as_ref().unwrap(), e.id))
+        .map(|e| e.to.clone().unwrap())
 }
 
 /// Does event `e` **request or resume** a turn from the quark it addresses (`to =
@@ -70,7 +68,7 @@ pub fn is_turn_request(e: &Event) -> bool {
 /// marked answered and it was never re-dispatched.
 pub fn is_turn_completion(e: &Event, quark: &QuarkId) -> bool {
     e.from == Actor::Quark(quark.clone())
-        && (matches!(e.kind, Kind::Message { .. })
+        && (matches!(e.kind, Kind::Message { .. } | Kind::Edit { .. })
             || matches!(
                 e.kind,
                 Kind::Status {
@@ -80,6 +78,47 @@ pub fn is_turn_completion(e: &Event, quark: &QuarkId) -> bool {
                         | QuarkState::Waiting
                 }
             ))
+}
+
+/// Has `addressee` answered the message `msg_id` in `events`?
+///
+/// Shared by [`next_pending`] and `unaddressed_message_targets` so both paths
+/// agree on whether a turn request has been served. An event answers `msg_id` if it
+/// represents `addressee` completing a turn ([`is_turn_completion`]) and its `answers`
+/// stamp matches `msg_id` (or matches an `Assign`/`Message` event answering the same task).
+/// For legacy events where `e.answers` is `None`, falls back to checking if the quark
+/// spoke after `msg_id`.
+pub fn has_answered(events: &[Event], addressee: &QuarkId, msg_id: ulid::Ulid) -> bool {
+    let Some(msg_idx) = events.iter().position(|e| e.id == msg_id) else {
+        return false;
+    };
+    let msg_event = &events[msg_idx];
+    let msg_answers = msg_event.answers;
+    let msg_turn = msg_event.turn;
+
+    events[msg_idx + 1..].iter().any(|e| {
+        if !is_turn_completion(e, addressee) {
+            return false;
+        }
+        let Some(a) = e.answers else {
+            return true; // legacy event: fall back to "it spoke after the message"
+        };
+        if a == msg_id {
+            return true;
+        }
+        if msg_answers.is_some() && Some(a) == msg_answers {
+            return true;
+        }
+        if let Some(prev) = events.iter().find(|p| p.id == a) {
+            if prev.answers == Some(msg_id)
+                || (msg_answers.is_some() && prev.answers == msg_answers)
+                || (msg_turn.is_some() && prev.turn == msg_turn)
+            {
+                return true;
+            }
+        }
+        false
+    })
 }
 
 /// The role alias every quark can address without knowing who currently holds the

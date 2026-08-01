@@ -132,7 +132,7 @@ impl super::Engine {
                 if !seen.insert(addressee.clone()) {
                     continue;
                 }
-                if !Self::has_answered(&events[idx + 1..], &addressee, msg_id) {
+                if !Self::has_answered(events, &addressee, msg_id) {
                     // Mentions decide WHO; the human's latest mention-less message
                     // decides WHAT — but it is APPENDED, never substituted. Only a
                     // human naming message is extended at all: a quark→quark
@@ -212,13 +212,7 @@ impl super::Engine {
     /// and stranded a quark whose turn was interrupted after it went Excited. `next_pending`
     /// already used this reading; sharing it is what keeps the two from disagreeing.
     fn has_answered(after: &[Event], addressee: &QuarkId, msg_id: ulid::Ulid) -> bool {
-        after.iter().any(|e| {
-            crate::router::is_turn_completion(e, addressee)
-                && match e.answers {
-                    Some(a) => a == msg_id,
-                    None => true, // legacy event: fall back to "it spoke after the message"
-                }
-        })
+        crate::router::has_answered(after, addressee, msg_id)
     }
 
     /// Whether a genuinely new `Message` addressed to or mentioning `target` has
