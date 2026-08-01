@@ -56,6 +56,9 @@ impl super::Chamber {
                 cx.listener(|this, _, window, cx| this.toggle_rail(Rail::Inspector, window, cx)),
             );
 
+        let tab_start =
+            std::env::var_os("HADRON_FRAME_TIMING").is_some().then(std::time::Instant::now);
+
         let content = match selected {
             RightRailTab::Terminal => {
                 // The live grid: one styled row per terminal line, each line a
@@ -819,6 +822,13 @@ impl super::Chamber {
                     .into_any_element()
             }
         };
+
+        if let Some(start) = tab_start {
+            hadron_lattice::term::info(
+                hadron_lattice::term::Source::Chamber,
+                &format!("frame render tab {}: {:?}", selected.label(), start.elapsed()),
+            );
+        }
 
         let card = v_flex()
             .flex_1()
