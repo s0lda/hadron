@@ -1096,10 +1096,48 @@ mod cli_spec_tests {
                 bypass: vec!["--bypass".into()],
             },
             argv_guard: true,
+            stream: Some(StreamSpec {
+                args: vec!["--output-format".into(), "stream-json".into()],
+                format: StreamFormat::Ndjson {
+                    delta: "choices.0.delta.content".into(),
+                    final_text: Some("choices.0.message.content".into()),
+                    usage_input: Some("usage.prompt_tokens".into()),
+                    usage_output: Some("usage.completion_tokens".into()),
+                    usage_cache_read: None,
+                    usage_cache_write: None,
+                },
+            }),
         };
         let json = serde_json::to_string(&spec).unwrap();
         let back: CliSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(spec, back, "a full CliSpec must round-trip through JSON byte-for-byte");
+    }
+
+    /// `AgyStreamJson` has no payload fields — its serde shape is just the tag.
+    #[test]
+    fn agy_stream_json_format_round_trips() {
+        let spec = StreamSpec { args: vec!["--output-format".into(), "stream-json".into()], format: StreamFormat::AgyStreamJson };
+        let json = serde_json::to_string(&spec).unwrap();
+        let back: StreamSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(spec, back);
+    }
+
+    /// `stream: None` is the byte-for-byte-unchanged default: every built-in preset
+    /// keeps it, and a `CliSpec` with no `stream` key at all deserializes to `None`
+    /// rather than erroring on an old `team.json`.
+    #[test]
+    fn stream_is_none_on_every_built_in_preset() {
+        assert_eq!(CliSpec::agy().stream, None);
+        assert_eq!(CliSpec::claude().stream, None);
+        assert_eq!(CliSpec::copilot().stream, None);
+        assert_eq!(CliSpec::generic("x".into(), vec![]).stream, None);
+    }
+
+    #[test]
+    fn stream_is_absent_from_serialized_json_when_none() {
+        let spec = CliSpec::generic("x".into(), vec![]);
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(!json.contains("\"stream\""), "None must not serialize a key at all: {json}");
     }
 
     /// `CliSpec::agy()` must mirror `crates/hadron-gluon/src/adapter/agy.rs` exactly —

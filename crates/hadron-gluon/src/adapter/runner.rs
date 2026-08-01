@@ -68,6 +68,28 @@ pub struct CliResult {
 #[async_trait]
 pub trait CliRunner: Send + Sync {
     async fn run(&self, inv: CliInvocation) -> anyhow::Result<CliResult>;
+
+    /// As [`Self::run`], but each line of stdout is handed to `on_line` as it is
+    /// produced, before the process exits — for a [`hadron_lattice::CliSpec::stream`]
+    /// seat, whose deltas must reach `live::publish` as they happen rather than only
+    /// once the whole subprocess has finished.
+    ///
+    /// Default impl: run to completion, then replay the collected stdout one line at
+    /// a time. Correct (if not actually incremental) for any runner that never
+    /// streams — every `FakeRunner` test that doesn't care, and any future `CliRunner`
+    /// impl that has no true streaming story. Only [`ProcessRunner`] overrides this
+    /// with a real line-by-line read.
+    async fn run_streaming(
+        &self,
+        inv: CliInvocation,
+        on_line: &mut (dyn for<'a> FnMut(&'a str) + Send),
+    ) -> anyhow::Result<CliResult> {
+        let result = self.run(inv).await?;
+        for line in result.stdout.lines() {
+            on_line(line);
+        }
+        Ok(result)
+    }
 }
 
 /// Map a CLI result's stdout to a turn outcome: trimmed non-empty → a message,
@@ -173,6 +195,113 @@ impl CliRunner for ProcessRunner {
 
         Ok(CliResult { stdout, exit: output.status.code().unwrap_or(0) })
     }
+
+    async fn run_streaming(
+        &self,
+        inv: CliInvocation,
+        on_line: &mut (dyn for<'a> FnMut(&'a str) + Send),
+    ) -> anyhow::Result<CliResult> {
+        use std::process::Stdio;
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+        let mut child_cmd = tokio::process::Command::new(&inv.program);
+        child_cmd
+            .args(&inv.args)
+            .current_dir(&inv.cwd)
+            .envs(inv.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        #[cfg(unix)]
+        child_cmd.process_group(0);
+
+        let mut child = child_cmd.spawn().map_err(|e| {
+            if !inv.cwd.is_dir() {
+                anyhow::anyhow!(
+                    "failed to spawn {}: its working directory {:?} does not exist",
+                    inv.program,
+                    inv.cwd,
+                )
+            } else {
+                anyhow::anyhow!("failed to spawn {}: {e}", inv.program)
+            }
+        })?;
+
+        let pid = child.id();
+        if let Some(pid) = pid {
+            crate::proc::register(pid);
+        }
+
+        if let Some(mut stdin) = child.stdin.take() {
+            let res = stdin.write_all(inv.stdin.as_bytes()).await;
+            if res.is_err() {
+                if let Some(pid) = pid {
+                    crate::proc::unregister(pid);
+                }
+            }
+            res?;
+            let res = stdin.shutdown().await;
+            if res.is_err() {
+                if let Some(pid) = pid {
+                    crate::proc::unregister(pid);
+                }
+            }
+            res?; // close stdin so the CLI proceeds
+        }
+
+        let stdout = child.stdout.take().expect("stdout was piped at spawn");
+        let stderr = child.stderr.take().expect("stderr was piped at spawn");
+
+        // Drain stderr concurrently, the same reason `wait_with_output` reads both
+        // pipes: a chatty stderr would otherwise fill its OS pipe buffer and block
+        // the child while we sit here reading stdout line-by-line.
+        let stderr_task = tokio::spawn(async move {
+            let mut buf = String::new();
+            let _ = BufReader::new(stderr).read_to_string(&mut buf).await;
+            buf
+        });
+
+        let mut full_stdout = String::new();
+        let mut lines = BufReader::new(stdout).lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    full_stdout.push_str(&line);
+                    full_stdout.push('\n');
+                    on_line(&line);
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    if let Some(pid) = pid {
+                        crate::proc::unregister(pid);
+                    }
+                    return Err(anyhow::anyhow!("failed reading {} stdout: {e}", inv.program));
+                }
+            }
+        }
+
+        let status = child.wait().await;
+        if let Some(pid) = pid {
+            crate::proc::unregister(pid);
+        }
+        let status = status?;
+        let stderr_text = stderr_task.await.unwrap_or_default();
+
+        if !status.success() {
+            let code = status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".to_string());
+            return Err(anyhow::anyhow!(
+                "{} exited with {code}: {}",
+                inv.program,
+                stderr_text.trim()
+            ));
+        }
+
+        Ok(CliResult { stdout: full_stdout, exit: status.code().unwrap_or(0) })
+    }
 }
 
 /// A deterministic runner for tests: returns queued replies in order and records
@@ -180,6 +309,11 @@ impl CliRunner for ProcessRunner {
 #[cfg(test)]
 pub struct FakeRunner {
     replies: std::sync::Mutex<std::collections::VecDeque<CliResult>>,
+    /// Queued canned stdout *lines* for `run_streaming`, one `Vec` per turn — tests
+    /// that need `on_line` called incrementally (a `StreamSpec` seat) queue here
+    /// instead of `replies`. Empty by default, so every existing `run()`-only test
+    /// is unaffected.
+    stream_lines: std::sync::Mutex<std::collections::VecDeque<Vec<String>>>,
     pub recorded: std::sync::Mutex<Vec<CliInvocation>>,
 }
 
@@ -188,6 +322,7 @@ impl FakeRunner {
     pub fn new(replies: Vec<CliResult>) -> Self {
         FakeRunner {
             replies: std::sync::Mutex::new(replies.into_iter().collect()),
+            stream_lines: std::sync::Mutex::new(std::collections::VecDeque::new()),
             recorded: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -200,6 +335,18 @@ impl FakeRunner {
                 .map(|s| CliResult { stdout: s.to_string(), exit: 0 })
                 .collect(),
         )
+    }
+
+    /// A runner whose single turn streams `lines` to `on_line` one at a time via
+    /// `run_streaming`, in order.
+    pub fn with_stream_lines(lines: Vec<&str>) -> Self {
+        let runner = Self::new(Vec::new());
+        runner
+            .stream_lines
+            .lock()
+            .unwrap()
+            .push_back(lines.into_iter().map(str::to_string).collect());
+        runner
     }
 }
 
@@ -214,6 +361,34 @@ impl CliRunner for FakeRunner {
             .unwrap()
             .pop_front()
             .ok_or_else(|| anyhow::anyhow!("FakeRunner ran out of queued replies"))?;
+        Ok(reply)
+    }
+
+    async fn run_streaming(
+        &self,
+        inv: CliInvocation,
+        on_line: &mut (dyn for<'a> FnMut(&'a str) + Send),
+    ) -> anyhow::Result<CliResult> {
+        self.recorded.lock().unwrap().push(inv);
+        let queued = self.stream_lines.lock().unwrap().pop_front();
+        if let Some(lines) = queued {
+            let mut full = String::new();
+            for line in &lines {
+                on_line(line);
+                full.push_str(line);
+                full.push('\n');
+            }
+            return Ok(CliResult { stdout: full, exit: 0 });
+        }
+        let reply = self
+            .replies
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow::anyhow!("FakeRunner ran out of queued replies"))?;
+        for line in reply.stdout.lines() {
+            on_line(line);
+        }
         Ok(reply)
     }
 }
@@ -313,6 +488,57 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("boom"), "stderr should surface in the error: {msg}");
         assert!(msg.contains('3'), "exit code should surface: {msg}");
+    }
+
+    /// The real streaming path: `on_line` must be called once per stdout line, IN
+    /// ORDER, and the joined `CliResult.stdout` must still equal what `run()` would
+    /// have produced for the same subprocess.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_runner_streams_stdout_line_by_line() {
+        let mut seen = Vec::new();
+        let out = ProcessRunner
+            .run_streaming(
+                CliInvocation {
+                    program: "sh".into(),
+                    args: vec!["-c".into(), "echo one; echo two; echo three".into()],
+                    stdin: String::new(),
+                    cwd: std::env::temp_dir(),
+                    env: RedactedEnv::default(),
+                },
+                &mut |line: &str| seen.push(line.to_string()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(seen, vec!["one", "two", "three"]);
+        assert_eq!(out.stdout, "one\ntwo\nthree\n");
+        assert_eq!(out.exit, 0);
+    }
+
+    /// The streaming path must fail the same way `run()` does on a nonzero exit —
+    /// stderr surfaced in the error — not swallow the failure because it already
+    /// consumed stdout line by line.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_runner_streaming_errors_on_nonzero_with_stderr() {
+        let mut seen = Vec::new();
+        let err = ProcessRunner
+            .run_streaming(
+                CliInvocation {
+                    program: "sh".into(),
+                    args: vec!["-c".into(), "echo partial; echo boom >&2; exit 3".into()],
+                    stdin: String::new(),
+                    cwd: std::env::temp_dir(),
+                    env: RedactedEnv::default(),
+                },
+                &mut |line: &str| seen.push(line.to_string()),
+            )
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("boom"), "stderr should surface in the error: {msg}");
+        assert!(msg.contains('3'), "exit code should surface: {msg}");
+        assert_eq!(seen, vec!["partial"], "lines seen before the failure still reached on_line");
     }
 
     /// **The other end of the CLI carry path.** `inv.env` is a seat's resolved secret

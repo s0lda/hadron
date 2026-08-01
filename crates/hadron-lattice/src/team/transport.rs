@@ -157,6 +157,63 @@ impl PostureMap {
     }
 }
 
+/// How to interpret a streaming CLI's NDJSON stdout: which line shape carries an
+/// incremental text delta, and where the final reply + token usage live once the
+/// turn completes.
+///
+/// Two named shapes, deliberately not a free-form config blob: the two we can
+/// actually verify get a real match arm, so a typo in a dotted path can never
+/// silently produce an always-empty stream for a provider we already know.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum StreamFormat {
+    /// `agy --output-format stream-json`'s shape, verified live against a real
+    /// subprocess (2026-08-01): NDJSON lines shaped
+    /// `{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"…"}}`
+    /// per incremental chunk, and exactly one
+    /// `{"event":"result","result":{"response":"…","usage":{"input_tokens":…,"output_tokens":…,"thinking_tokens":…,"cache_read_tokens":…,"total_tokens":…}}}`
+    /// at the end. Note the nesting: `result` and `usage` sit one level under the
+    /// `"event":"result"` line's own `result` key, not at its top level.
+    AgyStreamJson,
+    /// A provider-agnostic NDJSON shape described by dotted JSON paths, for a
+    /// Custom CLI seat whose vendor Hadron has not specifically coded (e.g. an
+    /// OpenAI-compatible CLI streaming `choices.0.delta.content`). Each path is
+    /// resolved independently against every line's parsed JSON; a path that
+    /// doesn't match a given line is simply skipped, not an error — most lines
+    /// carry only some of the fields. A numeric path segment indexes an array
+    /// (`"choices.0.delta.content"`); any other segment is an object key.
+    Ndjson {
+        /// Path to the incremental text delta.
+        delta: String,
+        /// Path to the FULL final reply text, read off whichever line completes
+        /// the turn. `None` (or absent on every line) falls back to the deltas
+        /// concatenated so far.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        final_text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage_input: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage_output: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage_cache_read: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage_cache_write: Option<String>,
+    },
+}
+
+/// Turns a [`Transport::Cli`] seat's subprocess from "wait for it to exit, read
+/// stdout whole" into "read stdout line by line as it is produced". `None` on
+/// [`CliSpec::stream`] (every built-in preset, today) keeps the collected
+/// `wait_with_output()` path byte-for-byte — this is additive, not a replacement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamSpec {
+    /// Flags appended to the invocation to turn streaming on, e.g. agy's
+    /// `["--output-format", "stream-json"]`.
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub format: StreamFormat,
+}
+
 /// The CLI invocation shape for a [`Transport::Cli`] seat: how to build the
 /// subprocess argv/stdin for one turn. Config-driven so reaching a new CLI vendor
 /// is a `team.json` change, not a new adapter — the generic CLI transport this
@@ -191,6 +248,11 @@ pub struct CliSpec {
     /// stdin, so the whole prompt rides as one argv element, which Linux caps).
     #[serde(default)]
     pub argv_guard: bool,
+    /// `Some` turns this seat's subprocess into a streaming one: stdout is read
+    /// line-by-line and parsed per [`StreamFormat`] instead of collected whole.
+    /// `None` (every built-in preset) is today's behaviour, unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<StreamSpec>,
 }
 
 impl CliSpec {
@@ -221,6 +283,7 @@ impl CliSpec {
                 bypass: vec!["--dangerously-skip-permissions".to_string()],
             },
             argv_guard: true,
+            stream: None,
         }
     }
 
@@ -249,6 +312,7 @@ impl CliSpec {
                 bypass: mediation_args,
             },
             argv_guard: false,
+            stream: None,
         }
     }
 
@@ -277,6 +341,7 @@ impl CliSpec {
                 bypass: mediation_args,
             },
             argv_guard: false,
+            stream: None,
         }
     }
 
@@ -307,6 +372,7 @@ impl CliSpec {
             timeout: None,
             posture: PostureMap::default(),
             argv_guard: false,
+            stream: None,
         }
     }
 }
