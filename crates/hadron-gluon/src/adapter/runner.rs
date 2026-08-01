@@ -71,6 +71,15 @@ pub struct CliResult {
 #[async_trait]
 pub trait CliRunner: Send + Sync {
     async fn run(&self, inv: CliInvocation) -> anyhow::Result<CliResult>;
+
+    async fn run_streaming(
+        &self,
+        inv: CliInvocation,
+        on_line: &mut (dyn for<'a> FnMut(&'a str) + Send),
+    ) -> anyhow::Result<CliResult> {
+        let _ = on_line;
+        self.run(inv).await
+    }
 }
 
 /// Map a CLI result's stdout to a turn outcome: trimmed non-empty → a message,

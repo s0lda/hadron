@@ -220,7 +220,7 @@ impl<R: CliRunner> CliQuark<R> {
     fn invocation(&self, prompt: String, mode: Mode, cwd: PathBuf) -> CliInvocation {
         let mut args = self.spec.args.clone();
         if let Some(stream) = &self.spec.stream {
-            args.extend(stream.args.iter().cloned());
+            args.extend(stream.flags.iter().cloned());
         }
         if self.resident {
             if let ResumeMode::Continue { flag } = &self.spec.resume {
@@ -811,7 +811,7 @@ mod tests {
 
     fn agy_stream_spec() -> hadron_lattice::StreamSpec {
         hadron_lattice::StreamSpec {
-            args: vec!["--output-format".to_string(), "stream-json".to_string()],
+            flags: vec!["--output-format".to_string(), "stream-json".to_string()],
             format: hadron_lattice::StreamFormat::AgyStreamJson,
         }
     }
@@ -821,11 +821,11 @@ mod tests {
     /// (which is NDJSON, not a chat reply).
     #[tokio::test]
     async fn a_streaming_seat_appends_stream_flags_and_parses_the_final_reply() {
-        let lines = vec![
-            r#"{"event":"init","conversation_id":"abc"}"#,
-            r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"hi"}}"#,
-            r#"{"event":"result","result":{"response":"hi","usage":{"input_tokens":10,"output_tokens":2,"thinking_tokens":1,"cache_read_tokens":3,"total_tokens":12}}}"#,
-        ];
+        let lines = vec![vec![
+            r#"{"event":"init","conversation_id":"abc"}"#.to_string(),
+            r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"hi"}}"#.to_string(),
+            r#"{"event":"result","result":{"response":"hi","usage":{"input_tokens":10,"output_tokens":2,"thinking_tokens":1,"cache_read_tokens":3,"total_tokens":12}}}"#.to_string(),
+        ]];
         let runner = FakeRunner::with_stream_lines(lines);
         let mut spec = CliSpec::agy();
         spec.stream = Some(agy_stream_spec());
@@ -870,10 +870,10 @@ mod tests {
     async fn a_watched_streaming_seat_publishes_deltas_and_clears_on_finish() {
         let dir = std::env::temp_dir().join(format!("hadron-cli-stream-test-{}", ulid::Ulid::new()));
         let id = QuarkId::new("agy");
-        let lines = vec![
-            r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"partial"}}"#,
-            r#"{"event":"result","result":{"response":"partial done","usage":{"input_tokens":1,"output_tokens":1,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":2}}}"#,
-        ];
+        let lines = vec![vec![
+            r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"partial"}}"#.to_string(),
+            r#"{"event":"result","result":{"response":"partial done","usage":{"input_tokens":1,"output_tokens":1,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":2}}}"#.to_string(),
+        ]];
         let runner = FakeRunner::with_stream_lines(lines);
         let mut spec = CliSpec::agy();
         spec.stream = Some(agy_stream_spec());
