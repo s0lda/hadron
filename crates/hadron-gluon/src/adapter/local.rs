@@ -1,15 +1,19 @@
-//! A quark backed by a keyless local HTTP server — Ollama or LM Studio — over
+//! A quark backed by an HTTP server — Ollama, LM Studio, or any cloud
+//! OpenAI-compatible endpoint (OpenRouter, Groq, DeepSeek, Together, …) — over
 //! [`hadron_lattice::Transport::Http`]. No subprocess, no protocol handshake: just
-//! a GET to list models and a POST to run one turn, both against `localhost`.
+//! a GET to list models and a POST to run one turn.
 //!
 //! Wire contracts read from the vendors' own APIs (Zed's checked-in `ollama`/
 //! `lmstudio` crates were the reference for the shapes, confirmed live against a
 //! running Ollama on this box and LM Studio's own server log):
-//! - **Ollama**: `GET {base}/api/tags` lists models; `POST {base}/api/chat` streams
-//!   newline-delimited JSON chat chunks.
-//! - **LM Studio**: the OpenAI-compatible surface, `GET {base}/models` and
-//!   `POST {base}/chat/completions`, streaming Server-Sent-Events `data: {...}`
-//!   lines terminated by `data: [DONE]`.
+//! - **Ollama**: keyless. `GET {base}/api/tags` lists models; `POST {base}/api/chat`
+//!   streams newline-delimited JSON chat chunks.
+//! - **LM Studio** and **cloud OpenAI-compatible**: the same OpenAI-shaped surface,
+//!   `GET {base}/models` and `POST {base}/chat/completions`, streaming
+//!   Server-Sent-Events `data: {...}` lines terminated by `data: [DONE]`. LM
+//!   Studio is keyless (localhost); a cloud endpoint needs [`HttpTarget::api_key`],
+//!   sent as `Authorization: Bearer <key>` — the same wire shape OpenRouter and
+//!   every other OpenAI-compatible provider documents.
 //!
 //! Deserialization is deliberately lenient — every struct here names only the
 //! field this adapter actually reads, so a vendor's response growing an unrelated
@@ -26,66 +30,91 @@ use serde::{Deserialize, Serialize};
 
 use crate::quark::Quark;
 
-/// Which local HTTP provider a [`Transport::Http`] seat speaks to.
+/// Which HTTP provider a [`Transport::Http`] seat speaks to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LocalVendor {
+pub enum HttpVendor {
     Ollama,
     LmStudio,
+    /// Any cloud server speaking the OpenAI-compatible surface (OpenRouter, Groq,
+    /// DeepSeek, Together, …) — same wire shape as [`HttpVendor::LmStudio`], plus
+    /// an `Authorization: Bearer` header (see [`HttpTarget::api_key`]).
+    OpenAiCompatible,
 }
 
-impl LocalVendor {
+impl HttpVendor {
     /// Parse a seat's `vendor` string. `None` for anything else — a
     /// [`Transport::Http`] seat on an unknown vendor has nothing to boot.
-    pub fn parse(vendor: &str) -> Option<LocalVendor> {
+    pub fn parse(vendor: &str) -> Option<HttpVendor> {
         match vendor {
-            "ollama" => Some(LocalVendor::Ollama),
-            "lmstudio" => Some(LocalVendor::LmStudio),
+            "ollama" => Some(HttpVendor::Ollama),
+            "lmstudio" => Some(HttpVendor::LmStudio),
+            "openai-compatible" => Some(HttpVendor::OpenAiCompatible),
             _ => None,
         }
     }
 
     pub fn code(&self) -> &'static str {
         match self {
-            LocalVendor::Ollama => "ollama",
-            LocalVendor::LmStudio => "lmstudio",
+            HttpVendor::Ollama => "ollama",
+            HttpVendor::LmStudio => "lmstudio",
+            HttpVendor::OpenAiCompatible => "openai-compatible",
         }
     }
 
-    /// The zero-setup default base URL — what "just works" against the vendor's
-    /// own out-of-the-box defaults, with no env var and no config file.
+    /// The default base URL — for the two local vendors, what "just works"
+    /// zero-setup against the out-of-the-box default; for the cloud vendor, a
+    /// one-paste-friendly prefill (OpenRouter's endpoint) rather than a claim of
+    /// working with no key.
     pub fn default_base_url(&self) -> &'static str {
         match self {
-            LocalVendor::Ollama => "http://localhost:11434",
-            LocalVendor::LmStudio => "http://localhost:1234/v1",
+            HttpVendor::Ollama => "http://localhost:11434",
+            HttpVendor::LmStudio => "http://localhost:1234/v1",
+            HttpVendor::OpenAiCompatible => "https://openrouter.ai/api/v1",
         }
     }
 
     pub fn display_name(&self) -> &'static str {
         match self {
-            LocalVendor::Ollama => "Ollama (local)",
-            LocalVendor::LmStudio => "LM Studio (local)",
+            HttpVendor::Ollama => "Ollama (local)",
+            HttpVendor::LmStudio => "LM Studio (local)",
+            HttpVendor::OpenAiCompatible => "Cloud (OpenAI-compatible)",
         }
+    }
+
+    /// Whether this vendor's server needs an `Authorization: Bearer` header to
+    /// answer at all — the two local vendors are keyless; the cloud vendor is not.
+    pub fn requires_api_key(&self) -> bool {
+        matches!(self, HttpVendor::OpenAiCompatible)
     }
 }
 
 /// How to reach a [`Transport::Http`] seat's server: which vendor's wire shape to
-/// speak, and the base URL (the seat's own, or the vendor's default).
+/// speak, the base URL (the seat's own, or the vendor's default), and — for a
+/// keyed vendor — the bearer token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpTarget {
-    pub vendor: LocalVendor,
+    pub vendor: HttpVendor,
     pub base_url: String,
+    /// Sent as `Authorization: Bearer <key>` on every request when present. Never
+    /// read from `Seat` directly — [`HttpTarget::for_seat`] always leaves this
+    /// `None`; the registry resolves it from the seat's `secret_env` via the
+    /// credential store and attaches it after construction, the same way
+    /// `AcpTarget::for_seat_with_env` attaches a resolved env. Ollama and LM
+    /// Studio seats declare no `secret_env`, so this stays `None` for them.
+    pub api_key: Option<String>,
 }
 
 impl HttpTarget {
     /// The target for a seat, or `None` for a non-`Http` seat or an unknown vendor.
+    /// `api_key` is always `None` here — see the field's doc comment.
     pub fn for_seat(seat: &Seat) -> Option<HttpTarget> {
         if seat.transport != Transport::Http {
             return None;
         }
-        let vendor = LocalVendor::parse(&seat.vendor)?;
+        let vendor = HttpVendor::parse(&seat.vendor)?;
         let base_url =
             seat.http_base_url.clone().unwrap_or_else(|| vendor.default_base_url().to_string());
-        Some(HttpTarget { vendor, base_url })
+        Some(HttpTarget { vendor, base_url, api_key: None })
     }
 
     fn url(&self, path: &str) -> String {
@@ -126,17 +155,21 @@ struct OpenAiModelEntry {
 /// chamber's Connect button can run it via `cx.background_spawn` with no tokio
 /// reactor of its own — a bare background thread, same as the ACP probe.
 pub fn fetch_models(target: &HttpTarget) -> anyhow::Result<Vec<LocalModel>> {
-    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(5)).build()?;
+    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build()?;
     match target.vendor {
-        LocalVendor::Ollama => {
+        HttpVendor::Ollama => {
             let resp = client.get(target.url("/api/tags")).send()?;
             anyhow::ensure!(resp.status().is_success(), "Ollama returned {}", resp.status());
             let body: OllamaTagsResponse = resp.json()?;
             Ok(body.models.into_iter().map(|m| LocalModel { id: m.name }).collect())
         }
-        LocalVendor::LmStudio => {
-            let resp = client.get(target.url("/models")).send()?;
-            anyhow::ensure!(resp.status().is_success(), "LM Studio returned {}", resp.status());
+        HttpVendor::LmStudio | HttpVendor::OpenAiCompatible => {
+            let mut req = client.get(target.url("/models"));
+            if let Some(key) = &target.api_key {
+                req = req.bearer_auth(key);
+            }
+            let resp = req.send()?;
+            anyhow::ensure!(resp.status().is_success(), "{} returned {}", target.vendor.display_name(), resp.status());
             let body: OpenAiModelsResponse = resp.json()?;
             Ok(body.data.into_iter().map(|m| LocalModel { id: m.id }).collect())
         }
@@ -223,7 +256,7 @@ async fn stream_chat(
     let body = ChatRequest { model, messages: [ChatMessage { role: "user", content: prompt }], stream: true };
     let mut full = String::new();
     match target.vendor {
-        LocalVendor::Ollama => {
+        HttpVendor::Ollama => {
             let resp = client.post(target.url("/api/chat")).json(&body).send().await?;
             anyhow::ensure!(resp.status().is_success(), "Ollama chat request failed: {}", resp.status());
             for_each_line(resp, |line| {
@@ -238,9 +271,18 @@ async fn stream_chat(
             })
             .await?;
         }
-        LocalVendor::LmStudio => {
-            let resp = client.post(target.url("/chat/completions")).json(&body).send().await?;
-            anyhow::ensure!(resp.status().is_success(), "LM Studio chat request failed: {}", resp.status());
+        HttpVendor::LmStudio | HttpVendor::OpenAiCompatible => {
+            let mut req = client.post(target.url("/chat/completions")).json(&body);
+            if let Some(key) = &target.api_key {
+                req = req.bearer_auth(key);
+            }
+            let resp = req.send().await?;
+            anyhow::ensure!(
+                resp.status().is_success(),
+                "{} chat request failed: {}",
+                target.vendor.display_name(),
+                resp.status()
+            );
             for_each_line(resp, |line| {
                 let Some(data) = line.strip_prefix("data: ") else { return };
                 if data == "[DONE]" {
@@ -267,7 +309,8 @@ async fn stream_chat(
 /// hundreds of times a turn.
 const PUBLISH_THROTTLE: Duration = Duration::from_millis(200);
 
-/// A quark backed by a local HTTP server (Ollama, LM Studio). Single-shot, like
+/// A quark backed by an HTTP server (Ollama, LM Studio, or a cloud OpenAI-compatible
+/// endpoint). Single-shot, like
 /// [`crate::adapter::cli::CliQuark`]: the whole prompt goes in as one user
 /// message and the reply comes back as one string — a bare chat completion has
 /// no tool loop, no file edits, no multi-turn resume, so there is no session to
@@ -416,6 +459,68 @@ mod tests {
         format!("http://127.0.0.1:{port}")
     }
 
+    /// As [`serve_once`], but also hands back the raw request text it received —
+    /// for asserting on a header (`Authorization: Bearer …`, or its absence).
+    fn serve_once_capturing(status: &'static str, body: &'static str) -> (String, std::sync::mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_string());
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (format!("http://127.0.0.1:{port}"), rx)
+    }
+
+    #[test]
+    fn fetch_models_sends_bearer_auth_header_when_an_api_key_is_set() {
+        let (base, rx) =
+            serve_once_capturing("200 OK", r#"{"object":"list","data":[{"id":"openrouter/some-model"}]}"#);
+        let target =
+            HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: Some("sk-test-123".to_string()) };
+        let models = fetch_models(&target).unwrap();
+        assert_eq!(models, vec![LocalModel { id: "openrouter/some-model".to_string() }]);
+        let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(request.to_lowercase().contains("authorization: bearer sk-test-123"), "request:\n{request}");
+    }
+
+    #[test]
+    fn fetch_models_sends_no_authorization_header_when_no_api_key_is_set() {
+        // The Ollama/LM Studio case — a keyless server must never see the header at all.
+        let (base, rx) = serve_once_capturing("200 OK", r#"{"models":[]}"#);
+        let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
+        fetch_models(&target).unwrap();
+        let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(!request.to_lowercase().contains("authorization"), "request:\n{request}");
+    }
+
+    #[tokio::test]
+    async fn stream_chat_sends_bearer_auth_header_when_an_api_key_is_set() {
+        let (base, rx) = serve_once_capturing("200 OK", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\ndata: [DONE]\n");
+        let target =
+            HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: Some("sk-test-456".to_string()) };
+        stream_chat(&target, "some-model", "hi", |_| {}).await.unwrap();
+        let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(request.to_lowercase().contains("authorization: bearer sk-test-456"), "request:\n{request}");
+    }
+
+    #[test]
+    fn open_ai_compatible_vendor_parses_and_defaults_to_openrouter() {
+        assert_eq!(HttpVendor::parse("openai-compatible"), Some(HttpVendor::OpenAiCompatible));
+        assert_eq!(HttpVendor::OpenAiCompatible.default_base_url(), "https://openrouter.ai/api/v1");
+        assert!(HttpVendor::OpenAiCompatible.requires_api_key());
+        assert!(!HttpVendor::Ollama.requires_api_key());
+        assert!(!HttpVendor::LmStudio.requires_api_key());
+    }
+
     #[test]
     fn fetch_models_parses_a_real_ollama_tags_response() {
         // Captured live from `curl http://localhost:11434/api/tags` on this box.
@@ -423,7 +528,7 @@ mod tests {
             "200 OK",
             r#"{"models":[{"name":"gemma3:27b","model":"gemma3:27b","modified_at":"2026-05-24T17:56:53Z","size":1,"digest":"x","details":{"format":"gguf","family":"gemma3","parameter_size":"27.4B","quantization_level":"Q4_K_M"}}]}"#,
         );
-        let target = HttpTarget { vendor: LocalVendor::Ollama, base_url: base };
+        let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
         let models = fetch_models(&target).unwrap();
         assert_eq!(models, vec![LocalModel { id: "gemma3:27b".to_string() }]);
     }
@@ -436,7 +541,7 @@ mod tests {
             "200 OK",
             r#"{"object":"list","data":[{"id":"google/gemma-4-12b-qat","object":"model","owned_by":"organization"}]}"#,
         );
-        let target = HttpTarget { vendor: LocalVendor::LmStudio, base_url: base };
+        let target = HttpTarget { vendor: HttpVendor::LmStudio, base_url: base, api_key: None };
         let models = fetch_models(&target).unwrap();
         assert_eq!(models, vec![LocalModel { id: "google/gemma-4-12b-qat".to_string() }]);
     }
@@ -444,7 +549,7 @@ mod tests {
     #[test]
     fn fetch_models_reports_a_connection_failure_plainly() {
         // Nothing is listening on this port — the Connect button's "server not running" path.
-        let target = HttpTarget { vendor: LocalVendor::Ollama, base_url: "http://127.0.0.1:1".to_string() };
+        let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: "http://127.0.0.1:1".to_string(), api_key: None };
         assert!(fetch_models(&target).is_err());
     }
 
@@ -456,7 +561,7 @@ mod tests {
              {\"message\":{\"role\":\"assistant\",\"content\":\"lo\"},\"done\":false}\n\
              {\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true}\n",
         );
-        let target = HttpTarget { vendor: LocalVendor::Ollama, base_url: base };
+        let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
         let mut seen = Vec::new();
         let full = stream_chat(&target, "gemma3:27b", "hi", |delta| seen.push(delta.to_string())).await.unwrap();
         assert_eq!(full, "Hello");
@@ -471,7 +576,7 @@ mod tests {
              data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\
              data: [DONE]\n",
         );
-        let target = HttpTarget { vendor: LocalVendor::LmStudio, base_url: base };
+        let target = HttpTarget { vendor: HttpVendor::LmStudio, base_url: base, api_key: None };
         let full = stream_chat(&target, "some-model", "hi", |_| {}).await.unwrap();
         assert_eq!(full, "Hello");
     }
@@ -481,7 +586,7 @@ mod tests {
         let mut seat = Seat::cli(QuarkId::new("http-ollama"), "ollama", "gemma3:27b", Flavor::Worker);
         seat.transport = Transport::Http;
         let target = HttpTarget::for_seat(&seat).unwrap();
-        assert_eq!(target.vendor, LocalVendor::Ollama);
+        assert_eq!(target.vendor, HttpVendor::Ollama);
         assert_eq!(target.base_url, "http://localhost:11434");
     }
 
@@ -498,7 +603,7 @@ mod tests {
     #[ignore = "hits the real local Ollama server — run manually with `--ignored`"]
     fn fetch_models_reaches_the_real_local_ollama() {
         let target =
-            HttpTarget { vendor: LocalVendor::Ollama, base_url: LocalVendor::Ollama.default_base_url().to_string() };
+            HttpTarget { vendor: HttpVendor::Ollama, base_url: HttpVendor::Ollama.default_base_url().to_string(), api_key: None };
         let models = fetch_models(&target).unwrap();
         assert!(!models.is_empty(), "expected at least one model from the live Ollama server");
     }
@@ -509,7 +614,7 @@ mod tests {
     #[ignore = "hits the real local Ollama server — run manually with `--ignored`"]
     async fn stream_chat_reaches_the_real_local_ollama() {
         let target =
-            HttpTarget { vendor: LocalVendor::Ollama, base_url: LocalVendor::Ollama.default_base_url().to_string() };
+            HttpTarget { vendor: HttpVendor::Ollama, base_url: HttpVendor::Ollama.default_base_url().to_string(), api_key: None };
         let mut deltas = 0;
         let full = stream_chat(&target, "gemma3:27b", "Reply with exactly one word: pong", |_| deltas += 1)
             .await

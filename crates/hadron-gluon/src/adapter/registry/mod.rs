@@ -611,7 +611,7 @@ impl QuarkKind {
                 let target = HttpTarget::for_seat(seat).ok_or_else(|| {
                     anyhow::anyhow!(
                         "seat '{}' is an http seat on vendor {:?}, which Hadron does not know \
-                         how to reach over HTTP — use \"ollama\" or \"lmstudio\"",
+                         how to reach over HTTP — use \"ollama\", \"lmstudio\", or \"openai-compatible\"",
                         seat.id.as_str(),
                         seat.vendor
                     )
@@ -750,7 +750,7 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
                 .with_external_roots(spec.external_roots),
         ),
         QuarkKind::Http(target) => Box::new(
-            LocalQuark::new(spec.id, spec.flavor, spec.model, target)
+            LocalQuark::new(spec.id, spec.flavor, spec.model, attach_http_api_key(target, &env))
                 .with_display_name(name)
                 .with_roles(roles, exclusive)
                 .with_commands(commands)
@@ -759,6 +759,20 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
         ),
     };
     Ok(quark)
+}
+
+/// The bearer token for a cloud HTTP vendor: whichever `secret_env` var the seat
+/// declared, resolved to a value the same way ACP env is resolved above — never
+/// read from `Seat` directly (see `HttpTarget::api_key`'s doc comment). Ollama/LM
+/// Studio seats declare no `secret_env`, so `env` is empty and this is a no-op for
+/// them. Pure and extracted out of `build()`'s match arm specifically so the
+/// wiring itself (not just `HttpTarget`'s auth-header logic, already covered in
+/// `adapter::local`'s tests) is unit-tested.
+fn attach_http_api_key(mut target: HttpTarget, env: &[(String, String)]) -> HttpTarget {
+    if let Some((_, value)) = env.first() {
+        target.api_key = Some(value.clone());
+    }
+    target
 }
 
 /// Build a live quark from a team-config `Seat`. The seat's `transport` picks CLI vs

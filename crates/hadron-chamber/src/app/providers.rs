@@ -56,7 +56,7 @@ pub(super) enum WizardState {
     /// seat. Connect GETs the vendor's model-list endpoint instead of booting a
     /// subprocess; `Chamber::local_base_url`/`local_models`/`local_selected_model`
     /// hold the live form state, same reasoning as `CustomCli`'s fields.
-    LocalProvider(hadron_gluon::adapter::local::LocalVendor, ProviderState),
+    LocalProvider(hadron_gluon::adapter::local::HttpVendor, ProviderState),
 }
 
 /// Which channel the custom-CLI wizard's prompt-delivery toggle currently selects. Drives
@@ -239,6 +239,12 @@ pub(super) enum AgyBridgeState {
 /// Default env-var name the per-quark API-key field offers when a seat has not
 /// declared any `secret_env` yet (the common case: Antigravity's `GEMINI_API_KEY`).
 pub(super) const DEFAULT_SECRET_VAR: &str = "GEMINI_API_KEY";
+
+/// The `secret_env` var name the "Cloud (OpenAI-compatible)" wizard row declares
+/// on the seat it saves — there is no subprocess to name an env var FOR (see
+/// `Transport::Http`'s doc comment), so any name works; this is just the account
+/// key the keyring entry and `Seat.secret_env` share.
+pub(super) const CLOUD_API_KEY_VAR: &str = "API_KEY";
 
 /// Which identity or setting tab the Settings overlay is currently editing.
 #[derive(Clone, PartialEq, Eq)]

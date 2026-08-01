@@ -330,14 +330,20 @@ struct Chamber {
     /// hand-typed command reaches the daemon down exactly the same path a preset does.
     acp_program: Entity<InputState>,
     acp_args: Entity<InputState>,
-    /// The "Ollama (local)" / "LM Studio (local)" wizard form (`WizardState::LocalProvider`):
-    /// a keyless `Transport::Http` seat, base URL pre-filled to the vendor's zero-setup
-    /// default and editable (e.g. a Windows-hosted LM Studio reached from WSL on a
-    /// different port). Connect GETs the models endpoint; the fetched ids populate
+    /// The "Ollama (local)" / "LM Studio (local)" / "Cloud (OpenAI-compatible)" wizard
+    /// form (`WizardState::LocalProvider`): a `Transport::Http` seat, base URL
+    /// pre-filled to the vendor's default and editable (e.g. a Windows-hosted LM Studio
+    /// reached from WSL on a different port, or an OpenRouter-compatible base for the
+    /// cloud vendor). Connect GETs the models endpoint; the fetched ids populate
     /// `local_models` for the picker, and the chosen one lands here.
     local_base_url: Entity<InputState>,
     local_models: Vec<String>,
     local_selected_model: Option<String>,
+    /// The cloud vendor's API key — read live at Connect (to probe the real endpoint)
+    /// and again at Save (to write it to the keyring). Never touches `team.json`;
+    /// only its VAR NAME (`CLOUD_API_KEY_VAR`) is declared onto the saved seat's
+    /// `secret_env`. Masked, and empty/inert for the keyless Ollama/LM Studio rows.
+    local_api_key: Entity<InputState>,
     /// Arbitrary-colour picker for the current Settings identity, beside the preset
     /// swatches. Its `Change` events write the identity's colour (see `new`).
     color_picker: Entity<ColorPickerState>,
@@ -488,6 +494,7 @@ impl Chamber {
         let acp_program = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. npx, opencode, or an absolute path"));
         let acp_args = cx.new(|cx| InputState::new(window, cx).placeholder("space-separated, e.g. -y @scope/agent@latest"));
         let local_base_url = cx.new(|cx| InputState::new(window, cx).placeholder("http://localhost:11434"));
+        let local_api_key = cx.new(|cx| InputState::new(window, cx).masked(true).placeholder("sk-… (write-only)"));
         let custom_cli_model = cx.new(|cx| InputState::new(window, cx).placeholder("model name (optional)"));
         let custom_cli_flag = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. --prompt (blank = positional)"));
         let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
@@ -724,6 +731,7 @@ impl Chamber {
             local_base_url,
             local_models: Vec::new(),
             local_selected_model: None,
+            local_api_key,
             custom_cli_model,
             custom_cli_flag,
             custom_cli_channel: CliChannelChoice::default(),
