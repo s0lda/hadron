@@ -897,15 +897,22 @@ pub(super) fn empty_hint(text: &'static str) -> impl IntoElement {
 /// and they are the reason to look at this list at all — they get the warning and
 /// danger tags so a bad outcome cannot read as a green one.
 pub(super) fn task_state_tag(state: TaskState) -> gpui::AnyElement {
-    let (tag, label) = match state {
-        TaskState::Working => (Tag::info(), "Working"),
-        TaskState::Done => (Tag::success(), "Done"),
-        TaskState::Blocked => (Tag::warning(), "Blocked"),
-        TaskState::Failed => (Tag::danger(), "Failed"),
+    let (color, label) = match state {
+        TaskState::Working => (gpui::rgb(0x38bdf8), "Working"),
+        TaskState::Done => (gpui::rgb(0x34d399), "Done"),
+        TaskState::Blocked => (gpui::rgb(0xf59e0b), "Blocked"),
+        TaskState::Failed => (gpui::rgb(0xf87171), "Failed"),
     };
-    tag.xsmall()
-        .outline()
-        .child(div().text_xs().child(label))
+    div()
+        .px_2()
+        .py_0p5()
+        .rounded_md()
+        .border_1()
+        .border_color(color)
+        .text_xs()
+        .font_weight(gpui::FontWeight::BOLD)
+        .text_color(color)
+        .child(label)
         .into_any_element()
 }
 
@@ -984,7 +991,8 @@ pub(super) fn task_row(
         .child(
             div()
                 .flex_none()
-                .w(px(68.0))
+                .w(px(100.0))
+                .whitespace_nowrap()
                 .text_xs()
                 .font_family("Cascadia Code")
                 .text_color(theme::text_muted())

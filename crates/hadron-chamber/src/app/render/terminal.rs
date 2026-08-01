@@ -378,9 +378,9 @@ impl super::Chamber {
                                 theme::text_muted()
                             } else {
                                 match git_statuses.get(&node.full_path) {
-                                    Some(crate::vcs::GitStatus::Modified) => gpui::rgb(0xfb923c),
-                                    Some(crate::vcs::GitStatus::Added) => gpui::rgb(0x22c55e),
-                                    Some(crate::vcs::GitStatus::Deleted) => gpui::rgb(0xef4444),
+                                    Some(crate::vcs::GitStatus::Modified) => gpui::rgb(0xf59e0b),
+                                    Some(crate::vcs::GitStatus::Added) => gpui::rgb(0x34d399),
+                                    Some(crate::vcs::GitStatus::Deleted) => gpui::rgb(0xf87171),
                                     None => theme::text(),
                                 }
                             })
