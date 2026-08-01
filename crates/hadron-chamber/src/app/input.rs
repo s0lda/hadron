@@ -139,6 +139,28 @@ impl super::Chamber {
             .scroll_to_reveal_item(self.view.messages.len().saturating_sub(1));
         cx.notify();
     }
+
+    /// When text is pasted into the chat input, scroll to the bottom on the next frame.
+    ///
+    /// A paste action (like Shift+Enter) does not fire an `InputEvent::Change`, so
+    /// `InputState`'s internal scroll bounds and the chat view's scroll bounds are not
+    /// updated synchronously during the paste turn. Deferring the scroll adjustment
+    /// to `window.on_next_frame` ensures that line measurements and input bounds have
+    /// updated first.
+    pub(super) fn on_input_paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let input = self.input.clone();
+        let selected_idx = self.chat_tab.index();
+        let scroll = self.chat_scrolls[selected_idx].clone();
+        cx.on_next_frame(window, move |_, _, cx: &mut Context<Self>| {
+            input.update(cx, |state, cx| {
+                let end = state.value().len();
+                state.set_selected_range(end..end, cx);
+            });
+            scroll.scroll_to_bottom();
+            cx.notify();
+        });
+    }
+
     /// Rebuild the completion card from the input's current text and cursor.
     /// Sets `self.completion` to `None` when no `@`/`:`/`/` query is live.
     pub(super) fn recompute_completion(&mut self, cx: &mut Context<Self>) {
