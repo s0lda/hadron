@@ -94,9 +94,9 @@ pub fn glass_highlight() -> Hsla {
 }
 
 // --- vector status halo indicators ---
-/// Active status halo (Soft Cyan `#38bdf8`) for tool execution / active state.
+/// Active status halo (Soft Sapphire Blue `#60a5fa`) for tool execution / active state.
 pub fn halo_active() -> Hsla {
-    rgb(0x38bdf8).into()
+    rgb(0x60a5fa).into()
 }
 
 /// Reasoning status halo (Soft Amethyst `#a78bfa`) for reasoning / thinking state.
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn test_halo_color_tokens() {
-        assert_eq!(halo_active(), Hsla::from(rgb(0x38bdf8)));
+        assert_eq!(halo_active(), Hsla::from(rgb(0x60a5fa)));
         assert_eq!(halo_reasoning(), Hsla::from(rgb(0xa78bfa)));
         assert_eq!(halo_idle(), Hsla::from(rgb(0x34d399)));
         assert_eq!(halo_error(), Hsla::from(rgb(0xf87171)));

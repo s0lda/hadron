@@ -854,7 +854,7 @@ impl super::Chamber {
         let (bg, text_color) = match dec.kind {
             crate::vcs::RefKind::Head => (gpui::rgba(0x34d39922), gpui::rgb(0x34d399)),
             crate::vcs::RefKind::LocalBranch => (gpui::rgba(0xa78bfa22), gpui::rgb(0xa78bfa)),
-            crate::vcs::RefKind::RemoteBranch => (gpui::rgba(0x38bdf822), gpui::rgb(0x38bdf8)),
+            crate::vcs::RefKind::RemoteBranch => (gpui::rgba(0x60a5fa22), gpui::rgb(0x60a5fa)),
             crate::vcs::RefKind::Tag => (gpui::rgba(0xfbbf2422), gpui::rgb(0xfbbf24)),
         };
 
