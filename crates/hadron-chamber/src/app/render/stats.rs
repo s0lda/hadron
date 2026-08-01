@@ -386,7 +386,7 @@ impl super::Chamber {
         let info_selected = self.info_tab;
         let info_tabs = TabBar::new("info-tabs")
             .segmented()
-            .bg(theme::field_base())
+            .bg(theme::glass_card())
             .selected_index(info_selected.index())
             .children(InfoTab::ALL.map(|t| {
                 if t.index() == info_selected.index() {
@@ -440,7 +440,7 @@ impl super::Chamber {
                     // Flat #101010 field colour — opaque, so the bright field can't
                     // bleed through, and matches the Quark Info panel to the solid
                     // background (Jake's request).
-                    .bg(theme::field_base())
+                    .bg(theme::glass_card())
                     .border_1()
                     .border_color(theme::glass_highlight())
                     .rounded(INNER_RADIUS)
@@ -525,7 +525,7 @@ impl super::Chamber {
         h_flex().child(
             TabBar::new(id)
                 .segmented()
-                .bg(theme::field_base())
+                .bg(theme::glass_card())
                 .selected_index(sel_ix)
                 .children(StatsWindow::ALL.map(|w| {
                     if w == selected {

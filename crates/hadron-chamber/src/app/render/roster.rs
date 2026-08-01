@@ -143,12 +143,6 @@ impl super::Chamber {
 
         let halo_dot_el = self.render_halo_dot(effective_state);
 
-        let shortcut_hint = if ix < 9 {
-            format!("Alt+{}", ix + 1)
-        } else {
-            String::new()
-        };
-
         let mode_el = div()
             .id(SharedString::from(format!("mode-{}", r.id)))
             .cursor_pointer()
@@ -156,7 +150,7 @@ impl super::Chamber {
             .on_click(cx.listener(move |this, _, _, cx| this.cycle_quark_mode(&qid, cx)))
             .child(mode_tag(r.mode, !r.mode_is_override));
 
-        // Header line: Halo + Avatar + Quark Name + Transport Badge + Model Tag + Alt hint
+        // Header line: Halo + Avatar + Quark Name + Transport Badge + Model Tag
         let header_row = h_flex()
             .items_center()
             .justify_between()
@@ -212,15 +206,7 @@ impl super::Chamber {
                                 .child(r.model_label().to_string()),
                         )
                     }),
-            )
-            .when(!shortcut_hint.is_empty(), |this| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(theme::text_muted())
-                        .child(shortcut_hint),
-                )
-            });
+            );
 
         // Subdued telemetry line: tokens / activity + effort + mode
         let tokens_formatted = format!("{} tokens", format_num(r.tokens as u64));
@@ -271,16 +257,15 @@ impl super::Chamber {
                 cx.notify();
             }))
             .border_color(if is_selected {
-                gpui::rgb(0xe879f9).into()
+                gpui::rgba(0xffffff38).into()
             } else {
                 theme::glass_highlight()
             })
             .context_menu({
                 let qid_str = r.id.clone();
-                let enable_str = if r.enabled { "Disable" } else { "Enable" };
                 let r_flavor = r.flavor.clone();
                 let is_adopted = r.adopted;
-                let menu_is_acp = is_acp;
+                let is_enabled = r.enabled;
                 let view = cx.entity().clone();
                 move |mut menu, _, _| {
                     let qid1 = qid_str.clone();
@@ -294,7 +279,7 @@ impl super::Chamber {
                         });
                         window.refresh();
                     }));
-                    if menu_is_acp {
+                    if is_acp {
                         let qid_r = qid_str.clone();
                         let view_r = view.clone();
                         menu = menu.item(PopupMenuItem::new("Restart").on_click(
@@ -309,25 +294,10 @@ impl super::Chamber {
                             },
                         ));
                     }
-                    if !is_adopted {
-                        let qid_a = qid_str.clone();
-                        let view_a = view.clone();
-                        menu = menu.item(PopupMenuItem::new("Adopt into repo").on_click(
-                            move |_, window, cx| {
-                                view_a.update(cx, |this, cx| {
-                                    this.handle_context_menu_action(
-                                        ContextMenuAction::AdoptQuark(qid_a.clone()),
-                                        cx,
-                                    );
-                                });
-                                window.refresh();
-                            },
-                        ));
-                        return menu;
-                    }
                     let qid2 = qid_str.clone();
                     let view2 = view.clone();
-                    menu = menu.item(PopupMenuItem::new(enable_str).on_click(move |_, window, cx| {
+                    let toggle_lbl = if is_enabled { "Disable" } else { "Enable" };
+                    menu = menu.item(PopupMenuItem::new(toggle_lbl).on_click(move |_, window, cx| {
                         view2.update(cx, |this, cx| {
                             this.handle_context_menu_action(
                                 ContextMenuAction::ToggleQuark(qid2.clone()),
@@ -336,28 +306,38 @@ impl super::Chamber {
                         });
                         window.refresh();
                     }));
-                    if let Some(flavor) = &r_flavor {
-                        match flavor {
-                            hadron_lattice::Flavor::Orchestrator => {}
-                            hadron_lattice::Flavor::Worker => {
-                                let qid4 = qid_str.clone();
-                                let view4 = view.clone();
-                                menu = menu.item(PopupMenuItem::new("Make Orchestrator").on_click(
-                                    move |_, window, cx| {
-                                        view4.update(cx, |this, cx| {
-                                            this.handle_context_menu_action(
-                                                ContextMenuAction::SetFlavor(
-                                                    qid4.clone(),
-                                                    hadron_lattice::Flavor::Orchestrator,
-                                                ),
-                                                cx,
-                                            );
-                                        });
-                                        window.refresh();
-                                    },
-                                ));
-                            }
-                        }
+                    if !is_adopted {
+                        let qid3 = qid_str.clone();
+                        let view3 = view.clone();
+                        menu = menu.item(PopupMenuItem::new("Adopt").on_click(
+                            move |_, window, cx| {
+                                view3.update(cx, |this, cx| {
+                                    this.handle_context_menu_action(
+                                        ContextMenuAction::AdoptQuark(qid3.clone()),
+                                        cx,
+                                    );
+                                });
+                                window.refresh();
+                            },
+                        ));
+                    }
+                    if r_flavor.is_none() {
+                        let qid4 = qid_str.clone();
+                        let view4 = view.clone();
+                        menu = menu.item(PopupMenuItem::new("Promote to Orchestrator").on_click(
+                            move |_, window, cx| {
+                                view4.update(cx, |this, cx| {
+                                    this.handle_context_menu_action(
+                                        ContextMenuAction::SetFlavor(
+                                            qid4.clone(),
+                                            hadron_lattice::Flavor::Orchestrator,
+                                        ),
+                                        cx,
+                                    );
+                                });
+                                window.refresh();
+                            },
+                        ));
                     }
                     menu
                 }
@@ -418,8 +398,9 @@ impl super::Chamber {
                     .px_2()
                     .py_0p5()
                     .rounded_md()
-                    .bg(mode_clr)
-                    .text_color(gpui::rgb(0xffffff))
+                    .border_1()
+                    .border_color(mode_clr)
+                    .text_color(mode_clr)
                     .child(mode_lbl),
             )
     }

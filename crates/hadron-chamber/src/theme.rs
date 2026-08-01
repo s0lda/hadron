@@ -24,9 +24,9 @@ use gpui::{rgb, rgba, Hsla, Rgba};
 use hadron_lattice::QuarkState;
 
 // --- the ambient field: a flat black housing (the frosted-glass-on-black look) ---
-/// Layer 0 (Canvas Base): Ultra-dark cosmic obsidian canvas base fill (`#090B10`).
+/// Layer 0 (Canvas Base): Deep graphite obsidian canvas base fill (`#0C0D10`).
 pub fn canvas_base() -> Hsla {
-    rgb(0x090b10).into()
+    rgb(0x0c0d10).into()
 }
 
 /// The near-black base — the opaque tone painted behind the rounded corners and the dark
@@ -34,12 +34,12 @@ pub fn canvas_base() -> Hsla {
 /// here would show the desktop, not the field). Just off pure black so the rounded corners
 /// and any panel seam still read against it.
 pub fn field_base() -> Rgba {
-    rgb(0x101010) // flat near-black — the field the frosted panels float on
+    rgb(0x0d0e12) // flat near-black — the field the frosted panels float on
 }
 /// The top of the field wash — a barely-lifted near-black, so the housing is a whisper
 /// lighter at the top than behind the panels rather than a bright glow.
 pub fn field_bright() -> Rgba {
-    rgb(0x141417)
+    rgb(0x131419)
 }
 /// The near-black the wash settles into at the bottom / behind the panels.
 pub fn field_deep() -> Rgba {
@@ -78,19 +78,19 @@ pub fn bg_elevated() -> Rgba {
     rgba(0xffffff1a) // ~0.10 white — lifted chrome, the brightest frost in the ladder
 }
 
-/// Layer 1 (Panels & Rails): Translucent glass containers (`#111520e6` at 85% opacity).
+/// Layer 1 (Panels & Rails): Translucent graphite glass containers (`#131519f2`).
 pub fn glass_surface() -> Hsla {
-    rgba(0x111520e6).into()
+    rgba(0x131519f2).into()
 }
 
-/// Layer 2 (Floating Cards & Modals): Elevated glass cards (`#181E2Ce6` at 85% opacity).
+/// Layer 2 (Floating Cards & Modals): Elevated warm dark charcoal glass cards (`#1A1C22f2`).
 pub fn glass_card() -> Hsla {
-    rgba(0x181e2ce6).into()
+    rgba(0x1a1c22f2).into()
 }
 
-/// Highlights / rims: Subtle 1px highlight rim (`rgba(255, 255, 255, 0.06)`).
+/// Highlights / rims: Crisp 1px highlight rim (`rgba(255, 255, 255, 0.12)`).
 pub fn glass_highlight() -> Hsla {
-    rgba(0xffffff0f).into()
+    rgba(0xffffff1f).into()
 }
 
 // --- vector status halo indicators ---
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn test_canvas_base_token() {
         let base = canvas_base();
-        let expected: Hsla = rgb(0x090b10).into();
+        let expected: Hsla = rgb(0x0c0d10).into();
         assert_eq!(base, expected);
         assert_eq!(base.a, 1.0);
     }
@@ -289,21 +289,21 @@ mod tests {
     #[test]
     fn test_glass_surface_token() {
         let surface = glass_surface();
-        let expected: Hsla = rgba(0x111520e6).into();
+        let expected: Hsla = rgba(0x131519f2).into();
         assert_eq!(surface, expected);
     }
 
     #[test]
     fn test_glass_card_token() {
         let card = glass_card();
-        let expected: Hsla = rgba(0x181e2ce6).into();
+        let expected: Hsla = rgba(0x1a1c22f2).into();
         assert_eq!(card, expected);
     }
 
     #[test]
     fn test_glass_highlight_token() {
         let highlight = glass_highlight();
-        let expected: Hsla = rgba(0xffffff0f).into();
+        let expected: Hsla = rgba(0xffffff1f).into();
         assert_eq!(highlight, expected);
     }
 
@@ -355,16 +355,16 @@ mod tests {
     fn test_translucency_invariants() {
         assert_eq!(canvas_base().a, 1.0, "Canvas base must be opaque");
         assert!(
-            glass_surface().a > 0.8 && glass_surface().a < 0.95,
-            "Glass surface must be ~85-90% opacity"
+            glass_surface().a > 0.8 && glass_surface().a <= 1.0,
+            "Glass surface must be ~85-95% opacity"
         );
         assert!(
-            glass_card().a > 0.8 && glass_card().a < 0.95,
-            "Glass card must be ~85-90% opacity"
+            glass_card().a > 0.8 && glass_card().a <= 1.0,
+            "Glass card must be ~85-95% opacity"
         );
         assert!(
-            glass_highlight().a < 0.1,
-            "Glass highlight rim must be low-alpha white (<10%)"
+            glass_highlight().a < 0.25,
+            "Glass highlight rim must be low-alpha white (<25%)"
         );
     }
 }

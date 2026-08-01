@@ -926,16 +926,16 @@ pub(super) fn task_row(
     let elapsed = crate::app::render::chat::format_duration(t.elapsed_secs(now));
     h_flex()
         .w_full()
-        .items_start()
+        .items_center()
         .gap_3()
-        .px_2()
-        .py_1()
-        .rounded_md()
+        .px_3()
+        .py_1p5()
+        .rounded_lg()
         .hover(|s| s.bg(theme::glass_highlight()))
         .child(
             div()
                 .flex_none()
-                .w(px(58.0))
+                .w(px(60.0))
                 .text_xs()
                 .font_family("Cascadia Code")
                 .text_color(theme::text_muted())
@@ -944,7 +944,7 @@ pub(super) fn task_row(
         .child(
             div()
                 .flex_none()
-                .w(px(92.0))
+                .w(px(96.0))
                 .text_xs()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(to.color)
@@ -956,7 +956,7 @@ pub(super) fn task_row(
         .child(
             div()
                 .flex_none()
-                .w(px(76.0))
+                .w(px(80.0))
                 .text_xs()
                 .text_color(theme::text_muted())
                 .truncate()
@@ -974,7 +974,7 @@ pub(super) fn task_row(
         .child(
             div()
                 .flex_none()
-                .w(px(64.0))
+                .w(px(68.0))
                 .text_xs()
                 .font_family("Cascadia Code")
                 .text_color(theme::text_muted())

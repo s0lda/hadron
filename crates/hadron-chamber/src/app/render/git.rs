@@ -34,7 +34,7 @@ impl super::Chamber {
         let selected = self.git_subtab;
         let subtabs = TabBar::new("git-subtabs")
             .segmented()
-            .bg(theme::field_base())
+            .bg(theme::glass_card())
             .selected_index(selected.index())
             .children(GitSubtab::ALL.map(|t| {
                 if t.index() == selected.index() {
