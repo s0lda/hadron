@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use hadron_lattice::term::{self, Source};
 use hadron_lattice::{
     Actor, Event, Flavor, Kind, Mode, QuarkId, QuarkState,
     TurnOutcome,
@@ -274,10 +275,13 @@ impl super::Engine {
                                                         target.as_str()
                                                     );
                                                     if let Err(e) = crate::worktree::commit_turn(&wt, &msg) {
-                                                        eprintln!(
-                                                            "  {} failed to snapshot its dirty worktree \
-                                                             before interrupt: {e:#}",
-                                                            target.as_str()
+                                                        term::warn(
+                                                            Source::Gluon,
+                                                            &format!(
+                                                                "{} failed to snapshot its dirty worktree \
+                                                                 before interrupt: {e:#}",
+                                                                target.as_str()
+                                                            ),
                                                         );
                                                     }
                                                 }
@@ -315,9 +319,9 @@ impl super::Engine {
                     // blocked rather than forever-Excited — and the daemon log still
                     // names it, exactly like the "seated but DISABLED" line at startup.
                     if !self.is_enabled(&target) {
-                        eprintln!(
-                            "  {} is disabled — skipping the turn addressed to it",
-                            target.as_str()
+                        term::warn(
+                            Source::Gluon,
+                            &format!("{} is disabled — skipping the turn addressed to it", target.as_str()),
                         );
                         self.park_blocked(&target).await?;
                         continue;

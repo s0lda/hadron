@@ -27,6 +27,7 @@ use crate::field::read_events;
 use crate::quark::Quark;
 use crate::reseat;
 use hadron_lattice::secrets::SecretStore;
+use hadron_lattice::term::{self, Source};
 use hadron_lattice::{
     load_team, orphan_overrides, parse_team, resolve_team, team_config_path, Actor, EnergyState, Event, Flavor, Kind,
     Projection, QuarkId, Team,
@@ -121,40 +122,50 @@ fn resolve_team_path(explicit: Option<PathBuf>, field_path: &Path) -> Option<Pat
 }
 
 /// Seat the quarks: real adapters from `team.json` when present, else the
-/// deterministic mock pair (zero-spend). Returns the quarks and a mode label.
+/// deterministic mock pair (zero-spend). Returns the quarks, a mode label, and
+/// one [`term::SeatRow`] per successfully built seat — the caller prints them as
+/// a single table once startup knows each seat's final enabled/chat-lane state,
+/// instead of this function printing per-seat as it builds.
 ///
 /// `store` resolves each seat's `secret_env` names to values. // TODO(next task):
 /// swap `MemoryStore` for a real `KeyringStore` at the call site once one exists.
-fn seat_quarks(team: &Team, live_dir: &Path, store: &dyn SecretStore) -> (Vec<Box<dyn Quark>>, &'static str) {
+fn seat_quarks(
+    team: &Team,
+    live_dir: &Path,
+    store: &dyn SecretStore,
+) -> (Vec<Box<dyn Quark>>, &'static str, Vec<term::SeatRow>) {
     if team.is_empty() {
-        eprintln!(
-            "  ⚠ no usable team.json — running MOCK quarks: only '@claude' and '@agy' exist \
+        term::warn(
+            Source::Gluon,
+            "no usable team.json — running MOCK quarks: only '@claude' and '@agy' exist \
              and their replies are fake. Add a team.json next to the field \
-             (e.g. .hadron/team.json) or pass --team to seat real CLI quarks."
+             (e.g. .hadron/team.json) or pass --team to seat real CLI quarks.",
         );
         let quarks: Vec<Box<dyn Quark>> = vec![
             Box::new(DemoQuark::new("claude", Flavor::Orchestrator, "Claude")),
             Box::new(DemoQuark::new("agy", Flavor::Worker, "Antigravity")),
         ];
-        return (quarks, "mock mode");
+        return (quarks, "mock mode", Vec::new());
     }
     let mut quarks: Vec<Box<dyn Quark>> = Vec::new();
+    let mut rows = Vec::new();
     for seat in &team.quarks {
         match registry::build_seat_watched(seat, live_dir, store) {
             Ok(q) => {
-                eprintln!(
-                    "  seated {} — {} · {} ({:?})",
-                    seat.id.as_str(),
-                    seat.vendor,
-                    seat.model,
-                    seat.flavor
-                );
+                rows.push(term::SeatRow {
+                    id: seat.id.as_str().to_string(),
+                    agent: seat.vendor.clone(),
+                    model: seat.model.clone(),
+                    flavor: format!("{:?}", seat.flavor),
+                    enabled: seat.enabled,
+                    chat_lane: false,
+                });
                 quarks.push(q);
             }
-            Err(e) => eprintln!("  skipped {}: {e:#}", seat.id.as_str()),
+            Err(e) => term::warn(Source::Gluon, &format!("skipped {}: {e:#}", seat.id.as_str())),
         }
     }
-    (quarks, "live mode (real CLIs — real budget)")
+    (quarks, "live mode (real CLIs — real budget)", rows)
 }
 
 /// Apply a [`reseat::ReseatPlan`] to the live engine, and return the team that is
@@ -195,7 +206,10 @@ fn apply_reseat(
 
     for (id, on) in &plan.toggled {
         engine.set_enabled(id, *on);
-        eprintln!("  {} {}", id.as_str(), if *on { "ENABLED" } else { "DISABLED (instance kept, session intact)" });
+        term::info(
+            Source::Gluon,
+            &format!("{} {}", id.as_str(), if *on { "ENABLED" } else { "DISABLED (instance kept, session intact)" }),
+        );
     }
 
     // A rename is metadata: update the roster card the router matches, keep the instance
@@ -206,16 +220,19 @@ fn apply_reseat(
         if let Some(seat) = out.quarks.iter_mut().find(|s| &s.id == id) {
             seat.display_name = name.clone();
         }
-        eprintln!(
-            "  {} renamed to '{}' (instance kept, session intact)",
-            id.as_str(),
-            name.as_deref().unwrap_or("<id>")
+        term::info(
+            Source::Gluon,
+            &format!(
+                "{} renamed to '{}' (instance kept, session intact)",
+                id.as_str(),
+                name.as_deref().unwrap_or("<id>")
+            ),
         );
     }
 
     for id in &plan.removed {
         if engine.unseat(id) {
-            eprintln!("  unseated {}", id.as_str());
+            term::info(Source::Gluon, &format!("unseated {}", id.as_str()));
         }
     }
 
@@ -232,27 +249,33 @@ fn apply_reseat(
                         Ok(chat) => {
                             engine.seat_chat_lane(&seat.id, chat);
                         }
-                        Err(e) => eprintln!("  {} — could not seat a chat lane on reseat: {e:#}", seat.id.as_str()),
+                        Err(e) => term::warn(
+                            Source::Gluon,
+                            &format!("{} — could not seat a chat lane on reseat: {e:#}", seat.id.as_str()),
+                        ),
                     }
                 }
                 out.quarks.push(seat.clone());
-                eprintln!(
-                    "  seated {} — {} · {} ({:?})",
-                    seat.id.as_str(),
-                    seat.vendor,
-                    seat.model,
-                    seat.flavor
+                term::info(
+                    Source::Gluon,
+                    &format!(
+                        "seated {} — {} · {} ({:?})",
+                        seat.id.as_str(),
+                        seat.vendor,
+                        seat.model,
+                        seat.flavor
+                    ),
                 );
             }
             Err(e) => {
                 // Not fatal, and deliberately not silent: the swarm keeps running with
                 // the seats it has, and the human is told which one did not take.
-                eprintln!("  ⚠ could not seat {}: {e:#}", seat.id.as_str());
+                term::warn(Source::Gluon, &format!("could not seat {}: {e:#}", seat.id.as_str()));
                 // A *replacement* that failed to build never displaced anything — the
                 // old quark is still seated and still answering. Record the OLD seat, or
                 // the daemon's picture of the swarm would disagree with the swarm.
                 if let Some(old) = running.get(&seat.id) {
-                    eprintln!("    → {} keeps its previous seat", seat.id.as_str());
+                    term::info(Source::Gluon, &format!("  → {} keeps its previous seat", seat.id.as_str()));
                     out.quarks.push(old.clone());
                 }
             }
@@ -269,10 +292,10 @@ pub async fn run() {
     let _shutdown_guard = crate::proc::ShutdownGuard::new();
 
     let Some(args) = parse_args() else {
-        eprintln!("usage: hadron-gluon <field.jsonl> [--interval-ms N] [--team team.json]");
-        eprintln!("  Team resolution: --team, else a team.json next to the field");
-        eprintln!("  (e.g. .hadron/team.json), else ~/.hadron/team.json.");
-        eprintln!("  With none, runs deterministic mock quarks (ids: claude, agy).");
+        term::error(Source::Gluon, "usage: hadron-gluon <field.jsonl> [--interval-ms N] [--team team.json]");
+        term::error(Source::Gluon, "Team resolution: --team, else a team.json next to the field");
+        term::error(Source::Gluon, "(e.g. .hadron/team.json), else ~/.hadron/team.json.");
+        term::error(Source::Gluon, "With none, runs deterministic mock quarks (ids: claude, agy).");
         std::process::exit(2);
     };
 
@@ -287,7 +310,7 @@ pub async fn run() {
     {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("hadron-gluon: failed to open lock file: {}", e);
+            term::error(Source::Gluon, &format!("failed to open lock file: {}", e));
             std::process::exit(1);
         }
     };
@@ -299,7 +322,7 @@ pub async fn run() {
         let fd = lock_file.as_raw_fd();
         let lock_res = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
         if lock_res != 0 {
-            eprintln!("hadron-gluon: another instance of gluon is already running.");
+            term::error(Source::Gluon, "another instance of gluon is already running.");
             std::process::exit(1);
         }
         let mut f = &lock_file;
@@ -313,8 +336,8 @@ pub async fn run() {
     // (the .hadron/ convention), else the config-dir default; mock when none.
     let team_path = resolve_team_path(args.team_path.clone(), &args.field_path);
     match &team_path {
-        Some(p) => eprintln!("hadron-gluon: team from {}", p.display()),
-        None => eprintln!("hadron-gluon: no team.json found (looked next to the field, then the config dir)"),
+        Some(p) => term::info(Source::Gluon, &format!("team from {}", p.display())),
+        None => term::info(Source::Gluon, "no team.json found (looked next to the field, then the config dir)"),
     }
     // The global catalogue holds the quark *definitions* a repo's role/state overrides
     // resolve against. Skip it when it IS the repo file (a bare ~/.hadron/team.json used
@@ -322,7 +345,7 @@ pub async fn run() {
     let global_path =
         team_config_path().filter(|g| Some(g.as_path()) != team_path.as_deref());
     if let Some(g) = &global_path {
-        eprintln!("hadron-gluon: catalogue from {}", g.display());
+        term::info(Source::Gluon, &format!("catalogue from {}", g.display()));
     }
     let team = load_resolved_team(team_path.as_deref(), global_path.as_deref());
 
@@ -344,9 +367,9 @@ pub async fn run() {
     // Security note in the encrypted-secrets design doc.
     let secret_store = crate::secrets::KeyringStore::new();
 
-    let (quarks, mode_label) = seat_quarks(&team, &live_dir, &secret_store);
+    let (quarks, mode_label, mut seat_rows) = seat_quarks(&team, &live_dir, &secret_store);
     if quarks.is_empty() {
-        eprintln!("hadron-gluon: team.json had no usable quarks; nothing to run.");
+        term::error(Source::Gluon, "team.json had no usable quarks; nothing to run.");
         std::process::exit(2);
     }
     let max_exchanges = team.max_exchanges.unwrap_or(12);
@@ -358,7 +381,7 @@ pub async fn run() {
     // reader's own fallback (`read_nucleus_index_with_fallback`) covers a
     // failed or skipped migration.
     if let Err(e) = crate::engine::migrate_legacy_memory(&repo_root) {
-        eprintln!("hadron-gluon: memory→nucleus migration failed (non-fatal): {e:#}");
+        term::warn(Source::Gluon, &format!("memory→nucleus migration failed (non-fatal): {e:#}"));
     }
 
     // Startup reclamation. `worktree::reclaim` has existed (and been tested) since
@@ -371,15 +394,18 @@ pub async fn run() {
     match crate::worktree::reclaim(&repo_root) {
         Ok(found) => {
             for wt in found.iter().filter(|w| w.dirty) {
-                eprintln!(
-                    "hadron-gluon: {} left uncommitted work in {} (on {}) — inspect it before its next turn",
-                    wt.quark.as_str(),
-                    wt.path.display(),
-                    wt.branch,
+                term::warn(
+                    Source::Gluon,
+                    &format!(
+                        "{} left uncommitted work in {} (on {}) — inspect it before its next turn",
+                        wt.quark.as_str(),
+                        wt.path.display(),
+                        wt.branch,
+                    ),
                 );
             }
         }
-        Err(e) => eprintln!("hadron-gluon: worktree reclamation failed (non-fatal): {e:#}"),
+        Err(e) => term::warn(Source::Gluon, &format!("worktree reclamation failed (non-fatal): {e:#}")),
     }
     let base = crate::worktree::default_branch(&repo_root);
     // Then the disk bound. A worktree is stable per quark and nothing ever removed
@@ -393,7 +419,7 @@ pub async fn run() {
     // Skipped entirely on an empty roster: `load_resolved_team` degrades a missing or
     // malformed team.json to empty, and that must not read as "no quark is seated".
     if team.quarks.is_empty() {
-        eprintln!("hadron-gluon: roster is empty — skipping the idle-worktree reap");
+        term::info(Source::Gluon, "roster is empty — skipping the idle-worktree reap");
     } else {
         let keep: Vec<_> =
             team.quarks.iter().filter(|s| s.enabled).map(|s| s.id.clone()).collect();
@@ -402,34 +428,36 @@ pub async fn run() {
                 for r in &reaped {
                     match r {
                         crate::worktree::Reap::Removed { quark, preserved, .. } => {
-                            eprintln!(
-                                "hadron-gluon: reclaimed {}'s worktree — it takes no turns and \
-                                 held nothing that is not on {base} (recreated on its next turn)",
-                                quark.as_str(),
+                            term::info(
+                                Source::Gluon,
+                                &format!(
+                                    "reclaimed {}'s worktree — it takes no turns and \
+                                     held nothing that is not on {base} (recreated on its next turn)",
+                                    quark.as_str(),
+                                ),
                             );
                             // Never silent: anything moved or pinned out of the tree is
                             // named, or the human cannot find it again.
                             for note in preserved {
-                                eprintln!("hadron-gluon:   {note}");
+                                term::info(Source::Gluon, &format!("  {note}"));
                             }
                         }
-                        crate::worktree::Reap::Spared { quark, path, why } => eprintln!(
-                            "hadron-gluon: keeping {}'s worktree at {} — {why}",
-                            quark.as_str(),
-                            path.display(),
+                        crate::worktree::Reap::Spared { quark, path, why } => term::info(
+                            Source::Gluon,
+                            &format!("keeping {}'s worktree at {} — {why}", quark.as_str(), path.display()),
                         ),
                     }
                 }
             }
-            Err(e) => eprintln!("hadron-gluon: idle-worktree reap failed (non-fatal): {e:#}"),
+            Err(e) => term::warn(Source::Gluon, &format!("idle-worktree reap failed (non-fatal): {e:#}")),
         }
     }
     match crate::worktree::prune_merged_branches(&repo_root, &base) {
         Ok(pruned) if !pruned.is_empty() => {
-            eprintln!("hadron-gluon: pruned {} merged quark branches", pruned.len());
+            term::info(Source::Gluon, &format!("pruned {} merged quark branches", pruned.len()));
         }
         Ok(_) => {}
-        Err(e) => eprintln!("hadron-gluon: branch prune failed (non-fatal): {e:#}"),
+        Err(e) => term::warn(Source::Gluon, &format!("branch prune failed (non-fatal): {e:#}")),
     }
     // The shared build dir (`worktree::shared_build_env`) is a landfill: nothing has
     // ever swept it, and cargo has no target-dir GC of its own. Measured on this box
@@ -445,18 +473,21 @@ pub async fn run() {
         // because `eprintln!` went to the launching terminal and nowhere else.
         Ok(Some(reap)) => {
             if reap.files_removed > 0 {
-                eprintln!(
-                    "hadron-gluon: swept {} stale build artifacts ({:.1} GB)",
-                    reap.files_removed,
-                    reap.bytes_removed as f64 / 1e9,
+                term::info(
+                    Source::Gluon,
+                    &format!(
+                        "swept {} stale build artifacts ({:.1} GB)",
+                        reap.files_removed,
+                        reap.bytes_removed as f64 / 1e9,
+                    ),
                 );
             }
             if let Err(e) = crate::worktree::record_artifact_sweep(&field_dir, &reap) {
-                eprintln!("hadron-gluon: could not record the artifact sweep (non-fatal): {e:#}");
+                term::warn(Source::Gluon, &format!("could not record the artifact sweep (non-fatal): {e:#}"));
             }
         }
-        Ok(None) => eprintln!("hadron-gluon: build artifact sweep skipped — cargo is building right now"),
-        Err(e) => eprintln!("hadron-gluon: build artifact sweep failed (non-fatal): {e:#}"),
+        Ok(None) => term::info(Source::Gluon, "build artifact sweep skipped — cargo is building right now"),
+        Err(e) => term::warn(Source::Gluon, &format!("build artifact sweep failed (non-fatal): {e:#}")),
     }
 
     let engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
@@ -481,7 +512,7 @@ pub async fn run() {
     let ledger = match crate::ledger::Ledger::open(&ledger_path) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("hadron-gluon: failed to open ledger at {}: {e:#}", ledger_path.display());
+            term::error(Source::Gluon, &format!("failed to open ledger at {}: {e:#}", ledger_path.display()));
             std::process::exit(2);
         }
     };
@@ -490,11 +521,12 @@ pub async fn run() {
     // must not be cut off mid-plan by a number nobody chose.
     let mut engine = engine.with_ledger(ledger, None);
     // A seat can boot switched OFF. It is still seated (still addressable, still owns
-    // its instance) — it just does not take turns until the human enables it.
+    // its instance) — it just does not take turns until the human enables it. Its row
+    // already carries `enabled: false` from `seat_quarks`, so the table below shows it
+    // as a column rather than this loop printing a separate line per disabled seat.
     for seat in &team.quarks {
         if !seat.enabled {
             engine.set_enabled(&seat.id, false);
-            eprintln!("  {} is seated but DISABLED — it will not take turns", seat.id.as_str());
         }
     }
     // Give every orchestrator-flavoured seat a second, chat-only lane (Task 6 Step 4
@@ -517,26 +549,36 @@ pub async fn run() {
                     // chat lane is ever attached, so telling the instance here as well would
                     // be a second site to keep in step for no coverage gained.
                     engine.seat_chat_lane(&seat.id, chat);
-                    eprintln!("  {} — chat lane seated (never blocks on a busy work lane)", seat.id.as_str());
+                    if let Some(row) = seat_rows.iter_mut().find(|r| r.id == seat.id.as_str()) {
+                        row.chat_lane = true;
+                    }
                 }
-                Err(e) => eprintln!("  {} — could not seat a chat lane: {e:#}", seat.id.as_str()),
+                Err(e) => term::warn(
+                    Source::Gluon,
+                    &format!("{} — could not seat a chat lane: {e:#}", seat.id.as_str()),
+                ),
             }
         }
     }
 
-    eprintln!(
-        "hadron-gluon ({mode_label}) watching {}",
-        args.field_path.display()
-    );
-    eprintln!("  address quarks from the chamber: '@<id> …'. Ctrl-C to stop.");
+    // The startup seating summary — one table, built from every row `seat_quarks`
+    // (and the chat-lane loop above) collected, instead of the six-odd separate
+    // "seated …" / "is seated but DISABLED" / "chat lane seated" lines this used to be.
+    for line in term::seating_table(&seat_rows) {
+        term::info(Source::Gluon, &line);
+    }
+
+    term::info(Source::Gluon, &format!("({mode_label}) watching {}", args.field_path.display()));
+    term::info(Source::Gluon, "address quarks from the chamber: '@<id> …'. Ctrl-C to stop.");
     // DO-NOT-ACTIVATE toggle (spec §2 D): read once from HADRON_NO_HUMAN_MODE inside
     // `Engine::new`. Loud on purpose — a mode where the orchestrator, not a human,
     // adjudicates permission asks under global Bypass must never be silently on.
     if engine.no_human() {
-        eprintln!(
-            "  ⚠️  HADRON_NO_HUMAN_MODE is ON — under global Bypass, permission asks that would \
+        term::warn(
+            Source::Gluon,
+            "HADRON_NO_HUMAN_MODE is ON — under global Bypass, permission asks that would \
              stop for a human are instead adjudicated by the orchestrator. A human deny-list \
-             entry remains absolute (never orchestrator-overridable)."
+             entry remains absolute (never orchestrator-overridable).",
         );
     }
 
@@ -569,14 +611,14 @@ pub async fn run() {
         let before = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
         let excite_res = tokio::select! {
             _ = &mut shutdown_signal => {
-                eprintln!("hadron-gluon: shutting down daemon...");
+                term::info(Source::Gluon, "shutting down daemon...");
                 break;
             }
             res = engine.run_until_quiesce() => res,
         };
 
         if let Err(e) = excite_res {
-            eprintln!("gluon: excite error (continuing): {e:#}");
+            term::error(Source::Gluon, &format!("excite error (continuing): {e:#}"));
             let events_after = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
             if events_after == before {
                 let orch_exists =
@@ -593,7 +635,7 @@ pub async fn run() {
         }
         let after = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
         if after > before {
-            eprintln!("gluon: appended {} event(s) → {after} total", after - before);
+            term::info(Source::Gluon, &format!("appended {} event(s) → {after} total", after - before));
         }
 
         // ---- THE SAFE POINT ---------------------------------------------------
@@ -623,16 +665,17 @@ pub async fn run() {
                 // A file caught mid-write parses as garbage on EITHER side. Keep the
                 // swarm exactly as it is — treating an unparseable file as empty would
                 // unseat everybody.
-                (Err(e), _) | (_, Err(e)) => eprintln!(
-                    "gluon: a team file changed but does not parse — keeping the running roster: {e}"
+                (Err(e), _) | (_, Err(e)) => term::warn(
+                    Source::Gluon,
+                    &format!("a team file changed but does not parse — keeping the running roster: {e}"),
                 ),
                 (Ok(repo), Ok(global)) => {
                     let repo = repo.unwrap_or_default();
                     let global = global.unwrap_or_default();
                     for id in orphan_overrides(&repo, &global) {
-                        eprintln!(
-                            "  ⚠ repo override {} names no catalogue seat — ignored",
-                            id.as_str()
+                        term::warn(
+                            Source::Gluon,
+                            &format!("repo override {} names no catalogue seat — ignored", id.as_str()),
                         );
                     }
                     let desired = resolve_team(&repo, &global);
@@ -641,9 +684,12 @@ pub async fn run() {
                     // The guard is on the RESOLVED team, so an empty result from a bad
                     // merge (e.g. all-orphan overrides) is caught too.
                     if desired.is_empty() {
-                        eprintln!(
-                            "gluon: team now seats nobody — keeping the running roster ({} quark(s))",
-                            engine.seated_count()
+                        term::warn(
+                            Source::Gluon,
+                            &format!(
+                                "team now seats nobody — keeping the running roster ({} quark(s))",
+                                engine.seated_count()
+                            ),
                         );
                     } else {
                         let max_exchanges = desired.max_exchanges.unwrap_or(12);
@@ -658,17 +704,17 @@ pub async fn run() {
                         if mock_mode {
                             for id in engine.seated_ids() {
                                 if desired.get(&id).is_none() && engine.unseat(&id) {
-                                    eprintln!("  unseated mock {}", id.as_str());
+                                    term::info(Source::Gluon, &format!("unseated mock {}", id.as_str()));
                                 }
                             }
                             mock_mode = false;
                         }
                         let plan = reseat::plan(&running_team, &desired);
                         if !plan.is_empty() {
-                            eprintln!("gluon: team changed — re-seating [{}]", plan.summary());
+                            term::info(Source::Gluon, &format!("team changed — re-seating [{}]", plan.summary()));
                             running_team =
                                 apply_reseat(&mut engine, &running_team, &plan, &live_dir, &secret_store);
-                            eprintln!("gluon: roster is now {} quark(s)", engine.seated_count());
+                            term::info(Source::Gluon, &format!("roster is now {} quark(s)", engine.seated_count()));
                         }
                     }
                 }
@@ -677,7 +723,7 @@ pub async fn run() {
 
         tokio::select! {
             _ = &mut shutdown_signal => {
-                eprintln!("hadron-gluon: shutting down daemon...");
+                term::info(Source::Gluon, "shutting down daemon...");
                 break;
             }
             _ = tokio::time::sleep(args.interval) => {}
@@ -699,7 +745,7 @@ async fn wait_for_shutdown_signal() {
                 std::future::pending::<()>().await;
             }
         } => {
-            eprintln!("hadron-gluon: received SIGINT, shutting down...");
+            term::info(Source::Gluon, "received SIGINT, shutting down...");
         }
         _ = async {
             if let Some(s) = &mut sigterm {
@@ -708,7 +754,7 @@ async fn wait_for_shutdown_signal() {
                 std::future::pending::<()>().await;
             }
         } => {
-            eprintln!("hadron-gluon: received SIGTERM, shutting down...");
+            term::info(Source::Gluon, "received SIGTERM, shutting down...");
         }
     }
 }
@@ -728,9 +774,9 @@ fn load_resolved_team(repo_path: Option<&Path>, global_path: Option<&Path>) -> T
     let repo = repo_path.map(load_team).unwrap_or_default();
     let global = global_path.map(load_team).unwrap_or_default();
     for id in orphan_overrides(&repo, &global) {
-        eprintln!(
-            "  ⚠ repo override {} names no catalogue seat — ignored (not seated)",
-            id.as_str()
+        term::warn(
+            Source::Gluon,
+            &format!("repo override {} names no catalogue seat — ignored (not seated)", id.as_str()),
         );
     }
     resolve_team(&repo, &global)
@@ -828,5 +874,41 @@ mod tests {
         if let Some(p) = resolved {
             assert_ne!(p, field.parent().unwrap().join("team.json"));
         }
+    }
+
+    /// `seat_quarks`' whole reason to return rows instead of printing per-seat: the
+    /// startup summary must be ONE table built from a known roster, not six-odd
+    /// separate lines. Assert on the rows it hands back, and on what
+    /// `term::seating_table` renders from them — the seam Task 2 converts.
+    #[test]
+    fn seat_quarks_returns_one_row_per_seat_with_its_enabled_state() {
+        use hadron_lattice::secrets::MemoryStore;
+        use hadron_lattice::Seat;
+
+        let mut disabled = Seat::cli(QuarkId::new("cli-agy"), "agy", "", Flavor::Worker);
+        disabled.enabled = false;
+        let team = Team {
+            quarks: vec![
+                Seat::cli(QuarkId::new("opus"), "agy", "opus-4.8", Flavor::Orchestrator),
+                disabled,
+            ],
+            ..Default::default()
+        };
+        let dir = tempdir().unwrap();
+        let store = MemoryStore::new();
+
+        let (quarks, mode_label, rows) = seat_quarks(&team, dir.path(), &store);
+
+        assert_eq!(quarks.len(), 2, "both seats must build — neither is malformed");
+        assert_eq!(mode_label, "live mode (real CLIs — real budget)");
+        assert_eq!(rows.len(), 2, "one SeatRow per seat, not one line per fact about it");
+        assert_eq!(rows[0].id, "opus");
+        assert!(rows[0].enabled);
+        assert!(!rows[1].enabled, "the disabled seat's row must carry that state");
+
+        let table = term::seating_table(&rows);
+        assert_eq!(table.len(), 2);
+        assert!(table[0].contains("opus") && table[0].contains("opus-4.8"));
+        assert!(table[1].contains("disabled"), "a disabled seat is a column, not a second line");
     }
 }

@@ -11,6 +11,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use hadron_lattice::term::{self, Source};
+
 use crate::skills::{front_matter_value, split_front_matter};
 
 /// One loaded preon: a name a human can address, an optional role it prefers to
@@ -106,7 +108,7 @@ fn load_dir(dir: &Path) -> Vec<Preon> {
                 // mistake should be visible, not a preon that never loads with no
                 // clue.
                 Err(e) => {
-                    eprintln!("preons: skipping {} — could not read it: {e}", path.display());
+                    term::warn(Source::Gluon, &format!("skipping {} — could not read it: {e}", path.display()));
                     return None;
                 }
             };
@@ -119,9 +121,9 @@ fn load_dir(dir: &Path) -> Vec<Preon> {
                     // not on what its author declared), it is skipped. Silent
                     // would be worse: a typo'd or missing `name:` should be
                     // visible, not a preon that silently never loads.
-                    eprintln!(
-                        "hadron-gluon: skipping preon file {} — missing required `name:` front-matter",
-                        path.display()
+                    term::warn(
+                        Source::Gluon,
+                        &format!("skipping preon file {} — missing required `name:` front-matter", path.display()),
                     );
                     None
                 }

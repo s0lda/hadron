@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use hadron_lattice::term::{self, Source};
 use tokio::sync::watch;
 
 use crate::engine::Engine;
@@ -48,7 +49,7 @@ impl Engine {
         let mut change_open = true;
         loop {
             if let Err(e) = self.run_until_quiesce().await {
-                eprintln!("gluon: excite error in daemon (continuing): {e:#}");
+                term::error(Source::Gluon, &format!("excite error in daemon (continuing): {e:#}"));
             }
             tokio::select! {
                 _ = shutdown.changed() => {

@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use hadron_lattice::term::{self, Source};
+
 use super::ResolvedSkill;
 
 /// Insert `skill`, replacing any existing entry with the same `id` in place (so
@@ -42,7 +44,7 @@ pub(super) fn load_dir(dir: &Path) -> Vec<ResolvedSkill> {
                 // silently, mirroring the missing-`name:` case below: an authoring
                 // mistake should be visible, not a skill that never loads with no clue.
                 Err(e) => {
-                    eprintln!("skills: skipping {} — could not read it: {e}", path.display());
+                    term::warn(Source::Gluon, &format!("skipping {} — could not read it: {e}", path.display()));
                     return None;
                 }
             };
@@ -55,9 +57,9 @@ pub(super) fn load_dir(dir: &Path) -> Vec<ResolvedSkill> {
                     // its author declared), it is skipped. Silent would be worse: a
                     // typo'd or missing `name:` should be visible, not a skill that
                     // silently never loads.
-                    eprintln!(
-                        "hadron-gluon: skipping skill file {} — missing required `name:` front-matter",
-                        path.display()
+                    term::warn(
+                        Source::Gluon,
+                        &format!("skipping skill file {} — missing required `name:` front-matter", path.display()),
                     );
                     None
                 }

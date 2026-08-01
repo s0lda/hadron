@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use hadron_lattice::term::{self, Source};
 use hadron_lattice::{
     Actor, Event, Kind, QuarkId, QuarkState,
 };
@@ -128,10 +129,7 @@ impl super::Engine {
                 seen.insert(id);
             }
             let Some(lanes) = self.quarks.get(&target).cloned() else {
-                eprintln!(
-                    "gluon: reboot for unseated quark {} — ignored",
-                    target.as_str()
-                );
+                term::warn(Source::Gluon, &format!("reboot for unseated quark {} — ignored", target.as_str()));
                 continue;
             };
 
@@ -155,7 +153,7 @@ impl super::Engine {
             if let Some(chat) = &lanes.chat {
                 chat.lock().await.reset_session();
             }
-            eprintln!("gluon: force-restarted quark {}", target.as_str());
+            term::info(Source::Gluon, &format!("force-restarted quark {}", target.as_str()));
         }
 
         Ok(grounded)
