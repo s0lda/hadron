@@ -5,6 +5,11 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-08-02
+
+### Fixed
+- **In-App Changelog Said "Unreleased"**: the Changelog overlay carried its own hand-written copy of the release list, so 0.1.4 shipped to users still wearing the "Unreleased" badge and missing four entries. The overlay's list is now a single `RELEASES` table whose newest entry is checked against `docs/CHANGELOG.md` and `CARGO_PKG_VERSION` by a test, so a release that forgets it fails the gate.
+
 ## [0.1.4] - 2026-08-02
 
 ### Added
