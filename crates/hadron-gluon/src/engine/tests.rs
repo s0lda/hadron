@@ -4033,6 +4033,178 @@ async fn a_worker_reporting_to_the_orchestrator_lands_its_branch() {
     );
 }
 
+/// Passes green, like `GreenLandingRunner`, but its `tests()` sleeps first — long
+/// enough for a concurrent poller to observe the gate's heartbeat mid-run.
+struct SlowGreenLandingRunner(std::time::Duration);
+
+#[async_trait::async_trait]
+impl crate::merge::MergeRunner for SlowGreenLandingRunner {
+    async fn tests(&self, _wt: &crate::worktree::Worktree) -> anyhow::Result<(bool, String)> {
+        tokio::time::sleep(self.0).await;
+        Ok((true, String::new()))
+    }
+    fn land(
+        &self,
+        repo_root: &std::path::Path,
+        wt: &crate::worktree::Worktree,
+        base: &str,
+    ) -> anyhow::Result<crate::merge::Landed> {
+        crate::merge::land(repo_root, wt, base)
+    }
+}
+
+/// **Flight Recorder A1, Step 3.** While the gate is actually running, it must have
+/// published a fresh `Doing::Gating` heartbeat to `live::gates_dir` — the whole point
+/// of the wrapper in `merge_gate`. A poller races the gate itself, so a runner slow
+/// enough to still be inside `tests()` when the poller checks is required; without it
+/// the gate could finish (and clean up) before anything ever looked.
+#[tokio::test]
+async fn a_running_gate_publishes_a_fresh_gating_activity() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w write w.txt".into() }),
+    )
+    .unwrap();
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("orch"), Flavor::Orchestrator, "ok")),
+            Box::new(ReportingWriter { id: QuarkId::new("w"), file: "w.txt", reply: "@orchestrator done" }),
+        ],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(SlowGreenLandingRunner(std::time::Duration::from_millis(400))));
+
+    let gates_dir = hadron_lattice::live::gates_dir(&field);
+    let seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let poller = {
+        let gates_dir = gates_dir.clone();
+        let seen = seen.clone();
+        tokio::spawn(async move {
+            for _ in 0..100 {
+                let fresh = hadron_lattice::live::gates(&gates_dir, chrono::Utc::now());
+                if fresh.iter().any(|a| a.doing == hadron_lattice::Doing::Gating) {
+                    seen.store(true, std::sync::atomic::Ordering::SeqCst);
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+    };
+
+    engine.run_until_quiesce().await.unwrap();
+    poller.await.unwrap();
+
+    assert!(
+        seen.load(std::sync::atomic::Ordering::SeqCst),
+        "the gate never published a fresh gating activity while it was running"
+    );
+}
+
+/// Red tests, like `RedTestRunner`, but slow — so a heartbeat is guaranteed to have
+/// actually published before the gate finishes and cleans up (see the comment on
+/// `SlowGreenLandingRunner`: without a delay the spawned heartbeat task may never
+/// get scheduled before its guard drops, which would pass the negative-control
+/// tests below whether or not cleanup ran at all).
+struct SlowRedTestRunner(std::time::Duration);
+
+#[async_trait::async_trait]
+impl crate::merge::MergeRunner for SlowRedTestRunner {
+    async fn tests(&self, _wt: &crate::worktree::Worktree) -> anyhow::Result<(bool, String)> {
+        tokio::time::sleep(self.0).await;
+        Ok((false, "test tests::it_works ... FAILED".to_string()))
+    }
+    fn land(
+        &self,
+        _repo_root: &std::path::Path,
+        _wt: &crate::worktree::Worktree,
+        _base: &str,
+    ) -> anyhow::Result<crate::merge::Landed> {
+        panic!("a branch with red tests must never reach land()")
+    }
+}
+
+/// **Negative control, happy path.** Once the gate has landed, its `live/gates/`
+/// entry must be gone — a gate that leaves its file behind shows a quark gating
+/// forever, exactly the lie `Activity::is_fresh` exists to bound at 120s, which is
+/// still a lie for 120s. Uses `SlowGreenLandingRunner`, not the instant
+/// `GreenLandingRunner` — a mutation that deleted the cleanup call still passed
+/// against the instant runner, because the heartbeat's first publish never got
+/// scheduled before the guard dropped. The delay is what makes this test load-bearing.
+#[tokio::test]
+async fn a_finished_gate_leaves_no_live_file() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w write w.txt".into() }),
+    )
+    .unwrap();
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("orch"), Flavor::Orchestrator, "ok")),
+            Box::new(ReportingWriter { id: QuarkId::new("w"), file: "w.txt", reply: "@orchestrator done" }),
+        ],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(SlowGreenLandingRunner(std::time::Duration::from_millis(200))));
+
+    engine.run_until_quiesce().await.unwrap();
+
+    let gates_dir = hadron_lattice::live::gates_dir(&field);
+    assert!(
+        hadron_lattice::live::gates(&gates_dir, chrono::Utc::now()).is_empty(),
+        "a landed gate left its live file behind"
+    );
+}
+
+/// **Negative control, the error/blocked path** — not just the happy one. Red tests
+/// send the gate through `hand_back_to_quark` instead of `land`, and the heartbeat
+/// guard must clean up there too: it is a `Drop`, not an explicit call on the
+/// success branch alone. Slowed for the same reason as the happy-path test above.
+#[tokio::test]
+async fn a_blocked_gate_also_leaves_no_live_file() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w do the work".into() }),
+    )
+    .unwrap();
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(RecordingWriter { id: QuarkId::new("w"), turns: Arc::new(Mutex::new(vec![])), handoff: None })],
+        20,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(SlowRedTestRunner(std::time::Duration::from_millis(200))));
+
+    engine.run_until_quiesce().await.unwrap();
+
+    let gates_dir = hadron_lattice::live::gates_dir(&field);
+    assert!(
+        hadron_lattice::live::gates(&gates_dir, chrono::Utc::now()).is_empty(),
+        "a blocked/handed-back gate left its live file behind"
+    );
+}
+
 /// Records the order the gate calls the runner's steps in, and otherwise behaves
 /// exactly like `GreenLandingRunner` (real `sync`, real `land`).
 struct OrderRecordingRunner(Arc<Mutex<Vec<&'static str>>>);

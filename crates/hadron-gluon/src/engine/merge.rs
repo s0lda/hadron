@@ -132,6 +132,20 @@ impl super::Engine {
     /// the quark (Waiting on a human, or Blocked on red tests), in which case the
     /// caller must NOT append `Ground`.
     ///
+    /// **Wraps [`Engine::merge_gate_body`] with a live heartbeat.** Both call sites
+    /// (`run.rs` and `turn.rs::finish_turn`) go through this one function, so the
+    /// heartbeat can't drift between them — see the Flight Recorder plan's Task A1.
+    /// The `_heartbeat` guard's `Drop` clears the gate's `live/gates/` file and aborts
+    /// the republishing task on EVERY exit path of the body below, including the `?`
+    /// early-returns and the error path — there is no explicit cleanup call to forget.
+    pub(super) async fn merge_gate(&self, target: &QuarkId, t: &TurnTree) -> anyhow::Result<bool> {
+        let _heartbeat = self.start_gate_heartbeat(target, &t.wt.branch);
+        self.merge_gate_body(target, t).await
+    }
+
+    /// The decision + effects the gate actually performs. See [`Engine::merge_gate`]
+    /// for the heartbeat wrapper every caller goes through instead of this directly.
+    ///
     /// The DECISION is pure and lives in `hadron-gatekeeper` (that crate is
     /// side-effect-free by contract). Only the EFFECTS — `cargo test`, `git merge` —
     /// live here, behind the [`MergeRunner`](crate::merge::MergeRunner) seam.
@@ -140,7 +154,7 @@ impl super::Engine {
     /// the quark, surfaced by `gatekeeper::pending_permission`, rendered by the chamber
     /// the human already has, answered by the same `PermissionGrant`. No second
     /// approval mechanism.
-    pub(super) async fn merge_gate(&self, target: &QuarkId, t: &TurnTree) -> anyhow::Result<bool> {
+    async fn merge_gate_body(&self, target: &QuarkId, t: &TurnTree) -> anyhow::Result<bool> {
         use hadron_gatekeeper::{BlockReason, BranchState, MergeVerdict};
         let Some(runner) = &self.merge else { return Ok(false) };
         let Some(root) = &self.repo_root else { return Ok(false) };
@@ -434,6 +448,49 @@ impl super::Engine {
                 Ok(true)
             }
         }
+    }
+
+    /// Start republishing `Doing::Gating` to `live::gates_dir` every
+    /// [`GATE_HEARTBEAT_INTERVAL`] for as long as the returned guard lives. Keyed by
+    /// `branch`, never by `target` — see `live::gates_dir`'s own doc for why a gate
+    /// must not share a quark's `<id>.json`.
+    fn start_gate_heartbeat(&self, target: &QuarkId, branch: &str) -> GateHeartbeat {
+        let dir = hadron_lattice::live::gates_dir(&self.field_path);
+        let quark = target.clone();
+        let branch = branch.to_string();
+        let started = chrono::Utc::now();
+        let task_dir = dir.clone();
+        let task_branch = branch.clone();
+        let handle = tokio::spawn(async move {
+            loop {
+                let activity = hadron_lattice::Activity::gating(quark.clone(), &task_branch, started);
+                let _ = hadron_lattice::live::publish_gate(&task_dir, &task_branch, &activity);
+                tokio::time::sleep(GATE_HEARTBEAT_INTERVAL).await;
+            }
+        });
+        GateHeartbeat { dir, branch, handle }
+    }
+}
+
+/// Well inside `live::STALE_AFTER_SECS` (120s) — same reasoning as `run.rs`'s
+/// `until_silent` poll: a single publish would read as stale long before a gate
+/// bounded by `GATE_TEST_DEADLINE` finishes.
+const GATE_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// RAII guard for a running gate's heartbeat. Dropping it — on every return path of
+/// [`Engine::merge_gate_body`], `?` early-returns included — aborts the republishing
+/// task and removes the `live/gates/` file, so a gate never leaves behind a stale
+/// "still running" row.
+struct GateHeartbeat {
+    dir: std::path::PathBuf,
+    branch: String,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for GateHeartbeat {
+    fn drop(&mut self) {
+        self.handle.abort();
+        let _ = hadron_lattice::live::clear_gate(&self.dir, &self.branch);
     }
 }
 
