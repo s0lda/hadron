@@ -53,8 +53,17 @@ impl super::Chamber {
                     }))
             }));
 
+        let close_btn = div()
+            .id("inspector-close-btn")
+            .cursor_pointer()
+            .active(|s| s.opacity(0.6))
+            .child(Icon::new(IconName::PanelRightClose).small())
+            .on_click(
+                cx.listener(|this, _, window, cx| this.toggle_rail(Rail::Inspector, window, cx)),
+            );
+
         let header = h_flex()
-            .id("inspector-toggle")
+            .id("inspector-header")
             .w_full()
             .justify_between()
             .items_center()
@@ -63,11 +72,7 @@ impl super::Chamber {
             .text_sm()
             .text_color(theme::text_muted())
             .child(tabs)
-            .child(Icon::new(IconName::PanelRightClose).small())
-            .active(|s| s.opacity(0.6))
-            .on_click(
-                cx.listener(|this, _, window, cx| this.toggle_rail(Rail::Inspector, window, cx)),
-            );
+            .child(close_btn);
 
         let tab_start =
             std::env::var_os("HADRON_FRAME_TIMING").is_some().then(std::time::Instant::now);
