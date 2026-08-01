@@ -159,7 +159,7 @@ pub fn input_bg() -> Rgba {
     rgb(0x18181b) // zinc-900
 }
 pub fn popover() -> Rgba {
-    field_base() // flat #101010 field color for context menus (Jake's request)
+    rgb(0x1c1d22) // solid elevated surface tone for popovers, dropdowns and select menus
 }
 pub fn border() -> Rgba {
     rgb(0x3f3f46) // zinc-700
