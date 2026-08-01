@@ -124,18 +124,14 @@ impl StreamAccumulator {
                 // one throttle window before `live::clear`, which is precisely the
                 // "your stream still doesn't work" the human saw. What IS
                 // incremental is the step feed: `state:"ACTIVE"` tool steps naming
-                // `view_file`, `run_command`, … So the tool name (else the step
-                // type) becomes the status line, and that is what streams.
+                // `view_file`, `run_command`, … So the step's label (see
+                // `agy_step_label`) becomes the status line, and that is what streams.
                 let Some(step) = value.get("step_update") else { return false };
-                let label = step
-                    .get("tool_name")
-                    .and_then(Value::as_str)
-                    .or_else(|| step.get("step_type").and_then(Value::as_str));
-                let Some(label) = label else { return false };
+                let Some(label) = agy_step_label(step) else { return false };
                 if label == self.status {
                     return false; // the same step going ACTIVE → DONE says nothing new
                 }
-                self.status = label.to_string();
+                self.status = label;
                 true
             }
             Some("result") => {
@@ -176,6 +172,58 @@ impl StreamAccumulator {
         let message = self.final_text.or_else(|| (!self.draft.is_empty()).then_some(self.draft));
         (message, self.spend)
     }
+}
+
+/// The Live-card line for one agy `step_update`, or `None` when the step names
+/// no work worth showing.
+///
+/// A tool step also carries `tool_info.parameters` — captured live on
+/// 2026-08-01: `{"name":"run_command","parameters":{"CommandLine":"ls -la"}}`,
+/// `{"name":"view_file","parameters":{"AbsolutePath":"/tmp/x/a.txt"}}` — so the
+/// card can say `run_command: ls -la` rather than a bare tool name. The
+/// parameter KEY differs per tool, so the first usable string value is taken
+/// instead of a hardcoded key.
+fn agy_step_label(step: &Value) -> Option<String> {
+    if let Some(tool) = step.get("tool_name").and_then(Value::as_str) {
+        let arg = step
+            .get("tool_info")
+            .and_then(|info| info.get("parameters"))
+            .and_then(Value::as_object)
+            .and_then(|params| params.values().filter_map(Value::as_str).find_map(short_arg));
+        return Some(match arg {
+            Some(arg) => format!("{tool}: {arg}"),
+            None => tool.to_string(),
+        });
+    }
+    match step.get("step_type").and_then(Value::as_str)? {
+        // Neither names any work: `checkpoint` and `unknown` were 2 of the 17
+        // steps in the live capture and say nothing a human can act on.
+        "checkpoint" | "unknown" => None,
+        "agent_response" => Some("thinking".to_string()),
+        "user_input" => Some("reading the message".to_string()),
+        other => Some(other.replace('_', " ")),
+    }
+}
+
+/// One short line for a tool parameter. `None` for anything that is not a
+/// glanceable label: empty, or long enough to be a file body rather than a path
+/// (an `edit_file`-shaped tool passes both, and the map is not ordered).
+fn short_arg(value: &str) -> Option<String> {
+    const MAX_SOURCE: usize = 200;
+    const MAX_SHOWN: usize = 48;
+    if value.len() > MAX_SOURCE {
+        return None;
+    }
+    let line = value.lines().next().unwrap_or_default().trim();
+    // An absolute path is mostly directory the human already knows.
+    let short = line.rsplit('/').next().filter(|_| line.starts_with('/')).unwrap_or(line);
+    if short.is_empty() {
+        return None;
+    }
+    Some(match short.char_indices().nth(MAX_SHOWN) {
+        Some((cut, _)) => format!("{}…", &short[..cut]),
+        None => short.to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -277,6 +325,60 @@ mod tests {
             r#"{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"Hello! Greetings user!"}}"#
         ));
         assert_eq!(acc.draft(), "Hello! Greetings user!");
+    }
+
+    /// **What the human saw next**: the card moved, but it read `user_input`,
+    /// `agent_response` — agy's own slugs, naming no work. Captured verbatim from
+    /// a second live run on 2026-08-01, this time one that used tools: every tool
+    /// step also carries `tool_info.parameters`, so the card can name the file or
+    /// the command. `checkpoint` and `unknown` steps name nothing and are dropped.
+    #[test]
+    fn a_tool_step_is_labelled_with_its_file_or_command_and_noise_steps_are_dropped() {
+        let mut acc = agy();
+        let mut statuses: Vec<String> = Vec::new();
+        for line in [
+            r#"{"event":"step_update","step_update":{"step_index":0,"state":"DONE","step_type":"user_input"}}"#,
+            r#"{"event":"step_update","step_update":{"step_index":1,"state":"DONE","step_type":"unknown"}}"#,
+            r#"{"event":"step_update","step_update":{"step_index":2,"state":"DONE","step_type":"agent_response"}}"#,
+            r#"{"event":"step_update","step_update":{"step_index":3,"state":"ACTIVE","step_type":"tool","tool_name":"view_file","tool_info":{"name":"view_file","parameters":{"AbsolutePath":"/tmp/agy-stream-probe/a.txt"}}}}"#,
+            r#"{"event":"step_update","step_update":{"step_index":4,"state":"DONE","step_type":"checkpoint"}}"#,
+            r#"{"event":"step_update","step_update":{"step_index":6,"state":"ACTIVE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"ls -la"}}}}"#,
+        ] {
+            if acc.on_line(line) {
+                statuses.push(acc.status().to_string());
+            }
+        }
+
+        assert_eq!(
+            statuses,
+            [
+                "reading the message",
+                "thinking",
+                "view_file: a.txt",
+                "run_command: ls -la"
+            ],
+            "the two work-free steps (`unknown`, `checkpoint`) publish nothing, and a tool step \
+             names its argument — the absolute path shortened to its basename"
+        );
+    }
+
+    /// A parameter that is a file BODY rather than a path must never reach the
+    /// card: the parameter map is unordered, so an edit-shaped tool would
+    /// otherwise have a coin-flip chance of pasting a whole file into it.
+    #[test]
+    fn an_oversized_or_absent_tool_parameter_leaves_the_bare_tool_name() {
+        let body = "x".repeat(500);
+        let mut acc = agy();
+        assert!(acc.on_line(&format!(
+            r#"{{"event":"step_update","step_update":{{"step_type":"tool","tool_name":"edit_file","tool_info":{{"parameters":{{"Content":"{body}"}}}}}}}}"#
+        )));
+        assert_eq!(acc.status(), "edit_file", "a 500-char body is not a label");
+
+        let mut acc = agy();
+        assert!(acc.on_line(
+            r#"{"event":"step_update","step_update":{"step_type":"tool","tool_name":"list_dir"}}"#
+        ));
+        assert_eq!(acc.status(), "list_dir", "no tool_info at all is still a usable label");
     }
 
     #[test]
