@@ -603,6 +603,42 @@ mod tests {
         assert!(!err.contains("scheme is not http"), "no TLS backend compiled in: {err}");
     }
 
+    #[test]
+    fn an_lm_studio_base_missing_its_v1_suffix_is_anchored_to_the_openai_surface() {
+        // Jake typed `http://10.5.0.2:1234` — the host alone. LM Studio's OpenAI
+        // surface is under `/v1`, so without this the GET went to `/models`.
+        let bare = HttpTarget {
+            vendor: HttpVendor::LmStudio,
+            base_url: "http://10.5.0.2:1234".to_string(),
+            api_key: None,
+        };
+        assert_eq!(bare.url("/models"), "http://10.5.0.2:1234/v1/models");
+        let already = HttpTarget { base_url: "http://10.5.0.2:1234/v1/".to_string(), ..bare.clone() };
+        assert_eq!(already.url("/models"), "http://10.5.0.2:1234/v1/models");
+        // A cloud endpoint's prefix differs per provider, so it is never rewritten.
+        let cloud = HttpTarget { vendor: HttpVendor::OpenAiCompatible, ..bare };
+        assert_eq!(cloud.url("/models"), "http://10.5.0.2:1234/models");
+    }
+
+    #[test]
+    fn an_error_body_answered_with_200_is_a_failure_not_an_empty_model_list() {
+        // Measured against the real LM Studio: a wrong path answers 200 with an
+        // error body, which read as "connected, 0 models" — a green light on a
+        // request that failed.
+        let base = serve_once("200 OK", "{\"error\":\"Unexpected endpoint or method. (GET /models)\"}");
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let err = format!("{:#}", fetch_models(&target).unwrap_err());
+        assert!(err.contains("Unexpected endpoint"), "the server's own reason must survive: {err}");
+    }
+
+    #[test]
+    fn an_openai_shaped_error_object_is_reported_by_its_message() {
+        let base = serve_once("200 OK", "{\"error\":{\"message\":\"Invalid API key\",\"code\":401}}");
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let err = format!("{:#}", fetch_models(&target).unwrap_err());
+        assert!(err.contains("Invalid API key"), "expected the nested message: {err}");
+    }
+
     #[tokio::test]
     async fn stream_chat_accumulates_ollama_ndjson_deltas() {
         let base = serve_once(
@@ -665,8 +701,41 @@ mod tests {
     async fn stream_chat_reaches_the_real_local_ollama() {
         let target =
             HttpTarget { vendor: HttpVendor::Ollama, base_url: HttpVendor::Ollama.default_base_url().to_string(), api_key: None };
+        // Ask the server which model it has rather than naming one: the box's
+        // Ollama store emptied mid-project and this test hard-coded `gemma3:27b`,
+        // so it failed for a missing model rather than for anything it tests.
+        let listed = {
+            let t = target.clone();
+            tokio::task::spawn_blocking(move || fetch_models(&t)).await.unwrap().unwrap()
+        };
+        let model = listed.first().expect("the live Ollama server has no models pulled").id.clone();
         let mut deltas = 0;
-        let full = stream_chat(&target, "gemma3:27b", "Reply with exactly one word: pong", |_| deltas += 1)
+        let full = stream_chat(&target, &model, "Reply with exactly one word: pong", |_| deltas += 1)
+            .await
+            .unwrap();
+        assert!(deltas > 0, "expected at least one streamed delta");
+        assert!(full.to_lowercase().contains("pong"), "got: {full:?}");
+    }
+
+    /// Not a fixture: the LM Studio server on the Windows side of this box, reached
+    /// from WSL at the address the human's own seat uses — deliberately written
+    /// WITHOUT the `/v1` suffix, so a pass proves the normalisation too.
+    #[test]
+    #[ignore = "hits the real LM Studio server on the Windows host — run manually with `--ignored`"]
+    fn fetch_models_reaches_the_real_lm_studio() {
+        let target =
+            HttpTarget { vendor: HttpVendor::LmStudio, base_url: "http://10.5.0.2:1234".to_string(), api_key: None };
+        let models = fetch_models(&target).unwrap();
+        assert!(!models.is_empty(), "expected at least one model from the live LM Studio server");
+    }
+
+    #[tokio::test]
+    #[ignore = "hits the real LM Studio server on the Windows host — run manually with `--ignored`"]
+    async fn stream_chat_reaches_the_real_lm_studio() {
+        let target =
+            HttpTarget { vendor: HttpVendor::LmStudio, base_url: "http://10.5.0.2:1234".to_string(), api_key: None };
+        let mut deltas = 0;
+        let full = stream_chat(&target, "google/gemma-4-12b-qat", "Reply with exactly one word: pong", |_| deltas += 1)
             .await
             .unwrap();
         assert!(deltas > 0, "expected at least one streamed delta");
