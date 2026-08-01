@@ -7,7 +7,9 @@ use super::*;
 
 mod titlebar;
 mod roster;
-mod chat;
+// `pub(crate)` only so `widgets::task_row` can reuse `chat::format_duration` rather
+// than growing a second copy of it.
+pub(crate) mod chat;
 mod terminal;
 mod git;
 mod stats;
