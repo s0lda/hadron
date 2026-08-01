@@ -3056,14 +3056,13 @@ async fn a_busy_cli_backed_orchestrator_can_take_a_second_turn() {
             } else if self.first_turn_running.load(Ordering::SeqCst) {
                 self.second_call_overlapped_first.store(true, Ordering::SeqCst);
             }
-            Ok(crate::adapter::runner::CliResult { stdout: "done".into(), exit: 0 })
+            Ok(crate::adapter::runner::CliResult { stdout: "done".into(), exit: 0, usage: None })
         }
     }
 
     let dir = tempdir().unwrap();
     let path = dir.path().join("field.jsonl");
-    // Quark-authored, same reason as the mock-quark test above: "everything else"
-    // (Task 6 Step 5) routes to Work, leaving the chat lane free for the human ask.
+
     append_event(
         &path,
         &Event::new(
@@ -3153,7 +3152,7 @@ async fn a_reseat_retains_the_orchestrators_chat_lane() {
             } else if self.first_turn_running.load(Ordering::SeqCst) {
                 self.second_call_overlapped_first.store(true, Ordering::SeqCst);
             }
-            Ok(crate::adapter::runner::CliResult { stdout: "done".into(), exit: 0 })
+            Ok(crate::adapter::runner::CliResult { stdout: "done".into(), exit: 0, usage: None })
         }
     }
 
