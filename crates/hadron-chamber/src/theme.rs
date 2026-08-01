@@ -159,7 +159,7 @@ pub fn input_bg() -> Rgba {
     rgb(0x18181b) // zinc-900
 }
 pub fn popover() -> Rgba {
-    rgb(0x1c1d22) // elevated solid dark surface tone so select dropdowns and popover menus stand out clearly
+    rgb(0x22242b) // elevated solid dark surface tone so select dropdowns and popover menus stand out clearly
 }
 pub fn border() -> Rgba {
     rgb(0x3f3f46) // zinc-700
