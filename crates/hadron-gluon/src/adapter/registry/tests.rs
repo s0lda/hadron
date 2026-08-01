@@ -488,6 +488,90 @@ async fn build_seat_watched_wires_a_streaming_cli_seat_and_leaves_a_plain_one_al
     );
 }
 
+/// A local server that advertises a `Content-Length` it never delivers: it writes
+/// `body` and then hangs up. `reqwest` therefore fails the response body PART WAY
+/// THROUGH, which is the whole point — it is the only way to observe the live file
+/// while a turn is still in flight without a sleep or a poll loop, since
+/// `LocalQuark::excite` clears the file on its way out of a turn that succeeds.
+/// `adapter::local`'s own `serve_once` completes its body, so it cannot prove this.
+fn serve_truncated(body: &'static str) -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\n\r\n",
+                body.len() + 4096
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+/// **The HTTP half of `build_seat_watched`.** `LocalQuark::watching` was fully
+/// implemented and had NO production caller — `build_seat_watched` wired ACP and
+/// streaming-CLI seats and dropped `Transport::Http` through to `build_seat`, so
+/// an Ollama/OpenRouter quark published nothing and the chamber's Live card showed
+/// `working…` for the entire turn. A watched HTTP seat must publish its draft into
+/// `live_dir` as the deltas arrive.
+#[tokio::test]
+async fn build_seat_watched_wires_an_http_seat_to_the_live_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = serve_truncated("{\"message\":{\"role\":\"assistant\",\"content\":\"partial draft\"},\"done\":false}\n");
+    let s = Seat {
+        transport: Transport::Http,
+        vendor: "ollama".to_string(),
+        http_base_url: Some(base),
+        ..seat("http-ollama", "ollama")
+    };
+
+    let mut q = build_seat_watched(&s, dir.path(), &store()).unwrap();
+    // The truncated body fails the turn AFTER the first delta was published, and
+    // `excite`'s `?` short-circuits before its `live::clear` — so what is left on
+    // disk is exactly what the chamber would have been rendering mid-turn.
+    let err = q.excite(http_turn()).await.expect_err("a truncated response body must fail the turn");
+    let seen = hadron_lattice::live::read(dir.path(), &QuarkId::new("http-ollama"), chrono::Utc::now())
+        .unwrap_or_else(|| panic!("an http seat published nothing mid-turn (turn failed with: {err})"));
+    assert!(
+        format!("{seen:?}").contains("partial draft"),
+        "the published activity must carry the streamed draft, got {seen:?}"
+    );
+}
+
+/// A `Projection` for the HTTP wiring test — every field at its inert value, so
+/// the assertion is about `build_seat_watched`'s wiring and nothing else.
+fn http_turn() -> hadron_lattice::Projection {
+    hadron_lattice::Projection {
+        isolated: true,
+        task: "say hi".into(),
+        invariants: String::new(),
+        available_invariants: vec![],
+        nucleus_digest: String::new(),
+        live_activities: vec![],
+        roster: vec![],
+        field_window: vec![],
+        field_truncated: false,
+        nucleus_index: String::new(),
+        nucleus_index_path: std::path::PathBuf::new(),
+        nucleus_index_truncated: false,
+        nucleus_index_budget_bytes: hadron_lattice::DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES,
+        nucleus_notes_dir: std::path::PathBuf::new(),
+        git_diff: String::new(),
+        cwd: std::env::temp_dir(),
+        mode: hadron_lattice::Mode::default(),
+        role_body: None,
+        active_skill: None,
+        named_specifically: true,
+        has_forge_tools: false,
+    }
+}
+
 /// The command allow/deny carry path's build-time seam: a seat's `commands`
 /// must reach the quark `build_seat` constructs, the same way `roles`/
 /// `exclusive` already do (see `build_seat_carries_the_seats_roles_onto_the_quark`).

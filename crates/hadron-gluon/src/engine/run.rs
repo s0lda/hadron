@@ -21,8 +21,8 @@ use super::*;
 /// watchdog can see.
 ///
 /// **The start of the turn counts as a sign of life.** A transport that publishes
-/// nothing at all — every CLI seat, since `build_seat_watched` only calls `.watching()`
-/// on the ACP branch — therefore expires at exactly `deadline`, bit-identical to the
+/// nothing at all — a CLI seat whose `CliSpec.stream` is `None`, the only shape
+/// `build_seat_watched` leaves unwatched — therefore expires at exactly `deadline`, bit-identical to the
 /// flat timeout this replaced. The change can only ever *extend* a turn, never shorten
 /// one, which is what makes it safe to land on the dispatch path.
 ///

@@ -102,8 +102,8 @@ const FIELD_POLL: std::time::Duration = std::time::Duration::from_millis(150);
 /// the longest healthy turn and tight enough to notice a dead one.
 ///
 /// **Two things this deliberately does not do.** A quark whose transport publishes no
-/// activity at all — every CLI seat, since `build_seat_watched` only calls
-/// `.watching()` on the ACP branch — still expires at exactly this duration, identical
+/// activity at all — a CLI seat whose `CliSpec.stream` is `None`, the only shape
+/// `build_seat_watched` leaves unwatched — still expires at exactly this duration, identical
 /// to the old behaviour; the change can only extend a turn, never shorten one. And a
 /// turn that keeps publishing forever is never reaped: a quark in a visible loop is a
 /// human's `/clear`, not the watchdog's business. Override per-engine with
