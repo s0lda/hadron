@@ -212,6 +212,27 @@ impl Chamber {
                     } else if let Err(e) = std::fs::write(&self.path, "") {
                         eprintln!("chamber: failed to clear field.jsonl: {e}");
                     } else {
+                        // Re-arm the human's standing permission mode. The effective mode
+                        // is folded from the field's `ModeSet` events, and the truncation
+                        // above just deleted every one of them — so without this a `/clear`
+                        // silently dropped the swarm back to `Mode::Ask` however the human
+                        // had it set, every single session. Seeded FIRST, so it is the base
+                        // the reboots below land on.
+                        //
+                        // Only when it differs from `Mode::default()`: an empty field
+                        // already resolves to that, so seeding it would write a row that
+                        // changes nothing, and `Mode::default()` stays the one definition
+                        // of the floor.
+                        if self.prefs.default_mode != hadron_lattice::Mode::default() {
+                            let seed = Event::new(
+                                Actor::Human,
+                                None,
+                                Kind::ModeSet { mode: self.prefs.default_mode },
+                            );
+                            if let Err(e) = io::append_event(&self.path, &seed) {
+                                eprintln!("chamber: failed to seed the default mode: {e}");
+                            }
+                        }
                         // The archived agents still hold their pre-clear resident ACP
                         // sessions. Restart every resident quark so it re-boots into the
                         // fresh (empty) field instead of carrying stale context (see

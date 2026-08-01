@@ -319,6 +319,55 @@ pub(super) fn active_quarks(
         .collect()
 }
 
+/// How much of a streaming reply the draft bubble shows, in **characters**.
+///
+/// The bubble is pinned above the input, so it cannot be allowed to grow without
+/// bound and push the message box off the window. Characters, not bytes — a byte cut
+/// lands mid-codepoint and panics the renderer (`Char Boundary Safety`).
+pub(super) const DRAFT_TAIL_CHARS: usize = 1200;
+
+/// Every quark whose reply is currently streaming in: `(quark id, text so far)`,
+/// from the same live files [`active_quarks`] reads.
+///
+/// The draft rides `Activity::full`, which only [`hadron_lattice::live::Activity::speaking`]
+/// sets — so a thought, a tool call and a plan step all correctly yield nothing here
+/// and stay in the Live card, which is the whole point of the split: **messages to the
+/// chat, tool use to the live view**.
+///
+/// Shows the **tail** when a reply outgrows [`DRAFT_TAIL_CHARS`]: text is arriving at
+/// the end, so the end is what a human is reading. `live` is injected for the same
+/// reason [`active_quarks`] injects it — this stays a pure function, testable without
+/// touching disk.
+pub(super) fn streaming_drafts(
+    roster: &[RosterRow],
+    live: impl Fn(&str) -> Option<hadron_lattice::live::Activity>,
+) -> Vec<(String, String)> {
+    roster
+        .iter()
+        .filter(|r| r.adopted && r.enabled)
+        .filter_map(|r| {
+            let act = live(&r.id)?;
+            let full = act.full?;
+            let trimmed = full.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            Some((act.quark.as_str().to_string(), draft_tail(trimmed)))
+        })
+        .collect()
+}
+
+/// The last [`DRAFT_TAIL_CHARS`] characters of `text`, marked with a leading ellipsis
+/// when anything was dropped. Counts characters, never bytes.
+fn draft_tail(text: &str) -> String {
+    let count = text.chars().count();
+    if count <= DRAFT_TAIL_CHARS {
+        return text.to_string();
+    }
+    let tail: String = text.chars().skip(count - DRAFT_TAIL_CHARS).collect();
+    format!("…{tail}")
+}
+
 /// One roster entry, styled as a presence list-item: the resolved avatar with a
 /// status [`Badge`] dot, a display name, and a one-word presence subtitle, with a
 /// tooltip on hover.
@@ -361,8 +410,15 @@ pub(super) fn roster_row(
     };
 
     let has_activity = activity.is_some();
+    // A streaming reply publishes an EMPTY detail on purpose (the text belongs in the
+    // chat bubble, not here), so the label stands alone rather than trailing a colon
+    // over nothing: "speaking", not "speaking: ".
     let detail_1: SharedString = if let Some(act) = activity {
-        format!("{}: {}", act.doing.label(), act.detail).into()
+        if act.detail.is_empty() {
+            act.doing.label().into()
+        } else {
+            format!("{}: {}", act.doing.label(), act.detail).into()
+        }
     } else if needs_activity_placeholder(effective_state, r.adopted, r.enabled, has_activity) {
         "working…".into()
     } else if r.vendor.is_empty() && r.model_label().is_empty() {
@@ -777,6 +833,12 @@ pub(super) fn effort_tag(effort: &Option<String>) -> gpui::AnyElement {
         .child(div().text_xs().child(label))
         .into_any_element()
 }
+
+/// The permission-mode ladder in ascending order of delegated authority, for a UI
+/// that offers all four at once (the Settings "Default permission mode" picker)
+/// rather than cycling. [`next_global_mode`] walks the same order as a cycle and
+/// stays separate: one answers "what comes next", this one answers "what are they".
+pub(super) const MODE_LADDER: [Mode; 4] = [Mode::Ask, Mode::Write, Mode::Auto, Mode::Bypass];
 
 /// The short badge label for a permission mode, e.g. `Mode::Bypass` → `"BYPASS"`.
 /// One source of truth for the ladder's labels, shared by the roster tag and the
@@ -1201,5 +1263,88 @@ mod tests {
             classify_pick(Some(Some(vec![PathBuf::from("/home/jake/dev")]))),
             Picked::Path("/home/jake/dev".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod draft_tests {
+    use super::*;
+    use hadron_lattice::live::Activity;
+    use hadron_lattice::{Doing, QuarkId};
+
+    fn row(id: &str) -> RosterRow {
+        RosterRow {
+            id: id.to_string(),
+            display_name: None,
+            state: QuarkState::Excited,
+            mode: hadron_lattice::Mode::Ask,
+            mode_is_override: false,
+            vendor: "anthropic".to_string(),
+            model: "claude-opus-5".to_string(),
+            flavor: Some(hadron_lattice::Flavor::Worker),
+            transport: hadron_lattice::Transport::Acp,
+            effort: None,
+            enabled: true,
+            adopted: true,
+            tokens: 0,
+            unknown_turns: 0,
+        }
+    }
+
+    /// **The split Jake asked for.** A streaming reply becomes a chat draft; a thought,
+    /// a tool call and a plan step stay in the Live card and produce no draft at all.
+    /// `Activity::full` is what separates them, and only `Activity::speaking` sets it.
+    #[test]
+    fn only_a_speaking_activity_becomes_a_chat_draft() {
+        let roster = vec![row("opus")];
+        let speaking = |_: &str| Some(Activity::speaking(QuarkId::new("opus"), "Half a sentence"));
+        assert_eq!(
+            streaming_drafts(&roster, speaking),
+            vec![("opus".to_string(), "Half a sentence".to_string())]
+        );
+
+        for doing in [Doing::Thinking, Doing::Working, Doing::Planning] {
+            let tool = |_: &str| Some(Activity::new(QuarkId::new("opus"), doing, "Editing engine.rs"));
+            assert!(
+                streaming_drafts(&roster, tool).is_empty(),
+                "{doing:?} belongs in the Live card, not the chat"
+            );
+        }
+    }
+
+    /// The Live card and the chat draft read the SAME file and must not both print the
+    /// message: a speaking activity carries an empty `detail`, so the card falls back
+    /// to the `speaking` label while the text goes to the bubble.
+    #[test]
+    fn the_live_card_shows_the_label_not_the_streaming_text() {
+        let roster = vec![row("opus")];
+        let speaking = |_: &str| Some(Activity::speaking(QuarkId::new("opus"), "Half a sentence"));
+        assert_eq!(
+            active_quarks(&roster, speaking),
+            vec![("opus".to_string(), "speaking".to_string())]
+        );
+    }
+
+    /// The bubble is pinned above the input, so an unbounded reply would push the
+    /// message box off the window. Cut to the TAIL — text arrives at the end — and cut
+    /// on a character boundary, never a byte one (`Char Boundary Safety`).
+    #[test]
+    fn a_long_draft_is_cut_to_its_tail_on_a_character_boundary() {
+        let roster = vec![row("opus")];
+        let body = "🚀".repeat(DRAFT_TAIL_CHARS * 2);
+        let long = move |_: &str| Some(Activity::speaking(QuarkId::new("opus"), &body));
+        let (_, text) = streaming_drafts(&roster, long).pop().expect("one draft");
+        assert_eq!(text.chars().count(), DRAFT_TAIL_CHARS + 1, "the tail plus its ellipsis");
+        assert!(text.starts_with('…'), "the cut is marked: {}", &text[..8]);
+        assert!(text.ends_with('🚀'), "the END is what is kept");
+    }
+
+    /// An agent that has emitted only whitespace has said nothing yet — an empty
+    /// bordered card flashing above the input is worse than no card.
+    #[test]
+    fn a_blank_draft_renders_nothing() {
+        let roster = vec![row("opus")];
+        let blank = |_: &str| Some(Activity::speaking(QuarkId::new("opus"), "  \n\n "));
+        assert!(streaming_drafts(&roster, blank).is_empty());
     }
 }

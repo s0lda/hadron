@@ -70,6 +70,20 @@ pub struct Activity {
     pub doing: Doing,
     /// A short human-readable line: the tool's title, or the tail of the thought.
     pub detail: String,
+    /// The **message so far**, uncapped and with its newlines intact — set only by
+    /// [`Activity::speaking`], `None` for every other kind of activity.
+    ///
+    /// This is the streaming reply, and it is deliberately NOT `detail`: `detail` is
+    /// one truncated line for the Live card, while a chat bubble needs the whole
+    /// markdown. It rides this file rather than `field.jsonl` because the field is
+    /// what `router::next_pending` dispatches from — a partial message whose text
+    /// happens to begin a line with `@peer` would excite that peer mid-turn and again
+    /// when the real message lands. A live file is volatile, unrouted, and already
+    /// cleared when the turn ends, which is exactly the lifetime a draft wants.
+    ///
+    /// `serde(default)` so a live file written by an older build still parses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full: Option<String>,
 }
 
 impl Activity {
@@ -81,6 +95,25 @@ impl Activity {
             at: Utc::now(),
             doing,
             detail: one_line(detail),
+            full: None,
+        }
+    }
+
+    /// The reply as it streams in: [`Doing::Speaking`] carrying `message` whole in
+    /// [`Activity::full`].
+    ///
+    /// `detail` is left EMPTY on purpose. A reader that shows `detail` is the Live
+    /// card, whose job is what the quark is *doing* — the message itself belongs in
+    /// the chat, and duplicating it into both would say the same thing twice. Empty
+    /// already means "show the `doing` label" to every existing reader, so the Live
+    /// card reads `speaking` and needs no special case.
+    pub fn speaking(quark: QuarkId, message: &str) -> Self {
+        Activity {
+            quark,
+            at: Utc::now(),
+            doing: Doing::Speaking,
+            detail: String::new(),
+            full: Some(message.to_string()),
         }
     }
 
@@ -231,5 +264,35 @@ mod tests {
     fn a_multi_line_detail_is_flattened() {
         let a = Activity::new(QuarkId::new("q"), Doing::Thinking, "one\n\ntwo\tthree  ");
         assert_eq!(a.detail, "one two three");
+    }
+
+    /// A streaming reply keeps its newlines and its length — it is rendered as a
+    /// markdown chat bubble, not as the Live card's one-line status. `detail` stays
+    /// empty so the Live card falls back to the `speaking` label instead of printing
+    /// the same text a second time.
+    #[test]
+    fn a_speaking_draft_carries_the_whole_message_and_no_detail() {
+        let body = "First paragraph.\n\n@peer second paragraph, ".to_string()
+            + &"long ".repeat(DETAIL_CHARS);
+        let a = Activity::speaking(QuarkId::new("q"), &body);
+        assert_eq!(a.doing, Doing::Speaking);
+        assert_eq!(a.detail, "", "the message belongs in the chat, not in the Live card");
+        assert_eq!(a.full.as_deref(), Some(body.as_str()), "uncapped and unflattened");
+    }
+
+    /// The draft rides the SAME file, so it inherits the staleness guard and the
+    /// atomic write — and a live file written by a build that predates `full` must
+    /// still parse rather than reading as an idle quark.
+    #[test]
+    fn a_draft_round_trips_and_an_older_file_without_full_still_parses() {
+        let dir = tmp();
+        let id = QuarkId::new("opus");
+        publish(&dir, &Activity::speaking(id.clone(), "half a sen")).unwrap();
+        let back = read(&dir, &id, Utc::now()).expect("just published");
+        assert_eq!(back.full.as_deref(), Some("half a sen"));
+
+        let legacy = r#"{"quark":"opus","at":"2026-08-01T00:00:00Z","doing":"working","detail":"Read x.rs"}"#;
+        let parsed: Activity = serde_json::from_str(legacy).expect("an older live file still parses");
+        assert_eq!(parsed.full, None);
     }
 }

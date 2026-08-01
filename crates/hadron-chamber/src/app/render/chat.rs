@@ -12,6 +12,63 @@ impl super::Chamber {
             hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(id), chrono::Utc::now())
         });
 
+        // The reply as it arrives. A sibling of the Live card rather than a row in the
+        // message list: `chat_list_state`'s count is derived from `chat_message_ixs`
+        // (see the `A Field Swap Resets Every List Cache` invariant), and a draft is
+        // not a field event — inventing a list row for one would put a third,
+        // untracked writer on caches that only `resync_lists_to_projection` may rebuild.
+        // Pinned above the input, so it is where the human is already looking.
+        let drafts = streaming_drafts(&self.view.roster, |id| {
+            hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(id), chrono::Utc::now())
+        });
+        let draft_card = (!drafts.is_empty()).then(|| {
+            v_flex().w_full().gap_2().mb_2().children(drafts.into_iter().map(|(quark_id_str, text)| {
+                let identity = self.resolve_identity(&quark_id_str);
+                v_flex()
+                    .w_full()
+                    .overflow_hidden()
+                    .gap_1()
+                    .px_3()
+                    .py_2()
+                    .rounded_lg()
+                    .bg(theme::glass_surface())
+                    .border_1()
+                    .border_color(identity.color.opacity(0.5))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(identity.color)
+                                    .child(identity.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child("writing\u{2026}"),
+                            ),
+                    )
+                    // Plain text, NOT markdown: this element re-renders on every
+                    // publish while the reply streams, and `parsed_markdown` is keyed
+                    // by message identity for rows that do not change. Re-parsing a
+                    // growing document several times a second on a software renderer
+                    // is the cost `a-render-fn-runs-on-every-hover` already charged
+                    // this codebase once. The finished message renders as markdown a
+                    // moment later, in the list, where it belongs.
+                    .child(
+                        div()
+                            .w_full()
+                            .text_sm()
+                            .text_color(theme::text_secondary())
+                            .child(text),
+                    )
+            }))
+        });
+
         let live_card = (!active.is_empty()).then(|| {
             v_flex()
                 .w_full()
@@ -149,6 +206,7 @@ impl super::Chamber {
                     .when(self.completion.is_some(), |el| {
                         el.child(self.completion_card_overlay(cx))
                     })
+                    .when_some(draft_card, |el, card| el.child(card))
                     .when_some(live_card, |el, card| el.child(card))
                     .child({
                         let is_focused = self.input.read(cx).focus_handle(cx).is_focused(window);

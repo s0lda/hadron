@@ -69,7 +69,7 @@ use widgets::{
     fallback_pick_image, format_num, frame_corner_radii, kind_icon, kv_row, log_row,
     markdown_style, menu_button, mode_color, mode_hint, mode_label, mode_tag, next_global_mode,
     next_mode, panel_eyebrow, progress_meter, roster_row, session_card, settings_field,
-    settings_field_stacked, stat_tile, task_row, text_button,
+    settings_field_stacked, stat_tile, streaming_drafts, task_row, text_button,
 };
 
 mod actions;

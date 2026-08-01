@@ -70,6 +70,19 @@ pub struct ChamberPrefs {
     /// and silently reset the human's layout, widths and every quark identity.
     #[serde(default, deserialize_with = "lenient_editor")]
     pub editor: crate::sys::EditorChoice,
+    /// The global permission mode a **fresh field** starts on.
+    ///
+    /// The effective mode is folded from the field's `ModeSet` events
+    /// (`hadron_gatekeeper::matrix::global_mode`) and that stays the one source of
+    /// truth — but `/clear` truncates `field.jsonl`, which took every `ModeSet` with
+    /// it and dropped the swarm back to `Mode::Ask` on every new session. This is the
+    /// standing preference `/clear` re-seeds from, so a human who works in `Auto` does
+    /// not re-arm it by hand each time.
+    ///
+    /// Defaults to `Mode::Ask` — `Mode::default()` — so an existing `chamber.json`
+    /// with no such key behaves exactly as it always has.
+    #[serde(default)]
+    pub default_mode: hadron_lattice::Mode,
 }
 
 /// An `editor` value we do not understand resolves to the default instead of
@@ -119,6 +132,7 @@ impl Default for ChamberPrefs {
             close_gluon_on_exit: default_true(),
             roster_width: default_roster_width(),
             inspector_width: default_inspector_width(),
+            default_mode: hadron_lattice::Mode::default(),
             window_bounds: None,
             human: Identity::default(),
             quarks: BTreeMap::new(),
@@ -198,6 +212,7 @@ mod tests {
             close_gluon_on_exit: false,
             roster_width: 180.5,
             inspector_width: 320.0,
+            default_mode: hadron_lattice::Mode::Auto,
             window_bounds: None,
             human: Identity {
                 display_name: Some("Jake".into()),
