@@ -129,9 +129,12 @@ impl super::Chamber {
             SettingsTarget::Providers => self.providers_view(cx).into_any_element(),
             _ => {
             let is_quark = matches!(target, SettingsTarget::Quark(_));
-            // ACP quarks get a live model dropdown (re-probed from the agent) in place of
-            // the free-text Model box; everything else keeps the text field.
+            // ACP quarks get a live model dropdown (re-probed from the agent), and Http
+            // quarks (Ollama/LM Studio/cloud) get a live searchable model list
+            // (re-probed from the endpoint), in place of the free-text Model box;
+            // everything else keeps the text field.
             let acp_quark = matches!(&target, SettingsTarget::Quark(id) if self.is_acp_quark(id));
+            let http_quark = matches!(&target, SettingsTarget::Quark(id) if self.is_http_quark(id));
             v_flex()
                 .gap_4()
                 .child(settings_field("Preview", None, preview_row.into_any_element()))
@@ -154,6 +157,8 @@ impl super::Chamber {
                 .when(is_quark, |v| {
                     let model_field = if acp_quark {
                         self.acp_model_select(cx)
+                    } else if http_quark {
+                        self.http_model_select(cx)
                     } else {
                         Input::new(&self.settings_model).w_full().into_any_element()
                     };

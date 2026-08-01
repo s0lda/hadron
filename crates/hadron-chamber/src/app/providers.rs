@@ -219,6 +219,24 @@ pub(super) enum AcpModelState {
     Unavailable(String),
 }
 
+/// Backs the searchable model list in a quark's Settings for a `Transport::Http`
+/// seat — mirrors [`AcpModelProbe`], re-probed each time such a quark is opened
+/// (see `start_http_model_probe`) and keyed by `id` the same way.
+pub(super) struct HttpModelProbe {
+    pub id: String,
+    pub state: HttpModelState,
+}
+
+pub(super) enum HttpModelState {
+    /// GETting the vendor's model-list endpoint.
+    Probing,
+    /// The model ids the endpoint returned, most-recent probe wins.
+    Ready { models: Vec<String> },
+    /// Unreachable, errored, or connected with an empty list. The string is a
+    /// short human note; the picker still offers "Inherit" (the seat's own value).
+    Unavailable(String),
+}
+
 /// Backs an in-progress `agy` ACP bridge venv provisioning, keyed by seat `id` the
 /// same way [`AcpModelProbe`] is — a provisioning attempt that finishes after the
 /// human has moved off the seat must not write into whatever is open now.

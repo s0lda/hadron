@@ -60,7 +60,8 @@ use providers::{
     cli_seat_from, configured_providers, custom_cli_vendor_is_valid, migrate_legacy_ids,
     migrate_repo_to_catalogue, parse_max_exchanges, prompt_channel_from, AcpModelProbe,
     AcpModelState, AgentDescriptor, AgyBridgeProbe, AgyBridgeState, CliChannelChoice,
-    ConfiguredQuark, ProviderState, SettingsTarget, WizardState, DEFAULT_SECRET_VAR,
+    ConfiguredQuark, HttpModelProbe, HttpModelState, ProviderState, SettingsTarget, WizardState,
+    DEFAULT_SECRET_VAR,
 };
 
 mod widgets;
@@ -339,6 +340,9 @@ struct Chamber {
     local_base_url: Entity<InputState>,
     local_models: Vec<String>,
     local_selected_model: Option<String>,
+    /// Filter text for the wizard's searchable model list — see
+    /// `Chamber::model_picker_list`, shared with `http_model_filter` below.
+    local_model_filter: Entity<InputState>,
     /// The cloud vendor's API key — read live at Connect (to probe the real endpoint)
     /// and again at Save (to write it to the keyring). Never touches `team.json`;
     /// only its VAR NAME (`CLOUD_API_KEY_VAR`) is declared onto the saved seat's
@@ -361,6 +365,13 @@ struct Chamber {
     /// Offered-model probe for the ACP quark whose Settings are open — drives the model
     /// dropdown. `None` for a non-ACP target or before the first probe. See `providers`.
     acp_model_probe: Option<AcpModelProbe>,
+    /// Offered-model probe for the `Transport::Http` quark whose Settings are open —
+    /// mirrors `acp_model_probe`. `None` for a non-Http target or before the first
+    /// probe. See `start_http_model_probe`.
+    http_model_probe: Option<HttpModelProbe>,
+    /// Filter text for the Settings Model list of the open Http quark — see
+    /// `local_model_filter` above (same widget, different consumer).
+    http_model_filter: Entity<InputState>,
     /// In-progress `agy` ACP bridge venv provisioning for the seat whose Settings are
     /// open, if any. `None` for any other kind of seat, before the first attempt, or
     /// once already provisioned — see `start_agy_bridge_provision`. This runs off the
@@ -495,6 +506,8 @@ impl Chamber {
         let acp_args = cx.new(|cx| InputState::new(window, cx).placeholder("space-separated, e.g. -y @scope/agent@latest"));
         let local_base_url = cx.new(|cx| InputState::new(window, cx).placeholder("http://localhost:11434"));
         let local_api_key = cx.new(|cx| InputState::new(window, cx).masked(true).placeholder("sk-… (write-only)"));
+        let local_model_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter models…"));
+        let http_model_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter models…"));
         let custom_cli_model = cx.new(|cx| InputState::new(window, cx).placeholder("model name (optional)"));
         let custom_cli_flag = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. --prompt (blank = positional)"));
         let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
@@ -731,6 +744,7 @@ impl Chamber {
             local_base_url,
             local_models: Vec::new(),
             local_selected_model: None,
+            local_model_filter,
             local_api_key,
             custom_cli_model,
             custom_cli_flag,
@@ -742,6 +756,8 @@ impl Chamber {
             providers,
             wizard_state: WizardState::None,
             acp_model_probe: None,
+            http_model_probe: None,
+            http_model_filter,
             agy_bridge_probe: None,
             file_tree_paths: files,
             _lock_file: lock_file,

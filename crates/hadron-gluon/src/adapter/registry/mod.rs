@@ -768,11 +768,8 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
 /// them. Pure and extracted out of `build()`'s match arm specifically so the
 /// wiring itself (not just `HttpTarget`'s auth-header logic, already covered in
 /// `adapter::local`'s tests) is unit-tested.
-fn attach_http_api_key(mut target: HttpTarget, env: &[(String, String)]) -> HttpTarget {
-    if let Some((_, value)) = env.first() {
-        target.api_key = Some(value.clone());
-    }
-    target
+fn attach_http_api_key(target: HttpTarget, env: &[(String, String)]) -> HttpTarget {
+    target.with_resolved_env(env)
 }
 
 /// Build a live quark from a team-config `Seat`. The seat's `transport` picks CLI vs

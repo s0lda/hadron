@@ -1199,47 +1199,27 @@ impl super::Chamber {
                     ProviderState::NeedsAuth(_) => div().into_any_element(),
                     ProviderState::Ready { model } => {
                         let selected = self.local_selected_model.clone().unwrap_or_else(|| model.clone());
-                        let mut picker = h_flex().gap_2().flex_wrap();
-                        for id in self.local_models.clone() {
-                            let is_selected = id == selected;
-                            let id_for_click = id.clone();
-                            picker = picker.child(
-                                div()
-                                    .id(SharedString::from(format!("local-model-{id}")))
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_md()
-                                    .cursor_pointer()
-                                    .when(is_selected, |d| {
-                                        d.bg(theme::glass_card())
-                                            .border_1()
-                                            .border_color(theme::accent())
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .text_color(theme::accent())
-                                    })
-                                    .when(!is_selected, |d| {
-                                        d.border_1()
-                                            .border_color(theme::border())
-                                            .text_color(theme::text_secondary())
-                                            .hover(|s| s.bg(theme::bg_surface_raised()))
-                                    })
-                                    .child(id.clone())
-                                    .on_click(cx.listener(move |this, _, _window, cx| {
-                                        this.local_selected_model = Some(id_for_click.clone());
-                                        cx.notify();
-                                    })),
-                            );
-                        }
+                        let picker = self.model_picker_list(
+                            &self.local_models,
+                            &selected,
+                            &self.local_model_filter,
+                            "local-model",
+                            "Default",
+                            std::rc::Rc::new(
+                                |this: &mut Self, value: String, _window: &mut Window, cx: &mut Context<Self>| {
+                                    this.local_selected_model = Some(value);
+                                    cx.notify();
+                                },
+                            ),
+                            cx,
+                        );
                         let typed = self.local_base_url.read(cx).value().trim().to_string();
                         let base_url =
                             if typed.is_empty() { vendor.default_base_url().to_string() } else { typed };
                         v_flex()
                             .gap_4()
-                            .child(div().text_color(theme::accent()).child(format!(
-                                "Connected \u{2014} {} model(s) found",
-                                self.local_models.len()
-                            )))
-                            .child(settings_field_stacked("Model", picker.into_any_element()))
+                            .child(div().text_color(theme::accent()).child("Connected"))
+                            .child(settings_field_stacked("Model", picker))
                             .child(text_button("save-local-provider", "Save Provider").on_click(
                                 cx.listener(move |this, _, window, cx| {
                                     let model = this.local_selected_model.clone().unwrap_or_default();
