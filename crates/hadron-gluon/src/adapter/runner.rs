@@ -270,6 +270,82 @@ impl CliRunner for ProcessRunner {
             Ok(CliResult { stdout, exit: output.status.code().unwrap_or(0), usage: None })
         }
     }
+
+    async fn run_streaming(
+        &self,
+        inv: CliInvocation,
+        on_line: &mut (dyn for<'a> FnMut(&'a str) + Send),
+    ) -> anyhow::Result<CliResult> {
+        use std::process::Stdio;
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+        let mut child_cmd = tokio::process::Command::new(&inv.program);
+        child_cmd
+            .args(&inv.args)
+            .current_dir(&inv.cwd)
+            .envs(inv.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        #[cfg(unix)]
+        child_cmd.process_group(0);
+
+        let mut child = child_cmd
+            .spawn()
+            .map_err(|e| {
+                if !inv.cwd.is_dir() {
+                    anyhow::anyhow!(
+                        "failed to spawn {}: its working directory {:?} does not exist",
+                        inv.program,
+                        inv.cwd,
+                    )
+                } else {
+                    anyhow::anyhow!("failed to spawn {}: {e}", inv.program)
+                }
+            })?;
+
+        let pid = child.id();
+        if let Some(pid) = pid {
+            crate::proc::register(pid);
+        }
+
+        if let Some(mut stdin) = child.stdin.take() {
+            let res = stdin.write_all(inv.stdin.as_bytes()).await;
+            if res.is_err() {
+                if let Some(pid) = pid {
+                    crate::proc::unregister(pid);
+                }
+            }
+            res?;
+            let res = stdin.shutdown().await;
+            if res.is_err() {
+                if let Some(pid) = pid {
+                    crate::proc::unregister(pid);
+                }
+            }
+            res?;
+        }
+
+        let mut stdout_accumulated = String::new();
+        if let Some(stdout_pipe) = child.stdout.take() {
+            let mut reader = tokio::io::BufReader::new(stdout_pipe).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                on_line(&line);
+                stdout_accumulated.push_str(&line);
+                stdout_accumulated.push('\n');
+            }
+        }
+        let status = child.wait().await?;
+        if let Some(pid) = pid {
+            crate::proc::unregister(pid);
+        }
+        if !status.success() {
+            let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".to_string());
+            return Err(anyhow::anyhow!("{} exited with {code}", inv.program));
+        }
+        Ok(CliResult { stdout: stdout_accumulated, exit: status.code().unwrap_or(0), usage: None })
+    }
 }
 
 /// A deterministic runner for tests: returns queued replies in order and records

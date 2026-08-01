@@ -194,6 +194,7 @@ mod tests {
         assert!(!acc.on_line("not json at all"));
         assert!(!acc.on_line(r#"{"event":"step_update","step_update":{"step_type":"tool"}}"#));
         assert!(!acc.on_line(""));
+        assert!(!acc.on_line(r#"{"event":"result","result":{"response":"Canonical final message","usage":{"input_tokens":100,"output_tokens":25}}}"#));
         let (message, spend) = acc.finish();
         assert_eq!(message.as_deref(), Some("Canonical final message"));
         assert_eq!(spend.input, Some(100));
