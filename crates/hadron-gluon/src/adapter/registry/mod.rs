@@ -2,6 +2,7 @@ use hadron_lattice::{CliSpec, Flavor, QuarkId, Seat, SeatCommands, Transport};
 
 use crate::adapter::acp::AcpQuark;
 use crate::adapter::cli::CliQuark;
+use crate::adapter::local::{HttpTarget, LocalQuark};
 use crate::adapter::runner::{ProcessRunner, RedactedEnv};
 use crate::quark::Quark;
 
@@ -74,6 +75,8 @@ pub enum QuarkKind {
     Cli(CliSpec),
     /// A resident ACP agent subprocess.
     Acp(AcpTarget),
+    /// A keyless local HTTP server (Ollama, LM Studio).
+    Http(HttpTarget),
 }
 
 /// How to boot an ACP agent: the program, its args, and its env. This comes
@@ -604,6 +607,17 @@ impl QuarkKind {
                  \"acp\" or \"cli\" instead",
                 seat.id.as_str()
             ),
+            Transport::Http => {
+                let target = HttpTarget::for_seat(seat).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "seat '{}' is an http seat on vendor {:?}, which Hadron does not know \
+                         how to reach over HTTP — use \"ollama\" or \"lmstudio\"",
+                        seat.id.as_str(),
+                        seat.vendor
+                    )
+                })?;
+                Ok(QuarkKind::Http(target))
+            }
         }
     }
 }
@@ -734,6 +748,14 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
                 .with_energy_limit(energy_limit)
                 .with_deny_skills(deny_skills)
                 .with_external_roots(spec.external_roots),
+        ),
+        QuarkKind::Http(target) => Box::new(
+            LocalQuark::new(spec.id, spec.flavor, spec.model, target)
+                .with_display_name(name)
+                .with_roles(roles, exclusive)
+                .with_commands(commands)
+                .with_energy_limit(energy_limit)
+                .with_deny_skills(deny_skills),
         ),
     };
     Ok(quark)

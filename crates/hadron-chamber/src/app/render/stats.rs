@@ -96,6 +96,10 @@ impl super::Chamber {
                 .unwrap_or_else(|| format!("default ({})", roster_row.vendor)),
             hadron_lattice::Transport::Cli => "hadron-adapter".to_string(),
             hadron_lattice::Transport::Sdk => "unsupported — use ACP or CLI".to_string(),
+            hadron_lattice::Transport::Http => seat
+                .as_ref()
+                .and_then(|s| s.http_base_url.clone())
+                .unwrap_or_else(|| format!("default ({})", roster_row.vendor)),
         };
         let model_str = match roster_row.model_label() {
             label if label.is_empty() => "—".to_string(),
@@ -105,6 +109,7 @@ impl super::Chamber {
             hadron_lattice::Transport::Cli => "CLI (one-shot)",
             hadron_lattice::Transport::Acp => "ACP (resident)",
             hadron_lattice::Transport::Sdk => "SDK (unsupported)",
+            hadron_lattice::Transport::Http => "HTTP (local server)",
         };
 
         // Presence: a live (adopted + enabled) quark shows its state colour, overridden

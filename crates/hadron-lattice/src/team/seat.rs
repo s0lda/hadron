@@ -120,6 +120,11 @@ pub struct Seat {
     /// *request*, and a root that does not exist on disk is dropped at spawn.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub external_roots: Vec<ExternalRootSpec>,
+    /// The base URL of this seat's local HTTP server, e.g. `http://localhost:11434`
+    /// for Ollama. Ignored unless `transport` is [`Transport::Http`]; absent there
+    /// means "resolve the vendor's default" (see `hadron_gluon::adapter::local`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_base_url: Option<String>,
 }
 
 /// One granted external directory, as written in `team.json`.
@@ -165,7 +170,7 @@ impl Seat {
     /// a field to `Seat` without deciding which side of this line it falls on will not
     /// compile.
     pub fn same_agent(&self, other: &Seat) -> bool {
-        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env, energy_limit, deny_skills, external_roots } = self;
+        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env, energy_limit, deny_skills, external_roots, http_base_url } = self;
         id == &other.id
             && vendor == &other.vendor
             && model == &other.model
@@ -182,6 +187,7 @@ impl Seat {
             && energy_limit == &other.energy_limit
             && deny_skills == &other.deny_skills
             && external_roots == &other.external_roots
+            && http_base_url == &other.http_base_url
     }
 
     /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
@@ -206,6 +212,7 @@ impl Seat {
             energy_limit: None,
             deny_skills: vec![],
             external_roots: vec![],
+            http_base_url: None,
         }
     }
 

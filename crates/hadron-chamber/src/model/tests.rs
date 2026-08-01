@@ -483,6 +483,7 @@
                     energy_limit: None,
                     deny_skills: vec![],
                     external_roots: vec![],
+                    http_base_url: None,
                 },
                 Seat {
                     id: QuarkId::new("opus"),
@@ -503,6 +504,7 @@
                     energy_limit: None,
                     deny_skills: vec![],
                     external_roots: vec![],
+                    http_base_url: None,
                 },
             ],
             roster: vec![],
