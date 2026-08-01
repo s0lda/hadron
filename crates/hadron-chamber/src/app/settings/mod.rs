@@ -12,6 +12,8 @@ pub(super) use secrets::SecretStatus;
 mod secrets;
 mod identity;
 mod acp_probe;
+mod http_probe;
+mod model_picker;
 mod overlay;
 mod providers;
 #[cfg(test)]
@@ -329,10 +331,12 @@ impl Chamber {
             SettingsTarget::Quark(id) => {
                 self.start_acp_model_probe(&id.clone(), cx);
                 self.start_agy_bridge_provision(&id.clone(), cx);
+                self.start_http_model_probe(&id.clone(), cx);
             }
             _ => {
                 self.acp_model_probe = None;
                 self.agy_bridge_probe = None;
+                self.http_model_probe = None;
             }
         }
         cx.notify();

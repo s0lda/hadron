@@ -117,6 +117,27 @@ impl HttpTarget {
         Some(HttpTarget { vendor, base_url, api_key: None })
     }
 
+    /// Attach a bearer token from a resolved `secret_env` — whichever var comes
+    /// first, since a cloud vendor needs exactly one. Ollama/LM Studio seats
+    /// declare no `secret_env`, so this is a no-op for them. The one place this
+    /// rule lives; `registry::attach_http_api_key` (the live turn path) and
+    /// [`HttpTarget::for_seat_with_env`] (the Settings probe path) both call it
+    /// rather than each re-deciding "first var wins".
+    pub fn with_resolved_env(mut self, env: &[(String, String)]) -> HttpTarget {
+        if let Some((_, value)) = env.first() {
+            self.api_key = Some(value.clone());
+        }
+        self
+    }
+
+    /// Build a target for `seat` with its resolved secret environment attached —
+    /// mirrors `AcpTarget::for_seat_with_env`, so the Settings Model probe reaches
+    /// a keyed cloud seat the same way a live turn does.
+    pub fn for_seat_with_env(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore) -> Option<HttpTarget> {
+        let target = Self::for_seat(seat)?;
+        Some(target.with_resolved_env(&seat.resolve_env(store)))
+    }
+
     /// Every request in this module goes through here, so this is the one place a
     /// base URL is normalised — a literal-built `HttpTarget` (the chamber's Connect
     /// probe builds one) cannot bypass it.
@@ -680,6 +701,27 @@ mod tests {
     fn for_seat_is_none_for_a_non_http_seat() {
         let seat = Seat::cli(QuarkId::new("cli-agy"), "agy", "gemini", Flavor::Worker);
         assert!(HttpTarget::for_seat(&seat).is_none());
+    }
+
+    #[test]
+    fn for_seat_with_env_attaches_the_resolved_secret_as_the_api_key() {
+        use hadron_lattice::secrets::{MemoryStore, SecretStore};
+        let mut seat = Seat::cli(QuarkId::new("http-openrouter"), "openai-compatible", "some-model", Flavor::Worker);
+        seat.transport = Transport::Http;
+        seat.secret_env = vec!["API_KEY".to_string()];
+        let store = MemoryStore::new();
+        store.set(&seat.id, "API_KEY", "sk-live-123").unwrap();
+        let target = HttpTarget::for_seat_with_env(&seat, &store).unwrap();
+        assert_eq!(target.api_key, Some("sk-live-123".to_string()));
+    }
+
+    #[test]
+    fn for_seat_with_env_is_a_no_op_with_no_declared_secret_env() {
+        let mut seat = Seat::cli(QuarkId::new("http-ollama"), "ollama", "gemma3:27b", Flavor::Worker);
+        seat.transport = Transport::Http;
+        let store = hadron_lattice::secrets::MemoryStore::new();
+        let target = HttpTarget::for_seat_with_env(&seat, &store).unwrap();
+        assert_eq!(target.api_key, None);
     }
 
     /// Not a fixture: hits the real Ollama server running on this box
