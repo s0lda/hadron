@@ -68,7 +68,7 @@ impl Render for Chamber {
         let (top_radius, bottom_radius) = frame_corner_radii(window);
         let titlebar = self.titlebar(window, cx);
         let body = self.body(window, cx);
-        let settings = self.settings_open.then(|| self.settings_overlay(cx));
+        let settings = self.settings_open.then(|| self.settings_overlay(window, cx));
         let info = self
             .info_panel
             .is_some()

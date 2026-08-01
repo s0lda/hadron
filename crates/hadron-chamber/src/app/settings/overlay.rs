@@ -3,7 +3,7 @@ use super::*;
 impl super::Chamber {
     // `pub(crate)`, not `pub(super)`: called from `app::render::mod` (a sibling of
     // `settings`), the same reach it had when this fn lived directly in settings.rs.
-    pub(crate) fn settings_overlay(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn settings_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let target = self.settings_target.clone();
 
         // Left nav: Settings (General, Providers), then Identities (Human, Quarks)
@@ -126,7 +126,7 @@ impl super::Chamber {
 
         let fields = match target {
             SettingsTarget::General => self.general_settings_view(cx).into_any_element(),
-            SettingsTarget::Providers => self.providers_view(cx).into_any_element(),
+            SettingsTarget::Providers => self.providers_view(window, cx).into_any_element(),
             _ => {
             let is_quark = matches!(target, SettingsTarget::Quark(_));
             // ACP quarks get a live model dropdown (re-probed from the agent), and Http
@@ -156,11 +156,11 @@ impl super::Chamber {
                 // through load/commit) but is no longer human-editable here.
                 .when(is_quark, |v| {
                     let model_field = if acp_quark {
-                        self.acp_model_select(cx)
+                        self.acp_model_select(window, cx)
                     } else if http_quark {
-                        self.http_model_select(cx)
+                        self.http_model_select(window, cx)
                     } else {
-                        self.general_model_select(cx)
+                        self.general_model_select(window, cx)
                     };
                     v.child(settings_field(
                         "Model",

@@ -30,7 +30,9 @@ use gpui_component::stepper::{Stepper, StepperItem};
 use gpui_component::switch::Switch;
 // tab imports removed
 // tag imports removed
+use gpui_component::select::{Select, SelectEvent, SelectState};
 use gpui_component::tooltip::Tooltip;
+use settings::{create_model_delegate, ModelSelectDelegate};
 
 // table imports removed
 use gpui_component::{
@@ -340,9 +342,6 @@ struct Chamber {
     local_base_url: Entity<InputState>,
     local_models: Vec<String>,
     local_selected_model: Option<String>,
-    /// Filter text for the wizard's searchable model list — see
-    /// `Chamber::model_picker_list`, shared with `http_model_filter` below.
-    local_model_filter: Entity<InputState>,
     /// The cloud vendor's API key — read live at Connect (to probe the real endpoint)
     /// and again at Save (to write it to the keyring). Never touches `team.json`;
     /// only its VAR NAME (`CLOUD_API_KEY_VAR`) is declared onto the saved seat's
@@ -359,23 +358,24 @@ struct Chamber {
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
-    _settings_subs: [Subscription; 10],
+    _settings_subs: [Subscription; 11],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
     /// Offered-model probe for the ACP quark whose Settings are open — drives the model
     /// dropdown. `None` for a non-ACP target or before the first probe. See `providers`.
     acp_model_probe: Option<AcpModelProbe>,
-    /// Filter text for the Settings Model list of an ACP quark — see `model_picker_list`.
-    acp_model_filter: Entity<InputState>,
+    /// Native SelectState dropdown for Settings Model list of an ACP quark.
+    acp_model_select_state: Entity<SelectState<ModelSelectDelegate>>,
     /// Offered-model probe for the `Transport::Http` quark whose Settings are open —
     /// mirrors `acp_model_probe`. `None` for a non-Http target or before the first
     /// probe. See `start_http_model_probe`.
     http_model_probe: Option<HttpModelProbe>,
-    /// Filter text for the Settings Model list of the open Http quark — see
-    /// `local_model_filter` above (same widget, different consumer).
-    http_model_filter: Entity<InputState>,
-    /// Filter text for the Settings Model list of general/CLI quarks.
-    general_model_filter: Entity<InputState>,
+    /// Native SelectState dropdown for Settings Model list of an Http quark.
+    http_model_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    /// Native SelectState dropdown for Settings Model list of general/CLI quarks.
+    general_model_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    /// Native SelectState dropdown for wizard's model list.
+    wizard_model_select_state: Entity<SelectState<ModelSelectDelegate>>,
     /// In-progress `agy` ACP bridge venv provisioning for the seat whose Settings are
     /// open, if any. `None` for any other kind of seat, before the first attempt, or
     /// once already provisioned — see `start_agy_bridge_provision`. This runs off the
@@ -512,10 +512,18 @@ impl Chamber {
         let acp_args = cx.new(|cx| InputState::new(window, cx).placeholder("space-separated, e.g. -y @scope/agent@latest"));
         let local_base_url = cx.new(|cx| InputState::new(window, cx).placeholder("http://localhost:11434"));
         let local_api_key = cx.new(|cx| InputState::new(window, cx).masked(true).placeholder("sk-… (write-only)"));
-        let local_model_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter models…"));
-        let http_model_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter models…"));
-        let acp_model_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter models…"));
-        let general_model_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter models…"));
+        let acp_model_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Inherit", &[], None), None, window, cx).searchable(true)
+        });
+        let http_model_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Inherit", &[], None), None, window, cx).searchable(true)
+        });
+        let general_model_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Inherit", &[], None), None, window, cx).searchable(true)
+        });
+        let wizard_model_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Default", &[], None), None, window, cx).searchable(true)
+        });
         let custom_cli_model = cx.new(|cx| InputState::new(window, cx).placeholder("model name (optional)"));
         let custom_cli_flag = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. --prompt (blank = positional)"));
         let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
@@ -532,14 +540,32 @@ impl Chamber {
             cx.subscribe_in(&preset_filter, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
             }),
-            cx.subscribe_in(&acp_model_filter, window, |_, _, _: &InputEvent, _, cx| {
-                cx.notify()
+            cx.subscribe_in(&acp_model_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                this.settings_model.update(cx, |s, cx| s.set_value(val.to_string(), window, cx));
+                this.commit_settings_inputs(cx);
+                cx.notify();
             }),
-            cx.subscribe_in(&http_model_filter, window, |_, _, _: &InputEvent, _, cx| {
-                cx.notify()
+            cx.subscribe_in(&http_model_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                this.settings_model.update(cx, |s, cx| s.set_value(val.to_string(), window, cx));
+                this.commit_settings_inputs(cx);
+                cx.notify();
             }),
-            cx.subscribe_in(&general_model_filter, window, |_, _, _: &InputEvent, _, cx| {
-                cx.notify()
+            cx.subscribe_in(&general_model_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                this.settings_model.update(cx, |s, cx| s.set_value(val.to_string(), window, cx));
+                this.commit_settings_inputs(cx);
+                cx.notify();
+            }),
+            cx.subscribe_in(&wizard_model_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                this.local_selected_model = if val.is_empty() { None } else { Some(val.to_string()) };
+                cx.notify();
             }),
             // Same reason: the custom-CLI form's "Save" button is only wired up once
             // vendor + program are non-empty (`can_save` in `providers_view`), so typing
@@ -761,7 +787,6 @@ impl Chamber {
             local_base_url,
             local_models: Vec::new(),
             local_selected_model: None,
-            local_model_filter,
             local_api_key,
             custom_cli_model,
             custom_cli_flag,
@@ -773,10 +798,11 @@ impl Chamber {
             providers,
             wizard_state: WizardState::None,
             acp_model_probe: None,
-            acp_model_filter,
+            acp_model_select_state,
             http_model_probe: None,
-            http_model_filter,
-            general_model_filter,
+            http_model_select_state,
+            general_model_select_state,
+            wizard_model_select_state,
             agy_bridge_probe: None,
             file_tree_paths: files,
             _lock_file: lock_file,

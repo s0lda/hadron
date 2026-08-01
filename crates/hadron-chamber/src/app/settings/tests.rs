@@ -2,6 +2,7 @@ use super::*;
 use super::secrets::{declare_secret_var, secret_status, undeclare_secret_var, SecretStatus};
 use hadron_lattice::secrets::MemoryStore;
 use hadron_lattice::secrets::SecretStore;
+use gpui_component::IndexPath;
 use hadron_lattice::{Flavor, Seat};
 
 fn seat(id: &str) -> Seat {
@@ -129,4 +130,22 @@ fn a_second_same_provider_seat_gets_a_unique_id() {
     assert_eq!(super::providers::unique_seat_id("acp-codex", &taken), "acp-codex");
     // Taken base and taken -2 → the next free suffix.
     assert_eq!(super::providers::unique_seat_id("acp-claude", &taken), "acp-claude-3");
+}
+
+#[test]
+fn model_select_delegate_includes_default_and_custom_value() {
+    use gpui_component::searchable_list::SearchableListDelegate;
+    use gpui_component::select::SelectItem;
+    let models = vec!["gpt-4o".to_string(), "gpt-4o-mini".to_string()];
+    let delegate = create_model_delegate("Inherit", &models, Some("custom-model-x"));
+
+    assert_eq!(delegate.items_count(0), 4, "Inherit + 2 models + 1 custom selected model");
+    assert_eq!(delegate.item(IndexPath::default().row(0)).unwrap().value, "");
+    assert_eq!(delegate.item(IndexPath::default().row(0)).unwrap().title(), "Inherit (inherit)");
+    assert_eq!(delegate.item(IndexPath::default().row(1)).unwrap().value, "gpt-4o");
+    assert_eq!(delegate.item(IndexPath::default().row(2)).unwrap().value, "gpt-4o-mini");
+    assert_eq!(delegate.item(IndexPath::default().row(3)).unwrap().value, "custom-model-x");
+
+    let pos = delegate.position(&gpui::SharedString::from("gpt-4o-mini"));
+    assert_eq!(pos, Some(IndexPath::default().row(2)));
 }

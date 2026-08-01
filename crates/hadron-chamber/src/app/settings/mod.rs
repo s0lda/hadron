@@ -9,11 +9,13 @@ use secrets::secret_status;
 // settings.rs (`pub(super)` there = visible to `app`).
 pub(super) use secrets::SecretStatus;
 
+pub(super) use model_select::{create_model_delegate, ModelSelectDelegate};
+
 mod secrets;
 mod identity;
 mod acp_probe;
 mod http_probe;
-mod model_picker;
+mod model_select;
 mod overlay;
 mod providers;
 #[cfg(test)]
