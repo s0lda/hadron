@@ -208,47 +208,46 @@ impl super::Chamber {
                     }),
             );
 
-        // Telemetry line: excited time (time per task) : tokens / context window
+        // Telemetry line: excited_time (time_per_task)  (larger gap)  context/context_window (%)
         let now = chrono::Utc::now();
-        let excited_secs: i64 = self
-            .view
-            .tasks
-            .iter()
-            .filter(|t| t.to == r.id)
-            .map(|t| t.elapsed_secs(now))
-            .sum();
+        let latest_task = self.view.tasks.iter().find(|t| t.to == r.id);
+        let excited_secs = latest_task.map(|t| t.elapsed_secs(now)).unwrap_or(0);
 
-        let excited_time_str = if excited_secs < 60 {
-            format!("{}s", excited_secs)
-        } else if excited_secs < 3600 {
-            format!("{}m {}s", excited_secs / 60, excited_secs % 60)
+        fn format_dur(secs: i64) -> String {
+            if secs < 60 {
+                format!("{}s", secs)
+            } else if secs < 3600 {
+                format!("{}m {}s", secs / 60, secs % 60)
+            } else {
+                format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+            }
+        }
+
+        let excited_time_str = format_dur(excited_secs);
+
+        let time_part = if let Some(act) = &activity {
+            let task_secs = (now - act.at).num_seconds().max(0);
+            if excited_secs > task_secs && task_secs > 0 {
+                format!("{} ({})", excited_time_str, format_dur(task_secs))
+            } else {
+                excited_time_str
+            }
         } else {
-            format!("{}h {}m", excited_secs / 3600, (excited_secs % 3600) / 60)
+            excited_time_str
         };
 
         let ctx_opt = self.latest_context(&r.id);
         let context_str = if let Some(ctx) = ctx_opt {
             format!(
-                "{} / {}",
+                "{} / {} ({:.0}%)",
                 format_num(ctx.used_tokens as u64),
                 format_num(ctx.context_window_size as u64),
+                ctx.used_percentage,
             )
         } else if r.tokens > 0 {
             format!("{} tok", format_num(r.tokens as u64))
         } else {
             "0 tok".to_string()
-        };
-
-        let telemetry_str = if let Some(act) = &activity {
-            let task_secs = (now - act.at).num_seconds().max(0);
-            let task_time_str = if task_secs >= 60 {
-                format!("{}m {}s", task_secs / 60, task_secs % 60)
-            } else {
-                format!("{}s", task_secs)
-            };
-            format!("{} ({}) : {}", excited_time_str, task_time_str, context_str)
-        } else {
-            format!("{} : {}", excited_time_str, context_str)
         };
 
         let telemetry_row = h_flex()
@@ -260,12 +259,13 @@ impl super::Chamber {
             .child(
                 div()
                     .truncate()
-                    .child(telemetry_str),
+                    .child(time_part),
             )
             .child(
                 h_flex()
                     .items_center()
-                    .gap_1p5()
+                    .gap_2()
+                    .child(div().truncate().child(context_str))
                     .when(matches!(r.effort.as_deref(), Some(e) if !e.is_empty()), |this| {
                         this.child(effort_tag(&r.effort))
                     })
