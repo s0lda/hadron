@@ -208,12 +208,28 @@ impl super::Chamber {
                     }),
             );
 
-        // Telemetry line: Context window usage (or token count) + active working duration (no stage labels)
+        // Telemetry line: excited time (time per task) : tokens / context window
+        let now = chrono::Utc::now();
+        let excited_secs: i64 = self
+            .view
+            .tasks
+            .iter()
+            .filter(|t| t.to == r.id)
+            .map(|t| t.elapsed_secs(now))
+            .sum();
+
+        let excited_time_str = if excited_secs < 60 {
+            format!("{}s", excited_secs)
+        } else if excited_secs < 3600 {
+            format!("{}m {}s", excited_secs / 60, excited_secs % 60)
+        } else {
+            format!("{}h {}m", excited_secs / 3600, (excited_secs % 3600) / 60)
+        };
+
         let ctx_opt = self.latest_context(&r.id);
         let context_str = if let Some(ctx) = ctx_opt {
             format!(
-                "Ctx {:.0}% · {} / {}",
-                ctx.used_percentage,
+                "{} / {}",
                 format_num(ctx.used_tokens as u64),
                 format_num(ctx.context_window_size as u64),
             )
@@ -224,15 +240,15 @@ impl super::Chamber {
         };
 
         let telemetry_str = if let Some(act) = &activity {
-            let elapsed_secs = (chrono::Utc::now() - act.at).num_seconds().max(0);
-            let time_str = if elapsed_secs >= 60 {
-                format!("{}m {}s", elapsed_secs / 60, elapsed_secs % 60)
+            let task_secs = (now - act.at).num_seconds().max(0);
+            let task_time_str = if task_secs >= 60 {
+                format!("{}m {}s", task_secs / 60, task_secs % 60)
             } else {
-                format!("{}s", elapsed_secs)
+                format!("{}s", task_secs)
             };
-            format!("{} · {}", time_str, context_str)
+            format!("{} ({}) : {}", excited_time_str, task_time_str, context_str)
         } else {
-            context_str
+            format!("{} : {}", excited_time_str, context_str)
         };
 
         let telemetry_row = h_flex()
