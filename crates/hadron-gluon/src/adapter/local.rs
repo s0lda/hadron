@@ -733,8 +733,8 @@ mod tests {
         );
         let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
         let mut seen = Vec::new();
-        let (full, _) = stream_chat(&target, "gemma3:27b", "hi", |delta| seen.push(delta.to_string())).await.unwrap();
-        assert_eq!(full, "Hello");
+        let full = stream_chat(&target, "gemma3:27b", "hi", |delta| seen.push(delta.to_string())).await.unwrap();
+        assert_eq!(full.0, "Hello");
         assert_eq!(seen, vec!["Hel".to_string(), "lo".to_string()]);
     }
 
@@ -747,8 +747,8 @@ mod tests {
              data: [DONE]\n",
         );
         let target = HttpTarget { vendor: HttpVendor::LmStudio, base_url: base, api_key: None };
-        let (full, _) = stream_chat(&target, "some-model", "hi", |_| {}).await.unwrap();
-        assert_eq!(full, "Hello");
+        let full = stream_chat(&target, "some-model", "hi", |_| {}).await.unwrap();
+        assert_eq!(full.0, "Hello");
     }
 
     #[tokio::test]
@@ -761,8 +761,8 @@ mod tests {
         );
         let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
         let mut seen = Vec::new();
-        let (full, _) = stream_chat(&target, "some-model", "hi", |d| seen.push(d.to_string())).await.unwrap();
-        assert_eq!(full, "Thinking...");
+        let full = stream_chat(&target, "some-model", "hi", |d| seen.push(d.to_string())).await.unwrap();
+        assert_eq!(full.0, "Thinking...");
         assert_eq!(seen, vec!["Think".to_string(), "ing...".to_string()]);
     }
 
@@ -775,8 +775,8 @@ mod tests {
              {\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true}",
         );
         let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
-        let (full, _) = stream_chat(&target, "deepseek-r1", "hi", |_| {}).await.unwrap();
-        assert_eq!(full, "ThoughtAnswer");
+        let full = stream_chat(&target, "deepseek-r1", "hi", |_| {}).await.unwrap();
+        assert_eq!(full.0, "ThoughtAnswer");
     }
 
     #[test]
