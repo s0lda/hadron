@@ -201,7 +201,7 @@ impl super::Chamber {
         // Signature brand motif: the four quark energies as a small constellation of dots,
         // echoing the field's corner glows.
         let quark_dots = h_flex().gap_1p5().items_center().children(
-            [0x38bdf8u32, 0xec4899, 0x34d399, 0xfbbf24]
+            [0x38bdf8u32, 0xc084fc, 0x34d399, 0xfbbf24]
                 .into_iter()
                 .map(|c| div().size(px(9.0)).rounded_full().bg(rgb(c)).into_any_element()),
         );

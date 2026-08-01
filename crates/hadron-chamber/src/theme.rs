@@ -54,7 +54,7 @@ pub fn glow_blue() -> Rgba {
     rgba(0x4f83f01c) // working / excited — top-left
 }
 pub fn glow_pink() -> Rgba {
-    rgba(0xb85cf018) // thinking — top-right
+    rgba(0xc084fc15) // thinking / reasoning — top-right
 }
 pub fn glow_green() -> Rgba {
     rgba(0x2fcf8a1a) // available — bottom-left
@@ -99,9 +99,9 @@ pub fn halo_active() -> Hsla {
     rgb(0x00e5ff).into()
 }
 
-/// Reasoning status halo (Violet `#aa00ff`) for reasoning / thinking state.
+/// Reasoning status halo (Soft Amethyst `#c084fc`) for reasoning / thinking state.
 pub fn halo_reasoning() -> Hsla {
-    rgb(0xaa00ff).into()
+    rgb(0xc084fc).into()
 }
 
 /// Idle status halo (Emerald `#22c55e`) for ground / waiting / available state.
@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn test_halo_color_tokens() {
         assert_eq!(halo_active(), Hsla::from(rgb(0x00e5ff)));
-        assert_eq!(halo_reasoning(), Hsla::from(rgb(0xaa00ff)));
+        assert_eq!(halo_reasoning(), Hsla::from(rgb(0xc084fc)));
         assert_eq!(halo_idle(), Hsla::from(rgb(0x22c55e)));
         assert_eq!(halo_error(), Hsla::from(rgb(0xef4444)));
     }
