@@ -170,6 +170,19 @@ pub fn span(tasks: &[SwarmTask], now: DateTime<Utc>) -> Option<(DateTime<Utc>, D
     Some((start, end.max(start)))
 }
 
+/// The instant `fraction` of the way along a track spanning `start`..`end`.
+///
+/// The scrubber's only geometry rule, kept here so the click path and the drag path
+/// cannot disagree about where a pixel lands. `fraction` is clamped, so a drag that
+/// leaves the track sideways pins to an end rather than naming a time off the timeline.
+pub fn instant_at_fraction(
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    fraction: f64,
+) -> DateTime<Utc> {
+    let span_ms = (end - start).num_milliseconds().max(0) as f64;
+    start + chrono::Duration::milliseconds((fraction.clamp(0.0, 1.0) * span_ms) as i64)
+}
 
 /// What the completing event says the turn's outcome was. A `Message` is a reply, so
 /// it is `Done`; the terminal statuses carry their own verdict.
@@ -652,5 +665,35 @@ mod tests {
         let dir = gates_tmp();
         assert!(live_rows(&dir, Utc::now()).is_empty());
     }
-}
 
+    #[test]
+    fn a_fraction_of_the_track_names_an_instant_on_it() {
+        let start = Utc::now() - chrono::Duration::seconds(100);
+        let end = start + chrono::Duration::seconds(100);
+
+        // (fraction, expected offset from `start`, in seconds)
+        let cases = [
+            (0.0, 0),
+            (0.5, 50),
+            (1.0, 100),
+            // A drag that leaves the track sideways pins to an end, never past it.
+            (-2.0, 0),
+            (7.5, 100),
+        ];
+        for (fraction, want_secs) in cases {
+            assert_eq!(
+                instant_at_fraction(start, end, fraction),
+                start + chrono::Duration::seconds(want_secs),
+                "fraction {fraction}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_zero_width_span_names_its_own_instant() {
+        // A single task that has not finished yet can make `span` degenerate. Dividing by
+        // that width is what a naive mapping would do; this must not panic or drift.
+        let t = Utc::now();
+        assert_eq!(instant_at_fraction(t, t, 0.7), t);
+    }
+}

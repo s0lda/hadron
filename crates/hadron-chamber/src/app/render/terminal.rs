@@ -1043,6 +1043,7 @@ impl super::Chamber {
         let track_bounds_cell = std::rc::Rc::new(std::cell::Cell::new(gpui::Bounds::default()));
         let track_paint = track_bounds_cell.clone();
         let track_click = track_bounds_cell.clone();
+        let track_drag = track_bounds_cell.clone();
 
         let track_canvas = gpui::canvas(
             move |bounds, _, _| bounds,
@@ -1087,17 +1088,28 @@ impl super::Chamber {
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
-                    let bounds = track_click.get();
-                    if bounds.size.width > px(0.0) {
-                        let rel_x = (event.position.x - bounds.origin.x).max(px(0.0));
-                        let pct = (rel_x / bounds.size.width).clamp(0.0, 1.0) as f64;
-                        let scrub_ms = (pct * span_ms) as i64;
-                        let scrub_at = start_time + chrono::Duration::milliseconds(scrub_ms);
-                        this.task_scrub = Some(scrub_at);
-                        cx.notify();
-                    }
+                    this.seek_task_scrub(event.position.x, track_click.get(), start_time, end_time, cx);
                 }),
-            );
+            )
+            // The press has to keep being tracked once the pointer leaves a 12px-tall
+            // strip, which it does immediately in any real drag. `on_mouse_move` on the
+            // track stops firing there; GPUI's drag system does not. Same mechanism the
+            // fork's own `Slider` uses (`gpui-component/src/slider.rs:691`).
+            .on_drag(TaskScrubDrag, |drag, _, _, cx| {
+                cx.stop_propagation();
+                cx.new(|_| drag.clone())
+            })
+            .on_drag_move(cx.listener(
+                move |this, e: &gpui::DragMoveEvent<TaskScrubDrag>, _window, cx| {
+                    this.seek_task_scrub(
+                        e.event.position.x,
+                        track_drag.get(),
+                        start_time,
+                        end_time,
+                        cx,
+                    );
+                },
+            ));
 
         v_flex()
             .w_full()
@@ -1108,6 +1120,39 @@ impl super::Chamber {
             .child(header)
             .child(track_interactive)
             .into_any_element()
+    }
+
+    /// Move the scrub head to the pixel `x` on a track of `bounds` spanning
+    /// `start`..`end`. The click path and the drag path both land here so they cannot
+    /// disagree about where a pixel is in time; the mapping itself is
+    /// [`model::tasks::instant_at_fraction`], which is where it is tested.
+    fn seek_task_scrub(
+        &mut self,
+        x: gpui::Pixels,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        start: chrono::DateTime<chrono::Utc>,
+        end: chrono::DateTime<chrono::Utc>,
+        cx: &mut Context<Self>,
+    ) {
+        // Before the first paint the cell still holds a zero-width default: a press then
+        // names no instant rather than dividing by nothing.
+        if bounds.size.width <= px(0.0) {
+            return;
+        }
+        let fraction = ((x - bounds.origin.x) / bounds.size.width) as f64;
+        self.task_scrub = Some(model::tasks::instant_at_fraction(start, end, fraction));
+        cx.notify();
+    }
+}
+
+/// The drag payload for the Tasks-tab scrubber head. It renders nothing — the track
+/// paints its own head — and exists only because GPUI keys drag tracking on the type.
+#[derive(Clone)]
+struct TaskScrubDrag;
+
+impl Render for TaskScrubDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
     }
 }
 
