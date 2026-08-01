@@ -1075,11 +1075,13 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             t.secondary = rgb(0x191a1b).into();
             t.secondary_hover = rgb(0x252627).into();
             t.popover = theme::popover().into();
+            t.popover_foreground = theme::text().into();
             // Context menus, dropdown menus and tooltips paint from `tokens.popover`, which
             // is computed once at theme construction and does NOT re-derive from the mutated
             // `colors.popover` above — so without this line they stay the stock-dark theme
             // colour (near-black) instead of our surface. Same gotcha as `tokens.title_bar`.
             t.tokens.popover = gpui::Hsla::from(theme::popover()).into();
+            t.tokens.popover_foreground = gpui::Hsla::from(theme::text()).into();
             // `border` is ONE shared token: every popup menu, dialog, tab, table and
             // input outline reads it, not just the chat/right-rail resize handle. It was
             // previously zeroed out here to hide that one handle at rest, which silently
