@@ -799,23 +799,28 @@ pub(super) fn mode_tag_label(mode: Mode, is_default: bool) -> &'static str {
 pub(super) fn mode_tag(mode: Mode, is_default: bool) -> gpui::AnyElement {
     let label = mode_tag_label(mode, is_default);
     if is_default {
-        // Neutral grey — a "Default" chip must not borrow the risk colour of
-        // whatever the global mode happens to be right now.
-        return Tag::secondary()
-            .xsmall()
-            .outline()
-            .child(div().text_xs().child(label))
+        return div()
+            .px_2()
+            .py_0p5()
+            .rounded_md()
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .text_xs()
+            .text_color(theme::text_muted())
+            .child(label)
             .into_any_element();
     }
-    let tag = match mode {
-        Mode::Ask => Tag::secondary(),
-        Mode::Write => Tag::info(),
-        Mode::Auto => Tag::warning(),
-        Mode::Bypass => Tag::danger(),
-    };
-    tag.xsmall()
-        .outline()
-        .child(div().text_xs().child(label))
+    let color = mode_color(mode);
+    div()
+        .px_2()
+        .py_0p5()
+        .rounded_md()
+        .border_1()
+        .border_color(color)
+        .text_xs()
+        .font_weight(gpui::FontWeight::BOLD)
+        .text_color(color)
+        .child(label)
         .into_any_element()
 }
 
@@ -830,10 +835,15 @@ pub(super) fn effort_tag(effort: &Option<String>) -> gpui::AnyElement {
         Some(e) if !e.is_empty() => e.to_uppercase(),
         _ => "Default".to_string(),
     };
-    Tag::secondary()
-        .xsmall()
-        .outline()
-        .child(div().text_xs().child(label))
+    div()
+        .px_2()
+        .py_0p5()
+        .rounded_md()
+        .border_1()
+        .border_color(theme::glass_highlight())
+        .text_xs()
+        .text_color(theme::text_muted())
+        .child(label)
         .into_any_element()
 }
 
@@ -855,14 +865,14 @@ pub(super) fn mode_label(mode: Mode) -> &'static str {
     }
 }
 
-/// The selected-chip colour for a permission mode — a risk temperature from muted
-/// (Ask) through blue/amber to danger red (Bypass), matching the roster tag variants.
+/// The selected-chip colour for a permission mode — a delegated authority ladder
+/// from neutral slate (Ask) through cyan/amethyst to warm amber gold (Bypass).
 pub(super) fn mode_color(mode: Mode) -> gpui::Hsla {
     match mode {
-        Mode::Ask => gpui::rgb(0x6b7280).into(),    // gray — pure conversation
-        Mode::Write => gpui::rgb(0x3b82f6).into(),   // blue — edits flow
-        Mode::Auto => gpui::rgb(0xf59e0b).into(),    // amber — commands remembered
-        Mode::Bypass => gpui::rgb(0xef4444).into(),  // red — nothing asks
+        Mode::Ask => gpui::rgb(0x94a3b8).into(),    // slate — ask
+        Mode::Write => gpui::rgb(0x38bdf8).into(),   // sky cyan — write
+        Mode::Auto => gpui::rgb(0xc084fc).into(),    // soft amethyst — auto
+        Mode::Bypass => gpui::rgb(0xf59e0b).into(),  // warm amber gold — bypass
     }
 }
 

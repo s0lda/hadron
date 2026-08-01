@@ -277,43 +277,46 @@ impl super::Chamber {
                                                     .child(mode_tag(self.view.global_mode, false)),
                                             )
                                             .child(
-                                                Button::new("picker-quark")
-                                                    .ghost()
-                                                    .small()
-                                                    .label("@ Quark")
-                                                    .on_click(cx.listener(|this, _, window, cx| {
-                                                        this.insert_completion_trigger("@", window, cx);
-                                                    })),
-                                            )
-                                            .child(
-                                                Button::new("picker-file")
-                                                    .ghost()
-                                                    .small()
-                                                    .label("@ File")
-                                                    .on_click(cx.listener(|this, _, window, cx| {
-                                                        this.insert_completion_trigger("@", window, cx);
-                                                    })),
-                                            ),
+                                                 div()
+                                                     .id("picker-quark")
+                                                     .px_2()
+                                                     .py_0p5()
+                                                     .rounded_md()
+                                                     .bg(theme::glass_card())
+                                                     .border_1()
+                                                     .border_color(theme::glass_highlight())
+                                                     .text_xs()
+                                                     .text_color(theme::text_muted())
+                                                     .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
+                                                     .cursor_pointer()
+                                                     .child("@Quark")
+                                                     .on_click(cx.listener(|this, _, window, cx| {
+                                                         this.insert_completion_trigger("@", window, cx);
+                                                     })),
+                                             )
+                                             .child(
+                                                 div()
+                                                     .id("picker-file")
+                                                     .px_2()
+                                                     .py_0p5()
+                                                     .rounded_md()
+                                                     .bg(theme::glass_card())
+                                                     .border_1()
+                                                     .border_color(theme::glass_highlight())
+                                                     .text_xs()
+                                                     .text_color(theme::text_muted())
+                                                     .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
+                                                     .cursor_pointer()
+                                                     .child("@File")
+                                                     .on_click(cx.listener(|this, _, window, cx| {
+                                                         this.insert_completion_trigger("@", window, cx);
+                                                     })),
+                                             ),
                                     )
                                     .child(
-                                        h_flex()
-                                            .gap_3()
-                                            .items_center()
-                                            .child(
-                                                div().text_xs().text_color(theme::text_muted()).child(
-                                                    crate::vcs::format_working_dir(&self.path),
-                                                ),
-                                            )
-                                            .child(
-                                                Button::new("submit-prompt")
-                                                    .primary()
-                                                    .small()
-                                                    .label("Send")
-                                                    .on_click(cx.listener(|this, _, window, cx| {
-                                                        let input_entity = this.input.clone();
-                                                        this.on_input_submit(&input_entity, &InputEvent::PressEnter { shift: false, secondary: false }, window, cx);
-                                                    })),
-                                            ),
+                                        div().text_xs().text_color(theme::text_muted()).child(
+                                            crate::vcs::format_working_dir(&self.path),
+                                        ),
                                     ),
                             )
                     })
