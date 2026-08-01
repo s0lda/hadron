@@ -499,10 +499,10 @@ mod tests {
             .unwrap();
         assert_eq!(out.stdout, "Hello world");
         let u = out.usage.expect("usage spend parsed");
-        assert_eq!(u.input, 10);
+        assert_eq!(u.input, Some(10));
         // Note: thinking_tokens (2) is folded into output (5 + 2 = 7) because thinking/reasoning spends output token budget
-        assert_eq!(u.output, 7);
-        assert_eq!(u.cache_read, 1);
+        assert_eq!(u.output, Some(7));
+        assert_eq!(u.cache_read, Some(1));
     }
 
     #[cfg(unix)]
