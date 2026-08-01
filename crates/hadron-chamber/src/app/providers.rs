@@ -52,6 +52,11 @@ pub(super) enum WizardState {
     /// wizard's own `custom_cli_*` input fields on `Chamber` hold the live form state
     /// (see `mod.rs`), so this variant carries no payload of its own.
     CustomCli,
+    /// The "Ollama (local)" / "LM Studio (local)" form: a keyless `Transport::Http`
+    /// seat. Connect GETs the vendor's model-list endpoint instead of booting a
+    /// subprocess; `Chamber::local_base_url`/`local_models`/`local_selected_model`
+    /// hold the live form state, same reasoning as `CustomCli`'s fields.
+    LocalProvider(hadron_gluon::adapter::local::LocalVendor, ProviderState),
 }
 
 /// Which channel the custom-CLI wizard's prompt-delivery toggle currently selects. Drives
