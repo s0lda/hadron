@@ -242,18 +242,18 @@ pub fn presence_label(state: QuarkState) -> &'static str {
 /// The auto-assignment palette: distinct, legible hues a quark cycles through by name
 /// when it has no custom colour. Exposed so a colour picker can offer them as presets.
 pub const AUTO_PALETTE: [u32; 12] = [
-    0x38bdf8, // sky
-    0x34d399, // emerald
-    0xa78bfa, // violet
-    0xfbbf24, // amber
-    0xfb7185, // rose
-    0x94a3b8, // slate
-    0x22d3ee, // cyan
-    0x4ade80, // green
-    0xfb923c, // orange
-    0x818cf8, // indigo
-    0xe879f9, // fuchsia
-    0xf472b6, // pink
+    0x60a5fa, // soft sapphire blue
+    0x34d399, // soft mint emerald
+    0xa78bfa, // soft amethyst
+    0xf59e0b, // soft warm amber
+    0xf87171, // soft coral rose
+    0x94a3b8, // cool slate
+    0x2dd4bf, // soft ice teal
+    0x10b981, // muted sage green
+    0xf97316, // soft terracotta orange
+    0x818cf8, // soft dusk indigo
+    0xc084fc, // soft orchid
+    0x9333ea, // muted royal purple
 ];
 
 /// A stable hue for a chat author's header, so who-said-what scans at a glance.
