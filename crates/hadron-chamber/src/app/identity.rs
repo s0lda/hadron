@@ -22,20 +22,20 @@ pub(super) struct ResolvedIdentity {
 /// The palette a user picks an identity color from (Settings). Kept small and
 /// legible on the dark surfaces.
 pub(super) const IDENTITY_SWATCHES: [u32; 14] = [
-    0xf5f5f6, // near-white (the human's default)
-    0xc084fc, // amethyst
-    0xa855f7, // purple
-    0x60a5fa, // blue
-    0x34d399, // green
-    0xfbbf24, // amber
-    0xfb7185, // rose
-    0x94a3b8, // slate
-    0x38bdf8, // sky
-    0x22d3ee, // cyan
-    0x4ade80, // emerald
-    0xfb923c, // orange
-    0x818cf8, // indigo
-    0xe879f9, // fuchsia
+    0xe2e8f0, // soft slate white
+    0xa78bfa, // soft amethyst
+    0x9333ea, // muted royal purple
+    0x60a5fa, // soft sapphire blue
+    0x34d399, // soft mint emerald
+    0xf59e0b, // soft warm amber
+    0xf87171, // soft coral rose
+    0x94a3b8, // cool slate
+    0x3898ec, // soft cyan blue
+    0x2dd4bf, // soft ice teal
+    0x10b981, // muted sage green
+    0xf97316, // soft terracotta orange
+    0x818cf8, // soft dusk indigo
+    0xc084fc, // soft orchid
 ];
 
 /// Parse a `#rrggbb` string into a color.
