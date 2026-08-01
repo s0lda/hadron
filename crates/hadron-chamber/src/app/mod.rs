@@ -1097,7 +1097,8 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             // invisible against its own card. Re-anchor all three to the chamber's own
             // neutral/amethyst ramp so nothing on these panels still carries the fork's
             // stock accent.
-            t.input = theme::border().into();
+            t.input = theme::input_bg().into();
+            t.tokens.input = gpui::Hsla::from(theme::input_bg()).into();
             t.selection = theme::accent_soft().into();
             t.list_active = gpui::rgba(0xc084fc33).into();
             t.list_active_border = theme::accent().into();
