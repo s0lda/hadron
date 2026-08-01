@@ -1,4 +1,5 @@
 
+use hadron_lattice::term::{self, Source};
 use hadron_lattice::{
     Actor, Event, Kind, QuarkId, QuarkState,
 };
@@ -370,7 +371,7 @@ impl super::Engine {
                 // will safely refuse to delete it and this pass sweeps everyone ELSE's
                 // already-landed, now-idle branches instead.
                 if let Err(e) = crate::worktree::prune_merged_branches(root, &t.base) {
-                    eprintln!("hadron-gluon: branch prune after land failed (non-fatal): {e:#}");
+                    term::warn(Source::Gluon, &format!("branch prune after land failed (non-fatal): {e:#}"));
                 }
 
                 Ok(false) // landed → the quark grounds normally

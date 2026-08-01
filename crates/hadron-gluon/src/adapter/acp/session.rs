@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use hadron_lattice::term::{self, Source};
 use hadron_lattice::{
     live, Activity, ContextUsage, Doing, Mode, Projection, QuarkId, QuotaBucket, TurnOutcome, Usage,
 };
@@ -642,14 +643,20 @@ impl super::AcpQuark {
                                             match set {
                                                 Ok(_) => {
                                                     *pump_model.lock().unwrap() = Some(value.clone());
-                                                    eprintln!(
-                                                        "[acp] model set to {value:?} (asked for {want_model:?})"
+                                                    term::info(
+                                                        Source::Acp,
+                                                        &format!(
+                                                            "model set to {value:?} (asked for {want_model:?})"
+                                                        ),
                                                     );
                                                 }
-                                                Err(e) => eprintln!(
-                                                    "[acp] the agent refused model {value:?}: {e} — \
-                                                     staying on its default {:?}",
-                                                    selector.current
+                                                Err(e) => term::warn(
+                                                    Source::Acp,
+                                                    &format!(
+                                                        "the agent refused model {value:?}: {e} — \
+                                                         staying on its default {:?}",
+                                                        selector.current
+                                                    ),
                                                 ),
                                             }
                                         }
@@ -668,15 +675,18 @@ impl super::AcpQuark {
                                                             || m.label
                                                                 .eq_ignore_ascii_case(&want_model)))
                                             {
-                                                eprintln!(
-                                                    "[acp] seat asked for model {want_model:?}; \
-                                                     agent runs {:?} and offers {:?}",
-                                                    selector.current,
-                                                    selector
-                                                        .available
-                                                        .iter()
-                                                        .map(|m| &m.value)
-                                                        .collect::<Vec<_>>()
+                                                term::warn(
+                                                    Source::Acp,
+                                                    &format!(
+                                                        "seat asked for model {want_model:?}; \
+                                                         agent runs {:?} and offers {:?}",
+                                                        selector.current,
+                                                        selector
+                                                            .available
+                                                            .iter()
+                                                            .map(|m| &m.value)
+                                                            .collect::<Vec<_>>()
+                                                    ),
                                                 );
                                             }
                                         }
@@ -684,9 +694,12 @@ impl super::AcpQuark {
                                 }
                                 None => {
                                     if !want_model.trim().is_empty() {
-                                        eprintln!(
-                                            "[acp] seat asked for model {want_model:?} but this \
-                                             agent advertises no model selector"
+                                        term::warn(
+                                            Source::Acp,
+                                            &format!(
+                                                "seat asked for model {want_model:?} but this \
+                                                 agent advertises no model selector"
+                                            ),
                                         );
                                     }
                                 }
@@ -700,7 +713,7 @@ impl super::AcpQuark {
                                             selector.config_id,
                                             value.as_str(),
                                         )).block_task().await;
-                                        eprintln!("[acp] effort set to {:?}", value);
+                                        term::info(Source::Acp, &format!("effort set to {:?}", value));
                                     }
                                 }
                             }
@@ -713,7 +726,7 @@ impl super::AcpQuark {
                                             selector.config_id,
                                             value.as_str(),
                                         )).block_task().await;
-                                        eprintln!("[acp] mode set to {:?}", value);
+                                        term::info(Source::Acp, &format!("mode set to {:?}", value));
                                     }
                                 }
                             }

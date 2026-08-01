@@ -1,4 +1,5 @@
 
+use hadron_lattice::term::{self, Source};
 use hadron_lattice::{
     Event, Kind,
 };
@@ -143,9 +144,9 @@ fn read_invariant_dir(dir: &std::path::Path) -> Vec<(String, String)> {
                 Err(err) => {
                     // Loud, not silent: an unreadable rule file is a rule the quark
                     // is not being given, and nobody would otherwise ever know.
-                    eprintln!(
-                        "warning: invariant exists but could not be read: {} — {err}",
-                        e.path().display()
+                    term::warn(
+                        Source::Gluon,
+                        &format!("invariant exists but could not be read: {} — {err}", e.path().display()),
                     );
                     None
                 }
