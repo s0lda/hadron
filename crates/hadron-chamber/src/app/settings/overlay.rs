@@ -282,8 +282,11 @@ impl super::Chamber {
             .rounded(INNER_RADIUS)
             .overflow_hidden()
             // Opaque: a focused settings modal shouldn't let the bright field bleed through
-            // (it read as too transparent). Solid, not glass — shared with the info panel.
-            .bg(theme::glass_card())
+            // (it read as too transparent). `glass_card()` is ~95% alpha by design (see its
+            // `test_translucency_invariants`), which is exactly the readable-through-it bug
+            // this comment describes — `modal_surface()` is the token built for this: fully
+            // opaque, matching the quark-info/About panels, and previously unwired.
+            .bg(theme::modal_surface())
             .border_1()
             .border_color(theme::glass_highlight())
             .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {}) // swallow inner clicks
