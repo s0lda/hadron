@@ -859,3 +859,27 @@
         // human is not a quark → not on the roster.
         assert!(!ids.contains(&"human"));
     }
+
+/// **The mode that survives `/clear`.** The effective mode is folded from the field's
+/// `ModeSet` events and `/clear` truncates the field, so before this every new session
+/// silently reopened on `Mode::Ask` however the human had it set. The seed re-arms it.
+#[test]
+fn a_non_default_mode_is_re_seeded_after_a_clear() {
+    for mode in [Mode::Write, Mode::Auto, Mode::Bypass] {
+        let seed = default_mode_seed(mode).expect("a non-default mode must be re-seeded");
+        assert!(matches!(seed.kind, Kind::ModeSet { mode: m } if m == mode));
+        assert_eq!(seed.to, None, "the GLOBAL default, not a per-quark override");
+        // The gatekeeper is what actually reads it back; assert against that, not
+        // against a second copy of the folding rule.
+        assert_eq!(hadron_gatekeeper::global_mode(&[seed]), mode);
+    }
+}
+
+/// `Mode::default()` needs no seed: an empty field already resolves to it, so writing
+/// one would add a row that changes nothing — and a second definition of the floor
+/// beside `Mode::default()` itself.
+#[test]
+fn the_default_mode_needs_no_seed() {
+    assert!(default_mode_seed(Mode::default()).is_none());
+    assert_eq!(hadron_gatekeeper::global_mode(&[]), Mode::default());
+}

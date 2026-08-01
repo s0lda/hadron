@@ -73,7 +73,7 @@ pub struct ChamberPrefs {
     /// The global permission mode a **fresh field** starts on.
     ///
     /// The effective mode is folded from the field's `ModeSet` events
-    /// (`hadron_gatekeeper::matrix::global_mode`) and that stays the one source of
+    /// (`hadron_gatekeeper::global_mode`) and that stays the one source of
     /// truth — but `/clear` truncates `field.jsonl`, which took every `ModeSet` with
     /// it and dropped the swarm back to `Mode::Ask` on every new session. This is the
     /// standing preference `/clear` re-seeds from, so a human who works in `Auto` does

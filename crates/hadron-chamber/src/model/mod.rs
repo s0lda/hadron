@@ -166,6 +166,23 @@ impl RosterRow {
     }
 }
 
+/// The global `ModeSet` `/clear` must append to re-arm the human's standing
+/// permission mode, or `None` when the fresh field already resolves to it.
+///
+/// The effective mode is folded from the field's `ModeSet` events
+/// (`hadron_gatekeeper::global_mode`), and `/clear` truncates the field — so
+/// every mode the human had set went with it and each new session silently reopened
+/// on `Mode::Ask`. This is the re-seed.
+///
+/// `None` for `Mode::default()` on purpose: an empty field ALREADY resolves to that,
+/// so seeding it would write a row that changes nothing and would put a second
+/// definition of the floor next to `Mode::default()`. Same pure-and-tested shape as
+/// [`post_clear_reboots`], so the GPUI command handler stays a thin caller.
+pub fn default_mode_seed(default_mode: Mode) -> Option<Event> {
+    (default_mode != Mode::default())
+        .then(|| Event::new(Actor::Human, None, Kind::ModeSet { mode: default_mode }))
+}
+
 /// The reboots `/clear` must append after truncating the field: one per resident
 /// (ACP) quark, so every live agent re-boots into the fresh session instead of
 /// carrying pre-clear context. The field-is-session model means a cleared field

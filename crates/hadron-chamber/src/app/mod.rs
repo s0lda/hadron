@@ -307,6 +307,17 @@ struct Chamber {
     custom_cli_flag: Entity<InputState>,
     /// Which of the two prompt-delivery channels the toggle currently selects.
     custom_cli_channel: CliChannelChoice,
+    /// The boot command for an ACP agent the catalogue has none for — a registry row
+    /// whose only distribution is a `binary` archive Hadron will not download, or an
+    /// agent nobody has written a preset for (a local model behind `opencode`, say).
+    ///
+    /// The wizard used to render those rows greyed with the words "Needs a manual
+    /// command" and no way anywhere in the UI to supply one, which made the sentence
+    /// a dead end rather than an instruction. These two fields are what it now leads
+    /// to; `WizardState::Connecting` boots and probes whatever they hold, so a
+    /// hand-typed command reaches the daemon down exactly the same path a preset does.
+    acp_program: Entity<InputState>,
+    acp_args: Entity<InputState>,
     /// Arbitrary-colour picker for the current Settings identity, beside the preset
     /// swatches. Its `Change` events write the identity's colour (see `new`).
     color_picker: Entity<ColorPickerState>,
@@ -318,7 +329,7 @@ struct Chamber {
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
-    _settings_subs: [Subscription; 6],
+    _settings_subs: [Subscription; 7],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
     /// Offered-model probe for the ACP quark whose Settings are open — drives the model
@@ -449,6 +460,8 @@ impl Chamber {
         let custom_cli_vendor = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. ollama"));
         let custom_cli_program = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. ollama or /usr/local/bin/mytool"));
         let custom_cli_args = cx.new(|cx| InputState::new(window, cx).placeholder("space-separated, e.g. run llama3"));
+        let acp_program = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. npx, opencode, or an absolute path"));
+        let acp_args = cx.new(|cx| InputState::new(window, cx).placeholder("space-separated, e.g. -y @scope/agent@latest"));
         let custom_cli_model = cx.new(|cx| InputState::new(window, cx).placeholder("model name (optional)"));
         let custom_cli_flag = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. --prompt (blank = positional)"));
         let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
@@ -472,6 +485,10 @@ impl Chamber {
                 cx.notify()
             }),
             cx.subscribe_in(&custom_cli_program, window, |_, _, _: &InputEvent, _, cx| {
+                cx.notify()
+            }),
+            // Same reason: "Connect" only lights up once a program has been typed.
+            cx.subscribe_in(&acp_program, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
             }),
             // A colour chosen in the picker writes the current Settings identity's colour.
@@ -675,6 +692,8 @@ impl Chamber {
             custom_cli_vendor,
             custom_cli_program,
             custom_cli_args,
+            acp_program,
+            acp_args,
             custom_cli_model,
             custom_cli_flag,
             custom_cli_channel: CliChannelChoice::default(),
