@@ -74,6 +74,7 @@ impl Render for Chamber {
             .is_some()
             .then(|| self.info_panel_overlay(cx));
         let about = self.about_open.then(|| self.about_overlay(cx));
+        let changelog = self.changelog_open.then(|| self.changelog_overlay(cx));
         let app_menu = self.app_menu_open.then(|| self.app_menu_overlay(cx));
         let processes = self
             .process_manager_open
@@ -130,6 +131,7 @@ impl Render for Chamber {
             .children(settings)
             .children(info)
             .children(about)
+            .children(changelog)
             .children(app_menu)
             .children(processes);
 

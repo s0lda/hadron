@@ -407,6 +407,8 @@ struct Chamber {
     info_panel: Option<String>,
     /// The About dialog, opened from the app menu.
     about_open: bool,
+    /// The Changelog dialog overlay.
+    pub(super) changelog_open: bool,
     file_tree_scroll: ScrollHandle,
     file_tree_open_scroll: ScrollHandle,
     completion_scroll: ScrollHandle,
@@ -772,6 +774,7 @@ impl Chamber {
             terminal_warmup: 0,
             info_panel: None,
             about_open: false,
+            changelog_open: false,
             file_tree_scroll: ScrollHandle::new(),
             file_tree_open_scroll: ScrollHandle::new(),
             completion_scroll: ScrollHandle::new(),

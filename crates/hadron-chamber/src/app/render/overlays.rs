@@ -286,6 +286,262 @@ impl super::Chamber {
             )
     }
 
+    /// The Changelog overlay modal displaying release history back to v0.1.0.
+    pub(super) fn changelog_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let render_section = |version: &'static str, date: &'static str, is_unreleased: bool, added: &[&'static str], changed: &[&'static str], fixed: &[&'static str]| {
+            let mut sec = v_flex().gap_2().pb_4().border_b_1().border_color(theme::border());
+
+            let mut header = h_flex().items_center().gap_2();
+            header = header.child(
+                div()
+                    .text_base()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(theme::text())
+                    .child(format!("v{}", version)),
+            );
+            if is_unreleased {
+                header = header.child(
+                    div()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .bg(theme::accent_soft())
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(theme::accent())
+                        .child("Unreleased"),
+                );
+            } else {
+                header = header.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(date),
+                );
+            }
+            sec = sec.child(header);
+
+            let render_group = |title: &'static str, items: &[&'static str]| {
+                if items.is_empty() {
+                    return None;
+                }
+                let mut grp = v_flex().gap_1();
+                grp = grp.child(
+                    div()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(theme::text_secondary())
+                        .child(title),
+                );
+                for item in items {
+                    grp = grp.child(
+                        h_flex()
+                            .gap_2()
+                            .items_start()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child("•"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text())
+                                    .child(*item),
+                            ),
+                    );
+                }
+                Some(grp)
+            };
+
+            if let Some(grp) = render_group("Added", added) {
+                sec = sec.child(grp);
+            }
+            if let Some(grp) = render_group("Changed", changed) {
+                sec = sec.child(grp);
+            }
+            if let Some(grp) = render_group("Fixed", fixed) {
+                sec = sec.child(grp);
+            }
+
+            sec
+        };
+
+        div()
+            .id("changelog-backdrop")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000099))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.changelog_open = false;
+                    cx.notify();
+                }),
+            )
+            .child(
+                v_flex()
+                    .occlude()
+                    .w(px(540.0))
+                    .max_h(px(580.0))
+                    .p_5()
+                    .gap_4()
+                    .rounded(INNER_RADIUS)
+                    .bg(theme::glass_card())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {})
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2p5()
+                                    .child(
+                                        div()
+                                            .text_xl()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(theme::text())
+                                            .child("Changelog"),
+                                    )
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_full()
+                                            .bg(theme::bg_surface_raised())
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(theme::text_muted())
+                                            .child(format!("v{}", env!("CARGO_PKG_VERSION"))),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id("changelog-close-icon")
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .size(px(24.0))
+                                    .rounded_full()
+                                    .text_color(theme::text_secondary())
+                                    .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
+                                    .child(Icon::new(IconName::WindowClose).small())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.changelog_open = false;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .id("changelog-list")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .gap_4()
+                            .pr_1()
+                            .child(render_section(
+                                "0.1.4",
+                                "Unreleased",
+                                true,
+                                &[
+                                    "Ollama, LM Studio & Cloud OpenAI-compatible HTTP providers over Transport::Http",
+                                    "Add-Quark wizard rows for HTTP providers with keyring API key support",
+                                    "Searchable model picker with pinned Default row in wizard and Settings",
+                                ],
+                                &[],
+                                &[
+                                    "Enabled rustls-tls on reqwest so cloud endpoints connect over HTTPS",
+                                    "Fixed LM Studio /v1 endpoint path handling and error response parsing",
+                                    "Restored Make Orchestrator context menu action for Worker quarks",
+                                    "Auto-scroll chat input on paste of large text blocks",
+                                ],
+                            ))
+                            .child(render_section(
+                                "0.1.3",
+                                "2026-07-27",
+                                false,
+                                &[
+                                    "Unified Swarm Command Deck UI redesign with floating capsule tab bars",
+                                    "/Command picker chip selection alongside @Quark and @File mentions",
+                                    "Task time scrubbing and live merge-gate heartbeats",
+                                    "Live streamed replies directly in chat while tool activity stays in Live card",
+                                ],
+                                &[
+                                    "Obsidian Graphite theme, soft amethyst accents, and metallic pastel git graph",
+                                ],
+                                &[],
+                            ))
+                            .child(render_section(
+                                "0.1.2",
+                                "2026-07-26",
+                                false,
+                                &[
+                                    "Graceful turn cancellation & mid-turn interruption for resident ACP sessions",
+                                    "Automatic Chamber restart after successful self-update",
+                                    "Silence-based turn watchdog (TURN_DEADLINE)",
+                                    "Dedicated orchestrator chat lane preserved across reseats",
+                                ],
+                                &[],
+                                &[
+                                    "Snapshot worktrees on turn interruption to avoid stranding uncommitted edits",
+                                ],
+                            ))
+                            .child(render_section(
+                                "0.1.1",
+                                "2026-07-25",
+                                false,
+                                &[],
+                                &[],
+                                &[
+                                    "Self-update workflow installs the exact released tag offered",
+                                ],
+                            ))
+                            .child(render_section(
+                                "0.1.0",
+                                "2026-07-24",
+                                false,
+                                &[
+                                    "Multi-quark swarm orchestration daemon (hadron-gluon)",
+                                    "Lattice IPC data layer and ACP adapter engine",
+                                    "Native GPUI Chamber desktop application",
+                                ],
+                                &[],
+                                &[],
+                            )),
+                    )
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .child(
+                                div()
+                                    .id("changelog-close")
+                                    .px_3()
+                                    .py_1()
+                                    .rounded_md()
+                                    .bg(theme::bg_surface_raised())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::glass_highlight()))
+                                    .text_sm()
+                                    .text_color(theme::text())
+                                    .child("Close")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.changelog_open = false;
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
+    }
+
+
     /// Best-effort, read-only probe of whether `hadron-gluon` currently holds
     /// `gluon.lock` — the same flock check `main.rs` runs once at chamber startup
     /// (`gluon_running`), made callable live each time the Process Manager opens.
