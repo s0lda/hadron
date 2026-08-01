@@ -77,10 +77,14 @@ pub trait CliRunner: Send + Sync {
 /// empty/whitespace → no message (a silent turn).
 pub fn reply_to_outcome(result: &CliResult) -> TurnOutcome {
     let trimmed = result.stdout.trim();
+    let usage = result.usage.as_ref().map(|spend| hadron_lattice::Usage {
+        spend: spend.clone(),
+        ..Default::default()
+    }).unwrap_or_default();
     if trimmed.is_empty() {
-        TurnOutcome { message: None, permission: None, usage: result.usage, ..Default::default() }
+        TurnOutcome { message: None, permission: None, usage, ..Default::default() }
     } else {
-        TurnOutcome { message: Some(trimmed.to_string()), permission: None, usage: result.usage, ..Default::default() }
+        TurnOutcome { message: Some(trimmed.to_string()), permission: None, usage, ..Default::default() }
     }
 }
 
@@ -172,16 +176,16 @@ impl CliRunner for ProcessRunner {
                                             }
                                         }
                                         if let Some(u) = v.get("usage") {
-                                            let in_tok = u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
+                                            let in_tok = u.get("input_tokens").and_then(|n| n.as_u64()).map(|n| n as u32);
                                             let out_tok = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
                                             let think_tok = u.get("thinking_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
-                                            let cache_read = u.get("cache_read_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
+                                            let cache_read = u.get("cache_read_tokens").and_then(|n| n.as_u64()).map(|n| n as u32);
                                             // Note: thinking_tokens is folded into output because thinking/reasoning generation spends output token budget on LLM inference.
                                             usage = Some(hadron_lattice::TokenSpend {
                                                 input: in_tok,
-                                                output: out_tok + think_tok,
+                                                output: Some(out_tok + think_tok),
                                                 cache_read,
-                                                cache_write: 0,
+                                                cache_write: None,
                                             });
                                         }
                                     }
@@ -197,14 +201,14 @@ impl CliRunner for ProcessRunner {
                                         stdout_accumulated.push_str(delta);
                                     }
                                 }
-                                let in_tok = input_tokens_path.as_ref().and_then(|p| v.pointer(p)).and_then(|n| n.as_u64()).unwrap_or(0) as u32;
-                                let out_tok = output_tokens_path.as_ref().and_then(|p| v.pointer(p)).and_then(|n| n.as_u64()).unwrap_or(0) as u32;
-                                if in_tok > 0 || out_tok > 0 {
+                                let in_tok = input_tokens_path.as_ref().and_then(|p| v.pointer(p)).and_then(|n| n.as_u64()).map(|n| n as u32);
+                                let out_tok = output_tokens_path.as_ref().and_then(|p| v.pointer(p)).and_then(|n| n.as_u64()).map(|n| n as u32);
+                                if in_tok.is_some() || out_tok.is_some() {
                                     usage = Some(hadron_lattice::TokenSpend {
                                         input: in_tok,
                                         output: out_tok,
-                                        cache_read: 0,
-                                        cache_write: 0,
+                                        cache_read: None,
+                                        cache_write: None,
                                     });
                                 }
                             }
