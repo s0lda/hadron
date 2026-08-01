@@ -249,18 +249,20 @@ struct ChatRequest<'a> {
 struct OllamaChatMessage {
     #[serde(default)]
     content: String,
-}
-
-#[derive(Deserialize)]
-struct OllamaChatChunk {
     #[serde(default)]
-    message: Option<OllamaChatMessage>,
+    reasoning: Option<String>,
+    #[serde(default)]
+    thinking: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
 struct OpenAiDelta {
     #[serde(default)]
     content: Option<String>,
+    #[serde(default)]
+    reasoning_content: Option<String>,
+    #[serde(default)]
+    reasoning: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -269,10 +271,30 @@ struct OpenAiChoice {
     delta: OpenAiDelta,
 }
 
+#[derive(Deserialize, Default)]
+struct OpenAiUsage {
+    #[serde(default)]
+    prompt_tokens: u32,
+    #[serde(default)]
+    completion_tokens: u32,
+}
+
 #[derive(Deserialize)]
 struct OpenAiChatChunk {
     #[serde(default)]
     choices: Vec<OpenAiChoice>,
+    #[serde(default)]
+    usage: Option<OpenAiUsage>,
+}
+
+#[derive(Deserialize)]
+struct OllamaChatChunk {
+    #[serde(default)]
+    message: Option<OllamaChatMessage>,
+    #[serde(default)]
+    prompt_eval_count: Option<u32>,
+    #[serde(default)]
+    eval_count: Option<u32>,
 }
 
 /// Read `resp`'s body as a byte stream and hand each newline-terminated line to
@@ -296,36 +318,64 @@ async fn for_each_line(
             }
         }
     }
+    if !buf.is_empty() {
+        let line = String::from_utf8_lossy(&buf);
+        let line = line.trim();
+        if !line.is_empty() {
+            on_line(line);
+        }
+    }
     Ok(())
 }
 
 /// Run one chat turn against `target`, streaming each text delta to `on_delta` as
 /// it arrives (for live-activity publishing) and returning the full accumulated
-/// reply once the stream ends.
+/// reply once the stream ends along with reported usage.
 async fn stream_chat(
     target: &HttpTarget,
     model: &str,
     prompt: &str,
     mut on_delta: impl FnMut(&str),
-) -> anyhow::Result<String> {
+) -> anyhow::Result<(String, hadron_lattice::Usage)> {
     let client = reqwest::Client::new();
     let body = ChatRequest { model, messages: [ChatMessage { role: "user", content: prompt }], stream: true };
     let mut full = String::new();
+    let mut usage = hadron_lattice::Usage::default();
     match target.vendor {
         HttpVendor::Ollama => {
             let resp = client.post(target.url("/api/chat")).json(&body).send().await?;
             anyhow::ensure!(resp.status().is_success(), "Ollama chat request failed: {}", resp.status());
+            let mut prompt_tokens = 0u32;
+            let mut eval_tokens = 0u32;
             for_each_line(resp, |line| {
                 if let Ok(chunk) = serde_json::from_str::<OllamaChatChunk>(line) {
+                    if let Some(p) = chunk.prompt_eval_count {
+                        prompt_tokens = p;
+                    }
+                    if let Some(e) = chunk.eval_count {
+                        eval_tokens = e;
+                    }
                     if let Some(msg) = chunk.message {
-                        if !msg.content.is_empty() {
-                            full.push_str(&msg.content);
-                            on_delta(&msg.content);
+                        let text = if !msg.content.is_empty() {
+                            &msg.content
+                        } else if let Some(ref r) = msg.reasoning {
+                            r
+                        } else if let Some(ref t) = msg.thinking {
+                            t
+                        } else {
+                            ""
+                        };
+                        if !text.is_empty() {
+                            full.push_str(text);
+                            on_delta(text);
                         }
                     }
                 }
             })
             .await?;
+            if prompt_tokens > 0 || eval_tokens > 0 {
+                usage.spend = hadron_lattice::TokenSpend { input: Some(prompt_tokens), output: Some(eval_tokens), ..Default::default() };
+            }
         }
         HttpVendor::LmStudio | HttpVendor::OpenAiCompatible => {
             let mut req = client.post(target.url("/chat/completions")).json(&body);
@@ -340,15 +390,28 @@ async fn stream_chat(
                 resp.status()
             );
             for_each_line(resp, |line| {
-                let Some(data) = line.strip_prefix("data: ") else { return };
+                let line = line.trim();
+                let Some(data) = line.strip_prefix("data:") else { return };
+                let data = data.trim();
                 if data == "[DONE]" {
                     return;
                 }
                 if let Ok(chunk) = serde_json::from_str::<OpenAiChatChunk>(data) {
-                    if let Some(content) = chunk.choices.first().and_then(|c| c.delta.content.as_deref()) {
-                        if !content.is_empty() {
-                            full.push_str(content);
-                            on_delta(content);
+                    if let Some(u) = chunk.usage {
+                        usage.spend = hadron_lattice::TokenSpend { input: Some(u.prompt_tokens), output: Some(u.completion_tokens), ..Default::default() };
+                    }
+                    if let Some(c) = chunk.choices.first() {
+                        let text = c
+                            .delta
+                            .content
+                            .as_deref()
+                            .or_else(|| c.delta.reasoning_content.as_deref())
+                            .or_else(|| c.delta.reasoning.as_deref());
+                        if let Some(content) = text {
+                            if !content.is_empty() {
+                                full.push_str(content);
+                                on_delta(content);
+                            }
                         }
                     }
                 }
@@ -356,7 +419,7 @@ async fn stream_chat(
             .await?;
         }
     }
-    Ok(full)
+    Ok((full, usage))
 }
 
 /// The minimum gap between two published draft updates — mirrors
@@ -473,7 +536,7 @@ impl Quark for LocalQuark {
         let dir = self.live_dir.clone();
         let mut draft = String::new();
         let mut last_publish: Option<Instant> = None;
-        let message = stream_chat(&self.target, &self.model, &prompt, |delta| {
+        let (message, usage) = stream_chat(&self.target, &self.model, &prompt, |delta| {
             draft.push_str(delta);
             let Some(dir) = &dir else { return };
             let due = last_publish.is_none_or(|t| t.elapsed() >= PUBLISH_THROTTLE);
@@ -486,7 +549,7 @@ impl Quark for LocalQuark {
         if let Some(dir) = &self.live_dir {
             let _ = live::clear(dir, &self.id);
         }
-        Ok(TurnOutcome { message: Some(message), ..Default::default() })
+        Ok(TurnOutcome { message: Some(message), usage, ..Default::default() })
     }
 }
 
@@ -657,10 +720,7 @@ mod tests {
         let base = serve_once("200 OK", "{\"error\":{\"message\":\"Invalid API key\",\"code\":401}}");
         let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
         let err = format!("{:#}", fetch_models(&target).unwrap_err());
-        assert!(err.contains("Invalid API key"), "expected the nested message: {err}");
-    }
-
-    #[tokio::test]
+        assert!(err.conta    #[tokio::test]
     async fn stream_chat_accumulates_ollama_ndjson_deltas() {
         let base = serve_once(
             "200 OK",
@@ -686,6 +746,34 @@ mod tests {
         let target = HttpTarget { vendor: HttpVendor::LmStudio, base_url: base, api_key: None };
         let full = stream_chat(&target, "some-model", "hi", |_| {}).await.unwrap();
         assert_eq!(full, "Hello");
+    }
+
+    #[tokio::test]
+    async fn stream_chat_accumulates_openai_sse_reasoning_and_unspaced_data_prefix() {
+        let base = serve_once(
+            "200 OK",
+            "data:{\"choices\":[{\"delta\":{\"reasoning_content\":\"Think\"}}]}\n\
+             data: {\"choices\":[{\"delta\":{\"content\":\"ing...\"}}]}\n\
+             data: [DONE]",
+        );
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let mut seen = Vec::new();
+        let full = stream_chat(&target, "some-model", "hi", |d| seen.push(d.to_string())).await.unwrap();
+        assert_eq!(full, "Thinking...");
+        assert_eq!(seen, vec!["Think".to_string(), "ing...".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn stream_chat_accumulates_ollama_reasoning_deltas() {
+        let base = serve_once(
+            "200 OK",
+            "{\"message\":{\"role\":\"assistant\",\"thinking\":\"Thought\"},\"done\":false}\n\
+             {\"message\":{\"role\":\"assistant\",\"content\":\"Answer\"},\"done\":false}\n\
+             {\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true}",
+        );
+        let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
+        let full = stream_chat(&target, "deepseek-r1", "hi", |_| {}).await.unwrap();
+        assert_eq!(full, "ThoughtAnswer");
     }
 
     #[test]
@@ -778,6 +866,8 @@ mod tests {
             HttpTarget { vendor: HttpVendor::LmStudio, base_url: "http://10.5.0.2:1234".to_string(), api_key: None };
         let mut deltas = 0;
         let full = stream_chat(&target, "google/gemma-4-12b-qat", "Reply with exactly one word: pong", |_| deltas += 1)
+            .await
+            .unwrap();ctly one word: pong", |_| deltas += 1)
             .await
             .unwrap();
         assert!(deltas > 0, "expected at least one streamed delta");

@@ -97,12 +97,21 @@ impl super::Engine {
             .chars()
             .take(72)
             .collect::<String>();
-        // Who this reply addresses (its single line-leading `@mention`), if anyone —
-        // `None` means it hands back to the human. Drives the merge gate below.
+        // Who this reply addresses (its single line-leading `@mention`), if anyone.
+        // If a worker emits a message without an explicit line-leading `@mention`,
+        // fall back to addressing `@orchestrator` so the worker's reply does not drop
+        // unaddressed in the field.
         let addressee = outcome
             .message
             .as_deref()
-            .and_then(|body| parse_addressee(body, &self.roster, Some(target), &preons));
+            .and_then(|body| parse_addressee(body, &self.roster, Some(target), &preons))
+            .or_else(|| {
+                if !self.is_orchestrator(target) && outcome.message.is_some() {
+                    self.orchestrator_id()
+                } else {
+                    None
+                }
+            });
 
         // THE ONE TOTALLER. No adapter computes this; they report components and
         // `TokenSpend::fresh` sums the comparable ones (input + output, cache
