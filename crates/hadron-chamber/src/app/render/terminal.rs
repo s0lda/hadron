@@ -5,37 +5,52 @@ impl super::Chamber {
     /// (Internally still `Rail::Inspector` for collapse/size.)
     pub(super) fn terminal_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.right_rail_tab;
-
-        let tabs = TabBar::new("right-rail-tabs")
-            .segmented()
+        let tabs = h_flex()
+            .id("right-rail-capsule-tabs")
+            .items_center()
+            .gap_1()
+            .p_1()
+            .rounded_full()
             .bg(theme::glass_card())
-            .selected_index(selected.index())
+            .border_1()
+            .border_color(theme::glass_highlight())
             .children(RightRailTab::ALL.map(|t| {
-                if t.index() == selected.index() {
-                    Tab::new().child(
-                        div()
+                let is_selected = t.index() == selected.index();
+                let label = t.label();
+                let ix = t.index();
+                div()
+                    .id(("right-rail-tab-pill", ix))
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .when(is_selected, |s| {
+                        s.bg(theme::glass_highlight())
                             .text_color(theme::accent())
-                            .child(t.label().to_string()),
-                    )
-                } else {
-                    Tab::new().child(div().child(t.label()))
-                }
-            }))
-            .on_click(cx.listener(move |this, ix: &usize, _window, cx| {
-                this.right_rail_tab = RightRailTab::from_index(*ix);
-                if this.right_rail_tab == RightRailTab::Changes {
-                    let root = crate::vcs::repo_root_of(&this.path);
-                    this.working_diff = crate::vcs::working_diff(root);
-                }
-                if this.right_rail_tab == RightRailTab::Git {
-                    let root = crate::vcs::repo_root_of(&this.path);
-                    this.git_branch_fingerprint = Some(crate::vcs::branch_fingerprint(root));
-                    this.git_branches = Some(crate::vcs::list_branches(root, "main"));
-                    this.git_worktrees = Some(crate::vcs::list_worktrees(root));
-                    this.git_log_graph = crate::vcs::commit_graph(root);
-                    this.rebuild_graph_rows();
-                }
-                cx.notify();
+                            .font_weight(gpui::FontWeight::BOLD)
+                    })
+                    .when(!is_selected, |s| {
+                        s.text_color(theme::text_muted())
+                            .hover(|h| h.text_color(theme::text()))
+                    })
+                    .text_xs()
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.right_rail_tab = RightRailTab::from_index(ix);
+                        if this.right_rail_tab == RightRailTab::Changes {
+                            let root = crate::vcs::repo_root_of(&this.path);
+                            this.working_diff = crate::vcs::working_diff(root);
+                        }
+                        if this.right_rail_tab == RightRailTab::Git {
+                            let root = crate::vcs::repo_root_of(&this.path);
+                            this.git_branch_fingerprint = Some(crate::vcs::branch_fingerprint(root));
+                            this.git_branches = Some(crate::vcs::list_branches(root, "main"));
+                            this.git_worktrees = Some(crate::vcs::list_worktrees(root));
+                            this.git_log_graph = crate::vcs::commit_graph(root);
+                            this.rebuild_graph_rows();
+                        }
+                        cx.notify();
+                    }))
             }));
 
         let header = h_flex()
@@ -140,7 +155,8 @@ impl super::Chamber {
                         .font_family("Cascadia Code")
                         .text_size(px(TERM_FONT))
                         .line_height(px(TERM_CELL_H))
-                        .size_full();
+                        .size_full()
+                        .p_3();
                     for line in &snap.lines {
                         let mut row = h_flex()
                             .h(px(TERM_CELL_H))
