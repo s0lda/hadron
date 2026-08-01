@@ -88,7 +88,7 @@ pub fn swarm_tasks(events: &[Event]) -> Vec<SwarmTask> {
                 let Some(title) = titled(&e.kind) else { continue };
                 let to_str = to.as_str().to_string();
                 open.insert(to_str.clone(), tasks.len());
-                by_event.insert(e.id, tasks.len());
+                by_event.insert(e.id.to_string(), tasks.len());
                 tasks.push(SwarmTask {
                     to: to_str,
                     from: actor_label(&e.from),

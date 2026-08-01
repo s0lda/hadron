@@ -879,12 +879,16 @@ pub(super) fn empty_hint(text: &'static str) -> impl IntoElement {
     div().text_sm().text_color(theme::text_muted()).child(text)
 }
 
-/// A swarm task's state badge — `Working` (info blue, still in flight) or `Done`
-/// (success green). Mirrors [`mode_tag`]/[`effort_tag`]'s outlined-chip shape.
+/// A swarm task's state badge. Mirrors [`mode_tag`]/[`effort_tag`]'s outlined-chip
+/// shape. `Blocked` and `Failed` are the two the projection used to fold into `Done`,
+/// and they are the reason to look at this list at all — they get the warning and
+/// danger tags so a bad outcome cannot read as a green one.
 pub(super) fn task_state_tag(state: TaskState) -> gpui::AnyElement {
     let (tag, label) = match state {
         TaskState::Working => (Tag::info(), "Working"),
         TaskState::Done => (Tag::success(), "Done"),
+        TaskState::Blocked => (Tag::warning(), "Blocked"),
+        TaskState::Failed => (Tag::danger(), "Failed"),
     };
     tag.xsmall()
         .outline()
@@ -892,14 +896,21 @@ pub(super) fn task_state_tag(state: TaskState) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// One row in the Tasks tab: who it's addressed to, its title, and a state chip —
-/// same dense layout as [`log_row`], swapping the kind column for the state tag.
-pub(super) fn task_row(t: &SwarmTask) -> impl IntoElement {
+/// One row in the Tasks tab: who it's addressed to, its title, how long it has taken
+/// and a state chip — same dense layout as [`log_row`], swapping the kind column for
+/// the state tag.
+///
+/// `now` is the render pass's clock, so an in-flight row counts UP while you watch it.
+/// That column is the whole point of the tab: a task with no elapsed time next to it
+/// cannot distinguish "started a second ago" from "wedged twenty minutes ago", which
+/// is the one question this list exists to answer.
+pub(super) fn task_row(t: &SwarmTask, now: chrono::DateTime<chrono::Utc>) -> impl IntoElement {
     let time = t
         .asked_at
         .with_timezone(&chrono::Local)
         .format("%H:%M:%S")
         .to_string();
+    let elapsed = crate::app::render::chat::format_duration(t.elapsed_secs(now));
     h_flex()
         .w_full()
         .items_start()
@@ -935,6 +946,15 @@ pub(super) fn task_row(t: &SwarmTask) -> impl IntoElement {
                 .text_color(theme::text_secondary())
                 .truncate()
                 .child(t.title.clone()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .w(px(64.0))
+                .text_xs()
+                .font_family("Cascadia Code")
+                .text_color(theme::text_muted())
+                .child(elapsed),
         )
         .child(div().flex_none().child(task_state_tag(t.state)))
 }

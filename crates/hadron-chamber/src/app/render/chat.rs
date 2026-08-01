@@ -821,7 +821,7 @@ pub(super) fn turn_summary_parts(
 }
 
 /// Format turn duration in seconds to human-friendly strings like "<1s", "5s", "1m 02s", "2m 34s", "1h 02m 05s".
-pub(super) fn format_duration(secs: i64) -> String {
+pub(crate) fn format_duration(secs: i64) -> String {
     if secs < 1 {
         return "<1s".to_string();
     }

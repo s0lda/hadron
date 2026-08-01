@@ -786,9 +786,12 @@ impl super::Chamber {
                 let list = if self.view.tasks.is_empty() {
                     div().p_4().child(empty_hint("No swarm tasks yet.")).into_any_element()
                 } else {
+                    // One clock for the whole list, so every row's elapsed time is
+                    // measured against the same instant.
+                    let now = chrono::Utc::now();
                     let mut col = v_flex().gap_1().p_2().w_full();
                     for t in &self.view.tasks {
-                        col = col.child(task_row(t));
+                        col = col.child(task_row(t, now));
                     }
                     col.into_any_element()
                 };
