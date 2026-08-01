@@ -410,12 +410,39 @@ impl super::Chamber {
                                     cx.notify();
                                 }))
                         }
-                        None => row.opacity(0.6).child(
-                            div()
-                                .text_sm()
-                                .text_color(theme::text_muted())
-                                .child("Needs a manual command"),
-                        ),
+                        // No command we can synthesise — a `binary`-only registry row
+                        // (we do not download and execute a third-party archive) or an
+                        // agent with no preset. This used to be greyed and unclickable,
+                        // which told the human a command was needed and offered nowhere
+                        // to put one. It now opens the SAME `Connecting` form with empty
+                        // program/args inputs, so the manual command has somewhere to go
+                        // and is booted and probed exactly like a preset's.
+                        None => {
+                            let preset = AgentDescriptor {
+                                id: entry.vendor.clone(),
+                                name: entry.name.clone(),
+                                description: entry.description.clone(),
+                                command: String::new(),
+                                args: Vec::new(),
+                            };
+                            row.hover(|s| s.bg(theme::bg_surface_raised()))
+                                .cursor_pointer()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme::text_muted())
+                                        .child("Set command \u{2192}"),
+                                )
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.acp_program.update(cx, |s, cx| s.set_value("", window, cx));
+                                    this.acp_args.update(cx, |s, cx| s.set_value("", window, cx));
+                                    this.wizard_state = WizardState::Connecting(
+                                        preset.clone(),
+                                        ProviderState::NotConnected,
+                                    );
+                                    cx.notify();
+                                }))
+                        }
                     };
                     list = list.child(row);
                 }
@@ -509,6 +536,52 @@ impl super::Chamber {
             }
 
             WizardState::Connecting(desc, state) => {
+                // A catalogue row with no boot command (a `binary`-only registry entry, or
+                // an agent nobody wrote a preset for) arrives here with `command` empty and
+                // the human types one. Resolving it HERE — before the probe, the auth retry
+                // and the save all read `desc` — is what keeps those three in step: the
+                // command that gets probed is the command that gets saved.
+                let needs_command = desc.command.trim().is_empty();
+                let desc = if needs_command {
+                    let program = self.acp_program.read(cx).value().trim().to_string();
+                    let args = self
+                        .acp_args
+                        .read(cx)
+                        .value()
+                        .split_whitespace()
+                        .map(str::to_string)
+                        .collect::<Vec<_>>();
+                    &AgentDescriptor { command: program, args, ..desc.clone() }
+                } else {
+                    desc
+                };
+                // Nothing to boot until a program is typed, so Connect stays inert rather
+                // than spawning `""` and reporting a bare ENOENT that names no path.
+                let command_ready = !desc.command.trim().is_empty();
+                let command_form = needs_command.then(|| {
+                    v_flex()
+                        .gap_4()
+                        .child(settings_field_stacked(
+                            "Program (the binary to spawn)",
+                            Input::new(&self.acp_program).into_any_element(),
+                        ))
+                        .child(settings_field_stacked(
+                            "Args (space-separated)",
+                            Input::new(&self.acp_args).into_any_element(),
+                        ))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text_muted())
+                                .child(
+                                    "Hadron has no built-in command for this agent. Give it the \
+                                     one its own docs use to speak ACP over stdio \u{2014} that is \
+                                     also how you seat a local model: point an ACP agent \
+                                     (opencode, goose, qwen-code\u{2026}) at Ollama or LM Studio in \
+                                     its own config, then name it here.",
+                                ),
+                        )
+                });
                 let desc_clone = desc.clone();
                 let state_ui = match state {
                     ProviderState::Connecting => v_flex()
@@ -523,7 +596,8 @@ impl super::Chamber {
                     ProviderState::NotConnected => {
                         v_flex()
                             .gap_4()
-                            .child(text_button("connect-btn", "Connect").on_click(cx.listener(
+                            .children(command_form)
+                            .child(text_button("connect-btn", "Connect").when(command_ready, |b| b.on_click(cx.listener(
                                 move |this, _, _window, cx| {
                                     this.wizard_state = WizardState::Connecting(
                                         desc_clone.clone(),
@@ -573,7 +647,7 @@ impl super::Chamber {
                                     )
                                     .detach();
                                 },
-                            )))
+                            ))))
                             .into_any_element()
                     }
                     ProviderState::NeedsAuth(methods) => {
