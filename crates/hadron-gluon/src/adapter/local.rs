@@ -865,9 +865,7 @@ mod tests {
         let target =
             HttpTarget { vendor: HttpVendor::LmStudio, base_url: "http://10.5.0.2:1234".to_string(), api_key: None };
         let mut deltas = 0;
-        let full = stream_chat(&target, "google/gemma-4-12b-qat", "Reply with exactly one word: pong", |_| deltas += 1)
-            .await
-            .unwrap();ctly one word: pong", |_| deltas += 1)
+        let (full, _) = stream_chat(&target, "google/gemma-4-12b-qat", "Reply with exactly one word: pong", |_| deltas += 1)
             .await
             .unwrap();
         assert!(deltas > 0, "expected at least one streamed delta");
