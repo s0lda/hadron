@@ -842,7 +842,7 @@ mod tests {
         };
         let model = listed.first().expect("the live Ollama server has no models pulled").id.clone();
         let mut deltas = 0;
-        let full = stream_chat(&target, &model, "Reply with exactly one word: pong", |_| deltas += 1)
+        let (full, _) = stream_chat(&target, &model, "Reply with exactly one word: pong", |_| deltas += 1)
             .await
             .unwrap();
         assert!(deltas > 0, "expected at least one streamed delta");
