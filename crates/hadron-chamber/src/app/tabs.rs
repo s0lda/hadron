@@ -47,7 +47,7 @@ impl ChatTab {
         match self {
             ChatTab::Chat => "Chat",
             ChatTab::Log => "Event Log",
-            ChatTab::Stats => "Timeline",
+            ChatTab::Stats => "Stats",
         }
     }
 }
