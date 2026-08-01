@@ -29,15 +29,21 @@ use crate::preons::Preon;
 ///
 /// Only the newest unanswered request is returned. Two quarks masked at once therefore
 /// resolve one per dispatch pass, which the engine's re-read loop already does.
+///
+/// **"Answered" is [`has_answered`]'s `.answers`-stamp rule, not "said anything at
+/// all."** This used to accept ANY [`is_turn_completion`] event after the request as
+/// proof it was served — so a quark mid-turn on an OLDER assignment, replying to
+/// *that* one, silently answered a newer addressed message it never saw (Task 8). The
+/// two walks share one predicate so they cannot drift into disagreeing again.
 pub fn next_pending(events: &[Event]) -> Option<QuarkId> {
     events
         .iter()
         .enumerate()
         .rev()
         .filter(|(_, e)| e.to.is_some() && is_turn_request(e))
-        .map(|(idx, e)| (idx, e.to.clone().unwrap()))
-        .find(|(idx, target)| !events[idx + 1..].iter().any(|e| is_turn_completion(e, target)))
-        .map(|(_, target)| target)
+        .map(|(idx, e)| (idx, e.id, e.to.clone().unwrap()))
+        .find(|(idx, msg_id, target)| !has_answered(&events[idx + 1..], target, *msg_id))
+        .map(|(_, _, target)| target)
 }
 
 /// Does event `e` **request or resume** a turn from the quark it addresses (`to =
@@ -80,6 +86,41 @@ pub fn is_turn_completion(e: &Event, quark: &QuarkId) -> bool {
                         | QuarkState::Waiting
                 }
             ))
+}
+
+/// Has `addressee` answered message `msg_id`, given the events **after** it?
+///
+/// The obvious reading — *"has it authored anything since?"* — is **wrong the moment
+/// a second request lands while the quark is already working.** The quark finishes the
+/// turn it was on, its reply lands after the newer request, and that reply gets
+/// counted as an answer to a request it could not possibly have seen. The newer
+/// request is then dropped, silently and permanently. Jake hit exactly this by typing
+/// twice; `next_pending`'s own older positional check hit the addressed-message form of
+/// the same bug (Task 8).
+///
+/// So an event answers a message only if it **says** it does: the engine stamps
+/// `answers` with the assignment the turn was dispatched for.
+///
+/// The `answers.is_none()` arm is not a loophole, it is the legacy reading, and it has
+/// to stay: every event written before this field existed carries `None`, and treating
+/// those as "has not answered" would re-excite a quark for every historical message in
+/// the field the next time the daemon starts. Absent is unknown, and for unknown we
+/// keep the old, order-based answer. New events are precise.
+///
+/// **What counts as answering is [`is_turn_completion`]** — a reply or a terminal
+/// status, NOT the `Excited` "I started" the engine writes at dispatch. That status
+/// carries no `answers` stamp, so before the shared predicate it hit the legacy arm and
+/// stranded a quark whose turn was interrupted after it went Excited. Shared by
+/// [`next_pending`] and the engine's `unaddressed_message_targets` so the two can never
+/// drift into disagreeing about whether a quark is still pending.
+pub fn has_answered(after: &[Event], addressee: &QuarkId, msg_id: ulid::Ulid) -> bool {
+    after.iter().any(|e| {
+        is_turn_completion(e, addressee)
+            && match e.answers {
+                Some(a) => a == msg_id,
+                None => true, // legacy event: fall back to "it spoke after the message"
+            }
+    })
 }
 
 /// The role alias every quark can address without knowing who currently holds the

@@ -275,6 +275,27 @@ fn a_per_quark_mode_change_is_not_a_pending_turn() {
     assert_eq!(next_pending(&events), None);
 }
 
+/// Task 8: an addressed message arriving mid-turn must not be marked answered
+/// by the quark's reply to an EARLIER assignment. `next_pending` used to ask
+/// only "did this quark say anything at all after the request" — any reply
+/// counted, whichever assignment it actually answered.
+#[test]
+fn an_addressed_message_arriving_mid_turn_is_not_swallowed_by_a_reply_to_an_earlier_assignment() {
+    let worker = QuarkId::new("worker");
+    let assignment_0 = msg(Actor::Human, Some("worker"), "assignment 0");
+    let assignment_1 = msg(Actor::Human, Some("worker"), "assignment 1");
+    let mut reply_to_0 = msg(Actor::Quark(worker.clone()), None, "done with assignment 0");
+    reply_to_0.answers = Some(assignment_0.id);
+
+    let events = vec![assignment_0, assignment_1, reply_to_0];
+
+    assert_eq!(
+        next_pending(&events),
+        Some(worker),
+        "assignment_1 has no reply stamped `answers == assignment_1.id` — must stay pending"
+    );
+}
+
 #[test]
 fn parse_addressee_matches_a_line_starting_mention() {
     // A delegation begins a line (optionally indented).

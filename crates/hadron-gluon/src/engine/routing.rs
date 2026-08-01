@@ -132,7 +132,7 @@ impl super::Engine {
                 if !seen.insert(addressee.clone()) {
                     continue;
                 }
-                if !Self::has_answered(&events[idx + 1..], &addressee, msg_id) {
+                if !crate::router::has_answered(&events[idx + 1..], &addressee, msg_id) {
                     // Mentions decide WHO; the human's latest mention-less message
                     // decides WHAT — but it is APPENDED, never substituted. Only a
                     // human naming message is extended at all: a quark→quark
@@ -173,7 +173,7 @@ impl super::Engine {
     /// router"` → `"actually do the README first"`) and destroys the instruction for the
     /// far commoner aside (`"@sonnet fix the router"` → `"thanks"`), and no heuristic
     /// tells the two apart. Appending is right for both, and it is the same silent-drop
-    /// family as [`Self::has_answered`]'s own comment: the newer message must be added to
+    /// family as [`crate::router::has_answered`]'s own comment: the newer message must be added to
     /// the field's account of the turn, never allowed to erase an older one.
     fn latest_unaddressed_human<'a>(&self, events: &'a [Event]) -> Option<(usize, &'a str)> {
         let preons = self.loaded_preons();
@@ -186,38 +186,6 @@ impl super::Engine {
                 Some((idx, body.as_str()))
             }
             _ => None,
-        })
-    }
-
-    /// Has `addressee` answered the human message `msg_id`?
-    ///
-    /// The obvious reading — *"has it authored anything since?"* — is **wrong the moment
-    /// the human speaks while the quark is already working.** The quark finishes the turn
-    /// it was on, its reply lands after the newer message, and that reply gets counted as
-    /// an answer to a message it could not possibly have seen. The newer message is then
-    /// dropped, silently and permanently. Jake hit exactly this by typing twice.
-    ///
-    /// So an event answers a message only if it **says** it does: the engine stamps
-    /// `answers` with the assignment the turn was dispatched for.
-    ///
-    /// The `answers.is_none()` arm is not a loophole, it is the legacy reading, and it
-    /// has to stay: every event written before this field existed carries `None`, and
-    /// treating those as "has not answered" would re-excite a quark for every historical
-    /// message in the field the next time the daemon starts. Absent is unknown, and for
-    /// unknown we keep the old, order-based answer. New events are precise.
-    ///
-    /// **What counts as answering is [`is_turn_completion`]** — a reply or a terminal
-    /// status, NOT the `Excited` "I started" the engine writes at dispatch. That status
-    /// carries no `answers` stamp, so before the shared predicate it hit the legacy arm
-    /// and stranded a quark whose turn was interrupted after it went Excited. `next_pending`
-    /// already used this reading; sharing it is what keeps the two from disagreeing.
-    fn has_answered(after: &[Event], addressee: &QuarkId, msg_id: ulid::Ulid) -> bool {
-        after.iter().any(|e| {
-            crate::router::is_turn_completion(e, addressee)
-                && match e.answers {
-                    Some(a) => a == msg_id,
-                    None => true, // legacy event: fall back to "it spoke after the message"
-                }
         })
     }
 
