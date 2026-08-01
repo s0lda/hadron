@@ -29,7 +29,7 @@ use gpui_component::scroll::{ScrollableElement, Scrollbar, ScrollbarShow};
 use gpui_component::stepper::{Stepper, StepperItem};
 use gpui_component::switch::Switch;
 // tab imports removed
-use gpui_component::tag::Tag;
+// tag imports removed
 use gpui_component::tooltip::Tooltip;
 
 // table imports removed

@@ -141,7 +141,7 @@ impl super::Chamber {
             activity.is_some(),
         );
 
-        let halo_dot_el = self.render_halo_dot(effective_state);
+        let halo_dot_el = self.render_halo_dot(effective_state, r.enabled);
 
         let mode_el = div()
             .id(SharedString::from(format!("mode-{}", r.id)))
@@ -346,8 +346,12 @@ impl super::Chamber {
     }
 
     /// Renders an 8px vector GPU-native status halo indicator dot.
-    pub(super) fn render_halo_dot(&self, state: QuarkState) -> impl IntoElement {
-        let color = theme::halo_dot(state);
+    pub(super) fn render_halo_dot(&self, state: QuarkState, enabled: bool) -> impl IntoElement {
+        let color = if enabled {
+            theme::halo_dot(state)
+        } else {
+            gpui::rgb(0x71717a).into()
+        };
         div()
             .w(px(8.0))
             .h(px(8.0))

@@ -94,24 +94,24 @@ pub fn glass_highlight() -> Hsla {
 }
 
 // --- vector status halo indicators ---
-/// Active status halo (Cyan `#00e5ff`) for tool execution / active state.
+/// Active status halo (Soft Cyan `#38bdf8`) for tool execution / active state.
 pub fn halo_active() -> Hsla {
-    rgb(0x00e5ff).into()
+    rgb(0x38bdf8).into()
 }
 
-/// Reasoning status halo (Soft Amethyst `#c084fc`) for reasoning / thinking state.
+/// Reasoning status halo (Soft Amethyst `#a78bfa`) for reasoning / thinking state.
 pub fn halo_reasoning() -> Hsla {
-    rgb(0xc084fc).into()
+    rgb(0xa78bfa).into()
 }
 
-/// Idle status halo (Emerald `#22c55e`) for ground / waiting / available state.
+/// Idle status halo (Soft Emerald `#34d399`) for ground / waiting / available state.
 pub fn halo_idle() -> Hsla {
-    rgb(0x22c55e).into()
+    rgb(0x34d399).into()
 }
 
-/// Error status halo (Red `#ef4444`) for blocked / error state.
+/// Error status halo (Soft Coral `#f87171`) for blocked / error state.
 pub fn halo_error() -> Hsla {
-    rgb(0xef4444).into()
+    rgb(0xf87171).into()
 }
 
 /// Resolves the 8px GPU-native vector status halo indicator color for a given `QuarkState`.
@@ -308,10 +308,10 @@ mod tests {
 
     #[test]
     fn test_halo_color_tokens() {
-        assert_eq!(halo_active(), Hsla::from(rgb(0x00e5ff)));
-        assert_eq!(halo_reasoning(), Hsla::from(rgb(0xc084fc)));
-        assert_eq!(halo_idle(), Hsla::from(rgb(0x22c55e)));
-        assert_eq!(halo_error(), Hsla::from(rgb(0xef4444)));
+        assert_eq!(halo_active(), Hsla::from(rgb(0x38bdf8)));
+        assert_eq!(halo_reasoning(), Hsla::from(rgb(0xa78bfa)));
+        assert_eq!(halo_idle(), Hsla::from(rgb(0x34d399)));
+        assert_eq!(halo_error(), Hsla::from(rgb(0xf87171)));
     }
 
     #[test]
