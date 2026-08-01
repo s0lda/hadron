@@ -59,29 +59,21 @@ impl StreamAccumulator {
         match &self.format {
             StreamFormat::AgyStreamJson => self.on_agy_line(&value),
             StreamFormat::Ndjson {
-                delta,
-                final_text,
-                usage_input,
-                usage_output,
-                usage_cache_read,
-                usage_cache_write,
+                text_delta_path,
+                input_tokens_path,
+                output_tokens_path,
             } => {
                 let mut changed = false;
-                if let Some(d) = path_as_str(&value, delta) {
-                    if !d.is_empty() {
-                        self.draft.push_str(d);
-                        changed = true;
+                if let Some(p) = text_delta_path.as_deref() {
+                    if let Some(d) = path_as_str(&value, p) {
+                        if !d.is_empty() {
+                            self.draft.push_str(d);
+                            changed = true;
+                        }
                     }
                 }
-                if let Some(p) = final_text.as_deref() {
-                    if let Some(text) = path_as_str(&value, p) {
-                        self.final_text = Some(text.to_string());
-                    }
-                }
-                Self::apply_usage_path(&mut self.spend.input, &value, usage_input.as_deref());
-                Self::apply_usage_path(&mut self.spend.output, &value, usage_output.as_deref());
-                Self::apply_usage_path(&mut self.spend.cache_read, &value, usage_cache_read.as_deref());
-                Self::apply_usage_path(&mut self.spend.cache_write, &value, usage_cache_write.as_deref());
+                Self::apply_usage_path(&mut self.spend.input, &value, input_tokens_path.as_deref());
+                Self::apply_usage_path(&mut self.spend.output, &value, output_tokens_path.as_deref());
                 changed
             }
         }
@@ -202,12 +194,13 @@ mod tests {
         assert!(!acc.on_line("not json at all"));
         assert!(!acc.on_line(r#"{"event":"step_update","step_update":{"step_type":"tool"}}"#));
         assert!(!acc.on_line(""));
-        assert_eq!(acc.draft(), "");
+        let (message, spend) = acc.finish();
+        assert_eq!(message.as_deref(), Some("Canonical final message"));
+        assert_eq!(spend.input, Some(100));
+        assert_eq!(spend.output, Some(25), "thinking_tokens are folded into output");
+        assert_eq!(spend.cache_read, None);
     }
 
-    /// If the stream dies before a `result` line ever arrives, the deltas seen so
-    /// far are the best available reply — never silently `None` after real work
-    /// was streamed to the human.
     #[test]
     fn missing_result_line_falls_back_to_accumulated_deltas() {
         let mut acc = agy();
@@ -217,44 +210,32 @@ mod tests {
         assert_eq!(spend.input, None, "no usage was ever reported");
     }
 
-    /// The generic `Ndjson` format resolves dotted paths, including a numeric
-    /// segment indexing an array — the OpenAI-compatible SSE-as-NDJSON shape a
-    /// Custom CLI seat would describe for a provider Hadron has no preset for.
     #[test]
     fn ndjson_format_resolves_dotted_paths_including_array_indices() {
         let mut acc = StreamAccumulator::new(StreamFormat::Ndjson {
-            delta: "choices.0.delta.content".to_string(),
-            final_text: Some("choices.0.message.content".to_string()),
-            usage_input: Some("usage.prompt_tokens".to_string()),
-            usage_output: Some("usage.completion_tokens".to_string()),
-            usage_cache_read: None,
-            usage_cache_write: None,
+            text_delta_path: Some("choices.0.delta.content".to_string()),
+            input_tokens_path: Some("usage.prompt_tokens".to_string()),
+            output_tokens_path: Some("usage.completion_tokens".to_string()),
         });
         assert!(acc.on_line(r#"{"choices":[{"delta":{"content":"Hel"}}]}"#));
         assert!(acc.on_line(r#"{"choices":[{"delta":{"content":"lo"}}]}"#));
         assert!(!acc.on_line(r#"{"choices":[{"delta":{}}]}"#), "no content key at all: no delta");
         assert!(!acc.on_line(
-            r#"{"choices":[{"message":{"content":"Hello"}}],"usage":{"prompt_tokens":5,"completion_tokens":2}}"#
-        ), "this line carries the final text + usage, not a delta");
+            r#"{"usage":{"prompt_tokens":5,"completion_tokens":2}}"#
+        ), "usage line");
 
         let (message, spend) = acc.finish();
-        assert_eq!(message.as_deref(), Some("Hello"), "final_text path wins over the accumulated draft");
+        assert_eq!(message.as_deref(), Some("Hello"));
         assert_eq!(spend.input, Some(5));
         assert_eq!(spend.output, Some(2));
-        assert_eq!(spend.cache_read, None, "path not configured — never a guessed 0");
     }
 
-    /// No `final_text` path configured (or it never resolves) falls back to
-    /// whatever deltas were accumulated — same fallback as the agy format.
     #[test]
     fn ndjson_format_without_a_final_text_path_falls_back_to_deltas() {
         let mut acc = StreamAccumulator::new(StreamFormat::Ndjson {
-            delta: "delta".to_string(),
-            final_text: None,
-            usage_input: None,
-            usage_output: None,
-            usage_cache_read: None,
-            usage_cache_write: None,
+            text_delta_path: Some("delta".to_string()),
+            input_tokens_path: None,
+            output_tokens_path: None,
         });
         acc.on_line(r#"{"delta":"hi there"}"#);
         let (message, _) = acc.finish();

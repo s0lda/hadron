@@ -434,7 +434,7 @@ async fn build_seat_watched_wires_a_streaming_cli_seat_and_leaves_a_plain_one_al
     let mut s = seat("agy-stream", "agy");
     let mut cli = CliSpec::agy();
     cli.stream = Some(hadron_lattice::StreamSpec {
-        args: vec![],
+        flags: vec![],
         format: hadron_lattice::StreamFormat::AgyStreamJson,
     });
     // Stand in for the real `agy` binary with a tiny shell script emitting the
