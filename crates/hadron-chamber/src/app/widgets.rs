@@ -904,7 +904,10 @@ pub(super) fn task_state_tag(state: TaskState) -> gpui::AnyElement {
         TaskState::Failed => (gpui::rgb(0xf87171), "Failed"),
     };
     div()
-        .px_2()
+        .w(px(64.0))
+        .flex()
+        .items_center()
+        .justify_center()
         .py_0p5()
         .rounded_md()
         .border_1()
