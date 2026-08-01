@@ -721,6 +721,21 @@ pub fn validate_quark_id(id: &QuarkId) -> anyhow::Result<()> {
 /// Validate the spec and build a live quark over a real `ProcessRunner`. Wiring
 /// the runner does not spawn anything — the process is spawned only on `excite`.
 pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
+    build_watched(spec, None)
+}
+
+/// The one construction site for every transport — [`build`] and
+/// [`build_seat_watched`] are both this function, so a builder call added to an
+/// arm cannot reach one caller and silently miss the other. It used to be two
+/// copies of the same chains, and the Http copy was simply never written: that is
+/// why `LocalQuark::watching` sat implemented with no caller and Ollama/OpenRouter
+/// showed `working…` for a whole turn.
+///
+/// `live_dir` is where the quark publishes what it is doing mid-turn
+/// (`hadron_lattice::live`). A plain CLI seat is deliberately left unwatched even
+/// when `live_dir` is `Some`: it runs its process to completion and hands back one
+/// blob, so there is nothing to watch until it is over.
+fn build_watched(spec: QuarkSpec, live_dir: Option<&std::path::Path>) -> anyhow::Result<Box<dyn Quark>> {
     validate_quark_id(&spec.id)?;
     let name = spec.display_name.clone();
     let roles = spec.roles.clone();
@@ -730,33 +745,47 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
     let energy_limit = spec.energy_limit;
     let deny_skills = spec.deny_skills.clone();
     let quark: Box<dyn Quark> = match spec.kind {
-        QuarkKind::Cli(cli_spec) => Box::new(
-            CliQuark::new(spec.id, spec.flavor, spec.model, cli_spec, ProcessRunner)
+        QuarkKind::Cli(cli_spec) => {
+            let watch = live_dir.filter(|_| cli_spec.stream.is_some());
+            let mut q = CliQuark::new(spec.id, spec.flavor, spec.model, cli_spec, ProcessRunner)
                 .with_display_name(name)
                 .with_roles(roles, exclusive)
                 .with_commands(commands)
                 .with_env(env)
                 .with_energy_limit(energy_limit)
-                .with_deny_skills(deny_skills),
-        ),
-        QuarkKind::Acp(target) => Box::new(
-            AcpQuark::new(spec.id, spec.flavor, spec.model, spec.effort, spec.mode_config, target)
+                .with_deny_skills(deny_skills);
+            if let Some(dir) = watch {
+                q = q.watching(dir.to_path_buf());
+            }
+            Box::new(q)
+        }
+        QuarkKind::Acp(target) => {
+            let mut q =
+                AcpQuark::new(spec.id, spec.flavor, spec.model, spec.effort, spec.mode_config, target)
+                    .with_display_name(name)
+                    .with_roles(roles, exclusive)
+                    .with_commands(commands)
+                    .with_env(env)
+                    .with_energy_limit(energy_limit)
+                    .with_deny_skills(deny_skills)
+                    .with_external_roots(spec.external_roots);
+            if let Some(dir) = live_dir {
+                q = q.watching(dir.to_path_buf());
+            }
+            Box::new(q)
+        }
+        QuarkKind::Http(target) => {
+            let mut q = LocalQuark::new(spec.id, spec.flavor, spec.model, attach_http_api_key(target, &env))
                 .with_display_name(name)
                 .with_roles(roles, exclusive)
                 .with_commands(commands)
-                .with_env(env)
                 .with_energy_limit(energy_limit)
-                .with_deny_skills(deny_skills)
-                .with_external_roots(spec.external_roots),
-        ),
-        QuarkKind::Http(target) => Box::new(
-            LocalQuark::new(spec.id, spec.flavor, spec.model, attach_http_api_key(target, &env))
-                .with_display_name(name)
-                .with_roles(roles, exclusive)
-                .with_commands(commands)
-                .with_energy_limit(energy_limit)
-                .with_deny_skills(deny_skills),
-        ),
+                .with_deny_skills(deny_skills);
+            if let Some(dir) = live_dir {
+                q = q.watching(dir.to_path_buf());
+            }
+            Box::new(q)
+        }
     };
     Ok(quark)
 }
@@ -780,7 +809,14 @@ fn attach_http_api_key(target: HttpTarget, env: &[(String, String)]) -> HttpTarg
 /// store. Resolution happens here, once, so every caller gets the same seam a real
 /// keychain will eventually sit behind.
 pub fn build_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore) -> anyhow::Result<Box<dyn Quark>> {
-    build(QuarkSpec {
+    build_watched(spec_for_seat(seat, store)?, None)
+}
+
+/// A `Seat` read out of `team.json` as the [`QuarkSpec`] both [`build_seat`] and
+/// [`build_seat_watched`] construct from — one place, so a new `Seat` field
+/// reaches the watched path and the unwatched one together.
+fn spec_for_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore) -> anyhow::Result<QuarkSpec> {
+    Ok(QuarkSpec {
         id: seat.id.clone(),
         flavor: seat.flavor.clone(),
         kind: QuarkKind::from_seat(seat)?,
@@ -801,42 +837,17 @@ pub fn build_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore)
 /// As [`build_seat`], but the quark also publishes what it is doing mid-turn into
 /// `live_dir` (see `hadron_lattice::live`) so the chamber can render it.
 ///
-/// Two transports have a mid-turn stream to publish: ACP always (it is
-/// resident JSON-RPC), and a CLI seat only when its `CliSpec.stream` is `Some` —
-/// a plain CLI adapter runs its process to completion and hands back one blob,
-/// so there is nothing to watch until it is over. `Transport::Http` has its own
-/// stream too (`LocalQuark::watching`) but is not wired to `live_dir` here; that
-/// is a pre-existing gap this task does not touch.
+/// Three transports have a mid-turn stream to publish: ACP always (it is
+/// resident JSON-RPC), `Transport::Http` always (`LocalQuark` streams its chat
+/// completion delta by delta), and a CLI seat only when its `CliSpec.stream` is
+/// `Some` — a plain CLI adapter runs its process to completion and hands back one
+/// blob, so there is nothing to watch until it is over. The per-transport rule
+/// lives in [`build_watched`], not here.
 pub fn build_seat_watched(
     seat: &Seat,
     live_dir: &std::path::Path,
     store: &dyn hadron_lattice::secrets::SecretStore,
 ) -> anyhow::Result<Box<dyn Quark>> {
-    validate_quark_id(&seat.id)?;
-    let kind = QuarkKind::from_seat(seat)?;
-    match kind {
-        QuarkKind::Acp(target) => Ok(Box::new(
-            AcpQuark::new(seat.id.clone(), seat.flavor.clone(), seat.model.clone(), seat.effort.clone(), seat.mode_config.clone(), target)
-                .watching(live_dir.to_path_buf())
-                .with_display_name(seat.display_name.clone())
-                .with_roles(seat.roles.clone(), seat.exclusive)
-                .with_commands(seat.commands.clone())
-                .with_env(seat.resolve_env(store))
-                .with_energy_limit(seat.energy_limit)
-                .with_deny_skills(seat.deny_skills.clone())
-                .with_external_roots(seat.external_roots.clone()),
-        )),
-        QuarkKind::Cli(cli_spec) if cli_spec.stream.is_some() => Ok(Box::new(
-            CliQuark::new(seat.id.clone(), seat.flavor.clone(), seat.model.clone(), cli_spec, ProcessRunner)
-                .watching(live_dir.to_path_buf())
-                .with_display_name(seat.display_name.clone())
-                .with_roles(seat.roles.clone(), seat.exclusive)
-                .with_commands(seat.commands.clone())
-                .with_env(seat.resolve_env(store))
-                .with_energy_limit(seat.energy_limit)
-                .with_deny_skills(seat.deny_skills.clone()),
-        )),
-        _ => build_seat(seat, store),
-    }
+    build_watched(spec_for_seat(seat, store)?, Some(live_dir))
 }
 
