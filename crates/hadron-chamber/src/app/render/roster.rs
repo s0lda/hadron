@@ -350,10 +350,10 @@ impl super::Chamber {
                             },
                         ));
                     }
-                    if r_flavor.is_none() {
+                    if let Some(hadron_lattice::Flavor::Worker) = r_flavor {
                         let qid4 = qid_str.clone();
                         let view4 = view.clone();
-                        menu = menu.item(PopupMenuItem::new("Promote to Orchestrator").on_click(
+                        menu = menu.item(PopupMenuItem::new("Make Orchestrator").on_click(
                             move |_, window, cx| {
                                 view4.update(cx, |this, cx| {
                                     this.handle_context_menu_action(
