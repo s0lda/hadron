@@ -5,17 +5,21 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.4] - Unreleased
+## [0.1.4] - 2026-08-02
 
 ### Added
 - **HTTP Quark Adapters**: Support for `Ollama`, `LM Studio`, and OpenAI-compatible Cloud providers (`OpenRouter`, `Groq`, `DeepSeek`, `Together`) via `hadron_lattice::Transport::Http`.
 - **Add-Quark Wizard HTTP Rows**: Connect and configure local Ollama, LM Studio, and Cloud OpenAI endpoints directly in the wizard with keyring-secured API keys.
 - **Searchable Model Selection**: Unified searchable model list with pinned "Default" row across both the Add-Quark wizard and HTTP-seat Settings panel.
+- **CLI Seat Streaming**: `CliQuark` streams end to end and publishes `agy`'s step/tool feed, so the Live card moves during a CLI turn and names the file or command each step is working on.
+- **Gitignored Files in `@` Mentions**: The `@file` completion offers gitignored paths, with an icon and path detail on each row.
 
 ### Fixed
 - **HTTPS TLS Connectivity**: Enabled `rustls-tls` feature on `reqwest` so cloud endpoints (`OpenRouter` etc.) connect over HTTPS without scheme errors.
 - **LM Studio `/v1` Endpoint Handling**: Fixed LM Studio `/v1` endpoint resolution and prevented empty/error response bodies from crashing model discovery.
 - **Worker Roster Action**: Restored "Make Orchestrator" context menu item for worker quarks in the Roster rail.
+- **See-Through Overlays**: The model dropdown and the Settings modal now paint on opaque surfaces instead of a translucent card.
+- **HTTP Seat Live Card**: Ollama and OpenRouter seats are wired to `live_dir`, so their activity shows in the Live card.
 - **Chat Input Auto-Scroll**: Auto-scroll chat input on paste of large text blocks.
 
 ## [0.1.3] - 2026-07-27
