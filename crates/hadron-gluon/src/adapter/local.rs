@@ -719,8 +719,10 @@ mod tests {
     fn an_openai_shaped_error_object_is_reported_by_its_message() {
         let base = serve_once("200 OK", "{\"error\":{\"message\":\"Invalid API key\",\"code\":401}}");
         let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
-        let err = format!("{:#}", fetch_models(&target).unwrap_err());
-        assert!(err.conta    #[tokio::test]
+        assert!(err.contains("Invalid API key"), "expected the nested message: {err}");
+    }
+
+    #[tokio::test]
     async fn stream_chat_accumulates_ollama_ndjson_deltas() {
         let base = serve_once(
             "200 OK",
