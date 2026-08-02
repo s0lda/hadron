@@ -170,7 +170,9 @@ WORKTREE_PATH=$(git rev-parse --show-toplevel)
 
 **If `GIT_DIR == GIT_COMMON`:** Normal repo, no worktree to clean up. Done.
 
-**If worktree path is under `.hadron/trees/`, `.worktrees/`, or `worktrees/`:** Hadron/Superpowers created this worktree — we own cleanup.
+**If worktree path is under `.hadron/trees/` (`.hadron/trees/<quark>`):** Hadron Gluon harness owns and manages this stable per-quark worktree. Do NOT run `git worktree remove` — Hadron Gluon automatically handles branch switching, dirty snapshots, and idle tree recycling across turns.
+
+**If worktree path is under `.worktrees/` or `worktrees/`:** Standalone Superpowers worktree — we own cleanup:
 
 ```bash
 MAIN_ROOT=$(git -C "$(git rev-parse --git-common-dir)/.." rev-parse --show-toplevel)
@@ -179,7 +181,7 @@ git worktree remove "$WORKTREE_PATH"
 git worktree prune  # Self-healing: clean up any stale registrations
 ```
 
-**Otherwise:** The host environment (harness) owns this workspace. Do NOT remove it. If your platform provides a workspace-exit tool, use it. Otherwise, leave the workspace in place.
+**Otherwise:** The host environment (harness) owns this workspace. Do NOT remove it. Leave the workspace in place.
 
 ## Quick Reference
 
@@ -214,7 +216,7 @@ git worktree prune  # Self-healing: clean up any stale registrations
 
 **Cleaning up harness-owned worktrees**
 - **Problem:** Removing a worktree the harness created causes phantom state
-- **Fix:** Only clean up worktrees under `.hadron/trees/`, `.worktrees/`, or `worktrees/`
+- **Fix:** Never run `git worktree remove` on `.hadron/trees/<quark>` (managed by Hadron Gluon daemon); only clean up ad-hoc worktrees under `.worktrees/` or `worktrees/`.
 
 **No confirmation for discard**
 - **Problem:** Accidentally delete work
