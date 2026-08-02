@@ -693,12 +693,15 @@ impl Quark for LocalQuark {
     }
 
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
-        let prompt = crate::adapter::prompt::build(&turn, &self.id);
+        let mut prompt = crate::adapter::prompt::build(&turn, &self.id);
         let root = hadron_forge::file::Root::new(turn.cwd.clone());
         let quark_id = self.id.clone();
         let dir = self.live_dir.clone();
         let mode = turn.mode;
         let tools = crate::adapter::local_tools::declarations_for_mode(mode);
+        if mode == hadron_lattice::Mode::Auto {
+            prompt.push_str(crate::adapter::local_tools::AUTO_MODE_EXEC_NOTE);
+        }
         let mut messages = vec![json!({ "role": "user", "content": prompt })];
         let mut spend = hadron_lattice::TokenSpend::default();
 
@@ -1528,6 +1531,46 @@ mod tests {
         let request = rx.recv_timeout(Duration::from_secs(2)).expect("request");
         assert!(request.contains(r#""name":"read_file""#), "Write must declare forge tools: {request}");
         assert!(!request.contains(r#""name":"exec""#), "Write must not declare exec: {request}");
+    }
+
+    /// Step 5: `mode_guidance(Mode::Auto)` tells the model "ungated shell commands
+    /// are not available" while `declarations_for_mode(Auto)` declares `exec` —
+    /// a prompt contradicting the wire. The prompt sent at `Auto` must qualify
+    /// that `exec` is a jailed allowlist, not the "ungated shell" the authority
+    /// note refers to, so the model does not read the two as disagreeing.
+    #[tokio::test]
+    async fn an_auto_mode_http_quark_is_told_exec_is_jailed_not_ungated() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base, rx) =
+            serve_once_capturing("200 OK", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\ndata: [DONE]\n");
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let mut q = LocalQuark::new(QuarkId::new("t"), Flavor::Worker, "m", target);
+
+        let turn = Projection { mode: hadron_lattice::Mode::Auto, ..tool_loop_turn(dir.path().to_path_buf()) };
+        q.excite(turn).await.expect("turn");
+        let request = rx.recv_timeout(Duration::from_secs(2)).expect("request");
+        assert!(request.contains(r#""name":"exec""#), "Auto must still declare exec: {request}");
+        assert!(
+            request.contains("jailed") && request.contains("cargo"),
+            "Auto's prompt must qualify exec as a jailed allowlist, not ungated shell: {request}"
+        );
+    }
+
+    /// The same contradiction does not exist at `Write` (no `exec` declared) or
+    /// `Bypass` (guidance already says "full tool access") — the note would be
+    /// noise there, so it must not appear.
+    #[tokio::test]
+    async fn the_exec_note_only_appears_at_auto() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base, rx) =
+            serve_once_capturing("200 OK", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\ndata: [DONE]\n");
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let mut q = LocalQuark::new(QuarkId::new("t"), Flavor::Worker, "m", target);
+
+        let turn = Projection { mode: hadron_lattice::Mode::Bypass, ..tool_loop_turn(dir.path().to_path_buf()) };
+        q.excite(turn).await.expect("turn");
+        let request = rx.recv_timeout(Duration::from_secs(2)).expect("request");
+        assert!(!request.contains("jailed"), "Bypass's guidance is already accurate, no note needed: {request}");
     }
 }
 

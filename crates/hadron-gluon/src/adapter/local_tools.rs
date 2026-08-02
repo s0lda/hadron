@@ -49,6 +49,24 @@ fn verdict(mode: Mode, name: &str) -> Verdict {
     }
 }
 
+/// Appended to the turn prompt at `Mode::Auto` — the one mode where
+/// `prompt::mode_guidance` and `declarations_for_mode` disagree. The guidance text
+/// tells the model "ungated shell commands are not available", but
+/// `declarations_for_mode(Auto)` declares `exec` anyway (see its match arm below):
+/// `exec` is a jailed `cargo`/`git` allowlist, not the arbitrary shell the guidance
+/// is actually refusing, so the two are not really in conflict — but a model reading
+/// only the prose has no way to know that. Without this note the prompt tells the
+/// model not to do something the tools array right below it hands it a way to do.
+///
+/// Not needed at `Write` (`exec` isn't declared there) or `Bypass` (whose guidance
+/// already says "full tool access") — only `Auto` states a restriction `exec`
+/// appears to violate.
+pub const AUTO_MODE_EXEC_NOTE: &str = "\n\n# About `exec` this turn\n\
+    The `exec` tool declared in the tools list is a jailed `cargo`/`git` allowlist — \
+    no shell, no arbitrary commands, sandboxed to your worktree. It is not the \
+    \"ungated shell\" the authority note above says is unavailable; that restriction \
+    is about arbitrary commands, not this tool. Use it exactly as declared.\n";
+
 /// The `tools` array to declare for a turn at the given mode — `None` when the
 /// mode permits none at all (`Ask`: "talk, don't act"). Filtering happens here
 /// rather than declare-then-refuse: a refused call still burns a round
