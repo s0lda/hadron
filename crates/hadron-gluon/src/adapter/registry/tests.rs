@@ -500,8 +500,17 @@ fn serve_truncated(body: &'static str) -> String {
     let port = listener.local_addr().unwrap().port();
     std::thread::spawn(move || {
         if let Ok((mut stream, _)) = listener.accept() {
-            let mut buf = [0u8; 4096];
-            let _ = stream.read(&mut buf);
+            // A single 4096-byte read used to be enough for the small
+            // no-tools request this test used to send; a tool-capable turn's
+            // request now carries the `tools` declarations too (a few KB), so
+            // a partial read here leaves the client still writing when the
+            // server closes — the OS answers that with a reset, and NOTHING
+            // (not even the truncated body below) ever reaches the client.
+            // Drain until the client stops sending instead of guessing a size.
+            stream.set_read_timeout(Some(std::time::Duration::from_millis(50))).ok();
+            let mut drain = [0u8; 8192];
+            while matches!(stream.read(&mut drain), Ok(n) if n > 0) {}
+            stream.set_read_timeout(None).ok();
             let head = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\n\r\n",
                 body.len() + 4096

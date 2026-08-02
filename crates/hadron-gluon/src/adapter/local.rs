@@ -234,16 +234,16 @@ pub fn fetch_models(target: &HttpTarget) -> anyhow::Result<Vec<LocalModel>> {
 }
 
 #[derive(Serialize)]
-struct ChatMessage<'a> {
-    role: &'a str,
-    content: &'a str,
-}
-
-#[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
-    messages: [ChatMessage<'a>; 1],
+    messages: &'a [Value],
     stream: bool,
+    /// Present only on a tool-capable turn — see [`LocalQuark::excite`]. Both
+    /// vendors accept `tools` alongside `stream: true` and stream `tool_calls`
+    /// deltas the same way they stream content: confirmed live against the real
+    /// OpenRouter and Ollama endpoints, not assumed from documentation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<&'a Value>,
 }
 
 #[derive(Deserialize, Default)]
@@ -254,6 +254,27 @@ struct OllamaChatMessage {
     reasoning: Option<String>,
     #[serde(default)]
     thinking: Option<String>,
+    /// Ollama's native `/api/chat` emits a call's whole `tool_calls` array in
+    /// ONE chunk — never split token-by-token the way OpenAI's `arguments`
+    /// string can be — so no cross-chunk accumulation is needed here.
+    #[serde(default)]
+    tool_calls: Vec<OllamaToolCall>,
+}
+
+#[derive(Deserialize)]
+struct OllamaToolCall {
+    #[serde(default)]
+    id: Option<String>,
+    function: OllamaToolCallFunction,
+}
+
+#[derive(Deserialize)]
+struct OllamaToolCallFunction {
+    name: String,
+    /// Ollama sends this as a JSON **object**, unlike OpenAI's string — see
+    /// [`ToolCall::arguments_json`] which normalises both to the same accessor.
+    #[serde(default)]
+    arguments: Value,
 }
 
 #[derive(Deserialize, Default)]
@@ -264,6 +285,29 @@ struct OpenAiDelta {
     reasoning_content: Option<String>,
     #[serde(default)]
     reasoning: Option<String>,
+    /// One entry per tool call touched by this delta, keyed by
+    /// [`OpenAiToolCallDelta::index`] — `id`/`function.name` arrive once on the
+    /// first delta for that index, `function.arguments` arrives as a string
+    /// FRAGMENT on every delta after and must be concatenated in order.
+    #[serde(default)]
+    tool_calls: Vec<OpenAiToolCallDelta>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiToolCallDelta {
+    index: usize,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    function: Option<OpenAiToolCallFunctionDelta>,
+}
+
+#[derive(Deserialize, Default)]
+struct OpenAiToolCallFunctionDelta {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -298,44 +342,21 @@ struct OllamaChatChunk {
     eval_count: Option<u32>,
 }
 
-/// A NON-streamed chat completion — what the tool loop's intermediate rounds
-/// get. A partial `arguments` string cannot be executed, so there is nothing
-/// useful to publish until a round is whole; only the loop's FINAL answer (no
-/// `tool_calls`) still goes out over [`stream_chat`].
-#[derive(Debug, Deserialize)]
-pub(crate) struct ChatCompletion {
-    #[serde(default)]
-    choices: Vec<CompletionChoice>,
-    #[serde(default)]
-    usage: Option<OpenAiUsage>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct CompletionChoice {
-    #[serde(default)]
-    message: CompletionMessage,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct CompletionMessage {
-    #[serde(default)]
-    content: Option<String>,
-    #[serde(default)]
-    tool_calls: Vec<ToolCall>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
+/// One tool call a model asked for, normalised across both vendors' wire
+/// shapes (Ollama's whole-object `arguments`, OpenAI's incrementally-streamed
+/// `arguments` string) into the one shape [`crate::adapter::local_tools::execute`]
+/// consumes.
+#[derive(Debug, Clone, Default)]
 pub(crate) struct ToolCall {
-    #[serde(default)]
     pub id: String,
     pub function: ToolCallFunction,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct ToolCallFunction {
     pub name: String,
-    /// The API sends this as a JSON **string**, not an object.
-    #[serde(default)]
+    /// Always a JSON-encoded string here, whichever vendor it came from — see
+    /// [`ToolCall::arguments_json`].
     pub arguments: String,
 }
 
@@ -348,15 +369,41 @@ impl ToolCall {
     }
 }
 
-impl ChatCompletion {
-    pub fn tool_calls(&self) -> Vec<ToolCall> {
-        self.choices.first().map(|c| c.message.tool_calls.clone()).unwrap_or_default()
+impl From<OllamaToolCall> for ToolCall {
+    fn from(t: OllamaToolCall) -> Self {
+        ToolCall {
+            id: t.id.unwrap_or_default(),
+            function: ToolCallFunction { name: t.function.name, arguments: t.function.arguments.to_string() },
+        }
     }
-    pub fn text(&self) -> String {
-        self.choices.first().and_then(|c| c.message.content.clone()).unwrap_or_default()
+}
+
+/// Accumulates OpenAI-style streamed tool-call deltas, keyed by `index` so
+/// fragments for the same call (arriving across many SSE lines) land on the
+/// same entry regardless of what else interleaves.
+#[derive(Default)]
+struct ToolCallAccumulator {
+    by_index: std::collections::BTreeMap<usize, ToolCall>,
+}
+
+impl ToolCallAccumulator {
+    fn add(&mut self, delta: OpenAiToolCallDelta) {
+        let entry = self.by_index.entry(delta.index).or_default();
+        if let Some(id) = delta.id {
+            entry.id = id;
+        }
+        if let Some(f) = delta.function {
+            if let Some(name) = f.name {
+                entry.function.name = name;
+            }
+            if let Some(args) = f.arguments {
+                entry.function.arguments.push_str(&args);
+            }
+        }
     }
-    pub fn usage(&self) -> Option<&OpenAiUsage> {
-        self.usage.as_ref()
+
+    fn finish(self) -> Vec<ToolCall> {
+        self.by_index.into_values().collect()
     }
 }
 
@@ -434,14 +481,16 @@ async fn ensure_chat_ok(resp: reqwest::Response, vendor: HttpVendor) -> anyhow::
 async fn stream_chat(
     target: &HttpTarget,
     model: &str,
-    prompt: &str,
+    messages: &[Value],
+    tools: Option<&Value>,
     mut on_delta: impl FnMut(Doing, &str),
-) -> anyhow::Result<(String, hadron_lattice::Usage)> {
+) -> anyhow::Result<(String, Vec<ToolCall>, hadron_lattice::Usage)> {
     let client = reqwest::Client::new();
-    let body = ChatRequest { model, messages: [ChatMessage { role: "user", content: prompt }], stream: true };
+    let body = ChatRequest { model, messages, stream: true, tools };
     let mut full = String::new();
     let mut thought = String::new();
     let mut usage = hadron_lattice::Usage::default();
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
     match target.vendor {
         HttpVendor::Ollama => {
             let resp = client.post(target.url("/api/chat")).json(&body).send().await?;
@@ -464,6 +513,7 @@ async fn stream_chat(
                             thought.push_str(t);
                             on_delta(Doing::Thinking, t);
                         }
+                        tool_calls.extend(msg.tool_calls.into_iter().map(ToolCall::from));
                     }
                 }
             })
@@ -479,6 +529,7 @@ async fn stream_chat(
             }
             let resp = req.send().await?;
             let resp = ensure_chat_ok(resp, target.vendor).await?;
+            let mut acc = ToolCallAccumulator::default();
             for_each_line(resp, |line| {
                 let line = line.trim();
                 let Some(data) = line.strip_prefix("data:") else { return };
@@ -490,7 +541,7 @@ async fn stream_chat(
                     if let Some(u) = chunk.usage {
                         usage.spend = hadron_lattice::TokenSpend { input: Some(u.prompt_tokens), output: Some(u.completion_tokens), ..Default::default() };
                     }
-                    if let Some(c) = chunk.choices.first() {
+                    if let Some(c) = chunk.choices.into_iter().next() {
                         if let Some(content) = present(&c.delta.content) {
                             full.push_str(content);
                             on_delta(Doing::Speaking, content);
@@ -500,18 +551,22 @@ async fn stream_chat(
                             thought.push_str(t);
                             on_delta(Doing::Thinking, t);
                         }
+                        for delta in c.delta.tool_calls {
+                            acc.add(delta);
+                        }
                     }
                 }
             })
             .await?;
+            tool_calls = acc.finish();
         }
     }
     // A model that never left its reasoning channel said exactly one thing; an
     // empty reply would report that turn to the swarm as silence.
-    if full.is_empty() {
+    if full.is_empty() && tool_calls.is_empty() {
         full = thought;
     }
-    Ok((full, usage))
+    Ok((full, tool_calls, usage))
 }
 
 /// The minimum gap between two published draft updates — mirrors
@@ -625,34 +680,122 @@ impl Quark for LocalQuark {
 
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let prompt = crate::adapter::prompt::build(&turn, &self.id);
+        let root = hadron_forge::file::Root::new(turn.cwd.clone());
         let quark_id = self.id.clone();
         let dir = self.live_dir.clone();
-        let mut draft = String::new();
-        let mut thought = String::new();
-        let mut last_publish: Option<Instant> = None;
-        let (message, usage) = stream_chat(&self.target, &self.model, &prompt, |doing, delta| {
-            // Two buffers, because they are two different things: the draft is the
-            // reply the chat will show, the thought is only ever the Live card's
-            // "thinking" line. Mirrors `adapter::acp::session`'s split.
-            let buf = if doing == Doing::Speaking { &mut draft } else { &mut thought };
-            buf.push_str(delta);
-            let Some(dir) = &dir else { return };
-            let due = last_publish.is_none_or(|t| t.elapsed() >= PUBLISH_THROTTLE);
-            if due {
-                last_publish = Some(Instant::now());
-                let activity = if doing == Doing::Speaking {
-                    Activity::speaking(quark_id.clone(), &draft)
-                } else {
-                    Activity::new(quark_id.clone(), Doing::Thinking, &thought)
-                };
-                let _ = live::publish(dir, &activity);
+        let tools = crate::adapter::local_tools::declarations();
+        let mut messages = vec![json!({ "role": "user", "content": prompt })];
+        let mut spend = hadron_lattice::TokenSpend::default();
+
+        for round in 0..MAX_TOOL_ROUNDS {
+            let mut draft = String::new();
+            let mut thought = String::new();
+            let mut last_publish: Option<Instant> = None;
+            let (text, calls, usage) =
+                stream_chat(&self.target, &self.model, &messages, Some(&tools), |doing, delta| {
+                    // Two buffers, because they are two different things: the draft is
+                    // the reply the chat will show, the thought is only ever the Live
+                    // card's "thinking" line. Mirrors `adapter::acp::session`'s split.
+                    let buf = if doing == Doing::Speaking { &mut draft } else { &mut thought };
+                    buf.push_str(delta);
+                    let Some(dir) = &dir else { return };
+                    let due = last_publish.is_none_or(|t| t.elapsed() >= PUBLISH_THROTTLE);
+                    if due {
+                        last_publish = Some(Instant::now());
+                        let activity = if doing == Doing::Speaking {
+                            Activity::speaking(quark_id.clone(), &draft)
+                        } else {
+                            Activity::new(quark_id.clone(), Doing::Thinking, &thought)
+                        };
+                        let _ = live::publish(dir, &activity);
+                    }
+                })
+                .await?;
+            accumulate_spend(&mut spend, &usage.spend);
+
+            if calls.is_empty() {
+                if let Some(dir) = &self.live_dir {
+                    let _ = live::clear(dir, &self.id);
+                }
+                return Ok(TurnOutcome {
+                    message: Some(text),
+                    usage: hadron_lattice::Usage { spend, ..Default::default() },
+                    ..Default::default()
+                });
             }
-        })
-        .await?;
+
+            messages.push(json!({
+                "role": "assistant",
+                "content": text,
+                "tool_calls": calls.iter().map(|c| json!({
+                    "id": c.id, "type": "function",
+                    "function": { "name": c.function.name, "arguments": c.function.arguments }
+                })).collect::<Vec<_>>(),
+            }));
+            for call in &calls {
+                if let Some(dir) = &self.live_dir {
+                    let _ = live::publish(
+                        dir,
+                        &Activity::new(
+                            quark_id.clone(),
+                            Doing::Working,
+                            &format!("round {}: {}", round + 1, call.function.name),
+                        ),
+                    );
+                }
+                let result = crate::adapter::local_tools::execute(&root, &call.function.name, &call.arguments_json());
+                messages.push(json!({
+                    "role": "tool", "tool_call_id": call.id, "content": truncate_tool_result(&result),
+                }));
+            }
+        }
+
         if let Some(dir) = &self.live_dir {
             let _ = live::clear(dir, &self.id);
         }
-        Ok(TurnOutcome { message: Some(message), usage, ..Default::default() })
+        Ok(TurnOutcome {
+            message: Some(format!(
+                "I ran {MAX_TOOL_ROUNDS} tool rounds without reaching an answer and stopped. \
+                 The work so far is on disk; ask me to continue."
+            )),
+            usage: hadron_lattice::Usage { spend, ..Default::default() },
+            ..Default::default()
+        })
+    }
+}
+
+/// How many tool rounds one turn may take before it stops and answers with
+/// whatever it has. A model that loops forever must cost a bounded number of
+/// requests, not an unbounded bill.
+const MAX_TOOL_ROUNDS: usize = 24;
+
+/// A whole `cargo test` log in a tool result blows the context window on a
+/// 32k local model, and the round after it fails for a reason nobody can see.
+///
+/// Truncates by **character** count on both the length check and the
+/// head/tail split, so `s.len() - LIMIT` (bytes) is never used to describe a
+/// chars-based cut — multi-byte content would make that arithmetic lie.
+fn truncate_tool_result(s: &str) -> String {
+    const LIMIT: usize = 12_000;
+    let char_count = s.chars().count();
+    if char_count <= LIMIT {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(LIMIT / 2).collect();
+    let tail: String = s.chars().rev().take(LIMIT / 2).collect::<Vec<_>>().into_iter().rev().collect();
+    format!("{head}\n… [{} chars elided] …\n{tail}", char_count - LIMIT)
+}
+
+/// Add one round's usage into a running total. Never treats an ABSENT round as
+/// zero-cost — a round with no reported tokens simply leaves `spend`
+/// untouched, per the "absent is not zero" invariant; only a round that DID
+/// report a number gets added in.
+fn accumulate_spend(spend: &mut hadron_lattice::TokenSpend, round: &hadron_lattice::TokenSpend) {
+    if let Some(i) = round.input {
+        spend.input = Some(spend.input.unwrap_or(0).saturating_add(i));
+    }
+    if let Some(o) = round.output {
+        spend.output = Some(spend.output.unwrap_or(0).saturating_add(o));
     }
 }
 
@@ -702,30 +845,60 @@ mod tests {
         (format!("http://127.0.0.1:{port}"), rx)
     }
 
-    /// A non-streamed chat reply that asks for a tool must be parsed into the
-    /// calls the loop will run. A model that asks for a tool and is answered
-    /// with prose is a quark that silently cannot edit files — the exact bug
+    /// OpenAI-style streamed `tool_calls` deltas arrive char-by-char, keyed by
+    /// `index` — confirmed live against the real OpenRouter endpoint (see the
+    /// task's verification notes). A model that asks for a tool and gets
+    /// nothing back is a quark that silently cannot edit files — the exact bug
     /// this task exists to fix.
-    #[test]
-    fn a_reply_carrying_tool_calls_is_parsed_into_them() {
-        let body = r#"{"choices":[{"message":{"role":"assistant","content":null,
-          "tool_calls":[{"id":"c1","type":"function",
-          "function":{"name":"read_file","arguments":"{\"path\":\"Cargo.toml\"}"}}]},
-          "finish_reason":"tool_calls"}]}"#;
-        let parsed: ChatCompletion = serde_json::from_str(body).expect("parse");
-        let calls = parsed.tool_calls();
+    #[tokio::test]
+    async fn a_streamed_openai_reply_reassembles_split_tool_call_arguments() {
+        // Built with `json!` rather than hand-escaped literals — the SSE
+        // payload nests a JSON-encoded string (`arguments`) inside JSON, and a
+        // hand-typed literal here previously mismatched its own braces.
+        let chunks = [
+            json!({"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "c1", "type": "function", "function": {"name": "read_file", "arguments": ""}}
+            ]}}]}),
+            json!({"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "function": {"arguments": "{\"path\":"}}
+            ]}}]}),
+            json!({"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "function": {"arguments": "\"Cargo.toml\"}"}}
+            ]}}]}),
+        ];
+        let mut sse = String::new();
+        for c in &chunks {
+            sse.push_str("data: ");
+            sse.push_str(&c.to_string());
+            sse.push('\n');
+        }
+        sse.push_str("data: [DONE]\n");
+        let sse: &'static str = Box::leak(sse.into_boxed_str());
+        let (base, _rx) = serve_once_capturing("200 OK", sse);
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let (text, calls, _) =
+            stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, |_, _| {})
+                .await
+                .unwrap();
+        assert!(text.is_empty(), "a tool-only reply must not be mistaken for prose: {text:?}");
         assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "c1");
         assert_eq!(calls[0].function.name, "read_file");
         assert_eq!(calls[0].arguments_json()["path"], "Cargo.toml");
     }
 
     /// A plain answer must NOT be mistaken for a tool round, or the loop spins.
-    #[test]
-    fn a_reply_with_no_tool_calls_ends_the_loop() {
-        let body = r#"{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}"#;
-        let parsed: ChatCompletion = serde_json::from_str(body).expect("parse");
-        assert!(parsed.tool_calls().is_empty());
-        assert_eq!(parsed.text(), "done");
+    #[tokio::test]
+    async fn a_streamed_reply_with_no_tool_calls_ends_the_loop() {
+        let (base, _rx) =
+            serve_once_capturing("200 OK", "data: {\"choices\":[{\"delta\":{\"content\":\"done\"}}]}\ndata: [DONE]\n");
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let (text, calls, _) =
+            stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, |_, _| {})
+                .await
+                .unwrap();
+        assert!(calls.is_empty());
+        assert_eq!(text, "done");
     }
 
     #[test]
@@ -755,7 +928,7 @@ mod tests {
         let (base, rx) = serve_once_capturing("200 OK", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\ndata: [DONE]\n");
         let target =
             HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: Some("sk-test-456".to_string()) };
-        stream_chat(&target, "some-model", "hi", |_, _| {}).await.unwrap();
+        stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, |_, _| {}).await.unwrap();
         let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(request.to_lowercase().contains("authorization: bearer sk-test-456"), "request:\n{request}");
     }
@@ -774,11 +947,11 @@ mod tests {
         // Captured live from `curl http://localhost:11434/api/tags` on this box.
         let base = serve_once(
             "200 OK",
-            r#"{"models":[{"name":"gemma3:27b","model":"gemma3:27b","modified_at":"2026-05-24T17:56:53Z","size":1,"digest":"x","details":{"format":"gguf","family":"gemma3","parameter_size":"27.4B","quantization_level":"Q4_K_M"}}]}"#,
+            r#"{"models":[{"name":"nemotron-3-ultra:cloud","model":"gemma3:27b","modified_at":"2026-05-24T17:56:53Z","size":1,"digest":"x","details":{"format":"gguf","family":"gemma3","parameter_size":"27.4B","quantization_level":"Q4_K_M"}}]}"#,
         );
         let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
         let models = fetch_models(&target).unwrap();
-        assert_eq!(models, vec![LocalModel { id: "gemma3:27b".to_string() }]);
+        assert_eq!(models, vec![LocalModel { id: "nemotron-3-ultra:cloud".to_string() }]);
     }
 
     #[test]
@@ -862,7 +1035,7 @@ mod tests {
         );
         let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
         let mut seen = Vec::new();
-        let full = stream_chat(&target, "gemma3:27b", "hi", |_, delta| seen.push(delta.to_string())).await.unwrap();
+        let full = stream_chat(&target, "nemotron-3-ultra:cloud", &[json!({"role": "user", "content": "hi"})], None, |_, delta| seen.push(delta.to_string())).await.unwrap();
         assert_eq!(full.0, "Hello");
         assert_eq!(seen, vec!["Hel".to_string(), "lo".to_string()]);
     }
@@ -876,7 +1049,7 @@ mod tests {
              data: [DONE]\n",
         );
         let target = HttpTarget { vendor: HttpVendor::LmStudio, base_url: base, api_key: None };
-        let full = stream_chat(&target, "some-model", "hi", |_, _| {}).await.unwrap();
+        let full = stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, |_, _| {}).await.unwrap();
         assert_eq!(full.0, "Hello");
     }
 
@@ -890,7 +1063,7 @@ mod tests {
         );
         let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
         let mut seen = Vec::new();
-        let full = stream_chat(&target, "some-model", "hi", |d, t| seen.push((d, t.to_string()))).await.unwrap();
+        let full = stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, |d, t| seen.push((d, t.to_string()))).await.unwrap();
         // The thought is PUBLISHED but is not part of the reply — see
         // `a_reasoning_delta_carrying_an_empty_content_still_streams`.
         assert_eq!(full.0, "ing...");
@@ -909,7 +1082,7 @@ mod tests {
              {\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true}",
         );
         let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
-        let full = stream_chat(&target, "deepseek-r1", "hi", |_, _| {}).await.unwrap();
+        let full = stream_chat(&target, "deepseek-r1", &[json!({"role": "user", "content": "hi"})], None, |_, _| {}).await.unwrap();
         assert_eq!(full.0, "Answer");
     }
 
@@ -934,7 +1107,7 @@ mod tests {
         );
         let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
         let mut seen = Vec::new();
-        let full = stream_chat(&target, "nemotron", "hi", |d, t| seen.push((d, t.to_string()))).await.unwrap();
+        let full = stream_chat(&target, "nemotron", &[json!({"role": "user", "content": "hi"})], None, |d, t| seen.push((d, t.to_string()))).await.unwrap();
         assert_eq!(full.0, "BANANA", "the reply is the content, never the chain of thought");
         assert_eq!(
             seen,
@@ -962,7 +1135,7 @@ mod tests {
              data: [DONE]\n",
         );
         let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
-        let full = stream_chat(&target, "some-model", "hi", |_, _| {}).await.unwrap();
+        let full = stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, |_, _| {}).await.unwrap();
         assert_eq!(full.0, "only thoughts");
     }
 
@@ -972,7 +1145,7 @@ mod tests {
     async fn a_refused_chat_request_reports_the_servers_own_explanation() {
         let base = serve_once("403 Forbidden", r#"{"error":"model 'kimi-k2.7-code:cloud' not found"}"#);
         let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
-        let err = stream_chat(&target, "kimi-k2.7-code:cloud", "hi", |_, _| {}).await.unwrap_err();
+        let err = stream_chat(&target, "kimi-k2.7-code:cloud", &[json!({"role": "user", "content": "hi"})], None, |_, _| {}).await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("403"), "{msg}");
         assert!(msg.contains("not found"), "the server's own explanation is missing: {msg}");
@@ -980,7 +1153,7 @@ mod tests {
 
     #[test]
     fn for_seat_resolves_the_vendors_default_base_url_when_the_seat_names_none() {
-        let mut seat = Seat::cli(QuarkId::new("http-ollama"), "ollama", "gemma3:27b", Flavor::Worker);
+        let mut seat = Seat::cli(QuarkId::new("http-ollama"), "ollama", "nemotron-3-ultra:cloud", Flavor::Worker);
         seat.transport = Transport::Http;
         let target = HttpTarget::for_seat(&seat).unwrap();
         assert_eq!(target.vendor, HttpVendor::Ollama);
@@ -1007,7 +1180,7 @@ mod tests {
 
     #[test]
     fn for_seat_with_env_is_a_no_op_with_no_declared_secret_env() {
-        let mut seat = Seat::cli(QuarkId::new("http-ollama"), "ollama", "gemma3:27b", Flavor::Worker);
+        let mut seat = Seat::cli(QuarkId::new("http-ollama"), "ollama", "nemotron-3-ultra:cloud", Flavor::Worker);
         seat.transport = Transport::Http;
         let store = hadron_lattice::secrets::MemoryStore::new();
         let target = HttpTarget::for_seat_with_env(&seat, &store).unwrap();
@@ -1042,7 +1215,7 @@ mod tests {
         };
         let model = listed.first().expect("the live Ollama server has no models pulled").id.clone();
         let mut deltas = 0;
-        let (full, _) = stream_chat(&target, &model, "Reply with exactly one word: pong", |_, _| deltas += 1)
+        let (full, _, _) = stream_chat(&target, &model, &[json!({"role": "user", "content": "Reply with exactly one word: pong"})], None, |_, _| deltas += 1)
             .await
             .unwrap();
         assert!(deltas > 0, "expected at least one streamed delta");
@@ -1068,10 +1241,11 @@ mod tests {
             api_key: Some(key),
         };
         let (mut thoughts, mut says) = (0, 0);
-        let (full, usage) = stream_chat(
+        let (full, _calls, usage) = stream_chat(
             &target,
             "nvidia/nemotron-3-ultra-550b-a55b:free",
-            "Say the word BANANA three times, then stop.",
+            &[json!({ "role": "user", "content": "Say the word BANANA three times, then stop." })],
+            None,
             |doing, _| {
                 if doing == Doing::Thinking {
                     thoughts += 1
@@ -1107,10 +1281,112 @@ mod tests {
         let target =
             HttpTarget { vendor: HttpVendor::LmStudio, base_url: "http://10.5.0.2:1234".to_string(), api_key: None };
         let mut deltas = 0;
-        let (full, _) = stream_chat(&target, "google/gemma-4-12b-qat", "Reply with exactly one word: pong", |_, _| deltas += 1)
+        let (full, _, _) = stream_chat(&target, "google/gemma-4-12b-qat", &[json!({"role": "user", "content": "Reply with exactly one word: pong"})], None, |_, _| deltas += 1)
             .await
             .unwrap();
         assert!(deltas > 0, "expected at least one streamed delta");
         assert!(full.to_lowercase().contains("pong"), "got: {full:?}");
     }
+
+    /// Serves `first` on the first connection accepted and `second` on the
+    /// second, capturing both raw requests — for asserting that round 2 of the
+    /// tool loop actually carries round 1's tool result back.
+    fn serve_twice_capturing(
+        first: String,
+        second: String,
+    ) -> (String, std::sync::mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for body in [first, second] {
+                let Ok((mut stream, _)) = listener.accept() else { return };
+                stream.set_read_timeout(Some(Duration::from_millis(200))).ok();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 8192];
+                while let Ok(n) = stream.read(&mut chunk) {
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                let _ = tx.send(String::from_utf8_lossy(&buf).to_string());
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (format!("http://127.0.0.1:{port}"), rx)
+    }
+
+    /// A `Projection` for a `LocalQuark::excite` test — every field at its
+    /// inert value except `cwd`, which the tool loop jails `hadron_forge::Root`
+    /// to.
+    fn tool_loop_turn(cwd: std::path::PathBuf) -> Projection {
+        Projection {
+            isolated: true,
+            task: "list the current directory".into(),
+            invariants: String::new(),
+            available_invariants: vec![],
+            nucleus_digest: String::new(),
+            live_activities: vec![],
+            roster: vec![],
+            field_window: vec![],
+            field_truncated: false,
+            nucleus_index: String::new(),
+            nucleus_index_path: std::path::PathBuf::new(),
+            nucleus_index_truncated: false,
+            nucleus_index_budget_bytes: hadron_lattice::DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES,
+            nucleus_notes_dir: std::path::PathBuf::new(),
+            git_diff: String::new(),
+            cwd,
+            mode: hadron_lattice::Mode::default(),
+            role_body: None,
+            active_skill: None,
+            named_specifically: true,
+            has_forge_tools: false,
+        }
+    }
+
+    /// The end-to-end proof that Task 2 actually closes the loop: a real
+    /// `LocalQuark::excite` call, given a reply that asks for `list_dir`, must
+    /// run it against the real filesystem (jailed to `turn.cwd`) and send the
+    /// result back as a `role: "tool"` message on the NEXT request — not just
+    /// parse the shape of a canned reply (every other test in this module).
+    #[tokio::test]
+    async fn the_loop_runs_the_requested_tool_and_sends_its_result_back() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("marker.txt"), "hi").unwrap();
+
+        let first = format!(
+            "data: {}\ndata: [DONE]\n",
+            json!({"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "c1", "type": "function", "function": {"name": "list_dir", "arguments": "{\"path\":\".\"}"}}
+            ]}}]})
+        );
+        let second = format!(
+            "data: {}\ndata: [DONE]\n",
+            json!({"choices": [{"delta": {"content": "there you go"}}]})
+        );
+        let (base, rx) = serve_twice_capturing(first, second);
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let mut q = LocalQuark::new(QuarkId::new("t"), Flavor::Worker, "m", target);
+
+        let out = q.excite(tool_loop_turn(dir.path().to_path_buf())).await.expect("turn");
+        assert_eq!(out.message.as_deref(), Some("there you go"));
+
+        let _first_request = rx.recv_timeout(Duration::from_secs(2)).expect("round 1 request");
+        let second_request = rx.recv_timeout(Duration::from_secs(2)).expect("round 2 request");
+        assert!(
+            second_request.contains(r#""role":"tool""#),
+            "the tool result was never sent back to the model: {second_request}"
+        );
+        assert!(
+            second_request.contains("marker.txt"),
+            "the tool result must carry the REAL directory listing (jailed to turn.cwd): {second_request}"
+        );
+    }
 }
+
