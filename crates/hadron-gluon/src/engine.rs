@@ -893,3 +893,174 @@ impl Engine {
     }
 
 }
+
+/// Wrap bare file/directory paths and branch/worktree refs in backticks so they
+/// do not render as raw text or get mistaken for chat commands in Markdown.
+///
+/// Leaves already-backticked paths, code fences, URLs, and `@mention` targets untouched.
+pub fn quote_paths(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_code_fence = false;
+
+    for (line_idx, line) in s.lines().enumerate() {
+        if line_idx > 0 {
+            out.push('\n');
+        }
+
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_code_fence = !in_code_fence;
+            out.push_str(line);
+            continue;
+        }
+
+        if in_code_fence {
+            out.push_str(line);
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split('`').collect();
+        for (i, part) in parts.iter().enumerate() {
+            if i % 2 == 0 {
+                out.push_str(&quote_plain_text_segment(part));
+            } else {
+                out.push('`');
+                out.push_str(part);
+                out.push('`');
+            }
+        }
+    }
+
+    if s.ends_with('\n') && !out.ends_with('\n') {
+        out.push('\n');
+    }
+
+    out
+}
+
+fn quote_plain_text_segment(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let mut start = 0;
+
+    while start < bytes.len() {
+        if bytes[start].is_ascii_whitespace() {
+            let ws_start = start;
+            while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+                start += 1;
+            }
+            out.push_str(&text[ws_start..start]);
+            continue;
+        }
+
+        let token_start = start;
+        while start < bytes.len() && !bytes[start].is_ascii_whitespace() {
+            start += 1;
+        }
+        let token = &text[token_start..start];
+        out.push_str(&quote_token_if_path(token));
+    }
+
+    out
+}
+
+fn quote_token_if_path(token: &str) -> String {
+    let (leading, core, trailing) = split_leading_trailing_punct(token);
+    if is_bare_path(core) {
+        format!("{leading}`{core}`{trailing}")
+    } else {
+        token.to_string()
+    }
+}
+
+fn split_leading_trailing_punct(s: &str) -> (&str, &str, &str) {
+    let bytes = s.as_bytes();
+    let mut start = 0;
+    let mut end = bytes.len();
+
+    while start < end {
+        let ch = bytes[start] as char;
+        if matches!(ch, '(' | '[' | '{' | '"' | '\'' | '<') {
+            start += 1;
+        } else {
+            break;
+        }
+    }
+
+    while end > start {
+        let ch = bytes[end - 1] as char;
+        if matches!(ch, '.' | ',' | ':' | ';' | '!' | '?' | ')' | ']' | '}' | '"' | '\'' | '>') {
+            end -= 1;
+        } else {
+            break;
+        }
+    }
+
+    (&s[..start], &s[start..end], &s[end..])
+}
+
+fn is_bare_path(core: &str) -> bool {
+    if core.is_empty() || core.starts_with('@') || core.starts_with('`') {
+        return false;
+    }
+    if core.starts_with("http://") || core.starts_with("https://") || core.starts_with("file://") {
+        return false;
+    }
+    if is_common_slash_phrase(core) {
+        return false;
+    }
+
+    if core.starts_with('/') {
+        return core.len() > 1;
+    }
+
+    if core.contains('/') {
+        let slash_count = core.matches('/').count();
+        if slash_count >= 2 {
+            return true;
+        }
+        if slash_count == 1 {
+            return has_extension(core) || has_path_prefix(core);
+        }
+    }
+
+    false
+}
+
+fn is_common_slash_phrase(s: &str) -> bool {
+    let lower = s.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "and/or"
+            | "or/and"
+            | "yes/no"
+            | "no/yes"
+            | "true/false"
+            | "either/or"
+            | "w/o"
+            | "c/o"
+            | "n/a"
+            | "tcp/ip"
+            | "stdin/stdout"
+    )
+}
+
+fn has_path_prefix(s: &str) -> bool {
+    let prefixes = [
+        "crates/", "quark/", ".hadron/", "src/", "target/", "assets/", "docs/", "tests/",
+        "bin/", "lib/", "notes/", "invariants/", "hadron/",
+    ];
+    let lower = s.to_ascii_lowercase();
+    prefixes.iter().any(|p| lower.starts_with(p))
+}
+
+fn has_extension(s: &str) -> bool {
+    if let Some(pos) = s.rfind('.') {
+        if pos > 0 && pos + 1 < s.len() {
+            let ext = &s[pos + 1..];
+            return ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric());
+        }
+    }
+    false
+}
+
