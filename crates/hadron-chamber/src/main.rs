@@ -24,6 +24,9 @@ mod sys;
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 mod pty;
 
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+mod fonts;
+
 #[cfg(feature = "gui")]
 mod app;
 #[cfg(feature = "gui")]

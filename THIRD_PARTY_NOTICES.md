@@ -66,3 +66,17 @@ git-tracked dependencies:
   (https://github.com/agentclientprotocol/rust-sdk).
 
 See each dependency's own repository for its full licence text.
+
+---
+
+## Inter
+
+Copyright (c) 2016 The Inter Project Authors. Licensed under the SIL Open Font
+License 1.1. Bundled as `crates/hadron-chamber/assets/fonts/Inter-{Regular,Bold}.ttf`;
+full licence at `crates/hadron-chamber/assets/fonts/Inter-OFL.txt`.
+
+## Cascadia Code
+
+Copyright (c) 2019 Microsoft Corporation. Licensed under the SIL Open Font
+License 1.1. Bundled as `crates/hadron-chamber/assets/fonts/CascadiaCode-{Regular,Bold}.ttf`;
+full licence at `crates/hadron-chamber/assets/fonts/CascadiaCode-OFL.txt`.
