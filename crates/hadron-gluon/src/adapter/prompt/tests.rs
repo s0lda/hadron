@@ -517,89 +517,13 @@ fn a_quark_is_shown_the_nucleus_index_and_told_where_to_write_it() {
     assert!(empty.contains("shared by every quark"), "and that it is not private");
     assert!(empty.contains("append to it"), "and that writing is its job");
 
-    // A populated index comes back verbatim.
-    proj.nucleus_index = "- **forge-unwired** — the forge has zero consumers.".into();
+    // A populated index with pinned lessons comes back in the prompt.
+    proj.nucleus_index = "## How we get things wrong\n\n- [forge-unwired](notes/forge-unwired.md) — the forge has zero consumers.".into();
     let carried = build(&proj, &QuarkId::new("agy"));
-    assert!(carried.contains("- **forge-unwired** — the forge has zero consumers."));
+    assert!(carried.contains("forge-unwired"));
     assert!(!carried.contains("nothing has been recorded here yet"));
-    assert!(!carried.contains("index above is CUT"), "it was not truncated");
 }
 
-/// A nucleus index cut for size must SAY it was cut. Silent truncation is the
-/// failure we killed in the field window: the quark cannot tell "never learned"
-/// from "not shown" and treats the last line it can see as the end of what is known.
-#[test]
-fn a_truncated_nucleus_index_says_so() {
-    let mut proj = projection("x");
-    proj.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
-    proj.nucleus_index = "- **a** — a lesson.".into();
-    proj.nucleus_index_truncated = true;
-
-    let p = build(&proj, &QuarkId::new("agy"));
-    assert!(p.contains("index above is CUT"));
-}
-
-/// The budget the prompt enforces is whatever `Projection::nucleus_index_budget_bytes`
-/// carries, not always the shipped default — an index well under the 32 KiB default
-/// but over a smaller CONFIGURED budget must still degrade to counts. This is the
-/// whole point of threading the resolved value through rather than reading a
-/// hardcoded constant at the call site.
-#[test]
-fn a_configured_smaller_budget_is_enforced_even_under_the_default() {
-    let mut proj = projection("x");
-    proj.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
-    proj.nucleus_index_budget_bytes = 64;
-    proj.nucleus_index = "- [a-lesson](notes/a-lesson.md) — well under the 32 KiB shipped default\n".into();
-    assert!(proj.nucleus_index.len() > 64, "fixture must exceed the configured budget");
-    assert!(
-        proj.nucleus_index.len() < crate::engine::nucleus::NUCLEUS_INDEX_BUDGET,
-        "fixture must stay under the shipped default, to prove it's the configured value that fired"
-    );
-
-    let p = build(&proj, &QuarkId::new("agy"));
-    assert!(p.contains("COUNTS, not lessons"), "a smaller configured budget must still be enforced");
-}
-
-/// Symmetric case: a larger configured budget must let an index PAST the shipped
-/// default through in full.
-#[test]
-fn a_configured_larger_budget_admits_an_index_past_the_default() {
-    let mut proj = projection("x");
-    proj.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
-    proj.nucleus_index_budget_bytes = 128 * 1024;
-    let big = "- [x](notes/x.md) — ".to_string()
-        + &"a".repeat(crate::engine::nucleus::NUCLEUS_INDEX_BUDGET + 1000);
-    proj.nucleus_index = big.clone();
-
-    let p = build(&proj, &QuarkId::new("agy"));
-    assert!(!p.contains("COUNTS, not lessons"), "a larger configured budget must admit the full index");
-    assert!(p.contains(&big));
-}
-
-#[test]
-fn an_over_budget_nucleus_index_emits_tag_manifest_and_relevant_lessons() {
-    let mut proj = projection("fix GUI rendering bug");
-    proj.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
-
-    let mut big_index = String::from("## GUI\n- **gui-bug** — fixed [tag:gui]\n- **pinned-item** — important [pinned]\n## IPC\n");
-    while big_index.len() <= crate::engine::nucleus::NUCLEUS_INDEX_BUDGET {
-        big_index.push_str("- **other** — padding line\n");
-    }
-    proj.nucleus_index = big_index;
-
-    let p = build(&proj, &QuarkId::new("agy"));
-    assert!(p.contains("GUI:"));
-    assert!(p.contains("IPC:"));
-    assert!(p.contains("Relevant & Pinned Lessons"));
-    assert!(p.contains("gui-bug"));
-    assert!(p.contains("pinned-item"));
-    // A degraded section that does not announce itself is how the nucleus went
-    // inert unnoticed: counts printed under "What the swarm has learned" read as
-    // the truth about what is known.
-    assert!(p.contains("COUNTS, not lessons"), "the substitution must announce itself");
-    let notice = p.find("COUNTS, not lessons").unwrap();
-    assert!(notice < p.find("GUI:").unwrap(), "the notice must precede the counts");
-}
 
 /// No nucleus index path (a mock adapter, an old snapshot) → no section, rather
 /// than a section telling the quark to write to nowhere.
@@ -691,31 +615,7 @@ fn measure_counts_the_active_skill_body() {
     assert!(total <= build(&proj, &id).len(), "and still not double-counted");
 }
 
-/// The safety net under the budget cliff was silently disabled by the index migration.
-/// Over budget, the prompt substitutes counts for the index and then re-adds the lines
-/// that match the task — `line_matches_task_or_pinned`. That filter required a line to
-/// start `- **`, the OLD index shape. `c449aef` moved every line to
-/// `- [slug](notes/slug.md) — hook` and fixed `tag_manifest`'s identical coupling, but
-/// not this one, so a quark past the budget got counts and an EMPTY relevant-lessons
-/// list: zero lessons, no partial recovery.
-#[test]
-fn a_pointer_line_still_matches_the_task_it_names() {
-    let lower = "the merge gate keeps hanging on a rebase".to_lowercase();
-    assert!(
-        super::line_matches_task_or_pinned(
-            "- [the-merge-gate](notes/the-merge-gate.md) — a hung suite in the target project",
-            &lower
-        ),
-        "a pointer line whose slug appears in the task must still be surfaced"
-    );
-    // The old shape has to keep working — a user's index may not be migrated.
-    assert!(super::line_matches_task_or_pinned("- **the-merge-gate** — a hung suite", &lower));
-    // And an unrelated lesson must NOT be dragged in.
-    assert!(!super::line_matches_task_or_pinned(
-        "- [gpui-hsla-takes-normalised-hue-not-degrees](notes/x.md) — hue clamps to 0..1",
-        &lower
-    ));
-}
+
 
 #[test]
 fn prompt_contains_hadron_forge_tools_section_when_enabled() {
@@ -756,3 +656,56 @@ fn prompt_renders_active_skill_immediately_before_your_task() {
     assert!(inv_pos < skill_pos, "invariants precede active skill");
     assert!(skill_pos < task_pos, "active skill precedes task");
 }
+
+#[test]
+fn nucleus_recall_prompt_rendering() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let notes_dir = temp.path().join("notes");
+    std::fs::create_dir_all(&notes_dir).unwrap();
+
+    std::fs::write(
+        notes_dir.join("worktree-isolation.md"),
+        "---\ndescription: Git worktree management and checkout isolation\n---\nIsolation notes",
+    ).unwrap();
+
+    let mut proj = projection("Need worktree isolation for task");
+    proj.nucleus_index_path = temp.path().join("index.md");
+    proj.nucleus_notes_dir = notes_dir;
+    proj.nucleus_index = r#"# Memory index
+
+## How we get things wrong
+
+- [compiled-is-not-running](notes/compiled-is-not-running.md) — Pinned lesson
+
+## The shared tree
+
+- [worktree-isolation](notes/worktree-isolation.md) — Git worktree management and checkout isolation
+"#.to_string();
+
+    let p = build(&proj, &QuarkId::new("agy"));
+    assert!(p.contains("# What the swarm has learned (nucleus index)"));
+    assert!(p.contains("compiled-is-not-running"));
+    assert!(p.contains("worktree-isolation"));
+}
+
+#[test]
+fn nucleus_recall_cache_stability() {
+    let mut proj1 = projection("Task A: build login");
+    proj1.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
+    proj1.nucleus_index = "- [compiled-is-not-running](notes/compiled-is-not-running.md) — Pinned lesson".to_string();
+
+    let mut proj2 = projection("Task B: fix database migration");
+    proj2.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
+    proj2.nucleus_index = "- [compiled-is-not-running](notes/compiled-is-not-running.md) — Pinned lesson".to_string();
+
+    let p1 = build(&proj1, &QuarkId::new("agy"));
+    let p2 = build(&proj2, &QuarkId::new("agy"));
+
+    let idx_header = "# What the swarm has learned (nucleus index)";
+    let pos1 = p1.find(idx_header).expect("index header present in p1");
+    let pos2 = p2.find(idx_header).expect("index header present in p2");
+
+    assert_eq!(pos1, pos2);
+    assert_eq!(&p1[..pos1], &p2[..pos2], "Prompt cache prefix prior to nucleus index MUST be identical across tasks");
+}
+

@@ -62,56 +62,7 @@ fn render_event_line(
     }
 }
 
-fn line_matches_task_or_pinned(line: &str, lower_task: &str) -> bool {
-    if line.contains("[pinned]") {
-        return true;
-    }
-    let Some(slug) = index_line_slug(line) else {
-        return false;
-    };
-    let lower_line = line.to_lowercase();
-    // A slug is kebab-case and a task is prose, so comparing them verbatim only ever
-    // fires when the human typed the slug itself — which is to say never. Matching the
-    // hyphens as spaces too is what makes this net catch anything at all: a task about
-    // "the merge gate" now surfaces `the-merge-gate`.
-    let lower_slug = slug.to_lowercase();
-    if !lower_slug.is_empty()
-        && (lower_task.contains(&lower_slug) || lower_task.contains(&lower_slug.replace('-', " ")))
-    {
-        return true;
-    }
-    if let Some(start) = lower_line.find("[tag:") {
-        if let Some(end) = lower_line[start..].find(']') {
-            let tag = &lower_line[start + 5..start + end];
-            if !tag.is_empty() && lower_task.contains(tag) {
-                return true;
-            }
-        }
-    }
-    if lower_task.contains(&lower_line) {
-        return true;
-    }
-    false
-}
 
-/// The slug an index line names, in **either** index shape — `- **slug** — hook`
-/// (pre-`c449aef`) or `- [slug](notes/slug.md) — hook` (current). `None` means the
-/// line is not an index entry at all (a heading, prose, a blank).
-///
-/// Both shapes on purpose, and this is the second call site of that coupling, not the
-/// first: `tag_manifest` counted only `- **` and would have reported `0 lesson(s)` for
-/// a full index the moment the format changed. That one was caught and fixed in the
-/// migration commit; **this one was not**, so from `c449aef` until now the over-budget
-/// path substituted counts and then re-added a relevant-lessons list that could never
-/// match anything — the whole safety net under the budget cliff, silently dead. A
-/// user's un-migrated index must keep working too, which is why neither shape wins.
-fn index_line_slug(line: &str) -> Option<&str> {
-    let rest = line.trim_start();
-    if let Some(r) = rest.strip_prefix("- [") {
-        return r.split(']').next();
-    }
-    rest.strip_prefix("- **")?.split("**").next()
-}
 
 /// Frame a task interrupted mid-turn together with the message that
 /// interrupted it, for use as a [`Projection::task`] — ADDS work, does not
@@ -185,48 +136,15 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         p.push_str("# What the swarm has learned (nucleus index)\n");
         if projection.nucleus_index.trim().is_empty() {
             p.push_str("_Empty — nothing has been recorded here yet._\n\n");
-        } else if projection.nucleus_index.len() > projection.nucleus_index_budget_bytes {
-            let manifest = crate::engine::nucleus::tag_manifest(&projection.nucleus_index);
-            // Say that this is a substitute BEFORE printing it. The index reached 46 KB
-            // against a 32 KB budget and every quark was handed these counts under the
-            // heading "What the swarm has learned" with nothing marking them as a
-            // degraded form — so the nucleus was inert for an unknown number of turns
-            // and no quark could tell. (The `nucleus_index_truncated` warning below does
-            // not cover this: `read_nucleus_index` stopped truncating, so that flag is
-            // now always false and the one path that DOES degrade said nothing.)
-            p.push_str(
-                "**You are seeing COUNTS, not lessons — the index is over budget, so \
-                 nothing below is the index itself.** Open it to read a lesson, and \
-                 prune it: a line must be a pointer (`- [slug](notes/slug.md) — hook`), \
-                 never the lesson text.\n\n",
-            );
-            p.push_str(&manifest);
-            p.push_str("\n");
-            let lower_task = projection.task.to_lowercase();
-            let matching_lines: Vec<&str> = projection
-                .nucleus_index
-                .lines()
-                .filter(|line| line_matches_task_or_pinned(line, &lower_task))
-                .collect();
-            if !matching_lines.is_empty() {
-                p.push_str("### Relevant & Pinned Lessons\n");
-                for line in matching_lines {
-                    p.push_str(line);
-                    p.push_str("\n");
-                }
-                p.push_str("\n");
-            }
         } else {
-            p.push_str(projection.nucleus_index.trim());
-            p.push_str("\n\n");
-        }
-        if projection.nucleus_index_truncated {
-            p.push_str(
-                "**The index above is CUT — it did not fit the budget, and lessons are \
-                 missing from it.** Do not read the end of it as the end of what is known. \
-                 It has stopped being an index: prune it to one line per lesson and move \
-                 the long versions into notes.\n\n",
+            let recalled = crate::engine::nucleus::rank_lessons(
+                &projection.nucleus_index,
+                &projection.nucleus_notes_dir,
+                &projection.task,
+                projection.nucleus_index_budget_bytes,
             );
+            p.push_str(&recalled);
+            p.push_str("\n\n");
         }
         p.push_str(&format!(
             "This index is **shared by every quark**, and it persists across turns and \
