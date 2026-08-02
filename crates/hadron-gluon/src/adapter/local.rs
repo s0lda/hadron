@@ -367,6 +367,20 @@ impl ToolCall {
     pub fn arguments_json(&self) -> Value {
         serde_json::from_str(&self.function.arguments).unwrap_or_else(|_| json!({}))
     }
+
+    /// How this call's arguments must be written when the assistant turn is
+    /// echoed back on the next round.
+    ///
+    /// The two wire formats are not interchangeable and the mismatch is fatal,
+    /// not cosmetic: Ollama's native `/api/chat` answers a string-form
+    /// `arguments` with `400 Bad Request` and rejects the WHOLE request, so
+    /// round 1 succeeds and round 2 kills the turn.
+    pub fn echoed_arguments(&self, vendor: HttpVendor) -> Value {
+        match vendor {
+            HttpVendor::Ollama => self.arguments_json(),
+            HttpVendor::LmStudio | HttpVendor::OpenAiCompatible => Value::String(self.function.arguments.clone()),
+        }
+    }
 }
 
 impl From<OllamaToolCall> for ToolCall {
@@ -729,7 +743,7 @@ impl Quark for LocalQuark {
                 "content": text,
                 "tool_calls": calls.iter().map(|c| json!({
                     "id": c.id, "type": "function",
-                    "function": { "name": c.function.name, "arguments": c.function.arguments }
+                    "function": { "name": c.function.name, "arguments": c.echoed_arguments(self.target.vendor) }
                 })).collect::<Vec<_>>(),
             }));
             for call in &calls {
@@ -1386,6 +1400,65 @@ mod tests {
         assert!(
             second_request.contains("marker.txt"),
             "the tool result must carry the REAL directory listing (jailed to turn.cwd): {second_request}"
+        );
+    }
+
+    /// Ollama's native `/api/chat` REJECTS the whole request — `400 Bad
+    /// Request`, `{"error":"Value looks like object, but can't find closing
+    /// '}' symbol"}` — when the assistant echo carries `arguments` as a
+    /// JSON-encoded string instead of an object. Reproduced live against
+    /// `http://localhost:11434` on 2026-08-02: the identical request with
+    /// `"arguments":{"path":"/tmp"}` answers normally, so round 1 succeeds and
+    /// round 2 kills the turn.
+    #[tokio::test]
+    async fn an_ollama_assistant_echo_carries_its_arguments_as_an_object() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("marker.txt"), "hi").unwrap();
+
+        let first = format!(
+            "{}\n",
+            json!({"message": {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "c1", "function": {"name": "list_dir", "arguments": {"path": "."}}}
+            ]}})
+        );
+        let second = format!("{}\n", json!({"message": {"content": "there you go"}, "done": true}));
+        let (base, rx) = serve_twice_capturing(first, second);
+        let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
+        let mut q = LocalQuark::new(QuarkId::new("t"), Flavor::Worker, "m", target);
+
+        let out = q.excite(tool_loop_turn(dir.path().to_path_buf())).await.expect("turn");
+        assert_eq!(out.message.as_deref(), Some("there you go"));
+
+        let _first_request = rx.recv_timeout(Duration::from_secs(2)).expect("round 1 request");
+        let second_request = rx.recv_timeout(Duration::from_secs(2)).expect("round 2 request");
+        assert!(
+            second_request.contains(r#""arguments":{"path":"."}"#),
+            "Ollama needs the echoed arguments as an object, not a string: {second_request}"
+        );
+    }
+
+    /// The other half of the same rule: an OpenAI-compatible endpoint wants the
+    /// string form, so the fix above must not become a blanket change.
+    #[tokio::test]
+    async fn an_openai_assistant_echo_keeps_its_arguments_as_a_string() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = format!(
+            "data: {}\ndata: [DONE]\n",
+            json!({"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "c1", "type": "function", "function": {"name": "list_dir", "arguments": "{\"path\":\".\"}"}}
+            ]}}]})
+        );
+        let second = format!("data: {}\ndata: [DONE]\n", json!({"choices": [{"delta": {"content": "done"}}]}));
+        let (base, rx) = serve_twice_capturing(first, second);
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let mut q = LocalQuark::new(QuarkId::new("t"), Flavor::Worker, "m", target);
+
+        q.excite(tool_loop_turn(dir.path().to_path_buf())).await.expect("turn");
+        let _first = rx.recv_timeout(Duration::from_secs(2)).expect("round 1 request");
+        let second_request = rx.recv_timeout(Duration::from_secs(2)).expect("round 2 request");
+        assert!(
+            second_request.contains(r#""arguments":"{\"path\":\".\"}""#),
+            "an OpenAI-compatible echo must keep the JSON-encoded string form: {second_request}"
         );
     }
 }
