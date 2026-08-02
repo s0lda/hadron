@@ -849,13 +849,14 @@ impl super::Chamber {
     }
 
     /// Elide long branch names like `quark/cli-agy/01KY8CNJT01HHWB...` -> `cli-agy`.
+    /// Non-quark refs (e.g. `origin/main`, `origin/HEAD`, `main`) are preserved as-is.
     fn elide_ref_name(name: &str) -> String {
-        let clean = name.strip_prefix("quark/").unwrap_or(name);
-        if let Some((seat, _ulid)) = clean.split_once('/') {
-            seat.to_string()
-        } else {
-            clean.to_string()
+        if let Some(clean) = name.strip_prefix("quark/") {
+            if let Some((seat, _ulid)) = clean.split_once('/') {
+                return seat.to_string();
+            }
         }
+        name.to_string()
     }
 
     /// A styled ref pill badge depending on decoration kind (HEAD, Local, Remote, Tag).
@@ -1166,6 +1167,16 @@ mod tests {
             deco("v1.0.0", RefKind::Tag),
         ];
         assert_eq!(Chamber::distinct_refs(&decos).len(), 3);
+    }
+
+    #[test]
+    fn elide_ref_name_preserves_remote_branches() {
+        assert_eq!(Chamber::elide_ref_name("origin/main"), "origin/main");
+        assert_eq!(Chamber::elide_ref_name("origin/HEAD"), "origin/HEAD");
+        assert_eq!(
+            Chamber::elide_ref_name("quark/cli-agy/01KY8CCE0YZV5X8NXMYNNNJMHF"),
+            "cli-agy"
+        );
     }
 
     fn authored(author: &str, subject: &str) -> crate::vcs::GraphRow {
