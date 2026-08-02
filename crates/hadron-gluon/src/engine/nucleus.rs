@@ -61,6 +61,7 @@ use crate::nucleus_status::is_lesson_line;
 /// A few hundred bytes: one heading per `## ` section in the index, with a count
 /// of lessons under it. What the quark sees instead of the full index when the
 /// index has grown past a size worth always sending in full.
+#[allow(dead_code)]
 pub(crate) fn tag_manifest(index_text: &str) -> String {
     let mut out = String::new();
     let mut current: Option<(&str, usize)> = None;

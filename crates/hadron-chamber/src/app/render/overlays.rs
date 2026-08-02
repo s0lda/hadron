@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.1.7",
+        date: Some("2026-08-02"),
+        added: &[
+            "Lexical nucleus lesson recall over notes/*.md using BM25 ranking based on task text",
+        ],
+        changed: &[],
+        fixed: &[
+            "Preserves partial text streaming output on graceful ACP session cancellation",
+            "Preserves remote branch names like origin/main in git graph ref pills",
+        ],
+    },
+    Release {
         version: "0.1.6",
         date: Some("2026-08-02"),
         added: &[

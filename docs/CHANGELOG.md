@@ -5,6 +5,15 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-08-02
+
+### Added
+- **Lexical Nucleus Recall**: Recalls relevant lessons from `notes/*.md` using BM25 lexical ranking based on assignment text (`Assign.task`), pinning `## How we get things wrong` first and capping injected output within a 1/8 budget ceiling while preserving prompt cache prefix stability.
+
+### Fixed
+- **Partial Text Preservation on Turn Cancel**: Preserves partial text streaming output on graceful ACP session cancellation instead of discarding it.
+- **Git Graph Remote Branch Names**: Preserves remote branch names like `origin/main` in git graph ref pills.
+
 ## [0.1.6] - 2026-08-02
 
 ### Added
