@@ -5,7 +5,7 @@ These are your built-in procedures. The engine hands you a starting one below; i
 
 - **writing-plans** — Use when you have a spec or requirements for a multi-step task, before touching code
 - **executing-plans** — Use when you have a written implementation plan to execute in a separate session with review checkpoints
-- **reviewing-work** — Use when receiving code review feedback, before implementing suggestions, especially if feedback seems unclear or technically questionable - requires technical rigor and verification, not performative agreement or blind implementation
+- **reviewing-work** — Use when performing code review or plan verification on work completed by another agent or self
 - **brainstorming** — "You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation."
 - **dispatching-parallel-agents** — Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies
 - **finishing-a-development-branch** — Use when implementation is complete, all tests pass, and you need to decide how to integrate the work - guides completion of development work by presenting structured options for merge, PR, or cleanup

@@ -5,152 +5,73 @@ description: Use when completing tasks, implementing major features, or before m
 
 # Requesting Code Review
 
-Dispatch a code reviewer subagent to catch issues before they cascade. The reviewer gets precisely crafted context for evaluation — never your session's history. This keeps the reviewer focused on the work product, not your thought process, and preserves your own context for continued work.
+## Core Principle
+Dispatch a code reviewer subagent with isolated context to audit completed work against plan specifications before merging or advancing.
 
-**Core principle:** Review early, review often.
+## Applicability
 
-## When to Request Review
+### Mandatory
+- After completing each task in subagent-driven development.
+- After completing a major feature.
+- Prior to merging into target base branch (`main` / `master`).
 
-**Mandatory:**
-- After each task in subagent-driven development
-- After completing major feature
-- Before merge to main
+### Optional
+- When blocked or seeking fresh perspective on complex refactoring.
 
-**Optional but valuable:**
-- When stuck (fresh perspective)
-- Before refactoring (baseline check)
-- After fixing complex bug
+## Execution Sequence
 
-## How to Request
-
-**1. Get git SHAs:**
+### Step 1: Determine Git Revision Range
 ```bash
 BASE_SHA=$(git rev-parse HEAD~1)  # or origin/main
 HEAD_SHA=$(git rev-parse HEAD)
 ```
 
-**2. Dispatch a `general-purpose` code reviewer subagent** with this prompt
-(fill the bracketed placeholders):
+### Step 2: Dispatch Code Reviewer Subagent
+Dispatch a `general-purpose` subagent using this exact prompt contract:
 
-```
-You are a Senior Code Reviewer with expertise in software architecture,
-design patterns, and best practices. Review completed work against its plan
-or requirements and identify issues before they cascade.
+```text
+You are a Senior Code Reviewer. Review completed work against plan/requirements.
 
 ## What Was Implemented
-[DESCRIPTION — brief summary of what was built]
+[DESCRIPTION — concise summary of changes]
 
 ## Requirements / Plan
-[PLAN_OR_REQUIREMENTS — what it should do: plan path, task text, or requirements]
+[PLAN_OR_REQUIREMENTS — plan file path or task spec]
 
 ## Git Range to Review
 Base: [BASE_SHA]   Head: [HEAD_SHA]
-Inspect with: git diff --stat [BASE_SHA]..[HEAD_SHA] and git diff [BASE_SHA]..[HEAD_SHA]
+Inspect: git diff --stat [BASE_SHA]..[HEAD_SHA] and git diff [BASE_SHA]..[HEAD_SHA]
 
-## Read-Only Review
-Your review is read-only on this checkout. Do not mutate the working tree,
-index, HEAD, or branch state. Use git show/diff/log to inspect history. To
-inspect another revision, check it out into a separate temp dir
-(git worktree add) — never move HEAD on this checkout.
+## Read-Only Review Invariant
+Read-only checkout. Do NOT mutate working tree, index, HEAD, or branch. Use git show/diff/log.
 
-## What to Check
-- Plan alignment: implementation matches the plan; deviations are justified,
-  not problematic; all planned functionality present.
-- Code quality: clean separation of concerns, proper error handling, type
-  safety where applicable, DRY without premature abstraction, edge cases.
-- Architecture: sound design, reasonable performance/scalability, security,
-  clean integration with surrounding code.
-- Testing: tests verify real behavior (not mocks), edge cases covered,
-  integration tests where they matter, all tests passing.
-- Production readiness: migration/backward-compat if schema changed, docs,
-  no obvious bugs.
+## Evaluation Checklist
+- Plan Alignment: Implementation matches plan specifications; deviations justified.
+- Code Quality: Separation of concerns, error handling, type safety, DRY.
+- Architecture: Sound design, performance, security, clean integration.
+- Testing: Tests verify real behavior (no mocks), edge cases covered, all passing.
+- Production Readiness: Migration/backward-compat, docs, zero obvious bugs.
 
-## Calibration
-Categorize by ACTUAL severity — not everything is Critical. Acknowledge what
-was done well before listing issues (accurate praise earns trust). Flag
-significant plan deviations specifically so the implementer can confirm
-intent. If the problem is with the plan itself rather than the code, say so.
-
-## Output Format
-### Strengths — [specific, what's well done]
+## Output Contract Format
+### Strengths — [specific well-built items]
 ### Issues
-#### Critical (Must Fix) — bugs, security, data-loss, broken functionality
-#### Important (Should Fix) — architecture problems, missing features, poor
-    error handling, test gaps
-#### Minor (Nice to Have) — style, optimization, doc polish
-For each issue: file:line, what's wrong, why it matters, how to fix.
-### Recommendations — improvements for quality/architecture/process
+#### Critical (Must Fix) — bugs, security flaws, data loss, broken functionality
+#### Important (Should Fix) — architecture flaws, missing features, test gaps
+#### Minor (Nice to Have) — style, optimization, documentation
+For each issue: file:line, what is wrong, why it matters, how to fix.
+### Recommendations — quality/process improvements
 ### Assessment
 Ready to merge? [Yes | No | With fixes]
 Reasoning: [1-2 sentence technical assessment]
-
-## Critical Rules
-DO: categorize by real severity; be specific (file:line, not vague); explain
-WHY each issue matters; acknowledge strengths; give a clear verdict.
-DON'T: say "looks good" without checking; mark nitpicks Critical; review code
-you didn't read; be vague ("improve error handling"); dodge the verdict.
 ```
 
-**Reviewer returns:** Strengths, Issues (Critical / Important / Minor),
-Recommendations, and a clear merge verdict.
+### Step 3: Triage and Act on Findings
+- **Critical Issues**: Fix immediately before any further progress.
+- **Important Issues**: Fix before proceeding to subsequent plan tasks.
+- **Minor Issues**: Note for polish or defer.
+- **Pushback Protocol**: If reviewer assessment is flawed, push back with empirical code/test evidence.
 
-**3. Act on feedback:**
-- Fix Critical issues immediately
-- Fix Important issues before proceeding
-- Note Minor issues for later
-- Push back if reviewer is wrong (with reasoning)
-
-## Example
-
-```
-[Just completed Task 2: Add verification function]
-
-You: Let me request code review before proceeding.
-
-BASE_SHA=$(git log --oneline | grep "Task 1" | head -1 | awk '{print $1}')
-HEAD_SHA=$(git rev-parse HEAD)
-
-[Dispatch code reviewer subagent]
-  DESCRIPTION: Added verifyIndex() and repairIndex() with 4 issue types
-  PLAN_OR_REQUIREMENTS: Task 2 from docs/superpowers/plans/deployment-plan.md
-  BASE_SHA: a7981ec
-  HEAD_SHA: 3df7661
-
-[Subagent returns]:
-  Strengths: Clean architecture, real tests
-  Issues:
-    Important: Missing progress indicators
-    Minor: Magic number (100) for reporting interval
-  Assessment: Ready to proceed
-
-You: [Fix progress indicators]
-[Continue to Task 3]
-```
-
-## Integration with Workflows
-
-**Subagent-Driven Development:**
-- Review after EACH task
-- Catch issues before they compound
-- Fix before moving to next task
-
-**Executing Plans:**
-- Review after each task or at natural checkpoints
-- Get feedback, apply, continue
-
-**Ad-Hoc Development:**
-- Review before merge
-- Review when stuck
-
-## Red Flags
-
-**Never:**
-- Skip review because "it's simple"
-- Ignore Critical issues
-- Proceed with unfixed Important issues
-- Argue with valid technical feedback
-
-**If reviewer wrong:**
-- Push back with technical reasoning
-- Show code/tests that prove it works
-- Request clarification
+## Invariants & Red Flags
+- **NEVER** skip code review because changes seem "simple".
+- **NEVER** ignore Critical or Important issues reported by reviewer.
+- **ALWAYS** enforce read-only execution constraints on reviewer subagents.

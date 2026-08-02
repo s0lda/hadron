@@ -6,65 +6,42 @@ description: Use when you have a written implementation plan to execute in a sep
 # Executing Plans
 
 ## Overview
-
 Load plan, review critically, execute all tasks, report when complete.
 
 **Announce at start:** "I'm using the executing-plans skill to implement this plan."
 
-**Note:** Work quality is significantly higher with access to subagents. If subagents are available, use superpowers:subagent-driven-development instead of this skill.
+> **Recommendation:** If subagents are available, prefer `superpowers:subagent-driven-development`.
 
-## The Process
+## Execution Workflow
 
 ### Step 1: Load and Review Plan
-1. Read plan file
-2. Review critically - identify any questions or concerns about the plan
-3. If concerns: Raise them with your human partner before starting
-4. If no concerns: Create todos for the plan items and proceed
+1. Load plan, review critically - identify any questions or concerns about the plan before starting.
+2. If concerns exist: raise them with human partner before starting.
+3. If clear: create todo list per task item.
 
-### Step 2: Execute Tasks
+### Step 2: Task-by-Task Execution
+For each task in the plan:
+1. Mark task status as `in_progress`.
+2. Follow bite-sized steps exactly without jumping ahead or skipping code blocks.
+3. Execute required verification commands (`cargo test`, `pytest`, etc.).
+4. Mark task status as `completed`.
 
-For each task:
-1. Mark as in_progress
-2. Follow each step exactly (plan has bite-sized steps)
-3. Run verifications as specified
-4. Mark as completed
+### Step 3: Branch Completion
+When all tasks are complete and verified:
+- **Announce:** "I'm using the finishing-a-development-branch skill to complete this work."
+- **REQUIRED SUB-SKILL:** Execute `superpowers:finishing-a-development-branch`.
 
-### Step 3: Complete Development
+## Stop Conditions (Hard Gates)
+STOP execution immediately and request clarification when:
+- Hitting a blocker (missing dependency, test failure, unclear instruction).
+- Verification commands fail repeatedly.
+- Fundamental approach requires rethinking.
 
-After all tasks complete and verified:
-- Announce: "I'm using the finishing-a-development-branch skill to complete this work."
-- **REQUIRED SUB-SKILL:** Use superpowers:finishing-a-development-branch
-- Follow that skill to verify tests, present options, execute choice
+## Critical Invariants
+- **Branch Protection:** Never start implementation on `main` or `master` branch without explicit user consent.
+- **Strict Verification:** Never skip verification steps specified in task steps.
 
-## When to Stop and Ask for Help
-
-**STOP executing immediately when:**
-- Hit a blocker (missing dependency, test fails, instruction unclear)
-- Plan has critical gaps preventing starting
-- You don't understand an instruction
-- Verification fails repeatedly
-
-**Ask for clarification rather than guessing.**
-
-## When to Revisit Earlier Steps
-
-**Return to Review (Step 1) when:**
-- Partner updates the plan based on your feedback
-- Fundamental approach needs rethinking
-
-**Don't force through blockers** - stop and ask.
-
-## Remember
-- Review plan critically first
-- Follow plan steps exactly
-- Don't skip verifications
-- Reference skills when plan says to
-- Stop when blocked, don't guess
-- Never start implementation on main/master branch without explicit user consent
-
-## Integration
-
-**Required workflow skills:**
-- **superpowers:using-git-worktrees** - Ensures isolated workspace (creates one or verifies existing)
-- **superpowers:writing-plans** - Creates the plan this skill executes
-- **superpowers:finishing-a-development-branch** - Complete development after all tasks
+## Workflow Integration
+- **Workspace Isolation:** `superpowers:using-git-worktrees`
+- **Plan Authoring:** `superpowers:writing-plans`
+- **Branch Finalization:** `superpowers:finishing-a-development-branch`
