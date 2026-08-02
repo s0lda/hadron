@@ -171,6 +171,7 @@ mod tests {
             deny_skills: vec![],
             external_roots: vec![],
             http_base_url: None,
+            model_params: hadron_lattice::ModelParams::default(),
         };
         let mut desired = running.clone();
         desired.quarks.push(new_seat.clone());
@@ -231,6 +232,7 @@ mod tests {
             deny_skills: vec![],
             external_roots: vec![],
             http_base_url: None,
+            model_params: hadron_lattice::ModelParams::default(),
         };
         let running = team(&[seat(&["-y", "old-agent"])]);
         let desired = team(&[seat(&["-y", "new-agent"])]);
@@ -264,6 +266,7 @@ mod enabled_tests {
             deny_skills: vec![],
             external_roots: vec![],
             http_base_url: None,
+            model_params: hadron_lattice::ModelParams::default(),
         }
     }
     fn team(seats: &[Seat]) -> Team {

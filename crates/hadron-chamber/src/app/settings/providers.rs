@@ -919,6 +919,7 @@ impl super::Chamber {
                                         // worktree until a human grants it a root.
                                         external_roots: vec![],
                                         http_base_url: None,
+                                        model_params: hadron_lattice::ModelParams::default(),
                                     };
                                     // `vendor` is already pure (Task 3's re-keyed preset list), so this
                                     // is a no-op today — left in as a defensive strip in case a vendor
@@ -1268,6 +1269,7 @@ impl super::Chamber {
                                         deny_skills: vec![],
                                         external_roots: vec![],
                                         http_base_url: Some(base_url.clone()),
+                                        model_params: hadron_lattice::ModelParams::default(),
                                     };
                                     this.add_configured_quark(seat, cx);
 

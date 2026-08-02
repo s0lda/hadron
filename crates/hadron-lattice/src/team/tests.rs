@@ -249,6 +249,39 @@ fn same_agent_rebuilds_on_secret_env_change() {
 }
 
 #[test]
+fn seat_model_params_serde_round_trips() {
+    let mut s = seat("local-ollama", "http", "llama3", Flavor::Worker);
+    s.model_params = ModelParams {
+        temperature: Some(0.1),
+        top_p: Some(0.95),
+        max_tokens: Some(4096),
+    };
+    let json = serde_json::to_string(&s).unwrap();
+    assert!(json.contains("\"temperature\":0.1"), "{json}");
+    assert!(json.contains("\"top_p\":0.95"), "{json}");
+    assert!(json.contains("\"max_tokens\":4096"), "{json}");
+    let back: Seat = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, s);
+}
+
+#[test]
+fn seat_without_model_params_parses_default_and_omits_key_on_serialize() {
+    let json = r#"{"id":"local-ollama","provider":"http","model":"llama3","flavor":"worker"}"#;
+    let s: Seat = serde_json::from_str(json).unwrap();
+    assert_eq!(s.model_params, ModelParams::default());
+    let out = serde_json::to_string(&s).unwrap();
+    assert!(!out.contains("model_params"), "empty model_params must not grow file: {out}");
+}
+
+#[test]
+fn same_agent_rebuilds_on_model_params_change() {
+    let base = Seat::cli(QuarkId::new("x"), "claude", "opus", Flavor::Worker);
+    let mut changed = base.clone();
+    changed.model_params.temperature = Some(0.1);
+    assert!(!base.same_agent(&changed), "model_params change must force rebuild");
+}
+
+#[test]
 fn resolve_env_pulls_values_from_the_store() {
     use crate::secrets::{MemoryStore, SecretStore};
     let mut s = seat("agy", "agy", "gemini-3-pro", Flavor::Worker);

@@ -484,6 +484,7 @@
                     deny_skills: vec![],
                     external_roots: vec![],
                     http_base_url: None,
+                    model_params: hadron_lattice::ModelParams::default(),
                 },
                 Seat {
                     id: QuarkId::new("opus"),
@@ -505,6 +506,7 @@
                     deny_skills: vec![],
                     external_roots: vec![],
                     http_base_url: None,
+                    model_params: hadron_lattice::ModelParams::default(),
                 },
             ],
             roster: vec![],

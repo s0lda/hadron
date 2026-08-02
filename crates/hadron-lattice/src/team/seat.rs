@@ -128,6 +128,46 @@ pub struct Seat {
     /// means "resolve the vendor's default" (see `hadron_gluon::adapter::local`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http_base_url: Option<String>,
+    /// Per-seat model parameters (temperature, top_p, max_tokens).
+    /// Empty by default, and omitted when empty.
+    #[serde(default, skip_serializing_if = "ModelParams::is_empty")]
+    pub model_params: ModelParams,
+}
+
+/// Per-seat model parameters (e.g. temperature, top_p, max_tokens).
+/// Every field is optional: `None` means "use vendor/provider default".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+}
+
+fn float_opt_eq(a: Option<f32>, b: Option<f32>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => x.to_bits() == y.to_bits(),
+        _ => false,
+    }
+}
+
+impl PartialEq for ModelParams {
+    fn eq(&self, other: &Self) -> bool {
+        float_opt_eq(self.temperature, other.temperature)
+            && float_opt_eq(self.top_p, other.top_p)
+            && self.max_tokens == other.max_tokens
+    }
+}
+
+impl Eq for ModelParams {}
+
+impl ModelParams {
+    pub fn is_empty(&self) -> bool {
+        self.temperature.is_none() && self.top_p.is_none() && self.max_tokens.is_none()
+    }
 }
 
 /// One granted external directory, as written in `team.json`.
@@ -173,7 +213,7 @@ impl Seat {
     /// a field to `Seat` without deciding which side of this line it falls on will not
     /// compile.
     pub fn same_agent(&self, other: &Seat) -> bool {
-        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env, energy_limit, deny_skills, external_roots, http_base_url } = self;
+        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env, energy_limit, deny_skills, external_roots, http_base_url, model_params } = self;
         id == &other.id
             && vendor == &other.vendor
             && model == &other.model
@@ -191,6 +231,7 @@ impl Seat {
             && deny_skills == &other.deny_skills
             && external_roots == &other.external_roots
             && http_base_url == &other.http_base_url
+            && model_params == &other.model_params
     }
 
     /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
@@ -216,6 +257,7 @@ impl Seat {
             deny_skills: vec![],
             external_roots: vec![],
             http_base_url: None,
+            model_params: ModelParams::default(),
         }
     }
 
@@ -316,6 +358,9 @@ pub struct SeatOverride {
     /// Per-repo skill locks. Absent = inherit the catalogue's `deny_skills`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deny_skills: Option<Vec<String>>,
+    /// Per-repo model parameters. Absent = inherit the catalogue's `model_params`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_params: Option<ModelParams>,
 }
 
 /// Deserialize an `Option<Option<T>>` field so the three states stay distinct: an
@@ -352,6 +397,7 @@ impl SeatOverride {
             commands: None,
             energy_limit: None,
             deny_skills: None,
+            model_params: None,
         }
     }
 }
