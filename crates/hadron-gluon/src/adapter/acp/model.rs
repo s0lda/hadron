@@ -19,7 +19,7 @@ use crate::adapter::registry::AcpTarget;
 /// and, since edits are meant to travel through hadron-forge, on *which* edit path
 /// it is. Three classes is the whole distinction the ladder needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RequestClass {
+pub(crate) enum RequestClass {
     /// The agent's own file-writing tools (`Edit`, `Write`, `fs/write_text_file`, …).
     NativeEdit,
     /// A `hadron_forge_*` MCP call: jailed to the worktree, hash-checked, and the
@@ -82,7 +82,7 @@ fn forge_tool_name(title: &str) -> bool {
 /// `AllowAlways` is never selected: remembering a grant is the field's job, and this
 /// function has no way to record one. Erring toward `*_once` keeps the blast radius
 /// of a mistake to a single tool call.
-pub(super) fn permission_choice(mode: Mode, class: RequestClass) -> PermissionOptionKind {
+pub(crate) fn permission_choice(mode: Mode, class: RequestClass) -> PermissionOptionKind {
     use PermissionOptionKind::{AllowOnce, RejectOnce};
     match (class, mode) {
         (RequestClass::NativeEdit, _) => RejectOnce,

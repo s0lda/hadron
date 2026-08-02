@@ -42,7 +42,7 @@ use crate::adapter::registry::AcpTarget;
 use crate::adapter::runner::RedactedEnv;
 use crate::quark::Quark;
 
-mod model;
+pub(crate) mod model;
 mod session;
 mod spend;
 #[cfg(test)]

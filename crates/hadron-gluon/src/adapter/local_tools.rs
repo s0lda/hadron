@@ -15,7 +15,63 @@
 
 use hadron_forge::exec::{Program, EXEC_DEADLINE};
 use hadron_forge::file::Root;
+use hadron_lattice::Mode;
 use serde_json::{json, Value};
+
+use crate::adapter::acp::model::{permission_choice, RequestClass};
+
+/// Transport-neutral answer to whether the current mode permits a named tool —
+/// keeps `agent_client_protocol`'s wire-level `PermissionOptionKind` out of what
+/// this module otherwise treats as plain HTTP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    Allow,
+    Reject,
+}
+
+/// `exec` runs an unmediated shell-adjacent program; every other declared tool
+/// is forge-backed (jailed, hash-checked). Same split ACP's `RequestClass`
+/// already makes, so this reuses the same ladder rather than a second one.
+fn classify(name: &str) -> RequestClass {
+    if name == "exec" {
+        RequestClass::Other
+    } else {
+        RequestClass::Forge
+    }
+}
+
+fn verdict(mode: Mode, name: &str) -> Verdict {
+    use agent_client_protocol::schema::v1::PermissionOptionKind::AllowOnce;
+    if permission_choice(mode, classify(name)) == AllowOnce {
+        Verdict::Allow
+    } else {
+        Verdict::Reject
+    }
+}
+
+/// The `tools` array to declare for a turn at the given mode — `None` when the
+/// mode permits none at all (`Ask`: "talk, don't act"). Filtering happens here
+/// rather than declare-then-refuse: a refused call still burns a round
+/// (`MAX_TOOL_ROUNDS`), and unlike an ACP agent an HTTP quark has no fallback
+/// native tools to retry with, so declaring an unreachable tool is a wasted
+/// round waiting to happen.
+pub fn declarations_for_mode(mode: Mode) -> Option<Value> {
+    let allowed: Vec<Value> = declarations()
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|t| {
+            let name = t["function"]["name"].as_str().unwrap_or_default();
+            verdict(mode, name) == Verdict::Allow
+        })
+        .collect();
+    if allowed.is_empty() {
+        None
+    } else {
+        Some(Value::Array(allowed))
+    }
+}
 
 /// The `tools` array sent with every chat request.
 pub fn declarations() -> Value {
@@ -121,7 +177,15 @@ fn tool(name: &str, description: &str, parameters: Value) -> Value {
 /// Run one tool call and return its result as the string that goes back into
 /// the conversation as a `role: "tool"` message. An error is a RESULT, not a
 /// failure: the model must see what went wrong so it can correct itself.
-pub fn execute(root: &Root, name: &str, args: &Value) -> String {
+///
+/// `mode` is checked again here even though `declarations_for_mode` already
+/// keeps a disallowed tool out of the request: a model can emit a call it was
+/// never offered (Nemotron demonstrably narrates tool envelopes as plain
+/// text), so this is a deliberate second layer, not a redundant one.
+pub fn execute(root: &Root, mode: Mode, name: &str, args: &Value) -> String {
+    if verdict(mode, name) == Verdict::Reject {
+        return format!("ERROR: `{name}` is not permitted in `{mode:?}` mode this turn");
+    }
     let s = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let opt_s = |k: &str| args.get(k).and_then(Value::as_str);
     let opt_usize = |k: &str| args.get(k).and_then(Value::as_u64).map(|n| n as usize);
@@ -253,9 +317,9 @@ mod tests {
         let root = Root::new(std::env::temp_dir());
         for t in tools.as_array().unwrap() {
             let name = t["function"]["name"].as_str().unwrap();
-            let out = execute(&root, name, &json!({}));
+            let out = execute(&root, Mode::Bypass, name, &json!({}));
             assert!(
-                !out.contains("unknown tool"),
+                !out.contains("unknown tool") && !out.contains("is not permitted"),
                 "declared tool `{name}` is not dispatched by execute(): {out}"
             );
         }
@@ -266,9 +330,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.txt"), "hello\nworld\n").unwrap();
         let root = Root::new(dir.path());
-        let out = execute(&root, "read_file", &json!({ "path": "a.txt" }));
+        let out = execute(&root, Mode::Bypass, "read_file", &json!({ "path": "a.txt" }));
         assert!(out.contains("hello") && out.contains("world"), "{out}");
-        let out = execute(&root, "list_dir", &json!({ "path": "." }));
+        let out = execute(&root, Mode::Bypass, "list_dir", &json!({ "path": "." }));
         assert!(out.contains("a.txt"), "{out}");
     }
 
@@ -277,7 +341,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("lib.rs"), "fn alpha() -> i32 { 1 }\n").unwrap();
         let root = Root::new(dir.path());
-        let blocks = execute(&root, "read_blocks", &json!({ "path": "lib.rs" }));
+        let blocks = execute(&root, Mode::Bypass, "read_blocks", &json!({ "path": "lib.rs" }));
         let hash = blocks
             .split("Hash: ")
             .nth(1)
@@ -285,6 +349,7 @@ mod tests {
             .expect("read_blocks must report a hash");
         let out = execute(
             &root,
+            Mode::Bypass,
             "edit_block",
             &json!({ "path": "lib.rs", "target_hash": hash, "new_text": "fn alpha() -> i32 { 2 }" }),
         );
@@ -299,6 +364,7 @@ mod tests {
         let root = Root::new(dir.path());
         let out = execute(
             &root,
+            Mode::Bypass,
             "edit_block",
             &json!({ "path": "lib.rs", "target_hash": "deadbeef", "new_text": "fn alpha() -> i32 { 2 }" }),
         );
@@ -310,7 +376,7 @@ mod tests {
     fn exec_refuses_a_program_off_the_allowlist() {
         let dir = tempfile::tempdir().unwrap();
         let root = Root::new(dir.path());
-        let out = execute(&root, "exec", &json!({ "program": "sh", "args": ["-c", "echo hi"] }));
+        let out = execute(&root, Mode::Bypass, "exec", &json!({ "program": "sh", "args": ["-c", "echo hi"] }));
         assert!(out.contains("not an allowlisted program"), "{out}");
     }
 
@@ -318,8 +384,29 @@ mod tests {
     fn exec_runs_a_real_allowlisted_command() {
         let dir = tempfile::tempdir().unwrap();
         let root = Root::new(dir.path());
-        let out = execute(&root, "exec", &json!({ "program": "git", "args": ["status"] }));
+        let out = execute(&root, Mode::Bypass, "exec", &json!({ "program": "git", "args": ["status"] }));
         assert!(out.contains("exit code:"), "{out}");
+    }
+
+    /// The backstop layer (step 3): even though `declarations_for_mode` keeps a
+    /// disallowed tool out of the request, `execute` must refuse it anyway if a
+    /// model emits the call unprompted — the model has no fallback native tool,
+    /// so this is the last line of defence, not a redundant one.
+    #[test]
+    fn execute_refuses_a_tool_the_mode_never_offered() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hello\n").unwrap();
+        let root = Root::new(dir.path());
+
+        let out = execute(&root, Mode::Ask, "read_file", &json!({ "path": "a.txt" }));
+        assert!(out.contains("is not permitted"), "Ask must refuse every tool: {out}");
+        let out = execute(&root, Mode::Write, "exec", &json!({ "program": "git", "args": ["status"] }));
+        assert!(out.contains("is not permitted"), "Write must refuse exec: {out}");
+
+        // The forge tools are still reachable at Write — the backstop is not a
+        // blanket refusal.
+        let out = execute(&root, Mode::Write, "read_file", &json!({ "path": "a.txt" }));
+        assert!(out.contains("hello"), "Write must still allow forge tools: {out}");
     }
 
     /// The prompt tells the quark "You are working in `/abs/path/to/worktree`",
@@ -335,10 +422,10 @@ mod tests {
         let root = Root::new(dir.path());
 
         let abs = dir.path().join("a.txt");
-        let out = execute(&root, "read_file", &json!({ "path": abs.to_str().unwrap() }));
+        let out = execute(&root, Mode::Bypass, "read_file", &json!({ "path": abs.to_str().unwrap() }));
         assert!(out.contains("hello"), "an absolute path inside the worktree must read: {out}");
 
-        let out = execute(&root, "list_dir", &json!({ "path": dir.path().to_str().unwrap() }));
+        let out = execute(&root, Mode::Bypass, "list_dir", &json!({ "path": dir.path().to_str().unwrap() }));
         assert!(out.contains("a.txt"), "the worktree root itself must list: {out}");
     }
 
@@ -349,7 +436,7 @@ mod tests {
     fn an_absolute_path_outside_the_worktree_is_still_refused() {
         let dir = tempfile::tempdir().unwrap();
         let root = Root::new(dir.path());
-        let out = execute(&root, "read_file", &json!({ "path": "/etc/passwd" }));
+        let out = execute(&root, Mode::Bypass, "read_file", &json!({ "path": "/etc/passwd" }));
         assert!(out.starts_with("ERROR"), "a path outside the worktree must stay refused: {out}");
     }
 }
