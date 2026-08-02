@@ -964,9 +964,23 @@ fn default_key_bindings() -> Vec<KeyBinding> {
 /// face. Equal ids mean either the family missed (both landed on the same fallback) or it
 /// has no bold face — both render flat, so both are rejected. This is the property we
 /// actually care about, which is why it is checked rather than "is the name installed".
+fn first_family_with_a_real_bold(cx: &App, candidates: &[&str]) -> SharedString {
+    let text_system = cx.text_system();
+    candidates
+        .iter()
+        .copied()
+        .find(|&name| {
+            let regular = gpui::font(name);
+            text_system.resolve_font(&regular.clone().bold()) != text_system.resolve_font(&regular)
+        })
+        .map(SharedString::from)
+        .unwrap_or_else(|| ".SystemUIFont".into())
+}
+
 fn font_family_with_a_real_bold(cx: &App) -> SharedString {
     // Platform-typical UI faces first, then the ones a Linux desktop nearly always ships.
-    const CANDIDATES: [&str; 7] = [
+    const CANDIDATES: [&str; 8] = [
+        crate::fonts::UI_FAMILY,
         ".SystemUIFont", // the real system face on macOS/Windows; "IBM Plex Sans" on Linux
         "Inter",
         "Segoe UI",
@@ -975,17 +989,18 @@ fn font_family_with_a_real_bold(cx: &App) -> SharedString {
         "Noto Sans",
         "DejaVu Sans",
     ];
-    let text_system = cx.text_system();
-    CANDIDATES
-        .into_iter()
-        .find(|name| {
-            let regular = gpui::font(*name);
-            text_system.resolve_font(&regular.clone().bold()) != text_system.resolve_font(&regular)
-        })
-        .map(SharedString::from)
-        // Nothing here has a distinguishable bold. Leave gpui to its own fallback rather
-        // than pinning a family we just proved does not work.
-        .unwrap_or_else(|| ".SystemUIFont".into())
+    first_family_with_a_real_bold(cx, &CANDIDATES)
+}
+
+fn mono_family_with_a_real_bold(cx: &App) -> SharedString {
+    const CANDIDATES: [&str; 5] = [
+        crate::fonts::MONO_FAMILY,
+        "Cascadia Code",
+        "DejaVu Sans Mono",
+        "Liberation Mono",
+        "monospace",
+    ];
+    first_family_with_a_real_bold(cx, &CANDIDATES)
 }
 
 /// Launch the chamber window against a field file path.
@@ -1053,12 +1068,19 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             }
         });
         Theme::change(ThemeMode::Dark, None, cx);
+        // Registered BEFORE `font_family_with_a_real_bold` probes: the probe asks
+        // the text system what it can already resolve, so a face added after it
+        // runs is a face the probe never sees.
+        if let Err(e) = cx.text_system().add_fonts(crate::fonts::embedded()) {
+            eprintln!("hadron: could not register bundled fonts ({e:#}); falling back to system fonts");
+        }
         // Probed before the theme block below, which holds `cx` mutably. Logged because
         // this bug is invisible from inside the app — the only symptom is flat bold.
         let ui_font = font_family_with_a_real_bold(cx);
+        let mono_font = mono_family_with_a_real_bold(cx);
         hadron_lattice::term::info(
             hadron_lattice::term::Source::Chamber,
-            &format!("UI font family {ui_font} (bold verified)"),
+            &format!("UI font family {ui_font}, Mono font family {mono_font} (bold verified)"),
         );
         // Align gpui-component's own component colors (titlebar, inputs, window
         // controls) to Jake's palette so they blend with our hand-drawn surfaces.
@@ -1146,6 +1168,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             t.tokens.background = gpui::Hsla::from(theme::popover()).into();
             // ONE family, never a comma list — see `font_family_with_a_real_bold`.
             t.font_family = ui_font;
+            t.mono_font_family = mono_font;
         }
         // Keyboard navigation. The chords still scoped to `KEY_CONTEXT` are ones
         // the text input's own key context (`gpui_component::input::state::CONTEXT`)
@@ -1368,5 +1391,26 @@ mod tests {
                 .any(|b| b.contains("control: true") && b.contains(r#"key: "m""#)),
             "ctrl-m missing: {bound:?}"
         );
+    }
+
+    /// The point of bundling is that the probe stops depending on the machine.
+    /// This asserts the mechanism, not the file: registration happened AND the
+    /// registered family resolves a bold face distinct from its regular.
+    #[test]
+    fn the_bundled_ui_and_mono_families_each_resolve_a_real_bold() {
+        let app = gpui_platform::application();
+        app.run(|cx: &mut App| {
+            cx.text_system().add_fonts(crate::fonts::embedded()).expect("register bundled fonts");
+            for family in [crate::fonts::UI_FAMILY, crate::fonts::MONO_FAMILY] {
+                let regular = gpui::font(family);
+                let bold = regular.clone().bold();
+                assert_ne!(
+                    cx.text_system().resolve_font(&regular),
+                    cx.text_system().resolve_font(&bold),
+                    "{family}: bold resolved to the same face as regular"
+                );
+            }
+            cx.quit();
+        });
     }
 }
