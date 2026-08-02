@@ -113,6 +113,26 @@ fn index_line_slug(line: &str) -> Option<&str> {
     rest.strip_prefix("- **")?.split("**").next()
 }
 
+/// Frame a task interrupted mid-turn together with the message that
+/// interrupted it, for use as a [`Projection::task`] — ADDS work, does not
+/// replace it (`.hadron/docs/plans/2026-08-02-fonts-tools-orchestrator.md`,
+/// Task 3). Before this, a re-dispatch after a graceful cancel carried only
+/// the interrupting message; the interrupted task was grounded (so
+/// `driver_for` never re-surfaces it) and silently dropped, even though the
+/// WIP it produced is already snapshot-committed on the quark's own branch
+/// (`engine/run.rs`'s interrupt arm) and so is real work to finish, not a
+/// fiction to resume.
+pub fn frame_interrupted_resumption(interrupted_task: &str, new_message: &str) -> String {
+    format!(
+        "You were interrupted partway through the task below before you finished it — your \
+         work up to that point is already committed as a WIP snapshot on this branch. A new \
+         message has since arrived. **Do both**: finish the interrupted task, then handle the \
+         new message — the new message ADDS to your work, it does not replace it.\n\n\
+         ## Interrupted task\n{interrupted_task}\n\n\
+         ## New message\n{new_message}"
+    )
+}
+
 /// Build the full Markdown prompt handed to a quark's CLI for one turn.
 /// Deterministic and side-effect-free so it can be unit-tested exactly.
 /// `self_id` is the quark's own handle — a human message can address several

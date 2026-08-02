@@ -107,14 +107,36 @@ impl super::Engine {
         // pending every pass it runs) would look identical to a fresh interrupting
         // message. Kept in lockstep with `in_flight`, same as `cancel_requested`.
         let mut dispatched_at_len: HashMap<(QuarkId, Lane), usize> = HashMap::new();
-        // Which assignment each in-flight turn was dispatched for — so the
-        // CANCEL_DEADLINE fallback's `ground` call (Task 9, Defect 2) can stamp
-        // `answers` on the abandoned turn's OWN assignment, not leave it unstamped.
-        // An unstamped Ground falls into `has_answered`'s "legacy: it spoke after
-        // the message" arm, which reads as answering EVERY earlier unaddressed
-        // message — including the very message that caused the interrupt, silently
-        // swallowing it. Kept in lockstep with `in_flight`, same as `cancel_requested`.
-        let mut dispatched_assignment: HashMap<(QuarkId, Lane), Option<ulid::Ulid>> = HashMap::new();
+        // Which assignment each in-flight turn was dispatched for, and the task text
+        // it was carrying — so the CANCEL_DEADLINE fallback's `ground` call (Task 9,
+        // Defect 2) can stamp `answers` on the abandoned turn's OWN assignment, not
+        // leave it unstamped. An unstamped Ground falls into `has_answered`'s
+        // "legacy: it spoke after the message" arm, which reads as answering EVERY
+        // earlier unaddressed message — including the very message that caused the
+        // interrupt, silently swallowing it. The task text rides along so an
+        // abandoned turn's work can be handed to `interrupted_task` below instead of
+        // dropped (Task 3 of `.hadron/docs/plans/2026-08-02-fonts-tools-
+        // orchestrator.md`). Kept in lockstep with `in_flight`, same as
+        // `cancel_requested`.
+        let mut dispatched_assignment: HashMap<(QuarkId, Lane), Option<(ulid::Ulid, String)>> =
+            HashMap::new();
+        // A task abandoned mid-turn by a graceful interrupt — keyed by quark only
+        // (not lane: the resumed dispatch may land on a different lane than the one
+        // that was interrupted, and the point is "this quark still owes this work",
+        // not "this lane does"). Populated at BOTH places a turn can end on an
+        // interrupt: the ordinary path (the transport honours `session/cancel`, the
+        // turn resolves normally with `outcome.cancelled == true`, handled in the
+        // `join_next` arm below) and the CANCEL_DEADLINE fallback (the transport
+        // never resolves the request at all, so the turn is aborted destructively).
+        // Either way `finish_turn`/the fallback's own `ground` call terminates the
+        // assignment unconditionally, so without this map the abandoned task is gone
+        // the instant it grounds. Consumed (removed) only once a real dispatch
+        // actually merges it into that quark's next `Driver::task` via
+        // `prompt::frame_interrupted_resumption` — peeked, not removed, on every pass
+        // a merge is attempted, so a target blocked this pass by an unrelated gate
+        // (exclusivity, energy, disabled) does not lose the interrupted task before
+        // it ever reaches a real dispatch.
+        let mut interrupted_task: HashMap<QuarkId, String> = HashMap::new();
         // The assignment rides along with the turn so that `finish_turn` can stamp
         // `answers` on what the turn emits. Without it, "has this quark answered the
         // human?" degenerates into "has it said anything since?", which silently eats
@@ -157,14 +179,31 @@ impl super::Engine {
                     dispatched_at_len.remove(&(target.clone(), Lane::Chat));
                     dispatched_assignment.remove(&(target.clone(), Lane::Work));
                     dispatched_assignment.remove(&(target.clone(), Lane::Chat));
+                    // A force-restart is a deliberate human reset of this quark; an
+                    // interrupted task queued up before it must not silently resurface
+                    // on some unrelated later turn.
+                    interrupted_task.remove(target);
                 }
 
                 for (target, fallback_task) in self.pending_targets(&events) {
                     // Resolved once, up front, so the in_flight check below and the
                     // worktree/branch logic further down (which used to call
                     // `driver_for` a second time) always agree on the same driver.
-                    let driver =
+                    let mut driver =
                         self.driver_for(&events, &target, fallback_task.as_ref().map(|t| t.task.as_str()));
+                    // A message arrived mid-turn ADDS work, it does not replace it
+                    // (Task 3 of `.hadron/docs/plans/2026-08-02-fonts-tools-
+                    // orchestrator.md`): if this quark still owes an interrupted task,
+                    // fold it into whatever is driving this dispatch instead of
+                    // letting the grounded assignment (and the message that
+                    // interrupted it) read as the *only* task. Peeked, not removed —
+                    // see `interrupted_task`'s own doc comment for why the actual
+                    // consume happens only once a dispatch is committed to, below.
+                    if let (Some(d), Some(old_task)) =
+                        (driver.as_mut(), interrupted_task.get(&target))
+                    {
+                        d.task = crate::adapter::prompt::frame_interrupted_resumption(old_task, &d.task);
+                    }
                     let lane = self.lane_for(&events, &target, driver.as_ref());
 
                     // One turn per (quark, lane) at a time. A quark that becomes
@@ -197,12 +236,24 @@ impl super::Engine {
                                 // fresh turn on the next pass instead of waiting out
                                 // `TURN_DEADLINE`.
                                 if requested_at.elapsed() >= self.cancel_deadline {
-                                    let abandoned_assignment =
-                                        dispatched_assignment.get(&key).copied().flatten();
+                                    let abandoned = dispatched_assignment.get(&key).cloned().flatten();
+                                    let abandoned_assignment = abandoned.as_ref().map(|(a, _)| *a);
                                     Self::abort_in_flight(&key, &mut in_flight, &mut abort_handles);
                                     cancel_requested.remove(&key);
                                     dispatched_at_len.remove(&key);
                                     dispatched_assignment.remove(&key);
+                                    // The abandoned task is not gone — it is handed to
+                                    // the next dispatch for this quark, which merges it
+                                    // with whatever interrupted it (Task 3 of
+                                    // `.hadron/docs/plans/2026-08-02-fonts-tools-
+                                    // orchestrator.md`): "adds work, does not replace
+                                    // it". A blank task (no task-bearing driver at
+                                    // dispatch time) has nothing worth resuming.
+                                    if let Some((_, task)) = abandoned {
+                                        if !task.trim().is_empty() {
+                                            interrupted_task.insert(target.clone(), task);
+                                        }
+                                    }
                                     // Grounds the abandoned assignment BEFORE
                                     // taking the quark's lock below — Defect 2 of
                                     // Task 9 (`.hadron/docs/plans/2026-07-31-
@@ -638,8 +689,18 @@ impl super::Engine {
                         (turn_id, lane, turn_tree, assignment, outcome)
                     });
                     dispatched_at_len.insert((target.clone(), lane), events.len());
-                    dispatched_assignment.insert((target.clone(), lane), assignment);
+                    dispatched_assignment.insert(
+                        (target.clone(), lane),
+                        driver.as_ref().map(|d| (d.assignment, d.task.clone())),
+                    );
                     abort_handles.insert((target.clone(), lane), abort);
+                    // Consumed here, not at the merge point above: this is the first
+                    // moment a dispatch for `target` is actually committed to (the
+                    // turn is spawned, `in_flight` is about to gain the key) rather
+                    // than merely attempted — a target that fell through the merge
+                    // but then hit an unrelated gate (exclusivity, energy, disabled)
+                    // this same pass must keep its interrupted task for the next one.
+                    interrupted_task.remove(&target);
                     in_flight.insert((target, lane));
                     exchanges += 1;
                     spawned_any = true;
@@ -692,7 +753,24 @@ impl super::Engine {
                     abort_handles.remove(&(target.clone(), lane));
                     cancel_requested.remove(&(target.clone(), lane));
                     dispatched_at_len.remove(&(target.clone(), lane));
-                    dispatched_assignment.remove(&(target.clone(), lane));
+                    let dispatched = dispatched_assignment.remove(&(target.clone(), lane)).flatten();
+                    // The graceful cancel's ordinary resolution: the transport honoured
+                    // `session/cancel` and the turn returned normally with
+                    // `outcome.cancelled == true` — this is the common path, NOT the
+                    // CANCEL_DEADLINE fallback above, which only fires when a transport
+                    // never resolves the request at all. `finish_turn` grounds this
+                    // turn's assignment unconditionally (a cancelled turn is still a
+                    // terminal one), so without this the interrupted task is gone the
+                    // instant it grounds. Task 3 of `.hadron/docs/plans/2026-08-02-
+                    // fonts-tools-orchestrator.md`: hand it to `interrupted_task`
+                    // instead, the same as the fallback path does.
+                    if outcome.cancelled {
+                        if let Some((_, task)) = dispatched {
+                            if !task.trim().is_empty() {
+                                interrupted_task.insert(target.clone(), task);
+                            }
+                        }
+                    }
                     if let Err(err) =
                         self.finish_turn(&target, outcome, tree.as_ref(), assignment).await
                     {

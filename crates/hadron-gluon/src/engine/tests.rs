@@ -6333,6 +6333,132 @@ async fn a_busy_quark_with_a_cancel_slot_is_interrupted_by_a_new_message() {
     );
 }
 
+/// **Task 3 of `.hadron/docs/plans/2026-08-02-fonts-tools-orchestrator.md`.** A
+/// message arriving mid-turn interrupts the in-flight turn (the responsive-
+/// orchestrator behaviour above), but the interrupted task must not simply be
+/// dropped: the re-dispatched turn's projection has to carry BOTH the original
+/// task and the interrupting message, framed as "resume this, and also do
+/// that" — not just the new message on its own, which is what the prior
+/// behaviour left it as.
+#[tokio::test]
+async fn a_message_arriving_mid_turn_adds_to_the_task_it_interrupts() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    struct CancellableQuark {
+        id: QuarkId,
+        cancelled: Arc<AtomicBool>,
+        excite_count: Arc<AtomicUsize>,
+        second_task: Arc<Mutex<Option<String>>>,
+        hold: Duration,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for CancellableQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        fn attach_cancel_slot(&mut self, slot: crate::quark::CancelSlot) {
+            let cancelled = self.cancelled.clone();
+            slot.set(Some(Arc::new(move || {
+                cancelled.store(true, Ordering::SeqCst);
+                true
+            })));
+        }
+        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+            let n = self.excite_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if n > 1 {
+                *self.second_task.lock().unwrap() = Some(turn.task.clone());
+                return Ok(TurnOutcome {
+                    message: Some(format!("done: {}", turn.task)),
+                    permission: None,
+                    ..Default::default()
+                });
+            }
+            self.cancelled.store(false, Ordering::SeqCst);
+            let deadline = tokio::time::Instant::now() + self.hold;
+            loop {
+                if self.cancelled.load(Ordering::SeqCst) {
+                    return Ok(TurnOutcome { message: None, cancelled: true, ..Default::default() });
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Ok(TurnOutcome {
+                        message: Some(format!("done: {}", turn.task)),
+                        permission: None,
+                        ..Default::default()
+                    });
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("field.jsonl");
+    let hold = Duration::from_millis(1500);
+
+    append_event(
+        &path,
+        &Event::new(
+            Actor::Quark(QuarkId::new("reporter")),
+            Some(QuarkId::new("seat")),
+            Kind::Message { body: "first task".into() },
+        ),
+    )
+    .unwrap();
+
+    let excite_count = Arc::new(AtomicUsize::new(0));
+    let second_task = Arc::new(Mutex::new(None));
+
+    let mid_flight = {
+        let path = path.clone();
+        let excite_count = excite_count.clone();
+        tokio::spawn(async move {
+            for _ in 0..200 {
+                if excite_count.load(Ordering::SeqCst) >= 1 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            seed_unaddressed_mention(&path, "seat", "second, urgent task");
+        })
+    };
+
+    let mut engine = Engine::new(
+        path.clone(),
+        vec![Box::new(CancellableQuark {
+            id: QuarkId::new("seat"),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            excite_count: excite_count.clone(),
+            second_task: second_task.clone(),
+            hold,
+        })],
+        10,
+    );
+
+    tokio::time::timeout(Duration::from_secs(8), engine.run_until_quiesce())
+        .await
+        .expect("the busy turn should have been interrupted well within 8s")
+        .unwrap();
+    mid_flight.await.unwrap();
+
+    let redispatched = second_task.lock().unwrap().clone().expect("the second turn must have run");
+    assert!(
+        redispatched.contains("first task"),
+        "the re-dispatched projection dropped the interrupted task entirely: {redispatched:?}"
+    );
+    assert!(
+        redispatched.contains("second, urgent task"),
+        "the re-dispatched projection must also carry the interrupting message: {redispatched:?}"
+    );
+}
+
 /// **Task 5 of the responsive-orchestrator plan.** A cancel fired against a
 /// quark whose worktree has uncommitted edits must not leave those edits
 /// stranded — a dirty tree blocks the merge gate with
@@ -6668,7 +6794,17 @@ async fn a_deadline_abandoned_turn_is_grounded_not_left_stale() {
     );
     assert!(
         events.iter().any(|e| matches!(&e.kind, Kind::Message { body }
-            if body.contains("resumed on: @seat second, urgent task"))),
+            if body.contains("resumed on:") && body.contains("@seat second, urgent task"))),
         "the quark was never re-excited onto the interrupting message at all: {events:?}"
+    );
+    // Task 3 of `.hadron/docs/plans/2026-08-02-fonts-tools-orchestrator.md`: the
+    // CANCEL_DEADLINE fallback abandons the turn destructively, but the task it
+    // abandoned is still owed — it must ride along into the re-dispatch too, not
+    // just the message that forced the abandonment.
+    assert!(
+        events.iter().any(|e| matches!(&e.kind, Kind::Message { body }
+            if body.contains("resumed on:") && body.contains("first task"))),
+        "the abandoned turn's own task ('first task') must survive into the re-dispatch, \
+         not just the interrupting message: {events:?}"
     );
 }
