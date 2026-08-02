@@ -46,6 +46,8 @@ use crate::config::{self, ChamberPrefs, Identity};
 use crate::model::{self, ChamberView, MessageRow, RosterRow, StatsWindow, SwarmTask, TaskState};
 use crate::theme;
 
+pub(super) mod delegation;
+
 mod mentions;
 use mentions::{parse_plan_progress, parse_plan_tasks, resolve_mention_names};
 
@@ -241,6 +243,7 @@ struct Chamber {
     /// is what made the tab lag.
     pub(super) git_graph_rows: Vec<crate::vcs::GraphRow>,
     pub(super) git_graph_max_lanes: usize,
+    pub(super) delegations: Vec<delegation::Delegation>,
     /// Virtual list state for the Graph subtab: without it every commit builds an element
     /// and a lane `canvas` on every frame, so an uncapped walk would be unaffordable.
     pub(super) git_graph_list: gpui::ListState,
@@ -756,6 +759,7 @@ impl Chamber {
             git_show_snapshots: false,
             git_graph_rows: Vec::new(),
             git_graph_max_lanes: 1,
+            delegations: Vec::new(),
             git_graph_list,
             plan_scroll: ScrollHandle::new(),
             tasks_scroll: ScrollHandle::new(),

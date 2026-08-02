@@ -45,6 +45,7 @@ impl super::Chamber {
     pub(super) fn reproject(&mut self, events: &[Event]) {
         let resolved = resolve_team(&self.team, &self.global);
         self.view = model::project_with_team(events, &resolved, &self.global);
+        self.delegations = delegation::parse_delegations(events);
         self.update_active_plan();
     }
 
