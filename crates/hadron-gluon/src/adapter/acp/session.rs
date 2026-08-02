@@ -918,16 +918,7 @@ impl super::AcpQuark {
 
         // A refusal or a token wall is a real thing the field should see; a plain
         // `end_turn` with no text is just a silent turn.
-        let text = reply.text.trim();
-        let message = match reply.stop {
-            StopReason::Cancelled => None,
-            StopReason::EndTurn if text.is_empty() => None,
-            StopReason::EndTurn => Some(text.to_string()),
-            other => {
-                let note = format!("[acp: stopped on {other:?}]");
-                Some(if text.is_empty() { note } else { format!("{text}\n\n{note}") })
-            }
-        };
+        let message = message_for_stop(reply.text.trim(), &reply.stop);
 
         // `message.is_none()` alone cannot tell "cut off mid-work" apart from
         // "genuinely finished with nothing to say" (`StopReason::EndTurn` with
@@ -939,6 +930,26 @@ impl super::AcpQuark {
         let cancelled = matches!(reply.stop, StopReason::Cancelled);
 
         Ok(TurnOutcome { message, permission: None, usage, cancelled, ..Default::default() })
+    }
+}
+
+/// What the field's `Message` event should carry for one `session/prompt` reply.
+/// Extracted from [`AcpQuark::run_turn`] as a pure function so the three stop-reason
+/// arms are directly testable without booting a resident ACP session.
+///
+/// `StopReason::Cancelled` currently discards `text` unconditionally, even when the
+/// agent had already streamed a substantial partial reply before the cancel landed
+/// (`append_message_chunk` accumulates every chunk regardless of how the turn ends) —
+/// see `.hadron/nucleus/notes/a-graceful-cancel-discards-partial-text.md`.
+pub(super) fn message_for_stop(text: &str, stop: &StopReason) -> Option<String> {
+    match stop {
+        StopReason::Cancelled => None,
+        StopReason::EndTurn if text.is_empty() => None,
+        StopReason::EndTurn => Some(text.to_string()),
+        other => {
+            let note = format!("[acp: stopped on {other:?}]");
+            Some(if text.is_empty() { note } else { format!("{text}\n\n{note}") })
+        }
     }
 }
 

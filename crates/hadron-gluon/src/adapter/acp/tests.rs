@@ -12,7 +12,7 @@ use hadron_lattice::{live, Doing, Flavor, Mode, Projection, QuarkId};
 
 use agent_client_protocol::schema::v1::{
     ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionKind, SessionConfigKind,
-    SessionConfigOption, SessionConfigOptionCategory, SessionUpdate, Usage as AcpUsage,
+    SessionConfigOption, SessionConfigOptionCategory, SessionUpdate, StopReason, Usage as AcpUsage,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, ConnectionTo};
@@ -1400,4 +1400,35 @@ fn an_activity_with_no_reply_yet_carries_no_draft() {
     let act = hadron_lattice::live::read(&dir, &quark, Utc::now()).expect("published");
     assert_eq!(act.full, None);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Regression test for the 2026-08-02 `acp-claude` incident: two concurrent
+/// turns (Chat and Work lanes) each reported real output tokens (1873, 1924)
+/// but wrote NO `Message` event — `outcome.message` was `None`. Root cause:
+/// `message_for_stop` maps `StopReason::Cancelled` to `None` UNCONDITIONALLY,
+/// discarding whatever text the agent had already streamed before the cancel
+/// landed (`append_message_chunk` accumulates every chunk regardless of how
+/// the turn ends, so a cancelled turn's `text` is not necessarily empty).
+///
+/// This is a FAILING test on purpose (Phase 4 Step 1 of systematic-debugging):
+/// it asserts the fix's desired behaviour, not today's. Do not "fix" it by
+/// relaxing the assertion — fix `message_for_stop` instead.
+#[test]
+fn a_cancelled_turn_with_partial_text_should_preserve_it_not_discard_it() {
+    let partial = "Here is my analysis so far: the index is at 29KB against a 32KB budget...";
+    let message = super::session::message_for_stop(partial, &StopReason::Cancelled);
+    assert_eq!(
+        message.as_deref(),
+        Some(partial),
+        "a graceful cancel must not throw away text the agent already streamed"
+    );
+}
+
+/// The companion positive control: a cancel with NOTHING streamed yet has
+/// nothing to preserve, so `None` is correct there — this test already
+/// passes and must keep passing after the fix above lands.
+#[test]
+fn a_cancelled_turn_with_no_partial_text_has_no_message() {
+    let message = super::session::message_for_stop("", &StopReason::Cancelled);
+    assert_eq!(message, None);
 }
