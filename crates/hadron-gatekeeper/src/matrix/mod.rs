@@ -249,5 +249,42 @@ pub fn decide(
     }
 }
 
+/// What a tool call actually does, coarse enough for the mode ladder to answer
+/// it without a human. Three classes, because three is what the ladder
+/// distinguishes: `Write` means "edits auto-approve; every command asks you".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolClass {
+    /// Reads the worktree and changes nothing (read a file, list a directory,
+    /// grep, show a diff).
+    Read,
+    /// Changes a file through the sanctioned, jailed edit path.
+    Edit,
+    /// Runs a program.
+    Exec,
+}
+
+/// Whether `mode` pre-authorizes a tool of this class on a path where **nobody
+/// can be asked**: the agent is mid-turn and blocking on our answer, so the only
+/// two outcomes are allow and refuse.
+///
+/// This is [`decide`]'s ladder with its ask-a-human rungs collapsed to refusal,
+/// and it is deliberately the narrow version: `Auto` allows a command outright
+/// rather than consulting the allow-list, because trust-on-first-use needs a
+/// human to answer the first time and there is no one here to answer. The
+/// blast radius of that choice is one tool call, inside a worktree jail.
+///
+/// `Ask` refuses everything, reads included — the rung's promise is "the quark
+/// may talk, not act", and a read that only *looks* harmless is still the quark
+/// acting (see `notes/ask-posture-rejects-forge-reads-too.md`).
+pub fn tool_allowed(mode: Mode, class: ToolClass) -> bool {
+    match (mode, class) {
+        (Mode::Ask, _) => false,
+        (_, ToolClass::Read | ToolClass::Edit) => true,
+        (Mode::Write, ToolClass::Exec) => false,
+        // Auto and Bypass; Ask and Write are both answered above.
+        (_, ToolClass::Exec) => true,
+    }
+}
+
 #[cfg(test)]
 mod tests;

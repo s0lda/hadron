@@ -472,3 +472,23 @@ fn clamp_only_under_global_bypass() {
     let evs_write = vec![mode_set(None, Mode::Write)];
     assert_eq!(effective_mode(&evs_write, &q("agy"), true, false), Mode::Write);
 }
+
+/// The no-human tool ladder, rung by rung. `Ask` may not act at all; `Write`
+/// buys edits and not commands; `Auto` and `Bypass` buy everything. This table
+/// is the one the ACP seat and the HTTP tool loop both answer from, so a change
+/// here changes both — which is the point of it having one home.
+#[test]
+fn the_tool_ladder_buys_a_rung_at_a_time() {
+    use ToolClass::{Edit, Exec, Read};
+    for class in [Read, Edit, Exec] {
+        assert!(!tool_allowed(Mode::Ask, class), "Ask must refuse {class:?}");
+    }
+    assert!(tool_allowed(Mode::Write, Read));
+    assert!(tool_allowed(Mode::Write, Edit));
+    assert!(!tool_allowed(Mode::Write, Exec), "Write's promise is edits yes, commands no");
+    for mode in [Mode::Auto, Mode::Bypass] {
+        for class in [Read, Edit, Exec] {
+            assert!(tool_allowed(mode, class), "{mode:?} must allow {class:?}");
+        }
+    }
+}

@@ -14,7 +14,7 @@ pub use gate::{any_pending_permission, grant, grant_remembering, pending_permiss
 pub use hadron_lattice::{Mode, Risk};
 pub use matrix::{
     allow_rules, decide, effective_mode, global_mode, has_override, op_matches, resolve_mode,
-    AllowRules, Decision, DenyRules,
+    tool_allowed, AllowRules, Decision, DenyRules, ToolClass,
 };
 pub use merge::{
     merge_approved, merge_decision, merge_op, BlockReason, BranchState, MergeVerdict,
