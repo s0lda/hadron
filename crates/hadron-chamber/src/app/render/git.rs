@@ -1026,13 +1026,16 @@ impl super::Chamber {
             };
             let to_str = format!("@{}", del.to.as_str());
 
-            let (state_color, state_text) = match del.state {
-                DelegationState::Pending => (0xf59e0b, "Pending"),
-                DelegationState::Working => (0x60a5fa, "Working"),
-                DelegationState::Completed => (0x34d399, "Completed"),
-                DelegationState::Blocked => (0x94a3b8, "Blocked"),
-                DelegationState::Error => (0xf87171, "Error"),
+            // The wording comes from `DelegationState::label`, not from a second
+            // copy of it here — this match carries only the colour.
+            let state_color = match del.state {
+                DelegationState::Pending => 0xf59e0b,
+                DelegationState::Working => 0x60a5fa,
+                DelegationState::Completed => 0x34d399,
+                DelegationState::Blocked => 0x94a3b8,
+                DelegationState::Error => 0xf87171,
             };
+            let state_text = del.state.label();
 
             let first_line = del.task.lines().next().unwrap_or("").trim();
             let truncated_task: String = first_line.chars().take(80).collect();

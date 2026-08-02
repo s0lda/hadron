@@ -146,6 +146,7 @@ fn build_wires_the_right_adapter() {
         energy_limit: None,
         deny_skills: Vec::new(),
         external_roots: vec![],
+        model_params: Default::default(),
     })
     .unwrap();
     assert_eq!(agy.id(), QuarkId::new("agy"));
@@ -166,6 +167,7 @@ fn build_wires_the_right_adapter() {
         energy_limit: None,
         deny_skills: Vec::new(),
         external_roots: vec![],
+        model_params: Default::default(),
     })
     .unwrap();
     assert_eq!(generic.id(), QuarkId::new("custom"));
@@ -189,6 +191,7 @@ fn build_rejects_reserved_id() {
         energy_limit: None,
         deny_skills: Vec::new(),
         external_roots: vec![],
+        model_params: Default::default(),
     });
     assert!(err.is_err());
 }
@@ -619,6 +622,7 @@ fn resolved_env_is_not_in_debug_output() {
         energy_limit: None,
         deny_skills: Vec::new(),
         external_roots: vec![],
+        model_params: Default::default(),
     };
     let debug = format!("{spec:?}");
     assert!(!debug.contains(secret_value), "the secret VALUE leaked into Debug: {debug}");

@@ -25,7 +25,9 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use futures::StreamExt;
 use hadron_lattice::live::{self, Activity, Doing};
-use hadron_lattice::{EnergyState, Flavor, Projection, QuarkId, Seat, SeatCommands, Transport, TurnOutcome};
+use hadron_lattice::{
+    EnergyState, Flavor, ModelParams, Projection, QuarkId, Seat, SeatCommands, Transport, TurnOutcome,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -244,6 +246,65 @@ struct ChatRequest<'a> {
     /// OpenRouter and Ollama endpoints, not assumed from documentation.
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<&'a Value>,
+    /// The seat's [`ModelParams`], in the shape the vendor actually reads — see
+    /// [`vendor_params`]. Serialized inline for an OpenAI-compatible surface;
+    /// always absent for Ollama, which takes them under `options` instead.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    params: Option<OpenAiParams>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<OllamaOptions>,
+}
+
+/// Model parameters as an OpenAI-compatible endpoint (OpenRouter, LM Studio, …)
+/// reads them: top level, and the ceiling is `max_tokens`.
+#[derive(Serialize, Debug, PartialEq)]
+struct OpenAiParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
+}
+
+/// Model parameters as Ollama's `/api/chat` reads them: nested under `options`,
+/// and the ceiling is `num_predict`.
+///
+/// The nesting and the rename are both load-bearing, and neither is cosmetic:
+/// measured live against `http://localhost:11434` on 2026-08-02, a request
+/// carrying a top-level `"max_tokens": 1` was **silently ignored** (93 tokens
+/// back, `done_reason: "stop"`), while the same request with
+/// `"options": {"num_predict": 1}` stopped at one token (`done_reason:
+/// "length"`). A wrong shape here is not a 400 you would notice — it is a
+/// parameter that reads as applied and does nothing.
+#[derive(Serialize, Debug, PartialEq)]
+struct OllamaOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    num_predict: Option<u32>,
+}
+
+/// Split a seat's [`ModelParams`] into the one shape this vendor reads, leaving
+/// the other `None`. An empty `ModelParams` yields `(None, None)` — absent must
+/// stay absent all the way to the wire, never `0.0`, so a seat that set nothing
+/// sends a request byte-identical to the one it sent before this existed.
+fn vendor_params(vendor: HttpVendor, p: &ModelParams) -> (Option<OpenAiParams>, Option<OllamaOptions>) {
+    if p.is_empty() {
+        return (None, None);
+    }
+    match vendor {
+        HttpVendor::Ollama => (
+            None,
+            Some(OllamaOptions { temperature: p.temperature, top_p: p.top_p, num_predict: p.max_tokens }),
+        ),
+        HttpVendor::LmStudio | HttpVendor::OpenAiCompatible => (
+            Some(OpenAiParams { temperature: p.temperature, top_p: p.top_p, max_tokens: p.max_tokens }),
+            None,
+        ),
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -497,10 +558,12 @@ async fn stream_chat(
     model: &str,
     messages: &[Value],
     tools: Option<&Value>,
+    model_params: &ModelParams,
     mut on_delta: impl FnMut(Doing, &str),
 ) -> anyhow::Result<(String, Vec<ToolCall>, hadron_lattice::Usage)> {
     let client = reqwest::Client::new();
-    let body = ChatRequest { model, messages, stream: true, tools };
+    let (params, options) = vendor_params(target.vendor, model_params);
+    let body = ChatRequest { model, messages, stream: true, tools, params, options };
     let mut full = String::new();
     let mut thought = String::new();
     let mut usage = hadron_lattice::Usage::default();
@@ -607,6 +670,10 @@ pub struct LocalQuark {
     commands: SeatCommands,
     energy_limit: Option<u32>,
     deny_skills: Vec<String>,
+    /// This seat's `model_params` from `team.json`, sent on every chat request in
+    /// whichever shape the vendor reads (see [`vendor_params`]). Default/empty =
+    /// send nothing and let the vendor pick.
+    model_params: ModelParams,
     /// Where to publish mid-turn draft activity. `None` = nobody is watching
     /// (tests, and any quark this daemon is not watching) — mirrors
     /// `adapter::acp::AcpQuark`'s same-shaped field.
@@ -626,8 +693,14 @@ impl LocalQuark {
             commands: SeatCommands::default(),
             energy_limit: None,
             deny_skills: Vec::new(),
+            model_params: ModelParams::default(),
             live_dir: None,
         }
+    }
+
+    pub fn with_model_params(mut self, params: ModelParams) -> Self {
+        self.model_params = params;
+        self
     }
 
     pub fn watching(mut self, dir: PathBuf) -> Self {
@@ -707,7 +780,7 @@ impl Quark for LocalQuark {
             let mut thought = String::new();
             let mut last_publish: Option<Instant> = None;
             let (text, calls, usage) =
-                stream_chat(&self.target, &self.model, &messages, tools.as_ref(), |doing, delta| {
+                stream_chat(&self.target, &self.model, &messages, tools.as_ref(), &self.model_params, |doing, delta| {
                     // Two buffers, because they are two different things: the draft is
                     // the reply the chat will show, the thought is only ever the Live
                     // card's "thinking" line. Mirrors `adapter::acp::session`'s split.
@@ -904,7 +977,7 @@ mod tests {
         let (base, _rx) = serve_once_capturing("200 OK", sse);
         let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
         let (text, calls, _) =
-            stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, |_, _| {})
+            stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, &ModelParams::default(), |_, _| {})
                 .await
                 .unwrap();
         assert!(text.is_empty(), "a tool-only reply must not be mistaken for prose: {text:?}");
@@ -921,7 +994,7 @@ mod tests {
             serve_once_capturing("200 OK", "data: {\"choices\":[{\"delta\":{\"content\":\"done\"}}]}\ndata: [DONE]\n");
         let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
         let (text, calls, _) =
-            stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, |_, _| {})
+            stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, &ModelParams::default(), |_, _| {})
                 .await
                 .unwrap();
         assert!(calls.is_empty());
@@ -955,7 +1028,7 @@ mod tests {
         let (base, rx) = serve_once_capturing("200 OK", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\ndata: [DONE]\n");
         let target =
             HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: Some("sk-test-456".to_string()) };
-        stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, |_, _| {}).await.unwrap();
+        stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, &ModelParams::default(), |_, _| {}).await.unwrap();
         let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(request.to_lowercase().contains("authorization: bearer sk-test-456"), "request:\n{request}");
     }
@@ -1062,7 +1135,7 @@ mod tests {
         );
         let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
         let mut seen = Vec::new();
-        let full = stream_chat(&target, "nemotron-3-ultra:cloud", &[json!({"role": "user", "content": "hi"})], None, |_, delta| seen.push(delta.to_string())).await.unwrap();
+        let full = stream_chat(&target, "nemotron-3-ultra:cloud", &[json!({"role": "user", "content": "hi"})], None, &ModelParams::default(), |_, delta| seen.push(delta.to_string())).await.unwrap();
         assert_eq!(full.0, "Hello");
         assert_eq!(seen, vec!["Hel".to_string(), "lo".to_string()]);
     }
@@ -1076,7 +1149,7 @@ mod tests {
              data: [DONE]\n",
         );
         let target = HttpTarget { vendor: HttpVendor::LmStudio, base_url: base, api_key: None };
-        let full = stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, |_, _| {}).await.unwrap();
+        let full = stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, &ModelParams::default(), |_, _| {}).await.unwrap();
         assert_eq!(full.0, "Hello");
     }
 
@@ -1090,7 +1163,7 @@ mod tests {
         );
         let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
         let mut seen = Vec::new();
-        let full = stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, |d, t| seen.push((d, t.to_string()))).await.unwrap();
+        let full = stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, &ModelParams::default(), |d, t| seen.push((d, t.to_string()))).await.unwrap();
         // The thought is PUBLISHED but is not part of the reply — see
         // `a_reasoning_delta_carrying_an_empty_content_still_streams`.
         assert_eq!(full.0, "ing...");
@@ -1109,7 +1182,7 @@ mod tests {
              {\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true}",
         );
         let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
-        let full = stream_chat(&target, "deepseek-r1", &[json!({"role": "user", "content": "hi"})], None, |_, _| {}).await.unwrap();
+        let full = stream_chat(&target, "deepseek-r1", &[json!({"role": "user", "content": "hi"})], None, &ModelParams::default(), |_, _| {}).await.unwrap();
         assert_eq!(full.0, "Answer");
     }
 
@@ -1134,7 +1207,7 @@ mod tests {
         );
         let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
         let mut seen = Vec::new();
-        let full = stream_chat(&target, "nemotron", &[json!({"role": "user", "content": "hi"})], None, |d, t| seen.push((d, t.to_string()))).await.unwrap();
+        let full = stream_chat(&target, "nemotron", &[json!({"role": "user", "content": "hi"})], None, &ModelParams::default(), |d, t| seen.push((d, t.to_string()))).await.unwrap();
         assert_eq!(full.0, "BANANA", "the reply is the content, never the chain of thought");
         assert_eq!(
             seen,
@@ -1162,7 +1235,7 @@ mod tests {
              data: [DONE]\n",
         );
         let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
-        let full = stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, |_, _| {}).await.unwrap();
+        let full = stream_chat(&target, "some-model", &[json!({"role": "user", "content": "hi"})], None, &ModelParams::default(), |_, _| {}).await.unwrap();
         assert_eq!(full.0, "only thoughts");
     }
 
@@ -1172,7 +1245,7 @@ mod tests {
     async fn a_refused_chat_request_reports_the_servers_own_explanation() {
         let base = serve_once("403 Forbidden", r#"{"error":"model 'kimi-k2.7-code:cloud' not found"}"#);
         let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
-        let err = stream_chat(&target, "kimi-k2.7-code:cloud", &[json!({"role": "user", "content": "hi"})], None, |_, _| {}).await.unwrap_err();
+        let err = stream_chat(&target, "kimi-k2.7-code:cloud", &[json!({"role": "user", "content": "hi"})], None, &ModelParams::default(), |_, _| {}).await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("403"), "{msg}");
         assert!(msg.contains("not found"), "the server's own explanation is missing: {msg}");
@@ -1242,7 +1315,7 @@ mod tests {
         };
         let model = listed.first().expect("the live Ollama server has no models pulled").id.clone();
         let mut deltas = 0;
-        let (full, _, _) = stream_chat(&target, &model, &[json!({"role": "user", "content": "Reply with exactly one word: pong"})], None, |_, _| deltas += 1)
+        let (full, _, _) = stream_chat(&target, &model, &[json!({"role": "user", "content": "Reply with exactly one word: pong"})], None, &ModelParams::default(), |_, _| deltas += 1)
             .await
             .unwrap();
         assert!(deltas > 0, "expected at least one streamed delta");
@@ -1273,6 +1346,7 @@ mod tests {
             "nvidia/nemotron-3-ultra-550b-a55b:free",
             &[json!({ "role": "user", "content": "Say the word BANANA three times, then stop." })],
             None,
+            &ModelParams::default(),
             |doing, _| {
                 if doing == Doing::Thinking {
                     thoughts += 1
@@ -1308,7 +1382,7 @@ mod tests {
         let target =
             HttpTarget { vendor: HttpVendor::LmStudio, base_url: "http://10.5.0.2:1234".to_string(), api_key: None };
         let mut deltas = 0;
-        let (full, _, _) = stream_chat(&target, "google/gemma-4-12b-qat", &[json!({"role": "user", "content": "Reply with exactly one word: pong"})], None, |_, _| deltas += 1)
+        let (full, _, _) = stream_chat(&target, "google/gemma-4-12b-qat", &[json!({"role": "user", "content": "Reply with exactly one word: pong"})], None, &ModelParams::default(), |_, _| deltas += 1)
             .await
             .unwrap();
         assert!(deltas > 0, "expected at least one streamed delta");
@@ -1528,6 +1602,71 @@ mod tests {
         let request = rx.recv_timeout(Duration::from_secs(2)).expect("request");
         assert!(request.contains(r#""name":"read_file""#), "Write must declare forge tools: {request}");
         assert!(!request.contains(r#""name":"exec""#), "Write must not declare exec: {request}");
+    }
+
+    /// A seat's `model_params` reach an OpenAI-compatible endpoint at the top
+    /// level, under the names that surface documents.
+    #[tokio::test]
+    async fn an_openai_compatible_seats_model_params_ride_at_the_top_level() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base, rx) =
+            serve_once_capturing("200 OK", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\ndata: [DONE]\n");
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let mut q = LocalQuark::new(QuarkId::new("t"), Flavor::Worker, "m", target).with_model_params(ModelParams {
+            temperature: Some(0.1),
+            top_p: Some(0.9),
+            max_tokens: Some(256),
+        });
+
+        q.excite(tool_loop_turn(dir.path().to_path_buf())).await.expect("turn");
+        let request = rx.recv_timeout(Duration::from_secs(2)).expect("request");
+        assert!(request.contains(r#""temperature":0.1"#), "{request}");
+        assert!(request.contains(r#""top_p":0.9"#), "{request}");
+        assert!(request.contains(r#""max_tokens":256"#), "{request}");
+        assert!(!request.contains(r#""options""#), "OpenAI-compatible takes no `options` object: {request}");
+    }
+
+    /// The same seat against Ollama must produce a DIFFERENT body: nested under
+    /// `options`, with the ceiling renamed to `num_predict`. Measured live on
+    /// 2026-08-02 — a top-level `max_tokens` is silently ignored by
+    /// `/api/chat`, so getting this wrong ships a parameter that does nothing
+    /// and reports no error. See [`OllamaOptions`].
+    #[tokio::test]
+    async fn an_ollama_seats_model_params_are_nested_under_options_as_num_predict() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base, rx) = serve_once_capturing("200 OK", "{\"message\":{\"content\":\"ok\"},\"done\":true}\n");
+        let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
+        let mut q = LocalQuark::new(QuarkId::new("t"), Flavor::Worker, "m", target).with_model_params(ModelParams {
+            temperature: Some(0.1),
+            top_p: None,
+            max_tokens: Some(256),
+        });
+
+        q.excite(tool_loop_turn(dir.path().to_path_buf())).await.expect("turn");
+        let request = rx.recv_timeout(Duration::from_secs(2)).expect("request");
+        assert!(request.contains(r#""options":{"temperature":0.1,"num_predict":256}"#), "{request}");
+        assert!(!request.contains(r#""max_tokens""#), "Ollama ignores a top-level max_tokens: {request}");
+        assert!(!request.contains(r#""top_p""#), "an unset param must not be sent at all: {request}");
+    }
+
+    /// Absent must mean "let the vendor decide" all the way to the wire — never
+    /// `0.0`, and never a `null`. Asserted against the raw request text rather
+    /// than a parsed body, because a `"temperature":null` parses back to the
+    /// same `None` this seat set and would pass a structural check while
+    /// pinning a real endpoint's sampling to whatever it reads `null` as.
+    #[tokio::test]
+    async fn a_seat_that_set_no_model_params_sends_none_of_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base, rx) =
+            serve_once_capturing("200 OK", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\ndata: [DONE]\n");
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let mut q = LocalQuark::new(QuarkId::new("t"), Flavor::Worker, "m", target);
+
+        q.excite(tool_loop_turn(dir.path().to_path_buf())).await.expect("turn");
+        let request = rx.recv_timeout(Duration::from_secs(2)).expect("request");
+        for key in ["temperature", "top_p", "max_tokens", "num_predict", "options"] {
+            assert!(!request.contains(key), "an unset seat must send no `{key}`: {request}");
+        }
     }
 }
 

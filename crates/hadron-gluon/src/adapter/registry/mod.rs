@@ -655,6 +655,10 @@ pub struct QuarkSpec {
     /// Directories outside the worktree this seat's forge tools may reach (see
     /// `Seat::external_roots`). Empty = the jail is exactly what it always was.
     pub external_roots: Vec<hadron_lattice::ExternalRootSpec>,
+    /// This seat's `model_params` (see `Seat::model_params`). Carried only onto
+    /// `Transport::Http`, the one transport that composes its own request body —
+    /// an ACP or CLI seat's model settings belong to the agent it boots.
+    pub model_params: hadron_lattice::ModelParams,
 }
 
 /// Enforce the naming contract: ids must be non-empty, whitespace-free, path- and
@@ -780,7 +784,8 @@ fn build_watched(spec: QuarkSpec, live_dir: Option<&std::path::Path>) -> anyhow:
                 .with_roles(roles, exclusive)
                 .with_commands(commands)
                 .with_energy_limit(energy_limit)
-                .with_deny_skills(deny_skills);
+                .with_deny_skills(deny_skills)
+                .with_model_params(spec.model_params);
             if let Some(dir) = live_dir {
                 q = q.watching(dir.to_path_buf());
             }
@@ -831,6 +836,7 @@ fn spec_for_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore) 
         energy_limit: seat.energy_limit,
         deny_skills: seat.deny_skills.clone(),
         external_roots: seat.external_roots.clone(),
+        model_params: seat.model_params.clone(),
     })
 }
 
