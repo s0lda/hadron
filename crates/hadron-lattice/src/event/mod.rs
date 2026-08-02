@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ulid::Ulid;
+pub use ulid::Ulid;
 
 use crate::QuarkId;
 

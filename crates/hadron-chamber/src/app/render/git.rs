@@ -96,6 +96,15 @@ impl super::Chamber {
                 .pb_3()
                 .child(self.git_graph_section(cx))
                 .into_any_element(),
+            GitSubtab::Delegation => div()
+                .id("git-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.git_scroll)
+                .px_3()
+                .pb_3()
+                .child(self.git_delegation_section(cx))
+                .into_any_element(),
         };
         let git_pane = div()
             .flex_1()
@@ -992,6 +1001,102 @@ impl super::Chamber {
             list = list.child(row.border_b_1().border_color(theme::border()));
         }
         list.into_any_element()
+    }
+
+    // ── Delegation ─────────────────────────────────────────────────────────────
+
+    fn git_delegation_section(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+        use crate::app::delegation::DelegationState;
+
+        if self.delegations.is_empty() {
+            return v_flex()
+                .w_full()
+                .gap_1()
+                .child(Self::git_section_title("Delegations"))
+                .child(Self::muted("No delegations recorded."))
+                .into_any_element();
+        }
+
+        let mut list = v_flex().w_full().gap_2();
+        for (ix, del) in self.delegations.iter().enumerate().rev() {
+            let from_str = match &del.from {
+                Actor::Human => "Human".to_string(),
+                Actor::Gluon => "Gluon".to_string(),
+                Actor::Quark(q) => format!("@{}", q.as_str()),
+            };
+            let to_str = format!("@{}", del.to.as_str());
+
+            let (state_color, state_text) = match del.state {
+                DelegationState::Pending => (0xf59e0b, "Pending"),
+                DelegationState::Working => (0x60a5fa, "Working"),
+                DelegationState::Completed => (0x34d399, "Completed"),
+                DelegationState::Blocked => (0x94a3b8, "Blocked"),
+                DelegationState::Error => (0xf87171, "Error"),
+            };
+
+            let first_line = del.task.lines().next().unwrap_or("").trim();
+            let truncated_task: String = first_line.chars().take(80).collect();
+
+            let card = v_flex()
+                .id(("delegation-row", ix))
+                .w_full()
+                .p_2()
+                .rounded_md()
+                .bg(theme::glass_card())
+                .border_1()
+                .border_color(theme::glass_highlight())
+                .gap_1()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .items_center()
+                                .text_xs()
+                                .child(
+                                    div()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme::accent())
+                                        .child(from_str),
+                                )
+                                .child(div().text_color(theme::text_muted()).child("➜"))
+                                .child(
+                                    div()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme::accent())
+                                        .child(to_str),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .items_center()
+                                .text_xs()
+                                .text_color(gpui::rgb(state_color))
+                                .child(div().child("●"))
+                                .child(div().child(state_text)),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .truncate()
+                        .child(truncated_task),
+                );
+
+            list = list.child(card);
+        }
+
+        v_flex()
+            .w_full()
+            .gap_2()
+            .child(Self::git_section_title("Delegations"))
+            .child(list)
+            .into_any_element()
     }
 }
 
