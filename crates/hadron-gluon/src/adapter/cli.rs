@@ -485,7 +485,7 @@ mod tests {
         assert!(prompt.contains("# Who you are"), "identity survives");
         assert!(prompt.contains("summarise the work so far"), "the task survives");
         assert!(prompt.contains("# Your authority this turn"), "authority survives");
-        assert!(prompt.contains("# How to respond"), "the handoff reminder survives");
+        assert!(prompt.contains("# Response Format & Output Strictness"), "the handoff reminder survives");
         assert!(prompt.contains("NEWEST-CANARY"), "the most recent field survives");
         assert!(!prompt.contains("OLDEST-CANARY"), "the oldest field is what gets dropped");
         assert!(
@@ -557,7 +557,7 @@ mod tests {
         // not stdin (agy ignores stdin in print mode). It is args[1], right after
         // "--print", and stdin is empty.
         assert_eq!(recorded[0].args[0], "--print");
-        assert!(recorded[0].args[1].contains("# How to respond"));
+        assert!(recorded[0].args[1].contains("# Response Format & Output Strictness"));
         assert!(recorded[0].stdin.is_empty());
     }
 
