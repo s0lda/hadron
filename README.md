@@ -12,7 +12,7 @@
 
   <br />
 
-  <img src="assets/demo_2.jpg" alt="Hadron Architecture Banner" width="900" />
+  <img src="assets/demo_2.png" alt="Hadron Architecture Banner" width="900" />
 
 </div>
 
