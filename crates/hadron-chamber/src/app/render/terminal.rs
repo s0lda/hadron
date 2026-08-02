@@ -171,12 +171,15 @@ impl super::Chamber {
                         for run in &line.runs {
                             if !run.text.is_empty() {
                                 line_empty = false;
-                                row = row.child(
-                                    div()
-                                        .text_color(gpui::rgb(pack_rgb(run.fg)))
-                                        .bg(gpui::rgb(pack_rgb(run.bg)))
-                                        .child(run.text.clone()),
-                                );
+                                let mut run_div = div()
+                                    .text_color(gpui::rgb(pack_rgb(run.fg)))
+                                    .bg(gpui::rgb(pack_rgb(run.bg)));
+                                if run.has_cursor {
+                                    run_div = run_div
+                                        .border_l(px(2.0))
+                                        .border_color(gpui::rgb(pack_rgb(run.fg)));
+                                }
+                                row = row.child(run_div.child(run.text.clone()));
                             }
                         }
                         if line_empty {

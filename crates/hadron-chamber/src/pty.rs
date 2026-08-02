@@ -59,6 +59,7 @@ pub struct TermRun {
     pub text: String,
     pub fg: (u8, u8, u8),
     pub bg: (u8, u8, u8),
+    pub has_cursor: bool,
 }
 
 /// One visible row: its coalesced runs, left to right.
@@ -317,8 +318,7 @@ impl PtyTerminal {
     }
 
     /// Build a render-ready snapshot of the visible screen: each row coalesced
-    /// into runs of identical colour, with the block cursor rendered as an
-    /// inverted cell.
+    /// into runs of identical colour, with the line cursor marked on the target cell.
     pub fn snapshot(&self) -> TermSnapshot {
         let Ok(term) = self.term.lock() else {
             return TermSnapshot::default();
@@ -339,7 +339,7 @@ impl PtyTerminal {
         // Gather every visible cell into a dense grid first (the iterator yields
         // in row-major order, but mapping through the viewport keeps us honest
         // about scrollback offset).
-        let mut grid: Vec<Vec<(char, (u8, u8, u8), (u8, u8, u8))>> =
+        let mut grid: Vec<Vec<(char, (u8, u8, u8), (u8, u8, u8), bool)>> =
             vec![Vec::with_capacity(cols); rows];
         for indexed in content.display_iter {
             let Some(vp) = point_to_viewport(display_offset, indexed.point) else {
@@ -357,27 +357,33 @@ impl PtyTerminal {
             if cell.flags.contains(Flags::HIDDEN) {
                 fg = bg;
             }
-            if cursor.is_some_and(|c| c.line == vp.line && c.column == vp.column) {
-                std::mem::swap(&mut fg, &mut bg);
-            }
+            let has_cursor = cursor.is_some_and(|c| c.line == vp.line && c.column == vp.column);
             if selection.is_some_and(|range| range.contains(indexed.point)) {
                 std::mem::swap(&mut fg, &mut bg);
             }
             let ch = if cell.c == '\0' { ' ' } else { cell.c };
-            grid[vp.line].push((ch, fg, bg));
+            grid[vp.line].push((ch, fg, bg, has_cursor));
         }
 
         let lines = grid
             .into_iter()
             .map(|row| {
                 let mut runs: Vec<TermRun> = Vec::new();
-                for (ch, fg, bg) in row {
+                for (ch, fg, bg, has_cursor) in row {
                     match runs.last_mut() {
-                        Some(run) if run.fg == fg && run.bg == bg => run.text.push(ch),
+                        Some(run)
+                            if run.fg == fg
+                                && run.bg == bg
+                                && run.has_cursor == has_cursor
+                                && !has_cursor =>
+                        {
+                            run.text.push(ch);
+                        }
                         _ => runs.push(TermRun {
                             text: ch.to_string(),
                             fg,
                             bg,
+                            has_cursor,
                         }),
                     }
                 }
@@ -712,6 +718,24 @@ mod tests {
             final_threads <= initial_threads,
             "Threads must not leak after dropping PTY terminals! Baseline: {}, Final: {}",
             initial_threads, final_threads
+        );
+    }
+
+    #[test]
+    fn terminal_cursor_is_marked_as_line_cursor() {
+        let dir = tempdir().unwrap();
+        let term = PtyTerminal::new(dir.path(), 40, 5).unwrap();
+        let snap = wait_for(&term, |s| {
+            s.lines.iter().any(|l| l.runs.iter().any(|r| r.has_cursor))
+        });
+        let cursor_run = snap
+            .lines
+            .iter()
+            .flat_map(|l| &l.runs)
+            .find(|r| r.has_cursor);
+        assert!(
+            cursor_run.is_some(),
+            "expected at least one run in grid to be marked with has_cursor = true"
         );
     }
 }
