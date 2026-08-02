@@ -162,13 +162,23 @@ pub fn ensure(repo_root: &Path, quark: &QuarkId, assignment: &str) -> anyhow::Re
 
     // A NEW assignment. A dirty tree here means the previous assignment's
     // uncommitted edits would be carried onto the new branch — silent
-    // cross-assignment contamination. Refuse loudly instead.
+    // cross-assignment contamination. Snapshot the dirty tree on its existing
+    // branch first so the work is preserved and the worktree becomes clean.
     if is_dirty(&path)? {
-        bail!(
-            "worktree {} has uncommitted work from a previous assignment; refusing to cut \
-             branch {branch} from it (inspect the tree, then commit or discard)",
-            path.display()
-        );
+        let current_b = current_branch(&path).unwrap_or_default();
+        let prev_wt = Worktree {
+            quark: quark.clone(),
+            path: path.clone(),
+            branch: current_b,
+        };
+        let msg = format!("{}: WIP snapshot before cutting branch {}", quark.as_str(), branch);
+        commit_turn(&prev_wt, &msg).with_context(|| {
+            format!(
+                "snapshotting dirty worktree {} before cutting branch {}",
+                path.display(),
+                branch
+            )
+        })?;
     }
 
     let branch_exists = git_ok(
@@ -1072,15 +1082,22 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn ensure_refuses_a_new_branch_from_a_dirty_tree() {
+    fn ensure_snapshots_a_dirty_tree_instead_of_refusing_the_new_assignment() {
         let repo = git_repo();
         let a = ensure(repo.path(), &q("opus"), "01AAA").unwrap();
         std::fs::write(a.path.join("uncommitted.txt"), "stray\n").unwrap();
-        let err = ensure(repo.path(), &q("opus"), "01BBB").unwrap_err().to_string();
-        assert!(err.contains("uncommitted work"), "refused loudly: {err}");
-        // The tree is left exactly as it was — nothing destroyed.
-        assert!(a.path.join("uncommitted.txt").exists());
-        assert_eq!(current_branch(&a.path).as_deref(), Some("quark/opus/01AAA"));
+
+        let b = ensure(repo.path(), &q("opus"), "01BBB").expect("snapshots dirty tree and cuts new branch");
+        assert_eq!(b.branch, "quark/opus/01BBB");
+        assert_eq!(b.path, a.path);
+
+        // The dirty file was committed on the previous branch `01AAA`…
+        let show = git(repo.path(), &["show", "quark/opus/01AAA:uncommitted.txt"]).unwrap();
+        assert_eq!(show.trim(), "stray");
+
+        // …and is NOT present on the new branch `01BBB` (which branched clean from main).
+        assert!(!b.path.join("uncommitted.txt").exists());
+        assert_eq!(current_branch(&b.path).as_deref(), Some("quark/opus/01BBB"));
     }
 
     #[test]
