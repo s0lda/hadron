@@ -28,7 +28,10 @@ const RELEASES: &[Release] = &[
             "Per-seat temperature, top_p and max_tokens in Settings, persisted in team.json",
             "Delegation subtab: who asked whom to do what, in each quark's name and colour",
         ],
-        changed: &["Tasks tab restyled as glass cards matching the Delegation view"],
+        changed: &[
+            "Tasks tab restyled as glass cards matching the Delegation view",
+            "The terminal cursor is a line beam, not a colour-inverted block",
+        ],
         fixed: &[
             "An HTTP quark declares only the tools its permission mode permits",
             "A message arriving mid-turn adds to the task it interrupts, it does not replace it",

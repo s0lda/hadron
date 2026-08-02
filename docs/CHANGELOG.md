@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Tasks Tab**: restyled as glass cards matching the Delegation view, keeping the live elapsed clock, the asked-at timestamp and the four task states.
+- **Terminal Cursor**: drawn as a line beam on the left edge of the cell instead of a colour-inverted block, so the character under the cursor stays readable.
 
 ### Fixed
 - **An HTTP Quark's Tools Now Obey the Permission Mode**: `edit_block`, `create_file` and `exec` were reachable from any mode, including `Ask` ("talk, don't act"). A turn now declares only what its mode permits, with a runtime backstop for a call the model was never offered, and an `Auto` turn is told that `exec` is a jailed `cargo`/`git` allowlist rather than the ungated shell the guidance refuses.
