@@ -10,7 +10,11 @@ gpui-component
 # Our own plans, specs and research. Internal working documents: they name
 # branches, quote half-finished designs, and are written for us, not for anyone
 # who clones this. They live in the untracked `.hadron/docs/` workspace instead.
+# `.docs/` alone never matched `docs/plans/`, which is how two of them reached
+# GitHub; the shipped docs tree keeps everything else under `docs/`.
 .docs/
+docs/plans/
+docs/specs/
 
 
 # A project's own Hadron workspace: the user's team, their field, their
