@@ -272,3 +272,361 @@ pub(super) fn bounded_window(events: &[Event], budget: usize) -> Vec<Event> {
     }
     events[events.len().saturating_sub(keep)..].to_vec()
 }
+
+fn extract_slug_from_line(line: &str) -> Option<&str> {
+    let start = line.find('[');
+    let end = line.find(']');
+    if let (Some(s), Some(e)) = (start, end) {
+        if e > s + 1 {
+            return Some(&line[s + 1..e]);
+        }
+    }
+    None
+}
+
+fn extract_description_from_note(content: &str) -> String {
+    if content.starts_with("---") {
+        if let Some(end_fm) = content[3..].find("---") {
+            let fm = &content[3..3 + end_fm];
+            for line in fm.lines() {
+                if let Some(desc) = line.strip_prefix("description:") {
+                    return desc.trim().to_string();
+                }
+            }
+        }
+    }
+    // Fallback: first non-empty line outside frontmatter
+    let body = if content.starts_with("---") {
+        if let Some(end_fm) = content[3..].find("---") {
+            &content[3 + end_fm + 3..]
+        } else {
+            content
+        }
+    } else {
+        content
+    };
+    body.lines()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .to_string()
+}
+
+trait LowercaseWords {
+    fn lowercase_words(&self) -> Vec<String>;
+}
+
+impl LowercaseWords for str {
+    fn lowercase_words(&self) -> Vec<String> {
+        let stopwords: std::collections::HashSet<&str> = [
+            "the", "and", "for", "with", "this", "that", "from", "you", "are", "have", "not", "all",
+            "was", "will", "can", "has", "but", "about", "into", "over", "more", "then", "them",
+        ]
+        .into_iter()
+        .collect();
+
+        self.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+            .map(|w| w.to_lowercase())
+            .filter(|w| w.len() >= 3 && !stopwords.contains(w.as_str()))
+            .collect()
+    }
+}
+
+pub(crate) fn rank_lessons(
+    index_text: &str,
+    notes_dir: &std::path::Path,
+    query: &str,
+    budget_bytes: usize,
+) -> String {
+    let max_output_bytes = budget_bytes / 8;
+    let query_terms = query.lowercase_words();
+
+    struct Section {
+        heading: String,
+        is_pinned_section: bool,
+        lines: Vec<LessonLine>,
+    }
+
+    struct LessonLine {
+        slug: String,
+        line_text: String,
+        is_pinned: bool,
+        score: f64,
+    }
+
+    let mut sections: Vec<Section> = Vec::new();
+    let mut current_section: Option<Section> = None;
+
+    for line in index_text.lines() {
+        if line.starts_with("## ") {
+            if let Some(sec) = current_section.take() {
+                sections.push(sec);
+            }
+            let heading = line[3..].trim().to_string();
+            let is_pinned_section = heading.to_lowercase().contains("how we get things wrong");
+            current_section = Some(Section {
+                heading,
+                is_pinned_section,
+                lines: Vec::new(),
+            });
+        } else if is_lesson_line(line) {
+            if current_section.is_none() {
+                current_section = Some(Section {
+                    heading: "General".to_string(),
+                    is_pinned_section: false,
+                    lines: Vec::new(),
+                });
+            }
+            if let Some(sec) = current_section.as_mut() {
+                if let Some(slug) = extract_slug_from_line(line) {
+                    let is_pinned = sec.is_pinned_section;
+                    sec.lines.push(LessonLine {
+                        slug: slug.to_string(),
+                        line_text: line.to_string(),
+                        is_pinned,
+                        score: if is_pinned { f64::INFINITY } else { 0.0 },
+                    });
+                }
+            }
+        }
+    }
+    if let Some(sec) = current_section.take() {
+        sections.push(sec);
+    }
+
+    // Score lessons
+    for sec in &mut sections {
+        for lesson in &mut sec.lines {
+            if lesson.is_pinned {
+                continue;
+            }
+            let note_path = notes_dir.join(format!("{}.md", lesson.slug));
+            let (desc, body) = if let Ok(content) = std::fs::read_to_string(&note_path) {
+                let desc = extract_description_from_note(&content);
+                (desc, content)
+            } else {
+                (String::new(), String::new())
+            };
+
+            let slug_terms = lesson.slug.lowercase_words();
+            let hook_terms = lesson.line_text.lowercase_words();
+            let desc_terms = desc.lowercase_words();
+            let body_terms = body.lowercase_words();
+
+            let mut score = 0.0;
+            for q in &query_terms {
+                let slug_matches = slug_terms.iter().filter(|t| t == &q).count() as f64;
+                let hook_matches = hook_terms.iter().filter(|t| t == &q).count() as f64;
+                let desc_matches = desc_terms.iter().filter(|t| t == &q).count() as f64;
+                let body_matches = body_terms.iter().filter(|t| t == &q).count() as f64;
+
+                score += slug_matches * 4.0
+                    + desc_matches * 3.0
+                    + hook_matches * 2.0
+                    + body_matches * 1.0;
+            }
+            lesson.score = score;
+        }
+    }
+
+    // Collect all lesson pointers and sort by relevance
+    struct Candidate {
+        section_idx: usize,
+        line_idx: usize,
+        score: f64,
+        is_pinned: bool,
+    }
+
+    let mut candidates: Vec<Candidate> = Vec::new();
+    for (sec_i, sec) in sections.iter().enumerate() {
+        for (line_i, lesson) in sec.lines.iter().enumerate() {
+            candidates.push(Candidate {
+                section_idx: sec_i,
+                line_idx: line_i,
+                score: lesson.score,
+                is_pinned: lesson.is_pinned,
+            });
+        }
+    }
+
+    // Sort: pinned first, then by score descending, then original index order
+    candidates.sort_by(|a, b| {
+        if a.is_pinned != b.is_pinned {
+            return b.is_pinned.cmp(&a.is_pinned);
+        }
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.section_idx.cmp(&b.section_idx))
+            .then_with(|| a.line_idx.cmp(&b.line_idx))
+    });
+
+    // Select candidates within budget
+    let mut selected_indices: std::collections::HashSet<(usize, usize)> =
+        std::collections::HashSet::new();
+
+    let header = "# Memory index\n\nShared by every quark, and injected into every prompt.\n\n";
+    let mut current_bytes = header.len();
+
+    for cand in candidates {
+        if !cand.is_pinned && cand.score <= 0.0 {
+            continue;
+        }
+
+        let sec = &sections[cand.section_idx];
+        let line_text = &sec.lines[cand.line_idx].line_text;
+        
+        let sec_header_needed = !sections[cand.section_idx]
+            .lines
+            .iter()
+            .enumerate()
+            .any(|(li, _)| selected_indices.contains(&(cand.section_idx, li)));
+
+        let sec_header_bytes = if sec_header_needed {
+            format!("## {}\n\n", sec.heading).len()
+        } else {
+            0
+        };
+
+        let line_bytes = line_text.len() + 1; // including newline
+
+        if current_bytes + sec_header_bytes + line_bytes > max_output_bytes {
+            if cand.is_pinned {
+                // Pinned items must fit if possible
+                selected_indices.insert((cand.section_idx, cand.line_idx));
+                current_bytes += sec_header_bytes + line_bytes;
+            } else {
+                // Non-pinned items cap at max_output_bytes
+                continue;
+            }
+        } else {
+            selected_indices.insert((cand.section_idx, cand.line_idx));
+            current_bytes += sec_header_bytes + line_bytes;
+        }
+    }
+
+    // Render selected lessons in original index order
+    let mut out = String::new();
+    out.push_str("# Memory index\n\nShared by every quark, and injected into every prompt.\n\n");
+
+    for (sec_i, sec) in sections.iter().enumerate() {
+        let selected_in_sec: Vec<&LessonLine> = sec
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(line_i, _)| selected_indices.contains(&(sec_i, *line_i)))
+            .map(|(_, line)| line)
+            .collect();
+
+        if !selected_in_sec.is_empty() {
+            out.push_str(&format!("## {}\n\n", sec.heading));
+            for line in selected_in_sec {
+                out.push_str(&line.line_text);
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+    }
+
+    out.trim_end().to_string()
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::rank_lessons;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn setup_test_notes() -> (TempDir, String) {
+        let temp = TempDir::new().unwrap();
+        let notes_dir = temp.path().join("notes");
+        fs::create_dir_all(&notes_dir).unwrap();
+
+        // Create sample note files
+        fs::write(
+            notes_dir.join("compiled-is-not-running.md"),
+            "---\ndescription: A patch that compiles is not a feature that runs\n---\nFind its caller before reporting it works.",
+        ).unwrap();
+
+        fs::write(
+            notes_dir.join("git-worktrees.md"),
+            "---\ndescription: Git worktree management and checkout isolation\n---\nWorktrees isolate branches cleanly.",
+        ).unwrap();
+
+        fs::write(
+            notes_dir.join("unindexed-note.md"),
+            "---\ndescription: Unindexed note about database migration\n---\nDatabase migrations need locks.",
+        ).unwrap();
+
+        let index_text = r#"# Memory index
+
+## How we get things wrong
+
+- [compiled-is-not-running](notes/compiled-is-not-running.md) — A patch that compiles is not a feature that runs; find caller
+
+## The shared tree
+
+- [git-worktrees](notes/git-worktrees.md) — Git worktree management and checkout isolation
+"#;
+
+        (temp, index_text.to_string())
+    }
+
+    #[test]
+    fn rank_lessons_pins_wrong_section_and_ranks_relevant_notes() {
+        let (temp, index_text) = setup_test_notes();
+        let notes_dir = temp.path().join("notes");
+
+        let result = rank_lessons(&index_text, &notes_dir, "worktree isolation", 100_000);
+        assert!(result.contains("## How we get things wrong"), "Must contain pinned section");
+        assert!(result.contains("compiled-is-not-running"), "Must contain pinned lesson");
+        assert!(result.contains("git-worktrees"), "Must rank relevant note for worktree query");
+    }
+
+    #[test]
+    fn rank_lessons_determinism() {
+        let (temp, index_text) = setup_test_notes();
+        let notes_dir = temp.path().join("notes");
+
+        let res1 = rank_lessons(&index_text, &notes_dir, "worktree query", 100_000);
+        let res2 = rank_lessons(&index_text, &notes_dir, "worktree query", 100_000);
+        assert_eq!(res1, res2, "Scoring and ranking must be deterministic");
+    }
+
+    #[test]
+    fn rank_lessons_negative_control_returns_pinned_only() {
+        let (temp, index_text) = setup_test_notes();
+        let notes_dir = temp.path().join("notes");
+
+        let result = rank_lessons(&index_text, &notes_dir, "xyzabc_nonexistent_query", 100_000);
+        assert!(result.contains("## How we get things wrong"), "Must contain pinned section");
+        assert!(result.contains("compiled-is-not-running"), "Must contain pinned lesson");
+        assert!(!result.contains("git-worktrees"), "Must NOT contain unrelated lesson");
+    }
+
+    #[test]
+    fn rank_lessons_preserves_index_order() {
+        let (temp, index_text) = setup_test_notes();
+        let notes_dir = temp.path().join("notes");
+
+        let result = rank_lessons(&index_text, &notes_dir, "compiles worktree", 100_000);
+        let pos_wrong = result.find("## How we get things wrong").unwrap();
+        let pos_tree = result.find("## The shared tree").unwrap();
+        assert!(pos_wrong < pos_tree, "Index order must be preserved");
+    }
+
+    #[test]
+    fn rank_lessons_respects_budget_fraction() {
+        let (temp, index_text) = setup_test_notes();
+        let notes_dir = temp.path().join("notes");
+
+        // Budget 2400 bytes -> max output 300 bytes. Pinned section takes 227 bytes.
+        // Adding non-pinned git-worktrees would take >350 bytes, so it must be capped out.
+        let result = rank_lessons(&index_text, &notes_dir, "compiles worktree database", 2400);
+        assert!(result.len() <= 300, "Result length {} must be <= budget / 8 (300)", result.len());
+        assert!(!result.contains("git-worktrees"), "Non-pinned lesson must be excluded due to budget cap");
+    }
+}
+
+
