@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use hadron_lattice::live::{self, Activity};
+use hadron_lattice::live::{self, Activity, Doing};
 use hadron_lattice::{EnergyState, Flavor, Projection, QuarkId, Seat, SeatCommands, Transport, TurnOutcome};
 use serde::{Deserialize, Serialize};
 
@@ -328,23 +328,61 @@ async fn for_each_line(
     Ok(())
 }
 
-/// Run one chat turn against `target`, streaming each text delta to `on_delta` as
-/// it arrives (for live-activity publishing) and returning the full accumulated
-/// reply once the stream ends along with reported usage.
+/// A field the wire may send as `null`, as an EMPTY STRING, or with real text.
+/// The three must not mean three different things: OpenRouter's reasoning deltas
+/// carry `"content": ""` beside the thought, and a chain that treats `Some("")`
+/// as present short-circuits there and drops the thought — see
+/// `a_reasoning_delta_carrying_an_empty_content_still_streams`.
+fn present(field: &Option<String>) -> Option<&str> {
+    field.as_deref().filter(|s| !s.is_empty())
+}
+
+/// Fail with the server's OWN explanation, not just its status line. A bare
+/// `403 Forbidden` names neither the model nor the key that was refused, and the
+/// body always does.
+async fn ensure_chat_ok(resp: reqwest::Response, vendor: HttpVendor) -> anyhow::Result<reqwest::Response> {
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(resp);
+    }
+    let body = resp.text().await.unwrap_or_default();
+    let detail = body.trim();
+    anyhow::bail!(
+        "{} chat request failed: {status}{}",
+        vendor.display_name(),
+        if detail.is_empty() {
+            String::new()
+        } else {
+            format!(" — {}", detail.chars().take(400).collect::<String>())
+        }
+    )
+}
+
+/// Run one chat turn against `target`, handing every text delta to `on_delta` as
+/// it arrives — tagged [`Doing::Thinking`] for the model's reasoning channel and
+/// [`Doing::Speaking`] for its answer — and returning the accumulated **reply**
+/// once the stream ends, along with reported usage.
+///
+/// Only the answer becomes the reply. A chain of thought is published so the Live
+/// card moves while the model thinks, exactly as `adapter::acp::session` already
+/// does with `Doing::Thinking`, but it is not something the model said to the
+/// swarm. The one exception is a model that never leaves its reasoning channel —
+/// then the thought IS the reply, because the alternative is an empty message.
 async fn stream_chat(
     target: &HttpTarget,
     model: &str,
     prompt: &str,
-    mut on_delta: impl FnMut(&str),
+    mut on_delta: impl FnMut(Doing, &str),
 ) -> anyhow::Result<(String, hadron_lattice::Usage)> {
     let client = reqwest::Client::new();
     let body = ChatRequest { model, messages: [ChatMessage { role: "user", content: prompt }], stream: true };
     let mut full = String::new();
+    let mut thought = String::new();
     let mut usage = hadron_lattice::Usage::default();
     match target.vendor {
         HttpVendor::Ollama => {
             let resp = client.post(target.url("/api/chat")).json(&body).send().await?;
-            anyhow::ensure!(resp.status().is_success(), "Ollama chat request failed: {}", resp.status());
+            let resp = ensure_chat_ok(resp, target.vendor).await?;
             let mut prompt_tokens = 0u32;
             let mut eval_tokens = 0u32;
             for_each_line(resp, |line| {
@@ -356,18 +394,12 @@ async fn stream_chat(
                         eval_tokens = e;
                     }
                     if let Some(msg) = chunk.message {
-                        let text = if !msg.content.is_empty() {
-                            &msg.content
-                        } else if let Some(ref r) = msg.reasoning {
-                            r
-                        } else if let Some(ref t) = msg.thinking {
-                            t
-                        } else {
-                            ""
-                        };
-                        if !text.is_empty() {
-                            full.push_str(text);
-                            on_delta(text);
+                        if !msg.content.is_empty() {
+                            full.push_str(&msg.content);
+                            on_delta(Doing::Speaking, &msg.content);
+                        } else if let Some(t) = present(&msg.reasoning).or_else(|| present(&msg.thinking)) {
+                            thought.push_str(t);
+                            on_delta(Doing::Thinking, t);
                         }
                     }
                 }
@@ -383,12 +415,7 @@ async fn stream_chat(
                 req = req.bearer_auth(key);
             }
             let resp = req.send().await?;
-            anyhow::ensure!(
-                resp.status().is_success(),
-                "{} chat request failed: {}",
-                target.vendor.display_name(),
-                resp.status()
-            );
+            let resp = ensure_chat_ok(resp, target.vendor).await?;
             for_each_line(resp, |line| {
                 let line = line.trim();
                 let Some(data) = line.strip_prefix("data:") else { return };
@@ -401,23 +428,25 @@ async fn stream_chat(
                         usage.spend = hadron_lattice::TokenSpend { input: Some(u.prompt_tokens), output: Some(u.completion_tokens), ..Default::default() };
                     }
                     if let Some(c) = chunk.choices.first() {
-                        let text = c
-                            .delta
-                            .content
-                            .as_deref()
-                            .or_else(|| c.delta.reasoning_content.as_deref())
-                            .or_else(|| c.delta.reasoning.as_deref());
-                        if let Some(content) = text {
-                            if !content.is_empty() {
-                                full.push_str(content);
-                                on_delta(content);
-                            }
+                        if let Some(content) = present(&c.delta.content) {
+                            full.push_str(content);
+                            on_delta(Doing::Speaking, content);
+                        } else if let Some(t) = present(&c.delta.reasoning_content)
+                            .or_else(|| present(&c.delta.reasoning))
+                        {
+                            thought.push_str(t);
+                            on_delta(Doing::Thinking, t);
                         }
                     }
                 }
             })
             .await?;
         }
+    }
+    // A model that never left its reasoning channel said exactly one thing; an
+    // empty reply would report that turn to the swarm as silence.
+    if full.is_empty() {
+        full = thought;
     }
     Ok((full, usage))
 }
@@ -536,14 +565,24 @@ impl Quark for LocalQuark {
         let quark_id = self.id.clone();
         let dir = self.live_dir.clone();
         let mut draft = String::new();
+        let mut thought = String::new();
         let mut last_publish: Option<Instant> = None;
-        let (message, usage) = stream_chat(&self.target, &self.model, &prompt, |delta| {
-            draft.push_str(delta);
+        let (message, usage) = stream_chat(&self.target, &self.model, &prompt, |doing, delta| {
+            // Two buffers, because they are two different things: the draft is the
+            // reply the chat will show, the thought is only ever the Live card's
+            // "thinking" line. Mirrors `adapter::acp::session`'s split.
+            let buf = if doing == Doing::Speaking { &mut draft } else { &mut thought };
+            buf.push_str(delta);
             let Some(dir) = &dir else { return };
             let due = last_publish.is_none_or(|t| t.elapsed() >= PUBLISH_THROTTLE);
             if due {
                 last_publish = Some(Instant::now());
-                let _ = live::publish(dir, &Activity::speaking(quark_id.clone(), &draft));
+                let activity = if doing == Doing::Speaking {
+                    Activity::speaking(quark_id.clone(), &draft)
+                } else {
+                    Activity::new(quark_id.clone(), Doing::Thinking, &thought)
+                };
+                let _ = live::publish(dir, &activity);
             }
         })
         .await?;
@@ -627,7 +666,7 @@ mod tests {
         let (base, rx) = serve_once_capturing("200 OK", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\ndata: [DONE]\n");
         let target =
             HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: Some("sk-test-456".to_string()) };
-        stream_chat(&target, "some-model", "hi", |_| {}).await.unwrap();
+        stream_chat(&target, "some-model", "hi", |_, _| {}).await.unwrap();
         let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(request.to_lowercase().contains("authorization: bearer sk-test-456"), "request:\n{request}");
     }
@@ -734,7 +773,7 @@ mod tests {
         );
         let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
         let mut seen = Vec::new();
-        let full = stream_chat(&target, "gemma3:27b", "hi", |delta| seen.push(delta.to_string())).await.unwrap();
+        let full = stream_chat(&target, "gemma3:27b", "hi", |_, delta| seen.push(delta.to_string())).await.unwrap();
         assert_eq!(full.0, "Hello");
         assert_eq!(seen, vec!["Hel".to_string(), "lo".to_string()]);
     }
@@ -748,7 +787,7 @@ mod tests {
              data: [DONE]\n",
         );
         let target = HttpTarget { vendor: HttpVendor::LmStudio, base_url: base, api_key: None };
-        let full = stream_chat(&target, "some-model", "hi", |_| {}).await.unwrap();
+        let full = stream_chat(&target, "some-model", "hi", |_, _| {}).await.unwrap();
         assert_eq!(full.0, "Hello");
     }
 
@@ -762,9 +801,14 @@ mod tests {
         );
         let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
         let mut seen = Vec::new();
-        let full = stream_chat(&target, "some-model", "hi", |d| seen.push(d.to_string())).await.unwrap();
-        assert_eq!(full.0, "Thinking...");
-        assert_eq!(seen, vec!["Think".to_string(), "ing...".to_string()]);
+        let full = stream_chat(&target, "some-model", "hi", |d, t| seen.push((d, t.to_string()))).await.unwrap();
+        // The thought is PUBLISHED but is not part of the reply — see
+        // `a_reasoning_delta_carrying_an_empty_content_still_streams`.
+        assert_eq!(full.0, "ing...");
+        assert_eq!(
+            seen,
+            vec![(Doing::Thinking, "Think".to_string()), (Doing::Speaking, "ing...".to_string())]
+        );
     }
 
     #[tokio::test]
@@ -776,8 +820,73 @@ mod tests {
              {\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true}",
         );
         let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
-        let full = stream_chat(&target, "deepseek-r1", "hi", |_| {}).await.unwrap();
-        assert_eq!(full.0, "ThoughtAnswer");
+        let full = stream_chat(&target, "deepseek-r1", "hi", |_, _| {}).await.unwrap();
+        assert_eq!(full.0, "Answer");
+    }
+
+    /// **The OpenRouter streaming bug, captured from the wire on 2026-08-02.**
+    /// `nvidia/nemotron-3-ultra-550b-a55b:free` sends its whole reasoning phase as
+    /// deltas carrying `"content": ""` — an EMPTY STRING, not `null` — alongside
+    /// `reasoning`. `content.as_deref().or_else(reasoning)` therefore short-circuits
+    /// on `Some("")` and the `or_else` never runs, so nothing at all was emitted for
+    /// the entire thinking phase (17 of that turn's 32 SSE lines): the Live card sat
+    /// dead until the answer began. An absent field and an empty one must mean the
+    /// same thing here.
+    #[tokio::test]
+    async fn a_reasoning_delta_carrying_an_empty_content_still_streams() {
+        let base = serve_once(
+            "200 OK",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"reasoning\":\"The\"}}]}\n\
+             data: {\"choices\":[{\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"reasoning\":\" user\"}}]}\n\
+             data: {\"choices\":[{\"delta\":{\"content\":\"BA\",\"role\":\"assistant\"}}]}\n\
+             data: {\"choices\":[{\"delta\":{\"content\":\"NANA\",\"role\":\"assistant\"}}]}\n\
+             data: {\"choices\":[{\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"reasoning\":null},\"finish_reason\":\"stop\"}]}\n\
+             data: [DONE]\n",
+        );
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let mut seen = Vec::new();
+        let full = stream_chat(&target, "nemotron", "hi", |d, t| seen.push((d, t.to_string()))).await.unwrap();
+        assert_eq!(full.0, "BANANA", "the reply is the content, never the chain of thought");
+        assert_eq!(
+            seen,
+            vec![
+                (Doing::Thinking, "The".to_string()),
+                (Doing::Thinking, " user".to_string()),
+                (Doing::Speaking, "BA".to_string()),
+                (Doing::Speaking, "NANA".to_string()),
+            ],
+            "the thinking phase must stream too — that is what the Live card shows"
+        );
+    }
+
+    /// A model that answers entirely inside its reasoning channel (some `:free`
+    /// OpenRouter routes, and `deepseek-r1` on a bad day) would otherwise return an
+    /// EMPTY reply, which reads to the swarm as a dead turn rather than as a model
+    /// that never left its thought stream. The thought is the only thing it said, so
+    /// it is what it gets to say.
+    #[tokio::test]
+    async fn a_reply_that_is_all_reasoning_falls_back_to_the_thought_stream() {
+        let base = serve_once(
+            "200 OK",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"\",\"reasoning\":\"only \"}}]}\n\
+             data: {\"choices\":[{\"delta\":{\"content\":\"\",\"reasoning\":\"thoughts\"}}]}\n\
+             data: [DONE]\n",
+        );
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let full = stream_chat(&target, "some-model", "hi", |_, _| {}).await.unwrap();
+        assert_eq!(full.0, "only thoughts");
+    }
+
+    /// Jake's Ollama seat died with a bare `403 Forbidden` that named no reason —
+    /// the body says which model or key was refused and we were throwing it away.
+    #[tokio::test]
+    async fn a_refused_chat_request_reports_the_servers_own_explanation() {
+        let base = serve_once("403 Forbidden", r#"{"error":"model 'kimi-k2.7-code:cloud' not found"}"#);
+        let target = HttpTarget { vendor: HttpVendor::Ollama, base_url: base, api_key: None };
+        let err = stream_chat(&target, "kimi-k2.7-code:cloud", "hi", |_, _| {}).await.unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("403"), "{msg}");
+        assert!(msg.contains("not found"), "the server's own explanation is missing: {msg}");
     }
 
     #[test]
@@ -844,7 +953,7 @@ mod tests {
         };
         let model = listed.first().expect("the live Ollama server has no models pulled").id.clone();
         let mut deltas = 0;
-        let (full, _) = stream_chat(&target, &model, "Reply with exactly one word: pong", |_| deltas += 1)
+        let (full, _) = stream_chat(&target, &model, "Reply with exactly one word: pong", |_, _| deltas += 1)
             .await
             .unwrap();
         assert!(deltas > 0, "expected at least one streamed delta");
@@ -869,7 +978,7 @@ mod tests {
         let target =
             HttpTarget { vendor: HttpVendor::LmStudio, base_url: "http://10.5.0.2:1234".to_string(), api_key: None };
         let mut deltas = 0;
-        let (full, _) = stream_chat(&target, "google/gemma-4-12b-qat", "Reply with exactly one word: pong", |_| deltas += 1)
+        let (full, _) = stream_chat(&target, "google/gemma-4-12b-qat", "Reply with exactly one word: pong", |_, _| deltas += 1)
             .await
             .unwrap();
         assert!(deltas > 0, "expected at least one streamed delta");
