@@ -630,8 +630,23 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
         note(&mut order, seat.id.as_str());
     }
 
+    // An id seen only in the field's HISTORY is not a member of the swarm: a seat that
+    // was renamed or deleted, a routing alias (`@team`), or — the case that cost a
+    // release — a mock quark a broken boot once stood in, whose row then outlived it
+    // forever with no vendor, no model and no way to remove it short of `/clear`. The
+    // roster is who is SEATED, so keep only ids a seat source knows.
+    //
+    // Unless neither source knows anybody: `load_team` degrades a malformed or
+    // mid-write file to an EMPTY team, and the 400ms tick re-reads both, so filtering
+    // unconditionally would blank the whole roster on one transient bad read. With no
+    // seats to trust, event-seen ids are the best answer there is.
+    let seats_known = !team.quarks.is_empty() || !global.quarks.is_empty();
     let roster = order
         .into_iter()
+        .filter(|id| {
+            let qid = QuarkId::new(id);
+            !seats_known || team.get(&qid).is_some() || global.get(&qid).is_some()
+        })
         .map(|id| {
             let state = states.get(&id).copied().unwrap_or(QuarkState::Ground);
             let qid = QuarkId::new(&id);

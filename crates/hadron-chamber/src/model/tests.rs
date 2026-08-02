@@ -719,6 +719,37 @@
         assert_eq!(gemini.vendor, "agy", "legibility comes from the catalogue");
     }
 
+    /// A quark that only ever appears in the field's HISTORY gets no roster row. On
+    /// 2026-08-01 a daemon that could not parse the catalogue seated a mock "claude",
+    /// which answered one message; the id then sat in the roster with no vendor and no
+    /// model for every later session, because roster membership was seeded from
+    /// event-seen ids. Rebuilding did not remove it — nothing but `/clear` could.
+    #[test]
+    fn an_id_no_seat_source_knows_gets_no_roster_row() {
+        use hadron_lattice::{Flavor, Seat};
+
+        let seated = QuarkId::new("acp-claude");
+        let team = Team {
+            quarks: vec![Seat::cli(seated.clone(), "claude", "opus", Flavor::Orchestrator)],
+            ..Default::default()
+        };
+        let evs = vec![
+            ev(Actor::Quark(QuarkId::new("claude")), None, Kind::Message { body: "[Claude] acknowledged".into() }),
+            ev(Actor::Quark(seated.clone()), None, Kind::Message { body: "real work".into() }),
+        ];
+
+        let view = project_with_team(&evs, &team, &Team::default());
+        let ids: Vec<&str> = view.roster.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, vec!["acp-claude"], "the ghost id is not a member of the swarm");
+        assert_eq!(view.messages.len(), 2, "its history still renders — only the roster row goes");
+
+        // …but with NO seat source at all (a malformed team.json degrades to empty),
+        // event-seen ids are all there is: filtering there would blank the roster.
+        let view = project_with_team(&evs, &Team::default(), &Team::default());
+        let ids: Vec<&str> = view.roster.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, vec!["claude", "acp-claude"], "no seats known → keep what spoke");
+    }
+
     #[test]
     fn mode_set_renders_as_a_row() {
         let view = project(&[ev(Actor::Human, None, Kind::ModeSet { mode: Mode::Bypass })]);

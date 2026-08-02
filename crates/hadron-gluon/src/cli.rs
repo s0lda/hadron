@@ -1,26 +1,18 @@
-//! The gluon daemon — mock mode.
+//! The gluon daemon.
 //!
 //! Watches a `field.jsonl`, and whenever a human message addresses a quark
-//! (`@claude …`, `@agy …`), excites that quark and appends its reply — the same
-//! coordination loop the real adapters will drive, but with deterministic
-//! **mock quarks** that echo the task back. Zero-spend: no CLI is ever invoked.
+//! (`@acp-claude …`), excites that quark over its real adapter and appends the
+//! reply. Every seat comes from a `team.json`: there is **no** stand-in quark and
+//! no mock mode — a daemon that cannot seat a real swarm refuses to start rather
+//! than answering a human with fabricated work.
 //!
 //! Run this beside `hadron-chamber <field>` to see the two-process architecture
-//! live: type `@claude build the login page` in the chamber and watch the reply
+//! live: type `@<quark> build the login page` in the chamber and watch the reply
 //! appear via the chamber's field tail.
-//!
-//! ## Not yet here (deliberately)
-//! Real-adapter mode — `adapter::registry::build` per configured quark over a
-//! `ProcessRunner`, `Engine::with_git(repo)` — is the glue described in Plan
-//! 3's notes. It invokes real CLIs (real budget), so it is held for a
-//! human-present session (Plan 3 Task 6). One open decision when it lands:
-//! whether an excite error aborts the human turn or appends a gluon error
-//! message and quiesces (see the plan's watch-items).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use async_trait::async_trait;
 use crate::adapter::registry;
 use crate::engine::Engine;
 use crate::field::read_events;
@@ -29,49 +21,9 @@ use crate::reseat;
 use hadron_lattice::secrets::SecretStore;
 use hadron_lattice::term::{self, Source};
 use hadron_lattice::{
-    load_team, orphan_overrides, parse_team, resolve_team, team_config_path, Actor, EnergyState, Event, Flavor, Kind,
-    Projection, QuarkId, Team,
-    TurnOutcome,
+    load_team, orphan_overrides, parse_team, resolve_team, team_config_path, Actor, Event, Flavor, Kind,
+    Team,
 };
-
-/// A deterministic stand-in for a real adapter: it acknowledges whatever task it
-/// was handed, labelled so the reply is unmistakably a mock. It never errors and
-/// never emits an `@mention`, so a burst always quiesces (bounded anyway by the
-/// engine's per-turn exchange budget).
-struct DemoQuark {
-    id: QuarkId,
-    flavor: Flavor,
-    /// Human-facing name used to sign the reply (e.g. "Claude").
-    label: String,
-}
-
-impl DemoQuark {
-    fn new(id: &str, flavor: Flavor, label: &str) -> Self {
-        DemoQuark { id: QuarkId::new(id), flavor, label: label.to_string() }
-    }
-}
-
-#[async_trait]
-impl Quark for DemoQuark {
-    fn id(&self) -> QuarkId {
-        self.id.clone()
-    }
-    fn flavor(&self) -> Flavor {
-        self.flavor.clone()
-    }
-    fn energy(&self) -> EnergyState {
-        EnergyState::Available
-    }
-    async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
-        let task = turn.task.trim();
-        let body = if task.is_empty() {
-            format!("[{}] standing by — what should I work on?", self.label)
-        } else {
-            format!("[{}] acknowledged: \"{task}\" (mock reply — no real work performed)", self.label)
-        };
-        Ok(TurnOutcome { message: Some(body), permission: None, ..Default::default()})
-    }
-}
 
 /// Parsed command line: the field path, poll interval, and optional team path.
 struct Args {
@@ -108,7 +60,7 @@ fn parse_args() -> Option<Args> {
 ///    `.hadron/team.json`), so opening a project's field just works;
 /// 3. the user-level default (`~/.hadron/team.json`).
 ///
-/// `None` → no team file found → mock quarks.
+/// `None` → no team file found → the daemon refuses to start.
 fn resolve_team_path(explicit: Option<PathBuf>, field_path: &Path) -> Option<PathBuf> {
     if explicit.is_some() {
         return explicit;
@@ -121,19 +73,17 @@ fn resolve_team_path(explicit: Option<PathBuf>, field_path: &Path) -> Option<Pat
     team_config_path().filter(|p| p.exists())
 }
 
-/// Seat the quarks: real adapters from `team.json` when present, else the
-/// deterministic mock pair (zero-spend). Returns the quarks, a mode label, and
-/// one [`term::SeatRow`] per successfully built seat — the caller prints them as
+/// Seat the quarks: real adapters, one per seat in `team.json`. Returns the quarks,
+/// a mode label, and one [`term::SeatRow`] per successfully built seat — the caller prints them as
 /// a single table once startup knows each seat's final enabled/chat-lane state,
 /// instead of this function printing per-seat as it builds.
 ///
-/// `team_path` is whether a team file was **found**, not whether it was usable —
-/// the mock pair stands in only when there was no file at all. A file that WAS
-/// found and still resolves to nobody is a broken configuration, and answering it
-/// with fakes makes the swarm reply to the human with fabricated work: on
-/// 2026-08-01 a daemon too old to parse a catalogue carrying `"transport": "http"`
-/// degraded it to an empty catalogue, orphaned every repo `roster` override, and
-/// seated a fake "@Claude" that acknowledged a real instruction it never did.
+/// An empty team seats **nobody** — there is no stand-in quark to fall back to,
+/// whether or not a file was found. A fake quark answering a human is worse than a
+/// daemon that refuses to start: on 2026-08-01 a daemon too old to parse a catalogue
+/// carrying `"transport": "http"` degraded it to an empty catalogue, orphaned every
+/// repo `roster` override, and seated a fake "@Claude" that acknowledged a real
+/// instruction it never did. `team_path` only chooses which refusal to print.
 ///
 /// `store` resolves each seat's `secret_env` names to values. // TODO(next task):
 /// swap `MemoryStore` for a real `KeyringStore` at the call site once one exists.
@@ -144,30 +94,24 @@ fn seat_quarks(
     store: &dyn SecretStore,
 ) -> (Vec<Box<dyn Quark>>, &'static str, Vec<term::SeatRow>) {
     if team.is_empty() {
-        if let Some(p) = team_path {
-            term::error(
+        match team_path {
+            Some(p) => term::error(
                 Source::Gluon,
                 &format!(
-                    "{} was found but resolves to NO seats — refusing to stand in mock quarks \
-                     for a real team. Usually the catalogue (~/.hadron/team.json) failed to \
-                     parse, so every roster override is an orphan (see the warnings above); \
-                     a build older than the file that describes it does exactly that.",
+                    "{} was found but resolves to NO seats. Usually the catalogue \
+                     (~/.hadron/team.json) failed to parse, so every roster override is an \
+                     orphan (see the warnings above); a build older than the file that \
+                     describes it does exactly that.",
                     p.display()
                 ),
-            );
-            return (Vec::new(), "no usable team", Vec::new());
+            ),
+            None => term::error(
+                Source::Gluon,
+                "no team.json found. Add one next to the field (e.g. .hadron/team.json) \
+                 or pass --team to seat real quarks.",
+            ),
         }
-        term::warn(
-            Source::Gluon,
-            "no usable team.json — running MOCK quarks: only '@claude' and '@agy' exist \
-             and their replies are fake. Add a team.json next to the field \
-             (e.g. .hadron/team.json) or pass --team to seat real CLI quarks.",
-        );
-        let quarks: Vec<Box<dyn Quark>> = vec![
-            Box::new(DemoQuark::new("claude", Flavor::Orchestrator, "Claude")),
-            Box::new(DemoQuark::new("agy", Flavor::Worker, "Antigravity")),
-        ];
-        return (quarks, "mock mode", Vec::new());
+        return (Vec::new(), "no usable team", Vec::new());
     }
     let mut quarks: Vec<Box<dyn Quark>> = Vec::new();
     let mut rows = Vec::new();
@@ -317,7 +261,7 @@ pub async fn run() {
         term::error(Source::Gluon, "usage: hadron-gluon <field.jsonl> [--interval-ms N] [--team team.json]");
         term::error(Source::Gluon, "Team resolution: --team, else a team.json next to the field");
         term::error(Source::Gluon, "(e.g. .hadron/team.json), else ~/.hadron/team.json.");
-        term::error(Source::Gluon, "With none, runs deterministic mock quarks (ids: claude, agy).");
+        term::error(Source::Gluon, "With none, the daemon refuses to start — there are no stand-in quarks.");
         std::process::exit(2);
     };
 
@@ -355,7 +299,7 @@ pub async fn run() {
     }
 
     // Seat the team: explicit --team, else a sibling team.json next to the field
-    // (the .hadron/ convention), else the config-dir default; mock when none.
+    // (the .hadron/ convention), else the config-dir default; refuse to start when none.
     let team_path = resolve_team_path(args.team_path.clone(), &args.field_path);
     match &team_path {
         Some(p) => term::info(Source::Gluon, &format!("team from {}", p.display())),
@@ -556,31 +500,24 @@ pub async fn run() {
     // of the responsive-orchestrator plan) — built through the SAME construction path
     // as the work lane above, so it gets an identical adapter/config. A build failure
     // here is non-fatal: the seat still runs, just on today's single-lane behaviour.
-    if team.is_empty() {
-        engine.seat_chat_lane(
-            &QuarkId::new("claude"),
-            Box::new(DemoQuark::new("claude", Flavor::Orchestrator, "Claude")),
-        );
-    } else {
-        for seat in &team.quarks {
-            if seat.flavor != Flavor::Orchestrator {
-                continue;
-            }
-            match registry::build_seat_watched(seat, &live_dir, &secret_store) {
-                Ok(chat) => {
-                    // `seat_chat_lane` calls `become_chat_lane` itself — it is the only way a
-                    // chat lane is ever attached, so telling the instance here as well would
-                    // be a second site to keep in step for no coverage gained.
-                    engine.seat_chat_lane(&seat.id, chat);
-                    if let Some(row) = seat_rows.iter_mut().find(|r| r.id == seat.id.as_str()) {
-                        row.chat_lane = true;
-                    }
+    for seat in &team.quarks {
+        if seat.flavor != Flavor::Orchestrator {
+            continue;
+        }
+        match registry::build_seat_watched(seat, &live_dir, &secret_store) {
+            Ok(chat) => {
+                // `seat_chat_lane` calls `become_chat_lane` itself — it is the only way a
+                // chat lane is ever attached, so telling the instance here as well would
+                // be a second site to keep in step for no coverage gained.
+                engine.seat_chat_lane(&seat.id, chat);
+                if let Some(row) = seat_rows.iter_mut().find(|r| r.id == seat.id.as_str()) {
+                    row.chat_lane = true;
                 }
-                Err(e) => term::warn(
-                    Source::Gluon,
-                    &format!("{} — could not seat a chat lane: {e:#}", seat.id.as_str()),
-                ),
             }
+            Err(e) => term::warn(
+                Source::Gluon,
+                &format!("{} — could not seat a chat lane: {e:#}", seat.id.as_str()),
+            ),
         }
     }
 
@@ -609,8 +546,6 @@ pub async fn run() {
     // `team.json`. Change is detected on the *bytes*, not on the mtime: a coarse
     // filesystem clock can hide a fast save, and the file is tiny enough that reading it
     // once per interval costs nothing.
-    // True when the roster is the DemoQuark pair rather than anything from a file.
-    let mut mock_mode = team.is_empty();
     let mut running_team = team;
     let mut last_seen_repo: Option<String> = team_path
         .as_deref()
@@ -720,18 +655,6 @@ pub async fn run() {
                         engine.set_nucleus_index_budget_bytes(
                             crate::nucleus_status::resolve_budget_bytes(&desired),
                         );
-                        // Booted with no usable team.json ⇒ the roster is the DemoQuark
-                        // pair. Those answer to no `Seat`, so no team-vs-team diff can
-                        // see them: evict them by hand the first time a real team lands,
-                        // or a fake '@claude' outlives the real one forever.
-                        if mock_mode {
-                            for id in engine.seated_ids() {
-                                if desired.get(&id).is_none() && engine.unseat(&id) {
-                                    term::info(Source::Gluon, &format!("unseated mock {}", id.as_str()));
-                                }
-                            }
-                            mock_mode = false;
-                        }
                         let plan = reseat::plan(&running_team, &desired);
                         if !plan.is_empty() {
                             term::info(Source::Gluon, &format!("team changed — re-seating [{}]", plan.summary()));
@@ -817,6 +740,7 @@ fn poll_team_file(path: &Path, last_seen: &mut Option<String>) -> Option<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hadron_lattice::QuarkId;
     use tempfile::tempdir;
 
     #[test]
@@ -935,25 +859,24 @@ mod tests {
         assert!(table[1].contains("disabled"), "a disabled seat is a column, not a second line");
     }
 
-    /// A team file that was FOUND but seats nobody must never be answered with the
-    /// mock pair: a fake '@Claude' acknowledging a real instruction is worse than a
-    /// daemon that refuses to start. Mocks are for the case there is no file at all.
+    /// An empty team seats nobody, whether or not a file was found. There is no mock
+    /// pair left to stand in: a fake '@Claude' acknowledging a real instruction is
+    /// worse than a daemon that refuses to start, and "no file at all" is no different
+    /// — a human with no team.json wants the wizard, not a puppet answering for them.
     #[test]
-    fn a_found_team_file_that_seats_nobody_is_refused_never_mocked() {
+    fn an_empty_team_seats_nobody_and_is_never_mocked() {
         use hadron_lattice::secrets::MemoryStore;
 
         let dir = tempdir().unwrap();
         let store = MemoryStore::new();
         let found = dir.path().join("team.json");
 
-        let (quarks, label, rows) =
-            seat_quarks(&Team::default(), Some(&found), dir.path(), &store);
-        assert!(quarks.is_empty(), "no seats, and no fakes standing in for them");
-        assert_eq!(label, "no usable team");
-        assert!(rows.is_empty());
-
-        let (mock, label, _) = seat_quarks(&Team::default(), None, dir.path(), &store);
-        assert_eq!(mock.len(), 2, "with no team file at all, the demo pair still stands");
-        assert_eq!(label, "mock mode");
+        for team_path in [Some(found.as_path()), None] {
+            let (quarks, label, rows) =
+                seat_quarks(&Team::default(), team_path, dir.path(), &store);
+            assert!(quarks.is_empty(), "no seats, and no fakes standing in for them");
+            assert_eq!(label, "no usable team");
+            assert!(rows.is_empty());
+        }
     }
 }

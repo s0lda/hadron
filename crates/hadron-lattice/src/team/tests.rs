@@ -341,7 +341,7 @@ fn global_paths_live_under_user_hadron_dir() {
 #[test]
 fn tolerates_unknown_keys_like_the_template_note() {
     // The shipped team.example.json carries a leading "_note" comment key.
-    // A silent parse failure would degrade to an empty team (mock quarks), so
+    // A silent parse failure would degrade to an empty team (which now seats nobody), so
     // pin that the extra key is ignored and the quarks still load.
     let with_note = r#"{
         "_note": "provider = backing CLI; agy model is a display name",
