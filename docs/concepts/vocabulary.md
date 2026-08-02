@@ -10,7 +10,7 @@ This document provides definitive definitions for terms and concepts used across
 The complete multi-agent operating environment and workspace orchestrator.
 
 ### **Quark**
-A seat in the swarm representing an active agent process, its underlying transport layer (ACP, CLI, or SDK bridge), and its configured permission mode.
+A seat in the swarm representing an active agent process, its underlying transport layer (ACP, CLI, SDK bridge, or HTTP for Ollama/OpenRouter/LM Studio), and its configured permission mode.
 
 ### **Preon**
 Addressable markdown instructions and prompt fragments dynamically loaded into a Quark's context window.

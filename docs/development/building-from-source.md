@@ -13,7 +13,7 @@ This guide covers prerequisites, installation options, local workspace execution
   - **macOS**
   - **Windows**: Windows users must run under **WSL2** (WSLg). Native Windows is _unsupported_ because process group termination timeouts rely on Unix signal APIs (`hadron-forge/src/exec.rs`).
 - **Seated Agents**:
-  - At least one supported agent: ACP agent (e.g. `npx @agentclientprotocol/claude-agent-acp`), a coding CLI on your `PATH`, or the Antigravity SDK bridge.
+  - At least one supported agent: ACP agent (e.g. `npx @agentclientprotocol/claude-agent-acp`), a coding CLI on your `PATH`, the Antigravity SDK bridge, or local/cloud HTTP providers (Ollama, LM Studio, OpenRouter).
 
 ---
 
