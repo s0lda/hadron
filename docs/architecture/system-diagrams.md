@@ -40,6 +40,7 @@ hadron/
 
 ## Visualizer Interface
 
-<div align="center">
-    <img src="../../assets/demo.png" alt="Hadron Chamber UI Demo" width="900" />
+<div style="display: flex; flex-direction: row; justify-content: center; gap: 16px;">
+    <img src="../../assets/demo.png" alt="Hadron Chamber UI Demo" width="450" />
+    <img src="../../assets/demo_2.png" alt="Hadron Chamber UI Demo" width="450" />
 </div>
