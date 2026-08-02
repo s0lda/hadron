@@ -763,14 +763,6 @@ impl Engine {
         self.quarks.len()
     }
 
-    /// The ids actually seated right now — the engine's own answer, not a caller's
-    /// shadow copy of what it believes it seated. The daemon needs this to evict the
-    /// mock quarks it booted with when a real `team.json` finally appears: those mocks
-    /// correspond to no `Seat`, so no team-vs-team diff can ever see them.
-    pub fn seated_ids(&self) -> Vec<QuarkId> {
-        self.quarks.keys().cloned().collect()
-    }
-
     /// Override the turn watchdog's [deadline](TURN_DEADLINE). Tests use a tiny one;
     /// production takes the default. A deadline of zero is not special-cased — an
     /// engine configured that way would time every turn out immediately, which is a
