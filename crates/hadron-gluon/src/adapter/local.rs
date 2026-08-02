@@ -27,6 +27,7 @@ use futures::StreamExt;
 use hadron_lattice::live::{self, Activity, Doing};
 use hadron_lattice::{EnergyState, Flavor, Projection, QuarkId, Seat, SeatCommands, Transport, TurnOutcome};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::quark::Quark;
 
@@ -271,7 +272,7 @@ struct OpenAiChoice {
     delta: OpenAiDelta,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Debug, Deserialize, Default)]
 struct OpenAiUsage {
     #[serde(default)]
     prompt_tokens: u32,
@@ -295,6 +296,68 @@ struct OllamaChatChunk {
     prompt_eval_count: Option<u32>,
     #[serde(default)]
     eval_count: Option<u32>,
+}
+
+/// A NON-streamed chat completion — what the tool loop's intermediate rounds
+/// get. A partial `arguments` string cannot be executed, so there is nothing
+/// useful to publish until a round is whole; only the loop's FINAL answer (no
+/// `tool_calls`) still goes out over [`stream_chat`].
+#[derive(Debug, Deserialize)]
+pub(crate) struct ChatCompletion {
+    #[serde(default)]
+    choices: Vec<CompletionChoice>,
+    #[serde(default)]
+    usage: Option<OpenAiUsage>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct CompletionChoice {
+    #[serde(default)]
+    message: CompletionMessage,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct CompletionMessage {
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<ToolCall>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct ToolCall {
+    #[serde(default)]
+    pub id: String,
+    pub function: ToolCallFunction,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct ToolCallFunction {
+    pub name: String,
+    /// The API sends this as a JSON **string**, not an object.
+    #[serde(default)]
+    pub arguments: String,
+}
+
+impl ToolCall {
+    /// Never fails: a model that emits malformed arguments gets an empty
+    /// object and then an `ERROR:` result telling it what it did — an
+    /// `unwrap` here would kill the turn instead.
+    pub fn arguments_json(&self) -> Value {
+        serde_json::from_str(&self.function.arguments).unwrap_or_else(|_| json!({}))
+    }
+}
+
+impl ChatCompletion {
+    pub fn tool_calls(&self) -> Vec<ToolCall> {
+        self.choices.first().map(|c| c.message.tool_calls.clone()).unwrap_or_default()
+    }
+    pub fn text(&self) -> String {
+        self.choices.first().and_then(|c| c.message.content.clone()).unwrap_or_default()
+    }
+    pub fn usage(&self) -> Option<&OpenAiUsage> {
+        self.usage.as_ref()
+    }
 }
 
 /// Read `resp`'s body as a byte stream and hand each newline-terminated line to
@@ -637,6 +700,32 @@ mod tests {
             }
         });
         (format!("http://127.0.0.1:{port}"), rx)
+    }
+
+    /// A non-streamed chat reply that asks for a tool must be parsed into the
+    /// calls the loop will run. A model that asks for a tool and is answered
+    /// with prose is a quark that silently cannot edit files — the exact bug
+    /// this task exists to fix.
+    #[test]
+    fn a_reply_carrying_tool_calls_is_parsed_into_them() {
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":null,
+          "tool_calls":[{"id":"c1","type":"function",
+          "function":{"name":"read_file","arguments":"{\"path\":\"Cargo.toml\"}"}}]},
+          "finish_reason":"tool_calls"}]}"#;
+        let parsed: ChatCompletion = serde_json::from_str(body).expect("parse");
+        let calls = parsed.tool_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "read_file");
+        assert_eq!(calls[0].arguments_json()["path"], "Cargo.toml");
+    }
+
+    /// A plain answer must NOT be mistaken for a tool round, or the loop spins.
+    #[test]
+    fn a_reply_with_no_tool_calls_ends_the_loop() {
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}"#;
+        let parsed: ChatCompletion = serde_json::from_str(body).expect("parse");
+        assert!(parsed.tool_calls().is_empty());
+        assert_eq!(parsed.text(), "done");
     }
 
     #[test]
