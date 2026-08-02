@@ -20,6 +20,27 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.1.6",
+        date: Some("2026-08-02"),
+        added: &[
+            "Inter and Cascadia Code ship inside the binary and are registered at startup",
+            "HTTP quarks get a bounded, jailed, streaming forge tool loop instead of prose",
+            "Per-seat temperature, top_p and max_tokens in Settings, persisted in team.json",
+            "Delegation subtab: who asked whom to do what, in each quark's name and colour",
+        ],
+        changed: &["Tasks tab restyled as glass cards matching the Delegation view"],
+        fixed: &[
+            "An HTTP quark declares only the tools its permission mode permits",
+            "A message arriving mid-turn adds to the task it interrupts, it does not replace it",
+            "A dirty worktree is snapshotted before the next branch is cut, not refused",
+            "Gluon's own notices quote bare paths and refs so they don't render as commands",
+            "Ollama gets echoed tool arguments as an object, not a string",
+            "An empty content field no longer swallows the whole reasoning stream",
+            "An absolute path inside the worktree is a spelling, not a jail escape",
+            "The mock quark is gone, and an empty team.json no longer resurrects its ghost",
+        ],
+    },
+    Release {
         version: "0.1.5",
         date: Some("2026-08-02"),
         added: &[],

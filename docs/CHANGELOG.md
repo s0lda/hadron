@@ -5,6 +5,27 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-08-02
+
+### Added
+- **Bundled Fonts**: Inter (UI) and Cascadia Code (mono) ship inside the binary and are registered at startup, so bold weights and the terminal grid render the same on a machine with no fonts installed.
+- **Forge Tool Loop for HTTP Quarks**: Ollama, LM Studio and OpenAI-compatible seats get a real, bounded, streaming tool surface (read/list/grep/blocks/edit/create/git_diff/exec) jailed to the turn's worktree, instead of narrating tool calls as prose.
+- **Per-Seat Model Parameters**: `temperature`, `top_p` and `max_tokens` are settable per quark in Settings and persist in `team.json`; every field is optional, and absent means "let the vendor decide".
+- **Delegation View**: a new Git-rail subtab showing who asked whom to do what — resolved from both explicit addressing and line-start `@mention` fan-outs — rendered with each quark's display name and identity colour.
+
+### Changed
+- **Tasks Tab**: restyled as glass cards matching the Delegation view, keeping the live elapsed clock, the asked-at timestamp and the four task states.
+
+### Fixed
+- **An HTTP Quark's Tools Now Obey the Permission Mode**: `edit_block`, `create_file` and `exec` were reachable from any mode, including `Ask` ("talk, don't act"). A turn now declares only what its mode permits, with a runtime backstop for a call the model was never offered, and an `Auto` turn is told that `exec` is a jailed `cargo`/`git` allowlist rather than the ungated shell the guidance refuses.
+- **A Message Arriving Mid-Turn Adds Work**: interrupting a quark used to replace its task; the interrupted task is now carried into the next dispatch instead of dropped.
+- **A Dirty Worktree No Longer Wedges the Swarm**: uncommitted work from a previous assignment is snapshotted onto its own branch before the next branch is cut, instead of refusing the turn.
+- **Gluon's Own Notices Quote Paths and Refs**: bare paths and branch names in daemon messages are wrapped in backticks so they no longer render as commands; `@mention` routing targets are left alone.
+- **Ollama Tool Arguments**: an echoed tool call's `arguments` is sent as an object, not a string, which Ollama rejected with a 400 for the whole request.
+- **Reasoning Streams**: an empty `content` field no longer swallows the entire reasoning phase of an OpenAI-SSE stream.
+- **Absolute Paths in Tool Arguments**: a path inside the worktree written absolutely is treated as a spelling, not a jail escape.
+- **Ghost Roster Rows**: the mock quark is deleted, and a `team.json` that seats nobody is no longer answered with mock quarks.
+
 ## [0.1.5] - 2026-08-02
 
 ### Fixed
