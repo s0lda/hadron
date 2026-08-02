@@ -887,6 +887,13 @@ impl Chamber {
         };
         let name = stored
             .and_then(|i| i.display_name.clone())
+            .or_else(|| {
+                self.view
+                    .roster
+                    .iter()
+                    .find(|r| r.id == actor)
+                    .and_then(|r| r.display_name.clone())
+            })
             .filter(|n| !n.trim().is_empty())
             .unwrap_or_else(|| default_name);
         let color: Hsla = stored

@@ -1019,12 +1019,25 @@ impl super::Chamber {
 
         let mut list = v_flex().w_full().gap_2();
         for (ix, del) in self.delegations.iter().enumerate().rev() {
-            let from_str = match &del.from {
-                Actor::Human => "Human".to_string(),
-                Actor::Gluon => "Gluon".to_string(),
-                Actor::Quark(q) => format!("@{}", q.as_str()),
+            let (from_identity, from_str) = match &del.from {
+                Actor::Human => {
+                    let id = self.resolve_identity("human");
+                    let name = id.name.clone();
+                    (id, name)
+                }
+                Actor::Gluon => {
+                    let id = self.resolve_identity("gluon");
+                    let name = id.name.clone();
+                    (id, name)
+                }
+                Actor::Quark(q) => {
+                    let id = self.resolve_identity(q.as_str());
+                    let name = format!("@{}", id.name);
+                    (id, name)
+                }
             };
-            let to_str = format!("@{}", del.to.as_str());
+            let to_identity = self.resolve_identity(del.to.as_str());
+            let to_str = format!("@{}", to_identity.name);
 
             let (state_color, state_text) = match del.state {
                 DelegationState::Pending => (0xf59e0b, "Pending"),
@@ -1059,14 +1072,14 @@ impl super::Chamber {
                                 .child(
                                     div()
                                         .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(theme::accent())
+                                        .text_color(from_identity.color)
                                         .child(from_str),
                                 )
                                 .child(div().text_color(theme::text_muted()).child("➜"))
                                 .child(
                                     div()
                                         .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(theme::accent())
+                                        .text_color(to_identity.color)
                                         .child(to_str),
                                 ),
                         )

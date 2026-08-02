@@ -11,6 +11,7 @@ pub enum DelegationState {
 }
 
 impl DelegationState {
+    #[allow(dead_code)]
     pub fn label(self) -> &'static str {
         match self {
             DelegationState::Pending => "Pending",
