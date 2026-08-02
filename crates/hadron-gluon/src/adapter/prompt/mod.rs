@@ -151,19 +151,36 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
          complete: never drop a critical detail just to be brief.\n\n",
     );
 
-    p.push_str(
-        "# CRITICAL Response Requirement: No Preamble or Essays\n\
-         Your entire response MUST consist ONLY of the structured report format below (or a direct brief answer if you changed nothing).\n\
-         DO NOT write any narrative explanation, conversational intro (e.g. 'I have completed the requested changes...'), summary-of-your-summary, or closing essay before or after the report.\n\n\
-         If you CHANGED files/refs this turn, format strictly as:\n\n\
-         **Done**: [Brief outcome summary, including commit hash]\n\n\
-         - **Done**:\n\
-           - [Brief list of key completed tasks and files changed]\n\
-         - **Evidence**: [Exact command run + concise summary output per Standard Model Rule 6]\n\
-         - **Risks**: [Security impact per Rule 7, or omit bullet]\n\
-         - **What I did not verify / clean up**: [Explicit unverified items]\n\n\
-         If you changed NOTHING (read-only / Q&A), reply directly with a brief answer (Standard Model Rule 11).\n\n",
-    );
+    if is_worker(projection, self_id) {
+        p.push_str(
+            "# CRITICAL Response Requirement: No Preamble or Essays\n\
+             Your entire response MUST consist ONLY of the structured report format below (or `@orchestrator` followed by a direct brief answer if you changed nothing).\n\
+             DO NOT write any narrative explanation, conversational intro (e.g. 'I have completed the requested changes...'), summary-of-your-summary, or closing essay before or after the report.\n\n\
+             If you CHANGED files/refs this turn, format strictly as:\n\n\
+             @orchestrator\n\
+             **Done**: [Brief outcome summary, including commit hash]\n\n\
+             - **Done**:\n\
+               - [Brief list of key completed tasks and files changed]\n\
+             - **Evidence**: [Exact command run + concise summary output per Standard Model Rule 6]\n\
+             - **Risks**: [Security impact per Rule 7, or omit bullet]\n\
+             - **What I did not verify / clean up**: [Explicit unverified items]\n\n\
+             If you changed NOTHING (read-only / Q&A), start your response with `@orchestrator` followed by a brief answer.\n\n",
+        );
+    } else {
+        p.push_str(
+            "# CRITICAL Response Requirement: No Preamble or Essays\n\
+             Your entire response MUST consist ONLY of the structured report format below (or a direct brief answer if you changed nothing).\n\
+             DO NOT write any narrative explanation, conversational intro (e.g. 'I have completed the requested changes...'), summary-of-your-summary, or closing essay before or after the report.\n\n\
+             If you CHANGED files/refs this turn, format strictly as:\n\n\
+             **Done**: [Brief outcome summary, including commit hash]\n\n\
+             - **Done**:\n\
+               - [Brief list of key completed tasks and files changed]\n\
+             - **Evidence**: [Exact command run + concise summary output per Standard Model Rule 6]\n\
+             - **Risks**: [Security impact per Rule 7, or omit bullet]\n\
+             - **What I did not verify / clean up**: [Explicit unverified items]\n\n\
+             If you changed NOTHING (read-only / Q&A), reply directly with a brief answer (Standard Model Rule 11).\n\n",
+        );
+    }
 
     // 6. Role & Escalation Directives
     if is_worker(projection, self_id) {
