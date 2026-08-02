@@ -18,7 +18,7 @@ mod migrate;
 mod tests;
 
 pub use transport::{Transport, AcpCommand, PromptChannel, ResumeMode, TimeoutArg, PostureMap, CliSpec, StreamSpec, StreamFormat};
-pub use seat::{ExternalRootSpec, Seat, SeatCommands, SeatOverride};
+pub use seat::{ExternalRootSpec, ModelParams, Seat, SeatCommands, SeatOverride};
 pub use io::{parse_team, load_team, save_team, team_config_path, team_for_field, user_hadron_dir};
 pub use migrate::{migrate_to_catalogue, seat_override_delta, orphan_overrides, legacy_id_renames, rename_legacy_ids, id_follows_convention};
 
@@ -145,6 +145,9 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
         }
         if let Some(deny_skills) = ov.deny_skills.clone() {
             seat.deny_skills = deny_skills;
+        }
+        if let Some(model_params) = ov.model_params.clone() {
+            seat.model_params = model_params;
         }
         seen.insert(ov.id.clone());
         quarks.push(seat);

@@ -61,7 +61,7 @@ impl Chamber {
 
     /// Load the current target's name + image path into the editor inputs.
     pub(super) fn load_settings_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (name, path, model, effort, mode, roles, deny_skills, energy_limit_str, secret_var, secret_is_set, secret_applies) = {
+        let (name, path, model, effort, mode, roles, deny_skills, energy_limit_str, temp_str, top_p_str, max_tokens_str, secret_var, secret_is_set, secret_applies) = {
             let key = self.settings_target.key();
             let mut mdl = String::new();
             let mut eff = None;
@@ -69,6 +69,9 @@ impl Chamber {
             let mut roles_str = String::new();
             let mut deny_skills_str = String::new();
             let mut energy_limit_str = String::new();
+            let mut temp_str = String::new();
+            let mut top_p_str = String::new();
+            let mut max_tokens_str = String::new();
             // Defaults for a non-quark target (Human/Providers), which never shows the
             // API-key field — overwritten below when `key` resolves to a seat.
             let mut var = String::new();
@@ -94,6 +97,9 @@ impl Chamber {
                     roles_str = seat.roles.join(", ");
                     deny_skills_str = seat.deny_skills.join(", ");
                     energy_limit_str = seat.energy_limit.map(|n| n.to_string()).unwrap_or_default();
+                    temp_str = seat.model_params.temperature.map(|f| f.to_string()).unwrap_or_default();
+                    top_p_str = seat.model_params.top_p.map(|f| f.to_string()).unwrap_or_default();
+                    max_tokens_str = seat.model_params.max_tokens.map(|n| n.to_string()).unwrap_or_default();
                     // The provider's required secret vars (catalogue SSOT) plus any the
                     // seat already declares decide whether to show the field and what to
                     // name it — never the value, only ever the NAME (see `secret_status`).
@@ -121,6 +127,9 @@ impl Chamber {
                 roles_str,
                 deny_skills_str,
                 energy_limit_str,
+                temp_str,
+                top_p_str,
+                max_tokens_str,
                 var,
                 is_set,
                 needs_secret,
@@ -144,6 +153,12 @@ impl Chamber {
             .update(cx, |s, cx| s.set_value(deny_skills, window, cx));
         self.settings_energy_limit
             .update(cx, |s, cx| s.set_value(energy_limit_str, window, cx));
+        self.settings_temperature
+            .update(cx, |s, cx| s.set_value(temp_str, window, cx));
+        self.settings_top_p
+            .update(cx, |s, cx| s.set_value(top_p_str, window, cx));
+        self.settings_max_tokens
+            .update(cx, |s, cx| s.set_value(max_tokens_str, window, cx));
         self.settings_secret_var
             .update(cx, |s, cx| s.set_value(secret_var, window, cx));
         // Never populated from the store — write-only, always blank on (re)load.
@@ -183,6 +198,20 @@ impl Chamber {
 
         let energy_limit_val = self.settings_energy_limit.read(cx).value().trim().to_string();
         let new_energy_limit: Option<u32> = energy_limit_val.parse::<u32>().ok();
+
+        let temp_val = self.settings_temperature.read(cx).value().trim().to_string();
+        let top_p_val = self.settings_top_p.read(cx).value().trim().to_string();
+        let max_tokens_val = self.settings_max_tokens.read(cx).value().trim().to_string();
+
+        let new_temperature: Option<f32> = temp_val.parse::<f32>().ok();
+        let new_top_p: Option<f32> = top_p_val.parse::<f32>().ok();
+        let new_max_tokens: Option<u32> = max_tokens_val.parse::<u32>().ok();
+
+        let new_model_params = hadron_lattice::ModelParams {
+            temperature: new_temperature,
+            top_p: new_top_p,
+            max_tokens: new_max_tokens,
+        };
 
         // Team-wide "Max exchanges" (Providers panel) — gated on the Providers target,
         // like the per-quark model/effort/mode fields below are gated on `key`. This
@@ -257,6 +286,7 @@ impl Chamber {
                     roles: new_roles,
                     deny_skills: new_deny_skills,
                     energy_limit: new_energy_limit,
+                    model_params: new_model_params,
                     ..base.clone()
                 };
 
@@ -265,7 +295,8 @@ impl Chamber {
                     || base.mode_config != desired.mode_config
                     || base.roles != desired.roles
                     || base.deny_skills != desired.deny_skills
-                    || base.energy_limit != desired.energy_limit;
+                    || base.energy_limit != desired.energy_limit
+                    || base.model_params != desired.model_params;
                 if knobs_changed {
                     self.update_seat_config(&qid, &desired, cx);
                 }
@@ -279,7 +310,7 @@ impl Chamber {
         }
     }
 
-    /// Persist updated configuration knobs (model, effort, mode, roles, deny_skills, energy_limit)
+    /// Persist updated configuration knobs (model, effort, mode, roles, deny_skills, energy_limit, model_params)
     /// for a seat, handling both self-contained legacy seats and catalogue-adopted seats.
     pub(super) fn update_seat_config(
         &mut self,
@@ -295,6 +326,7 @@ impl Chamber {
             existing.roles = desired.roles.clone();
             existing.deny_skills = desired.deny_skills.clone();
             existing.energy_limit = desired.energy_limit;
+            existing.model_params = desired.model_params.clone();
             self.save_repo_team(cx);
         } else if let Some(def) = self.global.get(qid).cloned() {
             // Adopted via the catalogue — write a delta override (only what
