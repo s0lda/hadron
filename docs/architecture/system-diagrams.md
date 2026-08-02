@@ -40,7 +40,11 @@ hadron/
 
 ## Visualizer Interface
 
-<div style="display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 16px;">
-    <img src="../../assets/demo.png" alt="Hadron Chamber UI Demo" width="450" style="max-width: 48%; height: auto;" />
-    <img src="../../assets/demo_2.png" alt="Hadron Chamber UI Demo" width="450" style="max-width: 48%; height: auto;" />
-</div>
+<!-- GitHub strips `style` from user HTML, so flexbox and equal-width CSS are gone
+     there: `align` and `height` are what survive its sanitiser. The two shots have
+     different aspect ratios (1873x1391 vs 2108x1218), so matching their WIDTHS is
+     what made the right one shorter — match their heights instead. -->
+<p align="center">
+  <img src="../../assets/demo.png" alt="Hadron Chamber UI Demo" height="260" />
+  <img src="../../assets/demo_2.png" alt="Hadron Chamber UI Demo" height="260" />
+</p>
