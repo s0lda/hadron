@@ -960,6 +960,46 @@ mod tests {
         assert!(full.to_lowercase().contains("pong"), "got: {full:?}");
     }
 
+    /// Not a fixture: a real turn against the live OpenRouter seat, on the
+    /// reasoning model whose empty-`content` deltas were the bug. Proves the fix
+    /// against the wire rather than against our own capture of it — a fixture can
+    /// only ever re-assert what we already believed.
+    #[tokio::test]
+    #[ignore = "hits the real OpenRouter endpoint and spends the seat's key — run manually with `--ignored`"]
+    async fn stream_chat_reaches_the_real_openrouter_reasoning_model() {
+        use hadron_lattice::secrets::SecretStore;
+        let seat = QuarkId::new("http-openai-compatible");
+        let key = crate::secrets::KeyringStore::new()
+            .get(&seat, "API_KEY")
+            .unwrap()
+            .expect("the http-openai-compatible seat has no API_KEY in the keyring");
+        let target = HttpTarget {
+            vendor: HttpVendor::OpenAiCompatible,
+            base_url: HttpVendor::OpenAiCompatible.default_base_url().to_string(),
+            api_key: Some(key),
+        };
+        let (mut thoughts, mut says) = (0, 0);
+        let (full, usage) = stream_chat(
+            &target,
+            "nvidia/nemotron-3-ultra-550b-a55b:free",
+            "Say the word BANANA three times, then stop.",
+            |doing, _| {
+                if doing == Doing::Thinking {
+                    thoughts += 1
+                } else {
+                    says += 1
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert!(thoughts > 0, "the reasoning phase streamed nothing — this is the bug");
+        assert!(says > 0, "the answer streamed nothing");
+        assert!(full.to_uppercase().contains("BANANA"), "got: {full:?}");
+        assert!(!full.to_lowercase().contains("the user wants"), "chain of thought leaked into the reply: {full:?}");
+        assert!(usage.spend.output.unwrap_or(0) > 0, "no usage reported: {usage:?}");
+    }
+
     /// Not a fixture: the LM Studio server on the Windows side of this box, reached
     /// from WSL at the address the human's own seat uses — deliberately written
     /// WITHOUT the `/v1` suffix, so a pass proves the normalisation too.
