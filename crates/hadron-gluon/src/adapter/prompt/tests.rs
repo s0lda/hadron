@@ -709,3 +709,360 @@ fn nucleus_recall_cache_stability() {
     assert_eq!(&p1[..pos1], &p2[..pos2], "Prompt cache prefix prior to nucleus index MUST be identical across tasks");
 }
 
+#[test]
+fn prompt_cache_prefix_strictly_identical_across_dynamic_turn_variations() {
+    use hadron_lattice::{Actor, Kind};
+
+    let mut base_proj = projection("Base task");
+    base_proj.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
+    base_proj.nucleus_index = "## How we get things wrong\n\n- [pinned](notes/pinned.md) — Pinned".to_string();
+
+    let mut proj1 = base_proj.clone();
+    proj1.task = "Task 1: implementing feature A".into();
+    proj1.active_skill = Some("# Skill for this turn: executing-plans\nDo step A".into());
+    proj1.git_diff = "--- a/file1.rs\n+++ b/file1.rs\n@@ -1 +1 @@\n-old\n+new".into();
+    proj1.field_window = vec![Event::new(
+        Actor::Human,
+        Some(QuarkId::new("agy")),
+        Kind::Message { body: "Msg 1".into() },
+    )];
+
+    let mut proj2 = base_proj.clone();
+    proj2.task = "Task 2: fixing bug B".into();
+    proj2.active_skill = Some("# Skill for this turn: test-driven-development\nDo step B".into());
+    proj2.git_diff = "--- a/file2.rs\n+++ b/file2.rs\n@@ -1 +1 @@\n-foo\n+bar".into();
+    proj2.field_window = vec![Event::new(
+        Actor::Human,
+        Some(QuarkId::new("agy")),
+        Kind::Message { body: "Msg 2".into() },
+    )];
+
+    let p1 = build(&proj1, &QuarkId::new("agy"));
+    let p2 = build(&proj2, &QuarkId::new("agy"));
+
+    let header = "# What the swarm has learned (nucleus index)";
+    let pos1 = p1.find(header).expect("index header present in p1");
+    let pos2 = p2.find(header).expect("index header present in p2");
+
+    assert_eq!(pos1, pos2, "Header position must match exactly");
+    assert_eq!(
+        &p1[..pos1],
+        &p2[..pos2],
+        "Prompt cache prefix (0a-2a) MUST be byte-identical despite task, skill, diff, and window changes"
+    );
+}
+
+#[test]
+fn prompt_build_nucleus_recall_negative_control_and_pinned_retention() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let notes_dir = temp.path().join("notes");
+    std::fs::create_dir_all(&notes_dir).unwrap();
+
+    std::fs::write(
+        notes_dir.join("pinned-mistake.md"),
+        "---\ndescription: Mistake note\n---\nPinned content",
+    ).unwrap();
+    std::fs::write(
+        notes_dir.join("unrelated-topic.md"),
+        "---\ndescription: Database locking rules\n---\nDB locks content",
+    ).unwrap();
+
+    let mut proj = projection("Task about frontend CSS layout");
+    proj.nucleus_index_path = temp.path().join("index.md");
+    proj.nucleus_notes_dir = notes_dir;
+    proj.nucleus_index = r#"# Memory index
+
+## How we get things wrong
+
+- [pinned-mistake](notes/pinned-mistake.md) — Always check callers first
+
+## Database
+
+- [unrelated-topic](notes/unrelated-topic.md) — Database locking rules
+"#.to_string();
+
+    let p = build(&proj, &QuarkId::new("agy"));
+
+    assert!(p.contains("## How we get things wrong"), "Pinned section must always be rendered");
+    assert!(p.contains("pinned-mistake"), "Pinned lesson must be rendered");
+    assert!(!p.contains("unrelated-topic"), "Unrelated non-pinned lesson must be filtered out by rank_lessons");
+    assert!(p.contains("This index is **shared by every quark**"), "Instructions footer must be preserved");
+}
+
+#[test]
+fn prompt_build_respects_nucleus_index_budget_bytes() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let notes_dir = temp.path().join("notes");
+    std::fs::create_dir_all(&notes_dir).unwrap();
+
+    std::fs::write(
+        notes_dir.join("pinned-mistake.md"),
+        "---\ndescription: Mistake note\n---\nPinned content",
+    ).unwrap();
+    std::fs::write(
+        notes_dir.join("auth-rule.md"),
+        "---\ndescription: Authentication token handling and session security\n---\nAuth details",
+    ).unwrap();
+
+    let mut proj = projection("Authentication task token security");
+    proj.nucleus_index_path = temp.path().join("index.md");
+    proj.nucleus_notes_dir = notes_dir;
+    proj.nucleus_index = r#"# Memory index
+
+## How we get things wrong
+
+- [pinned-mistake](notes/pinned-mistake.md) — Always check callers first
+
+## Auth
+
+- [auth-rule](notes/auth-rule.md) — Authentication token handling and session security
+"#.to_string();
+
+    // Set budget to 2000 bytes -> max output 250 bytes.
+    // Pinned section consumes output bytes, capping auth-rule.
+    proj.nucleus_index_budget_bytes = 2000;
+
+    let p = build(&proj, &QuarkId::new("agy"));
+
+    assert!(p.contains("pinned-mistake"), "Pinned lesson must fit");
+    assert!(!p.contains("auth-rule"), "Matched lesson must be excluded due to budget limit");
+}
+
+#[test]
+fn active_skill_is_rendered_after_nucleus_index_and_before_task() {
+    let mut proj = projection("Do auth task");
+    proj.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
+    proj.nucleus_index = "- [lesson](notes/lesson.md) — Lesson line".to_string();
+    proj.active_skill = Some("# Skill for this turn: test-driven-development\nWrite test first.".to_string());
+
+    let p = build(&proj, &QuarkId::new("agy"));
+
+    let idx_pos = p.find("# What the swarm has learned (nucleus index)").expect("nucleus index header");
+    let skill_pos = p.find("# Skill for this turn: test-driven-development").expect("active skill content");
+    let task_pos = p.find("# Your task").expect("task header");
+
+    assert!(idx_pos < skill_pos, "Nucleus index (2b) must precede active skill (2c) for cache stability");
+    assert!(skill_pos < task_pos, "Active skill (2c) must precede task (3)");
+}
+
+#[test]
+fn stress_test_huge_inputs_and_context_items() {
+    let mut proj = projection("huge task");
+    
+    // Huge task, invariants, git diff, role body, active skill
+    proj.task = "A".repeat(1_000_000);
+    proj.invariants = "B".repeat(500_000);
+    proj.git_diff = "C".repeat(500_000);
+    proj.role_body = Some("D".repeat(500_000));
+    proj.active_skill = Some("E".repeat(500_000));
+    proj.nucleus_digest = "F".repeat(500_000);
+
+    // Large number of field window events
+    let mut events = Vec::new();
+    for i in 0..1000 {
+        events.push(Event::new(
+            Actor::Quark(QuarkId::new("agy")),
+            Some(QuarkId::new("claude")),
+            Kind::Message {
+                body: format!("Message {} {}", i, "X".repeat(500)),
+            },
+        ));
+    }
+    proj.field_window = events;
+
+    let id = QuarkId::new("agy");
+    let built = build(&proj, &id);
+    let measured = measure(&proj, &id);
+
+    assert!(built.len() > 3_500_000);
+    let total_measured = measured.standard_model
+        + measured.invariants
+        + measured.nucleus_digest
+        + measured.nucleus_index
+        + measured.active_skill
+        + measured.task
+        + measured.field_window;
+    assert!(total_measured <= built.len());
+}
+
+#[test]
+fn stress_test_special_regex_and_format_template_characters() {
+    let mut proj = projection("Task with format strings {0} {} %s %d %x #{foo} {self} {:?}");
+    proj.invariants = "Invariants with regex .*+?^$()|[]{}\\ \\d+ \\b (?i) (?m) and format {val}".to_string();
+    proj.nucleus_digest = "Digest with format string {0} and markdown <h1>html</h1> ```rust code``` \0 \r \n".to_string();
+    proj.active_skill = Some("Skill with format strings {x} and regex [a-z]+".to_string());
+    proj.git_diff = "--- a/file\n+++ b/file\n@@ {line} @@\n- old {val}\n+ new {val}".to_string();
+
+    proj.roster[0].display_name = Some("Quark{0}%s$1".to_string());
+    proj.field_window = vec![Event::new(
+        Actor::Quark(QuarkId::new("agy")),
+        Some(QuarkId::new("claude")),
+        Kind::Message {
+            body: "Msg with {key} and regex ^[0-9]+$ %s %d \0".to_string(),
+        },
+    )];
+
+    let id = QuarkId::new("agy");
+    let built = build(&proj, &id);
+    let measured = measure(&proj, &id);
+
+    assert!(built.contains("{0}"));
+    assert!(built.contains("%s"));
+    assert!(built.contains(".*+?^$()|[]{}\\"));
+    assert!(built.contains("Quark{0}%s$1"));
+
+    let resumed = frame_interrupted_resumption(
+        "Interrupted task with {0} %s regex .*+",
+        "New msg with {1} %d regex \\d+"
+    );
+    assert!(resumed.contains("{0}"));
+    assert!(resumed.contains("{1}"));
+
+    let total_measured = measured.standard_model
+        + measured.invariants
+        + measured.nucleus_digest
+        + measured.nucleus_index
+        + measured.active_skill
+        + measured.task
+        + measured.field_window;
+    assert!(total_measured <= built.len());
+}
+
+#[test]
+fn stress_test_unicode_and_multibyte_sequences() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let notes_dir = temp.path().join("notes");
+    std::fs::create_dir_all(&notes_dir).unwrap();
+
+    std::fs::write(
+        notes_dir.join("unicode-lesson.md"),
+        "---\ndescription: 🦀 Rust 🚀 Unicode 测试 测试 测试\n---\nMulti-byte content 你好世界",
+    ).unwrap();
+
+    let mut proj = projection("Task with multi-byte unicode: 🦀🔥💻🚀 你好世界  الكلمة e\u{0301} 👨‍👩‍👧‍👦");
+    proj.invariants = "Invariant: 🦝 ñoño 🌍".to_string();
+    proj.role_body = Some("Role: 🦸‍♀️ Architect 🏗️".to_string());
+    proj.active_skill = Some("Skill: 🪄 Wizardry ✨".to_string());
+    proj.git_diff = "--- a/unicode.rs\n+++ b/unicode.rs\n+ // 🦀 Rust emoji and CJK 🎉".to_string();
+
+    proj.nucleus_index_path = temp.path().join("index.md");
+    proj.nucleus_notes_dir = notes_dir;
+    proj.nucleus_index = r#"# Memory index
+
+## 🦀 Unicode section
+
+- [unicode-lesson](notes/unicode-lesson.md) — 🦀 Rust 🚀 Unicode 测试 测试 测试
+"#.to_string();
+
+    proj.roster[0].display_name = Some("Quark 🚀 ⚛️".to_string());
+    proj.field_window = vec![Event::new(
+        Actor::Quark(QuarkId::new("agy")),
+        Some(QuarkId::new("claude")),
+        Kind::Message {
+            body: "Unicode field message: 🥳 🤹‍♀️ 💻 🎉".to_string(),
+        },
+    )];
+
+    let id = QuarkId::new("agy");
+    let built = build(&proj, &id);
+    let measured = measure(&proj, &id);
+
+    assert!(built.contains("Quark 🚀 ⚛️"));
+    assert!(built.contains("🦀🔥💻🚀"));
+    assert!(built.contains("你好世界"));
+
+    let total_measured = measured.standard_model
+        + measured.invariants
+        + measured.nucleus_digest
+        + measured.nucleus_index
+        + measured.active_skill
+        + measured.task
+        + measured.field_window;
+    assert!(total_measured <= built.len());
+}
+
+#[test]
+fn stress_test_malformed_notes_and_empty_input_list() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let notes_dir = temp.path().join("notes");
+
+    let mut proj = projection("");
+    proj.invariants = String::new();
+    proj.nucleus_digest = String::new();
+    proj.git_diff = String::new();
+    proj.role_body = None;
+    proj.active_skill = None;
+    proj.roster = vec![]; // Empty roster
+    proj.field_window = vec![]; // Empty field window
+    proj.live_activities = vec![]; // Empty live activities
+
+    proj.nucleus_index_path = temp.path().join("index.md");
+    proj.nucleus_notes_dir = notes_dir;
+    // Malformed markdown index
+    proj.nucleus_index = "### [unclosed bracket link(notes/foo.md\n- broken markdown table | |\n][[[bad link".to_string();
+
+    let id = QuarkId::new("non_existent_quark");
+    let built = build(&proj, &id);
+    let measured = measure(&proj, &id);
+
+    assert!(built.contains("# Who you are"));
+    assert!(built.contains("You are `@non_existent_quark`"));
+
+    let total_measured = measured.standard_model
+        + measured.invariants
+        + measured.nucleus_digest
+        + measured.nucleus_index
+        + measured.active_skill
+        + measured.task
+        + measured.field_window;
+    assert!(total_measured <= built.len());
+}
+
+#[test]
+fn stress_test_zero_and_extreme_budget_restrictions() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let notes_dir = temp.path().join("notes");
+    std::fs::create_dir_all(&notes_dir).unwrap();
+
+    std::fs::write(
+        notes_dir.join("note1.md"),
+        "---\ndescription: Budget stress test note\n---\nContent 1",
+    ).unwrap();
+
+    let mut proj = projection("Budget stress test task");
+    proj.nucleus_index_path = temp.path().join("index.md");
+    proj.nucleus_notes_dir = notes_dir;
+    proj.nucleus_index = "## How we get things wrong\n\n- [note1](notes/note1.md) — Budget stress test note".to_string();
+
+    let id = QuarkId::new("agy");
+
+    // Zero budget
+    proj.nucleus_index_budget_bytes = 0;
+    let built_zero = build(&proj, &id);
+    assert!(built_zero.contains("# What the swarm has learned (nucleus index)"));
+
+    // Budget = 1
+    proj.nucleus_index_budget_bytes = 1;
+    let built_one = build(&proj, &id);
+    assert!(built_one.contains("# What the swarm has learned (nucleus index)"));
+
+    // Budget = 7
+    proj.nucleus_index_budget_bytes = 7;
+    let built_seven = build(&proj, &id);
+    assert!(built_seven.contains("# What the swarm has learned (nucleus index)"));
+
+    // Budget = 100_000
+    proj.nucleus_index_budget_bytes = 100_000;
+    let built_100k = build(&proj, &id);
+    assert!(built_100k.contains("# What the swarm has learned (nucleus index)"));
+    assert!(built_100k.contains("note1"));
+
+    // Budget = usize::MAX / 10 (avoid overflow in multiplication if any, though division handles it)
+    proj.nucleus_index_budget_bytes = usize::MAX / 10;
+    let built_max = build(&proj, &id);
+    assert!(built_max.contains("# What the swarm has learned (nucleus index)"));
+    assert!(built_max.contains("note1"));
+}
+
+
+
