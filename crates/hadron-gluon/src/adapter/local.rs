@@ -697,7 +697,8 @@ impl Quark for LocalQuark {
         let root = hadron_forge::file::Root::new(turn.cwd.clone());
         let quark_id = self.id.clone();
         let dir = self.live_dir.clone();
-        let tools = crate::adapter::local_tools::declarations();
+        let mode = turn.mode;
+        let tools = crate::adapter::local_tools::declarations_for_mode(mode);
         let mut messages = vec![json!({ "role": "user", "content": prompt })];
         let mut spend = hadron_lattice::TokenSpend::default();
 
@@ -706,7 +707,7 @@ impl Quark for LocalQuark {
             let mut thought = String::new();
             let mut last_publish: Option<Instant> = None;
             let (text, calls, usage) =
-                stream_chat(&self.target, &self.model, &messages, Some(&tools), |doing, delta| {
+                stream_chat(&self.target, &self.model, &messages, tools.as_ref(), |doing, delta| {
                     // Two buffers, because they are two different things: the draft is
                     // the reply the chat will show, the thought is only ever the Live
                     // card's "thinking" line. Mirrors `adapter::acp::session`'s split.
@@ -757,7 +758,8 @@ impl Quark for LocalQuark {
                         ),
                     );
                 }
-                let result = crate::adapter::local_tools::execute(&root, &call.function.name, &call.arguments_json());
+                let result =
+                    crate::adapter::local_tools::execute(&root, mode, &call.function.name, &call.arguments_json());
                 messages.push(json!({
                     "role": "tool", "tool_call_id": call.id, "content": truncate_tool_result(&result),
                 }));
@@ -839,16 +841,27 @@ mod tests {
     }
 
     /// As [`serve_once`], but also hands back the raw request text it received —
-    /// for asserting on a header (`Authorization: Bearer …`, or its absence).
+    /// for asserting on a header (`Authorization: Bearer …`, or its absence) or
+    /// on the `tools` the request carried. A single fixed-size read truncates a
+    /// tools-carrying request (the one behind `build_seat_watched_wires_an_http_seat_to_the_live_dir`'s
+    /// prior regression) — drain until the client stops sending instead, same
+    /// fix as `serve_twice_capturing`.
     fn serve_once_capturing(status: &'static str, body: &'static str) -> (String, std::sync::mpsc::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 4096];
-                let n = stream.read(&mut buf).unwrap_or(0);
-                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_string());
+                stream.set_read_timeout(Some(Duration::from_millis(200))).ok();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 8192];
+                while let Ok(n) = stream.read(&mut chunk) {
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                let _ = tx.send(String::from_utf8_lossy(&buf).to_string());
                 let response = format!(
                     "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
@@ -1336,8 +1349,10 @@ mod tests {
     }
 
     /// A `Projection` for a `LocalQuark::excite` test — every field at its
-    /// inert value except `cwd`, which the tool loop jails `hadron_forge::Root`
-    /// to.
+    /// inert value except `cwd` (which the tool loop jails `hadron_forge::Root`
+    /// to) and `mode`, which defaults to `Bypass` so a test exercising the tool
+    /// loop's mechanics is not incidentally blocked by permission gating; tests
+    /// of the gating itself override `mode` explicitly.
     fn tool_loop_turn(cwd: std::path::PathBuf) -> Projection {
         Projection {
             isolated: true,
@@ -1356,7 +1371,7 @@ mod tests {
             nucleus_notes_dir: std::path::PathBuf::new(),
             git_diff: String::new(),
             cwd,
-            mode: hadron_lattice::Mode::default(),
+            mode: hadron_lattice::Mode::Bypass,
             role_body: None,
             active_skill: None,
             named_specifically: true,
@@ -1460,6 +1475,59 @@ mod tests {
             second_request.contains(r#""arguments":"{\"path\":\".\"}""#),
             "an OpenAI-compatible echo must keep the JSON-encoded string form: {second_request}"
         );
+    }
+
+    /// Positive control for the two negative-shaped tests below: proves
+    /// `serve_once_capturing`'s drained request actually carries `"tools"` when
+    /// the mode permits declaring them, so an absent key in the Ask test means
+    /// the request really omitted it — not that the harness failed to capture it.
+    #[tokio::test]
+    async fn a_bypass_mode_http_quark_is_offered_every_declared_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base, rx) =
+            serve_once_capturing("200 OK", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\ndata: [DONE]\n");
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let mut q = LocalQuark::new(QuarkId::new("t"), Flavor::Worker, "m", target);
+
+        let turn = Projection { mode: hadron_lattice::Mode::Bypass, ..tool_loop_turn(dir.path().to_path_buf()) };
+        q.excite(turn).await.expect("turn");
+        let request = rx.recv_timeout(Duration::from_secs(2)).expect("request");
+        assert!(request.contains(r#""tools":"#), "Bypass must declare tools: {request}");
+        assert!(request.contains(r#""name":"exec""#), "Bypass must declare exec too: {request}");
+    }
+
+    /// Step 1: `Ask` means "talk, don't act" — the request must not carry a
+    /// `tools` key at all, not merely refuse every call once offered. A refused
+    /// call still burns a tool round the model has no fallback for.
+    #[tokio::test]
+    async fn an_ask_mode_http_quark_is_offered_no_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base, rx) =
+            serve_once_capturing("200 OK", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\ndata: [DONE]\n");
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let mut q = LocalQuark::new(QuarkId::new("t"), Flavor::Worker, "m", target);
+
+        let turn = Projection { mode: hadron_lattice::Mode::Ask, ..tool_loop_turn(dir.path().to_path_buf()) };
+        q.excite(turn).await.expect("turn");
+        let request = rx.recv_timeout(Duration::from_secs(2)).expect("request");
+        assert!(!request.contains(r#""tools":"#), "Ask must offer no tools at all: {request}");
+    }
+
+    /// Step 2: `Write` auto-approves edits but asks for every command — so the
+    /// forge tools are declared and `exec` is not.
+    #[tokio::test]
+    async fn a_write_mode_http_quark_is_offered_forge_but_not_exec() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base, rx) =
+            serve_once_capturing("200 OK", "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\ndata: [DONE]\n");
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let mut q = LocalQuark::new(QuarkId::new("t"), Flavor::Worker, "m", target);
+
+        let turn = Projection { mode: hadron_lattice::Mode::Write, ..tool_loop_turn(dir.path().to_path_buf()) };
+        q.excite(turn).await.expect("turn");
+        let request = rx.recv_timeout(Duration::from_secs(2)).expect("request");
+        assert!(request.contains(r#""name":"read_file""#), "Write must declare forge tools: {request}");
+        assert!(!request.contains(r#""name":"exec""#), "Write must not declare exec: {request}");
     }
 }
 
