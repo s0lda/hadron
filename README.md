@@ -22,13 +22,13 @@
 
 **Hadron** is a native, GPU-accelerated multi-agent execution environment built in Rust. It orchestrates autonomous AI agent swarms—called **Quarks**—over a zero-CPU filesystem event bus (`field.jsonl`) and local SQLite ledgers.
 
-A seat takes any agent that speaks the **[Agent Client Protocol](https://agentclientprotocol.com)**, any coding **CLI** (through our resident CLI transport), or **[Antigravity](https://antigravity.google/)** — over its CLI _and_ over our SDK bridge. Hadron provides parallel execution, isolated git worktree branching, and race-free AST code edits via **Hadron Forge (Edit-by-Hash)**.
+A seat takes any agent that speaks the **[Agent Client Protocol](https://agentclientprotocol.com)**, any coding **CLI** (through our resident CLI transport), **[Antigravity](https://antigravity.google/)** (over CLI or SDK bridge), or local/cloud HTTP providers (**Ollama**, **OpenRouter**, **LM Studio**). Hadron provides parallel execution, isolated git worktree branching, and race-free AST code edits via **Hadron Forge (Edit-by-Hash)**.
 
 ### What Makes It Different
 - **A Swarm, Not a Chat**: Autonomous agents take turns on a shared, append-only event bus.
 - **Nothing Lands Unreviewed**: Turns run in isolated git worktrees; the Merge Gate rebases onto `main` and runs your test suite before merging.
 - **Native & Fast**: Built with Rust + GPUI desktop app featuring interactive PTY terminals, live git inspection, and per-quark token telemetry.
-- **Vendor-Neutral**: ACP, CLI, or SDK bridge — swap agents seamlessly behind any seat.
+- **Vendor-Neutral**: ACP, CLI, SDK bridge, or HTTP (Ollama, OpenRouter, LM Studio) — swap agents seamlessly behind any seat.
 
 ---
 
@@ -45,7 +45,7 @@ A seat takes any agent that speaks the **[Agent Client Protocol](https://agentcl
 ### Prerequisites
 * **Rust**: Toolchain (edition 2021, tested on 1.96.0+).
 * **OS**: Linux (X11/Wayland), macOS, or Windows via **WSL2**.
-* **Agents**: Any ACP agent, coding CLI, or Antigravity SDK bridge.
+* **Agents**: Any ACP agent, coding CLI, Antigravity SDK bridge, or local/cloud HTTP provider (Ollama, OpenRouter, LM Studio).
 
 ### Installation
 ```bash
@@ -67,6 +67,7 @@ For technical breakdowns of Hadron's physics mental model, architecture, and dev
 
 | Section | Description | Links |
 | :--- | :--- | :--- |
+| 📜 **Changelog** | Release history, version notes, & feature additions | [`Changelog`](docs/CHANGELOG.md) |
 | 🏛️ **Architecture** | 2-Tier Daemon/GUI split, Swarm Event Loop, & System Diagrams | [`Decoupled Architecture`](docs/architecture/decoupled-architecture.md) · [`Swarm Event Loop`](docs/architecture/swarm-event-loop.md) · [`System Diagrams`](docs/architecture/system-diagrams.md) |
 | ⚛️ **Concepts & Physics** | Particle Physics Mental Model & Workspace Glossary | [`Physics Metaphor`](docs/concepts/physics-metaphor.md) · [`Vocabulary & Glossary`](docs/concepts/vocabulary.md) |
 | 🛠️ **Hadron Forge** | AST Edit-by-Hash Precision & Stdio MCP Server | [`Edit-by-Hash Engine`](docs/forge/edit-by-hash.md) |
@@ -90,7 +91,7 @@ For technical breakdowns of Hadron's physics mental model, architecture, and dev
 
 * **Core Frameworks**: [Rust](https://www.rust-lang.org/), [GPUI](https://zed.dev), [gpui-component](https://github.com/longbridge/gpui-component), [ACP](https://agentclientprotocol.com), [Tree-Sitter](https://github.com/tree-sitter/tree-sitter).
 * **Tooling**: [Context7](https://context7.com), [Superpowers Skill Library](https://github.com/obra/superpowers), Hadron Forge MCP.
-* **Transports**: ACP, CLI, and Antigravity SDK bridge.
+* **Transports**: ACP, CLI, Antigravity SDK bridge, and HTTP (Ollama, OpenRouter, LM Studio).
 
 ---
 
