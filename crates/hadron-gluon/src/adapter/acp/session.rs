@@ -937,15 +937,17 @@ impl super::AcpQuark {
 /// Extracted from [`AcpQuark::run_turn`] as a pure function so the three stop-reason
 /// arms are directly testable without booting a resident ACP session.
 ///
-/// `StopReason::Cancelled` currently discards `text` unconditionally, even when the
-/// agent had already streamed a substantial partial reply before the cancel landed
-/// (`append_message_chunk` accumulates every chunk regardless of how the turn ends) —
-/// see `.hadron/nucleus/notes/a-graceful-cancel-discards-partial-text.md`.
+/// `StopReason::Cancelled` preserves whatever text the agent had already streamed
+/// before the cancel landed (`append_message_chunk` accumulates every chunk
+/// regardless of how the turn ends) — a graceful cancel mid-response used to discard
+/// it unconditionally, silently losing substantial partial replies. No annotation is
+/// added: `TurnOutcome::cancelled` already carries "this was interrupted" as its own
+/// fact (see the comment on `cancelled` below), so the message stays exactly what was
+/// said. See `.hadron/nucleus/notes/a-graceful-cancel-discarded-partial-text.md`.
 pub(super) fn message_for_stop(text: &str, stop: &StopReason) -> Option<String> {
     match stop {
-        StopReason::Cancelled => None,
-        StopReason::EndTurn if text.is_empty() => None,
-        StopReason::EndTurn => Some(text.to_string()),
+        StopReason::Cancelled | StopReason::EndTurn if text.is_empty() => None,
+        StopReason::Cancelled | StopReason::EndTurn => Some(text.to_string()),
         other => {
             let note = format!("[acp: stopped on {other:?}]");
             Some(if text.is_empty() { note } else { format!("{text}\n\n{note}") })

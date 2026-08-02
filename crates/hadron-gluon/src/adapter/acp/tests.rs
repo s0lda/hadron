@@ -1405,14 +1405,11 @@ fn an_activity_with_no_reply_yet_carries_no_draft() {
 /// Regression test for the 2026-08-02 `acp-claude` incident: two concurrent
 /// turns (Chat and Work lanes) each reported real output tokens (1873, 1924)
 /// but wrote NO `Message` event — `outcome.message` was `None`. Root cause:
-/// `message_for_stop` maps `StopReason::Cancelled` to `None` UNCONDITIONALLY,
-/// discarding whatever text the agent had already streamed before the cancel
-/// landed (`append_message_chunk` accumulates every chunk regardless of how
-/// the turn ends, so a cancelled turn's `text` is not necessarily empty).
-///
-/// This is a FAILING test on purpose (Phase 4 Step 1 of systematic-debugging):
-/// it asserts the fix's desired behaviour, not today's. Do not "fix" it by
-/// relaxing the assertion — fix `message_for_stop` instead.
+/// `message_for_stop` used to map `StopReason::Cancelled` to `None`
+/// unconditionally, discarding whatever text the agent had already streamed
+/// before the cancel landed (`append_message_chunk` accumulates every chunk
+/// regardless of how the turn ends, so a cancelled turn's `text` is not
+/// necessarily empty). Fixed: a cancel now preserves non-empty partial text.
 #[test]
 fn a_cancelled_turn_with_partial_text_should_preserve_it_not_discard_it() {
     let partial = "Here is my analysis so far: the index is at 29KB against a 32KB budget...";
