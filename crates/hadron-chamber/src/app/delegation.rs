@@ -33,13 +33,16 @@ pub struct Delegation {
     pub state: DelegationState,
 }
 
+use std::collections::HashMap;
+
 /// Pure function over `&[Event]` -> `Vec<Delegation>`.
-/// Parses delegations from explicit `to` fields and unaddressed line-start `@mentions`.
-pub fn parse_delegations(events: &[Event]) -> Vec<Delegation> {
+/// Parses delegations from explicit `to` fields and unaddressed line-start `@mentions`,
+/// resolving mention handles through `aliases` (display_name / handle -> seat QuarkId).
+pub fn parse_delegations(events: &[Event], aliases: &HashMap<String, QuarkId>) -> Vec<Delegation> {
     let mut delegations = Vec::new();
 
     for (i, e) in events.iter().enumerate() {
-        let targets = extract_delegation_targets(e);
+        let targets = extract_delegation_targets(e, aliases);
         if targets.is_empty() {
             continue;
         }
@@ -69,14 +72,20 @@ pub fn parse_delegations(events: &[Event]) -> Vec<Delegation> {
 /// Extract targeted QuarkIds from an event.
 /// If `e.to` is Some(q) and `e.from != Actor::Quark(q)`, returns `vec![q]`.
 /// If `e.to` is None and `e.kind` is Message/Assign, scans body for line-start `@mentions`.
-fn extract_delegation_targets(e: &Event) -> Vec<QuarkId> {
+fn extract_delegation_targets(e: &Event, aliases: &HashMap<String, QuarkId>) -> Vec<QuarkId> {
     if !matches!(e.kind, Kind::Message { .. } | Kind::Assign { .. }) {
         return vec![];
     }
 
     if let Some(ref to_quark) = e.to {
-        if e.from != Actor::Quark(to_quark.clone()) {
-            return vec![to_quark.clone()];
+        let resolved_to = aliases
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(to_quark.as_str()))
+            .map(|(_, v)| v.clone())
+            .unwrap_or_else(|| to_quark.clone());
+
+        if e.from != Actor::Quark(resolved_to.clone()) {
+            return vec![resolved_to];
         } else {
             return vec![];
         }
@@ -89,13 +98,13 @@ fn extract_delegation_targets(e: &Event) -> Vec<QuarkId> {
         _ => return vec![],
     };
 
-    parse_line_start_mentions(body, &e.from)
+    parse_line_start_mentions(body, &e.from, aliases)
 }
 
 /// Parse line-start mentions `@quarkid` in `body`, excluding `sender`.
 /// Ignores lines inside ``` code fences.
 /// Does NOT match bold `**@quark**` (starts with `*`, not `@`).
-fn parse_line_start_mentions(body: &str, sender: &Actor) -> Vec<QuarkId> {
+fn parse_line_start_mentions(body: &str, sender: &Actor, aliases: &HashMap<String, QuarkId>) -> Vec<QuarkId> {
     let mut targets: Vec<QuarkId> = Vec::new();
     let mut in_fence = false;
     let fenced = body.lines().filter(|l| l.trim_start().starts_with("```")).count() % 2 == 0;
@@ -118,7 +127,11 @@ fn parse_line_start_mentions(body: &str, sender: &Actor) -> Vec<QuarkId> {
             let handle = &rest[..end];
 
             if !handle.is_empty() && handle != "team" && handle != "orchestrator" {
-                let qid = QuarkId::new(handle);
+                let qid = aliases
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(handle))
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_else(|| QuarkId::new(handle));
                 if *sender != Actor::Quark(qid.clone()) {
                     if !targets.contains(&qid) {
                         targets.push(qid);
@@ -180,7 +193,7 @@ mod tests {
                 body: "do work".into(),
             },
         );
-        let dels = parse_delegations(&[e]);
+        let dels = parse_delegations(&[e], &HashMap::new());
         assert_eq!(dels.len(), 1);
         assert_eq!(dels[0].from, Actor::Human);
         assert_eq!(dels[0].to, QuarkId::new("acp-claude"));
@@ -192,7 +205,7 @@ mod tests {
     fn line_start_mentions_create_fanout_delegations() {
         let body = "@acp-claude Take Task 1\n@acp-claude-2 Take Task 2";
         let e = Event::new(Actor::Human, None, Kind::Message { body: body.into() });
-        let dels = parse_delegations(&[e]);
+        let dels = parse_delegations(&[e], &HashMap::new());
         assert_eq!(dels.len(), 2);
         assert_eq!(dels[0].to, QuarkId::new("acp-claude"));
         assert_eq!(dels[1].to, QuarkId::new("acp-claude-2"));
@@ -202,7 +215,7 @@ mod tests {
     fn bold_mentions_are_ignored() {
         let body = "**@acp-claude** Take Task 1";
         let e = Event::new(Actor::Human, None, Kind::Message { body: body.into() });
-        let dels = parse_delegations(&[e]);
+        let dels = parse_delegations(&[e], &HashMap::new());
         assert!(dels.is_empty(), "bold mentions must not route or create delegations");
     }
 
@@ -210,7 +223,7 @@ mod tests {
     fn fenced_code_blocks_are_ignored() {
         let body = "```\n@acp-claude inside code block\n```";
         let e = Event::new(Actor::Human, None, Kind::Message { body: body.into() });
-        let dels = parse_delegations(&[e]);
+        let dels = parse_delegations(&[e], &HashMap::new());
         assert!(dels.is_empty(), "mentions inside code blocks must be ignored");
     }
 
@@ -238,13 +251,39 @@ mod tests {
             },
         );
 
-        let dels_pending = parse_delegations(&[e1.clone()]);
+        let dels_pending = parse_delegations(&[e1.clone()], &HashMap::new());
         assert_eq!(dels_pending[0].state, DelegationState::Pending);
 
-        let dels_working = parse_delegations(&[e1.clone(), e2.clone()]);
+        let dels_working = parse_delegations(&[e1.clone(), e2.clone()], &HashMap::new());
         assert_eq!(dels_working[0].state, DelegationState::Working);
 
-        let dels_completed = parse_delegations(&[e1.clone(), e2.clone(), e3.clone()]);
+        let dels_completed = parse_delegations(&[e1.clone(), e2.clone(), e3.clone()], &HashMap::new());
         assert_eq!(dels_completed[0].state, DelegationState::Completed);
+    }
+
+    #[test]
+    fn display_name_mention_resolves_to_seat_id_and_completes() {
+        let mut aliases = HashMap::new();
+        aliases.insert("Agy".into(), QuarkId::new("cli-agy"));
+
+        let e1 = Event::new(
+            Actor::Human,
+            None,
+            Kind::Message {
+                body: "@Agy do X".into(),
+            },
+        );
+        let e2 = Event::new(
+            Actor::Quark(QuarkId::new("cli-agy")),
+            None,
+            Kind::Status {
+                state: QuarkState::Ground,
+            },
+        );
+
+        let dels = parse_delegations(&[e1, e2], &aliases);
+        assert_eq!(dels.len(), 1);
+        assert_eq!(dels[0].to, QuarkId::new("cli-agy"));
+        assert_eq!(dels[0].state, DelegationState::Completed);
     }
 }

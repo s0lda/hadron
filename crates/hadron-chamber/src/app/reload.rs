@@ -45,7 +45,20 @@ impl super::Chamber {
     pub(super) fn reproject(&mut self, events: &[Event]) {
         let resolved = resolve_team(&self.team, &self.global);
         self.view = model::project_with_team(events, &resolved, &self.global);
-        self.delegations = delegation::parse_delegations(events);
+        let alias_map: std::collections::HashMap<String, hadron_lattice::QuarkId> = self
+            .view
+            .roster
+            .iter()
+            .flat_map(|r| {
+                let qid = hadron_lattice::QuarkId::new(&r.id);
+                let mut pairs = vec![(r.id.clone(), qid.clone())];
+                if let Some(ref dn) = r.display_name {
+                    pairs.push((dn.clone(), qid));
+                }
+                pairs
+            })
+            .collect();
+        self.delegations = delegation::parse_delegations(events, &alias_map);
         self.update_active_plan();
     }
 
