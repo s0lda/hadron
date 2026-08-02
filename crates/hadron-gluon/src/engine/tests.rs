@@ -5846,6 +5846,33 @@ async fn looks_like_a_debugging_turn_catches_the_known_failure_markers() {
     assert!(!debugged("merged `quark/acp-claude/01K` → `main` (fast-forward)."));
 }
 
+#[test]
+fn quote_paths_wraps_bare_paths_and_leaves_backticked_and_fenced_paths_alone() {
+    use super::quote_paths;
+
+    // Already backticked path is left alone
+    assert_eq!(
+        quote_paths("already backticked `crates/x/src/y.rs`"),
+        "already backticked `crates/x/src/y.rs`",
+    );
+
+    // Path inside a fenced block is left alone
+    let fenced = "```\n/a/b/c\ncrates/x/src/y.rs\n```";
+    assert_eq!(quote_paths(fenced), fenced);
+
+    // Bare /a/b/c and bare crates/x/src/y.rs are wrapped
+    assert_eq!(
+        quote_paths("failed at /a/b/c and crates/x/src/y.rs"),
+        "failed at `/a/b/c` and `crates/x/src/y.rs`",
+    );
+
+    // Routing @mentions are left untouched
+    assert_eq!(
+        quote_paths("@orchestrator Quark `agy` turn errored: /path/to/err"),
+        "@orchestrator Quark `agy` turn errored: `/path/to/err`",
+    );
+}
+
 /// **Bug C.** The human names who they want in one message and says what they want in
 /// the next. `unaddressed_message_targets` walks newest-first and hands each seat its
 /// most-recent unserved mention, so the workers were dispatched on the *older* naming

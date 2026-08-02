@@ -106,6 +106,7 @@ impl super::Engine {
         }
 
         self.park_blocked(target).await?;
+        let quoted_why = super::quote_paths(why);
         self.append(
             Event::new(
                 Actor::Gluon,
@@ -113,7 +114,7 @@ impl super::Engine {
                 Kind::Message {
                     body: format!(
                         "@{id} {GATE_HANDBACK_MARKER} Nothing was merged and nothing was lost.\n\n\
-                         {why}\n\n\
+                         {quoted_why}\n\n\
                          You are still on your own branch in your own worktree — fix it THERE and \
                          end your turn as you normally would; the gate retries the merge on its own. \
                          Do not touch the main checkout, and do not start new work until this lands. \

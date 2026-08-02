@@ -55,17 +55,18 @@ async fn until_silent(
 
 impl super::Engine {
     fn format_error_message(&self, quark_id: &QuarkId, err: &anyhow::Error) -> String {
+        let err_text = super::quote_paths(&format!("{err:#}"));
         let orchestrator = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator);
         if let Some(orch) = orchestrator {
             if &orch.id != quark_id {
                 return format!(
-                    "@{} Quark `{}` turn errored: {err:#}",
+                    "@{} Quark `{}` turn errored: {err_text}",
                     crate::router::ORCHESTRATOR_ALIAS,
                     quark_id.as_str()
                 );
             }
         }
-        format!("Quark `{}` turn errored: {err:#}", quark_id.as_str())
+        format!("Quark `{}` turn errored: {err_text}", quark_id.as_str())
     }
 
     /// Dispatch every pending quark turn CONCURRENTLY until the field has no pending

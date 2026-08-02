@@ -33,10 +33,11 @@ impl super::Engine {
         why: &str,
         severity: hadron_lattice::Severity,
     ) -> anyhow::Result<()> {
+        let quoted_why = super::quote_paths(why);
         let msg = if self.roster.iter().any(|c| c.flavor == Flavor::Orchestrator) && !why.starts_with('@') {
-            format!("@{} {why}", crate::router::ORCHESTRATOR_ALIAS)
+            format!("@{} {quoted_why}", crate::router::ORCHESTRATOR_ALIAS)
         } else {
-            why.to_string()
+            quoted_why
         };
         self.append(Event::new(Actor::Gluon, None, Kind::Message { body: msg }).with_severity(severity))
             .await?;
