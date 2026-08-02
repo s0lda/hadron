@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.1.8",
+        date: Some("2026-08-02"),
+        added: &[
+            "Worker prompt response format template enforcing @orchestrator tag",
+        ],
+        changed: &[],
+        fixed: &[
+            "Prompt cache prefix stability and output formatting for worker quarks",
+        ],
+    },
+    Release {
         version: "0.1.7",
         date: Some("2026-08-02"),
         added: &[
