@@ -655,6 +655,9 @@ fn prompt_renders_active_skill_immediately_before_your_task() {
 
     assert!(inv_pos < skill_pos, "invariants precede active skill");
     assert!(skill_pos < task_pos, "active skill precedes task");
+
+    let between = &p[skill_pos + "# Skill for this turn: executing-plans".len()..task_pos];
+    assert!(!between.contains("\n# "), "no intervening section header between active skill and task");
 }
 
 #[test]
@@ -740,15 +743,15 @@ fn prompt_cache_prefix_strictly_identical_across_dynamic_turn_variations() {
     let p1 = build(&proj1, &QuarkId::new("agy"));
     let p2 = build(&proj2, &QuarkId::new("agy"));
 
-    let header = "# What the swarm has learned (nucleus index)";
-    let pos1 = p1.find(header).expect("index header present in p1");
-    let pos2 = p2.find(header).expect("index header present in p2");
+    let header = "# Who you are";
+    let pos1 = p1.find(header).expect("Who you are header present in p1");
+    let pos2 = p2.find(header).expect("Who you are header present in p2");
 
     assert_eq!(pos1, pos2, "Header position must match exactly");
     assert_eq!(
         &p1[..pos1],
         &p2[..pos2],
-        "Prompt cache prefix (0a-2a) MUST be byte-identical despite task, skill, diff, and window changes"
+        "Prompt cache prefix (Part A prior to '# Who you are') MUST be byte-identical despite task, skill, diff, and window changes"
     );
 }
 
