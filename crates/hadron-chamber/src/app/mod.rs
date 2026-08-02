@@ -1398,8 +1398,9 @@ mod tests {
     /// registered family resolves a bold face distinct from its regular.
     #[test]
     fn the_bundled_ui_and_mono_families_each_resolve_a_real_bold() {
-        let app = gpui_platform::application();
-        app.run(|cx: &mut App| {
+        let text_system = std::sync::Arc::new(gpui_wgpu::CosmicTextSystem::new("fallback"));
+        let mut cx = gpui::HeadlessAppContext::new(text_system);
+        cx.update(|cx| {
             cx.text_system().add_fonts(crate::fonts::embedded()).expect("register bundled fonts");
             for family in [crate::fonts::UI_FAMILY, crate::fonts::MONO_FAMILY] {
                 let regular = gpui::font(family);
@@ -1410,7 +1411,6 @@ mod tests {
                     "{family}: bold resolved to the same face as regular"
                 );
             }
-            cx.quit();
         });
     }
 }
