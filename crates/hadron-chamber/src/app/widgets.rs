@@ -905,13 +905,17 @@ pub(super) fn empty_hint(text: &'static str) -> impl IntoElement {
 /// shape. `Blocked` and `Failed` are the two the projection used to fold into `Done`,
 /// and they are the reason to look at this list at all — they get the warning and
 /// danger tags so a bad outcome cannot read as a green one.
-pub(super) fn task_state_tag(state: TaskState) -> gpui::AnyElement {
-    let (color, label) = match state {
+pub(super) fn task_state_info(state: TaskState) -> (Rgba, &'static str) {
+    match state {
         TaskState::Working => (gpui::rgb(0x60a5fa), "Working"),
         TaskState::Done => (gpui::rgb(0x34d399), "Done"),
         TaskState::Blocked => (gpui::rgb(0xf59e0b), "Blocked"),
         TaskState::Failed => (gpui::rgb(0xf87171), "Failed"),
-    };
+    }
+}
+
+pub(super) fn task_state_tag(state: TaskState) -> gpui::AnyElement {
+    let (color, label) = task_state_info(state);
     div()
         .w(px(64.0))
         .flex()
@@ -928,9 +932,8 @@ pub(super) fn task_state_tag(state: TaskState) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// One row in the Tasks tab: who it's addressed to, its title, how long it has taken
-/// and a state chip — same dense layout as [`log_row`], swapping the kind column for
-/// the state tag.
+/// One card in the Tasks tab: who it's addressed to, its title, how long it has taken,
+/// asked timestamp and a state chip — styled as a glass card matching the Delegation view.
 ///
 /// `now` is the render pass's clock, so an in-flight row counts UP while you watch it.
 /// That column is the whole point of the tab: a task with no elapsed time next to it
@@ -945,7 +948,7 @@ pub(super) fn task_row(
     t: &SwarmTask,
     now: chrono::DateTime<chrono::Utc>,
     to: &ResolvedIdentity,
-    from_name: &str,
+    from: &ResolvedIdentity,
 ) -> impl IntoElement {
     let time = t
         .asked_at
@@ -953,64 +956,77 @@ pub(super) fn task_row(
         .format("%H:%M:%S")
         .to_string();
     let elapsed = crate::app::render::chat::format_duration(t.elapsed_secs(now));
-    h_flex()
+    let from_str = if from.name.starts_with('@') {
+        from.name.clone()
+    } else {
+        format!("@{}", from.name)
+    };
+    let to_str = if to.name.starts_with('@') {
+        to.name.clone()
+    } else {
+        format!("@{}", to.name)
+    };
+
+    v_flex()
         .w_full()
-        .items_center()
-        .gap_3()
-        .px_3()
-        .py_1p5()
-        .rounded_lg()
-        .hover(|s| s.bg(theme::glass_highlight()))
+        .p_2()
+        .rounded_md()
+        .bg(theme::glass_card())
+        .border_1()
+        .border_color(theme::glass_highlight())
+        .gap_1()
         .child(
-            div()
-                .flex_none()
-                .w(px(60.0))
-                .text_xs()
-                .font_family("Cascadia Code")
-                .text_color(theme::text_muted())
-                .child(time),
+            h_flex()
+                .w_full()
+                .justify_between()
+                .items_center()
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .text_xs()
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(from.color)
+                                .child(from_str),
+                        )
+                        .child(div().text_color(theme::text_muted()).child("➜"))
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(to.color)
+                                .child(to_str),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_family("Cascadia Code")
+                                .text_color(theme::text_muted())
+                                .child(time),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_family("Cascadia Code")
+                                .text_color(theme::text_muted())
+                                .child(elapsed),
+                        )
+                        .child(task_state_tag(t.state)),
+                ),
         )
         .child(
             div()
-                .flex_none()
-                .w(px(96.0))
-                .text_xs()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(to.color)
-                .truncate()
-                .child(to.name.clone()),
-        )
-        // Who asked, quieter than who is on it: the answer matters (a task the human
-        // asked for reads differently from one a quark handed out) but never first.
-        .child(
-            div()
-                .flex_none()
-                .w(px(80.0))
-                .text_xs()
-                .text_color(theme::text_muted())
-                .truncate()
-                .child(format!("← {from_name}")),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
                 .text_xs()
                 .text_color(theme::text_secondary())
                 .truncate()
                 .child(t.title.clone()),
         )
-        .child(
-            div()
-                .flex_none()
-                .w(px(100.0))
-                .whitespace_nowrap()
-                .text_xs()
-                .font_family("Cascadia Code")
-                .text_color(theme::text_muted())
-                .child(elapsed),
-        )
-        .child(div().flex_none().child(task_state_tag(t.state)))
 }
 
 /// A single row in the compact activity Log: time · actor · kind · body, tabular and dense
@@ -1420,5 +1436,33 @@ mod draft_tests {
         let roster = vec![row("opus")];
         let blank = |_: &str| Some(Activity::speaking(QuarkId::new("opus"), "  \n\n "));
         assert!(streaming_drafts(&roster, blank).is_empty());
+    }
+
+    #[test]
+    fn four_task_states_have_distinct_labels_and_colors() {
+        use std::collections::HashSet;
+        use crate::model::TaskState;
+
+        let states = [
+            TaskState::Working,
+            TaskState::Done,
+            TaskState::Blocked,
+            TaskState::Failed,
+        ];
+        let labels: HashSet<&str> = states.iter().map(|s| task_state_info(*s).1).collect();
+        assert_eq!(labels.len(), 4, "Every TaskState must have a distinct label");
+
+        let colors: HashSet<(u32, u32, u32)> = states
+            .iter()
+            .map(|s| {
+                let c = task_state_info(*s).0;
+                (
+                    (c.r * 255.0).round() as u32,
+                    (c.g * 255.0).round() as u32,
+                    (c.b * 255.0).round() as u32,
+                )
+            })
+            .collect();
+        assert_eq!(colors.len(), 4, "Every TaskState must have a distinct color");
     }
 }

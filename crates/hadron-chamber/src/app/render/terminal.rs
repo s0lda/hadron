@@ -900,12 +900,12 @@ impl super::Chamber {
                     for t in &live_gate_rows {
                         let to = self.resolve_identity(&t.to);
                         let from = self.resolve_identity(&t.from);
-                        col = col.child(task_row(t, render_now, &to, &from.name));
+                        col = col.child(task_row(t, render_now, &to, &from));
                     }
                     for t in tasks_to_render {
                         let to = self.resolve_identity(&t.to);
                         let from = self.resolve_identity(&t.from);
-                        col = col.child(task_row(t, render_now, &to, &from.name));
+                        col = col.child(task_row(t, render_now, &to, &from));
                     }
                     col.into_any_element()
                 };
