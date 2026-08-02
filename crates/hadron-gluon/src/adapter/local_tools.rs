@@ -125,16 +125,20 @@ pub fn execute(root: &Root, name: &str, args: &Value) -> String {
     let s = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let opt_s = |k: &str| args.get(k).and_then(Value::as_str);
     let opt_usize = |k: &str| args.get(k).and_then(Value::as_u64).map(|n| n as usize);
+    // Every path argument, and only path arguments — `pattern`, `new_text` and
+    // `contents` are content and must never be touched.
+    let p = |k: &str| relativise(root, &s(k));
+    let opt_p = |k: &str| opt_s(k).map(|v| relativise(root, v));
 
     match name {
-        "read_file" => match hadron_forge::inspect::read_file(root, &s("path"), opt_usize("offset"), opt_usize("limit")) {
+        "read_file" => match hadron_forge::inspect::read_file(root, &p("path"), opt_usize("offset"), opt_usize("limit")) {
             Ok(slice) => format!(
                 "lines {}-{} of {}:\n{}",
                 slice.start_line, slice.end_line, slice.total_lines, slice.text
             ),
             Err(e) => format!("ERROR reading {}: {e}", s("path")),
         },
-        "list_dir" => match hadron_forge::inspect::list_dir(root, &s("path")) {
+        "list_dir" => match hadron_forge::inspect::list_dir(root, &p("path")) {
             Ok(entries) => entries
                 .iter()
                 .map(|e| if e.is_dir { format!("{}/", e.name) } else { e.name.clone() })
@@ -142,27 +146,27 @@ pub fn execute(root: &Root, name: &str, args: &Value) -> String {
                 .join("\n"),
             Err(e) => format!("ERROR listing {}: {e}", s("path")),
         },
-        "grep" => match hadron_forge::inspect::grep(root, &s("pattern"), opt_s("path")) {
+        "grep" => match hadron_forge::inspect::grep(root, &s("pattern"), opt_p("path").as_deref()) {
             Ok(hits) if hits.is_empty() => "(no matches)".to_string(),
             Ok(hits) => hits.iter().map(|h| format!("{}:{}: {}", h.path, h.line, h.text)).collect::<Vec<_>>().join("\n"),
             Err(e) => format!("ERROR grepping: {e}"),
         },
-        "read_blocks" => match hadron_forge::file::read_blocks(root, &s("path")) {
+        "read_blocks" => match hadron_forge::file::read_blocks(root, &p("path")) {
             Ok(report) if report.blocks.is_empty() => {
                 "(no hashable top-level blocks in this file — use create_file to replace it whole)".to_string()
             }
             Ok(report) => report.blocks,
             Err(e) => format!("ERROR reading blocks of {}: {e}", s("path")),
         },
-        "edit_block" => match hadron_forge::file::apply_block_edit(root, &s("path"), &s("target_hash"), &s("new_text")) {
+        "edit_block" => match hadron_forge::file::apply_block_edit(root, &p("path"), &s("target_hash"), &s("new_text")) {
             Ok(report) => format!("edited {}. New blocks:\n{}", s("path"), report.blocks),
             Err(e) => format!("ERROR editing {}: {e}", s("path")),
         },
-        "create_file" => match hadron_forge::file::create_file(root, &s("path"), &s("contents")) {
+        "create_file" => match hadron_forge::file::create_file(root, &p("path"), &s("contents")) {
             Ok(_) => format!("created {}", s("path")),
             Err(e) => format!("ERROR creating {}: {e}", s("path")),
         },
-        "git_diff" => match hadron_forge::git::git_diff(root, opt_s("path")) {
+        "git_diff" => match hadron_forge::git::git_diff(root, opt_p("path").as_deref()) {
             Ok(d) if d.trim().is_empty() => "(no uncommitted changes)".to_string(),
             Ok(d) => d,
             Err(e) => format!("ERROR: {e}"),
@@ -170,6 +174,37 @@ pub fn execute(root: &Root, name: &str, args: &Value) -> String {
         "exec" => execute_exec(root, args),
         other => format!("unknown tool `{other}`"),
     }
+}
+
+/// Rewrite an absolute path that points INSIDE the worktree as the relative
+/// one the forge expects; leave everything else exactly as the model sent it.
+///
+/// The prompt tells a quark "You are working in `<absolute worktree path>`", so
+/// a model quotes that path straight back into its tool arguments — and
+/// `hadron_forge::file::resolve_jailed_path` refuses every absolute path when
+/// no external root is granted. The result is not one bad call but a whole
+/// wasted turn: the model retries, gets the same refusal, and burns
+/// `MAX_TOOL_ROUNDS` without an answer.
+///
+/// This is a spelling fix, not a hole in the jail: a path that does not already
+/// live under the root is returned untouched and still reaches
+/// `resolve_jailed_path` absolute, where it is refused exactly as before.
+fn relativise(root: &Root, path: &str) -> String {
+    let path = std::path::Path::new(path);
+    if !path.is_absolute() {
+        return path.display().to_string();
+    }
+    // Both spellings: the canonical root (what the forge compares against) and
+    // the root as configured, which may still carry a symlink the model copied
+    // out of its own prompt.
+    let canonical = root.path().canonicalize();
+    let bases = [canonical.as_deref().unwrap_or_else(|_| root.path()), root.path()];
+    for base in bases {
+        if let Ok(rest) = path.strip_prefix(base) {
+            return if rest.as_os_str().is_empty() { ".".to_string() } else { rest.display().to_string() };
+        }
+    }
+    path.display().to_string()
 }
 
 fn execute_exec(root: &Root, args: &Value) -> String {
@@ -285,5 +320,36 @@ mod tests {
         let root = Root::new(dir.path());
         let out = execute(&root, "exec", &json!({ "program": "git", "args": ["status"] }));
         assert!(out.contains("exit code:"), "{out}");
+    }
+
+    /// The prompt tells the quark "You are working in `/abs/path/to/worktree`",
+    /// so a model reaches for that absolute path — and `resolve_jailed_path`
+    /// refuses EVERY absolute path when no external root is granted. Live cost
+    /// on 2026-08-02: `http-openai-compatible` burned all 24 tool rounds and
+    /// answered nothing, narrating "I'm in a git worktree at
+    /// /home/Jake/dev/hadron/.hadron/trees/http-openai-compatible" as it went.
+    #[test]
+    fn an_absolute_path_inside_the_worktree_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hello\n").unwrap();
+        let root = Root::new(dir.path());
+
+        let abs = dir.path().join("a.txt");
+        let out = execute(&root, "read_file", &json!({ "path": abs.to_str().unwrap() }));
+        assert!(out.contains("hello"), "an absolute path inside the worktree must read: {out}");
+
+        let out = execute(&root, "list_dir", &json!({ "path": dir.path().to_str().unwrap() }));
+        assert!(out.contains("a.txt"), "the worktree root itself must list: {out}");
+    }
+
+    /// The jail is unchanged: relativising only ever rewrites a path that is
+    /// already inside the root, so everything else still reaches
+    /// `resolve_jailed_path` absolute and is refused there.
+    #[test]
+    fn an_absolute_path_outside_the_worktree_is_still_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = Root::new(dir.path());
+        let out = execute(&root, "read_file", &json!({ "path": "/etc/passwd" }));
+        assert!(out.starts_with("ERROR"), "a path outside the worktree must stay refused: {out}");
     }
 }
