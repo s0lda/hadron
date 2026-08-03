@@ -84,7 +84,7 @@ For technical breakdowns of Hadron's physics mental model, architecture, and dev
 
 | Shortcut                      | Action                                                     |
 | :---------------------------- | :--------------------------------------------------------- |
-| `Ctrl+Tab` / `Ctrl+\``        | Toggle focus between Chat Input and PTY Terminal           |
+| `Ctrl+Tab` / `Ctrl+\`        | Toggle focus between Chat Input and PTY Terminal           |
 | `Alt+Left` / `Alt+Right`      | Switch Chat column tabs                                    |
 | `Alt+PageUp` / `Alt+PageDown` | Switch Right-Rail Inspector tabs                           |
 | `Alt+Up` / `Alt+Down`         | Switch Telemetry & Stats time windows                      |
