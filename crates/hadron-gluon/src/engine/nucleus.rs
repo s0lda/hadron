@@ -285,18 +285,41 @@ fn extract_slug_from_line(line: &str) -> Option<&str> {
     None
 }
 
-fn extract_description_from_note(content: &str) -> String {
+#[derive(Clone, Debug)]
+pub(crate) struct ParsedNote {
+    pub description: String,
+    pub pinned: bool,
+    pub body: String,
+}
+
+struct CachedNote {
+    mtime: Option<std::time::SystemTime>,
+    parsed: ParsedNote,
+}
+
+static NOTE_CACHE: std::sync::LazyLock<std::sync::RwLock<std::collections::HashMap<std::path::PathBuf, CachedNote>>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+
+fn parse_note_content(content: &str) -> ParsedNote {
+    let mut pinned = false;
+    let mut description = String::new();
+
     if content.starts_with("---") {
         if let Some(end_fm) = content[3..].find("---") {
             let fm = &content[3..3 + end_fm];
             for line in fm.lines() {
-                if let Some(desc) = line.strip_prefix("description:") {
-                    return desc.trim().to_string();
+                let trimmed = line.trim();
+                if let Some(val) = trimmed.strip_prefix("pinned:") {
+                    if val.trim().eq_ignore_ascii_case("true") {
+                        pinned = true;
+                    }
+                } else if let Some(desc) = trimmed.strip_prefix("description:") {
+                    description = desc.trim().to_string();
                 }
             }
         }
     }
-    // Fallback: first non-empty line outside frontmatter
+
     let body = if content.starts_with("---") {
         if let Some(end_fm) = content[3..].find("---") {
             &content[3 + end_fm + 3..]
@@ -306,11 +329,83 @@ fn extract_description_from_note(content: &str) -> String {
     } else {
         content
     };
-    body.lines()
-        .map(|l| l.trim())
-        .find(|l| !l.is_empty())
-        .unwrap_or("")
-        .to_string()
+
+    if description.is_empty() {
+        description = body
+            .lines()
+            .map(|l| l.trim())
+            .find(|l| !l.is_empty())
+            .unwrap_or("")
+            .to_string();
+    }
+
+    ParsedNote {
+        description,
+        pinned,
+        body: body.to_string(),
+    }
+}
+
+fn read_and_parse_note(path: &std::path::Path) -> ParsedNote {
+    let current_mtime = fs::metadata(path).and_then(|m| m.modified()).ok();
+
+    if let Ok(cache) = NOTE_CACHE.read() {
+        if let Some(cached) = cache.get(path) {
+            if cached.mtime == current_mtime {
+                return cached.parsed.clone();
+            }
+        }
+    }
+
+    let parsed = if let Ok(content) = fs::read_to_string(path) {
+        parse_note_content(&content)
+    } else {
+        ParsedNote {
+            description: String::new(),
+            pinned: false,
+            body: String::new(),
+        }
+    };
+
+    if let Ok(mut cache) = NOTE_CACHE.write() {
+        cache.insert(
+            path.to_path_buf(),
+            CachedNote {
+                mtime: current_mtime,
+                parsed: parsed.clone(),
+            },
+        );
+    }
+
+    parsed
+}
+
+fn expand_concept_aliases(terms: &[String]) -> Vec<(String, f64)> {
+    let mut result: Vec<(String, f64)> = terms.iter().map(|t| (t.clone(), 1.0)).collect();
+
+    for term in terms {
+        let aliases: &[&str] = match term.as_str() {
+            "worktree" | "worktrees" => &["workspace", "checkout", "isolation", "branch"],
+            "workspace" | "workspaces" => &["worktree", "checkout", "isolation"],
+            "compile" | "compiled" | "compiles" | "compilation" => &["build", "cargo", "check", "caller"],
+            "build" | "builds" => &["compile", "cargo", "check"],
+            "daemon" | "gluon" => &["process", "lock", "ipc"],
+            "gui" | "chamber" => &["gpui", "render", "view", "ui"],
+            "render" | "rendering" => &["gui", "view", "ui", "frame"],
+            "ipc" | "acp" => &["protocol", "ndjson", "wire"],
+            "test" | "tests" => &["gate", "spec", "assertion"],
+            "gate" | "gates" => &["test", "rebase", "merge"],
+            "memory" | "nucleus" => &["lesson", "note", "index", "post-mortem"],
+            "lesson" | "lessons" => &["nucleus", "memory", "note"],
+            _ => &[],
+        };
+        for alias in aliases {
+            if !result.iter().any(|(t, _)| t == alias) {
+                result.push((alias.to_string(), 0.5));
+            }
+        }
+    }
+    result
 }
 
 trait LowercaseWords {
@@ -341,6 +436,7 @@ pub(crate) fn rank_lessons(
 ) -> String {
     let max_output_bytes = budget_bytes / 8;
     let query_terms = query.lowercase_words();
+    let expanded_query = expand_concept_aliases(&query_terms);
 
     struct Section {
         heading: String,
@@ -380,7 +476,9 @@ pub(crate) fn rank_lessons(
             }
             if let Some(sec) = current_section.as_mut() {
                 if let Some(slug) = extract_slug_from_line(line) {
-                    let is_pinned = sec.is_pinned_section;
+                    let note_path = notes_dir.join(format!("{}.md", slug));
+                    let note_data = read_and_parse_note(&note_path);
+                    let is_pinned = sec.is_pinned_section || note_data.pinned;
                     sec.lines.push(LessonLine {
                         slug: slug.to_string(),
                         line_text: line.to_string(),
@@ -402,29 +500,24 @@ pub(crate) fn rank_lessons(
                 continue;
             }
             let note_path = notes_dir.join(format!("{}.md", lesson.slug));
-            let (desc, body) = if let Ok(content) = std::fs::read_to_string(&note_path) {
-                let desc = extract_description_from_note(&content);
-                (desc, content)
-            } else {
-                (String::new(), String::new())
-            };
+            let note_data = read_and_parse_note(&note_path);
 
             let slug_terms = lesson.slug.lowercase_words();
             let hook_terms = lesson.line_text.lowercase_words();
-            let desc_terms = desc.lowercase_words();
-            let body_terms = body.lowercase_words();
+            let desc_terms = note_data.description.lowercase_words();
+            let body_terms = note_data.body.lowercase_words();
 
             let mut score = 0.0;
-            for q in &query_terms {
+            for (q, weight) in &expanded_query {
                 let slug_matches = slug_terms.iter().filter(|t| t == &q).count() as f64;
                 let hook_matches = hook_terms.iter().filter(|t| t == &q).count() as f64;
                 let desc_matches = desc_terms.iter().filter(|t| t == &q).count() as f64;
                 let body_matches = body_terms.iter().filter(|t| t == &q).count() as f64;
 
-                score += slug_matches * 4.0
+                score += (slug_matches * 4.0
                     + desc_matches * 3.0
                     + hook_matches * 2.0
-                    + body_matches * 1.0;
+                    + body_matches * 1.0) * weight;
             }
             lesson.score = score;
         }
@@ -616,6 +709,84 @@ mod tests {
         let pos_wrong = result.find("## How we get things wrong").unwrap();
         let pos_tree = result.find("## The shared tree").unwrap();
         assert!(pos_wrong < pos_tree, "Index order must be preserved");
+    }
+
+    #[test]
+    fn rank_lessons_honors_pinned_frontmatter_flag() {
+        let temp = TempDir::new().unwrap();
+        let notes_dir = temp.path().join("notes");
+        fs::create_dir_all(&notes_dir).unwrap();
+
+        fs::write(
+            notes_dir.join("pinned-by-fm.md"),
+            "---\ndescription: Pinned via frontmatter\npinned: true\n---\nAlways pinned.",
+        ).unwrap();
+
+        let index_text = r#"# Memory index
+
+## Architectural Rules
+
+- [pinned-by-fm](notes/pinned-by-fm.md) — Pinned via frontmatter
+"#;
+
+        let result = rank_lessons(index_text, &notes_dir, "xyzabc_unrelated_query", 100_000);
+        assert!(result.contains("pinned-by-fm"), "Note with pinned: true frontmatter must be included even for unrelated queries");
+    }
+
+    #[test]
+    fn rank_lessons_semantic_concept_expansion() {
+        let temp = TempDir::new().unwrap();
+        let notes_dir = temp.path().join("notes");
+        fs::create_dir_all(&notes_dir).unwrap();
+
+        fs::write(
+            notes_dir.join("workspace-setup.md"),
+            "---\ndescription: Isolated branch directory management\n---\nRules for repo checkouts.",
+        ).unwrap();
+
+        let index_text = r#"# Memory index
+
+## Workspace
+
+- [workspace-setup](notes/workspace-setup.md) — Isolated branch directory management
+"#;
+
+        // Query contains "worktree", note contains "isolated branch directory" and "repo checkouts". Zero exact word overlap!
+        let result = rank_lessons(index_text, &notes_dir, "worktree", 100_000);
+        assert!(result.contains("workspace-setup"), "Concept expansion for 'worktree' must match 'workspace' and 'isolated branch directory'");
+    }
+
+    #[test]
+    fn rank_lessons_uses_mtime_cached_notes() {
+        let temp = TempDir::new().unwrap();
+        let notes_dir = temp.path().join("notes");
+        fs::create_dir_all(&notes_dir).unwrap();
+
+        let note_file = notes_dir.join("cached-note.md");
+        fs::write(
+            &note_file,
+            "---\ndescription: Initial description\n---\nInitial content.",
+        ).unwrap();
+
+        let index_text = r#"# Memory index
+
+## Cache Test
+
+- [cached-note](notes/cached-note.md) — Initial description
+"#;
+
+        let res1 = rank_lessons(index_text, &notes_dir, "Initial", 100_000);
+        assert!(res1.contains("cached-note"));
+
+        // Overwrite file with new content
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(
+            &note_file,
+            "---\ndescription: Updated description\n---\nUpdated content.",
+        ).unwrap();
+
+        let res2 = rank_lessons(index_text, &notes_dir, "Updated", 100_000);
+        assert!(res2.contains("cached-note"), "Cache must invalidate when mtime changes and find updated term");
     }
 
     #[test]
