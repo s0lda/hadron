@@ -1032,12 +1032,16 @@ pub(super) fn task_row(
 /// A single row in the compact activity Log: time · actor · kind · body, tabular and dense
 /// so the Log reads like a console rather than a second chat. Body truncates to one line —
 /// the Chat tab is where a message is read in full.
-pub(super) fn log_row(m: &MessageRow, expanded: bool, author_color: Hsla) -> impl IntoElement {
-    let time = m
-        .ts
-        .with_timezone(&chrono::Local)
-        .format("%H:%M:%S")
-        .to_string();
+pub(super) fn log_row<Tz: chrono::TimeZone>(
+    m: &MessageRow,
+    expanded: bool,
+    author_color: Hsla,
+    tz: Tz,
+) -> impl IntoElement
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let time = m.ts.with_timezone(&tz).format("%H:%M:%S").to_string();
     h_flex()
         .w_full()
         .items_start()

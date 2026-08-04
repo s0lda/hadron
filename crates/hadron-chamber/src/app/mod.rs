@@ -885,17 +885,16 @@ impl Chamber {
                 Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
             }
         };
+        let roster_name = if stored.is_none() || stored.and_then(|i| i.display_name.as_deref()).is_none() {
+            self.view.roster.iter().find(|r| r.id == actor).and_then(|r| r.display_name.clone())
+        } else {
+            None
+        };
         let name = stored
             .and_then(|i| i.display_name.clone())
-            .or_else(|| {
-                self.view
-                    .roster
-                    .iter()
-                    .find(|r| r.id == actor)
-                    .and_then(|r| r.display_name.clone())
-            })
+            .or_else(|| roster_name)
             .filter(|n| !n.trim().is_empty())
-            .unwrap_or_else(|| default_name);
+            .unwrap_or(default_name);
         let color: Hsla = stored
             .and_then(|i| i.color.as_deref())
             .and_then(parse_hex)

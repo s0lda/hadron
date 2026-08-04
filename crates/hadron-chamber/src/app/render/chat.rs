@@ -383,6 +383,8 @@ impl super::Chamber {
         }
 
         let weak_view = cx.entity().downgrade();
+        let local_offset = *chrono::Local::now().offset();
+        let today = chrono::Local::now().date_naive();
 
         // Wrap the virtual list with padding
         v_flex()
@@ -395,10 +397,11 @@ impl super::Chamber {
                             if let Some(&real_ix) = this.chat_message_ixs.get(ix) {
                                 if let Some(m) = this.view.messages.get(real_ix) {
                                     let mut add_divider = false;
+                                    let m_date = m.ts.with_timezone(&local_offset).date_naive();
                                     if ix > 0 {
                                         if let Some(&prev_real_ix) = this.chat_message_ixs.get(ix - 1) {
                                             if let Some(prev_m) = this.view.messages.get(prev_real_ix) {
-                                                if prev_m.ts.date_naive() != m.ts.date_naive() {
+                                                if prev_m.ts.with_timezone(&local_offset).date_naive() != m_date {
                                                     add_divider = true;
                                                 }
                                             }
@@ -410,8 +413,8 @@ impl super::Chamber {
                                     let mut row = div().pb(px(16.0));
                                     if add_divider {
                                         let label = crate::model::date_divider_label(
-                                            m.ts.date_naive(),
-                                            chrono::Local::now().date_naive(),
+                                            m_date,
+                                            today,
                                         );
                                         row = row.child(
                                             div().flex().items_center().justify_center().pt_2().pb_6().child(
@@ -426,6 +429,7 @@ impl super::Chamber {
                                             m,
                                             real_ix,
                                             &this.view.roster,
+                                            local_offset,
                                         ))
                                         .into_any_element();
                                 }
@@ -450,6 +454,8 @@ impl super::Chamber {
         }
 
         let weak_view = cx.entity().downgrade();
+        let local_offset = *chrono::Local::now().offset();
+        let today = chrono::Local::now().date_naive();
 
         v_flex()
             .size_full()
@@ -460,9 +466,10 @@ impl super::Chamber {
                         view.update(cx, |this, cx| {
                             if let Some(m) = this.view.messages.get(ix) {
                                 let mut add_divider = false;
+                                let m_date = m.ts.with_timezone(&local_offset).date_naive();
                                 if ix > 0 {
                                     if let Some(prev_m) = this.view.messages.get(ix - 1) {
-                                        if prev_m.ts.date_naive() != m.ts.date_naive() {
+                                        if prev_m.ts.with_timezone(&local_offset).date_naive() != m_date {
                                             add_divider = true;
                                         }
                                     }
@@ -473,8 +480,8 @@ impl super::Chamber {
                                 let mut row = v_flex().w_full();
                                 if add_divider {
                                     let label = crate::model::date_divider_label(
-                                        m.ts.date_naive(),
-                                        chrono::Local::now().date_naive(),
+                                        m_date,
+                                        today,
                                     );
                                     row = row.child(
                                         div()
@@ -494,6 +501,7 @@ impl super::Chamber {
                                 }
 
                                 let expanded = this.log_expanded.contains(&ix);
+                                let color = this.color_for(&m.from);
                                 return row
                                     .child(
                                         div()
@@ -505,7 +513,7 @@ impl super::Chamber {
                                                 }
                                                 cx.notify();
                                             }))
-                                            .child(log_row(m, expanded, this.color_for(&m.from))),
+                                            .child(log_row(m, expanded, color, local_offset)),
                                     )
                                     .into_any_element();
                             }
@@ -595,13 +603,17 @@ impl super::Chamber {
             .into_any_element()
     }
 
-    pub(super) fn chat_message_row(
+    pub(super) fn chat_message_row<Tz: chrono::TimeZone>(
         &self,
         id: &ResolvedIdentity,
         m: &MessageRow,
         ix: usize,
         roster: &[crate::model::RosterRow],
-    ) -> impl IntoElement {
+        tz: Tz,
+    ) -> impl IntoElement
+    where
+        Tz::Offset: std::fmt::Display,
+    {
         let summary_chip = turn_summary_parts(&self.view.messages, m).and_then(|(duration_secs, num_tools)| {
             if duration_secs > 0 || num_tools > 0 {
                 let mut parts = Vec::new();
@@ -643,7 +655,7 @@ impl super::Chamber {
                                 div()
                                     .text_xs()
                                     .text_color(theme::text_muted())
-                                    .child(crate::model::format_clock(m.ts.with_timezone(&chrono::Local))),
+                                    .child(crate::model::format_clock(m.ts.with_timezone(&tz))),
                             )
                             .when_some(m.to.clone(), |this, to| {
                                 this.child(
@@ -963,23 +975,53 @@ pub(super) fn turn_summary_parts(
     m: &MessageRow,
 ) -> Option<(i64, usize)> {
     let turn_id = m.turn.as_ref()?;
-    let turn_events: Vec<&MessageRow> = messages
-        .iter()
-        .filter(|x| x.turn.as_ref() == Some(turn_id))
-        .collect();
+    let m_pos = messages.iter().rposition(|x| std::ptr::eq(x, m))?;
+
+    let mut turn_events = Vec::new();
+    let mut min_ts = m.ts;
+    let mut excited_ts = None;
+
+    for x in messages[..=m_pos].iter().rev() {
+        if x.turn.as_ref() == Some(turn_id) {
+            turn_events.push(x);
+            if x.ts < min_ts {
+                min_ts = x.ts;
+            }
+        }
+        if excited_ts.is_none()
+            && x.from == m.from
+            && x.kind_label == "status"
+            && x.body == "excited"
+            && x.ts <= m.ts
+        {
+            excited_ts = Some(x.ts);
+        }
+        if excited_ts.is_some() && x.turn.as_ref() != Some(turn_id) && x.ts < min_ts {
+            break;
+        }
+    }
+
+    if m_pos + 1 < messages.len() {
+        for x in &messages[m_pos + 1..] {
+            if x.turn.as_ref() == Some(turn_id) {
+                turn_events.push(x);
+            } else if x.ts > m.ts + chrono::Duration::minutes(5) {
+                break;
+            }
+        }
+    }
+
     if turn_events.is_empty() {
         return None;
     }
-    let start_time = messages
-        .iter()
-        .rev()
-        .find(|x| x.ts <= m.ts && x.from == m.from && x.kind_label == "status" && x.body == "excited")
-        .map(|x| x.ts)
-        .or_else(|| turn_events.iter().map(|x| x.ts).min())?;
+
+    let start_time = excited_ts.or_else(|| turn_events.iter().map(|x| x.ts).min())?;
     let duration_secs = m.ts.signed_duration_since(start_time).num_seconds().max(0);
-    let num_commands = turn_events.iter().filter(|x| x.kind_label == "command").count();
-    let num_edits = turn_events.iter().filter(|x| x.kind_label == "edit").count();
-    let num_tools = num_commands + num_edits;
+    let num_tools = turn_events
+        .iter()
+        .filter(|x| x.kind_label == "command" || x.kind_label == "edit")
+        .count();
+
     Some((duration_secs, num_tools))
 }
 
