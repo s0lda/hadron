@@ -1033,6 +1033,7 @@ pub(super) fn task_row(
 /// so the Log reads like a console rather than a second chat. Body truncates to one line —
 /// the Chat tab is where a message is read in full.
 pub(super) fn log_row<Tz: chrono::TimeZone>(
+    ix: usize,
     m: &MessageRow,
     expanded: bool,
     author_color: Hsla,
@@ -1085,7 +1086,10 @@ where
                 .text_color(theme::text_secondary())
                 // Truncated to one line by default; an expanded row (click) wraps in full.
                 .when(!expanded, |d| d.truncate())
-                .child(m.body.clone()),
+                .child(
+                    gpui_component::text::TextView::markdown(("log-body", ix), m.body.clone())
+                        .selectable(true),
+                ),
         )
 }
 

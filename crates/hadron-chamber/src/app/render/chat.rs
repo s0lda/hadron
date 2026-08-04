@@ -393,49 +393,48 @@ impl super::Chamber {
             .child(
                 gpui::list(self.chat_list_state.clone(), move |ix, _window, cx| {
                     if let Some(view) = weak_view.upgrade() {
-                        view.update(cx, |this, _cx| {
-                            if let Some(&real_ix) = this.chat_message_ixs.get(ix) {
-                                if let Some(m) = this.view.messages.get(real_ix) {
-                                    let mut add_divider = false;
-                                    let m_date = m.ts.with_timezone(&local_offset).date_naive();
-                                    if ix > 0 {
-                                        if let Some(&prev_real_ix) = this.chat_message_ixs.get(ix - 1) {
-                                            if let Some(prev_m) = this.view.messages.get(prev_real_ix) {
-                                                if prev_m.ts.with_timezone(&local_offset).date_naive() != m_date {
-                                                    add_divider = true;
-                                                }
+                        let this = view.read(cx);
+                        if let Some(&real_ix) = this.chat_message_ixs.get(ix) {
+                            if let Some(m) = this.view.messages.get(real_ix) {
+                                let mut add_divider = false;
+                                let m_date = m.ts.with_timezone(&local_offset).date_naive();
+                                if ix > 0 {
+                                    if let Some(&prev_real_ix) = this.chat_message_ixs.get(ix - 1) {
+                                        if let Some(prev_m) = this.view.messages.get(prev_real_ix) {
+                                            if prev_m.ts.with_timezone(&local_offset).date_naive() != m_date {
+                                                add_divider = true;
                                             }
                                         }
-                                    } else {
-                                        add_divider = true;
                                     }
-                                    
-                                    let mut row = div().pb(px(16.0));
-                                    if add_divider {
-                                        let label = crate::model::date_divider_label(
-                                            m_date,
-                                            today,
-                                        );
-                                        row = row.child(
-                                            div().flex().items_center().justify_center().pt_2().pb_6().child(
-                                                div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::text_muted()).child(label)
-                                            )
-                                        );
-                                    }
-                                    
-                                    return row
-                                        .child(this.chat_message_row(
-                                            &this.resolve_identity(&m.from),
-                                            m,
-                                            real_ix,
-                                            &this.view.roster,
-                                            local_offset,
-                                        ))
-                                        .into_any_element();
+                                } else {
+                                    add_divider = true;
                                 }
+                                
+                                let mut row = div().pb(px(16.0));
+                                if add_divider {
+                                    let label = crate::model::date_divider_label(
+                                        m_date,
+                                        today,
+                                    );
+                                    row = row.child(
+                                        div().flex().items_center().justify_center().pt_2().pb_6().child(
+                                            div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(theme::text_muted()).child(label)
+                                        )
+                                    );
+                                }
+                                
+                                return row
+                                    .child(this.chat_message_row(
+                                        &this.resolve_identity(&m.from),
+                                        m,
+                                        real_ix,
+                                        &this.view.roster,
+                                        local_offset,
+                                    ))
+                                    .into_any_element();
                             }
-                            div().into_any_element()
-                        })
+                        }
+                        div().into_any_element()
                     } else {
                         div().into_any_element()
                     }
@@ -463,62 +462,64 @@ impl super::Chamber {
             .child(
                 gpui::list(self.log_list_state.clone(), move |ix, _window, cx| {
                     if let Some(view) = weak_view.upgrade() {
-                        view.update(cx, |this, cx| {
-                            if let Some(m) = this.view.messages.get(ix) {
-                                let mut add_divider = false;
-                                let m_date = m.ts.with_timezone(&local_offset).date_naive();
-                                if ix > 0 {
-                                    if let Some(prev_m) = this.view.messages.get(ix - 1) {
-                                        if prev_m.ts.with_timezone(&local_offset).date_naive() != m_date {
-                                            add_divider = true;
-                                        }
+                        let this = view.read(cx);
+                        if let Some(m) = this.view.messages.get(ix) {
+                            let mut add_divider = false;
+                            let m_date = m.ts.with_timezone(&local_offset).date_naive();
+                            if ix > 0 {
+                                if let Some(prev_m) = this.view.messages.get(ix - 1) {
+                                    if prev_m.ts.with_timezone(&local_offset).date_naive() != m_date {
+                                        add_divider = true;
                                     }
-                                } else {
-                                    add_divider = true;
                                 }
+                            } else {
+                                add_divider = true;
+                            }
 
-                                let mut row = v_flex().w_full();
-                                if add_divider {
-                                    let label = crate::model::date_divider_label(
-                                        m_date,
-                                        today,
-                                    );
-                                    row = row.child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .pt_3()
-                                            .pb_2()
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .font_weight(gpui::FontWeight::BOLD)
-                                                    .text_color(theme::text_muted())
-                                                    .child(label),
-                                            ),
-                                    );
-                                }
+                            let mut row = v_flex().w_full();
+                            if add_divider {
+                                let label = crate::model::date_divider_label(
+                                    m_date,
+                                    today,
+                                );
+                                row = row.child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .pt_3()
+                                        .pb_2()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(theme::text_muted())
+                                                .child(label),
+                                        ),
+                                );
+                            }
 
-                                let expanded = this.log_expanded.contains(&ix);
-                                let color = this.color_for(&m.from);
-                                return row
-                                    .child(
-                                        div()
-                                            .id(SharedString::from(format!("log-row-{ix}")))
-                                            .cursor_pointer()
-                                            .on_click(cx.listener(move |this, _, _, cx| {
+                            let expanded = this.log_expanded.contains(&ix);
+                            let color = this.color_for(&m.from);
+                            let entity = view.clone();
+                            return row
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!("log-row-{ix}")))
+                                        .cursor_pointer()
+                                        .on_click(move |_, _window, cx| {
+                                            entity.update(cx, |this, cx| {
                                                 if !this.log_expanded.remove(&ix) {
                                                     this.log_expanded.insert(ix);
                                                 }
                                                 cx.notify();
-                                            }))
-                                            .child(log_row(m, expanded, color, local_offset)),
-                                    )
-                                    .into_any_element();
-                            }
-                            div().into_any_element()
-                        })
+                                            });
+                                        })
+                                        .child(log_row(ix, m, expanded, color, local_offset)),
+                                )
+                                .into_any_element();
+                        }
+                        div().into_any_element()
                     } else {
                         div().into_any_element()
                     }
@@ -614,7 +615,7 @@ impl super::Chamber {
     where
         Tz::Offset: std::fmt::Display,
     {
-        let summary_chip = turn_summary_parts(&self.view.messages, m).and_then(|(duration_secs, num_tools)| {
+        let summary_chip = turn_summary_parts(&self.view.messages, ix).and_then(|(duration_secs, num_tools)| {
             if duration_secs > 0 || num_tools > 0 {
                 let mut parts = Vec::new();
                 parts.push(format!("thought for {}", format_duration(duration_secs)));
@@ -972,10 +973,10 @@ mod severity_tests {
 /// if available, falling back to the earliest event associated with the turn ULID.
 pub(super) fn turn_summary_parts(
     messages: &[MessageRow],
-    m: &MessageRow,
+    m_pos: usize,
 ) -> Option<(i64, usize)> {
+    let m = messages.get(m_pos)?;
     let turn_id = m.turn.as_ref()?;
-    let m_pos = messages.iter().rposition(|x| std::ptr::eq(x, m))?;
 
     let mut turn_events = Vec::new();
     let mut min_ts = m.ts;
@@ -1094,8 +1095,7 @@ mod turn_summary_tests {
             },
         ];
 
-        let m = &msgs[2];
-        let (duration, tools) = turn_summary_parts(&msgs, m).expect("summary parts found");
+        let (duration, tools) = turn_summary_parts(&msgs, 2).expect("summary parts found");
         assert_eq!(duration, 15, "turn duration should be 15 seconds, not 0");
         assert_eq!(tools, 1, "should count 1 tool");
     }
