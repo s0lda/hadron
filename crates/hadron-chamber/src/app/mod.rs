@@ -1245,6 +1245,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             // so the alpha channel costs almost nothing at rest.
             window_background: WindowBackgroundAppearance::Transparent,
             window_bounds: Some(bounds),
+            app_id: Some("Hadron".into()),
             ..Default::default()
         };
 
