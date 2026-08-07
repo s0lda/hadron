@@ -204,6 +204,9 @@ impl PtyTerminal {
         for sh in &shells {
             let mut cmd = CommandBuilder::new(sh);
             cmd.cwd(&final_cwd);
+            for (k, v) in std::env::vars() {
+                cmd.env(k, v);
+            }
             if cfg!(not(windows)) {
                 cmd.env("TERM", "xterm-256color");
             }
@@ -230,7 +233,7 @@ impl PtyTerminal {
             None => return Err(last_err),
         };
 
-        let writer = pair
+        let mut writer = pair
             .master
             .take_writer()
             .map_err(|e| format!("pty writer: {e}"))?;
@@ -238,6 +241,11 @@ impl PtyTerminal {
             .master
             .try_clone_reader()
             .map_err(|e| format!("pty reader: {e}"))?;
+
+        if cfg!(windows) {
+            let _ = writer.write_all(b"\r\n");
+            let _ = writer.flush();
+        }
 
         let mut config = Config::default();
         config.scrolling_history = 5000;

@@ -339,7 +339,7 @@ pub fn editor_argv(choice: &EditorChoice, path: &Path, line: Option<u32>) -> Opt
 }
 
 /// On Windows, set the process AppUserModelID so Taskbar groups Hadron windows with its icon,
-/// and apply the embedded executable icon (resource ID 1) to all active windows of this thread.
+/// and apply the embedded executable icon (resource ID 1) to all active windows of this process.
 #[cfg(target_os = "windows")]
 pub fn init_windows_app_icon() {
     use std::ffi::OsStr;
@@ -366,6 +366,9 @@ pub fn init_windows_app_icon() {
                 lParam: isize,
             ) -> i32;
             fn GetCurrentThreadId() -> u32;
+            fn GetForegroundWindow() -> *mut std::ffi::c_void;
+            fn GetWindowThreadProcessId(hWnd: *mut std::ffi::c_void, lpdwProcessId: *mut u32) -> u32;
+            fn GetCurrentProcessId() -> u32;
             fn SendMessageW(
                 hWnd: *mut std::ffi::c_void,
                 Msg: u32,
@@ -378,19 +381,32 @@ pub fn init_windows_app_icon() {
         if !h_instance.is_null() {
             let icon = LoadIconW(h_instance, 1 as *const u16);
             if !icon.is_null() {
+                unsafe extern "system" fn apply_icon_to_hwnd(hwnd: *mut std::ffi::c_void, icon: *mut std::ffi::c_void) {
+                    const WM_SETICON: u32 = 0x0080;
+                    const ICON_SMALL: usize = 0;
+                    const ICON_BIG: usize = 1;
+                    SendMessageW(hwnd, WM_SETICON, ICON_BIG, icon as isize);
+                    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, icon as isize);
+                }
+
                 unsafe extern "system" fn enum_win_proc(
                     hwnd: *mut std::ffi::c_void,
                     lparam: isize,
                 ) -> i32 {
-                    const WM_SETICON: u32 = 0x0080;
-                    const ICON_SMALL: usize = 0;
-                    const ICON_BIG: usize = 1;
-                    let icon = lparam as isize;
-                    SendMessageW(hwnd, WM_SETICON, ICON_BIG, icon);
-                    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, icon);
+                    apply_icon_to_hwnd(hwnd, lparam as *mut std::ffi::c_void);
                     1
                 }
+
                 let _ = EnumThreadWindows(GetCurrentThreadId(), Some(enum_win_proc), icon as isize);
+
+                let fg_win = GetForegroundWindow();
+                if !fg_win.is_null() {
+                    let mut proc_id = 0u32;
+                    GetWindowThreadProcessId(fg_win, &mut proc_id);
+                    if proc_id == GetCurrentProcessId() {
+                        apply_icon_to_hwnd(fg_win, icon);
+                    }
+                }
             }
         }
     }
