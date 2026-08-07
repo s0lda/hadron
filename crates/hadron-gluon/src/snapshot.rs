@@ -58,8 +58,14 @@ fn run_bounded(
 }
 
 fn git_with_env(repo_root: &Path, args: &[&str], envs: &[(&str, &str)]) -> anyhow::Result<String> {
+    let clean_root = hadron_lattice::sys::paths::simplified(repo_root);
     let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(repo_root).args(args);
+    cmd.arg("-C").arg(clean_root);
+    let clean_args: Vec<String> = args
+        .iter()
+        .map(|a| hadron_lattice::sys::paths::strip_unc_prefix(a))
+        .collect();
+    cmd.args(&clean_args);
     cmd.env("GIT_AUTHOR_NAME", "hadron")
         .env("GIT_AUTHOR_EMAIL", "hadron@localhost")
         .env("GIT_COMMITTER_NAME", "hadron")

@@ -353,7 +353,7 @@ pub async fn run() {
         std::process::exit(2);
     }
     let max_exchanges = team.max_exchanges.unwrap_or(12);
-    let repo_root = std::fs::canonicalize(hadron_lattice::repo_root_of(&args.field_path))
+    let repo_root = hadron_lattice::sys::paths::canonicalize(hadron_lattice::repo_root_of(&args.field_path))
         .unwrap_or_else(|_| hadron_lattice::repo_root_of(&args.field_path).to_path_buf());
 
     // Self-healing: move the legacy `.hadron/memory/` lessons ledger into

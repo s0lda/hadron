@@ -148,8 +148,8 @@ pub fn ensure(repo_root: &Path, quark: &QuarkId, assignment: &str) -> anyhow::Re
         // git may still hold an admin record for a tree someone deleted behind its
         // back; prune before re-adding, or `worktree add` refuses the path.
         let _ = git(repo_root, &["worktree", "prune"]);
-        std::fs::create_dir_all(trees_dir(repo_root))?;
-        let path_s = path.to_string_lossy().to_string();
+        let path_clean = hadron_lattice::sys::paths::simplified(&path);
+        let path_s = path_clean.to_string_lossy().to_string();
         git(repo_root, &["worktree", "add", "--detach", &path_s, &base])
             .with_context(|| format!("git worktree add {path_s}"))?;
     }
