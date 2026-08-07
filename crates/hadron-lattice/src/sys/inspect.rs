@@ -37,7 +37,7 @@ pub fn is_process_alive(pid: u32, expected_name: &str) -> bool {
             }
 
             let mut exit_code: u32 = 0;
-            let active = GetExitCodeProcess(handle, &mut exit_code) != 0 && exit_code == STILL_ACTIVE;
+            let active = GetExitCodeProcess(handle, &mut exit_code) != 0 && exit_code == STILL_ACTIVE as u32;
             if !active {
                 CloseHandle(handle);
                 return false;
