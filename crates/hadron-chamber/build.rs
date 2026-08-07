@@ -26,7 +26,6 @@ fn main() {
                 let mut res = winres::WindowsResource::new();
                 let path_str = ico.to_str().unwrap_or("assets/hadron.ico").replace('\\', "/");
                 res.set_icon(&path_str);
-                res.set_icon_with_id(&path_str, "1");
                 res.set_language(0x0409); // US English (0x0409) so Task Manager reads FileDescription
                 // VERSIONINFO metadata: FileDescription controls the name shown
                 // in Task Manager's "Apps" column; ProductName appears in the
