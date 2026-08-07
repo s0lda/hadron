@@ -107,28 +107,32 @@ fn main() {
         // Check if gluon is running
         let gluon_lock_path = field_dir.join("gluon.lock");
         let mut gluon_running = false;
-        match std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(&gluon_lock_path)
-        {
-            Ok(file) => {
+        if gluon_lock_path.exists() {
+            if let Some(pid) = read_lock_pid(&gluon_lock_path) {
+                if hadron_lattice::sys::inspect::is_process_alive(pid, "hadron-gluon") {
+                    gluon_running = true;
+                    gluon_pid = Some(pid);
+                }
+            }
+            if !gluon_running {
                 #[cfg(unix)]
                 {
-                    use std::os::unix::io::AsRawFd;
-                    let fd = file.as_raw_fd();
-                    let lock_res = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
-                    if lock_res == 0 {
-                        // Lock acquired successfully, so gluon is NOT running!
-                        unsafe { libc::flock(fd, libc::LOCK_UN) };
-                    } else {
-                        // Lock failed, so gluon is running!
-                        gluon_running = true;
+                    if let Ok(file) = std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(&gluon_lock_path)
+                    {
+                        use std::os::unix::io::AsRawFd;
+                        let fd = file.as_raw_fd();
+                        let lock_res = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+                        if lock_res == 0 {
+                            unsafe { libc::flock(fd, libc::LOCK_UN) };
+                        } else {
+                            gluon_running = true;
+                        }
                     }
                 }
             }
-            Err(_) => {}
         }
 
         if gluon_running {
@@ -187,15 +191,12 @@ fn main() {
                 // The PID may have come out of `gluon.lock`, which outlives the daemon
                 // that wrote it — so check the kernel still calls that process a
                 // `hadron-gluon` before signalling it.
-                #[cfg(unix)]
-                if pid_names_a_live_gluon(std::path::Path::new(PROC_ROOT), pid) {
+                if hadron_lattice::sys::inspect::is_process_alive(pid, "hadron-gluon") {
                     term::info(
                         Source::Chamber,
                         &format!("closing hadron-gluon (PID {}) on exit...", pid),
                     );
-                    unsafe {
-                        libc::kill(pid as libc::pid_t, libc::SIGTERM);
-                    }
+                    hadron_lattice::sys::process::kill_process_group(pid);
                 } else {
                     term::warn(
                         Source::Chamber,
@@ -209,7 +210,6 @@ fn main() {
                 }
                 // Reap the child if it was ours, so it does not linger as a zombie.
                 if let Some(mut child) = spawned_gluon {
-                    #[cfg(not(unix))]
                     let _ = child.kill();
                     let _ = child.wait();
                 }

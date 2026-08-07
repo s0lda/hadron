@@ -985,7 +985,12 @@ impl Chamber {
             .map(|(_, _, w, h)| term_dims((w, h)))
             .unwrap_or((80, 24));
         let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let title = format!("bash #{}", self.terminals.len() + 1);
+        let shell = crate::pty::default_shell();
+        let stem = std::path::Path::new(&shell)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("term");
+        let title = format!("{stem} #{}", self.terminals.len() + 1);
         match crate::pty::PtyTerminal::new(&root, dims.0, dims.1) {
             Ok(mut term) => {
                 term.title = title.clone();

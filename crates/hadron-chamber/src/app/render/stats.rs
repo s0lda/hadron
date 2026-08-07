@@ -398,12 +398,16 @@ impl super::Chamber {
             .bg(theme::glass_card())
             .border_1()
             .border_color(theme::glass_highlight())
+            .overflow_x_scrollbar()
+            .max_w_full()
+            .min_w_0()
             .children(InfoTab::ALL.map(|t| {
                 let is_selected = t.index() == info_selected.index();
                 let label = t.label();
                 let ix = t.index();
                 div()
                     .id(("info-tab-pill", ix))
+                    .flex_shrink_0()
                     .px_3()
                     .py_1()
                     .rounded_full()
@@ -549,12 +553,16 @@ impl super::Chamber {
                 .bg(theme::glass_card())
                 .border_1()
                 .border_color(theme::glass_highlight())
+                .overflow_x_scrollbar()
+                .max_w_full()
+                .min_w_0()
                 .children(StatsWindow::ALL.map(|w| {
                     let is_selected = w == selected;
                     let label = w.label();
                     let target_window = w;
                     div()
                         .id(SharedString::from(format!("{id}-pill-{}", w.label())))
+                        .flex_shrink_0()
                         .px_3()
                         .py_1()
                         .rounded_full()

@@ -618,24 +618,33 @@ impl super::Chamber {
     pub(in crate::app) fn gluon_running(&self) -> bool {
         let field_dir = hadron_lattice::hadron_dir_of(&self.path);
         let lock_path = field_dir.join("gluon.lock");
+        if !lock_path.exists() {
+            return false;
+        }
+        if let Ok(content) = std::fs::read_to_string(&lock_path) {
+            if let Some(first_line) = content.lines().next() {
+                if let Ok(pid) = first_line.trim().parse::<u32>() {
+                    if hadron_lattice::sys::inspect::is_process_alive(pid, "hadron-gluon") {
+                        return true;
+                    }
+                }
+            }
+        }
         #[cfg(unix)]
         {
             use std::os::unix::io::AsRawFd;
             let Ok(file) = std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)
-                .create(true)
                 .open(&lock_path)
             else {
                 return false;
             };
             let fd = file.as_raw_fd();
-            // SAFETY: `fd` is a valid, open descriptor owned by `file` for this call.
             let acquired = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0;
             if acquired {
                 unsafe { libc::flock(fd, libc::LOCK_UN) };
             }
-            // We could take the lock ourselves → nobody holds it → gluon is NOT running.
             !acquired
         }
         #[cfg(not(unix))]

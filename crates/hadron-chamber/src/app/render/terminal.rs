@@ -14,12 +14,16 @@ impl super::Chamber {
             .bg(theme::glass_card())
             .border_1()
             .border_color(theme::glass_highlight())
+            .overflow_x_scrollbar()
+            .max_w_full()
+            .min_w_0()
             .children(RightRailTab::ALL.map(|t| {
                 let is_selected = t.index() == selected.index();
                 let label = t.label();
                 let ix = t.index();
                 div()
                     .id(("right-rail-tab-pill", ix))
+                    .flex_shrink_0()
                     .px_3()
                     .py_1()
                     .rounded_full()
@@ -92,6 +96,8 @@ impl super::Chamber {
                         h_flex()
                             .items_center()
                             .gap_1()
+                            .overflow_x_scrollbar()
+                            .min_w_0()
                             .children(self.terminals.iter().enumerate().map(|(ix, tab)| {
                                 let is_active = ix == self.active_terminal_index;
                                 let bg_color = if is_active {
@@ -107,6 +113,7 @@ impl super::Chamber {
 
                                 h_flex()
                                     .id(SharedString::from(format!("terminal-tab-{ix}")))
+                                    .flex_shrink_0()
                                     .items_center()
                                     .gap_1()
                                     .px_2()
@@ -137,6 +144,7 @@ impl super::Chamber {
                     .child(
                         div()
                             .id("add-terminal-tab")
+                            .flex_shrink_0()
                             .px_2()
                             .py_0p5()
                             .rounded_md()

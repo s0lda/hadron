@@ -124,8 +124,27 @@ pub struct PtyTerminal {
     rows: usize,
 }
 
+/// Resolve default shell cross-platform (SHELL env -> COMSPEC env -> cmd.exe on Windows / sh on Unix).
+pub fn default_shell() -> String {
+    if let Ok(sh) = std::env::var("SHELL") {
+        if !sh.trim().is_empty() {
+            return sh;
+        }
+    }
+    if cfg!(windows) {
+        if let Ok(comspec) = std::env::var("COMSPEC") {
+            if !comspec.trim().is_empty() {
+                return comspec;
+            }
+        }
+        "cmd.exe".to_string()
+    } else {
+        "sh".to_string()
+    }
+}
+
 impl PtyTerminal {
-    /// Spawn `$SHELL` on a fresh PTY sized `cols × rows`, rooted at `cwd`.
+    /// Spawn default shell on a fresh PTY sized `cols × rows`, rooted at `cwd`.
     pub fn new(cwd: &Path, cols: usize, rows: usize) -> Result<Self, String> {
         let cols = cols.max(1);
         let rows = rows.max(1);
@@ -140,10 +159,12 @@ impl PtyTerminal {
             })
             .map_err(|e| format!("openpty failed: {e}"))?;
 
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
-        let mut cmd = CommandBuilder::new(shell);
+        let shell = default_shell();
+        let mut cmd = CommandBuilder::new(&shell);
         cmd.cwd(cwd);
-        cmd.env("TERM", "xterm-256color");
+        if !cfg!(windows) {
+            cmd.env("TERM", "xterm-256color");
+        }
         let child = pair
             .slave
             .spawn_command(cmd)
@@ -188,8 +209,14 @@ impl PtyTerminal {
             })
             .map_err(|e| format!("pty reader thread: {e}"))?;
 
+        let stem = std::path::Path::new(&shell)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("term");
+        let initial_title = format!("{stem} #1");
+
         Ok(Self {
-            title: "bash #1".to_string(),
+            title: initial_title,
             term,
             writer,
             master: pair.master,
@@ -737,6 +764,12 @@ mod tests {
             cursor_run.is_some(),
             "expected at least one run in grid to be marked with has_cursor = true"
         );
+    }
+
+    #[test]
+    fn test_default_shell_resolution() {
+        let shell = default_shell();
+        assert!(!shell.trim().is_empty(), "default_shell must return a non-empty shell command");
     }
 }
 

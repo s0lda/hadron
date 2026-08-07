@@ -41,12 +41,16 @@ impl super::Chamber {
             .bg(theme::glass_card())
             .border_1()
             .border_color(theme::glass_highlight())
+            .overflow_x_scrollbar()
+            .max_w_full()
+            .min_w_0()
             .children(GitSubtab::ALL.map(|t| {
                 let is_selected = t.index() == selected.index();
                 let label = t.label();
                 let ix = t.index();
                 div()
                     .id(("git-subtab-pill", ix))
+                    .flex_shrink_0()
                     .px_3()
                     .py_1()
                     .rounded_full()
