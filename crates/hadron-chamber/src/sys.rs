@@ -345,7 +345,7 @@ pub fn init_windows_app_icon() {
     use std::os::windows::ffi::OsStrExt;
 
     let app_id: Vec<u16> = OsStr::new("Hadron.Chamber")
-        .encode_utf16()
+        .encode_wide()
         .chain(std::iter::once(0))
         .collect();
 
