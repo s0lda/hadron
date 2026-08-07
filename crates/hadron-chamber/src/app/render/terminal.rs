@@ -14,7 +14,7 @@ impl super::Chamber {
             .bg(theme::glass_card())
             .border_1()
             .border_color(theme::glass_highlight())
-            .overflow_x_scroll()
+            .overflow_x_scrollbar()
             .children(RightRailTab::ALL.map(|t| {
                 let is_selected = t.index() == selected.index();
                 let label = t.label();
@@ -94,7 +94,7 @@ impl super::Chamber {
                         h_flex()
                             .items_center()
                             .gap_1()
-                            .overflow_x_scroll()
+                            .overflow_x_scrollbar()
                             .children(self.terminals.iter().enumerate().map(|(ix, tab)| {
                                 let is_active = ix == self.active_terminal_index;
                                 let bg_color = if is_active {
