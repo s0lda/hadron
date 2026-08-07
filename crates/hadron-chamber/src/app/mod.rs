@@ -142,8 +142,8 @@ const TERM_CELL_H: f32 = 17.0;
 /// spawn the PTY and to resize it. Floored, and never below a 2×2 usable grid.
 fn term_dims((w, h): (f32, f32)) -> (usize, usize) {
     (
-        ((w / TERM_CELL_W).floor() as usize).max(2),
-        ((h / TERM_CELL_H).floor() as usize).max(2),
+        ((w / TERM_CELL_W).floor() as usize).max(80),
+        ((h / TERM_CELL_H).floor() as usize).max(24),
     )
 }
 

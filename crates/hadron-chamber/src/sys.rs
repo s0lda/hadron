@@ -356,6 +356,47 @@ pub fn init_windows_app_icon() {
         }
         let _ = SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr());
     }
+
+    std::thread::spawn(|| {
+        use std::ptr::null_mut;
+
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetCurrentProcessId() -> u32;
+            fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(usize, isize) -> i32, lParam: isize) -> i32;
+            fn GetWindowThreadProcessId(hWnd: usize, lpdwProcessId: *mut u32) -> u32;
+            fn SendMessageW(hWnd: usize, Msg: u32, wParam: usize, lParam: isize) -> isize;
+            fn LoadIconW(hInstance: usize, lpIconName: *const u16) -> usize;
+            fn GetModuleHandleW(lpModuleName: *const u16) -> usize;
+            fn IsWindowVisible(hWnd: usize) -> i32;
+        }
+
+        unsafe extern "system" fn enum_win(hwnd: usize, lparam: isize) -> i32 {
+            let target_pid = lparam as u32;
+            let mut win_pid = 0u32;
+            GetWindowThreadProcessId(hwnd, &mut win_pid);
+            if win_pid == target_pid && IsWindowVisible(hwnd) != 0 {
+                let h_instance = GetModuleHandleW(null_mut());
+                let h_icon = LoadIconW(h_instance, 1 as *const u16);
+                if h_icon != 0 {
+                    const WM_SETICON: u32 = 0x0080;
+                    const ICON_SMALL: usize = 0;
+                    const ICON_BIG: usize = 1;
+                    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_icon as isize);
+                    SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_icon as isize);
+                }
+            }
+            1
+        }
+
+        let pid = unsafe { GetCurrentProcessId() };
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            unsafe {
+                EnumWindows(enum_win, pid as isize);
+            }
+        }
+    });
 }
 
 #[cfg(not(windows))]
