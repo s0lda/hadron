@@ -226,7 +226,11 @@ impl AcpTarget {
         if !self.needs_home_root() {
             let mut res = self.clone();
             if cfg!(windows) {
-                res.program = res.program.replace("/venv/bin/python", "/venv/Scripts/python.exe").replace("\\venv\\bin\\python", "\\venv\\Scripts\\python.exe");
+                res.program = res.program
+                    .replace("/venv/bin/python3", "/venv/Scripts/python.exe")
+                    .replace("/venv/bin/python", "/venv/Scripts/python.exe")
+                    .replace("\\venv\\bin\\python3", "\\venv\\Scripts\\python.exe")
+                    .replace("\\venv\\bin\\python", "\\venv\\Scripts\\python.exe");
             }
             return Ok(res);
         }
@@ -240,7 +244,11 @@ impl AcpTarget {
         let home_str = home.to_string_lossy().to_string();
         let mut program = self.program.replace(USER_HOME_TOKEN, &home_str);
         if cfg!(windows) {
-            program = program.replace("/venv/bin/python", "/venv/Scripts/python.exe").replace("\\venv\\bin\\python", "\\venv\\Scripts\\python.exe");
+            program = program
+                .replace("/venv/bin/python3", "/venv/Scripts/python.exe")
+                .replace("/venv/bin/python", "/venv/Scripts/python.exe")
+                .replace("\\venv\\bin\\python3", "\\venv\\Scripts\\python.exe")
+                .replace("\\venv\\bin\\python", "\\venv\\Scripts\\python.exe");
         }
         Ok(AcpTarget {
             program,
@@ -360,14 +368,16 @@ impl AcpTarget {
     /// genuinely no checkout, and `anchored_by` only looks at all for a target that
     /// needs a root — in the catalogue, one row.
     fn installed_repo_root() -> Result<std::path::PathBuf, String> {
-        static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-        if let Some(root) = ROOT.get() {
-            return Ok(root.clone());
+        static ROOT: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+        let cached = ROOT.get_or_init(|| {
+            let Ok(exe) = std::env::current_exe() else { return None; };
+            let near = exe.parent().unwrap_or(&exe);
+            crate::snapshot::main_repo_root(near).ok()
+        });
+        match cached {
+            Some(root) => Ok(root.clone()),
+            None => Err("no repository root found above executable".to_string()),
         }
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let near = exe.parent().unwrap_or(&exe);
-        let root = crate::snapshot::main_repo_root(near).map_err(|e| e.to_string())?;
-        Ok(ROOT.get_or_init(|| root).clone())
     }
 
     pub fn resolved(&self) -> anyhow::Result<ResolvedAcpTarget> {
@@ -598,7 +608,9 @@ impl QuarkKind {
                 // out on a machine with no venv would leave no way to create the seat
                 // whose Settings page is the only thing that provisions one.
                 let mut program = std::path::Path::new(resolved.program()).to_path_buf();
-                if seat.vendor == "agy" && program.is_absolute() && !program.exists() {
+                let is_agy_bridge =
+                    seat.vendor == "agy" || seat.id.as_str() == "acp-agy" || seat.id.as_str() == "agy";
+                if is_agy_bridge && program.is_absolute() && !program.exists() {
                     let _ = crate::adapter::bridge::materialize_script();
                     let _ = crate::adapter::bridge::provision_venv();
                     if let Ok(py) = crate::adapter::bridge::venv_python() {

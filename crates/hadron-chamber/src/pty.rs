@@ -124,21 +124,29 @@ pub struct PtyTerminal {
     rows: usize,
 }
 
-/// Resolve default shell cross-platform (SHELL env -> COMSPEC env -> cmd.exe on Windows / sh on Unix).
+/// Resolve default shell cross-platform (COMSPEC on Windows / SHELL on Unix).
 pub fn default_shell() -> String {
-    if let Ok(sh) = std::env::var("SHELL") {
-        if !sh.trim().is_empty() {
-            return sh;
-        }
-    }
     if cfg!(windows) {
         if let Ok(comspec) = std::env::var("COMSPEC") {
-            if !comspec.trim().is_empty() {
+            if !comspec.trim().is_empty() && std::path::Path::new(&comspec).exists() {
                 return comspec;
             }
         }
+        if let Ok(sh) = std::env::var("SHELL") {
+            if !sh.trim().is_empty() && std::path::Path::new(&sh).exists() {
+                return sh;
+            }
+        }
+        if std::path::Path::new("C:\\Windows\\System32\\cmd.exe").exists() {
+            return "C:\\Windows\\System32\\cmd.exe".to_string();
+        }
         "cmd.exe".to_string()
     } else {
+        if let Ok(sh) = std::env::var("SHELL") {
+            if !sh.trim().is_empty() {
+                return sh;
+            }
+        }
         "sh".to_string()
     }
 }
