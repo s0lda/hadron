@@ -268,21 +268,21 @@ pub async fn run() {
     let field_dir = hadron_lattice::hadron_dir_of(&args.field_path);
     let _ = std::fs::create_dir_all(&field_dir);
     let lock_path = field_dir.join("gluon.lock");
-    let lock_file = match std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(&lock_path)
-    {
-        Ok(f) => f,
-        Err(e) => {
-            term::error(Source::Gluon, &format!("failed to open lock file: {}", e));
-            std::process::exit(1);
-        }
-    };
-
     #[cfg(unix)]
     {
+        let lock_file = match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&lock_path)
+        {
+            Ok(f) => f,
+            Err(e) => {
+                term::error(Source::Gluon, &format!("failed to open lock file: {}", e));
+                std::process::exit(1);
+            }
+        };
+
         use std::io::{Seek, SeekFrom, Write};
         use std::os::unix::io::AsRawFd;
         let fd = lock_file.as_raw_fd();
@@ -296,6 +296,19 @@ pub async fn run() {
         let _ = f.seek(SeekFrom::Start(0));
         let _ = writeln!(f, "{}", std::process::id());
         let _ = f.flush();
+    }
+    #[cfg(windows)]
+    {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&lock_path)
+        {
+            let _ = writeln!(f, "{}", std::process::id());
+            let _ = f.flush();
+        }
     }
 
     // Seat the team: explicit --team, else a sibling team.json next to the field
