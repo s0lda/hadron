@@ -32,7 +32,8 @@
 **Interfaces:**
 - Produces: `pub mod sys;` with `sys::process::kill_process_group`, `sys::process::set_process_group`, `sys::inspect::is_process_alive`, `sys::paths::normalize_path`, `sys::shell::default_shell`
 
-- [ ] **Step 1: Update `crates/hadron-lattice/Cargo.toml` to add `windows-sys` under target cfg**
+- [x] **Step 1: Update `crates/hadron-lattice/Cargo.toml` to add `windows-sys` under target cfg**
+
 
 Add `windows-sys` for Windows targets with required features (`Win32_System_JobObjects`, `Win32_System_Threading`, `Win32_Foundation`, `Win32_System_ProcessStatus`):
 
@@ -46,7 +47,7 @@ windows-sys = { version = "0.59", features = [
 ] }
 ```
 
-- [ ] **Step 2: Implement `sys::process` in `crates/hadron-lattice/src/sys/process.rs`**
+- [x] **Step 2: Implement `sys::process` in `crates/hadron-lattice/src/sys/process.rs`**
 
 Provide cross-platform process group creation and teardown:
 - `kill_process_group(pid: u32)`:
@@ -56,18 +57,18 @@ Provide cross-platform process group creation and teardown:
   - On Unix: calls `.process_group(0)`.
   - On Windows: configures Job Object handle association on spawn.
 
-- [ ] **Step 3: Implement `sys::inspect` in `crates/hadron-lattice/src/sys/inspect.rs`**
+- [x] **Step 3: Implement `sys::inspect` in `crates/hadron-lattice/src/sys/inspect.rs`**
 
 Provide cross-platform PID and process name verification (`is_process_alive(pid: u32, expected_name: &str) -> bool`):
 - On Unix: checks `/proc/<pid>/cmdline` or `/proc/<pid>/comm`.
 - On Windows: uses `OpenProcess` and `QueryFullProcessImageNameW` via `windows-sys`.
 
-- [ ] **Step 4: Implement `sys::paths` and `sys::shell` in `crates/hadron-lattice/src/sys/`**
+- [x] **Step 4: Implement `sys::paths` and `sys::shell` in `crates/hadron-lattice/src/sys/`**
 
 - `sys::paths`: Handles Windows drive letter, UNC path, and backslash normalization.
 - `sys::shell`: Exports `default_shell() -> (&'static str, &'static str)` (`("sh", "-c")` on Unix vs `("cmd.exe", "/C")` / `("powershell.exe", "-Command")` on Windows).
 
-- [ ] **Step 5: Export `pub mod sys;` in `crates/hadron-lattice/src/lib.rs` and verify build**
+- [x] **Step 5: Export `pub mod sys;` in `crates/hadron-lattice/src/lib.rs` and verify build**
 
 Run: `cargo check -p hadron-lattice`  
 Expected: Clean compilation.
@@ -86,15 +87,15 @@ Expected: Clean compilation.
 **Interfaces:**
 - Consumes: `hadron_lattice::sys::process`, `hadron_lattice::sys::inspect`, `hadron_lattice::sys::shell`
 
-- [ ] **Step 1: Replace direct `libc::kill` and `process_group(0)` in `hadron-gluon`**
+- [x] **Step 1: Replace direct `libc::kill` and `process_group(0)` in `hadron-gluon`**
 
 Refactor `runner.rs`, `proc.rs`, `merge.rs`, and `statusline.rs` to use `hadron_lattice::sys::process` and `hadron_lattice::sys::shell`.
 
-- [ ] **Step 2: Replace `/proc` inspections in `hadron-gluon/src/main.rs`**
+- [x] **Step 2: Replace `/proc` inspections in `hadron-gluon/src/main.rs`**
 
 Update PID verification logic (`pid_names_a_live_gluon`) in `hadron-gluon/src/main.rs` to call `hadron_lattice::sys::inspect::is_process_alive`.
 
-- [ ] **Step 3: Check compilation of `hadron-gluon`**
+- [x] **Step 3: Check compilation of `hadron-gluon`**
 
 Run: `cargo check -p hadron-gluon`  
 Expected: Clean compilation.
@@ -112,15 +113,15 @@ Expected: Clean compilation.
 **Interfaces:**
 - Consumes: `hadron_lattice::sys`
 
-- [ ] **Step 1: Refactor `hadron-forge/src/exec.rs` to use `sys::process`**
+- [x] **Step 1: Refactor `hadron-forge/src/exec.rs` to use `sys::process`**
 
 Replace internal `kill_process_group` in `hadron-forge/src/exec.rs` with re-export or call to `hadron_lattice::sys::process::kill_process_group`.
 
-- [ ] **Step 2: Refactor `/proc` references in `hadron-chamber`**
+- [x] **Step 2: Refactor `/proc` references in `hadron-chamber`**
 
 Update `main.rs`, `pty.rs`, and `actions.rs` in `hadron-chamber` to use `hadron_lattice::sys::inspect` or `cfg(target_os = "linux")` wrappers for Linux-specific PTY thread counting.
 
-- [ ] **Step 3: Run full workspace test suite**
+- [x] **Step 3: Run full workspace test suite**
 
 Run: `cargo test --workspace`  
 Expected: All tests pass cleanly.
@@ -132,12 +133,13 @@ Expected: All tests pass cleanly.
 **Files:**
 - Modify: `docs/plans/2026-08-07-windows-support-implementation-plan.md`
 
-- [ ] **Step 1: Run full workspace check and test gate**
+- [x] **Step 1: Run full workspace check and test gate**
 
 Run: `cargo check --workspace && cargo test --workspace`  
 Expected: 0 errors, 0 test failures.
 
-- [ ] **Step 2: Commit implementation plan & code changes**
+- [x] **Step 2: Commit implementation plan & code changes**
+
 
 ```bash
 git add docs/plans/2026-08-07-windows-support-implementation-plan.md crates/

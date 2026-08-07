@@ -204,8 +204,8 @@ pub async fn run_tests_within(
     // the launcher. `cargo test` is a launcher: killing it orphans the test binary,
     // which is exactly the process that was still burning four CPU-hours after the
     // daemon that started it had given up on it.
-    #[cfg(unix)]
-    cmd.process_group(0);
+    use hadron_lattice::sys::ConfigureProcessGroup;
+    cmd.as_std_mut().set_process_group();
 
     let child = cmd
         .spawn()
@@ -253,9 +253,10 @@ pub async fn run_tests_within(
 /// SIGKILL the whole process group led by `pid` — the launcher *and* everything it
 /// spawned. Best-effort: a group that has already exited is not an error.
 ///
-/// Re-exported, not reimplemented: `hadron-forge` runs jailed commands under the
+/// Re-exported, not reimplemented: `hadron_lattice::sys` runs process management under the
 /// same rule, and two copies of a kill is one copy that stops matching.
-pub(crate) use hadron_forge::exec::kill_process_group;
+pub(crate) use hadron_lattice::sys::kill_process_group;
+
 
 /// Land `wt.branch` on `base` in the parent repo.
 ///

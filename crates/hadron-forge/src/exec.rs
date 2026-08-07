@@ -160,7 +160,16 @@ pub fn kill_process_group(pid: u32) {
     unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub fn kill_process_group(pid: u32) {
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/T", "/PID", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn kill_process_group(_pid: u32) {}
 
 /// Run `cmd` under a wall-clock `deadline`, killing its process group on expiry.
@@ -178,11 +187,18 @@ pub fn run_bounded(
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x00000200);
+    }
+
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let child = cmd.spawn()?;
     let pid = child.id();
+
 
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {

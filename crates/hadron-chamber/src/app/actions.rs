@@ -779,14 +779,9 @@ impl Chamber {
                     .ok()
                     .and_then(|c| c.trim().parse::<u32>().ok());
                 let pid_alive = daemon_pid.map_or(false, |pid| {
-                    let proc_root = std::path::Path::new("/proc");
-                    if !proc_root.is_dir() {
-                        true
-                    } else {
-                        std::fs::read_to_string(proc_root.join(pid.to_string()).join("comm"))
-                            .map_or(false, |c| c.trim() == "hadron-gluon")
-                    }
+                    hadron_lattice::sys::is_process_alive(pid, "hadron-gluon")
                 });
+
                 let trees_dir = hadron_gluon::worktree::trees_dir(&repo_root);
                 let wt_count = std::fs::read_dir(&trees_dir)
                     .map(|rd| rd.filter_map(Result::ok).filter(|e| e.path().is_dir()).count())

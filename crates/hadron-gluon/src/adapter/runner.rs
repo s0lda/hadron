@@ -1,6 +1,8 @@
 use async_trait::async_trait;
+use hadron_lattice::sys::ConfigureProcessGroup;
 use hadron_lattice::TurnOutcome;
 use std::path::PathBuf;
+
 
 /// A resolved secret env, wrapped so a `Debug` derive on the type that carries it
 /// (`QuarkSpec`, `CliInvocation`) can never accidentally print a VALUE.
@@ -120,10 +122,10 @@ impl CliRunner for ProcessRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        #[cfg(unix)]
-        child_cmd.process_group(0);
+        child_cmd.as_std_mut().set_process_group();
 
         let mut child = child_cmd
+
             .spawn()
             // A missing `cwd` fails as ENOENT — indistinguishable, in the raw error, from a
             // missing *program*. That cost a real debugging session: `failed to spawn claude:
@@ -288,8 +290,7 @@ impl CliRunner for ProcessRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        #[cfg(unix)]
-        child_cmd.process_group(0);
+        child_cmd.as_std_mut().set_process_group();
 
         let mut child = child_cmd
             .spawn()
