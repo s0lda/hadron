@@ -94,8 +94,7 @@ impl super::Chamber {
                         h_flex()
                             .items_center()
                             .gap_1()
-                            .overflow_x_scrollbar()
-                            .min_w_0()
+                            .overflow_x_scroll()
                             .children(self.terminals.iter().enumerate().map(|(ix, tab)| {
                                 let is_active = ix == self.active_terminal_index;
                                 let bg_color = if is_active {
