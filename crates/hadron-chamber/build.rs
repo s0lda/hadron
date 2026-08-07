@@ -21,7 +21,9 @@ fn main() {
             if let Some(ico) = target_ico {
                 println!("cargo:rerun-if-changed={}", ico.display());
                 let mut res = winres::WindowsResource::new();
-                res.set_icon(ico.to_str().unwrap_or("assets/hadron.ico"));
+                let path_str = ico.to_str().unwrap_or("assets/hadron.ico");
+                res.set_icon(path_str);
+                res.set_icon_with_id(path_str, "1");
                 if let Err(e) = res.compile() {
                     eprintln!("winres error: {e}");
                 }

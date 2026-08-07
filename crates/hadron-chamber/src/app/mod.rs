@@ -1245,15 +1245,11 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             // so the alpha channel costs almost nothing at rest.
             window_background: WindowBackgroundAppearance::Transparent,
             window_bounds: Some(bounds),
-            app_id: Some("Hadron".into()),
             ..Default::default()
         };
 
         cx.spawn(async move |cx| {
             cx.open_window(window_options, move |window, cx| {
-                #[cfg(target_os = "windows")]
-                crate::sys::init_windows_app_icon();
-
                 let chamber = cx.new(|cx| {
                     Chamber::new(
                         view.clone(),
