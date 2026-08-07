@@ -6,6 +6,7 @@ gpui-component
 
 # Session-local hook scratch (remember plugin); not project state.
 .remember/
+.agents/
 
 # Our own plans, specs and research. Internal working documents: they name
 # branches, quote half-finished designs, and are written for us, not for anyone
