@@ -24,7 +24,7 @@ pub fn is_process_alive(pid: u32, expected_name: &str) -> bool {
 
         unsafe {
             let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-            if handle == 0 {
+            if handle.is_null() {
                 return false;
             }
             let mut buf = [0u16; 1024];
