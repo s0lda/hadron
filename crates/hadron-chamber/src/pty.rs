@@ -125,23 +125,30 @@ pub struct PtyTerminal {
     rows: usize,
 }
 
-/// Resolve default shell cross-platform (COMSPEC on Windows / SHELL on Unix).
+/// Resolve default shell cross-platform (PowerShell/COMSPEC on Windows / SHELL on Unix).
 pub fn default_shell() -> String {
     if cfg!(windows) {
+        if let Ok(sh) = std::env::var("SHELL") {
+            let path = std::path::Path::new(&sh);
+            if !sh.trim().is_empty() && path.exists() {
+                return sh;
+            }
+        }
+        if std::path::Path::new("C:\\Program Files\\PowerShell\\7\\pwsh.exe").exists() {
+            return "C:\\Program Files\\PowerShell\\7\\pwsh.exe".to_string();
+        }
+        if std::path::Path::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe").exists() {
+            return "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_string();
+        }
         if let Ok(comspec) = std::env::var("COMSPEC") {
             if !comspec.trim().is_empty() && std::path::Path::new(&comspec).exists() {
                 return comspec;
             }
         }
-        if let Ok(sh) = std::env::var("SHELL") {
-            if !sh.trim().is_empty() && std::path::Path::new(&sh).exists() {
-                return sh;
-            }
-        }
         if std::path::Path::new("C:\\Windows\\System32\\cmd.exe").exists() {
             return "C:\\Windows\\System32\\cmd.exe".to_string();
         }
-        "cmd.exe".to_string()
+        "powershell.exe".to_string()
     } else {
         if let Ok(sh) = std::env::var("SHELL") {
             if !sh.trim().is_empty() {
@@ -181,6 +188,9 @@ impl PtyTerminal {
             if !shells.contains(&"powershell.exe".to_string()) {
                 shells.push("powershell.exe".to_string());
             }
+            if !shells.contains(&"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_string()) {
+                shells.push("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_string());
+            }
             if !shells.contains(&"cmd.exe".to_string()) {
                 shells.push("cmd.exe".to_string());
             }
@@ -194,9 +204,8 @@ impl PtyTerminal {
         for sh in &shells {
             let mut cmd = CommandBuilder::new(sh);
             cmd.cwd(&final_cwd);
-            if !cfg!(windows) {
-                cmd.env("TERM", "xterm-256color");
-            }
+            cmd.env("TERM", "xterm-256color");
+            cmd.env("COLORTERM", "truecolor");
             match pair.slave.spawn_command(cmd) {
                 Ok(child) => {
                     child_opt = Some(child);

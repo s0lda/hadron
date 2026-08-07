@@ -542,7 +542,7 @@ impl super::Chamber {
     /// once — the info panel overlays the chat pane), so their element ids never collide.
     pub(super) fn stats_window_tabs(&self, id: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.stats_window;
-        h_flex().child(
+        h_flex().flex_none().child(
             h_flex()
                 .id(id)
                 .items_center()
@@ -552,7 +552,8 @@ impl super::Chamber {
                 .bg(theme::glass_card())
                 .border_1()
                 .border_color(theme::glass_highlight())
-                .overflow_x_scrollbar()
+                .max_w_full()
+                .overflow_x_scroll()
                 .children(StatsWindow::ALL.map(|w| {
                     let is_selected = w == selected;
                     let label = w.label();

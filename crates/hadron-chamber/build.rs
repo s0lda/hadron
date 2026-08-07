@@ -19,6 +19,7 @@ fn main() {
             };
 
             if let Some(ico) = target_ico {
+                println!("cargo:rerun-if-changed={}", ico.display());
                 let mut res = winres::WindowsResource::new();
                 res.set_icon(ico.to_str().unwrap_or("assets/hadron.ico"));
                 if let Err(e) = res.compile() {

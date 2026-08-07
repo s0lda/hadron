@@ -1,4 +1,5 @@
 use super::*;
+use gpui_component::ActiveTheme;
 
 impl super::Chamber {
     /// The right rail: the swappable Terminal / File Tree / Changes pane.
@@ -38,8 +39,11 @@ impl super::Chamber {
                     })
                     .text_xs()
                     .child(label)
-                    .on_click(cx.listener(move |this, _, _window, cx| {
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.right_rail_tab = RightRailTab::from_index(ix);
+                        if this.right_rail_tab == RightRailTab::Terminal {
+                            window.focus(&this.terminal_focus, cx);
+                        }
                         if this.right_rail_tab == RightRailTab::Changes {
                             let root = crate::vcs::repo_root_of(&this.path);
                             this.working_diff = crate::vcs::working_diff(root);
@@ -163,7 +167,7 @@ impl super::Chamber {
                 let grid: gpui::AnyElement = if let Some(term) = active_term {
                     let snap = term.snapshot();
                     let mut lines = v_flex()
-                        .font_family("Cascadia Code")
+                        .font_family(cx.theme().mono_font_family.clone())
                         .text_size(px(TERM_FONT))
                         .line_height(px(TERM_CELL_H))
                         .size_full()
@@ -199,7 +203,7 @@ impl super::Chamber {
                     div()
                         .flex_1()
                         .p_3()
-                        .font_family("Cascadia Code")
+                        .font_family(cx.theme().mono_font_family.clone())
                         .text_size(px(TERM_FONT))
                         .text_color(theme::text_muted())
                         .child(msg.to_string())
