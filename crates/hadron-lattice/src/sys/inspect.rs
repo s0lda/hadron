@@ -17,10 +17,10 @@ pub fn is_process_alive(pid: u32, expected_name: &str) -> bool {
 
     #[cfg(windows)]
     {
-        use windows_sys::Win32::Foundation::{CloseHandle, FALSE};
+        use windows_sys::Win32::Foundation::{CloseHandle, FALSE, STILL_ACTIVE};
         use windows_sys::Win32::System::Threading::{
             GetExitCodeProcess, OpenProcess, QueryFullProcessImageNameW,
-            PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE,
+            PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
         };
 
         unsafe {
