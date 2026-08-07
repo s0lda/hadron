@@ -96,6 +96,9 @@ pub(super) const ACP_AGENTS: &[AcpAgentSpec] = &[
         // `notes/anchoring-a-boot-command-does-not-ship-it.md`. A bare relative path
         // would resolve by `execve` against the SPAWNING PROCESS's cwd — see
         // `AcpTarget::resolved`.
+        #[cfg(windows)]
+        program: "{hadron}/bridges/agy/venv/Scripts/python.exe",
+        #[cfg(not(windows))]
         program: "{hadron}/bridges/agy/venv/bin/python",
         args: &["{hadron}/bridges/agy/agy_acp.py"],
         proven: false,

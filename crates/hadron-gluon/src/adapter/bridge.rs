@@ -60,7 +60,12 @@ pub fn materialize_script() -> anyhow::Result<PathBuf> {
 
 /// The venv's python interpreter path, whether or not it exists yet.
 pub fn venv_python() -> anyhow::Result<PathBuf> {
-    Ok(bridge_dir()?.join("venv").join("bin").join("python"))
+    let dir = bridge_dir()?.join("venv");
+    if cfg!(windows) {
+        Ok(dir.join("Scripts").join("python.exe"))
+    } else {
+        Ok(dir.join("bin").join("python"))
+    }
 }
 
 /// Whether the venv is already provisioned — a pure existence check, cheap enough
@@ -84,9 +89,18 @@ pub fn provision_venv() -> anyhow::Result<PathBuf> {
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("creating bridge directory {}", dir.display()))?;
 
-    let mut make_venv = Command::new("python3");
+    let python_cmd = if cfg!(windows) {
+        if Command::new("python").arg("--version").output().is_ok() {
+            "python"
+        } else {
+            "py"
+        }
+    } else {
+        "python3"
+    };
+    let mut make_venv = Command::new(python_cmd);
     make_venv.args(["-m", "venv"]).arg(&venv_dir);
-    run_bounded(make_venv, "python3 -m venv")?;
+    run_bounded(make_venv, &format!("{python_cmd} -m venv"))?;
 
     let mut install = Command::new(&python);
     install.args(["-m", "pip", "install", "--quiet", "google-antigravity"]);
@@ -107,7 +121,7 @@ pub fn provision_venv() -> anyhow::Result<PathBuf> {
 /// helper (rule 2/3: reuse, one home for the pattern).
 fn run_bounded(cmd: Command, label: &str) -> anyhow::Result<()> {
     let out = hadron_forge::exec::run_bounded(cmd, PROVISION_DEADLINE, label)
-        .with_context(|| format!("failed to spawn {label} — is python3 installed and on PATH?"))?;
+        .with_context(|| format!("failed to spawn {label} — is Python installed and on PATH?"))?;
     if out.timed_out {
         anyhow::bail!("{label} timed out after {PROVISION_DEADLINE:?} and was killed");
     }

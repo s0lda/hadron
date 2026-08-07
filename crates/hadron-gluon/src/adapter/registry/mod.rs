@@ -224,7 +224,11 @@ impl AcpTarget {
     /// would be a worse version of the same ENOENT, naming a path no human wrote.
     fn resolve_home_token(&self) -> anyhow::Result<AcpTarget> {
         if !self.needs_home_root() {
-            return Ok(self.clone());
+            let mut res = self.clone();
+            if cfg!(windows) {
+                res.program = res.program.replace("/venv/bin/python", "/venv/Scripts/python.exe").replace("\\venv\\bin\\python", "\\venv\\Scripts\\python.exe");
+            }
+            return Ok(res);
         }
         let home = hadron_lattice::user_hadron_dir().ok_or_else(|| {
             anyhow::anyhow!(
@@ -234,8 +238,12 @@ impl AcpTarget {
             )
         })?;
         let home_str = home.to_string_lossy().to_string();
+        let mut program = self.program.replace(USER_HOME_TOKEN, &home_str);
+        if cfg!(windows) {
+            program = program.replace("/venv/bin/python", "/venv/Scripts/python.exe").replace("\\venv\\bin\\python", "\\venv\\Scripts\\python.exe");
+        }
         Ok(AcpTarget {
-            program: self.program.replace(USER_HOME_TOKEN, &home_str),
+            program,
             args: self.args.iter().map(|a| a.replace(USER_HOME_TOKEN, &home_str)).collect(),
             env: self.env.clone(),
         })
@@ -589,7 +597,14 @@ impl QuarkKind {
                 // wizard's availability probe (`mark_unseatable`), and greying the row
                 // out on a machine with no venv would leave no way to create the seat
                 // whose Settings page is the only thing that provisions one.
-                let program = std::path::Path::new(resolved.program());
+                let mut program = std::path::Path::new(resolved.program()).to_path_buf();
+                if seat.vendor == "agy" && program.is_absolute() && !program.exists() {
+                    let _ = crate::adapter::bridge::materialize_script();
+                    let _ = crate::adapter::bridge::provision_venv();
+                    if let Ok(py) = crate::adapter::bridge::venv_python() {
+                        program = py;
+                    }
+                }
                 if program.is_absolute() && !program.exists() {
                     anyhow::bail!(
                         "seat '{}' boots {} — that file does not exist. For the `agy` \

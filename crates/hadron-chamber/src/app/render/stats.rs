@@ -398,7 +398,8 @@ impl super::Chamber {
             .bg(theme::glass_card())
             .border_1()
             .border_color(theme::glass_highlight())
-            .overflow_x_scrollbar()
+            .max_w_full()
+            .overflow_x_scroll()
             .children(InfoTab::ALL.map(|t| {
                 let is_selected = t.index() == info_selected.index();
                 let label = t.label();

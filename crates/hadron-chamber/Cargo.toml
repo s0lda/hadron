@@ -89,5 +89,8 @@ gui = ["dep:gpui", "dep:gpui_platform", "dep:gpui-component", "dep:gpui-componen
 tempfile = "3"
 gpui_wgpu = { git = "https://github.com/zed-industries/zed" }
 
+[build-dependencies]
+winres = "0.1"
+
 
 

@@ -189,6 +189,17 @@ pub fn repo_root_of(field_path: &Path) -> &Path {
     }
 }
 
+/// Strip Windows verbatim UNC prefix (`\\?\` or `\\?\UNC\`).
+pub fn strip_unc_prefix(path_str: &str) -> String {
+    if let Some(stripped) = path_str.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{stripped}")
+    } else if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
+        stripped.to_string()
+    } else {
+        path_str.to_string()
+    }
+}
+
 /// Formats the repository working directory for display in the UI (e.g. `~/dev/hadron/`).
 pub fn format_working_dir(field_path: &Path) -> String {
     let root = repo_root_of(field_path);
@@ -196,22 +207,27 @@ pub fn format_working_dir(field_path: &Path) -> String {
         .canonicalize()
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| root.to_path_buf()));
 
-    let path_str = if let Ok(home) = std::env::var("HOME") {
-        let home_path = Path::new(&home);
-        if let Ok(rel) = abs_path.strip_prefix(home_path) {
+    let abs_str = strip_unc_prefix(&abs_path.to_string_lossy());
+    let home_var = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"));
+
+    let path_str = if let Ok(home) = home_var {
+        let home_clean = strip_unc_prefix(&home);
+        let home_path = Path::new(&home_clean);
+        let abs_p = Path::new(&abs_str);
+        if let Ok(rel) = abs_p.strip_prefix(home_path) {
             if rel.as_os_str().is_empty() {
                 "~".to_string()
             } else {
-                format!("~/{}", rel.display())
+                format!("~/{}", rel.display().to_string().replace('\\', "/"))
             }
         } else {
-            abs_path.display().to_string()
+            abs_str
         }
     } else {
-        abs_path.display().to_string()
+        abs_str
     };
 
-    if path_str.ends_with('/') {
+    if path_str.ends_with('/') || path_str.ends_with('\\') {
         path_str
     } else {
         format!("{path_str}/")

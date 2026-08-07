@@ -159,9 +159,10 @@ impl PtyTerminal {
             })
             .map_err(|e| format!("openpty failed: {e}"))?;
 
+        let clean_cwd = crate::vcs::strip_unc_prefix(&cwd.to_string_lossy());
         let shell = default_shell();
         let mut cmd = CommandBuilder::new(&shell);
-        cmd.cwd(cwd);
+        cmd.cwd(Path::new(&clean_cwd));
         if !cfg!(windows) {
             cmd.env("TERM", "xterm-256color");
         }
