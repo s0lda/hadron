@@ -171,13 +171,7 @@ impl super::Chamber {
         }
 
         let bytes: Vec<u8> = match ks.key.as_str() {
-            "enter" => {
-                if cfg!(windows) {
-                    vec![b'\r', b'\n']
-                } else {
-                    vec![b'\r']
-                }
-            }
+            "enter" => vec![b'\r'],
             "backspace" => {
                 if cfg!(windows) {
                     vec![0x08]
