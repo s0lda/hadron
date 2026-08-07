@@ -167,17 +167,50 @@ impl PtyTerminal {
             })
             .map_err(|e| format!("openpty failed: {e}"))?;
 
-        let clean_cwd = crate::vcs::strip_unc_prefix(&cwd.to_string_lossy());
-        let shell = default_shell();
-        let mut cmd = CommandBuilder::new(&shell);
-        cmd.cwd(Path::new(&clean_cwd));
-        if !cfg!(windows) {
-            cmd.env("TERM", "xterm-256color");
+        let clean_cwd = hadron_lattice::sys::paths::simplified(cwd);
+        let final_cwd = if clean_cwd.exists() {
+            clean_cwd.to_path_buf()
+        } else {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        };
+
+        let primary_shell = default_shell();
+        let mut shells = vec![primary_shell.clone()];
+        if cfg!(windows) {
+            if !shells.contains(&"powershell.exe".to_string()) {
+                shells.push("powershell.exe".to_string());
+            }
+            if !shells.contains(&"cmd.exe".to_string()) {
+                shells.push("cmd.exe".to_string());
+            }
+            if !shells.contains(&"C:\\Windows\\System32\\cmd.exe".to_string()) {
+                shells.push("C:\\Windows\\System32\\cmd.exe".to_string());
+            }
         }
-        let child = pair
-            .slave
-            .spawn_command(cmd)
-            .map_err(|e| format!("spawn shell failed: {e}"))?;
+
+        let mut child_opt = None;
+        let mut last_err = String::new();
+        for sh in &shells {
+            let mut cmd = CommandBuilder::new(sh);
+            cmd.cwd(&final_cwd);
+            if !cfg!(windows) {
+                cmd.env("TERM", "xterm-256color");
+            }
+            match pair.slave.spawn_command(cmd) {
+                Ok(child) => {
+                    child_opt = Some(child);
+                    break;
+                }
+                Err(e) => {
+                    last_err = format!("spawn shell '{sh}' in '{}' failed: {e}", final_cwd.display());
+                }
+            }
+        }
+
+        let child = match child_opt {
+            Some(c) => c,
+            None => return Err(last_err),
+        };
         drop(pair.slave); // parent keeps only the master end
 
         let writer = pair
@@ -218,7 +251,7 @@ impl PtyTerminal {
             })
             .map_err(|e| format!("pty reader thread: {e}"))?;
 
-        let stem = std::path::Path::new(&shell)
+        let stem = std::path::Path::new(&primary_shell)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("term");
