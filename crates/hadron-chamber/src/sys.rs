@@ -338,6 +338,29 @@ pub fn editor_argv(choice: &EditorChoice, path: &Path, line: Option<u32>) -> Opt
     Some((program.to_string(), args))
 }
 
+/// Explicitly set the Windows AppUserModelID so Taskbar groups and displays the PE icon properly.
+#[cfg(windows)]
+pub fn init_windows_app_icon() {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    let app_id: Vec<u16> = OsStr::new("Hadron.Chamber")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        #[link(name = "shell32")]
+        extern "system" {
+            fn SetCurrentProcessExplicitAppUserModelID(app_id: *const u16) -> i32;
+        }
+        let _ = SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr());
+    }
+}
+
+#[cfg(not(windows))]
+pub fn init_windows_app_icon() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -165,14 +165,12 @@ impl PtyTerminal {
         let rows = rows.max(1);
 
         let pty_system = native_pty_system();
-        let pair = pty_system
-            .openpty(PtySize {
-                rows: rows as u16,
-                cols: cols as u16,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| format!("openpty failed: {e}"))?;
+        let pty_size = PtySize {
+            rows: rows as u16,
+            cols: cols as u16,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
 
         let clean_cwd = hadron_lattice::sys::paths::simplified(cwd);
         let final_cwd = if clean_cwd.exists() {
@@ -198,27 +196,42 @@ impl PtyTerminal {
             }
         }
 
-        let mut child_opt = None;
+        let mut child_and_pair = None;
         let mut last_err = String::new();
         for sh in &shells {
+            let pair = match pty_system.openpty(pty_size) {
+                Ok(p) => p,
+                Err(e) => {
+                    last_err = format!("openpty failed: {e}");
+                    continue;
+                }
+            };
+
             let mut cmd = CommandBuilder::new(sh);
             cmd.cwd(&final_cwd);
+            let mut has_sys_root = false;
             for (k, v) in std::env::vars() {
+                if k.eq_ignore_ascii_case("SystemRoot") {
+                    has_sys_root = true;
+                }
                 cmd.env(k, v);
             }
-            if cfg!(not(windows)) {
-                cmd.env("TERM", "xterm-256color");
-            }
-            cmd.env("COLORTERM", "truecolor");
             if cfg!(windows) {
+                if !has_sys_root {
+                    cmd.env("SystemRoot", "C:\\Windows");
+                }
                 let sh_lower = sh.to_lowercase();
                 if sh_lower.contains("powershell") || sh_lower.contains("pwsh") {
                     cmd.arg("-NoLogo");
                 }
+            } else {
+                cmd.env("TERM", "xterm-256color");
             }
+            cmd.env("COLORTERM", "truecolor");
+
             match pair.slave.spawn_command(cmd) {
                 Ok(child) => {
-                    child_opt = Some(child);
+                    child_and_pair = Some((child, pair));
                     break;
                 }
                 Err(e) => {
@@ -227,8 +240,8 @@ impl PtyTerminal {
             }
         }
 
-        let child = match child_opt {
-            Some(c) => c,
+        let (child, pair) = match child_and_pair {
+            Some(cp) => cp,
             None => return Err(last_err),
         };
 
@@ -246,11 +259,6 @@ impl PtyTerminal {
             .try_clone_reader()
             .map_err(|e| format!("pty reader: {e}"))?;
 
-        if cfg!(windows) {
-            let _ = writer.write_all(b"\r\n");
-            let _ = writer.flush();
-        }
-
         let mut config = Config::default();
         config.scrolling_history = 5000;
         let term = Term::new(config, &GridSize { cols, rows }, VoidListener);
@@ -258,7 +266,7 @@ impl PtyTerminal {
         let dirty = Arc::new(AtomicBool::new(true));
 
         // Reader thread: pump PTY bytes through the VTE parser into the grid.
-        // Ends when the shell exits and the master reader returns EOF.
+        // Spawn BEFORE sending initial newline so no incoming bytes are lost.
         let term_r = Arc::clone(&term);
         let dirty_r = Arc::clone(&dirty);
         std::thread::Builder::new()
@@ -279,6 +287,11 @@ impl PtyTerminal {
                 }
             })
             .map_err(|e| format!("pty reader thread: {e}"))?;
+
+        if cfg!(windows) {
+            let _ = writer.write_all(b"\r\n");
+            let _ = writer.flush();
+        }
 
         let stem = std::path::Path::new(&primary_shell)
             .file_stem()

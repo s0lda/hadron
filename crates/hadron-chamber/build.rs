@@ -24,19 +24,22 @@ fn main() {
             if let Some(ico) = target_ico {
                 println!("cargo:rerun-if-changed={}", ico.display());
                 let mut res = winres::WindowsResource::new();
-                let path_str = ico.to_str().unwrap_or("assets/hadron.ico");
-                res.set_icon(path_str);
+                let path_str = ico.to_str().unwrap_or("assets/hadron.ico").replace('\\', "/");
+                res.set_icon(&path_str);
+                res.set_icon_with_id(&path_str, "1");
+                res.set_language(0x0409); // US English (0x0409) so Task Manager reads FileDescription
                 // VERSIONINFO metadata: FileDescription controls the name shown
                 // in Task Manager's "Apps" column; ProductName appears in the
                 // file's Properties → Details tab.
                 res.set("FileDescription", "Hadron");
                 res.set("ProductName", "Hadron");
                 res.set("InternalName", "hadron.exe");
+                res.set("OriginalFilename", "hadron.exe");
                 if let Err(e) = res.compile() {
-                    eprintln!("winres error: {e}");
+                    panic!("winres error: {e}");
                 }
             } else {
-                eprintln!("winres: icon path does not exist");
+                panic!("winres: icon path does not exist");
             }
         }
     }

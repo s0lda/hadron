@@ -1066,6 +1066,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
     let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
     app.run(move |cx: &mut App| {
         gpui_component::init(cx);
+        crate::sys::init_windows_app_icon();
         // A `file://` link in a chat message is a SOURCE FILE, not a document for the
         // desktop to guess about: without this it reaches `xdg-open` and lands in
         // whatever the system association says (Vim, here). Declining anything that
