@@ -23,7 +23,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor};
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize, SlavePty};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
 /// The terminal's default foreground / background, used when a cell asks for the
 /// terminal default colour (`SGR 39/49`, the initial state of every cell).
@@ -118,7 +118,6 @@ pub struct PtyTerminal {
     term: Arc<Mutex<Term<VoidListener>>>,
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
-    _slave: Box<dyn SlavePty + Send>,
     _child: Box<dyn Child + Send + Sync>,
     dirty: Arc<AtomicBool>,
     cols: usize,
@@ -249,6 +248,8 @@ impl PtyTerminal {
             None => return Err(last_err),
         };
 
+        drop(pair.slave);
+
         let mut writer = pair
             .master
             .take_writer()
@@ -317,7 +318,6 @@ impl PtyTerminal {
             term,
             writer,
             master: pair.master,
-            _slave: pair.slave,
             _child: child,
             dirty,
             cols,
