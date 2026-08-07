@@ -212,6 +212,9 @@ impl PtyTerminal {
             cmd.cwd(&final_cwd);
             let mut has_sys_root = false;
             for (k, v) in std::env::vars() {
+                if k.starts_with('=') || k.is_empty() {
+                    continue;
+                }
                 if k.eq_ignore_ascii_case("SystemRoot") {
                     has_sys_root = true;
                 }
@@ -272,7 +275,21 @@ impl PtyTerminal {
                 let mut buf = [0u8; 8192];
                 loop {
                     match reader.read(&mut buf) {
-                        Ok(0) | Err(_) => break,
+                        Ok(0) => {
+                            if let Ok(mut term) = term_r.lock() {
+                                parser.advance(&mut *term, b"\r\n[process exited]\r\n");
+                            }
+                            dirty_r.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        Err(e) => {
+                            if let Ok(mut term) = term_r.lock() {
+                                let err_msg = format!("\r\n[pty read error: {e}]\r\n");
+                                parser.advance(&mut *term, err_msg.as_bytes());
+                            }
+                            dirty_r.store(true, Ordering::Relaxed);
+                            break;
+                        }
                         Ok(n) => {
                             if let Ok(mut term) = term_r.lock() {
                                 parser.advance(&mut *term, &buf[..n]);

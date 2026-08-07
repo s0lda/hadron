@@ -366,7 +366,7 @@ pub fn init_windows_app_icon() {
             fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(usize, isize) -> i32, lParam: isize) -> i32;
             fn GetWindowThreadProcessId(hWnd: usize, lpdwProcessId: *mut u32) -> u32;
             fn SendMessageW(hWnd: usize, Msg: u32, wParam: usize, lParam: isize) -> isize;
-            fn LoadIconW(hInstance: usize, lpIconName: *const u16) -> usize;
+            fn LoadImageW(hInst: usize, name: *const u16, type_: u32, cx: i32, cy: i32, fuLoad: u32) -> usize;
             fn GetModuleHandleW(lpModuleName: *const u16) -> usize;
             fn IsWindowVisible(hWnd: usize) -> i32;
         }
@@ -377,13 +377,18 @@ pub fn init_windows_app_icon() {
             GetWindowThreadProcessId(hwnd, &mut win_pid);
             if win_pid == target_pid && IsWindowVisible(hwnd) != 0 {
                 let h_instance = GetModuleHandleW(null_mut());
-                let h_icon = LoadIconW(h_instance, 1 as *const u16);
-                if h_icon != 0 {
-                    const WM_SETICON: u32 = 0x0080;
-                    const ICON_SMALL: usize = 0;
-                    const ICON_BIG: usize = 1;
-                    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_icon as isize);
-                    SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_icon as isize);
+                const IMAGE_ICON: u32 = 1;
+                const LR_DEFAULTCOLOR: u32 = 0x0000;
+                let h_icon_big = LoadImageW(h_instance, 1 as *const u16, IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR);
+                let h_icon_small = LoadImageW(h_instance, 1 as *const u16, IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+                const WM_SETICON: u32 = 0x0080;
+                const ICON_SMALL: usize = 0;
+                const ICON_BIG: usize = 1;
+                if h_icon_small != 0 {
+                    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_icon_small as isize);
+                }
+                if h_icon_big != 0 {
+                    SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_icon_big as isize);
                 }
             }
             1
