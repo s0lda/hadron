@@ -178,16 +178,28 @@ impl super::Chamber {
                         .flex()
                         .justify_between()
                         .items_center()
+                        .gap_2()
+                        .w_full()
+                        .overflow_hidden()
                         .px_2()
                         .py_1()
                         .rounded_md()
                         .when(selected, |s| s.bg(theme::glass_highlight()))
                         .hover(|s| s.bg(theme::glass_highlight()))
-                        .child(div().text_sm().text_color(theme::text()).child(label))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text())
+                                .flex_shrink_0()
+                                .child(label),
+                        )
                         .child(
                             div()
                                 .text_xs()
                                 .text_color(theme::text_muted())
+                                .min_w_0()
+                                .truncate()
+                                .text_right()
                                 .child(detail),
                         )
                         .on_click(cx.listener(move |this, _, window, cx| {
