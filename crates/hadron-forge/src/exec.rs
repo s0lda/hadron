@@ -154,19 +154,29 @@ pub fn tail_within_budget(s: &str, budget: usize) -> String {
 /// leader alone leaves its children running with nobody waiting on them.
 #[cfg(unix)]
 pub fn kill_process_group(pid: u32) {
-    // Safety: `kill(2)` with a negative pid signals the process group. `pid` came
-    // from a child spawned with `process_group(0)`, so it leads its own group and
-    // the signal cannot reach the caller or anything else.
     unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
 }
 
 #[cfg(windows)]
 pub fn kill_process_group(pid: u32) {
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
     let _ = std::process::Command::new("taskkill")
         .args(["/F", "/T", "/PID", &pid.to_string()])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if !handle.is_null() {
+            TerminateProcess(handle, 1);
+            CloseHandle(handle);
+        }
+    }
 }
 
 #[cfg(not(any(unix, windows)))]

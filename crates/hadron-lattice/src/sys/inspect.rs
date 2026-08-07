@@ -19,14 +19,30 @@ pub fn is_process_alive(pid: u32, expected_name: &str) -> bool {
     {
         use windows_sys::Win32::Foundation::{CloseHandle, FALSE};
         use windows_sys::Win32::System::Threading::{
-            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+            GetExitCodeProcess, OpenProcess, QueryFullProcessImageNameW,
+            PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE,
         };
 
         unsafe {
-            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+            let mut handle = OpenProcess(
+                PROCESS_QUERY_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION,
+                FALSE,
+                pid,
+            );
+            if handle.is_null() {
+                handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+            }
             if handle.is_null() {
                 return false;
             }
+
+            let mut exit_code: u32 = 0;
+            let active = GetExitCodeProcess(handle, &mut exit_code) != 0 && exit_code == STILL_ACTIVE;
+            if !active {
+                CloseHandle(handle);
+                return false;
+            }
+
             let mut buf = [0u16; 1024];
             let mut size = buf.len() as u32;
             let success = QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut size);
@@ -34,13 +50,14 @@ pub fn is_process_alive(pid: u32, expected_name: &str) -> bool {
 
             if success != 0 {
                 let path_str = String::from_utf16_lossy(&buf[..size as usize]);
-                let path = std::path::Path::new(&path_str);
+                let clean_path = path_str.trim_start_matches("\\?\\").trim_start_matches("//?/");
+                let path = std::path::Path::new(clean_path);
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                     let expected_stem = expected_name.strip_suffix(".exe").unwrap_or(expected_name);
                     return stem.eq_ignore_ascii_case(expected_stem);
                 }
             }
-            false
+            active
         }
     }
 
