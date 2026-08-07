@@ -3005,10 +3005,12 @@ version = "0.1.8"
 dependencies = [
  "anyhow",
  "chrono",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",
  "ulid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
