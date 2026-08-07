@@ -17,7 +17,12 @@ impl super::Chamber {
             match dims {
                 Some((cols, rows)) => {
                     let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                    let title = "bash #1".to_string();
+                    let shell = crate::pty::default_shell();
+                    let stem = std::path::Path::new(&shell)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("term");
+                    let title = format!("{stem} #1");
                     match crate::pty::PtyTerminal::new(&root, cols, rows) {
                         Ok(mut term) => {
                             term.title = title.clone();
