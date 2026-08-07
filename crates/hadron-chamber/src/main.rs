@@ -272,15 +272,16 @@ fn main() {
 /// cannot be run in place of the one we shipped.
 #[cfg(feature = "gui")]
 fn resolve_gluon_binary() -> std::path::PathBuf {
+    let name = format!("hadron-gluon{}", std::env::consts::EXE_SUFFIX);
     if let Ok(current_exe) = std::env::current_exe() {
         if let Some(parent) = current_exe.parent() {
-            let candidate = parent.join("hadron-gluon");
+            let candidate = parent.join(&name);
             if candidate.exists() {
                 return candidate;
             }
         }
     }
-    std::path::PathBuf::from("hadron-gluon")
+    std::path::PathBuf::from(name)
 }
 
 /// Read the daemon's PID from a `gluon.lock` file. Returns `None` when the file is
