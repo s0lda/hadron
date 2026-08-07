@@ -215,7 +215,35 @@ fn release_tag(version: &str) -> String {
     format!("v{version}")
 }
 
+#[cfg(windows)]
+fn prepare_windows_cargo_bin_overwrite() {
+    let cargo_bin = std::env::var("CARGO_HOME")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(|| {
+            std::env::var("USERPROFILE")
+                .map(PathBuf::from)
+                .ok()
+                .map(|p| p.join(".cargo"))
+        })
+        .map(|p| p.join("bin"));
+
+    if let Some(cargo_bin) = cargo_bin {
+        for name in ["hadron.exe", "hadron-chamber.exe", "hadron-gluon.exe"] {
+            let bin_path = cargo_bin.join(name);
+            if bin_path.exists() {
+                let old_path = cargo_bin.join(format!("{name}.old"));
+                let _ = std::fs::remove_file(&old_path);
+                let _ = std::fs::rename(&bin_path, &old_path);
+            }
+        }
+    }
+}
+
 pub fn perform_cargo_install(target_version: &str) -> UpdateState {
+    #[cfg(windows)]
+    prepare_windows_cargo_bin_overwrite();
+
     let tag = release_tag(target_version);
     let mut cmd = install_command(&tag);
     // Debug-formatted from the `Command` itself, so the log's first line is what actually
