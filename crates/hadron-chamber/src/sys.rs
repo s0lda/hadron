@@ -338,6 +338,64 @@ pub fn editor_argv(choice: &EditorChoice, path: &Path, line: Option<u32>) -> Opt
     Some((program.to_string(), args))
 }
 
+/// On Windows, set the process AppUserModelID so Taskbar groups Hadron windows with its icon,
+/// and apply the embedded executable icon (resource ID 1) to all active windows of this thread.
+#[cfg(target_os = "windows")]
+pub fn init_windows_app_icon() {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    let app_id: Vec<u16> = OsStr::new("Hadron").encode_wide().chain(std::iter::once(0)).collect();
+    unsafe {
+        #[link(name = "shell32")]
+        extern "system" {
+            fn SetCurrentProcessExplicitAppUserModelID(AppID: *const u16) -> i32;
+        }
+        let _ = SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr());
+    }
+
+    unsafe {
+        #[link(name = "user32")]
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetModuleHandleW(lpModuleName: *const u16) -> *mut std::ffi::c_void;
+            fn LoadIconW(hInstance: *mut std::ffi::c_void, lpIconName: *const u16) -> *mut std::ffi::c_void;
+            fn EnumThreadWindows(
+                dwThreadId: u32,
+                lpfn: Option<unsafe extern "system" fn(*mut std::ffi::c_void, isize) -> i32>,
+                lParam: isize,
+            ) -> i32;
+            fn GetCurrentThreadId() -> u32;
+            fn SendMessageW(
+                hWnd: *mut std::ffi::c_void,
+                Msg: u32,
+                wParam: usize,
+                lParam: isize,
+            ) -> isize;
+        }
+
+        let h_instance = GetModuleHandleW(std::ptr::null());
+        if !h_instance.is_null() {
+            let icon = LoadIconW(h_instance, 1 as *const u16);
+            if !icon.is_null() {
+                unsafe extern "system" fn enum_win_proc(
+                    hwnd: *mut std::ffi::c_void,
+                    lparam: isize,
+                ) -> i32 {
+                    const WM_SETICON: u32 = 0x0080;
+                    const ICON_SMALL: usize = 0;
+                    const ICON_BIG: usize = 1;
+                    let icon = lparam as isize;
+                    SendMessageW(hwnd, WM_SETICON, ICON_BIG, icon);
+                    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, icon);
+                    1
+                }
+                let _ = EnumThreadWindows(GetCurrentThreadId(), Some(enum_win_proc), icon as isize);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

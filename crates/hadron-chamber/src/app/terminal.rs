@@ -170,8 +170,9 @@ impl super::Chamber {
             }
         }
 
-        let bytes: Vec<u8> = match ks.key.as_str() {
-            "enter" => vec![b'\r'],
+        let key_lower = ks.key.to_lowercase();
+        let bytes: Vec<u8> = match key_lower.as_str() {
+            "enter" | "return" => vec![b'\r'],
             "backspace" => {
                 if cfg!(windows) {
                     vec![0x08]
@@ -181,11 +182,11 @@ impl super::Chamber {
             }
             "tab" => vec![b'\t'],
             "escape" => vec![0x1b],
-            "space" => vec![b' '],
-            "up" => vec![0x1b, b'[', b'A'],
-            "down" => vec![0x1b, b'[', b'B'],
-            "right" => vec![0x1b, b'[', b'C'],
-            "left" => vec![0x1b, b'[', b'D'],
+            "space" | " " => vec![b' '],
+            "up" | "arrowup" => vec![0x1b, b'[', b'A'],
+            "down" | "arrowdown" => vec![0x1b, b'[', b'B'],
+            "right" | "arrowright" => vec![0x1b, b'[', b'C'],
+            "left" | "arrowleft" => vec![0x1b, b'[', b'D'],
             "home" => vec![0x1b, b'[', b'H'],
             "end" => vec![0x1b, b'[', b'F'],
             "delete" => vec![0x1b, b'[', b'3', b'~'],

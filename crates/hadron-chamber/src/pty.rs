@@ -204,8 +204,16 @@ impl PtyTerminal {
         for sh in &shells {
             let mut cmd = CommandBuilder::new(sh);
             cmd.cwd(&final_cwd);
-            cmd.env("TERM", "xterm-256color");
+            if cfg!(not(windows)) {
+                cmd.env("TERM", "xterm-256color");
+            }
             cmd.env("COLORTERM", "truecolor");
+            if cfg!(windows) {
+                let sh_lower = sh.to_lowercase();
+                if sh_lower.contains("powershell") || sh_lower.contains("pwsh") {
+                    cmd.arg("-NoLogo");
+                }
+            }
             match pair.slave.spawn_command(cmd) {
                 Ok(child) => {
                     child_opt = Some(child);

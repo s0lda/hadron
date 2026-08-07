@@ -177,6 +177,9 @@ fn main() {
 
     #[cfg(feature = "gui")]
     {
+        #[cfg(target_os = "windows")]
+        sys::init_windows_app_icon();
+
         // Blocks until the window closes.
         app::run(path, chamber_lock_file);
 
