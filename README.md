@@ -47,7 +47,7 @@ A seat takes any agent that speaks the **[Agent Client Protocol](https://agentcl
 ### Prerequisites
 
 - **Rust**: Toolchain (edition 2021, tested on 1.96.0+).
-- **OS**: Linux (X11/Wayland), macOS, or Windows via **WSL2**.
+- **OS**: Linux (X11/Wayland), macOS, or Windows (native MSVC or WSL2).
 - **Agents**: Any ACP agent, coding CLI, Antigravity SDK bridge, or local/cloud HTTP provider (Ollama, OpenRouter, LM Studio).
 
 ### Installation
