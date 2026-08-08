@@ -41,25 +41,6 @@ fn main() {
                     res.set("ProductVersion", &version);
                 }
 
-                // Enable GPUI DPI-awareness & shell interaction by embedding a basic manifest
-                res.set_manifest(r#"
-<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
-    <security>
-      <requestedPrivileges>
-        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
-      </requestedPrivileges>
-    </security>
-  </trustInfo>
-  <application xmlns="urn:schemas-microsoft-com:asm.v3">
-    <windowsSettings>
-      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
-      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
-    </windowsSettings>
-  </application>
-</assembly>
-"#);
-
                 if let Err(e) = res.compile() {
                     panic!("winres error: {e}");
                 }
