@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.2.0",
+        date: Some("2026-08-08"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Windows PTY terminal initialization, interactive shell execution, and icon resource linking",
+        ],
+    },
+    Release {
         version: "0.1.9",
         date: Some("2026-08-07"),
         added: &[],

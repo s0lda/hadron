@@ -5,6 +5,11 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-08-08
+
+### Fixed
+- **Windows PTY Terminal & Execution Engine**: Fixed Windows MSVC winres duplicate icon resource linking (`CVT1100`), restored interactive shell execution (PowerShell/CMD), removed verbose stream repaints, and fixed PTY double prompt on startup.
+
 ## [0.1.9] - 2026-08-07
 
 ### Fixed
