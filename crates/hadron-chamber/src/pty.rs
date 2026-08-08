@@ -362,12 +362,7 @@ impl PtyTerminal {
             })
             .map_err(|e| format!("pty reader thread: {e}"))?;
 
-        if cfg!(windows) {
-            if let Ok(mut w) = writer.lock() {
-                let _ = w.write_all(b"\r\n");
-                let _ = w.flush();
-            }
-        }
+
 
 
         let stem = std::path::Path::new(&primary_shell)

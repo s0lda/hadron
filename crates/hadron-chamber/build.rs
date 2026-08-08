@@ -63,9 +63,23 @@ fn main() {
                     }
                 }
 
-                if let Err(e) = res.compile() {
-                    println!("cargo:warning=[hadron build.rs] winres compilation ERROR: {e}");
-                    panic!("[hadron build.rs] winres compilation ERROR: {e}");
+                match res.compile() {
+                    Ok(_) => {
+                        let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR set by cargo");
+                        let out_path = std::path::PathBuf::from(&out_dir);
+                        let res_lib = out_path.join("resource.lib");
+                        let res_res = out_path.join("resource.res");
+                        let res_o = out_path.join("resource.o");
+
+                        if res_lib.exists() {
+                            println!("cargo:rustc-link-arg={}", res_lib.display());
+                        } else if res_res.exists() {
+                            println!("cargo:rustc-link-arg={}", res_res.display());
+                        } else if res_o.exists() {
+                            println!("cargo:rustc-link-arg={}", res_o.display());
+                        }
+                    }
+                    Err(e) => panic!("[hadron build.rs] winres compilation ERROR: {e}"),
                 }
             } else {
                 println!("cargo:warning=[hadron build.rs] ERROR: icon path does not exist!");
