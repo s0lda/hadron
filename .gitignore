@@ -15,7 +15,9 @@ gpui-component
 # GitHub; the shipped docs tree keeps everything else under `docs/`.
 .docs/
 docs/plans/
+docs/plan/
 docs/specs/
+docs/spec/
 
 
 # A project's own Hadron workspace: the user's team, their field, their
