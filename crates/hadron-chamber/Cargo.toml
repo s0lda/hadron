@@ -18,7 +18,7 @@ edition.workspace = true
 license.workspace = true
 # Never publishable: git deps on gpui/gpui_platform, which crates.io refuses.
 publish = false
-include = ["src/**/*", "assets/**/*", "Cargo.toml", "README.md"]
+include = ["src/**/*", "assets/**/*", "Cargo.toml", "README.md", "build.rs"]
 
 # All three binaries ship from this one package, and that is load-bearing rather
 # than tidy: the chamber resolves `hadron-gluon` as a sibling of its own

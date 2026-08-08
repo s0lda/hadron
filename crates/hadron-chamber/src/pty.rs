@@ -118,7 +118,6 @@ pub struct PtyTerminal {
     term: Arc<Mutex<Term<VoidListener>>>,
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
-    _slave: Box<dyn SlavePty + Send>,
     _child: Box<dyn Child + Send + Sync>,
     dirty: Arc<AtomicBool>,
     cols: usize,
@@ -312,12 +311,14 @@ impl PtyTerminal {
             .unwrap_or("term");
         let initial_title = format!("{stem} #1");
 
+        // Drop slave to prevent ConPTY hanging or breaking EOF on Windows.
+        drop(pair.slave);
+
         Ok(Self {
             title: initial_title,
             term,
             writer,
             master: pair.master,
-            _slave: pair.slave,
             _child: child,
             dirty,
             cols,
