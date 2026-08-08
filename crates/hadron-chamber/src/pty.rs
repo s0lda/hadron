@@ -211,7 +211,13 @@ impl PtyTerminal {
                 }
             };
 
-            let mut cmd = CommandBuilder::new(sh);
+            let mut cmd = if cfg!(windows) {
+                let mut c = CommandBuilder::new_default_prog();
+                c.env("ComSpec", sh);
+                c
+            } else {
+                CommandBuilder::new(sh)
+            };
             cmd.cwd(&final_cwd);
             let mut has_sys_root = false;
             let mut has_sys_drive = false;
@@ -249,18 +255,12 @@ impl PtyTerminal {
                 if !has_pathext {
                     cmd.env("PATHEXT", ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC");
                 }
-                let sh_lower = sh.to_lowercase();
-                if sh_lower.contains("powershell") || sh_lower.contains("pwsh") {
-                    cmd.arg("-NoExit");
-                    cmd.arg("-NoLogo");
-                } else if sh_lower.contains("cmd") {
-                    cmd.arg("/k");
-                }
-
+                cmd.env("TERM", "xterm-256color");
             } else {
                 cmd.env("TERM", "xterm-256color");
             }
             cmd.env("COLORTERM", "truecolor");
+
 
             match pair.slave.spawn_command(cmd) {
                 Ok(child) => {
