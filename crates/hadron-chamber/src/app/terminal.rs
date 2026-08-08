@@ -11,7 +11,9 @@ impl super::Chamber {
         }
         // Translate the last painted screen size into a column/row grid (None
         // until the first frame has measured it).
-        let dims = self.terminal_px.get().map(|(_, _, w, h)| term_dims((w, h)));
+        let dims = self.terminal_px.get()
+            .filter(|&(_, _, w, h)| w > 10.0 && h > 10.0)
+            .map(|(_, _, w, h)| term_dims((w, h)));
 
         if self.terminals.is_empty() {
             match dims {
