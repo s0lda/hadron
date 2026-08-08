@@ -24,12 +24,8 @@ fn main() {
             if let Some(ico) = target_ico {
                 println!("cargo:rerun-if-changed={}", ico.display());
                 let mut res = winres::WindowsResource::new();
-                let relative_ico = if ico_path.exists() {
-                    "assets/hadron.ico"
-                } else {
-                    "../../assets/hadron.ico"
-                };
-                res.set_icon(relative_ico);
+                // Pass the full absolute path string to prevent build toolchain path mismatches
+                res.set_icon(ico.to_str().unwrap());
                 res.set_language(0x0409); // US English (0x0409) so Task Manager reads FileDescription
                 // VERSIONINFO metadata: FileDescription controls the name shown
                 // in Task Manager's "Apps" column; ProductName appears in the
@@ -38,12 +34,32 @@ fn main() {
                 res.set("ProductName", "Hadron");
                 res.set("InternalName", "hadron.exe");
                 res.set("OriginalFilename", "hadron.exe");
-                
+
                 // VERSIONINFO block is not generated unless FileVersion is set!
                 if let Ok(version) = std::env::var("CARGO_PKG_VERSION") {
                     res.set("FileVersion", &version);
                     res.set("ProductVersion", &version);
                 }
+
+                // Enable GPUI DPI-awareness & shell interaction by embedding a basic manifest
+                res.set_manifest(r#"
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>
+"#);
+
                 if let Err(e) = res.compile() {
                     panic!("winres error: {e}");
                 }
