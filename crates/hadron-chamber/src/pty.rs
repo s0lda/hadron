@@ -127,12 +127,9 @@ pub struct PtyTerminal {
 /// Resolve default shell cross-platform (PowerShell/COMSPEC on Windows / SHELL on Unix).
 pub fn default_shell() -> String {
     if cfg!(windows) {
-        if let Ok(sh) = std::env::var("SHELL") {
-            let path = std::path::Path::new(&sh);
-            if !sh.trim().is_empty() && path.exists() {
-                return sh;
-            }
-        }
+        // We explicitly do NOT check the "SHELL" env var on Windows. MSYS2/Git Bash sets
+        // SHELL=/bin/bash or similar, which often hangs silently when spawned inside ConPTY.
+        // We always want to default to PowerShell or cmd on Windows.
         if std::path::Path::new("C:\\Program Files\\PowerShell\\7\\pwsh.exe").exists() {
             return "C:\\Program Files\\PowerShell\\7\\pwsh.exe".to_string();
         }
