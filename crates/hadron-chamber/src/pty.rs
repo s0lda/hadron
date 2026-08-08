@@ -23,7 +23,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor};
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize, SlavePty};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
 /// The terminal's default foreground / background, used when a cell asks for the
 /// terminal default colour (`SGR 39/49`, the initial state of every cell).
@@ -126,41 +126,41 @@ pub struct PtyTerminal {
 
 /// Resolve default shell cross-platform (PowerShell/COMSPEC on Windows / SHELL on Unix).
 pub fn default_shell() -> String {
-    if cfg!(windows) {
+    let resolved = if cfg!(windows) {
         // We explicitly do NOT check the "SHELL" env var on Windows. MSYS2/Git Bash sets
         // SHELL=/bin/bash or similar, which often hangs silently when spawned inside ConPTY.
         // We always want to default to PowerShell or cmd on Windows.
         if std::path::Path::new("C:\\Program Files\\PowerShell\\7\\pwsh.exe").exists() {
-            return "C:\\Program Files\\PowerShell\\7\\pwsh.exe".to_string();
+            "C:\\Program Files\\PowerShell\\7\\pwsh.exe".to_string()
+        } else if std::path::Path::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe").exists() {
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_string()
+        } else if let Some(comspec) = std::env::var("COMSPEC").ok().filter(|c| !c.trim().is_empty() && std::path::Path::new(c).exists()) {
+            comspec
+        } else if std::path::Path::new("C:\\Windows\\System32\\cmd.exe").exists() {
+            "C:\\Windows\\System32\\cmd.exe".to_string()
+        } else {
+            "powershell.exe".to_string()
         }
-        if std::path::Path::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe").exists() {
-            return "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_string();
-        }
-        if let Ok(comspec) = std::env::var("COMSPEC") {
-            if !comspec.trim().is_empty() && std::path::Path::new(&comspec).exists() {
-                return comspec;
-            }
-        }
-        if std::path::Path::new("C:\\Windows\\System32\\cmd.exe").exists() {
-            return "C:\\Windows\\System32\\cmd.exe".to_string();
-        }
-        "powershell.exe".to_string()
     } else {
-        if let Ok(sh) = std::env::var("SHELL") {
-            if !sh.trim().is_empty() {
-                return sh;
-            }
+        if let Some(sh) = std::env::var("SHELL").ok().filter(|s| !s.trim().is_empty()) {
+            sh
+        } else {
+            "sh".to_string()
         }
-        "sh".to_string()
-    }
+    };
+
+
+    println!("[hadron-pty] default_shell() resolved shell: '{resolved}'");
+    resolved
 }
 
 impl PtyTerminal {
     /// Spawn default shell on a fresh PTY sized `cols × rows`, rooted at `cwd`.
     pub fn new(cwd: &Path, cols: usize, rows: usize) -> Result<Self, String> {
         // Ensure dimensions are within safe bounds for ConPTY to avoid silent hangs
-        let cols = cols.max(40).min(500);
-        let rows = rows.max(15).min(500);
+        let cols = cols.max(10).min(500);
+        let rows = rows.max(1).min(500);
+
 
         let pty_system = native_pty_system();
         let pty_size = PtySize {
@@ -194,13 +194,18 @@ impl PtyTerminal {
             }
         }
 
+        println!("[hadron-pty] Creating PTY terminal. cwd: '{}', grid: {}x{}", final_cwd.display(), cols, rows);
+        println!("[hadron-pty] Candidate shells to try: {:?}", shells);
+
         let mut child_and_pair = None;
         let mut last_err = String::new();
         for sh in &shells {
+            println!("[hadron-pty] Attempting to spawn shell: '{sh}'");
             let pair = match pty_system.openpty(pty_size) {
                 Ok(p) => p,
                 Err(e) => {
                     last_err = format!("openpty failed: {e}");
+                    eprintln!("[hadron-pty] openpty() failed for shell '{sh}': {e}");
                     continue;
                 }
             };
@@ -208,6 +213,10 @@ impl PtyTerminal {
             let mut cmd = CommandBuilder::new(sh);
             cmd.cwd(&final_cwd);
             let mut has_sys_root = false;
+            let mut has_sys_drive = false;
+            let mut has_windir = false;
+            let mut has_pathext = false;
+
             for (k, v) in std::env::vars() {
                 if k.starts_with('=') || k.is_empty() {
                     continue;
@@ -215,11 +224,29 @@ impl PtyTerminal {
                 if k.eq_ignore_ascii_case("SystemRoot") {
                     has_sys_root = true;
                 }
+                if k.eq_ignore_ascii_case("SystemDrive") {
+                    has_sys_drive = true;
+                }
+                if k.eq_ignore_ascii_case("windir") {
+                    has_windir = true;
+                }
+                if k.eq_ignore_ascii_case("PATHEXT") {
+                    has_pathext = true;
+                }
                 cmd.env(k, v);
             }
             if cfg!(windows) {
                 if !has_sys_root {
                     cmd.env("SystemRoot", "C:\\Windows");
+                }
+                if !has_sys_drive {
+                    cmd.env("SystemDrive", "C:");
+                }
+                if !has_windir {
+                    cmd.env("windir", "C:\\Windows");
+                }
+                if !has_pathext {
+                    cmd.env("PATHEXT", ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC");
                 }
                 let sh_lower = sh.to_lowercase();
                 if sh_lower.contains("powershell") || sh_lower.contains("pwsh") {
@@ -232,18 +259,23 @@ impl PtyTerminal {
 
             match pair.slave.spawn_command(cmd) {
                 Ok(child) => {
+                    println!("[hadron-pty] Successfully spawned shell '{sh}' (process ID: {:?})", child.process_id());
                     child_and_pair = Some((child, pair));
                     break;
                 }
                 Err(e) => {
                     last_err = format!("spawn shell '{sh}' in '{}' failed: {e}", final_cwd.display());
+                    eprintln!("[hadron-pty] spawn_command() failed for shell '{sh}' in '{}': {e}", final_cwd.display());
                 }
             }
         }
 
         let (child, pair) = match child_and_pair {
             Some(cp) => cp,
-            None => return Err(last_err),
+            None => {
+                eprintln!("[hadron-pty] All candidate shells failed to spawn. Last error: '{last_err}'");
+                return Err(last_err);
+            }
         };
 
         let mut writer = pair
@@ -265,14 +297,17 @@ impl PtyTerminal {
         // Spawn BEFORE sending initial newline so no incoming bytes are lost.
         let term_r = Arc::clone(&term);
         let dirty_r = Arc::clone(&dirty);
+        let sh_label = primary_shell.clone();
         std::thread::Builder::new()
             .name("hadron-pty-reader".into())
             .spawn(move || {
+                println!("[hadron-pty] Started PTY reader thread for shell '{sh_label}'");
                 let mut parser: Processor = Processor::new();
                 let mut buf = [0u8; 8192];
                 loop {
                     match reader.read(&mut buf) {
                         Ok(0) => {
+                            println!("[hadron-pty] PTY reader thread hit EOF (0 bytes) for shell '{sh_label}'");
                             if let Ok(mut term) = term_r.lock() {
                                 parser.advance(&mut *term, b"\r\n[process exited]\r\n");
                             }
@@ -280,6 +315,7 @@ impl PtyTerminal {
                             break;
                         }
                         Err(e) => {
+                            eprintln!("[hadron-pty] PTY reader thread read error for shell '{sh_label}': {e}");
                             if let Ok(mut term) = term_r.lock() {
                                 let err_msg = format!("\r\n[pty read error: {e}]\r\n");
                                 parser.advance(&mut *term, err_msg.as_bytes());
@@ -297,6 +333,7 @@ impl PtyTerminal {
                 }
             })
             .map_err(|e| format!("pty reader thread: {e}"))?;
+
 
         if cfg!(windows) {
             let _ = writer.write_all(b"\r\n");

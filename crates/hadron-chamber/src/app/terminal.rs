@@ -25,8 +25,10 @@ impl super::Chamber {
                         .and_then(|s| s.to_str())
                         .unwrap_or("term");
                     let title = format!("{stem} #1");
+                    println!("[hadron-terminal] Lazily initializing first terminal tab '{title}' in '{}' (dims: {}x{})...", root.display(), cols, rows);
                     match crate::pty::PtyTerminal::new(&root, cols, rows) {
                         Ok(mut term) => {
+                            println!("[hadron-terminal] Successfully created terminal tab '{title}'");
                             term.title = title.clone();
                             self.terminals.push(TerminalTab {
                                 title,
@@ -40,6 +42,7 @@ impl super::Chamber {
                             self.terminal_warmup = 20;
                         }
                         Err(err) => {
+                            eprintln!("[hadron-terminal] ERROR creating terminal tab '{title}': {err}");
                             self.terminals.push(TerminalTab {
                                 title,
                                 term: None,
@@ -53,6 +56,7 @@ impl super::Chamber {
                 None => {}
             }
             cx.notify();
+
             return;
         }
 

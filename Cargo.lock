@@ -2936,6 +2936,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "windows-sys 0.59.0",
  "winres",
 ]
 

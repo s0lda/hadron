@@ -338,7 +338,30 @@ pub fn editor_argv(choice: &EditorChoice, path: &Path, line: Option<u32>) -> Opt
     Some((program.to_string(), args))
 }
 
+#[cfg(windows)]
+pub fn init_windows_app_icon() {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    println!("[hadron-sys] Initializing Windows AppUserModelID...");
+    let app_id: Vec<u16> = OsStr::new("Hadron.Chamber")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        let res = windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr());
+        if res == 0 {
+            println!("[hadron-sys] Successfully set AppUserModelID to 'Hadron.Chamber'");
+        } else {
+            eprintln!("[hadron-sys] SetCurrentProcessExplicitAppUserModelID failed with HRESULT: {res:#x}");
+        }
+    }
+}
+
+#[cfg(not(windows))]
 pub fn init_windows_app_icon() {}
+
 
 #[cfg(test)]
 mod tests {
