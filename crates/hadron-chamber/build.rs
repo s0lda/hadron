@@ -14,9 +14,9 @@ fn main() {
                 .join("hadron.ico");
 
             let target_ico = if ico_path.exists() {
-                Some(ico_path)
+                Some(ico_path.clone())
             } else if fallback_ico_path.exists() {
-                Some(fallback_ico_path)
+                Some(fallback_ico_path.clone())
             } else {
                 None
             };
