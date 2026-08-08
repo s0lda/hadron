@@ -79,7 +79,6 @@ impl super::Chamber {
                 want_paint = true;
             }
             if want_paint {
-                println!("[hadron-terminal] Terminal dirty repaint. Snapshot text preview: {:?}", term.snapshot().plain_text().trim_start());
                 cx.notify();
             }
         }

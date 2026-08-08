@@ -227,14 +227,7 @@ impl PtyTerminal {
                     continue;
                 }
             };
-
-            let mut cmd = if cfg!(windows) {
-                let mut c = CommandBuilder::new_default_prog();
-                c.env("ComSpec", sh);
-                c
-            } else {
-                CommandBuilder::new(sh)
-            };
+            let mut cmd = CommandBuilder::new(sh);
             cmd.cwd(&final_cwd);
             let mut has_sys_root = false;
             let mut has_sys_drive = false;
@@ -260,6 +253,7 @@ impl PtyTerminal {
                 cmd.env(k, v);
             }
             if cfg!(windows) {
+                cmd.env("ComSpec", sh);
                 if !has_sys_root {
                     cmd.env("SystemRoot", "C:\\Windows");
                 }
@@ -272,12 +266,18 @@ impl PtyTerminal {
                 if !has_pathext {
                     cmd.env("PATHEXT", ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC");
                 }
+                let sh_lower = sh.to_lowercase();
+                if sh_lower.contains("powershell") || sh_lower.contains("pwsh") {
+                    cmd.arg("-NoExit");
+                    cmd.arg("-NoLogo");
+                } else if sh_lower.contains("cmd") {
+                    cmd.arg("/k");
+                }
                 cmd.env("TERM", "xterm-256color");
             } else {
                 cmd.env("TERM", "xterm-256color");
             }
             cmd.env("COLORTERM", "truecolor");
-
 
             match pair.slave.spawn_command(cmd) {
                 Ok(child) => {
@@ -352,7 +352,6 @@ impl PtyTerminal {
                             break;
                         }
                         Ok(n) => {
-                            println!("[hadron-pty] Reader read {n} bytes from shell '{sh_label}': {:?}", String::from_utf8_lossy(&buf[..n]));
                             if let Ok(mut term) = term_r.lock() {
                                 parser.advance(&mut *term, &buf[..n]);
                             }
@@ -364,7 +363,6 @@ impl PtyTerminal {
             .map_err(|e| format!("pty reader thread: {e}"))?;
 
         if cfg!(windows) {
-            println!("[hadron-pty] Sending initial newline \\r\\n to PTY writer...");
             if let Ok(mut w) = writer.lock() {
                 let _ = w.write_all(b"\r\n");
                 let _ = w.flush();
