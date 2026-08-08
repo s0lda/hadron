@@ -33,7 +33,10 @@ fn main() {
                 // Pass the full absolute path string to prevent build toolchain path mismatches
                 let ico_str = ico.to_str().expect("valid UTF-8 icon path");
                 res.set_icon(ico_str);
+                res.set_icon_with_id(ico_str, "1");
+                res.set_icon_with_id(ico_str, "MAINICON");
                 res.set_language(0x0409); // US English (0x0409) so Task Manager reads FileDescription
+
 
                 // VERSIONINFO metadata: FileDescription controls the name shown
                 // in Task Manager's "Apps" column; ProductName appears in the

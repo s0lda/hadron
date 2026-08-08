@@ -342,6 +342,7 @@ pub fn editor_argv(choice: &EditorChoice, path: &Path, line: Option<u32>) -> Opt
 pub fn init_windows_app_icon() {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -349,7 +350,13 @@ pub fn init_windows_app_icon() {
         ICON_BIG, ICON_SMALL, WM_SETICON,
     };
 
+    static INITIALIZED: AtomicBool = AtomicBool::new(false);
+    if INITIALIZED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+
     println!("[hadron-sys] Initializing Windows AppUserModelID...");
+
     let app_id: Vec<u16> = OsStr::new("Hadron.Chamber")
         .encode_wide()
         .chain(std::iter::once(0))

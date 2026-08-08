@@ -16,7 +16,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use alacritty_terminal::event::VoidListener;
+use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
@@ -24,6 +24,23 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize, SlavePty};
+
+pub struct PtyEventListener {
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+}
+
+impl EventListener for PtyEventListener {
+    fn send_event(&self, event: Event) {
+        if let Event::PtyWrite(text) = event {
+            println!("[hadron-pty] Responding to PTY escape sequence request: {:?}", text);
+            if let Ok(mut w) = self.writer.lock() {
+                let _ = w.write_all(text.as_bytes());
+                let _ = w.flush();
+            }
+        }
+    }
+}
+
 
 /// The terminal's default foreground / background, used when a cell asks for the
 /// terminal default colour (`SGR 39/49`, the initial state of every cell).
@@ -115,8 +132,8 @@ impl Dimensions for GridSize {
 /// A live PTY + shell, its output parsed into a grid on a background thread.
 pub struct PtyTerminal {
     pub title: String,
-    term: Arc<Mutex<Term<VoidListener>>>,
-    writer: Box<dyn Write + Send>,
+    term: Arc<Mutex<Term<PtyEventListener>>>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     master: Box<dyn MasterPty + Send>,
     _slave: Box<dyn SlavePty + Send>,
     _child: Box<dyn Child + Send + Sync>,
@@ -283,18 +300,24 @@ impl PtyTerminal {
             }
         };
 
-        let mut writer = pair
+        let writer = pair
             .master
             .take_writer()
             .map_err(|e| format!("pty writer: {e}"))?;
+        let writer = Arc::new(Mutex::new(writer));
+
         let mut reader = pair
             .master
             .try_clone_reader()
             .map_err(|e| format!("pty reader: {e}"))?;
 
+        let listener = PtyEventListener {
+            writer: Arc::clone(&writer),
+        };
+
         let mut config = Config::default();
         config.scrolling_history = 5000;
-        let term = Term::new(config, &GridSize { cols, rows }, VoidListener);
+        let term = Term::new(config, &GridSize { cols, rows }, listener);
         let term = Arc::new(Mutex::new(term));
         let dirty = Arc::new(AtomicBool::new(true));
 
@@ -342,8 +365,10 @@ impl PtyTerminal {
 
         if cfg!(windows) {
             println!("[hadron-pty] Sending initial newline \\r\\n to PTY writer...");
-            let _ = writer.write_all(b"\r\n");
-            let _ = writer.flush();
+            if let Ok(mut w) = writer.lock() {
+                let _ = w.write_all(b"\r\n");
+                let _ = w.flush();
+            }
         }
 
 
@@ -369,9 +394,12 @@ impl PtyTerminal {
 
     /// Stream bytes straight to the child (a keystroke, a paste, a signal char).
     pub fn send_input(&mut self, bytes: &[u8]) {
-        let _ = self.writer.write_all(bytes);
-        let _ = self.writer.flush();
+        if let Ok(mut w) = self.writer.lock() {
+            let _ = w.write_all(bytes);
+            let _ = w.flush();
+        }
     }
+
 
     /// Re-size both the PTY (so the child gets `SIGWINCH`) and the grid. A no-op
     /// when the size is unchanged, so it is cheap to call every frame.
