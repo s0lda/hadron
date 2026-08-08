@@ -161,8 +161,8 @@ pub fn default_shell() -> String {
 impl PtyTerminal {
     /// Spawn default shell on a fresh PTY sized `cols × rows`, rooted at `cwd`.
     pub fn new(cwd: &Path, cols: usize, rows: usize) -> Result<Self, String> {
-        let cols = cols.max(2);
-        let rows = rows.max(2);
+        let cols = cols.max(40);
+        let rows = rows.max(15);
 
         let pty_system = native_pty_system();
         let pty_size = PtySize {

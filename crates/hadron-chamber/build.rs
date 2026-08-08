@@ -34,6 +34,12 @@ fn main() {
                 res.set("ProductName", "Hadron");
                 res.set("InternalName", "hadron.exe");
                 res.set("OriginalFilename", "hadron.exe");
+                
+                // VERSIONINFO block is not generated unless FileVersion is set!
+                if let Ok(version) = std::env::var("CARGO_PKG_VERSION") {
+                    res.set("FileVersion", &version);
+                    res.set("ProductVersion", &version);
+                }
                 if let Err(e) = res.compile() {
                     panic!("winres error: {e}");
                 }
