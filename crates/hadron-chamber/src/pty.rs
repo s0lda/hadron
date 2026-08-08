@@ -329,6 +329,7 @@ impl PtyTerminal {
                             break;
                         }
                         Ok(n) => {
+                            println!("[hadron-pty] Reader read {n} bytes from shell '{sh_label}': {:?}", String::from_utf8_lossy(&buf[..n]));
                             if let Ok(mut term) = term_r.lock() {
                                 parser.advance(&mut *term, &buf[..n]);
                             }
@@ -339,11 +340,12 @@ impl PtyTerminal {
             })
             .map_err(|e| format!("pty reader thread: {e}"))?;
 
-
         if cfg!(windows) {
+            println!("[hadron-pty] Sending initial newline \\r\\n to PTY writer...");
             let _ = writer.write_all(b"\r\n");
             let _ = writer.flush();
         }
+
 
         let stem = std::path::Path::new(&primary_shell)
             .file_stem()

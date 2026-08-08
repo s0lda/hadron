@@ -9,6 +9,7 @@ impl super::Chamber {
         if self.right_rail_tab != RightRailTab::Terminal || self.prefs.inspector_collapsed {
             return;
         }
+        crate::sys::init_windows_app_icon();
         // Translate the last painted screen size into a column/row grid (None
         // until the first frame has measured it).
         let dims = self.terminal_px.get()
@@ -78,10 +79,12 @@ impl super::Chamber {
                 want_paint = true;
             }
             if want_paint {
+                println!("[hadron-terminal] Terminal dirty repaint. Snapshot text preview: {:?}", term.snapshot().plain_text().trim_start());
                 cx.notify();
             }
         }
     }
+
 
     /// Translate a keystroke into the bytes a TTY expects and stream them to the
     /// child. Covers the printable range, the essential control keys, Ctrl+letter

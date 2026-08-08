@@ -368,6 +368,7 @@ pub fn init_windows_app_icon() {
         if !h_icon.is_null() {
             unsafe extern "system" fn enum_win(hwnd: HWND, lparam: isize) -> i32 {
                 let h_icon = lparam as windows_sys::Win32::UI::WindowsAndMessaging::HICON;
+                println!("[hadron-sys] EnumThreadWindows found window HWND {:?}, applying WM_SETICON and SetClassLongPtrW", hwnd);
                 SendMessageW(hwnd, WM_SETICON, ICON_BIG as _, h_icon as _);
                 SendMessageW(hwnd, WM_SETICON, ICON_SMALL as _, h_icon as _);
                 SetClassLongPtrW(hwnd, GCLP_HICON, h_icon as _);
@@ -375,10 +376,14 @@ pub fn init_windows_app_icon() {
                 1
             }
             let tid = windows_sys::Win32::System::Threading::GetCurrentThreadId();
+            println!("[hadron-sys] Enumerating windows for current thread ID {}...", tid);
             EnumThreadWindows(tid, Some(enum_win), h_icon as isize);
+        } else {
+            eprintln!("[hadron-sys] LoadIconW returned null handle!");
         }
     }
 }
+
 
 
 #[cfg(not(windows))]
