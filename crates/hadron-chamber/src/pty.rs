@@ -251,8 +251,12 @@ impl PtyTerminal {
                 }
                 let sh_lower = sh.to_lowercase();
                 if sh_lower.contains("powershell") || sh_lower.contains("pwsh") {
+                    cmd.arg("-NoExit");
                     cmd.arg("-NoLogo");
+                } else if sh_lower.contains("cmd") {
+                    cmd.arg("/k");
                 }
+
             } else {
                 cmd.env("TERM", "xterm-256color");
             }

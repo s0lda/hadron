@@ -42,7 +42,7 @@ fn main() {
                     ("FileDescription", "Hadron"),
                     ("ProductName", "Hadron"),
                     ("CompanyName", "Hadron"),
-                    ("LegalCopyright", "Copyright © Hadron"),
+                    ("LegalCopyright", "Apache-2.0"),
                     ("InternalName", "hadron.exe"),
                     ("OriginalFilename", "hadron.exe"),
                 ];

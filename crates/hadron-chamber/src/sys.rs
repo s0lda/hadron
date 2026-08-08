@@ -342,6 +342,12 @@ pub fn editor_argv(choice: &EditorChoice, path: &Path, line: Option<u32>) -> Opt
 pub fn init_windows_app_icon() {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumThreadWindows, LoadIconW, SendMessageW, SetClassLongPtrW, GCLP_HICON, GCLP_HICONSM,
+        ICON_BIG, ICON_SMALL, WM_SETICON,
+    };
 
     println!("[hadron-sys] Initializing Windows AppUserModelID...");
     let app_id: Vec<u16> = OsStr::new("Hadron.Chamber")
@@ -356,8 +362,24 @@ pub fn init_windows_app_icon() {
         } else {
             eprintln!("[hadron-sys] SetCurrentProcessExplicitAppUserModelID failed with HRESULT: {res:#x}");
         }
+
+        let h_instance = GetModuleHandleW(std::ptr::null());
+        let h_icon = LoadIconW(h_instance, 1 as _); // 1 = IDI_APPLICATION from resource
+        if !h_icon.is_null() {
+            unsafe extern "system" fn enum_win(hwnd: HWND, lparam: isize) -> i32 {
+                let h_icon = lparam as windows_sys::Win32::UI::WindowsAndMessaging::HICON;
+                SendMessageW(hwnd, WM_SETICON, ICON_BIG as _, h_icon as _);
+                SendMessageW(hwnd, WM_SETICON, ICON_SMALL as _, h_icon as _);
+                SetClassLongPtrW(hwnd, GCLP_HICON, h_icon as _);
+                SetClassLongPtrW(hwnd, GCLP_HICONSM, h_icon as _);
+                1
+            }
+            let tid = windows_sys::Win32::System::Threading::GetCurrentThreadId();
+            EnumThreadWindows(tid, Some(enum_win), h_icon as isize);
+        }
     }
 }
+
 
 #[cfg(not(windows))]
 pub fn init_windows_app_icon() {}
