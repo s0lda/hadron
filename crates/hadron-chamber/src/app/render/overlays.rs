@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.2.1",
+        date: Some("2026-08-09"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Antigravity Python bridge auto-provisioning and Windows Python launcher (`py.exe`) detection",
+        ],
+    },
+    Release {
         version: "0.2.0",
         date: Some("2026-08-08"),
         added: &[],
