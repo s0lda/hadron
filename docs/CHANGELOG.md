@@ -5,6 +5,11 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-08-09
+
+### Fixed
+- **Antigravity ACP Python Bridge Provisioning**: Prioritized Windows Python Launcher (`py`) over `python.exe` Microsoft Store execution alias stubs, added `--clear` flag to `python -m venv` to reset broken venv directories, and enhanced subprocess error reporting (`{e:#}`) with stdout/stderr details.
+
 ## [0.2.0] - 2026-08-08
 
 ### Fixed
