@@ -293,6 +293,14 @@ fn probe_session(target: &AcpTarget) -> anyhow::Result<(Option<String>, Vec<Sess
     // different process with a different cwd — so it needs the same `{repo}` resolution
     // or a fixed seat would still read "couldn't detect models" in the UI.
     let target_clone = target.resolved()?;
+    if (target_clone.program().contains("bridges") && target_clone.program().contains("agy"))
+        || target_clone.args().iter().any(|a| a.contains("agy_acp.py"))
+    {
+        if !std::path::Path::new(target_clone.program()).exists() {
+            let _ = crate::adapter::bridge::materialize_script();
+            let _ = crate::adapter::bridge::provision_venv();
+        }
+    }
     // Same shape as `boot`: the SDK's connection API is scoped to its closure and
     // wants its own executor, so it gets its own thread.
     std::thread::Builder::new()
