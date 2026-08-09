@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use anyhow::Context;
+
 use hadron_lattice::Mode;
 
 use agent_client_protocol::schema::v1::{
@@ -297,8 +299,10 @@ fn probe_session(target: &AcpTarget) -> anyhow::Result<(Option<String>, Vec<Sess
         || target_clone.args().iter().any(|a| a.contains("agy_acp.py"))
     {
         if !std::path::Path::new(target_clone.program()).exists() {
-            let _ = crate::adapter::bridge::materialize_script();
-            let _ = crate::adapter::bridge::provision_venv();
+            crate::adapter::bridge::materialize_script()
+                .context("failed to materialize agy bridge script")?;
+            crate::adapter::bridge::provision_venv()
+                .context("failed to provision agy bridge venv")?;
         }
     }
     // Same shape as `boot`: the SDK's connection API is scoped to its closure and

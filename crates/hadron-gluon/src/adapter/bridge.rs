@@ -92,11 +92,27 @@ pub fn provision_venv() -> anyhow::Result<PathBuf> {
     let python_cmd = if cfg!(windows) {
         if Command::new("python").arg("--version").output().is_ok() {
             "python"
-        } else {
+        } else if Command::new("py").arg("--version").output().is_ok() {
             "py"
+        } else if Command::new("python3").arg("--version").output().is_ok() {
+            "python3"
+        } else {
+            anyhow::bail!(
+                "Python 3 is required for the Antigravity bridge but was not found on PATH \
+                 (tried 'python', 'py', 'python3'). Please install Python 3."
+            );
         }
     } else {
-        "python3"
+        if Command::new("python3").arg("--version").output().is_ok() {
+            "python3"
+        } else if Command::new("python").arg("--version").output().is_ok() {
+            "python"
+        } else {
+            anyhow::bail!(
+                "Python 3 is required for the Antigravity bridge but was not found on PATH \
+                 (tried 'python3', 'python'). Please install Python 3."
+            );
+        }
     };
     let mut make_venv = Command::new(python_cmd);
     make_venv.args(["-m", "venv"]).arg(&venv_dir);
