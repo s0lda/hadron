@@ -115,7 +115,7 @@ pub fn provision_venv() -> anyhow::Result<PathBuf> {
         }
     };
     let mut make_venv = Command::new(python_cmd);
-    make_venv.args(["-m", "venv"]).arg(&venv_dir);
+    make_venv.args(["-m", "venv", "--clear"]).arg(&venv_dir);
     run_bounded(make_venv, &format!("{python_cmd} -m venv"))?;
 
     let mut install = Command::new(&python);
@@ -142,7 +142,16 @@ fn run_bounded(cmd: Command, label: &str) -> anyhow::Result<()> {
         anyhow::bail!("{label} timed out after {PROVISION_DEADLINE:?} and was killed");
     }
     if !out.success() {
-        anyhow::bail!("{label} failed: {}", out.stderr_lossy().trim());
+        let stderr = out.stderr_lossy().trim().to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("process exited with code {:?}", out.code)
+        };
+        anyhow::bail!("{label} failed: {detail}");
     }
     Ok(())
 }

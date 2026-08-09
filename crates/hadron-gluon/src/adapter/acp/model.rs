@@ -302,7 +302,7 @@ fn probe_session(target: &AcpTarget) -> anyhow::Result<(Option<String>, Vec<Sess
             crate::adapter::bridge::materialize_script()
                 .context("failed to materialize agy bridge script")?;
             crate::adapter::bridge::provision_venv()
-                .context("failed to provision agy bridge venv")?;
+                .map_err(|e| anyhow::anyhow!("failed to provision agy bridge venv: {e:#}"))?;
         }
     }
     // Same shape as `boot`: the SDK's connection API is scoped to its closure and
