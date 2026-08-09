@@ -130,9 +130,22 @@ impl ResolvedAcpTarget {
 /// added in `0b8e9c05`, `mark_unseatable`'s resolvability probe) — a `{hadron}/…`
 /// program that reached here without the carve-out would be misclassified as
 /// "relative to the checkout" and refused, even though it never needed one.
+fn is_absolute_path_str(part: &str) -> bool {
+    let bytes = part.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    if bytes[0] == b'/' || bytes[0] == b'\\' {
+        return true;
+    }
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return true;
+    }
+    std::path::Path::new(part).is_absolute()
+}
+
 fn is_repo_relative(part: &str) -> bool {
-    let path = std::path::Path::new(part);
-    if path.is_absolute() {
+    if is_absolute_path_str(part) {
         return false;
     }
     (part.contains('/') || part.contains('\\'))
