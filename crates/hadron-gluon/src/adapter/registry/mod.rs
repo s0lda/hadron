@@ -131,8 +131,11 @@ impl ResolvedAcpTarget {
 /// program that reached here without the carve-out would be misclassified as
 /// "relative to the checkout" and refused, even though it never needed one.
 fn is_repo_relative(part: &str) -> bool {
-    part.contains('/')
-        && !part.starts_with('/')
+    let path = std::path::Path::new(part);
+    if path.is_absolute() {
+        return false;
+    }
+    (part.contains('/') || part.contains('\\'))
         && !part.starts_with(REPO_ROOT_TOKEN)
         && !part.starts_with(USER_HOME_TOKEN)
         && !part.starts_with('~')

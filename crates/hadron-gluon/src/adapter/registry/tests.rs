@@ -1008,6 +1008,15 @@ fn a_preset_that_cannot_resolve_here_is_listed_but_not_seatable() {
     assert_eq!(entries[1].description, "Anthropic Claude Code, over ACP");
 }
 
+#[test]
+fn is_repo_relative_treats_windows_absolute_paths_as_not_relative() {
+    assert!(!is_repo_relative("C:\\Users\\Komputer\\.hadron\\bridges\\agy\\venv\\Scripts\\python.exe"));
+    assert!(!is_repo_relative("C:/Users/Komputer/.hadron/bridges/agy/venv/Scripts/python.exe"));
+    assert!(!is_repo_relative("/home/user/.hadron/bridges/agy/venv/bin/python"));
+    assert!(is_repo_relative("crates/hadron-gluon/src/lib.rs"));
+    assert!(is_repo_relative("crates\\hadron-gluon\\src\\lib.rs"));
+}
+
 /// The negative control for the guard above: from a real checkout the agy row is
 /// seatable, so `mark_unseatable` cannot be quietly greying out everything.
 #[test]
