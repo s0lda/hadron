@@ -90,22 +90,22 @@ pub fn provision_venv() -> anyhow::Result<PathBuf> {
         .with_context(|| format!("creating bridge directory {}", dir.display()))?;
 
     let python_cmd = if cfg!(windows) {
-        if Command::new("python").arg("--version").output().is_ok() {
-            "python"
-        } else if Command::new("py").arg("--version").output().is_ok() {
+        if is_valid_python("py") {
             "py"
-        } else if Command::new("python3").arg("--version").output().is_ok() {
+        } else if is_valid_python("python") {
+            "python"
+        } else if is_valid_python("python3") {
             "python3"
         } else {
             anyhow::bail!(
                 "Python 3 is required for the Antigravity bridge but was not found on PATH \
-                 (tried 'python', 'py', 'python3'). Please install Python 3."
+                 (tried 'py', 'python', 'python3'). Please install Python 3."
             );
         }
     } else {
-        if Command::new("python3").arg("--version").output().is_ok() {
+        if is_valid_python("python3") {
             "python3"
-        } else if Command::new("python").arg("--version").output().is_ok() {
+        } else if is_valid_python("python") {
             "python"
         } else {
             anyhow::bail!(
@@ -154,6 +154,25 @@ fn run_bounded(cmd: Command, label: &str) -> anyhow::Result<()> {
         anyhow::bail!("{label} failed: {detail}");
     }
     Ok(())
+}
+
+/// Verify that `cmd` is an actual Python executable and not a Microsoft Store stub / alias.
+fn is_valid_python(cmd: &str) -> bool {
+    let Ok(out) = Command::new(cmd).arg("--version").output() else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if combined.contains("Microsoft Store") || combined.contains("App execution aliases") {
+        return false;
+    }
+    combined.contains("Python")
 }
 
 #[cfg(test)]
