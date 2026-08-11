@@ -28,12 +28,39 @@ from google.antigravity.types import Text, Thought
 # advertises, so the picker can never advertise a model we don't actually run.
 SEAT_MODEL = "gemini-3.6-flash"
 
-# Supported Gemini models in the Antigravity Python SDK.
-SUPPORTED_MODELS = [
+# Default supported Gemini models in the Antigravity Python SDK fallback.
+DEFAULT_SUPPORTED_MODELS = [
     {"value": "gemini-3.6-flash", "name": "Gemini 3.6 Flash"},
     {"value": "gemini-3.5-flash", "name": "Gemini 3.5 Flash"},
     {"value": "gemini-3.1-pro", "name": "Gemini 3.1 Pro"},
 ]
+SUPPORTED_MODELS = DEFAULT_SUPPORTED_MODELS
+
+
+def fetch_sdk_models():
+    """Query available Gemini models dynamically via `google.genai.Client` if GEMINI_API_KEY is set.
+    Falls back to DEFAULT_SUPPORTED_MODELS on error or if GEMINI_API_KEY is unset."""
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        return DEFAULT_SUPPORTED_MODELS
+
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        discovered = []
+        for m in client.models.list():
+            raw_name = getattr(m, "name", "") or str(m)
+            val = raw_name[7:] if raw_name.startswith("models/") else raw_name
+            if "gemini" in val.lower():
+                display_name = getattr(m, "display_name", "") or val
+                discovered.append({"value": val, "name": display_name})
+        if discovered:
+            return discovered
+    except Exception as e:
+        logger.warning(f"failed to fetch SDK models dynamically, using defaults: {e}")
+
+    return DEFAULT_SUPPORTED_MODELS
+
 
 # stdout is the protocol. Anything that prints to it — a stray `print`, a chatty
 # dependency — corrupts the JSON-RPC stream and takes the seat down with no clue
@@ -169,10 +196,10 @@ async def handle_prompt(msg_id, session_id, prompt):
 
 
 def session_config_response(session_id):
-    """The static capabilities a `session/new` advertises: supported Gemini models.
-    Fixed and known, so reporting it needs NO live connection and NO
-    key — the Settings model probe reads exactly this."""
+    """The capabilities a `session/new` advertises: supported Gemini models.
+    Queries models dynamically via SDK if key available, falling back to static defaults."""
     current_model = sessions.get(session_id, {}).get("model", SEAT_MODEL)
+    options = fetch_sdk_models()
     return {
         "sessionId": session_id,
         "configOptions": [
@@ -184,7 +211,7 @@ def session_config_response(session_id):
                 # the model selector at all.
                 "category": "model",
                 "currentValue": current_model,
-                "options": SUPPORTED_MODELS
+                "options": options
             }
         ]
     }
@@ -201,7 +228,7 @@ async def ensure_agent(session_data):
         raise RuntimeError(NO_KEY)
     cwd = session_data.get("cwd") or ""
     model_name = session_data.get("model", SEAT_MODEL)
-    valid_models = {m["value"] for m in SUPPORTED_MODELS}
+    valid_models = {m["value"] for m in fetch_sdk_models()}
     if model_name not in valid_models:
         logger.warning(f"unsupported model {model_name!r}, falling back to default {SEAT_MODEL!r}")
         model_name = SEAT_MODEL
