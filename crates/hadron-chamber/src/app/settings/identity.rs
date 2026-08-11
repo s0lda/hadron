@@ -165,12 +165,10 @@ impl super::Chamber {
     }
 
     pub(super) fn available_skills(&self) -> Vec<String> {
-        let mut list = vec![
-            "writing-plans".to_string(),
-            "executing-plans".to_string(),
-            "reviewing-work".to_string(),
-            "systematic-debugging".to_string(),
-        ];
+        let mut list: Vec<String> = hadron_gluon::skills::builtins()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
         for skill in self.loaded_skills() {
             if !list.iter().any(|r| r.eq_ignore_ascii_case(&skill.name)) {
                 list.push(skill.name);

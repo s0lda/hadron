@@ -642,6 +642,13 @@ impl super::Chamber {
         let skills = self.loaded_skills();
 
         // 1. Standard Skills Card
+        let builtins = hadron_gluon::skills::builtins();
+        let mut standard_badges = h_flex().gap_2().flex_wrap();
+        for b in &builtins {
+            let desc = b.description.as_deref().unwrap_or("Standard swarm procedure");
+            standard_badges = standard_badges.child(self.skill_badge(&b.id, desc, true));
+        }
+
         let standard_cards = v_flex()
             .gap_2()
             .child(
@@ -650,19 +657,7 @@ impl super::Chamber {
                     .text_color(theme::text_muted())
                     .child("Core procedures built into Hadron swarm orchestrator and quarks:"),
             )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .flex_wrap()
-                    .child(self.skill_badge("writing-plans", "Multi-step implementation specs & plan creation", true))
-                    .child(self.skill_badge("executing-plans", "Plan execution with checkpoint reviews", true))
-                    .child(self.skill_badge("reviewing-work", "Code review & diff verification", true))
-                    .child(self.skill_badge("systematic-debugging", "Root cause investigation before fixing", true))
-                    .child(self.skill_badge("brainstorming", "Design exploration & intent alignment", true))
-                    .child(self.skill_badge("test-driven-development", "TDD cycle with test-first unit verification", true))
-                    .child(self.skill_badge("verification-before-completion", "Empirical verification before completing tasks", true))
-                    .child(self.skill_badge("subagent-driven-development", "Executing plans with sub-agents", true)),
-            );
+            .child(standard_badges);
 
         let standard_section = settings_card_section(
             "Standard Swarm Skills",
