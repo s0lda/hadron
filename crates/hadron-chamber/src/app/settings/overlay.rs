@@ -78,13 +78,13 @@ impl super::Chamber {
 
         // Color swatches; the stored color (if any) gets a bright ring.
         let selected = self.settings_color();
-        let mut swatches = h_flex().gap_2().flex_wrap();
+        let mut swatches = h_flex().w_full().gap_1p5().flex_wrap().justify_end();
         for hex in IDENTITY_SWATCHES {
             let is_sel = selected.as_deref() == Some(format!("#{hex:06x}").as_str());
             swatches = swatches.child(
                 div()
                     .id(SharedString::from(format!("swatch-{hex:06x}")))
-                    .size(px(22.0))
+                    .size(px(20.0))
                     .rounded_full()
                     .bg(rgb(hex))
                     .border_2()
@@ -106,14 +106,30 @@ impl super::Chamber {
         // Left sidebar: a recessed, scrollable nav column of identities.
         let sidebar = v_flex()
             .flex_none()
-            .w(px(190.0))
+            .w(px(220.0))
             .h_full()
-            .p_2()
+            .p_3()
             .gap_2()
             .bg(theme::bg_base())
             .border_r(px(1.0))
             .border_color(theme::border())
-            .child(div().px_1().text_color(theme::text()).child("Settings"))
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .px_1()
+                    .pb_2()
+                    .border_b_1()
+                    .border_color(theme::border())
+                    .child(Icon::new(IconName::Settings).small().text_color(theme::accent()))
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::text())
+                            .child("Settings"),
+                    ),
+            )
             .child(
                 div()
                     .id("settings-nav-scroll")
@@ -370,20 +386,19 @@ impl super::Chamber {
                                     .when(self.settings_advanced_expanded, |v| {
                                         v.child(
                                             h_flex()
+                                                .w_full()
                                                 .gap_3()
-                                                .child(div().flex_1().child(settings_field(
+                                                .pt_2()
+                                                .child(div().flex_1().child(settings_field_stacked(
                                                     "Temperature",
-                                                    None,
                                                     Input::new(&self.settings_temperature).w_full().into_any_element(),
                                                 )))
-                                                .child(div().flex_1().child(settings_field(
+                                                .child(div().flex_1().child(settings_field_stacked(
                                                     "Top P",
-                                                    None,
                                                     Input::new(&self.settings_top_p).w_full().into_any_element(),
                                                 )))
-                                                .child(div().flex_1().child(settings_field(
+                                                .child(div().flex_1().child(settings_field_stacked(
                                                     "Max Tokens",
-                                                    None,
                                                     Input::new(&self.settings_max_tokens).w_full().into_any_element(),
                                                 ))),
                                         )

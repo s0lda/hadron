@@ -542,33 +542,39 @@ pub(super) fn settings_field(
     description: Option<&'static str>,
     content: gpui::AnyElement,
 ) -> impl IntoElement {
-    v_flex()
+    h_flex()
         .w_full()
-        .gap_1()
+        .items_center()
+        .justify_between()
+        .gap_4()
+        .py_3()
+        .border_b_1()
+        .border_color(theme::border())
         .child(
-            h_flex()
-                .w_full()
-                .items_center()
-                .justify_between()
-                .gap_3()
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_0p5()
                 .child(
                     div()
-                        .flex_none()
                         .text_sm()
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .text_color(theme::text())
                         .child(label),
                 )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(content),
-                ),
+                .when_some(description, |v, desc| {
+                    v.child(div().text_xs().text_color(theme::text_muted()).child(desc))
+                }),
         )
-        .when_some(description, |v, desc| {
-            v.child(div().text_xs().text_color(theme::text_muted()).child(desc))
-        })
+        .child(
+            div()
+                .flex_none()
+                .w(px(280.0))
+                .flex()
+                .justify_end()
+                .items_center()
+                .child(content),
+        )
 }
 
 
