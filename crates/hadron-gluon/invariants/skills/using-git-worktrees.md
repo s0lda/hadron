@@ -43,13 +43,13 @@ Only use if no native tool is available.
 
 1. **Location Priority:**
     - Explicit directory in user instructions.
-    - Existing `.hadron/worktrees/` directory (or `worktrees/`).
-    - Default: `.hadron/worktrees/` at repository root.
+    - Existing `.hadron/trees/` or `.hadron/worktrees/` directory (or `worktrees/`).
+    - Default: `.hadron/trees/` (or `.hadron/worktrees/`) at repository root.
 
 2. **Gitignore Safety Verification:**
 
     ```bash
-    git check-ignore -q .worktrees 2>/dev/null || git check-ignore -q worktrees 2>/dev/null
+    git check-ignore -q .hadron 2>/dev/null || git check-ignore -q .hadron/trees 2>/dev/null || git check-ignore -q .worktrees 2>/dev/null
     ```
 
     _If NOT ignored:_ Add location to `.gitignore` and commit before creation.
