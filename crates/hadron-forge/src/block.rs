@@ -43,7 +43,7 @@ impl BlockKind {
                 "type_declaration" => Some(BlockKind::Struct),
                 _ => None,
             },
-            Lang::Opaque => None,
+            Lang::Opaque | _ => None,
         }
     }
 
@@ -118,7 +118,7 @@ pub fn parse_blocks_lang(source: &str, lang: Lang) -> Vec<Block> {
         Lang::Python => tree_sitter_python::LANGUAGE.into(),
         Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         Lang::Go => tree_sitter_go::LANGUAGE.into(),
-        Lang::Opaque => unreachable!(),
+        Lang::Opaque | _ => return Vec::new(),
     };
     if parser.set_language(&language).is_err() {
         return Vec::new();
