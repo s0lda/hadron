@@ -534,8 +534,8 @@ pub(super) fn roster_row(
         .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
 }
 
-/// A labeled block in the Settings card: label + optional muted caption on top,
-/// with the control spanning full card width below.
+/// A labeled block in the Settings card: label on top, optional description,
+/// with the control spanning full card width below so options never get squeezed into multiline.
 pub(super) fn settings_field(
     label: &'static str,
     description: Option<&'static str>,
@@ -543,32 +543,22 @@ pub(super) fn settings_field(
 ) -> impl IntoElement {
     v_flex()
         .w_full()
-        .gap_1()
+        .gap_1p5()
         .child(
-            h_flex()
-                .w_full()
-                .items_center()
-                .justify_between()
-                .gap_3()
-                .child(
-                    div()
-                        .flex_none()
-                        .text_sm()
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(theme::text())
-                        .child(label),
-                )
-                .child(
-                    h_flex()
-                        .flex_1()
-                        .max_w(px(360.0))
-                        .justify_end()
-                        .child(content),
-                ),
+            div()
+                .text_sm()
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(theme::text())
+                .child(label),
         )
         .when_some(description, |v, desc| {
             v.child(div().text_xs().text_color(theme::text_muted()).child(desc))
         })
+        .child(
+            div()
+                .w_full()
+                .child(content),
+        )
 }
 
 /// A container card for grouping related settings into a distinct visual section.
