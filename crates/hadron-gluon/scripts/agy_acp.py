@@ -31,9 +31,7 @@ SEAT_MODEL = "gemini-3.6-flash"
 # Supported Gemini models in the Antigravity Python SDK.
 SUPPORTED_MODELS = [
     {"value": "gemini-3.6-flash", "name": "Gemini 3.6 Flash"},
-    {"value": "gemini-3.6-pro", "name": "Gemini 3.6 Pro"},
     {"value": "gemini-3.5-flash", "name": "Gemini 3.5 Flash"},
-    {"value": "gemini-3.5-pro", "name": "Gemini 3.5 Pro"},
     {"value": "gemini-3.1-pro", "name": "Gemini 3.1 Pro"},
 ]
 
@@ -203,6 +201,10 @@ async def ensure_agent(session_data):
         raise RuntimeError(NO_KEY)
     cwd = session_data.get("cwd") or ""
     model_name = session_data.get("model", SEAT_MODEL)
+    valid_models = {m["value"] for m in SUPPORTED_MODELS}
+    if model_name not in valid_models:
+        logger.warning(f"unsupported model {model_name!r}, falling back to default {SEAT_MODEL!r}")
+        model_name = SEAT_MODEL
     agent = Agent(
         config=LocalAgentConfig(
             api_key=api_key,

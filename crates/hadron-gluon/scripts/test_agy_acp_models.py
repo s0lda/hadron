@@ -18,10 +18,10 @@ class TestAgyAcpModels(unittest.TestCase):
         model_opt = opts[0]
         self.assertEqual(model_opt["id"], "model")
         self.assertEqual(model_opt["category"], "model")
-        self.assertGreaterEqual(len(model_opt["options"]), 5)
+        self.assertGreaterEqual(len(model_opt["options"]), 3)
         model_vals = [o["value"] for o in model_opt["options"]]
         self.assertIn("gemini-3.6-flash", model_vals)
-        self.assertIn("gemini-3.6-pro", model_vals)
+        self.assertIn("gemini-3.1-pro", model_vals)
 
     def test_session_set_config_option_updates_model(self):
         # Register a test session
@@ -33,12 +33,12 @@ class TestAgyAcpModels(unittest.TestCase):
         }
         # Simulate updating config option for model
         old_model = agy_acp.sessions[session_id].get("model")
-        new_model = "gemini-3.6-pro"
+        new_model = "gemini-3.1-pro"
         agy_acp.sessions[session_id]["model"] = new_model
         if old_model != new_model and agy_acp.sessions[session_id].get("agent") is not None:
             agy_acp.sessions[session_id]["agent"] = None
 
-        self.assertEqual(agy_acp.sessions[session_id]["model"], "gemini-3.6-pro")
+        self.assertEqual(agy_acp.sessions[session_id]["model"], "gemini-3.1-pro")
         self.assertIsNone(agy_acp.sessions[session_id]["agent"])
 
 if __name__ == "__main__":
