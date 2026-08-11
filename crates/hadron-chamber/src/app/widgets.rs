@@ -534,8 +534,9 @@ pub(super) fn roster_row(
         .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
 }
 
-/// A labeled block in the Settings card: label on top, optional description,
-/// with the control spanning full card width below so options never get squeezed into multiline.
+/// A labeled block in the Settings card: Title and option/control on the top row,
+/// with the optional description on the bottom row. Title is `flex_none` so it only takes
+/// its text width, leaving maximum space for the option/control without dividing the row in half.
 pub(super) fn settings_field(
     label: &'static str,
     description: Option<&'static str>,
@@ -543,23 +544,33 @@ pub(super) fn settings_field(
 ) -> impl IntoElement {
     v_flex()
         .w_full()
-        .gap_1p5()
+        .gap_1()
         .child(
-            div()
-                .text_sm()
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(theme::text())
-                .child(label),
+            h_flex()
+                .w_full()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .child(
+                    div()
+                        .flex_none()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(theme::text())
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(content),
+                ),
         )
         .when_some(description, |v, desc| {
             v.child(div().text_xs().text_color(theme::text_muted()).child(desc))
         })
-        .child(
-            div()
-                .w_full()
-                .child(content),
-        )
 }
+
 
 /// A container card for grouping related settings into a distinct visual section.
 pub(super) fn settings_card_section(
