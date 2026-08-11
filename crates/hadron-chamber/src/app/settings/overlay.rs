@@ -150,7 +150,7 @@ impl super::Chamber {
                 match target {
                     SettingsTarget::General => "General Settings".to_string(),
                     SettingsTarget::Providers => "Providers".to_string(),
-                    SettingsTarget::Preons => "Preons & Roles".to_string(),
+                    SettingsTarget::Preons => "Preons".to_string(),
                     _ => format!("Editing {}", preview.name),
                 },
             ))
@@ -425,9 +425,9 @@ impl super::Chamber {
                             self.mode_select(target.key(), window, cx),
                         ))
                         .child(settings_field(
-                            "Roles",
-                            Some("Roles this quark takes on in the swarm."),
-                            self.role_selector(cx),
+                            "Preons",
+                            Some("Preons assigned to this quark in the swarm."),
+                            self.preon_selector(cx),
                         ))
                         .child(settings_field(
                             "Denied skills",
@@ -637,30 +637,30 @@ impl super::Chamber {
             }))
     }
 
-    /// Dedicated Preons management view: standard 3 roles, global & repo preons (with Edit & Delete), and preon creation.
+    /// Dedicated Preons management view: standard 3 preons, global & repo preons (with Edit & Delete), and preon creation.
     pub(super) fn preons_settings_view(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let preons = self.loaded_preons();
 
-        // 1. Standard Roles Card
+        // 1. Standard Preons Card
         let standard_cards = v_flex()
             .gap_2()
             .child(
                 div()
                     .text_xs()
                     .text_color(theme::text_muted())
-                    .child("Core roles built into Hadron swarm orchestrator and quarks:"),
+                    .child("Core preons built into Hadron swarm orchestrator and quarks:"),
             )
             .child(
                 h_flex()
                     .gap_2()
                     .flex_wrap()
-                    .child(self.role_badge("architect", "High-level design & planning", true))
-                    .child(self.role_badge("reviewer", "Code review & verification", true))
-                    .child(self.role_badge("executor", "Implementation & test execution", true)),
+                    .child(self.preon_badge("architect", "High-level design & planning", true))
+                    .child(self.preon_badge("reviewer", "Code review & verification", true))
+                    .child(self.preon_badge("executor", "Implementation & test execution", true)),
             );
 
         let standard_section = settings_card_section(
-            "Standard Swarm Roles",
+            "Standard Swarm Preons",
             Some(IconName::CircleCheck),
             standard_cards,
         );
@@ -873,7 +873,7 @@ impl super::Chamber {
             .child(create_section)
     }
 
-    fn role_badge(&self, name: &str, desc: &str, is_standard: bool) -> impl IntoElement {
+    fn preon_badge(&self, name: &str, desc: &str, is_standard: bool) -> impl IntoElement {
         v_flex()
             .gap_1()
             .p_2()

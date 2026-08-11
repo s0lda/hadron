@@ -185,14 +185,14 @@ impl super::Chamber {
         preons
     }
 
-    pub(super) fn available_roles(&self) -> Vec<String> {
-        let mut roles = vec!["architect".to_string(), "reviewer".to_string(), "executor".to_string()];
+    pub(super) fn available_preons(&self) -> Vec<String> {
+        let mut preons = vec!["architect".to_string(), "reviewer".to_string(), "executor".to_string()];
         for preon in self.loaded_preons() {
-            if !roles.iter().any(|r| r.eq_ignore_ascii_case(&preon.name)) {
-                roles.push(preon.name);
+            if !preons.iter().any(|r| r.eq_ignore_ascii_case(&preon.name)) {
+                preons.push(preon.name);
             }
         }
-        roles
+        preons
     }
 
     pub(super) fn add_custom_preon(&self, preon_name: &str, is_global: bool) -> Option<std::path::PathBuf> {
@@ -222,10 +222,6 @@ impl super::Chamber {
         }
     }
 
-    pub(super) fn add_custom_role(&self, role_name: &str) -> bool {
-        self.add_custom_preon(role_name, false).is_some()
-    }
-
     pub(super) fn delete_preon_file(&self, path: &std::path::Path) -> bool {
         if path.exists() {
             std::fs::remove_file(path).is_ok()
@@ -234,34 +230,8 @@ impl super::Chamber {
         }
     }
 
-    pub(super) fn delete_custom_role(&self, role_name: &str) -> bool {
-        let clean = role_name.trim().to_lowercase();
-        if ["architect", "reviewer", "executor"].contains(&clean.as_str()) {
-            return false;
-        }
-        let hadron_dir = match self.path.parent() {
-            Some(p) => p.to_path_buf(),
-            None => std::path::PathBuf::from(".hadron"),
-        };
-        let mut deleted = false;
-        let mut check_files = vec![
-            hadron_dir.join("preons").join(format!("{clean}.md")),
-            hadron_dir.join("roles").join(format!("{clean}.md")),
-        ];
-        if let Some(user_dir) = hadron_lattice::user_hadron_dir() {
-            check_files.push(user_dir.join("preons").join(format!("{clean}.md")));
-            check_files.push(user_dir.join("roles").join(format!("{clean}.md")));
-        }
-        for file in check_files {
-            if file.exists() && std::fs::remove_file(file).is_ok() {
-                deleted = true;
-            }
-        }
-        deleted
-    }
-
-    pub(super) fn role_selector(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let available = self.available_roles();
+    pub(super) fn preon_selector(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let available = self.available_preons();
         let current_roles_val = self.settings_roles.read(cx).value().trim().to_string();
         let current_roles: Vec<String> = current_roles_val
             .split(',')
@@ -270,15 +240,15 @@ impl super::Chamber {
             .collect();
 
         let mut row = h_flex().gap_1p5().flex_wrap();
-        for role in &available {
-            let selected = current_roles.iter().any(|r| r.eq_ignore_ascii_case(role));
+        for preon in &available {
+            let selected = current_roles.iter().any(|r| r.eq_ignore_ascii_case(preon));
             let f = self.settings_roles.clone();
-            let r = role.clone();
+            let p = preon.clone();
             let current_roles_clone = current_roles.clone();
 
             row = row.child(
                 div()
-                    .id(SharedString::from(format!("role-chip-{}", role)))
+                    .id(SharedString::from(format!("preon-chip-{}", preon)))
                     .px_2()
                     .py_0p5()
                     .rounded_md()
@@ -297,14 +267,14 @@ impl super::Chamber {
                             .text_color(theme::text_secondary())
                             .hover(|s| s.bg(theme::bg_surface_raised()))
                     })
-                    .child(role.clone())
+                    .child(preon.clone())
                     .on_click(cx.listener(move |this, _, window, cx| {
                         let mut new_roles = current_roles_clone.clone();
-                        let target_role = r.to_string();
-                        if let Some(pos) = new_roles.iter().position(|x| x.eq_ignore_ascii_case(&target_role)) {
+                        let target_preon = p.to_string();
+                        if let Some(pos) = new_roles.iter().position(|x| x.eq_ignore_ascii_case(&target_preon)) {
                             new_roles.remove(pos);
                         } else {
-                            new_roles.push(target_role);
+                            new_roles.push(target_preon);
                         }
                         f.update(cx, |s, cx| s.set_value(new_roles.join(", "), window, cx));
                         this.commit_settings_inputs(cx);
