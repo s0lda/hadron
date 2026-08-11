@@ -1,59 +1,120 @@
 use super::*;
 
 impl super::Chamber {
-    /// Whether the settings target `id` resolves to an ACP seat — the seats whose Model
-    /// field is a live dropdown (re-probed from the agent) rather than a free-text box.
+    /// Whether the settings target `id` resolves to an ACP seat or a probing CLI seat —
+    /// the seats whose Model field is a live dropdown rather than a free-text box.
     pub(super) fn is_acp_quark(&self, id: &str) -> bool {
-        resolve_team(&self.team, &self.global)
+        let seat = resolve_team(&self.team, &self.global)
             .get(&QuarkId::new(id))
-            .map(|s| s.transport == hadron_lattice::Transport::Acp)
-            .unwrap_or(false)
+            .cloned();
+        let Some(seat) = seat else { return false };
+        if seat.transport == hadron_lattice::Transport::Acp {
+            return true;
+        }
+        if seat.transport == hadron_lattice::Transport::Cli {
+            let spec = seat.cli.clone().unwrap_or_else(|| {
+                hadron_lattice::CliSpec::preset(&seat.vendor).unwrap_or_else(|| {
+                    hadron_lattice::CliSpec::generic(
+                        seat.command.as_ref().map(|c| c.program.clone()).unwrap_or_default(),
+                        seat.command.as_ref().map(|c| c.args.clone()).unwrap_or_default(),
+                    )
+                })
+            });
+            return spec.model_probe.is_some();
+        }
+        false
     }
 
-    /// Re-probe the ACP agent backing `id` for every config selector it offers (model,
-    /// effort, mode, …), parking the result in `acp_model_probe` for the Settings
-    /// dropdowns. A no-op (clears the probe) for a non-ACP quark or a seat with no
-    /// bootable command — those keep the free-text/static fields. The boot runs off the
-    /// UI thread; a probe that resolves after the human has moved to another quark is
+    /// Re-probe the ACP agent or CLI binary backing `id` for every config selector it offers,
+    /// parking the result in `acp_model_probe` for the Settings dropdowns.
     pub(super) fn start_acp_model_probe(&mut self, id: &str, cx: &mut Context<Self>) {
-        let target = resolve_team(&self.team, &self.global)
+        let seat_opt = resolve_team(&self.team, &self.global)
             .get(&QuarkId::new(id))
-            .and_then(|seat| hadron_gluon::adapter::registry::AcpTarget::for_seat_with_env(seat, self.secret_store.as_ref()));
-        let Some(target) = target else {
+            .cloned();
+        let Some(seat) = seat_opt else {
             self.acp_model_probe = None;
             return;
         };
-        let id = id.to_string();
-        self.acp_model_probe = Some(AcpModelProbe { id: id.clone(), state: AcpModelState::Probing });
-        cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            let mut cx = cx.clone();
-            async move {
-                // Blocking ACP boot, off the UI thread — a slow `npx` must not freeze the
-                // window (mirrors the Connect wizard's probe).
-                let result = cx
-                    .background_spawn(async move {
-                        hadron_gluon::adapter::acp::probe_selectors(&target)
-                    })
-                    .await;
-                this.update(&mut cx, |this, cx| {
-                    // Only the still-open probe may write its result.
-                    if !matches!(&this.acp_model_probe, Some(p) if p.id == id) {
-                        return;
-                    }
-                    let state = match result {
-                        Ok(sel) if sel.model.is_none() && sel.effort.is_none() => {
-                            AcpModelState::Unavailable("this agent offers no model picker".into())
+
+        let id_str = id.to_string();
+        if seat.transport == hadron_lattice::Transport::Acp {
+            let target = hadron_gluon::adapter::registry::AcpTarget::for_seat_with_env(&seat, self.secret_store.as_ref());
+            let Some(target) = target else {
+                self.acp_model_probe = None;
+                return;
+            };
+            self.acp_model_probe = Some(AcpModelProbe { id: id_str.clone(), state: AcpModelState::Probing });
+            cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    let result = cx
+                        .background_spawn(async move {
+                            hadron_gluon::adapter::acp::probe_selectors(&target)
+                        })
+                        .await;
+                    this.update(&mut cx, |this, cx| {
+                        if !matches!(&this.acp_model_probe, Some(p) if p.id == id_str) {
+                            return;
                         }
-                        Ok(sel) => AcpModelState::Ready { selectors: sel },
-                        Err(e) => AcpModelState::Unavailable(format!("couldn't detect models: {e}")),
-                    };
-                    this.acp_model_probe = Some(AcpModelProbe { id, state });
-                    cx.notify();
+                        let state = match result {
+                            Ok(sel) if sel.model.is_none() && sel.effort.is_none() => {
+                                AcpModelState::Unavailable("this agent offers no model picker".into())
+                            }
+                            Ok(sel) => AcpModelState::Ready { selectors: sel },
+                            Err(e) => AcpModelState::Unavailable(format!("couldn't detect models: {e}")),
+                        };
+                        this.acp_model_probe = Some(AcpModelProbe { id: id_str, state });
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            })
+            .detach();
+        } else if seat.transport == hadron_lattice::Transport::Cli {
+            let cli_spec = seat.cli.clone().unwrap_or_else(|| {
+                hadron_lattice::CliSpec::preset(&seat.vendor).unwrap_or_else(|| {
+                    hadron_lattice::CliSpec::generic(
+                        seat.command.as_ref().map(|c| c.program.clone()).unwrap_or_default(),
+                        seat.command.as_ref().map(|c| c.args.clone()).unwrap_or_default(),
+                    )
                 })
-                .ok();
+            });
+            if cli_spec.model_probe.is_some() {
+                self.acp_model_probe = Some(AcpModelProbe { id: id_str.clone(), state: AcpModelState::Probing });
+                cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                    let mut cx = cx.clone();
+                    async move {
+                        let result = cx
+                            .background_spawn(async move {
+                                hadron_gluon::adapter::cli::probe_cli_models(&cli_spec)
+                            })
+                            .await;
+                        this.update(&mut cx, |this, cx| {
+                            if !matches!(&this.acp_model_probe, Some(p) if p.id == id_str) {
+                                return;
+                            }
+                            let state = match result {
+                                Ok(selector) => AcpModelState::Ready {
+                                    selectors: hadron_gluon::adapter::acp::AcpSelectors {
+                                        model: Some(selector),
+                                        ..Default::default()
+                                    },
+                                },
+                                Err(e) => AcpModelState::Unavailable(format!("couldn't detect models: {e}")),
+                            };
+                            this.acp_model_probe = Some(AcpModelProbe { id: id_str, state });
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                })
+                .detach();
+            } else {
+                self.acp_model_probe = None;
             }
-        })
-        .detach();
+        } else {
+            self.acp_model_probe = None;
+        }
     }
 
     /// Provision the `agy` ACP bridge's venv for `id`, off the UI thread — a no-op
