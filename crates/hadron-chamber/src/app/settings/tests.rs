@@ -149,3 +149,16 @@ fn model_select_delegate_includes_default_and_custom_value() {
     let pos = delegate.position(&gpui::SharedString::from("gpt-4o-mini"));
     assert_eq!(pos, Some(IndexPath::default().row(2)));
 }
+
+#[test]
+fn supports_model_params_capability_gating_in_settings() {
+    use hadron_lattice::Transport;
+
+    let mut http_seat = Seat::cli(QuarkId::new("ollama"), "http", "llama3", Flavor::Worker);
+    http_seat.transport = Transport::Http;
+    assert!(http_seat.supports_model_params(), "HTTP transport must support model params");
+
+    let mut cli_seat = Seat::cli(QuarkId::new("claude"), "claude", "opus", Flavor::Worker);
+    cli_seat.transport = Transport::Cli;
+    assert!(!cli_seat.supports_model_params(), "Default CLI seat without param flags must not support model params");
+}

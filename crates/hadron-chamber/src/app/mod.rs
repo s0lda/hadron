@@ -311,6 +311,10 @@ struct Chamber {
     /// Whether the current Settings quark's provider needs a secret key at all —
     /// gates the API-key field so it isn't shown under every quark. Set on load.
     settings_secret_applies: bool,
+    /// Whether the current Settings quark supports model parameters (temperature, top_p, max_tokens).
+    settings_model_params_applies: bool,
+    /// Whether the "Advanced Model Parameters" collapsible section is expanded in Settings.
+    settings_advanced_expanded: bool,
     /// Live filter for the add-quark preset catalogue (~37 entries): a case-insensitive
     /// substring match on preset name + command, so the list is searchable instead of a
     /// long scroll.
@@ -795,6 +799,8 @@ impl Chamber {
             settings_secret_value,
             settings_secret_status: settings::SecretStatus::NotSet,
             settings_secret_applies: false,
+            settings_model_params_applies: false,
+            settings_advanced_expanded: false,
             preset_filter,
             custom_cli_vendor,
             custom_cli_program,

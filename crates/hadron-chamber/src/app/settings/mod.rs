@@ -61,7 +61,7 @@ impl Chamber {
 
     /// Load the current target's name + image path into the editor inputs.
     pub(super) fn load_settings_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (name, path, model, effort, mode, roles, deny_skills, energy_limit_str, temp_str, top_p_str, max_tokens_str, secret_var, secret_is_set, secret_applies) = {
+        let (name, path, model, effort, mode, roles, deny_skills, energy_limit_str, temp_str, top_p_str, max_tokens_str, secret_var, secret_is_set, secret_applies, supports_params) = {
             let key = self.settings_target.key();
             let mut mdl = String::new();
             let mut eff = None;
@@ -80,6 +80,7 @@ impl Chamber {
             // field is shown only then, not under every quark (its var is not a
             // universal default).
             let mut needs_secret = false;
+            let mut supports_params = false;
             let id = if key == "human" {
                 Some(&self.prefs.human)
             } else if key == "general" || key == "providers" {
@@ -100,6 +101,7 @@ impl Chamber {
                     temp_str = seat.model_params.temperature.map(|f| f.to_string()).unwrap_or_default();
                     top_p_str = seat.model_params.top_p.map(|f| f.to_string()).unwrap_or_default();
                     max_tokens_str = seat.model_params.max_tokens.map(|n| n.to_string()).unwrap_or_default();
+                    supports_params = seat.supports_model_params();
                     // The provider's required secret vars (catalogue SSOT) plus any the
                     // seat already declares decide whether to show the field and what to
                     // name it — never the value, only ever the NAME (see `secret_status`).
@@ -133,6 +135,7 @@ impl Chamber {
                 var,
                 is_set,
                 needs_secret,
+                supports_params,
             )
         };
         self.settings_name
@@ -154,11 +157,11 @@ impl Chamber {
         self.settings_energy_limit
             .update(cx, |s, cx| s.set_value(energy_limit_str, window, cx));
         self.settings_temperature
-            .update(cx, |s, cx| s.set_value(temp_str, window, cx));
+            .update(cx, |s, cx| s.set_value(temp_str.clone(), window, cx));
         self.settings_top_p
-            .update(cx, |s, cx| s.set_value(top_p_str, window, cx));
+            .update(cx, |s, cx| s.set_value(top_p_str.clone(), window, cx));
         self.settings_max_tokens
-            .update(cx, |s, cx| s.set_value(max_tokens_str, window, cx));
+            .update(cx, |s, cx| s.set_value(max_tokens_str.clone(), window, cx));
         self.settings_secret_var
             .update(cx, |s, cx| s.set_value(secret_var, window, cx));
         // Never populated from the store — write-only, always blank on (re)load.
@@ -166,6 +169,8 @@ impl Chamber {
             .update(cx, |s, cx| s.set_value(String::new(), window, cx));
         self.settings_secret_status = secret_is_set;
         self.settings_secret_applies = secret_applies;
+        self.settings_model_params_applies = supports_params;
+        self.settings_advanced_expanded = !temp_str.is_empty() || !top_p_str.is_empty() || !max_tokens_str.is_empty();
         // Team-wide, not per-identity — loaded unconditionally (not keyed off `key`) so
         // it stays in sync with `self.team.max_exchanges` regardless of which target the
         // overlay happens to be showing when this runs.

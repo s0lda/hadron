@@ -206,21 +206,61 @@ impl super::Chamber {
                         Some("Token budget before this quark is throttled. Blank = unlimited."),
                         Input::new(&self.settings_energy_limit).w_full().into_any_element(),
                     ))
-                    .child(settings_field(
-                        "Temperature",
-                        Some("Sampling temperature (e.g. 0.1 for code, 0.8 for creative). Blank = vendor default."),
-                        Input::new(&self.settings_temperature).w_full().into_any_element(),
-                    ))
-                    .child(settings_field(
-                        "Top P",
-                        Some("Nucleus sampling probability (e.g. 0.95). Blank = vendor default."),
-                        Input::new(&self.settings_top_p).w_full().into_any_element(),
-                    ))
-                    .child(settings_field(
-                        "Max tokens",
-                        Some("Max response token limit. Blank = vendor default."),
-                        Input::new(&self.settings_max_tokens).w_full().into_any_element(),
-                    ))
+                    .when(self.settings_model_params_applies, |v| {
+                        v.child(
+                            v_flex()
+                                .gap_2()
+                                .child(
+                                    h_flex()
+                                        .id("advanced-model-params-toggle")
+                                        .justify_between()
+                                        .items_center()
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.settings_advanced_expanded = !this.settings_advanced_expanded;
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .items_center()
+                                                .child(
+                                                    Icon::new(if self.settings_advanced_expanded {
+                                                        IconName::ChevronDown
+                                                    } else {
+                                                        IconName::ChevronRight
+                                                    })
+                                                    .small()
+                                                    .text_color(theme::text_secondary()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                                        .text_color(theme::text())
+                                                        .child("Advanced Model Parameters"),
+                                                ),
+                                        ),
+                                )
+                                .when(self.settings_advanced_expanded, |adv| {
+                                    adv.child(settings_field(
+                                        "Temperature",
+                                        Some("Sampling temperature (e.g. 0.1 for code, 0.8 for creative). Blank = vendor default."),
+                                        Input::new(&self.settings_temperature).w_full().into_any_element(),
+                                    ))
+                                    .child(settings_field(
+                                        "Top P",
+                                        Some("Nucleus sampling probability (e.g. 0.95). Blank = vendor default."),
+                                        Input::new(&self.settings_top_p).w_full().into_any_element(),
+                                    ))
+                                    .child(settings_field(
+                                        "Max tokens",
+                                        Some("Max response token limit. Blank = vendor default."),
+                                        Input::new(&self.settings_max_tokens).w_full().into_any_element(),
+                                    ))
+                                }),
+                        )
+                    })
                     // The secret env-var value (e.g. `GEMINI_API_KEY`) goes to the OS
                     // keychain via `SecretStore`, never into team.json or this panel's
                     // rendered state — see `secret_field`. Shown ONLY for a quark whose
