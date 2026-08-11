@@ -121,29 +121,17 @@ git commit -m "feat(acp): add multi-model support and dynamic switching to agy_a
 
 ---
 
-### Task 2: CLI Model Probing Data Structures & Prober
+### Task 2: CLI Model Probing Data Structures & Prober (Completed - commit c5c594dd)
 
 **Files:**
 - Modify: `crates/hadron-lattice/src/team/transport.rs`
 - Modify: `crates/hadron-gluon/src/adapter/cli.rs`
-- Modify: `crates/hadron-gluon/src/adapter/registry/tests.rs`
+- Modify: `crates/hadron-lattice/src/team/tests.rs`
 
 **Interfaces:**
 - Consumes: `CliSpec`
 - Produces: `CliProbeSpec`, `probe_cli_models(&CliSpec) -> anyhow::Result<ModelSelector>`
 
-- [ ] **Step 1: Add `CliProbeSpec` to `hadron-lattice/src/team/transport.rs` and write unit test**
-
-In `crates/hadron-lattice/src/team/transport.rs`:
-```rust
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CliProbeSpec {
-    pub args: Vec<String>,
-}
-```
-Add `pub model_probe: Option<CliProbeSpec>` to `CliSpec`.
-Update `CliSpec::agy()`:
-```rust
 model_probe: Some(CliProbeSpec { args: vec!["models".to_string()] }),
 ```
 In `crates/hadron-lattice/src/team/tests.rs`, add a test verifying `CliSpec::agy().model_probe` is `Some`.
