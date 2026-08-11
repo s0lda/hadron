@@ -28,6 +28,15 @@ from google.antigravity.types import Text, Thought
 # advertises, so the picker can never advertise a model we don't actually run.
 SEAT_MODEL = "gemini-3.6-flash"
 
+# Supported Gemini models in the Antigravity Python SDK.
+SUPPORTED_MODELS = [
+    {"value": "gemini-3.6-flash", "name": "Gemini 3.6 Flash"},
+    {"value": "gemini-3.6-pro", "name": "Gemini 3.6 Pro"},
+    {"value": "gemini-3.5-flash", "name": "Gemini 3.5 Flash"},
+    {"value": "gemini-3.5-pro", "name": "Gemini 3.5 Pro"},
+    {"value": "gemini-3.1-pro", "name": "Gemini 3.1 Pro"},
+]
+
 # stdout is the protocol. Anything that prints to it — a stray `print`, a chatty
 # dependency — corrupts the JSON-RPC stream and takes the seat down with no clue
 # why. Keep the real handle to ourselves and point everything else at stderr.
@@ -162,11 +171,10 @@ async def handle_prompt(msg_id, session_id, prompt):
 
 
 def session_config_response(session_id):
-    """The static capabilities a `session/new` advertises: the one model this
-    seat runs. Fixed and known, so reporting it needs NO live connection and NO
-    key — the Settings model probe reads exactly this. Booting the SDK here was
-    what made model detection fail (and bill a connection) whenever the key or
-    Google was momentarily unreachable."""
+    """The static capabilities a `session/new` advertises: supported Gemini models.
+    Fixed and known, so reporting it needs NO live connection and NO
+    key — the Settings model probe reads exactly this."""
+    current_model = sessions.get(session_id, {}).get("model", SEAT_MODEL)
     return {
         "sessionId": session_id,
         "configOptions": [
@@ -177,11 +185,8 @@ def session_config_response(session_id):
                 # Without `category`, the client does not recognise this as
                 # the model selector at all.
                 "category": "model",
-                # Advertise the model we ACTUALLY run (SEAT_MODEL, passed to the
-                # Agent in ensure_agent). Offering a model we never pass to the
-                # SDK is a picker that lies.
-                "currentValue": SEAT_MODEL,
-                "options": [{"value": SEAT_MODEL, "name": SEAT_MODEL}]
+                "currentValue": current_model,
+                "options": SUPPORTED_MODELS
             }
         ]
     }
@@ -197,19 +202,11 @@ async def ensure_agent(session_data):
     if not api_key:
         raise RuntimeError(NO_KEY)
     cwd = session_data.get("cwd") or ""
-    # The SDK's DEFAULT policy is `confirm_run_command()`, which DENIES
-    # `run_command` outright — a non-interactive seat gets no prompt, just a
-    # refusal. That cost this seat two turns: it could edit files but never run
-    # `cargo test`, so it committed unverified code and the merge gate caught the
-    # compile errors instead. Hadron gates a turn's authority through its own
-    # permission mode; a client-side default the daemon cannot see is not a
-    # second opinion, it is a silent veto. `workspaces` is deliberately kept: the
-    # SDK auto-prepends `policy.workspace_only()` when it is set, and that jail
-    # is the layer worth having.
+    model_name = session_data.get("model", SEAT_MODEL)
     agent = Agent(
         config=LocalAgentConfig(
             api_key=api_key,
-            model=SEAT_MODEL,
+            model=model_name,
             policies=[policy.allow_all()],
             workspaces=[cwd] if cwd else None
         )
@@ -243,10 +240,6 @@ async def main():
             })
 
         elif method == "session/new":
-            # Register the session and advertise the static model list WITHOUT a
-            # key or an SDK boot. The Agent is booted lazily on the first prompt
-            # (ensure_agent), where the key is genuinely required. This keeps the
-            # model probe fast, free, and independent of Google reachability.
             session_id = str(uuid.uuid4())
             sessions[session_id] = {
                 "agent": None,
@@ -261,10 +254,12 @@ async def main():
             value = str(params.get("value"))
             if session_id not in sessions:
                 send_error(msg_id, f"unknown session {session_id!r}")
-            elif config_id == "model" and value != SEAT_MODEL:
-                # We only ever run SEAT_MODEL. Refusing loudly is honest; the
-                # client logs the refusal and stays on the pinned model.
-                send_error(msg_id, f"this seat runs {SEAT_MODEL} and cannot switch to {value!r}")
+            elif config_id == "model":
+                old_model = sessions[session_id].get("model")
+                sessions[session_id]["model"] = value
+                if old_model != value and sessions[session_id].get("agent") is not None:
+                    sessions[session_id]["agent"] = None
+                send_response(msg_id, {})
             else:
                 send_response(msg_id, {})
 
