@@ -13,6 +13,11 @@ pub enum BlockKind {
     Enum,
     Impl,
     Trait,
+    Class,
+    Element,
+    Rule,
+    Statement,
+    Chunk,
 }
 
 impl BlockKind {
@@ -43,7 +48,56 @@ impl BlockKind {
                 "type_declaration" => Some(BlockKind::Struct),
                 _ => None,
             },
-            Lang::Opaque | _ => None,
+            Lang::C => match kind {
+                "function_definition" => Some(BlockKind::Function),
+                "struct_specifier" => Some(BlockKind::Struct),
+                _ => None,
+            },
+            Lang::Cpp => match kind {
+                "function_definition" => Some(BlockKind::Function),
+                "class_specifier" | "struct_specifier" => Some(BlockKind::Class),
+                _ => None,
+            },
+            Lang::Java => match kind {
+                "method_declaration" | "constructor_declaration" => Some(BlockKind::Function),
+                "class_declaration" => Some(BlockKind::Class),
+                "interface_declaration" => Some(BlockKind::Trait),
+                "enum_declaration" => Some(BlockKind::Enum),
+                _ => None,
+            },
+            Lang::CSharp => match kind {
+                "method_declaration" | "constructor_declaration" => Some(BlockKind::Function),
+                "class_declaration" => Some(BlockKind::Class),
+                "interface_declaration" => Some(BlockKind::Trait),
+                "enum_declaration" => Some(BlockKind::Enum),
+                "struct_declaration" => Some(BlockKind::Struct),
+                _ => None,
+            },
+            Lang::JavaScript => match kind {
+                "function_declaration" | "method_definition" => Some(BlockKind::Function),
+                "class_declaration" => Some(BlockKind::Class),
+                _ => None,
+            },
+            Lang::Ruby => match kind {
+                "method" | "singleton_method" => Some(BlockKind::Function),
+                "class" | "module" => Some(BlockKind::Class),
+                _ => None,
+            },
+            Lang::Php => match kind {
+                "function_definition" | "method_declaration" => Some(BlockKind::Function),
+                "class_declaration" => Some(BlockKind::Class),
+                "interface_declaration" => Some(BlockKind::Trait),
+                _ => None,
+            },
+            Lang::Html => match kind {
+                "element" => Some(BlockKind::Element),
+                _ => None,
+            },
+            Lang::Css => match kind {
+                "rule_set" | "media_statement" => Some(BlockKind::Rule),
+                _ => None,
+            },
+            Lang::Sql | Lang::Opaque => None,
         }
     }
 
@@ -55,6 +109,11 @@ impl BlockKind {
             BlockKind::Enum => "enum",
             BlockKind::Impl => "impl",
             BlockKind::Trait => "trait",
+            BlockKind::Class => "class",
+            BlockKind::Element => "element",
+            BlockKind::Rule => "rule",
+            BlockKind::Statement => "statement",
+            BlockKind::Chunk => "chunk",
         }
     }
 }
@@ -85,10 +144,25 @@ fn node_name(node: Node, src: &str) -> String {
     if let Some(n) = node.child_by_field_name("name") {
         return src[n.byte_range()].to_string();
     }
+    if let Some(n) = node.child_by_field_name("declarator") {
+        let mut cursor = n.walk();
+        for child in n.named_children(&mut cursor) {
+            if child.kind() == "identifier" || child.kind() == "field_identifier" {
+                return src[child.byte_range()].to_string();
+            }
+        }
+        return src[n.byte_range()].to_string();
+    }
     if let Some(ty) = node.child_by_field_name("type") {
         let ty_s = src[ty.byte_range()].to_string();
         if let Some(tr) = node.child_by_field_name("trait") {
             return format!("{} for {}", &src[tr.byte_range()], ty_s);
+        }
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            if child.kind() == "identifier" || child.kind() == "type_identifier" {
+                return src[child.byte_range()].to_string();
+            }
         }
         return ty_s;
     }
@@ -96,6 +170,9 @@ fn node_name(node: Node, src: &str) -> String {
     for child in node.named_children(&mut cursor) {
         if let Some(n) = child.child_by_field_name("name") {
             return src[n.byte_range()].to_string();
+        }
+        if child.kind() == "identifier" || child.kind() == "type_identifier" {
+            return src[child.byte_range()].to_string();
         }
     }
     "<anon>".to_string()
@@ -118,7 +195,16 @@ pub fn parse_blocks_lang(source: &str, lang: Lang) -> Vec<Block> {
         Lang::Python => tree_sitter_python::LANGUAGE.into(),
         Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         Lang::Go => tree_sitter_go::LANGUAGE.into(),
-        Lang::Opaque | _ => return Vec::new(),
+        Lang::C => tree_sitter_c::LANGUAGE.into(),
+        Lang::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+        Lang::Java => tree_sitter_java::LANGUAGE.into(),
+        Lang::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+        Lang::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
+        Lang::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+        Lang::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+        Lang::Html => tree_sitter_html::LANGUAGE.into(),
+        Lang::Css => tree_sitter_css::LANGUAGE.into(),
+        Lang::Sql | Lang::Opaque => return Vec::new(),
     };
     if parser.set_language(&language).is_err() {
         return Vec::new();
@@ -277,5 +363,60 @@ trait Shape { fn area(&self) -> f64; }
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].name, "main");
         assert_eq!(blocks[1].name, "User");
+    }
+
+    #[test]
+    fn ast_block_parsing_for_new_languages() {
+        let c_src = "int add(int a, int b) { return a + b; }\n";
+        let c_blocks = parse_blocks_lang(c_src, Lang::C);
+        assert_eq!(c_blocks.len(), 1);
+        assert_eq!(c_blocks[0].kind, BlockKind::Function);
+        assert_eq!(c_blocks[0].name, "add");
+
+        let cpp_src = "class Vector { int x; };\n";
+        let cpp_blocks = parse_blocks_lang(cpp_src, Lang::Cpp);
+        assert_eq!(cpp_blocks.len(), 1);
+        assert_eq!(cpp_blocks[0].kind, BlockKind::Class);
+        assert_eq!(cpp_blocks[0].name, "Vector");
+
+        let java_src = "public class App {\n}\n";
+        let java_blocks = parse_blocks_lang(java_src, Lang::Java);
+        assert_eq!(java_blocks.len(), 1);
+        assert_eq!(java_blocks[0].kind, BlockKind::Class);
+        assert_eq!(java_blocks[0].name, "App");
+
+        let cs_src = "class Server {\n}\n";
+        let cs_blocks = parse_blocks_lang(cs_src, Lang::CSharp);
+        assert_eq!(cs_blocks.len(), 1);
+        assert_eq!(cs_blocks[0].kind, BlockKind::Class);
+        assert_eq!(cs_blocks[0].name, "Server");
+
+        let js_src = "function greet(name) { return 'Hello ' + name; }\n";
+        let js_blocks = parse_blocks_lang(js_src, Lang::JavaScript);
+        assert_eq!(js_blocks.len(), 1);
+        assert_eq!(js_blocks[0].kind, BlockKind::Function);
+        assert_eq!(js_blocks[0].name, "greet");
+
+        let rb_src = "def calculate\n  1 + 1\nend\n";
+        let rb_blocks = parse_blocks_lang(rb_src, Lang::Ruby);
+        assert_eq!(rb_blocks.len(), 1);
+        assert_eq!(rb_blocks[0].kind, BlockKind::Function);
+        assert_eq!(rb_blocks[0].name, "calculate");
+
+        let php_src = "<?php\nfunction work() {}\n";
+        let php_blocks = parse_blocks_lang(php_src, Lang::Php);
+        assert_eq!(php_blocks.len(), 1);
+        assert_eq!(php_blocks[0].kind, BlockKind::Function);
+        assert_eq!(php_blocks[0].name, "work");
+
+        let html_src = "<div class=\"container\">\n  <p>Hello</p>\n</div>\n";
+        let html_blocks = parse_blocks_lang(html_src, Lang::Html);
+        assert_eq!(html_blocks.len(), 1);
+        assert_eq!(html_blocks[0].kind, BlockKind::Element);
+
+        let css_src = ".header { color: red; }\n";
+        let css_blocks = parse_blocks_lang(css_src, Lang::Css);
+        assert_eq!(css_blocks.len(), 1);
+        assert_eq!(css_blocks[0].kind, BlockKind::Rule);
     }
 }
