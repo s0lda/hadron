@@ -16,7 +16,7 @@ default-members = ["crates/hadron-chamber"]
 # against older toolchains rather than guessed — this box builds on 1.96.0 and that
 # is evidence of nothing about the floor.
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "Apache-2.0"
 

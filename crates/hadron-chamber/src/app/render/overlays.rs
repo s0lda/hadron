@@ -20,6 +20,19 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.2.2",
+        date: Some("2026-08-11"),
+        added: &[
+            "Dynamic model selection and live SDK model discovery for ACP and CLI Quarks",
+            "Capability-gated advanced model parameters with collapsible Settings accordion",
+            "Expanded replace-by-hash support for 11 AST languages and structural fallback chunking",
+        ],
+        changed: &[],
+        fixed: &[
+            "ACP bridge model resolution and automatic fallback for invalid model strings",
+        ],
+    },
+    Release {
         version: "0.2.1",
         date: Some("2026-08-09"),
         added: &[],

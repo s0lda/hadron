@@ -5,6 +5,16 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-08-11
+
+### Added
+- **Dynamic Model Selection & Live SDK Discovery**: Live SDK model listing via `google.genai.Client.models.list()` in Antigravity ACP Python bridge, and CLI model probing via `CliSpec` `model_probe` command.
+- **Capability-Gated Advanced Model Parameters**: Capability detection (`supports_model_params()`) to hide temperature/top_p/max_tokens inputs when unsupported by a Quark, grouped inside a collapsible accordion in Settings.
+- **Expanded Replace-by-Hash Language Support**: AST block parsing for 11 languages (Rust, Python, TS/TSX, Go, C, C++, Java, C#, JS, Ruby, PHP, HTML, CSS, SQL) and universal blank-line structural fallback chunking for opaque text files (`Lang::Opaque`).
+
+### Fixed
+- **ACP Agent Model Resolution & Fallback**: Removed non-existent models (`gemini-3.6-pro`) from ACP bridge and added auto-healing fallback to `gemini-3.6-flash` on unrecognized model strings.
+
 ## [0.2.1] - 2026-08-09
 
 ### Fixed
