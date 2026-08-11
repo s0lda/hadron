@@ -316,6 +316,8 @@ struct Chamber {
     settings_model_params_applies: bool,
     /// Whether the "Advanced Model Parameters" collapsible section is expanded in Settings.
     settings_advanced_expanded: bool,
+    /// Whether the "Standard Swarm Skills" collapsible accordion is expanded in Settings.
+    settings_standard_skills_expanded: bool,
     /// Live filter for the add-quark preset catalogue (~37 entries): a case-insensitive
     /// substring match on preset name + command, so the list is searchable instead of a
     /// long scroll.
@@ -894,6 +896,7 @@ impl Chamber {
             settings_secret_applies: false,
             settings_model_params_applies: false,
             settings_advanced_expanded: false,
+            settings_standard_skills_expanded: false,
             preset_filter,
             custom_cli_vendor,
             custom_cli_program,

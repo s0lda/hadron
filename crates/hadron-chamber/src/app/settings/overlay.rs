@@ -641,29 +641,127 @@ impl super::Chamber {
     pub(super) fn skills_settings_view(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let skills = self.loaded_skills();
 
-        // 1. Standard Skills Card
+        // 1. Standard Skills Accordion Card
         let builtins = hadron_gluon::skills::builtins();
-        let mut standard_badges = h_flex().gap_2().flex_wrap();
-        for b in &builtins {
-            let desc = b.description.as_deref().unwrap_or("Standard swarm procedure");
-            standard_badges = standard_badges.child(self.skill_badge(&b.id, desc, true));
-        }
+        let builtins_count = builtins.len();
 
-        let standard_cards = v_flex()
-            .gap_2()
+        let standard_section = v_flex()
+            .w_full()
+            .p_4()
+            .gap_3()
+            .rounded_lg()
+            .bg(theme::bg_surface())
+            .border_1()
+            .border_color(theme::border())
             .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child("Core procedures built into Hadron swarm orchestrator and quarks:"),
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .cursor_pointer()
+                    .id("standard-skills-accordion-toggle")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings_standard_skills_expanded = !this.settings_standard_skills_expanded;
+                        cx.notify();
+                    }))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(Icon::new(IconName::CircleCheck).small().text_color(theme::accent()))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme::text())
+                                    .child("Standard Swarm Skills"),
+                            )
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .bg(theme::bg_surface_raised())
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(format!("{builtins_count}")),
+                            ),
+                    )
+                    .child(
+                        Icon::new(if self.settings_standard_skills_expanded {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .small()
+                        .text_color(theme::text_muted()),
+                    ),
             )
-            .child(standard_badges);
-
-        let standard_section = settings_card_section(
-            "Standard Swarm Skills",
-            Some(IconName::CircleCheck),
-            standard_cards,
-        );
+            .when(self.settings_standard_skills_expanded, |this| {
+                let mut standard_list = v_flex().gap_2().w_full();
+                for b in &builtins {
+                    let desc = b.description.as_deref().unwrap_or("Standard swarm procedure");
+                    standard_list = standard_list.child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .items_center()
+                            .p_2()
+                            .rounded_md()
+                            .bg(theme::bg_surface_raised())
+                            .border_1()
+                            .border_color(theme::border())
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_md()
+                                            .bg(theme::glass_card())
+                                            .border_1()
+                                            .border_color(theme::accent())
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(theme::accent())
+                                            .child(b.id.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::text_secondary())
+                                            .truncate()
+                                            .child(desc.to_string()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child("standard"),
+                            ),
+                    );
+                }
+                this.child(
+                    v_flex()
+                        .gap_3()
+                        .w_full()
+                        .pt_1()
+                        .border_t_1()
+                        .border_color(theme::border())
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child("Core procedures built into Hadron swarm orchestrator and quarks:"),
+                        )
+                        .child(standard_list),
+                )
+            });
 
         // 2. Installed Skills Card
         let mut skills_list = v_flex().gap_2();
@@ -757,19 +855,7 @@ impl super::Chamber {
         let create_content = v_flex()
             .gap_3()
             .w_full()
-            .child(
-                v_flex()
-                    .gap_1p5()
-                    .w_full()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(theme::text())
-                            .child("Skill Name"),
-                    )
-                    .child(Input::new(&self.settings_new_role).w_full()),
-            )
+            .child(Input::new(&self.settings_new_role).w_full())
             .child(
                 h_flex()
                     .gap_3()
@@ -869,46 +955,5 @@ impl super::Chamber {
             .child(standard_section)
             .child(skills_section)
             .child(create_section)
-    }
-
-    fn skill_badge(&self, name: &str, desc: &str, is_standard: bool) -> impl IntoElement {
-        v_flex()
-            .gap_1()
-            .p_2()
-            .rounded_md()
-            .bg(theme::bg_surface())
-            .border_1()
-            .border_color(theme::border())
-            .min_w(px(180.0))
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_1p5()
-                    .child(
-                        div()
-                            .px_2()
-                            .py_0p5()
-                            .rounded_md()
-                            .bg(theme::bg_surface_raised())
-                            .text_xs()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(theme::text())
-                            .child(name.to_string()),
-                    )
-                    .when(is_standard, |d| {
-                        d.child(
-                            div()
-                                .text_xs()
-                                .text_color(theme::text_muted())
-                                .child("standard"),
-                        )
-                    }),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_secondary())
-                    .child(desc.to_string()),
-            )
     }
 }
