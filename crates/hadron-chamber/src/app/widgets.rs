@@ -569,7 +569,7 @@ pub(super) fn settings_field(
         .child(
             div()
                 .flex_none()
-                .w(px(280.0))
+                .min_w(px(280.0))
                 .flex()
                 .justify_end()
                 .items_center()

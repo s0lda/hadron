@@ -78,13 +78,13 @@ impl super::Chamber {
 
         // Color swatches; the stored color (if any) gets a bright ring.
         let selected = self.settings_color();
-        let mut swatches = h_flex().w_full().gap_1p5().flex_wrap().justify_end();
+        let mut swatches = h_flex().gap_1().items_center().justify_end();
         for hex in IDENTITY_SWATCHES {
             let is_sel = selected.as_deref() == Some(format!("#{hex:06x}").as_str());
             swatches = swatches.child(
                 div()
                     .id(SharedString::from(format!("swatch-{hex:06x}")))
-                    .size(px(20.0))
+                    .size(px(16.0))
                     .rounded_full()
                     .bg(rgb(hex))
                     .border_2()
@@ -167,7 +167,7 @@ impl super::Chamber {
             );
 
         let fields = match target {
-            SettingsTarget::General => self.general_settings_view(cx).into_any_element(),
+            SettingsTarget::General => self.general_settings_view(window, cx).into_any_element(),
             SettingsTarget::Providers => self.providers_view(window, cx).into_any_element(),
             _ => {
                 let is_quark = matches!(target, SettingsTarget::Quark(_));
@@ -308,7 +308,8 @@ impl super::Chamber {
                             h_flex()
                                 .gap_2()
                                 .items_center()
-                                .child(div().flex_1().child(Input::new(&self.settings_path)))
+                                .w_full()
+                                .child(div().flex_1().min_w(px(140.0)).child(Input::new(&self.settings_path).w_full()))
                                 .child(text_button("settings-browse-img", "Browse…").on_click(
                                     cx.listener(|this, _, _, cx| this.pick_avatar_image(cx)),
                                 ))

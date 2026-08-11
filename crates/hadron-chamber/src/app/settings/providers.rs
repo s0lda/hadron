@@ -72,7 +72,7 @@ impl super::Chamber {
         .detach();
     }
 
-    pub(super) fn general_settings_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn general_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let execution_card = settings_card_section(
             "Execution & Swarm Limits",
             Some(IconName::Cpu),
@@ -81,8 +81,8 @@ impl super::Chamber {
                 .child(settings_field(
                     "Max exchanges",
                     Some(
-                        "Caps quark\u{2194}quark exchanges before the swarm stops. \
-                         Blank or 0 = daemon default.",
+                        "Caps quark↔quark exchanges before the swarm stops. \
+                         Blank or 0 = daemon default (12).",
                     ),
                     Input::new(&self.settings_max_exchanges).w_full().into_any_element(),
                 ))
@@ -92,7 +92,7 @@ impl super::Chamber {
                         "How big .hadron/nucleus/index.md may grow before a quark is shown \
                          counts instead of the index.",
                     ),
-                    self.nucleus_budget_ladder(cx),
+                    self.nucleus_budget_select(window, cx),
                 )),
         );
 
@@ -107,14 +107,14 @@ impl super::Chamber {
                         "Which program opens a file you click (file:// link or file tree). \
                          System default uses desktop default (xdg-open).",
                     ),
-                    self.editor_ladder(cx),
+                    self.editor_select(window, cx),
                 ))
                 .child(settings_field(
                     "Default permission mode",
                     Some(
                         "The mode a new session starts on. /clear wipes the field and seeds this default.",
                     ),
-                    self.default_mode_ladder(cx),
+                    self.default_mode_select(window, cx),
                 ))
                 .child(settings_field(
                     "Close Gluon on Exit",
@@ -137,50 +137,45 @@ impl super::Chamber {
             .child(environment_card)
     }
 
-    /// The default-permission-mode picker: the full [`MODE_LADDER`], each chip in its
-    /// own risk colour, with the selected mode's gloss underneath so the choice is not
-    /// just a label. Same direct-write-and-save shape as [`Self::editor_ladder`].
-    ///
-    /// Writes ONLY the preference — it deliberately appends no `ModeSet`, so choosing a
-    /// default never silently re-arms the session the human is already in. `/clear`
-    /// seeds it into the fresh field; the global chip (and `F6`) still owns *now*.
-    pub(super) fn default_mode_ladder(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// The default-permission-mode picker using native Select dropdown component
+    /// with mode color coding.
+    pub(super) fn default_mode_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let current = self.prefs.default_mode;
-        let mut row = h_flex().gap_1p5().flex_wrap();
-        for mode in widgets::MODE_LADDER {
-            let selected = mode == current;
-            row = row.child(
-                div()
-                    .id(SharedString::from(format!("default-mode-{}", widgets::mode_label(mode))))
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .border_1()
-                    .text_xs()
-                    .cursor_pointer()
-                    .when(selected, |d| {
-                        d.bg(theme::glass_card())
-                            .border_color(widgets::mode_color(mode))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(widgets::mode_color(mode))
-                    })
-                    .when(!selected, |d| {
-                        d.bg(theme::bg_surface())
-                            .border_color(theme::border())
-                            .text_color(theme::text_secondary())
-                            .hover(|s| s.bg(theme::bg_surface_raised()))
-                    })
-                    .child(widgets::mode_label(mode).to_string())
-                    .on_click(cx.listener(move |this, _, _window, cx| {
-                        this.prefs.default_mode = mode;
-                        let _ = config::save(&this.prefs);
-                        cx.notify();
-                    })),
-            );
+        if self.default_mode_select_key != Some(current) {
+            self.default_mode_select_key = Some(current);
+            let modes = vec![
+                "Ask".to_string(),
+                "Write".to_string(),
+                "Auto".to_string(),
+                "Bypass".to_string(),
+            ];
+            let current_str = widgets::mode_label(current);
+            let delegate = create_model_delegate(&current_str, &modes, Some(&current_str));
+            self.default_mode_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_str.into(), window, cx);
+            });
         }
         v_flex()
             .gap_1p5()
-            .child(row)
+            .w_full()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .w_full()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(140.0))
+                            .child(
+                                Select::new(&self.default_mode_select_state)
+                                    .w_full()
+                                    .placeholder("Select default mode..."),
+                            ),
+                    )
+                    .child(widgets::mode_tag(current, false)),
+            )
             .child(
                 div()
                     .text_xs()
@@ -190,88 +185,44 @@ impl super::Chamber {
             .into_any_element()
     }
 
-    /// The code-editor picker. Same direct-write chip row as the nucleus budget
-    /// ladder below, over [`crate::sys::EDITOR_LADDER`] — and like that one, the UI
-    /// offers the ladder while a hand-edited `chamber.json` may carry a
-    /// `Custom` command. A `Custom` choice therefore has no chip to highlight; the
-    /// row shows none selected rather than silently pretending it is `System`.
-    pub(super) fn editor_ladder(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let mut row = h_flex().gap_1p5().flex_wrap();
-        for choice in crate::sys::EDITOR_LADDER {
-            let selected = choice == self.prefs.editor;
-            let pick = choice.clone();
-            row = row.child(
-                div()
-                    .id(SharedString::from(format!("editor-{}", choice.label())))
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .border_1()
-                    .text_xs()
-                    .cursor_pointer()
-                    .when(selected, |d| {
-                        d.bg(theme::glass_card())
-                            .border_color(theme::accent())
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(theme::accent())
-                    })
-                    .when(!selected, |d| {
-                        d.bg(theme::bg_surface())
-                            .border_color(theme::border())
-                            .text_color(theme::text_secondary())
-                            .hover(|s| s.bg(theme::bg_surface_raised()))
-                    })
-                    .child(choice.label().to_string())
-                    .on_click(cx.listener(move |this, _, _window, cx| {
-                        this.prefs.editor = pick.clone();
-                        let _ = config::save(&this.prefs);
-                        cx.notify();
-                    })),
-            );
+    /// The code-editor picker using native Select dropdown component.
+    pub(super) fn editor_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current = self.prefs.editor.clone();
+        if self.editor_select_key.as_ref() != Some(&current) {
+            self.editor_select_key = Some(current.clone());
+            let choices: Vec<String> = crate::sys::EDITOR_LADDER.iter().map(|e| e.label().to_string()).collect();
+            let current_label = current.label();
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.editor_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
         }
-        row.into_any_element()
+        Select::new(&self.editor_select_state)
+            .w_full()
+            .min_w(px(180.0))
+            .placeholder("Select code editor...")
+            .into_any_element()
     }
 
-    /// The nucleus index budget picker: a fixed ladder (16/32/64/128 KiB), not a
-    /// free-text field — a hand-edited `team.json` may still carry any other
-    /// positive value (`Team::nucleus_index_budget_kb` stays a plain `Option<usize>`
-    /// for that reason), but the UI only ever offers this ladder. Writes directly on
-    /// click and saves, the same direct-write shape as the identity color swatches —
-    /// no separate `Entity<InputState>` + commit round-trip needed for four buttons.
-    pub(super) fn nucleus_budget_ladder(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let current = nucleus_budget_kb_for(&self.team);
-        let mut row = h_flex().gap_1p5();
-        for kb in NUCLEUS_BUDGET_LADDER_KB {
-            let selected = kb == current;
-            row = row.child(
-                div()
-                    .id(SharedString::from(format!("nucleus-budget-{kb}")))
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .border_1()
-                    .text_xs()
-                    .cursor_pointer()
-                    .when(selected, |d| {
-                        d.bg(theme::glass_card())
-                            .border_color(theme::accent())
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(theme::accent())
-                    })
-                    .when(!selected, |d| {
-                        d.bg(theme::bg_surface())
-                            .border_color(theme::border())
-                            .text_color(theme::text_secondary())
-                            .hover(|s| s.bg(theme::bg_surface_raised()))
-                    })
-                    .child(format!("{kb} KiB"))
-                    .on_click(cx.listener(move |this, _, _window, cx| {
-                        this.team.nucleus_index_budget_kb = Some(kb);
-                        this.save_repo_team(cx);
-                    })),
-            );
+    /// The nucleus index budget picker using native Select dropdown component.
+    pub(super) fn nucleus_budget_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current_kb = nucleus_budget_kb_for(&self.team);
+        if self.nucleus_budget_select_key != Some(current_kb) {
+            self.nucleus_budget_select_key = Some(current_kb);
+            let choices: Vec<String> = NUCLEUS_BUDGET_LADDER_KB.iter().map(|kb| format!("{kb} KiB")).collect();
+            let current_label = format!("{current_kb} KiB");
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.nucleus_budget_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
         }
-        row.into_any_element()
+        Select::new(&self.nucleus_budget_select_state)
+            .w_full()
+            .min_w(px(180.0))
+            .placeholder("Select budget...")
+            .into_any_element()
     }
 
     pub(super) fn providers_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1353,6 +1304,8 @@ impl super::Chamber {
             });
         }
         Select::new(&self.wizard_model_select_state)
+            .w_full()
+            .min_w(px(200.0))
             .placeholder("Select model...")
             .search_placeholder("Search models...")
             .into_any_element()

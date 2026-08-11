@@ -932,7 +932,22 @@ impl super::Chamber {
 
         v_flex()
             .gap_1p5()
-            .child(Select::new(&self.mode_select_state).placeholder("Select permission mode..."))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .w_full()
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(
+                                Select::new(&self.mode_select_state)
+                                    .w_full()
+                                    .placeholder("Select permission mode..."),
+                            ),
+                    )
+                    .child(mode_tag(current, !is_override)),
+            )
             .child(div().text_xs().text_color(theme::text_muted()).child(if is_override {
                 format!("Pinned for this quark ({}) — global setting is overridden.", mode_label(current))
             } else {

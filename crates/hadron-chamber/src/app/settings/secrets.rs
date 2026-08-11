@@ -94,16 +94,24 @@ impl super::Chamber {
     pub(super) fn secret_field(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         v_flex()
             .gap_2()
+            .w_full()
             .child(
                 h_flex()
                     .gap_2()
                     .items_center()
+                    .w_full()
                     .child(
                         div()
-                            .w(px(200.0))
-                            .child(Input::new(&self.settings_secret_var)),
+                            .w(px(130.0))
+                            .min_w_0()
+                            .child(Input::new(&self.settings_secret_var).w_full()),
                     )
-                    .child(div().flex_1().child(Input::new(&self.settings_secret_value))),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(140.0))
+                            .child(Input::new(&self.settings_secret_value).w_full()),
+                    ),
             )
             .child(
                 h_flex()
