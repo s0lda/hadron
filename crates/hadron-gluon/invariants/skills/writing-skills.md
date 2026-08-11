@@ -21,13 +21,13 @@ Creating and editing skills follows Test-Driven Development (RED-GREEN-REFACTOR)
 
 ## TDD Mapping for Skills
 
-| TDD Phase | Skill Creation Action |
-|-----------|-----------------------|
-| **Test Case** | Pressure scenario / baseline task with subagent |
-| **Production Code** | `SKILL.md` file |
-| **RED (Test Fails)** | Agent violates rule / fails task without skill |
-| **GREEN (Test Passes)** | Agent complies / succeeds with skill present |
-| **REFACTOR** | Close loopholes and refine without breaking compliance |
+| TDD Phase               | Skill Creation Action                                  |
+| ----------------------- | ------------------------------------------------------ |
+| **Test Case**           | Pressure scenario / baseline task with subagent        |
+| **Production Code**     | `SKILL.md` file                                        |
+| **RED (Test Fails)**    | Agent violates rule / fails task without skill         |
+| **GREEN (Test Passes)** | Agent complies / succeeds with skill present           |
+| **REFACTOR**            | Close loopholes and refine without breaking compliance |
 
 ## Directory & File Structure
 
@@ -38,7 +38,7 @@ skills/
     supporting-file.* # Reusable tools or heavy reference (>100 lines) only
 ```
 
-- Flat namespace under `skills/`.
+- Flat namespace under `.hadron/skills/`.
 - Use separate files only for heavy reference (>100 lines) or executable scripts/templates. Keep principles and code patterns (<50 lines) inline.
 
 ## SKILL.md Structure & YAML Rules
@@ -51,18 +51,21 @@ description: Use when [specific triggering conditions, symptoms, and contexts]
 ```
 
 ### Frontmatter Requirements:
+
 - Max 1024 characters total.
 - `name`: Lowercase letters, numbers, hyphens only.
 - `description`:
-  - Must start with `"Use when..."`.
-  - Must be written in 3rd person.
-  - **CRITICAL:** Describe ONLY triggering conditions/symptoms. **NEVER summarize the skill's workflow/process.** (Summarizing workflow causes agents to shortcut and skip reading full skill content).
+    - Must start with `"Use when..."`.
+    - Must be written in 3rd person.
+    - **CRITICAL:** Describe ONLY triggering conditions/symptoms. **NEVER summarize the skill's workflow/process.** (Summarizing workflow causes agents to shortcut and skip reading full skill content).
 
 ### SDO & Keywords:
+
 - Include error messages, symptoms, synonyms, and commands.
 - Use active gerunds (`creating-skills`, `condition-based-waiting`).
 
 ### Cross-Referencing Other Skills:
+
 - Format: `**REQUIRED SUB-SKILL:** superpowers:skill-name`
 - **FORBIDDEN:** Do NOT use `@` file imports (e.g. `@skills/foo/SKILL.md`) as they force-load full context prematurely.
 
@@ -74,39 +77,43 @@ NO SKILL WITHOUT A FAILING TEST FIRST
 
 Applying to NEW skills AND EDITS to existing skills.
 Written without testing? **Delete it. Start over.**
+
 - No exceptions for "simple additions" or "doc updates".
 - Delete means delete.
 
 ## Form Selection by Failure Type
 
-| Baseline Failure Type | Required Format | Avoid |
-|---|---|---|
-| Rule violation under pressure | Prohibition + Rationalization Table + Red Flags | Soft guidance ("prefer...") |
-| Wrong output shape / structure | Positive Recipe/Contract (specify exact parts & order) | Prohibition list ("don't narrate") |
-| Omitted required element | Structural required slot in output template | Prose reminders |
-| Conditional behavior | Explicit predicate (`if condition X, do Y`) | Unconditional rule with exemption clauses |
+| Baseline Failure Type          | Required Format                                        | Avoid                                     |
+| ------------------------------ | ------------------------------------------------------ | ----------------------------------------- |
+| Rule violation under pressure  | Prohibition + Rationalization Table + Red Flags        | Soft guidance ("prefer...")               |
+| Wrong output shape / structure | Positive Recipe/Contract (specify exact parts & order) | Prohibition list ("don't narrate")        |
+| Omitted required element       | Structural required slot in output template            | Prose reminders                           |
+| Conditional behavior           | Explicit predicate (`if condition X, do Y`)            | Unconditional rule with exemption clauses |
 
-*Rule:* Avoid nuance clauses ("Don't X unless Y"). Express exceptions as explicit conditionals on observable predicates.
+_Rule:_ Avoid nuance clauses ("Don't X unless Y"). Express exceptions as explicit conditionals on observable predicates.
 
 ## Testing Skills (RED-GREEN-REFACTOR)
 
 ### 1. RED Phase (Baseline Test)
+
 - Run pressure scenario with subagent WITHOUT skill.
 - For discipline skills: combine 3+ pressures (time, sunk cost, authority, exhaustion, social proof, pragmatic shortcuts).
 - Document exact baseline failures and verbatim rationalizations.
 
 ### 2. GREEN Phase (Minimal Skill)
+
 - Write minimal `SKILL.md` addressing specific baseline failure rationalizations.
 - Micro-test wording against a no-guidance control (5+ reps per variant).
 - Run pressure scenario WITH skill and confirm compliance.
 
 ### 3. REFACTOR Phase (Close Loopholes)
+
 - If agent finds new rationalization, add explicit counter in skill.
 - Build Rationalization Table and Red Flags list.
 
 ```markdown
-| Excuse | Reality |
-|--------|---------|
+| Excuse               | Reality                                |
+| -------------------- | -------------------------------------- |
 | "Too simple to test" | Simple cases fail. Test takes seconds. |
 ```
 
@@ -122,10 +129,12 @@ Written without testing? **Delete it. Start over.**
 Create a tracking todo for each step:
 
 ### RED Phase
+
 - [ ] Create pressure scenarios (3+ combined pressures for discipline rules).
 - [ ] Run scenarios WITHOUT skill; record exact baseline failures and rationalizations.
 
 ### GREEN Phase
+
 - [ ] Validate YAML frontmatter (`name` hyphenated, `description` starts with "Use when...", no workflow summary, <1024 chars).
 - [ ] Ensure concise word count (<150 getting started, <200 frequent, <500 other).
 - [ ] Format skill references as `**REQUIRED SUB-SKILL:** superpowers:name` (NO `@` links).
@@ -133,6 +142,7 @@ Create a tracking todo for each step:
 - [ ] Run scenarios WITH skill; confirm compliance.
 
 ### REFACTOR Phase
+
 - [ ] Add explicit counters for any new rationalizations.
 - [ ] Populate Rationalization Table and Red Flags list.
 - [ ] Re-test until bulletproof.
