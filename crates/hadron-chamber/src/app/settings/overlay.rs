@@ -128,33 +128,46 @@ impl super::Chamber {
             SettingsTarget::General => self.general_settings_view(cx).into_any_element(),
             SettingsTarget::Providers => self.providers_view(window, cx).into_any_element(),
             _ => {
-            let is_quark = matches!(target, SettingsTarget::Quark(_));
-            // ACP quarks get a live model dropdown (re-probed from the agent), and Http
-            // quarks (Ollama/LM Studio/cloud) get a live searchable model list
-            // (re-probed from the endpoint), in place of the free-text Model box;
-            // everything else keeps the text field.
-            let acp_quark = matches!(&target, SettingsTarget::Quark(id) if self.is_acp_quark(id));
-            let http_quark = matches!(&target, SettingsTarget::Quark(id) if self.is_http_quark(id));
-            v_flex()
-                .gap_4()
-                .child(settings_field("Preview", None, preview_row.into_any_element()))
-                .child(settings_field(
-                    "Display name",
-                    Some("Shown in chat and the roster."),
-                    Input::new(&self.settings_name).w_full().into_any_element(),
-                ))
-                // Model + Effort configure an agent's session, so they are quark-only. The
-                // human has no such controls. Model here is a **per-repo** override: blank
-                // inherits the catalogue default (e.g. acp-claude = Opus), a value pins this
-                // repo (= Sonnet) without touching the shared catalogue or any other repo.
-                //
-                // Permission is the single authority control — it REPLACES the old ACP
-                // "Mode" field (default/plan/acceptEdits/bypassPermissions), which set the
-                // same posture axis by a cruder route. The ladder subsumes it: it is live,
-                // turn-granular, and applied over any boot-time `mode_config` per turn. The
-                // `mode_config` seat field is intentionally left in place (still round-trips
-                // through load/commit) but is no longer human-editable here.
-                .when(is_quark, |v| {
+                let is_quark = matches!(target, SettingsTarget::Quark(_));
+                let acp_quark = matches!(&target, SettingsTarget::Quark(id) if self.is_acp_quark(id));
+                let http_quark = matches!(&target, SettingsTarget::Quark(id) if self.is_http_quark(id));
+
+                // 1. Profile & Visual Identity Card
+                let profile_card = settings_card_section(
+                    "Profile & Appearance",
+                    Some(IconName::Info),
+                    v_flex()
+                        .gap_3()
+                        .child(settings_field("Preview", None, preview_row.into_any_element()))
+                        .child(settings_field(
+                            "Display name",
+                            Some("Shown in chat and the roster."),
+                            Input::new(&self.settings_name).w_full().into_any_element(),
+                        ))
+                        .child(settings_field("Color", Some("Accent color for identity badges."), swatches.into_any_element()))
+                        .child(settings_field(
+                            "Image",
+                            Some("Avatar shown in the roster and chat."),
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(div().flex_1().child(Input::new(&self.settings_path)))
+                                .child(text_button("settings-browse-img", "Browse…").on_click(
+                                    cx.listener(|this, _, _, cx| this.pick_avatar_image(cx)),
+                                ))
+                                .child(text_button("settings-clear-img", "Clear").on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.clear_settings_image(window, cx)
+                                    }),
+                                ))
+                                .into_any_element(),
+                        )),
+                );
+
+                let mut view = v_flex().gap_4().child(profile_card);
+
+                if is_quark {
+                    // 2. Model & Reasoning Card
                     let model_field = if acp_quark {
                         self.acp_model_select(window, cx)
                     } else if http_quark {
@@ -162,136 +175,133 @@ impl super::Chamber {
                     } else {
                         self.general_model_select(window, cx)
                     };
-                    v.child(settings_field(
-                        "Model",
-                        Some("Per-repo override; blank inherits the shared catalogue default."),
-                        model_field,
-                    ))
-                    .when_some(self.agy_bridge_status_row(cx), |v, row| v.child(row))
-                    .child(settings_field(
-                        "Effort",
-                        Some("How much reasoning effort this quark spends per turn."),
-                        if acp_quark {
-                            self.acp_effort_select(cx)
-                        } else {
-                            self.session_select(
-                                "effort",
-                                &self.settings_effort,
-                                &["low", "medium", "high"],
-                                cx,
-                            )
-                        },
-                    ))
-                    // The permission ladder: how much authority the human delegates to
-                    // this quark (Ask → Bypass). Stored on the field as a per-quark
-                    // `ModeSet`, so it is live-honoured and independent of team.json. A
-                    // per-quark choice persists even when the global default later changes.
-                    .child(settings_field(
-                        "Permission",
-                        Some("How much authority this quark has, from asking every time to full autonomy."),
-                        self.mode_select(target.key(), cx),
-                    ))
-                    .child(settings_field(
-                        "Roles",
-                        Some("Roles this quark may take on in the swarm."),
-                        self.role_selector(cx),
-                    ))
-                    .child(settings_field(
-                        "Denied skills",
-                        Some("Comma-separated skill names this quark may not invoke."),
-                        Input::new(&self.settings_deny_skills).w_full().into_any_element(),
-                    ))
-                    .child(settings_field(
-                        "Energy limit",
-                        Some("Token budget before this quark is throttled. Blank = unlimited."),
-                        Input::new(&self.settings_energy_limit).w_full().into_any_element(),
-                    ))
-                    .when(self.settings_model_params_applies, |v| {
-                        v.child(
-                            v_flex()
-                                .gap_2()
-                                .child(
-                                    h_flex()
-                                        .id("advanced-model-params-toggle")
-                                        .justify_between()
-                                        .items_center()
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.settings_advanced_expanded = !this.settings_advanced_expanded;
-                                            cx.notify();
-                                        }))
-                                        .child(
-                                            h_flex()
-                                                .gap_2()
-                                                .items_center()
-                                                .child(
-                                                    Icon::new(if self.settings_advanced_expanded {
-                                                        IconName::ChevronDown
-                                                    } else {
-                                                        IconName::ChevronRight
-                                                    })
-                                                    .small()
-                                                    .text_color(theme::text_secondary()),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                                        .text_color(theme::text())
-                                                        .child("Advanced Model Parameters"),
-                                                ),
-                                        ),
-                                )
-                                .when(self.settings_advanced_expanded, |adv| {
-                                    adv.child(settings_field(
-                                        "Temperature",
-                                        Some("Sampling temperature (e.g. 0.1 for code, 0.8 for creative). Blank = vendor default."),
-                                        Input::new(&self.settings_temperature).w_full().into_any_element(),
-                                    ))
-                                    .child(settings_field(
-                                        "Top P",
-                                        Some("Nucleus sampling probability (e.g. 0.95). Blank = vendor default."),
-                                        Input::new(&self.settings_top_p).w_full().into_any_element(),
-                                    ))
-                                    .child(settings_field(
-                                        "Max tokens",
-                                        Some("Max response token limit. Blank = vendor default."),
-                                        Input::new(&self.settings_max_tokens).w_full().into_any_element(),
-                                    ))
-                                }),
+
+                    let effort_field = if acp_quark {
+                        self.acp_effort_select(cx)
+                    } else {
+                        self.session_select(
+                            "effort",
+                            &self.settings_effort,
+                            &["low", "medium", "high"],
+                            cx,
                         )
-                    })
-                    // The secret env-var value (e.g. `GEMINI_API_KEY`) goes to the OS
-                    // keychain via `SecretStore`, never into team.json or this panel's
-                    // rendered state — see `secret_field`. Shown ONLY for a quark whose
-                    // provider actually needs a key (per the catalogue), not universally.
-                    .when(self.settings_secret_applies, |v| {
-                        v.child(settings_field(
-                            "API key",
-                            Some("Stored in the OS keychain — never written to team.json."),
-                            self.secret_field(cx),
+                    };
+
+                    let model_card_content = v_flex()
+                        .gap_3()
+                        .child(settings_field(
+                            "Model",
+                            Some("Per-repo override; blank inherits catalogue default."),
+                            model_field,
                         ))
-                    })
-                })
-                .child(settings_field("Color", None, swatches.into_any_element()))
-                .child(settings_field(
-                    "Image",
-                    Some("Avatar shown in the roster and chat."),
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .child(div().flex_1().child(Input::new(&self.settings_path)))
-                        .child(text_button("settings-browse-img", "Browse…").on_click(
-                            cx.listener(|this, _, _, cx| this.pick_avatar_image(cx)),
+                        .when_some(self.agy_bridge_status_row(cx), |v, row| v.child(row))
+                        .child(settings_field(
+                            "Effort",
+                            Some("Reasoning effort spent per turn."),
+                            effort_field,
                         ))
-                        .child(text_button("settings-clear-img", "Clear").on_click(
-                            cx.listener(|this, _, window, cx| {
-                                this.clear_settings_image(window, cx)
-                            }),
+                        .when(self.settings_model_params_applies, |v| {
+                            v.child(
+                                v_flex()
+                                    .gap_2()
+                                    .child(
+                                        h_flex()
+                                            .id("advanced-model-params-toggle")
+                                            .justify_between()
+                                            .items_center()
+                                            .cursor_pointer()
+                                            .py_1()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.settings_advanced_expanded = !this.settings_advanced_expanded;
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                h_flex()
+                                                    .gap_2()
+                                                    .items_center()
+                                                    .child(
+                                                        Icon::new(if self.settings_advanced_expanded {
+                                                            IconName::ChevronDown
+                                                        } else {
+                                                            IconName::ChevronRight
+                                                        })
+                                                        .small()
+                                                        .text_color(theme::text_secondary()),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                                            .text_color(theme::text())
+                                                            .child("Advanced Model Parameters"),
+                                                    ),
+                                            ),
+                                    )
+                                    .when(self.settings_advanced_expanded, |adv| {
+                                        adv.child(settings_field(
+                                            "Temperature",
+                                            Some("Sampling temperature (e.g. 0.1 for code, 0.8 for creative). Blank = default."),
+                                            Input::new(&self.settings_temperature).w_full().into_any_element(),
+                                        ))
+                                        .child(settings_field(
+                                            "Top P",
+                                            Some("Nucleus sampling probability (e.g. 0.95). Blank = default."),
+                                            Input::new(&self.settings_top_p).w_full().into_any_element(),
+                                        ))
+                                        .child(settings_field(
+                                            "Max tokens",
+                                            Some("Max response token limit. Blank = default."),
+                                            Input::new(&self.settings_max_tokens).w_full().into_any_element(),
+                                        ))
+                                    }),
+                            )
+                        });
+
+                    view = view.child(settings_card_section(
+                        "Model & Reasoning",
+                        Some(IconName::Cpu),
+                        model_card_content,
+                    ));
+
+                    // 3. Governance & Security Card
+                    let gov_card_content = v_flex()
+                        .gap_3()
+                        .child(settings_field(
+                            "Permission",
+                            Some("Authority level, from asking every time to full autonomy."),
+                            self.mode_select(target.key(), cx),
                         ))
-                        .into_any_element(),
-                ))
-                .into_any_element()
+                        .child(settings_field(
+                            "Roles",
+                            Some("Roles this quark takes on in the swarm."),
+                            self.role_selector(cx),
+                        ))
+                        .child(settings_field(
+                            "Denied skills",
+                            Some("Comma-separated skill names this quark may not invoke."),
+                            Input::new(&self.settings_deny_skills).w_full().into_any_element(),
+                        ))
+                        .when(self.settings_secret_applies, |v| {
+                            v.child(settings_field(
+                                "API key",
+                                Some("Stored in OS keychain — never written to team.json."),
+                                self.secret_field(cx),
+                            ))
+                        })
+                        .child(settings_field(
+                            "Energy limit",
+                            Some("Token budget before throttling. Blank = unlimited."),
+                            Input::new(&self.settings_energy_limit).w_full().into_any_element(),
+                        ));
+
+                    view = view.child(settings_card_section(
+                        "Governance & Security",
+                        Some(IconName::Settings),
+                        gov_card_content,
+                    ));
+                }
+
+                view.into_any_element()
             }
         };
 

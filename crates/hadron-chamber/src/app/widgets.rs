@@ -535,35 +535,71 @@ pub(super) fn roster_row(
 }
 
 /// A labeled row in the Settings card: `Name | control`, with an optional muted
-/// caption below explaining what it does. The name sits in a fixed-width column
-/// so every row's control lines up, and reads at full text contrast — the old
-/// `text_xs` + `text_muted` label was the "very hard to read" complaint.
+/// caption below the label. The label column has a fixed width so control inputs line up,
+/// while the control gets full flex width without an artificial 460px cap.
 pub(super) fn settings_field(
     label: &'static str,
     description: Option<&'static str>,
     content: gpui::AnyElement,
 ) -> impl IntoElement {
+    h_flex()
+        .w_full()
+        .items_start()
+        .justify_between()
+        .gap_4()
+        .child(
+            v_flex()
+                .flex_none()
+                .w(px(150.0))
+                .gap_0p5()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(theme::text())
+                        .child(label),
+                )
+                .when_some(description, |v, desc| {
+                    v.child(div().text_xs().text_color(theme::text_muted()).child(desc))
+                }),
+        )
+        .child(div().flex_1().min_w_0().child(content))
+}
+
+/// A container card for grouping related settings into a distinct visual section.
+pub(super) fn settings_card_section(
+    title: &'static str,
+    icon: Option<IconName>,
+    content: impl IntoElement,
+) -> impl IntoElement {
     v_flex()
         .w_full()
-        .gap_1()
+        .p_4()
+        .gap_3()
+        .rounded_lg()
+        .bg(theme::bg_surface())
+        .border_1()
+        .border_color(theme::border())
         .child(
             h_flex()
                 .w_full()
                 .items_center()
-                .justify_between()
-                .gap_4()
+                .gap_2()
+                .pb_2()
+                .border_b_1()
+                .border_color(theme::border())
+                .when_some(icon, |this, ic| {
+                    this.child(Icon::new(ic).small().text_color(theme::accent()))
+                })
                 .child(
                     div()
-                        .flex_none()
                         .text_sm()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(theme::text())
-                        .child(label),
-                )
-                .child(div().flex_1().max_w(px(460.0)).child(content)),
+                        .child(title),
+                ),
         )
-        .when_some(description, |v, desc| {
-            v.child(div().text_xs().text_color(theme::text_secondary()).child(desc))
-        })
+        .child(content)
 }
 
 /// A vertically-stacked labeled field: the label above a full-width control, no

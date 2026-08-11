@@ -73,56 +73,68 @@ impl super::Chamber {
     }
 
     pub(super) fn general_settings_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let execution_card = settings_card_section(
+            "Execution & Swarm Limits",
+            Some(IconName::Cpu),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "Max exchanges",
+                    Some(
+                        "Caps quark\u{2194}quark exchanges before the swarm stops. \
+                         Blank or 0 = daemon default.",
+                    ),
+                    Input::new(&self.settings_max_exchanges).w_full().into_any_element(),
+                ))
+                .child(settings_field(
+                    "Nucleus index budget",
+                    Some(
+                        "How big .hadron/nucleus/index.md may grow before a quark is shown \
+                         counts instead of the index.",
+                    ),
+                    self.nucleus_budget_ladder(cx),
+                )),
+        );
+
+        let environment_card = settings_card_section(
+            "Environment & Defaults",
+            Some(IconName::Settings),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "Code editor",
+                    Some(
+                        "Which program opens a file you click (file:// link or file tree). \
+                         System default uses desktop default (xdg-open).",
+                    ),
+                    self.editor_ladder(cx),
+                ))
+                .child(settings_field(
+                    "Default permission mode",
+                    Some(
+                        "The mode a new session starts on. /clear wipes the field and seeds this default.",
+                    ),
+                    self.default_mode_ladder(cx),
+                ))
+                .child(settings_field(
+                    "Close Gluon on Exit",
+                    Some("Terminate the hadron-gluon daemon when the Chamber window closes."),
+                    Switch::new("close-gluon-on-exit")
+                        .checked(self.prefs.close_gluon_on_exit)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.close_gluon_on_exit = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                )),
+        );
+
         v_flex()
-            .size_full()
-            .gap_6()
-            .child(settings_field(
-                "Max exchanges",
-                Some(
-                    "Caps quark\u{2194}quark exchanges before the swarm stops. \
-                     Blank or 0 = daemon default.",
-                ),
-                Input::new(&self.settings_max_exchanges).w_full().into_any_element(),
-            ))
-            .child(settings_field(
-                "Nucleus index budget",
-                Some(
-                    "How big .hadron/nucleus/index.md may grow before a quark is shown \
-                     counts instead of the index. Bigger buys more shared lessons at the \
-                     cost of context every quark pays on every turn.",
-                ),
-                self.nucleus_budget_ladder(cx),
-            ))
-            .child(settings_field(
-                "Code editor",
-                Some(
-                    "Which program opens a file you click \u{2014} a file:// link in a message, \
-                     or \"Open in editor\" in the file tree. System default hands it to the \
-                     desktop (xdg-open), which is how you end up in Vim.",
-                ),
-                self.editor_ladder(cx),
-            ))
-            .child(settings_field(
-                "Default permission mode",
-                Some(
-                    "The mode a new session starts on. /clear wipes the field, which is \
-                     where the current mode lives \u{2014} without this it always came back \
-                     as Ask. Changing it does not touch the session you are in.",
-                ),
-                self.default_mode_ladder(cx),
-            ))
-            .child(settings_field(
-                "Close Gluon on Exit",
-                Some("Terminate the hadron-gluon daemon when the Chamber window closes."),
-                Switch::new("close-gluon-on-exit")
-                    .checked(self.prefs.close_gluon_on_exit)
-                    .on_click(cx.listener(|this, checked, _window, cx| {
-                        this.prefs.close_gluon_on_exit = *checked;
-                        let _ = config::save(&this.prefs);
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            ))
+            .w_full()
+            .gap_4()
+            .child(execution_card)
+            .child(environment_card)
     }
 
     /// The default-permission-mode picker: the full [`MODE_LADDER`], each chip in its
