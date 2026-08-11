@@ -115,7 +115,7 @@ git commit -m "feat(lattice): add supports_model_params capability check to Seat
 
 ---
 
-### Task 2: Integrate capability hiding and collapsible accordion into Chamber Settings UI
+### Task 2: Integrate capability hiding and collapsible accordion into Chamber Settings UI (commit `55df0fd5`)
 
 **Files:**
 - Modify: `crates/hadron-chamber/src/app/mod.rs`
@@ -233,17 +233,17 @@ git commit -m "feat(chamber): capability-gate and collapse model parameters in S
 
 ---
 
-### Task 3: Full Workspace Verification
+### Task 3: Full Workspace Verification (commit `3d01abe4`)
 
 **Files:**
 - All touched files across `hadron-lattice` and `hadron-chamber`
 
-- [ ] **Step 1: Run full workspace test suite**
+- [x] **Step 1: Run full workspace test suite** (commit `3d01abe4`)
 
 Run: `cargo test --workspace`
 Expected: PASS (all tests pass)
 
-- [ ] **Step 2: Commit plan status update**
+- [x] **Step 2: Commit plan status update** (commit `3d01abe4`)
 
 ```bash
 git add .hadron/docs/plans/2026-08-11-capability-gated-advanced-model-parameters.md
