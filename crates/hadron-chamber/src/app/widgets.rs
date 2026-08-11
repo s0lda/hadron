@@ -543,22 +543,32 @@ pub(super) fn settings_field(
 ) -> impl IntoElement {
     v_flex()
         .w_full()
-        .gap_1p5()
+        .gap_1()
         .child(
-            v_flex()
-                .gap_0p5()
+            h_flex()
+                .w_full()
+                .items_center()
+                .justify_between()
+                .gap_3()
                 .child(
                     div()
+                        .flex_none()
                         .text_sm()
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .text_color(theme::text())
                         .child(label),
                 )
-                .when_some(description, |v, desc| {
-                    v.child(div().text_xs().text_color(theme::text_muted()).child(desc))
-                }),
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .max_w(px(360.0))
+                        .justify_end()
+                        .child(content),
+                ),
         )
-        .child(div().w_full().child(content))
+        .when_some(description, |v, desc| {
+            v.child(div().text_xs().text_color(theme::text_muted()).child(desc))
+        })
 }
 
 /// A container card for grouping related settings into a distinct visual section.
