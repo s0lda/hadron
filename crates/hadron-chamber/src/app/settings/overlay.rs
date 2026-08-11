@@ -737,12 +737,6 @@ impl super::Chamber {
                                             .truncate()
                                             .child(desc.to_string()),
                                     ),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme::text_muted())
-                                    .child("standard"),
                             ),
                     );
                 }
