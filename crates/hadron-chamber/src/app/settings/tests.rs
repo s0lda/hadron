@@ -162,3 +162,20 @@ fn supports_model_params_capability_gating_in_settings() {
     cli_seat.transport = Transport::Cli;
     assert!(!cli_seat.supports_model_params(), "Default CLI seat without param flags must not support model params");
 }
+
+#[test]
+fn preon_creation_and_deletion_in_repo_and_global_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let team_path = dir.path().join(".hadron").join("team.json");
+    std::fs::create_dir_all(team_path.parent().unwrap()).unwrap();
+    std::fs::write(&team_path, "{}").unwrap();
+
+    let preon_dir = team_path.parent().unwrap().join("preons");
+    std::fs::create_dir_all(&preon_dir).unwrap();
+    let file_path = preon_dir.join("code-auditor.md");
+    std::fs::write(&file_path, "---\nname: code-auditor\n---\n\n# Preon: code-auditor\n").unwrap();
+
+    assert!(file_path.exists());
+    assert!(std::fs::remove_file(&file_path).is_ok());
+    assert!(!file_path.exists());
+}

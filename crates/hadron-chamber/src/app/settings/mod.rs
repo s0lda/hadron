@@ -44,7 +44,7 @@ impl Chamber {
         match &self.settings_target {
             SettingsTarget::Human => Some(&mut self.prefs.human),
             SettingsTarget::Quark(id) => Some(self.prefs.quarks.entry(id.clone()).or_default()),
-            SettingsTarget::General | SettingsTarget::Providers | SettingsTarget::Roles => None,
+            SettingsTarget::General | SettingsTarget::Providers | SettingsTarget::Preons => None,
         }
     }
 
@@ -83,7 +83,7 @@ impl Chamber {
             let mut supports_params = false;
             let id = if key == "human" {
                 Some(&self.prefs.human)
-            } else if key == "general" || key == "providers" {
+            } else if key == "general" || key == "providers" || key == "preons" {
                 None
             } else {
                 // Read model/effort/mode from the RESOLVED seat, not just a legacy one — an
@@ -244,7 +244,7 @@ impl Chamber {
         }
 
         let key = self.settings_target.key();
-        if key != "human" && key != "providers" && key != "general" && key != "roles" {
+        if key != "human" && key != "providers" && key != "general" && key != "preons" {
             let qid = QuarkId::new(key);
             // The definition knobs (model/effort/mode/display name) are **per-repo**. How
             // they persist depends on how the quark is seated here:
@@ -388,7 +388,7 @@ impl Chamber {
             SettingsTarget::Quark(id) => {
                 self.prefs.quarks.remove(&id);
             }
-            SettingsTarget::General | SettingsTarget::Providers | SettingsTarget::Roles => {}
+            SettingsTarget::General | SettingsTarget::Providers | SettingsTarget::Preons => {}
         }
         self.load_settings_inputs(window, cx);
         let _ = config::save(&self.prefs);

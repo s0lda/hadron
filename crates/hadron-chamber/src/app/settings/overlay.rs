@@ -21,7 +21,7 @@ impl super::Chamber {
             )
             .child(self.settings_nav_row(SettingsTarget::General, &target, cx))
             .child(self.settings_nav_row(SettingsTarget::Providers, &target, cx))
-            .child(self.settings_nav_row(SettingsTarget::Roles, &target, cx))
+            .child(self.settings_nav_row(SettingsTarget::Preons, &target, cx))
             .child(
                 div()
                     .px_1()
@@ -150,7 +150,7 @@ impl super::Chamber {
                 match target {
                     SettingsTarget::General => "General Settings".to_string(),
                     SettingsTarget::Providers => "Providers".to_string(),
-                    SettingsTarget::Roles => "Swarm Roles".to_string(),
+                    SettingsTarget::Preons => "Preons & Roles".to_string(),
                     _ => format!("Editing {}", preview.name),
                 },
             ))
@@ -171,7 +171,7 @@ impl super::Chamber {
         let fields = match target {
             SettingsTarget::General => self.general_settings_view(window, cx).into_any_element(),
             SettingsTarget::Providers => self.providers_view(window, cx).into_any_element(),
-            SettingsTarget::Roles => self.roles_settings_view(window, cx).into_any_element(),
+            SettingsTarget::Preons => self.preons_settings_view(window, cx).into_any_element(),
             _ => {
                 let is_quark = matches!(target, SettingsTarget::Quark(_));
                 let acp_quark = matches!(&target, SettingsTarget::Quark(id) if self.is_acp_quark(id));
@@ -462,7 +462,7 @@ impl super::Chamber {
         // fields commit on nav-away or on close via ✕/backdrop — see
         // `commit_settings_inputs`), so there is nothing left for a "Done" button to do
         // that closing the panel any other way doesn't already do.
-        let footer = if target == SettingsTarget::Providers || target == SettingsTarget::Roles {
+        let footer = if target == SettingsTarget::Providers || target == SettingsTarget::Preons {
             div().into_any_element()
         } else {
             h_flex()
@@ -565,14 +565,14 @@ impl super::Chamber {
                     .into_any_element(),
                 None,
             ),
-            SettingsTarget::Roles => (
+            SettingsTarget::Preons => (
                 div()
                     .flex()
                     .items_center()
                     .justify_center()
                     .size(px(24.0))
                     .text_color(theme::text_muted())
-                    .child(Icon::new(IconName::CircleCheck).small())
+                    .child(Icon::new(IconName::Folder).small())
                     .into_any_element(),
                 None,
             ),
@@ -626,7 +626,7 @@ impl super::Chamber {
                             .child(match &who {
                                 SettingsTarget::General => "General".to_string(),
                                 SettingsTarget::Providers => "Providers".to_string(),
-                                SettingsTarget::Roles => "Roles".to_string(),
+                                SettingsTarget::Preons => "Preons".to_string(),
                                 _ => resolved.name.clone(),
                             }),
                     ),
@@ -637,10 +637,9 @@ impl super::Chamber {
             }))
     }
 
-    /// Dedicated Roles management view: standard 3 roles, custom role management, and role creation.
-    pub(super) fn roles_settings_view(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let available = self.available_roles();
-        let standard_roles = ["architect", "reviewer", "executor"];
+    /// Dedicated Preons management view: standard 3 roles, global & repo preons (with Edit & Delete), and preon creation.
+    pub(super) fn preons_settings_view(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let preons = self.loaded_preons();
 
         // 1. Standard Roles Card
         let standard_cards = v_flex()
@@ -666,24 +665,30 @@ impl super::Chamber {
             standard_cards,
         );
 
-        // 2. Custom Roles Card
-        let custom_roles: Vec<String> = available
-            .into_iter()
-            .filter(|r| !standard_roles.contains(&r.to_lowercase().as_str()))
-            .collect();
-
-        let mut custom_list = v_flex().gap_2();
-        if custom_roles.is_empty() {
-            custom_list = custom_list.child(
+        // 2. Installed Preons Card
+        let mut preons_list = v_flex().gap_2();
+        if preons.is_empty() {
+            preons_list = preons_list.child(
                 div()
                     .text_xs()
                     .text_color(theme::text_muted())
-                    .child("No custom roles defined yet. Create a custom role below to assign it to swarm quarks."),
+                    .child("No custom preons found. Create a global (~/.hadron/preons/) or per-repo (.hadron/preons/) preon below."),
             );
         } else {
-            for crole in custom_roles {
-                let role_name = crole.clone();
-                custom_list = custom_list.child(
+            for (idx, p_item) in preons.iter().enumerate() {
+                let preon_name = p_item.name.clone();
+                let preon_path = p_item.path.clone();
+                let is_global = p_item.is_global;
+                let scope_label = if is_global {
+                    "global (~/.hadron/preons/)"
+                } else {
+                    "repo (.hadron/preons/)"
+                };
+
+                let path_to_open = preon_path.clone();
+                let path_to_del = preon_path.clone();
+
+                preons_list = preons_list.child(
                     h_flex()
                         .justify_between()
                         .items_center()
@@ -707,71 +712,164 @@ impl super::Chamber {
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_color(theme::accent())
-                                        .child(crole.clone()),
+                                        .child(preon_name.clone()),
                                 )
                                 .child(
                                     div()
                                         .text_xs()
                                         .text_color(theme::text_muted())
-                                        .child(format!(".hadron/roles/{crole}.md")),
+                                        .child(scope_label),
                                 ),
                         )
                         .child(
-                            text_button(SharedString::from(format!("del-role-{crole}")), "Delete")
-                                .on_click(cx.listener(move |this, _, _window, cx| {
-                                    this.delete_custom_role(&role_name);
-                                    cx.notify();
-                                })),
+                            h_flex()
+                                .gap_1p5()
+                                .items_center()
+                                .child(
+                                    text_button(SharedString::from(format!("edit-preon-{idx}")), "Edit")
+                                        .on_click(cx.listener(move |this, _, _window, cx| {
+                                            this.open_in_editor(&path_to_open, None);
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(
+                                    text_button(SharedString::from(format!("del-preon-{idx}")), "Delete")
+                                        .on_click(cx.listener(move |this, _, _window, cx| {
+                                            this.delete_preon_file(&path_to_del);
+                                            cx.notify();
+                                        })),
+                                ),
                         ),
                 );
             }
         }
 
-        let custom_section = settings_card_section(
-            "Custom Roles",
+        let preons_section = settings_card_section(
+            "Installed Preons",
             Some(IconName::Folder),
-            custom_list,
+            preons_list,
         );
 
-        // 3. Create New Role Card
+        // 3. Create New Preon Card
         let f_new = self.settings_new_role.clone();
-        let add_role_control = h_flex()
-            .gap_2()
-            .items_center()
-            .w_full()
+        let is_global = self.settings_new_preon_global;
+
+        let scope_toggle = h_flex()
+            .gap_1p5()
             .child(
                 div()
-                    .flex_1()
-                    .min_w(px(180.0))
-                    .child(Input::new(&self.settings_new_role).w_full()),
+                    .id("preon-scope-repo")
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .border_1()
+                    .text_xs()
+                    .cursor_pointer()
+                    .when(!is_global, |d| {
+                        d.bg(theme::glass_card())
+                            .border_color(theme::accent())
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::accent())
+                    })
+                    .when(is_global, |d| {
+                        d.bg(theme::bg_surface())
+                            .border_color(theme::border())
+                            .text_color(theme::text_secondary())
+                            .hover(|s| s.bg(theme::bg_surface_raised()))
+                    })
+                    .child("Repo (.hadron/preons)")
+                    .on_click(cx.listener(|this, _, _window, cx| {
+                        this.settings_new_preon_global = false;
+                        cx.notify();
+                    })),
             )
             .child(
-                text_button("add-role-btn", "Add Role")
-                    .on_click(cx.listener(move |this, _, _window, cx| {
-                        let val = f_new.read(cx).value().trim().to_string();
-                        if !val.is_empty() {
-                            if this.add_custom_role(&val) {
-                                f_new.update(cx, |s, cx| s.set_value("", _window, cx));
-                            }
-                        }
+                div()
+                    .id("preon-scope-global")
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .border_1()
+                    .text_xs()
+                    .cursor_pointer()
+                    .when(is_global, |d| {
+                        d.bg(theme::glass_card())
+                            .border_color(theme::accent())
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::accent())
+                    })
+                    .when(!is_global, |d| {
+                        d.bg(theme::bg_surface())
+                            .border_color(theme::border())
+                            .text_color(theme::text_secondary())
+                            .hover(|s| s.bg(theme::bg_surface_raised()))
+                    })
+                    .child("Global (~/.hadron/preons)")
+                    .on_click(cx.listener(|this, _, _window, cx| {
+                        this.settings_new_preon_global = true;
                         cx.notify();
                     })),
             );
 
+        let f_new_edit = self.settings_new_role.clone();
+        let add_preon_control = v_flex()
+            .gap_2()
+            .w_full()
+            .child(scope_toggle)
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .w_full()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(180.0))
+                            .child(Input::new(&self.settings_new_role).w_full()),
+                    )
+                    .child(
+                        text_button("add-preon-btn", "Create Preon")
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                let val = f_new.read(cx).value().trim().to_string();
+                                if !val.is_empty() {
+                                    let global = this.settings_new_preon_global;
+                                    if this.add_custom_preon(&val, global).is_some() {
+                                        f_new.update(cx, |s, cx| s.set_value("", _window, cx));
+                                    }
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        text_button("create-edit-preon-btn", "Create & Edit")
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                let val = f_new_edit.read(cx).value().trim().to_string();
+                                if !val.is_empty() {
+                                    let global = this.settings_new_preon_global;
+                                    if let Some(path) = this.add_custom_preon(&val, global) {
+                                        f_new_edit.update(cx, |s, cx| s.set_value("", _window, cx));
+                                        this.open_in_editor(&path, None);
+                                    }
+                                }
+                                cx.notify();
+                            })),
+                    ),
+            );
+
         let create_section = settings_card_section(
-            "Create New Role",
+            "Create New Preon",
             Some(IconName::Plus),
             settings_field(
-                "Role Name",
-                Some("Enter custom role name (creates .hadron/roles/<name>.md)"),
-                add_role_control.into_any_element(),
+                "Preon Name",
+                Some("Enter preon name (creates front-matter markdown file in selected scope)"),
+                add_preon_control.into_any_element(),
             ),
         );
 
         v_flex()
             .gap_4()
             .child(standard_section)
-            .child(custom_section)
+            .child(preons_section)
             .child(create_section)
     }
 

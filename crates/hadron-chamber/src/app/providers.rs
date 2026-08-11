@@ -270,7 +270,7 @@ pub(super) const CLOUD_API_KEY_VAR: &str = "API_KEY";
 pub(super) enum SettingsTarget {
     General,
     Providers,
-    Roles,
+    Preons,
     Human,
     Quark(String),
 }
@@ -281,7 +281,7 @@ impl SettingsTarget {
         match self {
             SettingsTarget::General => "general",
             SettingsTarget::Providers => "providers",
-            SettingsTarget::Roles => "roles",
+            SettingsTarget::Preons => "preons",
             SettingsTarget::Human => "human",
             SettingsTarget::Quark(id) => id,
         }

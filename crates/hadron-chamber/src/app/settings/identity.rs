@@ -1,5 +1,12 @@
 use super::*;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct PreonInfo {
+    pub name: String,
+    pub path: std::path::PathBuf,
+    pub is_global: bool,
+}
+
 impl super::Chamber {
     /// A compact segmented picker for a free-string session field (Effort / Mode),
     /// replacing the old free-text input. The seat field stays an `Option<String>`;
@@ -125,65 +132,103 @@ impl super::Chamber {
         }
     }
 
-    pub(super) fn available_roles(&self) -> Vec<String> {
-        let mut roles = vec!["architect".to_string(), "reviewer".to_string(), "executor".to_string()];
-        
+    pub(super) fn loaded_preons(&self) -> Vec<PreonInfo> {
+        let mut preons = Vec::new();
+
+        // 1. Repo preons (.hadron/preons)
         let hadron_dir = match self.path.parent() {
             Some(p) => p.to_path_buf(),
             None => std::path::PathBuf::from(".hadron"),
         };
-        let repo_roles_dir = hadron_dir.join("roles");
-        if let Ok(rd) = std::fs::read_dir(repo_roles_dir) {
-            for entry in rd.filter_map(Result::ok) {
+        let repo_preons_dir = hadron_dir.join("preons");
+        if let Ok(rd) = std::fs::read_dir(&repo_preons_dir) {
+            let mut entries: Vec<_> = rd.filter_map(Result::ok).collect();
+            entries.sort_by_key(|e| e.path());
+            for entry in entries {
                 let path = entry.path();
                 if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        let name = stem.to_string();
-                        if !roles.contains(&name) {
-                            roles.push(name);
-                        }
+                        preons.push(PreonInfo {
+                            name: stem.to_string(),
+                            path,
+                            is_global: false,
+                        });
                     }
                 }
             }
         }
-        
-        if let Ok(home) = std::env::var("HOME") {
-            let global_roles_dir = std::path::Path::new(&home).join(".hadron").join("roles");
-            if let Ok(rd) = std::fs::read_dir(global_roles_dir) {
-                for entry in rd.filter_map(Result::ok) {
+
+        // 2. Global preons (~/.hadron/preons)
+        if let Some(user_dir) = hadron_lattice::user_hadron_dir() {
+            let global_preons_dir = user_dir.join("preons");
+            if let Ok(rd) = std::fs::read_dir(&global_preons_dir) {
+                let mut entries: Vec<_> = rd.filter_map(Result::ok).collect();
+                entries.sort_by_key(|e| e.path());
+                for entry in entries {
                     let path = entry.path();
                     if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
                         if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                             let name = stem.to_string();
-                            if !roles.contains(&name) {
-                                roles.push(name);
+                            if !preons.iter().any(|p| p.name == name) {
+                                preons.push(PreonInfo {
+                                    name,
+                                    path,
+                                    is_global: true,
+                                });
                             }
                         }
                     }
                 }
             }
         }
-        
+
+        preons
+    }
+
+    pub(super) fn available_roles(&self) -> Vec<String> {
+        let mut roles = vec!["architect".to_string(), "reviewer".to_string(), "executor".to_string()];
+        for preon in self.loaded_preons() {
+            if !roles.iter().any(|r| r.eq_ignore_ascii_case(&preon.name)) {
+                roles.push(preon.name);
+            }
+        }
         roles
     }
 
-    pub(super) fn add_custom_role(&self, role_name: &str) -> bool {
-        let clean = role_name.trim().to_lowercase();
-        if clean.is_empty() || ["architect", "reviewer", "executor"].contains(&clean.as_str()) {
-            return false;
+    pub(super) fn add_custom_preon(&self, preon_name: &str, is_global: bool) -> Option<std::path::PathBuf> {
+        let clean = preon_name.trim().to_lowercase();
+        if clean.is_empty() {
+            return None;
         }
-        let hadron_dir = match self.path.parent() {
-            Some(p) => p.to_path_buf(),
-            None => std::path::PathBuf::from(".hadron"),
+        let target_dir = if is_global {
+            hadron_lattice::user_hadron_dir()?.join("preons")
+        } else {
+            match self.path.parent() {
+                Some(p) => p.join("preons"),
+                None => std::path::PathBuf::from(".hadron/preons"),
+            }
         };
-        let roles_dir = hadron_dir.join("roles");
-        if std::fs::create_dir_all(&roles_dir).is_ok() {
-            let role_file = roles_dir.join(format!("{clean}.md"));
-            let _ = std::fs::write(
-                &role_file,
-                format!("# Role: {clean}\nCustom role created in Hadron Chamber.\n"),
-            );
-            true
+
+        if std::fs::create_dir_all(&target_dir).is_ok() {
+            let preon_file = target_dir.join(format!("{clean}.md"));
+            let content = format!("---\nname: {clean}\n---\n\n# Preon: {clean}\nCustom preon instructions.\n");
+            if std::fs::write(&preon_file, content).is_ok() {
+                Some(preon_file)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn add_custom_role(&self, role_name: &str) -> bool {
+        self.add_custom_preon(role_name, false).is_some()
+    }
+
+    pub(super) fn delete_preon_file(&self, path: &std::path::Path) -> bool {
+        if path.exists() {
+            std::fs::remove_file(path).is_ok()
         } else {
             false
         }
@@ -198,17 +243,17 @@ impl super::Chamber {
             Some(p) => p.to_path_buf(),
             None => std::path::PathBuf::from(".hadron"),
         };
-        let local_file = hadron_dir.join("roles").join(format!("{clean}.md"));
         let mut deleted = false;
-        if local_file.exists() && std::fs::remove_file(local_file).is_ok() {
-            deleted = true;
+        let mut check_files = vec![
+            hadron_dir.join("preons").join(format!("{clean}.md")),
+            hadron_dir.join("roles").join(format!("{clean}.md")),
+        ];
+        if let Some(user_dir) = hadron_lattice::user_hadron_dir() {
+            check_files.push(user_dir.join("preons").join(format!("{clean}.md")));
+            check_files.push(user_dir.join("roles").join(format!("{clean}.md")));
         }
-        if let Ok(home) = std::env::var("HOME") {
-            let global_file = std::path::Path::new(&home)
-                .join(".hadron")
-                .join("roles")
-                .join(format!("{clean}.md"));
-            if global_file.exists() && std::fs::remove_file(global_file).is_ok() {
+        for file in check_files {
+            if file.exists() && std::fs::remove_file(file).is_ok() {
                 deleted = true;
             }
         }
