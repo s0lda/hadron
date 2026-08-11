@@ -5,6 +5,16 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-08-11
+
+### Added
+- **Unified Skills Management in Settings**: Replaced legacy Preons in Settings with a unified Skills Manager featuring collapsible accordion for all 15 standard swarm skills, custom skill loading (`.hadron/skills` and `~/.hadron/skills`), code editor integration, and side-by-side Repo/Global skill creation.
+- **Slash Command Integration for Skills**: Integrated all built-in and custom skills into `/commands` slash autocomplete (`/<skill-id>`) and auto-formatted `name:` front-matter on `/add-skill`.
+
+### Fixed
+- **Antigravity SDK Trajectory Recovery**: Handled empty prompt payloads and reset agent state on ACP turn errors to prevent `400: Requests ending with a model turn are not supported` failures.
+- **Worktree Invariant Paths**: Updated `using-git-worktrees` skill procedure to prioritize `.hadron/trees/` and `.hadron/worktrees/` directory structures.
+
 ## [0.2.2] - 2026-08-11
 
 ### Added

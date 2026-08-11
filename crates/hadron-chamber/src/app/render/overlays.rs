@@ -20,6 +20,19 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.2.3",
+        date: Some("2026-08-11"),
+        added: &[
+            "Unified Skills Manager in Settings with collapsible accordion for 15 standard skills",
+            "Slash command completion and execution for built-in and custom skills (`/<skill-id>`)",
+        ],
+        changed: &[],
+        fixed: &[
+            "Antigravity SDK empty prompt validation and trajectory recovery on turn error",
+            "Standardized worktree invariant paths to `.hadron/trees/` and `.hadron/worktrees/`",
+        ],
+    },
+    Release {
         version: "0.2.2",
         date: Some("2026-08-11"),
         added: &[
