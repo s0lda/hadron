@@ -192,7 +192,7 @@ git commit -m "feat(cli): add model_probe to CliSpec and implement probe_cli_mod
 
 ---
 
-### Task 3: Integrate CLI & ACP Model Probing in Chamber Settings UI
+### Task 3: Integrate CLI & ACP Model Probing in Chamber Settings UI (Completed - commit 20fdb739)
 
 **Files:**
 - Modify: `crates/hadron-chamber/src/app/settings/acp_probe.rs`
@@ -201,17 +201,6 @@ git commit -m "feat(cli): add model_probe to CliSpec and implement probe_cli_mod
 **Interfaces:**
 - Consumes: `AcpTarget` or `CliSpec`
 - Produces: `AcpModelProbe` containing probed models for UI rendering
-
-- [ ] **Step 1: Update `start_acp_model_probe` in `acp_probe.rs` to probe CLI models**
-
-In `crates/hadron-chamber/src/app/settings/acp_probe.rs`:
-```rust
-pub(super) fn start_acp_model_probe(&mut self, id: &str, cx: &mut Context<Self>) {
-    let seat_opt = resolve_team(&self.team, &self.global).get(&QuarkId::new(id)).cloned();
-    let Some(seat) = seat_opt else {
-        self.acp_model_probe = None;
-        return;
-    };
 
     let id_str = id.to_string();
     if seat.transport == hadron_lattice::Transport::Acp {
