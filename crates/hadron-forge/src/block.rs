@@ -178,6 +178,63 @@ fn node_name(node: Node, src: &str) -> String {
     "<anon>".to_string()
 }
 
+fn parse_opaque_chunks(source: &str) -> Vec<Block> {
+    if source.trim().is_empty() {
+        return Vec::new();
+    }
+    let mut blocks = Vec::new();
+    let mut chunk_start_byte = None;
+    let mut chunk_start_line = 1;
+    let mut chunk_end_byte = 0;
+    let mut chunk_end_line = 1;
+
+    let base_ptr = source.as_ptr() as usize;
+
+    for (idx, line) in source.lines().enumerate() {
+        let current_line = idx + 1;
+        let line_start = line.as_ptr() as usize - base_ptr;
+        let line_end = line_start + line.len();
+
+        if line.trim().is_empty() {
+            if let Some(start_byte) = chunk_start_byte {
+                let text = &source[start_byte..chunk_end_byte];
+                blocks.push(Block {
+                    kind: BlockKind::Chunk,
+                    name: format!("lines {}-{}", chunk_start_line, chunk_end_line),
+                    hash: short_hash(text),
+                    start_line: chunk_start_line,
+                    end_line: chunk_end_line,
+                    byte_start: start_byte,
+                    byte_end: chunk_end_byte,
+                });
+                chunk_start_byte = None;
+            }
+        } else {
+            if chunk_start_byte.is_none() {
+                chunk_start_byte = Some(line_start);
+                chunk_start_line = current_line;
+            }
+            chunk_end_byte = line_end;
+            chunk_end_line = current_line;
+        }
+    }
+
+    if let Some(start_byte) = chunk_start_byte {
+        let text = &source[start_byte..chunk_end_byte];
+        blocks.push(Block {
+            kind: BlockKind::Chunk,
+            name: format!("lines {}-{}", chunk_start_line, chunk_end_line),
+            hash: short_hash(text),
+            start_line: chunk_start_line,
+            end_line: chunk_end_line,
+            byte_start: start_byte,
+            byte_end: chunk_end_byte,
+        });
+    }
+
+    blocks
+}
+
 /// Parse Rust `source` into its top-level hashed blocks, in source order.
 pub fn parse_blocks(source: &str) -> Vec<Block> {
     parse_blocks_lang(source, Lang::Rust)
@@ -186,8 +243,8 @@ pub fn parse_blocks(source: &str) -> Vec<Block> {
 /// Parse `source` into its top-level hashed blocks for `lang`, in source order.
 /// Only top-level items are addressed in v1; unparseable or empty input yields an empty list.
 pub fn parse_blocks_lang(source: &str, lang: Lang) -> Vec<Block> {
-    if lang == Lang::Opaque {
-        return Vec::new();
+    if lang == Lang::Opaque || lang == Lang::Sql {
+        return parse_opaque_chunks(source);
     }
     let mut parser = Parser::new();
     let language: tree_sitter::Language = match lang {
@@ -204,7 +261,7 @@ pub fn parse_blocks_lang(source: &str, lang: Lang) -> Vec<Block> {
         Lang::Php => tree_sitter_php::LANGUAGE_PHP.into(),
         Lang::Html => tree_sitter_html::LANGUAGE.into(),
         Lang::Css => tree_sitter_css::LANGUAGE.into(),
-        Lang::Sql | Lang::Opaque => return Vec::new(),
+        Lang::Sql | Lang::Opaque => return parse_opaque_chunks(source),
     };
     if parser.set_language(&language).is_err() {
         return Vec::new();
@@ -418,5 +475,21 @@ trait Shape { fn area(&self) -> f64; }
         let css_blocks = parse_blocks_lang(css_src, Lang::Css);
         assert_eq!(css_blocks.len(), 1);
         assert_eq!(css_blocks[0].kind, BlockKind::Rule);
+    }
+
+    #[test]
+    fn opaque_fallback_chunker_parses_any_text_file() {
+        let json_src = "{\n  \"name\": \"hadron\",\n  \"version\": \"1.0.0\"\n}\n\n{\n  \"key\": \"value\"\n}\n";
+        let blocks = parse_blocks_lang(json_src, Lang::Opaque);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].kind, BlockKind::Chunk);
+        assert_eq!(blocks[0].name, "lines 1-4");
+        assert_eq!(&json_src[blocks[0].byte_start..blocks[0].byte_end], "{\n  \"name\": \"hadron\",\n  \"version\": \"1.0.0\"\n}");
+
+        let yaml_src = "server:\n  port: 8080\n\ndatabase:\n  host: localhost\n";
+        let yblocks = parse_blocks_lang(yaml_src, Lang::Opaque);
+        assert_eq!(yblocks.len(), 2);
+        assert_eq!(yblocks[0].name, "lines 1-2");
+        assert_eq!(yblocks[1].name, "lines 4-5");
     }
 }
