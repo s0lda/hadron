@@ -1,3 +1,4 @@
+use agent_client_protocol::schema::v1::SessionConfigId;
 use async_trait::async_trait;
 use hadron_lattice::live::{self, Activity, Doing};
 use hadron_lattice::{
@@ -7,10 +8,48 @@ use hadron_lattice::{
 use std::path::PathBuf;
 use std::time::Instant;
 
+use crate::adapter::acp::{AcpModel, ModelSelector};
 use crate::adapter::cli_stream::StreamAccumulator;
 use crate::adapter::local::PUBLISH_THROTTLE;
 use crate::adapter::runner::{reply_to_outcome, CliInvocation, CliRunner, RedactedEnv};
 use crate::quark::Quark;
+
+/// Probe available models from a CLI binary by executing its `model_probe` spec.
+pub fn probe_cli_models(spec: &CliSpec) -> anyhow::Result<ModelSelector> {
+    let probe_spec = spec
+        .model_probe
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("no model_probe configured"))?;
+    let output = std::process::Command::new(&spec.program)
+        .args(&probe_spec.args)
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("model probe process exited with status {}", output.status);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut available = Vec::new();
+    for line in stdout.lines() {
+        let clean = line.trim();
+        if clean.is_empty() || clean.contains("Fetching available models") {
+            continue;
+        }
+        let parts: Vec<&str> = clean.split_whitespace().collect();
+        if !parts.is_empty() {
+            let value = parts[0].to_string();
+            let label = if parts.len() > 1 {
+                parts[1..].join(" ")
+            } else {
+                value.clone()
+            };
+            available.push(AcpModel { value, label });
+        }
+    }
+    Ok(ModelSelector {
+        config_id: SessionConfigId::from("model"),
+        current: "".to_string(),
+        available,
+    })
+}
 
 /// Linux's hard cap on a **single** argv element (`MAX_ARG_STRLEN` = 32 pages =
 /// 128 KiB, `include/uapi/linux/binfmts.h`). It is NOT the same as `ARG_MAX`, and
@@ -930,5 +969,36 @@ mod tests {
             None,
             "a finished streaming turn must leave no activity behind, same as ACP/HTTP"
         );
+    }
+
+    #[test]
+    fn probe_cli_models_fails_without_model_probe() {
+        let spec = CliSpec::generic("echo".to_string(), vec![]);
+        assert!(probe_cli_models(&spec).is_err());
+    }
+
+    #[test]
+    fn probe_cli_models_runs_echo_probe() {
+        let spec = CliSpec {
+            program: "echo".to_string(),
+            args: vec![],
+            prompt: PromptChannel::Stdin,
+            model_flag: None,
+            model_probe: Some(hadron_lattice::CliProbeSpec {
+                args: vec!["gemini-3.6-flash Gemini 3.6 Flash\ngemini-3.6-pro Gemini 3.6 Pro".to_string()],
+            }),
+            resume: ResumeMode::None,
+            timeout: None,
+            posture: hadron_lattice::PostureMap::default(),
+            argv_guard: false,
+            stream: None,
+        };
+        let selector = probe_cli_models(&spec).unwrap();
+        assert_eq!(selector.config_id, SessionConfigId::from("model"));
+        assert_eq!(selector.available.len(), 2);
+        assert_eq!(selector.available[0].value, "gemini-3.6-flash");
+        assert_eq!(selector.available[0].label, "Gemini 3.6 Flash");
+        assert_eq!(selector.available[1].value, "gemini-3.6-pro");
+        assert_eq!(selector.available[1].label, "Gemini 3.6 Pro");
     }
 }

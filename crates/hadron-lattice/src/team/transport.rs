@@ -157,6 +157,12 @@ impl PostureMap {
     }
 }
 
+/// Specification for probing available models from a CLI binary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CliProbeSpec {
+    pub args: Vec<String>,
+}
+
 /// The CLI invocation shape for a [`Transport::Cli`] seat: how to build the
 /// subprocess argv/stdin for one turn. Config-driven so reaching a new CLI vendor
 /// is a `team.json` change, not a new adapter — the generic CLI transport this
@@ -178,6 +184,9 @@ pub struct CliSpec {
     /// a model argument.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_flag: Option<String>,
+    /// Optional subcommand/args to probe available models from this CLI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_probe: Option<CliProbeSpec>,
     /// How (if at all) this CLI resumes a prior conversation.
     #[serde(default)]
     pub resume: ResumeMode,
@@ -238,6 +247,7 @@ impl CliSpec {
             args: Vec::new(),
             prompt: PromptChannel::Arg { flag: Some("--print".to_string()) },
             model_flag: Some("--model".to_string()),
+            model_probe: Some(CliProbeSpec { args: vec!["models".to_string()] }),
             resume: ResumeMode::Continue { flag: "--continue".to_string() },
             timeout: Some(TimeoutArg {
                 flag: "--print-timeout".to_string(),
@@ -273,6 +283,7 @@ impl CliSpec {
             args: Vec::new(),
             prompt: PromptChannel::Stdin,
             model_flag: Some("--model".to_string()),
+            model_probe: None,
             resume: ResumeMode::None,
             timeout: None,
             posture: PostureMap {
@@ -302,6 +313,7 @@ impl CliSpec {
             args: Vec::new(),
             prompt: PromptChannel::Stdin,
             model_flag: Some("--model".to_string()),
+            model_probe: None,
             resume: ResumeMode::None,
             timeout: None,
             posture: PostureMap {
@@ -338,6 +350,7 @@ impl CliSpec {
             args,
             prompt: PromptChannel::Stdin,
             model_flag: None,
+            model_probe: None,
             resume: ResumeMode::None,
             timeout: None,
             posture: PostureMap::default(),

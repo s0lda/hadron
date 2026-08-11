@@ -1120,6 +1120,7 @@ mod cli_spec_tests {
             args: vec!["--flag".into()],
             prompt: PromptChannel::Arg { flag: Some("--print".into()) },
             model_flag: Some("--model".into()),
+            model_probe: Some(CliProbeSpec { args: vec!["models".into()] }),
             resume: ResumeMode::Continue { flag: "--continue".into() },
             timeout: Some(TimeoutArg { flag: "--timeout".into(), value: "10m".into() }),
             posture: PostureMap {
@@ -1256,6 +1257,7 @@ mod cli_spec_tests {
         assert_eq!(spec.prompt, PromptChannel::Stdin);
         assert!(spec.args.is_empty());
         assert_eq!(spec.model_flag, None);
+        assert_eq!(spec.model_probe, None);
         assert_eq!(spec.resume, ResumeMode::None);
         assert_eq!(spec.timeout, None);
         assert_eq!(spec.posture, PostureMap::default());
