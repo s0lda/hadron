@@ -167,6 +167,54 @@ impl super::Chamber {
         roles
     }
 
+    pub(super) fn add_custom_role(&self, role_name: &str) -> bool {
+        let clean = role_name.trim().to_lowercase();
+        if clean.is_empty() || ["architect", "reviewer", "executor"].contains(&clean.as_str()) {
+            return false;
+        }
+        let hadron_dir = match self.path.parent() {
+            Some(p) => p.to_path_buf(),
+            None => std::path::PathBuf::from(".hadron"),
+        };
+        let roles_dir = hadron_dir.join("roles");
+        if std::fs::create_dir_all(&roles_dir).is_ok() {
+            let role_file = roles_dir.join(format!("{clean}.md"));
+            let _ = std::fs::write(
+                &role_file,
+                format!("# Role: {clean}\nCustom role created in Hadron Chamber.\n"),
+            );
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(super) fn delete_custom_role(&self, role_name: &str) -> bool {
+        let clean = role_name.trim().to_lowercase();
+        if ["architect", "reviewer", "executor"].contains(&clean.as_str()) {
+            return false;
+        }
+        let hadron_dir = match self.path.parent() {
+            Some(p) => p.to_path_buf(),
+            None => std::path::PathBuf::from(".hadron"),
+        };
+        let local_file = hadron_dir.join("roles").join(format!("{clean}.md"));
+        let mut deleted = false;
+        if local_file.exists() && std::fs::remove_file(local_file).is_ok() {
+            deleted = true;
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            let global_file = std::path::Path::new(&home)
+                .join(".hadron")
+                .join("roles")
+                .join(format!("{clean}.md"));
+            if global_file.exists() && std::fs::remove_file(global_file).is_ok() {
+                deleted = true;
+            }
+        }
+        deleted
+    }
+
     pub(super) fn role_selector(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let available = self.available_roles();
         let current_roles_val = self.settings_roles.read(cx).value().trim().to_string();
@@ -182,7 +230,7 @@ impl super::Chamber {
             let f = self.settings_roles.clone();
             let r = role.clone();
             let current_roles_clone = current_roles.clone();
-            
+
             row = row.child(
                 div()
                     .id(SharedString::from(format!("role-chip-{}", role)))
@@ -220,39 +268,6 @@ impl super::Chamber {
             );
         }
 
-        // Add custom role input field and add button next to it.
-        let f_roles = self.settings_roles.clone();
-        let f_new = self.settings_new_role.clone();
-        let current_roles_clone = current_roles.clone();
-        let add_custom = h_flex()
-            .gap_2()
-            .items_center()
-            .child(
-                div()
-                    .w(px(140.0))
-                    .child(Input::new(&self.settings_new_role))
-            )
-            .child(
-                text_button("add-custom-role-btn", "Add")
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        let custom = f_new.read(cx).value().trim().to_string();
-                        if !custom.is_empty() {
-                            let mut new_roles = current_roles_clone.clone();
-                            if !new_roles.iter().any(|r| r.eq_ignore_ascii_case(&custom)) {
-                                new_roles.push(custom);
-                                f_roles.update(cx, |s, cx| s.set_value(new_roles.join(", "), window, cx));
-                                this.commit_settings_inputs(cx);
-                            }
-                            f_new.update(cx, |s, cx| s.set_value("", window, cx));
-                        }
-                        cx.notify();
-                    }))
-            );
-
-        v_flex()
-            .gap_2()
-            .child(row)
-            .child(add_custom)
-            .into_any_element()
+        row.into_any_element()
     }
 }

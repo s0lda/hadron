@@ -348,7 +348,7 @@ impl super::Chamber {
         let mut col = v_flex().gap_1p5().child(
             Select::new(&self.acp_model_select_state)
                 .w_full()
-                .min_w(px(200.0))
+                .min_w(px(280.0))
                 .placeholder("Select model...")
                 .search_placeholder("Search models..."),
         );

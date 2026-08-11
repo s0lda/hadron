@@ -21,6 +21,7 @@ impl super::Chamber {
             )
             .child(self.settings_nav_row(SettingsTarget::General, &target, cx))
             .child(self.settings_nav_row(SettingsTarget::Providers, &target, cx))
+            .child(self.settings_nav_row(SettingsTarget::Roles, &target, cx))
             .child(
                 div()
                     .px_1()
@@ -149,6 +150,7 @@ impl super::Chamber {
                 match target {
                     SettingsTarget::General => "General Settings".to_string(),
                     SettingsTarget::Providers => "Providers".to_string(),
+                    SettingsTarget::Roles => "Swarm Roles".to_string(),
                     _ => format!("Editing {}", preview.name),
                 },
             ))
@@ -169,6 +171,7 @@ impl super::Chamber {
         let fields = match target {
             SettingsTarget::General => self.general_settings_view(window, cx).into_any_element(),
             SettingsTarget::Providers => self.providers_view(window, cx).into_any_element(),
+            SettingsTarget::Roles => self.roles_settings_view(window, cx).into_any_element(),
             _ => {
                 let is_quark = matches!(target, SettingsTarget::Quark(_));
                 let acp_quark = matches!(&target, SettingsTarget::Quark(id) if self.is_acp_quark(id));
@@ -310,7 +313,7 @@ impl super::Chamber {
                                 .items_center()
                                 .w_full()
                                 .child(div().flex_1().min_w(px(140.0)).child(Input::new(&self.settings_path).w_full()))
-                                .child(text_button("settings-browse-img", "Browse…").on_click(
+                                .child(text_button("settings-browse-img", "Browse").on_click(
                                     cx.listener(|this, _, _, cx| this.pick_avatar_image(cx)),
                                 ))
                                 .child(text_button("settings-clear-img", "Clear").on_click(
@@ -459,7 +462,7 @@ impl super::Chamber {
         // fields commit on nav-away or on close via ✕/backdrop — see
         // `commit_settings_inputs`), so there is nothing left for a "Done" button to do
         // that closing the panel any other way doesn't already do.
-        let footer = if target == SettingsTarget::Providers {
+        let footer = if target == SettingsTarget::Providers || target == SettingsTarget::Roles {
             div().into_any_element()
         } else {
             h_flex()
@@ -562,6 +565,17 @@ impl super::Chamber {
                     .into_any_element(),
                 None,
             ),
+            SettingsTarget::Roles => (
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.0))
+                    .text_color(theme::text_muted())
+                    .child(Icon::new(IconName::CircleCheck).small())
+                    .into_any_element(),
+                None,
+            ),
             SettingsTarget::Human => (
                 identity_avatar(&resolved, 24.0).into_any_element(),
                 None,
@@ -612,6 +626,7 @@ impl super::Chamber {
                             .child(match &who {
                                 SettingsTarget::General => "General".to_string(),
                                 SettingsTarget::Providers => "Providers".to_string(),
+                                SettingsTarget::Roles => "Roles".to_string(),
                                 _ => resolved.name.clone(),
                             }),
                     ),
@@ -620,5 +635,184 @@ impl super::Chamber {
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select_settings_target(who.clone(), window, cx)
             }))
+    }
+
+    /// Dedicated Roles management view: standard 3 roles, custom role management, and role creation.
+    pub(super) fn roles_settings_view(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let available = self.available_roles();
+        let standard_roles = ["architect", "reviewer", "executor"];
+
+        // 1. Standard Roles Card
+        let standard_cards = v_flex()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child("Core roles built into Hadron swarm orchestrator and quarks:"),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .flex_wrap()
+                    .child(self.role_badge("architect", "High-level design & planning", true))
+                    .child(self.role_badge("reviewer", "Code review & verification", true))
+                    .child(self.role_badge("executor", "Implementation & test execution", true)),
+            );
+
+        let standard_section = settings_card_section(
+            "Standard Swarm Roles",
+            Some(IconName::CircleCheck),
+            standard_cards,
+        );
+
+        // 2. Custom Roles Card
+        let custom_roles: Vec<String> = available
+            .into_iter()
+            .filter(|r| !standard_roles.contains(&r.to_lowercase().as_str()))
+            .collect();
+
+        let mut custom_list = v_flex().gap_2();
+        if custom_roles.is_empty() {
+            custom_list = custom_list.child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child("No custom roles defined yet. Create a custom role below to assign it to swarm quarks."),
+            );
+        } else {
+            for crole in custom_roles {
+                let role_name = crole.clone();
+                custom_list = custom_list.child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .p_2()
+                        .rounded_md()
+                        .bg(theme::bg_surface())
+                        .border_1()
+                        .border_color(theme::border())
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .bg(theme::glass_card())
+                                        .border_1()
+                                        .border_color(theme::accent())
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme::accent())
+                                        .child(crole.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(format!(".hadron/roles/{crole}.md")),
+                                ),
+                        )
+                        .child(
+                            text_button(SharedString::from(format!("del-role-{crole}")), "Delete")
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.delete_custom_role(&role_name);
+                                    cx.notify();
+                                })),
+                        ),
+                );
+            }
+        }
+
+        let custom_section = settings_card_section(
+            "Custom Roles",
+            Some(IconName::Folder),
+            custom_list,
+        );
+
+        // 3. Create New Role Card
+        let f_new = self.settings_new_role.clone();
+        let add_role_control = h_flex()
+            .gap_2()
+            .items_center()
+            .w_full()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(180.0))
+                    .child(Input::new(&self.settings_new_role).w_full()),
+            )
+            .child(
+                text_button("add-role-btn", "Add Role")
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        let val = f_new.read(cx).value().trim().to_string();
+                        if !val.is_empty() {
+                            if this.add_custom_role(&val) {
+                                f_new.update(cx, |s, cx| s.set_value("", _window, cx));
+                            }
+                        }
+                        cx.notify();
+                    })),
+            );
+
+        let create_section = settings_card_section(
+            "Create New Role",
+            Some(IconName::Plus),
+            settings_field(
+                "Role Name",
+                Some("Enter custom role name (creates .hadron/roles/<name>.md)"),
+                add_role_control.into_any_element(),
+            ),
+        );
+
+        v_flex()
+            .gap_4()
+            .child(standard_section)
+            .child(custom_section)
+            .child(create_section)
+    }
+
+    fn role_badge(&self, name: &str, desc: &str, is_standard: bool) -> impl IntoElement {
+        v_flex()
+            .gap_1()
+            .p_2()
+            .rounded_md()
+            .bg(theme::bg_surface())
+            .border_1()
+            .border_color(theme::border())
+            .min_w(px(180.0))
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_1p5()
+                    .child(
+                        div()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(theme::bg_surface_raised())
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::text())
+                            .child(name.to_string()),
+                    )
+                    .when(is_standard, |d| {
+                        d.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child("standard"),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_secondary())
+                    .child(desc.to_string()),
+            )
     }
 }

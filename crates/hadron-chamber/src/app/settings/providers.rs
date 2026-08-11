@@ -1305,7 +1305,7 @@ impl super::Chamber {
         }
         Select::new(&self.wizard_model_select_state)
             .w_full()
-            .min_w(px(200.0))
+            .min_w(px(280.0))
             .placeholder("Select model...")
             .search_placeholder("Search models...")
             .into_any_element()
