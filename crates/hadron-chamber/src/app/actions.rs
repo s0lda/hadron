@@ -263,27 +263,30 @@ impl Chamber {
             // channel to use. `/team-brainstorm` addresses the whole roster; the
             // other three address the named quark, or the orchestrator when the
             // human names nobody.
-            "team-brainstorm" | "brainstorm" | "writing-plans" | "executing-plans" => {
+            "commands" | "help" => {
+                self.post_chat_message(Actor::Gluon, crate::text::help_body(), cx);
+                true
+            }
+            cmd if cmd == "team-brainstorm" || cmd == "brainstorm" || self.skill_corpus().iter().any(|s| s.id == cmd) => {
                 let skill_id = match cmd {
                     "team-brainstorm" | "brainstorm" => "brainstorming",
-                    "writing-plans" => "writing-plans",
-                    _ => "executing-plans",
+                    other => other,
                 };
-                let Some(trigger) = hadron_gluon::skills::canonical_trigger(skill_id) else {
-                    // Unreachable unless someone removes a skill from the engine's
-                    // corpus. Say so rather than post a message that selects nothing.
-                    eprintln!(
-                        "chamber: `/{cmd}` found no skill `{skill_id}` in the engine — not posting"
-                    );
-                    return true;
-                };
+                let corpus = self.skill_corpus();
+                let trigger = corpus
+                    .iter()
+                    .find(|s| s.id == skill_id)
+                    .and_then(|s| s.triggers.first().cloned())
+                    .or_else(|| hadron_gluon::skills::canonical_trigger(skill_id).map(String::from))
+                    .unwrap_or_else(|| skill_id.to_string());
+
                 let (target, task) = if cmd == "team-brainstorm" {
                     (hadron_gluon::router::TEAM_ALIAS, args.trim())
                 } else {
                     let (named, task) = crate::text::split_target(args);
                     (named.unwrap_or(hadron_gluon::router::ORCHESTRATOR_ALIAS), task)
                 };
-                match crate::text::skill_command_body(trigger, target, task) {
+                match crate::text::skill_command_body(&trigger, target, task) {
                     // The human's own words, carrying the trigger the engine matches.
                     Some(body) => self.post_chat_message(Actor::Human, body, cx),
                     // No task: there is nothing of the human's to post, and posting
@@ -296,14 +299,6 @@ impl Chamber {
                         cx,
                     ),
                 }
-                true
-            }
-            // Discovery. Both print from `Actor::Gluon` with no `@mention`, which
-            // reaches no seat: `next_pending` skips `to: None` (`router/mod.rs:37`)
-            // and `unaddressed_message_targets` resolves mentions in the body, of
-            // which there are none. Answering "what can I type" must not cost a turn.
-            "help" => {
-                self.post_chat_message(Actor::Gluon, crate::text::help_body(), cx);
                 true
             }
             // Renders the nucleus file verbatim rather than a table built here.
@@ -938,6 +933,13 @@ impl Chamber {
                 // enforces (spec §10), and rather than silently write a file
                 // the loader will skip for having no `name:` — reuses the same
                 // front-matter parser `load_skills` itself uses (rule 3).
+                let (front, _) = hadron_gluon::skills::split_front_matter(&content);
+                let skill_name = dest.file_stem().and_then(|s| s.to_str()).unwrap_or("custom-skill");
+                let content = if front.and_then(|f| hadron_gluon::skills::front_matter_value(f, "name")).is_none() {
+                    format!("---\nname: {skill_name}\ndescription: {skill_name}\ntriggers: [{skill_name}]\n---\n\n{}", content.trim_start())
+                } else {
+                    content
+                };
                 let (front, _) = hadron_gluon::skills::split_front_matter(&content);
                 let has_tools = front.is_some_and(|f| hadron_gluon::skills::front_matter_value(f, "tools").is_some());
                 let has_name = front.is_some_and(|f| hadron_gluon::skills::front_matter_value(f, "name").is_some());

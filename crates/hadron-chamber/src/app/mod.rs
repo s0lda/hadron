@@ -525,7 +525,7 @@ impl Chamber {
         let settings_effort = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. low, standard, high"));
         let settings_mode_config = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. architect, code, ask"));
         let settings_roles = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. architect, reviewer"));
-        let settings_new_role = cx.new(|cx| InputState::new(window, cx).placeholder("Enter preon name (e.g. security-auditor)..."));
+        let settings_new_role = cx.new(|cx| InputState::new(window, cx).placeholder("Enter skill name (e.g. security-auditor)..."));
         let settings_deny_skills = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. writing-plans, brainstorming"));
         let settings_energy_limit = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. 500000 (blank = default)"));
         let settings_temperature = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. 0.1 for code, 0.8 for creative (blank = default)"));

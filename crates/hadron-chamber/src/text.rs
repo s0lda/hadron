@@ -89,6 +89,7 @@ pub struct Command {
 /// `every_listed_command_is_handled` in `app::input` is the guard that closes it.
 pub const COMMANDS: &[Command] = &[
     Command { name: "help", detail: "List every chat command", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "commands", detail: "List every chat command", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "skills", detail: "List the skills the engine can hand a quark, and their triggers", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "vocabulary", detail: "What each Hadron word means — quark, preon, field, gluon…", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "clear", detail: "Archive and clear the current chat history", arity: Arity::None, arg: ArgSource::None, listed: true },
@@ -101,9 +102,21 @@ pub const COMMANDS: &[Command] = &[
     // The skill commands. Each posts a message carrying the skill's own canonical
     // trigger, so the engine selects the procedure — see `skill_command_body`.
     Command { name: "brainstorm", detail: "Explore a design before any code (e.g. /brainstorm @Sonnet the new menu)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "team-brainstorm", detail: "Kick off brainstorming with the whole team", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "writing-plans", detail: "Turn a settled design into an implementation plan", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "executing-plans", detail: "Work through an existing plan, task by task", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
-    Command { name: "team-brainstorm", detail: "Kick off brainstorming with the whole team", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "reviewing-work", detail: "Review code changes, plans, or commit diffs", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "dispatching-parallel-agents", detail: "Dispatch 2+ independent parallel tasks across workers", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "finishing-a-development-branch", detail: "Guide branch completion, PRs, merge or cleanup", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "receiving-code-review", detail: "Process and verify code review feedback", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "requesting-code-review", detail: "Request review before completing or merging work", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "subagent-driven-development", detail: "Execute multi-task implementation plan via subagents", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "systematic-debugging", detail: "Investigate bugs, test failures, and unexpected behaviors", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "test-driven-development", detail: "Implement feature or bugfix using test-driven development", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "using-git-worktrees", detail: "Isolate feature work in a dedicated git worktree", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "using-superpowers", detail: "Discover and activate available superpowers/skills", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "verification-before-completion", detail: "Run verification commands before claiming work is complete", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "writing-skills", detail: "Create, edit, or verify custom skill procedures", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "reboot", detail: "Force-restart a resident quark (e.g. /reboot @acp-claude or /reboot all)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "approve", detail: "Approve a pending permission request (e.g. /approve @worker or /approve @worker remember)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "deny", detail: "Deny a pending permission request (e.g. /deny @worker)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
@@ -228,7 +241,32 @@ pub(crate) fn note_body(
 
 /// Look a command up by the name typed after the slash.
 pub fn command(name: &str) -> Option<&'static Command> {
-    COMMANDS.iter().find(|c| c.name == name)
+    if let Some(cmd) = COMMANDS.iter().find(|c| c.name == name) {
+        return Some(cmd);
+    }
+    if is_custom_skill(name) {
+        let leaked_name: &'static str = Box::leak(name.to_string().into_boxed_str());
+        let cmd = Box::leak(Box::new(Command {
+            name: leaked_name,
+            detail: "Custom skill procedure",
+            arity: Arity::Line,
+            arg: ArgSource::Quark,
+            listed: true,
+        }));
+        return Some(cmd);
+    }
+    None
+}
+
+fn is_custom_skill(name: &str) -> bool {
+    let repo_dir = std::env::current_dir().ok().map(|d| d.join(".hadron").join("skills"));
+    let user_dir = hadron_lattice::user_hadron_dir().map(|d| d.join("skills"));
+    for dir in [repo_dir, user_dir].into_iter().flatten() {
+        if dir.join(format!("{name}.md")).exists() {
+            return true;
+        }
+    }
+    false
 }
 
 /// The markdown `/help` prints.
@@ -1217,13 +1255,36 @@ pub fn completion_candidates(
         CompletionTrigger::Command => {
             // Straight off `COMMANDS`, so the menu cannot offer a command the
             // parser does not recognise.
+            let mut seen = std::collections::HashSet::new();
             for cmd in COMMANDS.iter().filter(|c| c.listed) {
                 if query_lower.is_empty() || cmd.name.contains(&query_lower) {
+                    seen.insert(cmd.name.to_string());
                     out.push(Candidate {
                         label: format!("/{}", cmd.name),
                         detail: cmd.detail.to_string(),
                         new_text: format!("/{} ", cmd.name),
                     });
+                }
+            }
+            let repo_dir = std::env::current_dir().ok().map(|d| d.join(".hadron").join("skills"));
+            let user_dir = hadron_lattice::user_hadron_dir().map(|d| d.join("skills"));
+            for dir in [repo_dir, user_dir].into_iter().flatten() {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().is_some_and(|e| e == "md") {
+                            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                                if !seen.contains(stem) && (query_lower.is_empty() || stem.contains(&query_lower)) {
+                                    seen.insert(stem.to_string());
+                                    out.push(Candidate {
+                                        label: format!("/{stem}"),
+                                        detail: "Custom skill procedure".into(),
+                                        new_text: format!("/{stem} "),
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
