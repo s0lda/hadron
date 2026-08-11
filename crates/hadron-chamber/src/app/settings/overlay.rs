@@ -21,7 +21,7 @@ impl super::Chamber {
             )
             .child(self.settings_nav_row(SettingsTarget::General, &target, cx))
             .child(self.settings_nav_row(SettingsTarget::Providers, &target, cx))
-            .child(self.settings_nav_row(SettingsTarget::Preons, &target, cx))
+            .child(self.settings_nav_row(SettingsTarget::Skills, &target, cx))
             .child(
                 div()
                     .px_1()
@@ -150,7 +150,7 @@ impl super::Chamber {
                 match target {
                     SettingsTarget::General => "General Settings".to_string(),
                     SettingsTarget::Providers => "Providers".to_string(),
-                    SettingsTarget::Preons => "Preons".to_string(),
+                    SettingsTarget::Skills => "Skills".to_string(),
                     _ => format!("Editing {}", preview.name),
                 },
             ))
@@ -171,7 +171,7 @@ impl super::Chamber {
         let fields = match target {
             SettingsTarget::General => self.general_settings_view(window, cx).into_any_element(),
             SettingsTarget::Providers => self.providers_view(window, cx).into_any_element(),
-            SettingsTarget::Preons => self.preons_settings_view(window, cx).into_any_element(),
+            SettingsTarget::Skills => self.skills_settings_view(window, cx).into_any_element(),
             _ => {
                 let is_quark = matches!(target, SettingsTarget::Quark(_));
                 let acp_quark = matches!(&target, SettingsTarget::Quark(id) if self.is_acp_quark(id));
@@ -425,9 +425,9 @@ impl super::Chamber {
                             self.mode_select(target.key(), window, cx),
                         ))
                         .child(settings_field(
-                            "Preons",
-                            Some("Preons assigned to this quark in the swarm."),
-                            self.preon_selector(cx),
+                            "Skills",
+                            Some("Skills assigned / active for this quark in the swarm."),
+                            self.skill_selector(cx),
                         ))
                         .child(settings_field(
                             "Denied skills",
@@ -462,7 +462,7 @@ impl super::Chamber {
         // fields commit on nav-away or on close via ✕/backdrop — see
         // `commit_settings_inputs`), so there is nothing left for a "Done" button to do
         // that closing the panel any other way doesn't already do.
-        let footer = if target == SettingsTarget::Providers || target == SettingsTarget::Preons {
+        let footer = if target == SettingsTarget::Providers || target == SettingsTarget::Skills {
             div().into_any_element()
         } else {
             h_flex()
@@ -565,7 +565,7 @@ impl super::Chamber {
                     .into_any_element(),
                 None,
             ),
-            SettingsTarget::Preons => (
+            SettingsTarget::Skills => (
                 div()
                     .flex()
                     .items_center()
@@ -626,7 +626,7 @@ impl super::Chamber {
                             .child(match &who {
                                 SettingsTarget::General => "General".to_string(),
                                 SettingsTarget::Providers => "Providers".to_string(),
-                                SettingsTarget::Preons => "Preons".to_string(),
+                                SettingsTarget::Skills => "Skills".to_string(),
                                 _ => resolved.name.clone(),
                             }),
                     ),
@@ -637,58 +637,63 @@ impl super::Chamber {
             }))
     }
 
-    /// Dedicated Preons management view: standard 3 preons, global & repo preons (with Edit & Delete), and preon creation.
-    pub(super) fn preons_settings_view(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let preons = self.loaded_preons();
+    /// Dedicated Skills management view: standard swarm procedures, global & repo skills (with Edit & Delete), and skill creation.
+    pub(super) fn skills_settings_view(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let skills = self.loaded_skills();
 
-        // 1. Standard Preons Card
+        // 1. Standard Skills Card
         let standard_cards = v_flex()
             .gap_2()
             .child(
                 div()
                     .text_xs()
                     .text_color(theme::text_muted())
-                    .child("Core preons built into Hadron swarm orchestrator and quarks:"),
+                    .child("Core procedures built into Hadron swarm orchestrator and quarks:"),
             )
             .child(
                 h_flex()
                     .gap_2()
                     .flex_wrap()
-                    .child(self.preon_badge("architect", "High-level design & planning", true))
-                    .child(self.preon_badge("reviewer", "Code review & verification", true))
-                    .child(self.preon_badge("executor", "Implementation & test execution", true)),
+                    .child(self.skill_badge("writing-plans", "Multi-step implementation specs & plan creation", true))
+                    .child(self.skill_badge("executing-plans", "Plan execution with checkpoint reviews", true))
+                    .child(self.skill_badge("reviewing-work", "Code review & diff verification", true))
+                    .child(self.skill_badge("systematic-debugging", "Root cause investigation before fixing", true))
+                    .child(self.skill_badge("brainstorming", "Design exploration & intent alignment", true))
+                    .child(self.skill_badge("test-driven-development", "TDD cycle with test-first unit verification", true))
+                    .child(self.skill_badge("verification-before-completion", "Empirical verification before completing tasks", true))
+                    .child(self.skill_badge("subagent-driven-development", "Executing plans with sub-agents", true)),
             );
 
         let standard_section = settings_card_section(
-            "Standard Swarm Preons",
+            "Standard Swarm Skills",
             Some(IconName::CircleCheck),
             standard_cards,
         );
 
-        // 2. Installed Preons Card
-        let mut preons_list = v_flex().gap_2();
-        if preons.is_empty() {
-            preons_list = preons_list.child(
+        // 2. Installed Skills Card
+        let mut skills_list = v_flex().gap_2();
+        if skills.is_empty() {
+            skills_list = skills_list.child(
                 div()
                     .text_xs()
                     .text_color(theme::text_muted())
-                    .child("No custom preons found. Create a global (~/.hadron/preons/) or per-repo (.hadron/preons/) preon below."),
+                    .child("No custom skills found. Create a global (~/.hadron/skills/) or per-repo (.hadron/skills/) skill below."),
             );
         } else {
-            for (idx, p_item) in preons.iter().enumerate() {
-                let preon_name = p_item.name.clone();
-                let preon_path = p_item.path.clone();
-                let is_global = p_item.is_global;
+            for (idx, s_item) in skills.iter().enumerate() {
+                let skill_name = s_item.name.clone();
+                let skill_path = s_item.path.clone();
+                let is_global = s_item.is_global;
                 let scope_label = if is_global {
-                    "global (~/.hadron/preons/)"
+                    "global (~/.hadron/skills/)"
                 } else {
-                    "repo (.hadron/preons/)"
+                    "repo (.hadron/skills/)"
                 };
 
-                let path_to_open = preon_path.clone();
-                let path_to_del = preon_path.clone();
+                let path_to_open = skill_path.clone();
+                let path_to_del = skill_path.clone();
 
-                preons_list = preons_list.child(
+                skills_list = skills_list.child(
                     h_flex()
                         .justify_between()
                         .items_center()
@@ -712,7 +717,7 @@ impl super::Chamber {
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_color(theme::accent())
-                                        .child(preon_name.clone()),
+                                        .child(skill_name.clone()),
                                 )
                                 .child(
                                     div()
@@ -726,16 +731,16 @@ impl super::Chamber {
                                 .gap_1p5()
                                 .items_center()
                                 .child(
-                                    text_button(SharedString::from(format!("edit-preon-{idx}")), "Edit")
+                                    text_button(SharedString::from(format!("edit-skill-{idx}")), "Edit")
                                         .on_click(cx.listener(move |this, _, _window, cx| {
                                             this.open_in_editor(&path_to_open, None);
                                             cx.notify();
                                         })),
                                 )
                                 .child(
-                                    text_button(SharedString::from(format!("del-preon-{idx}")), "Delete")
+                                    text_button(SharedString::from(format!("del-skill-{idx}")), "Delete")
                                         .on_click(cx.listener(move |this, _, _window, cx| {
-                                            this.delete_preon_file(&path_to_del);
+                                            this.delete_skill_file(&path_to_del);
                                             cx.notify();
                                         })),
                                 ),
@@ -744,13 +749,13 @@ impl super::Chamber {
             }
         }
 
-        let preons_section = settings_card_section(
-            "Installed Preons",
+        let skills_section = settings_card_section(
+            "Installed Custom Skills",
             Some(IconName::Folder),
-            preons_list,
+            skills_list,
         );
 
-        // 3. Create New Preon Card
+        // 3. Create New Skill Card
         let f_repo = self.settings_new_role.clone();
         let f_global = self.settings_new_role.clone();
 
@@ -766,7 +771,7 @@ impl super::Chamber {
                             .text_sm()
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(theme::text())
-                            .child("Preon Name"),
+                            .child("Skill Name"),
                     )
                     .child(Input::new(&self.settings_new_role).w_full()),
             )
@@ -776,7 +781,7 @@ impl super::Chamber {
                     .w_full()
                     .child(
                         div()
-                            .id("create-repo-preon-btn")
+                            .id("create-repo-skill-btn")
                             .flex_1()
                             .py_2()
                             .px_3()
@@ -796,18 +801,18 @@ impl super::Chamber {
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::MEDIUM)
                                     .text_color(theme::text())
-                                    .child("Repo Preon"),
+                                    .child("Repo Skill"),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(theme::text_muted())
-                                    .child("(.hadron/preons)"),
+                                    .child("(.hadron/skills)"),
                             )
                             .on_click(cx.listener(move |this, _, _window, cx| {
                                 let val = f_repo.read(cx).value().trim().to_string();
                                 if !val.is_empty() {
-                                    if let Some(path) = this.add_custom_preon(&val, false) {
+                                    if let Some(path) = this.add_custom_skill(&val, false) {
                                         f_repo.update(cx, |s, cx| s.set_value("", _window, cx));
                                         this.open_in_editor(&path, None);
                                     }
@@ -817,7 +822,7 @@ impl super::Chamber {
                     )
                     .child(
                         div()
-                            .id("create-global-preon-btn")
+                            .id("create-global-skill-btn")
                             .flex_1()
                             .py_2()
                             .px_3()
@@ -837,18 +842,18 @@ impl super::Chamber {
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::MEDIUM)
                                     .text_color(theme::text())
-                                    .child("Global Preon"),
+                                    .child("Global Skill"),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(theme::text_muted())
-                                    .child("(~/.hadron/preons)"),
+                                    .child("(~/.hadron/skills)"),
                             )
                             .on_click(cx.listener(move |this, _, _window, cx| {
                                 let val = f_global.read(cx).value().trim().to_string();
                                 if !val.is_empty() {
-                                    if let Some(path) = this.add_custom_preon(&val, true) {
+                                    if let Some(path) = this.add_custom_skill(&val, true) {
                                         f_global.update(cx, |s, cx| s.set_value("", _window, cx));
                                         this.open_in_editor(&path, None);
                                     }
@@ -859,7 +864,7 @@ impl super::Chamber {
             );
 
         let create_section = settings_card_section(
-            "Create New Preon",
+            "Create New Skill",
             Some(IconName::Plus),
             create_content,
         );
@@ -867,11 +872,11 @@ impl super::Chamber {
         v_flex()
             .gap_4()
             .child(standard_section)
-            .child(preons_section)
+            .child(skills_section)
             .child(create_section)
     }
 
-    fn preon_badge(&self, name: &str, desc: &str, is_standard: bool) -> impl IntoElement {
+    fn skill_badge(&self, name: &str, desc: &str, is_standard: bool) -> impl IntoElement {
         v_flex()
             .gap_1()
             .p_2()
