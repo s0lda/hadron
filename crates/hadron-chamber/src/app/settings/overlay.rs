@@ -215,7 +215,11 @@ impl super::Chamber {
                                     );
                                 }
 
-                                let mode_str = format!("{:?}", r.mode);
+                                let mode_str = if r.mode_is_override {
+                                    format!("{:?}", r.mode)
+                                } else {
+                                    "Default".to_string()
+                                };
                                 pills = pills.child(
                                     div()
                                         .px_2()
@@ -251,18 +255,20 @@ impl super::Chamber {
                     )
                     .child(
                         h_flex()
-                            .items_center()
+                            .w_full()
                             .gap_4()
+                            .items_center()
                             .child(identity_avatar(&preview, 56.0))
                             .child(
                                 v_flex()
                                     .gap_1()
+                                    .flex_1()
                                     .child(
                                         div()
                                             .text_lg()
                                             .font_weight(gpui::FontWeight::BOLD)
-                                            .text_color(preview.color)
-                                            .child(preview.name.clone()),
+                                            .text_color(theme::text())
+                                            .child(preview.name),
                                     )
                                     .child(hero_pills),
                             ),
@@ -312,14 +318,9 @@ impl super::Chamber {
                     };
 
                     let effort_field = if acp_quark {
-                        self.acp_effort_select(cx)
+                        self.acp_effort_select(window, cx)
                     } else {
-                        self.session_select(
-                            "effort",
-                            &self.settings_effort,
-                            &["low", "medium", "high"],
-                            cx,
-                        )
+                        self.general_effort_select(window, cx)
                     };
 
                     let model_card_content = v_flex()
@@ -341,53 +342,51 @@ impl super::Chamber {
                                     .gap_2()
                                     .child(
                                         h_flex()
-                                            .id("advanced-model-params-toggle")
-                                            .justify_between()
                                             .items_center()
+                                            .gap_2()
                                             .cursor_pointer()
-                                            .py_1()
+                                            .id("advanced-model-params-toggle")
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.settings_advanced_expanded = !this.settings_advanced_expanded;
                                                 cx.notify();
                                             }))
                                             .child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .items_center()
-                                                    .child(
-                                                        Icon::new(if self.settings_advanced_expanded {
-                                                            IconName::ChevronDown
-                                                        } else {
-                                                            IconName::ChevronRight
-                                                        })
-                                                        .small()
-                                                        .text_color(theme::text_secondary()),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_sm()
-                                                            .font_weight(gpui::FontWeight::MEDIUM)
-                                                            .text_color(theme::text())
-                                                            .child("Advanced Model Parameters"),
-                                                    ),
+                                                Icon::new(if self.settings_advanced_expanded {
+                                                    IconName::ChevronDown
+                                                } else {
+                                                    IconName::ChevronRight
+                                                })
+                                                .small()
+                                                .text_color(theme::text_muted()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                                    .text_color(theme::text_secondary())
+                                                    .child("Advanced Model Parameters"),
                                             ),
                                     )
-                                    .when(self.settings_advanced_expanded, |adv| {
-                                        adv.child(settings_field(
-                                            "Temperature",
-                                            Some("Sampling temperature (e.g. 0.1 for code, 0.8 for creative). Blank = default."),
-                                            Input::new(&self.settings_temperature).w_full().into_any_element(),
-                                        ))
-                                        .child(settings_field(
-                                            "Top P",
-                                            Some("Nucleus sampling probability (e.g. 0.95). Blank = default."),
-                                            Input::new(&self.settings_top_p).w_full().into_any_element(),
-                                        ))
-                                        .child(settings_field(
-                                            "Max tokens",
-                                            Some("Max response token limit. Blank = default."),
-                                            Input::new(&self.settings_max_tokens).w_full().into_any_element(),
-                                        ))
+                                    .when(self.settings_advanced_expanded, |v| {
+                                        v.child(
+                                            h_flex()
+                                                .gap_3()
+                                                .child(div().flex_1().child(settings_field(
+                                                    "Temperature",
+                                                    None,
+                                                    Input::new(&self.settings_temperature).w_full().into_any_element(),
+                                                )))
+                                                .child(div().flex_1().child(settings_field(
+                                                    "Top P",
+                                                    None,
+                                                    Input::new(&self.settings_top_p).w_full().into_any_element(),
+                                                )))
+                                                .child(div().flex_1().child(settings_field(
+                                                    "Max Tokens",
+                                                    None,
+                                                    Input::new(&self.settings_max_tokens).w_full().into_any_element(),
+                                                ))),
+                                        )
                                     }),
                             )
                         });
@@ -404,7 +403,7 @@ impl super::Chamber {
                         .child(settings_field(
                             "Permission",
                             Some("Authority level, from asking every time to full autonomy."),
-                            self.mode_select(target.key(), cx),
+                            self.mode_select(target.key(), window, cx),
                         ))
                         .child(settings_field(
                             "Roles",

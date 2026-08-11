@@ -893,7 +893,9 @@ impl super::Chamber {
     /// and a gloss explains what the choice delegates. The leading **Default** rung clears
     /// any override (`ModeClear`) so the quark follows the global default; the four posture
     /// rungs each pin a per-quark `ModeSet` override. The daemon honours it next tick.
-    pub(crate) fn mode_select(&self, id: &str, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(crate) fn mode_select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        use gpui_component::select::Select;
+
         let (current, is_override) = self
             .view
             .roster
@@ -902,87 +904,39 @@ impl super::Chamber {
             .map(|r| (r.mode, r.mode_is_override))
             .unwrap_or((self.view.global_mode, false));
 
-        // The "Default" rung is inheriting the global default; a concrete rung pins a
-        // per-quark override. So Default is selected exactly when there is no override,
-        // and a posture rung highlights only when it is the *pinned* one — otherwise a
-        // quark inheriting a global "Write" would look identical to one pinned to Write.
-        let mut row = h_flex().gap_1p5().flex_wrap();
-        {
-            let id_str = id.to_string();
-            let selected = !is_override;
-            row = row.child(
-                div()
-                    .id(SharedString::from(format!("mode-{id}-default")))
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .border_1()
-                    .text_xs()
-                    .cursor_pointer()
-                    .when(selected, |d| {
-                        d.bg(theme::glass_card())
-                            .border_color(theme::text_secondary())
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(theme::text())
-                    })
-                    .when(!selected, |d| {
-                        d.bg(theme::bg_surface())
-                            .border_color(theme::border())
-                            .text_color(theme::text_secondary())
-                            .hover(|s| s.bg(theme::bg_surface_raised()))
-                    })
-                    .child("Default")
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.clear_quark_mode(&id_str, cx);
-                        cx.notify();
-                    })),
-            );
-        }
-        for m in [Mode::Ask, Mode::Write, Mode::Auto, Mode::Bypass] {
-            let selected = is_override && m == current;
-            let id_str = id.to_string();
-            row = row.child(
-                div()
-                    .id(SharedString::from(format!("mode-{id}-{}", mode_label(m))))
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .border_1()
-                    .text_xs()
-                    .cursor_pointer()
-                    .when(selected, |d| {
-                        d.bg(theme::glass_card())
-                            .border_color(mode_color(m))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(mode_color(m))
-                    })
-                    .when(!selected, |d| {
-                        d.bg(theme::bg_surface())
-                            .border_color(theme::border())
-                            .text_color(theme::text_secondary())
-                            .hover(|s| s.bg(theme::bg_surface_raised()))
-                    })
-                    .child(mode_label(m))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_quark_mode(&id_str, m, cx);
-                        cx.notify();
-                    })),
-            );
+        let current_val = if is_override {
+            format!("{:?}", current)
+        } else {
+            String::new()
+        };
+
+        let key = (id.to_string(), current_val.clone());
+        if self.mode_select_key.as_ref() != Some(&key) {
+            self.mode_select_key = Some(key);
+            let modes = vec![
+                "Ask".to_string(),
+                "Write".to_string(),
+                "Auto".to_string(),
+                "Bypass".to_string(),
+            ];
+            let delegate = create_model_delegate("Default", &modes, Some(&current_val));
+            self.mode_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                if !current_val.is_empty() {
+                    s.set_selected_value(&current_val.into(), window, cx);
+                } else {
+                    s.set_selected_value(&"".into(), window, cx);
+                }
+            });
         }
 
         v_flex()
             .gap_1p5()
-            .child(row)
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme::text_muted())
-                    .child(mode_hint(current).to_string()),
-            )
+            .child(Select::new(&self.mode_select_state).placeholder("Select permission mode..."))
             .child(div().text_xs().text_color(theme::text_muted()).child(if is_override {
-                format!("Pinned for this quark ({}) — the global default no longer moves it.", mode_label(current))
+                format!("Pinned for this quark ({}) — global setting is overridden.", mode_label(current))
             } else {
-                format!("Default — following the global setting ({}).", mode_label(current))
+                format!("Default — following global setting ({}).", mode_label(current))
             }))
             .into_any_element()
     }

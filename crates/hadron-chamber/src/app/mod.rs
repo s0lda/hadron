@@ -368,7 +368,7 @@ struct Chamber {
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
-    _settings_subs: [Subscription; 11],
+    _settings_subs: [Subscription; 13],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
     /// Offered-model probe for the ACP quark whose Settings are open — drives the model
@@ -390,6 +390,12 @@ struct Chamber {
     /// Native SelectState dropdown for wizard's model list.
     wizard_model_select_state: Entity<SelectState<ModelSelectDelegate>>,
     wizard_model_select_key: Option<(Option<String>, Vec<String>)>,
+    /// Native SelectState dropdown for Settings Permission Mode.
+    mode_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    mode_select_key: Option<(String, String)>,
+    /// Native SelectState dropdown for Settings Reasoning Effort.
+    effort_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    effort_select_key: Option<(String, Vec<String>)>,
     /// In-progress `agy` ACP bridge venv provisioning for the seat whose Settings are
     /// open, if any. `None` for any other kind of seat, before the first attempt, or
     /// once already provisioned — see `start_agy_bridge_provision`. This runs off the
@@ -541,6 +547,12 @@ impl Chamber {
         let wizard_model_select_state = cx.new(|cx| {
             SelectState::new(create_model_delegate("Default", &[], None), None, window, cx).searchable(true)
         });
+        let mode_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Default", &[], None), None, window, cx).searchable(false)
+        });
+        let effort_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Inherit", &[], None), None, window, cx).searchable(false)
+        });
         let custom_cli_model = cx.new(|cx| InputState::new(window, cx).placeholder("model name (optional)"));
         let custom_cli_flag = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. --prompt (blank = positional)"));
         let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
@@ -582,6 +594,32 @@ impl Chamber {
                 let SelectEvent::Confirm(selected) = event;
                 let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
                 this.local_selected_model = if val.is_empty() { None } else { Some(val.to_string()) };
+                cx.notify();
+            }),
+            cx.subscribe_in(&mode_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                let target_key = this.settings_target.key().to_string();
+                if target_key != "general" && target_key != "providers" {
+                    if val.is_empty() {
+                        this.clear_quark_mode(&target_key, cx);
+                    } else if let Ok(m) = match val {
+                        "Ask" => Ok(Mode::Ask),
+                        "Write" => Ok(Mode::Write),
+                        "Auto" => Ok(Mode::Auto),
+                        "Bypass" => Ok(Mode::Bypass),
+                        _ => Err(()),
+                    } {
+                        this.set_quark_mode(&target_key, m, cx);
+                    }
+                }
+                cx.notify();
+            }),
+            cx.subscribe_in(&effort_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                this.settings_effort.update(cx, |s, cx| s.set_value(val.to_string(), window, cx));
+                this.commit_settings_inputs(cx);
                 cx.notify();
             }),
             // Same reason: the custom-CLI form's "Save" button is only wired up once
@@ -830,6 +868,10 @@ impl Chamber {
             general_model_select_key: None,
             wizard_model_select_state,
             wizard_model_select_key: None,
+            mode_select_state,
+            mode_select_key: None,
+            effort_select_state,
+            effort_select_key: None,
             agy_bridge_probe: None,
             file_tree_paths: files,
             _lock_file: lock_file,
