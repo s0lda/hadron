@@ -751,103 +751,105 @@ impl super::Chamber {
         );
 
         // 3. Create New Preon Card
-        let f_new = self.settings_new_role.clone();
-        let is_global = self.settings_new_preon_global;
+        let f_repo = self.settings_new_role.clone();
+        let f_global = self.settings_new_role.clone();
 
-        let scope_toggle = h_flex()
-            .gap_1p5()
-            .child(
-                div()
-                    .id("preon-scope-repo")
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .border_1()
-                    .text_xs()
-                    .cursor_pointer()
-                    .when(!is_global, |d| {
-                        d.bg(theme::glass_card())
-                            .border_color(theme::accent())
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(theme::accent())
-                    })
-                    .when(is_global, |d| {
-                        d.bg(theme::bg_surface())
-                            .border_color(theme::border())
-                            .text_color(theme::text_secondary())
-                            .hover(|s| s.bg(theme::bg_surface_raised()))
-                    })
-                    .child("Repo (.hadron/preons)")
-                    .on_click(cx.listener(|this, _, _window, cx| {
-                        this.settings_new_preon_global = false;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                div()
-                    .id("preon-scope-global")
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .border_1()
-                    .text_xs()
-                    .cursor_pointer()
-                    .when(is_global, |d| {
-                        d.bg(theme::glass_card())
-                            .border_color(theme::accent())
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(theme::accent())
-                    })
-                    .when(!is_global, |d| {
-                        d.bg(theme::bg_surface())
-                            .border_color(theme::border())
-                            .text_color(theme::text_secondary())
-                            .hover(|s| s.bg(theme::bg_surface_raised()))
-                    })
-                    .child("Global (~/.hadron/preons)")
-                    .on_click(cx.listener(|this, _, _window, cx| {
-                        this.settings_new_preon_global = true;
-                        cx.notify();
-                    })),
-            );
-
-        let f_new_edit = self.settings_new_role.clone();
-        let add_preon_control = v_flex()
-            .gap_2()
+        let create_content = v_flex()
+            .gap_3()
             .w_full()
-            .child(scope_toggle)
             .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
+                v_flex()
+                    .gap_1p5()
                     .w_full()
                     .child(
                         div()
-                            .flex_1()
-                            .min_w(px(180.0))
-                            .child(Input::new(&self.settings_new_role).w_full()),
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(theme::text())
+                            .child("Preon Name"),
                     )
+                    .child(Input::new(&self.settings_new_role).w_full()),
+            )
+            .child(
+                h_flex()
+                    .gap_3()
+                    .w_full()
                     .child(
-                        text_button("add-preon-btn", "Create Preon")
+                        div()
+                            .id("create-repo-preon-btn")
+                            .flex_1()
+                            .py_2()
+                            .px_3()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme::border())
+                            .bg(theme::bg_surface_raised())
+                            .hover(|s| s.bg(theme::glass_card()).border_color(theme::accent()))
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .gap_2()
+                            .child(Icon::new(IconName::Folder).small().text_color(theme::accent()))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(theme::text())
+                                    .child("Repo Preon"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child("(.hadron/preons)"),
+                            )
                             .on_click(cx.listener(move |this, _, _window, cx| {
-                                let val = f_new.read(cx).value().trim().to_string();
+                                let val = f_repo.read(cx).value().trim().to_string();
                                 if !val.is_empty() {
-                                    let global = this.settings_new_preon_global;
-                                    if this.add_custom_preon(&val, global).is_some() {
-                                        f_new.update(cx, |s, cx| s.set_value("", _window, cx));
+                                    if let Some(path) = this.add_custom_preon(&val, false) {
+                                        f_repo.update(cx, |s, cx| s.set_value("", _window, cx));
+                                        this.open_in_editor(&path, None);
                                     }
                                 }
                                 cx.notify();
                             })),
                     )
                     .child(
-                        text_button("create-edit-preon-btn", "Create & Edit")
+                        div()
+                            .id("create-global-preon-btn")
+                            .flex_1()
+                            .py_2()
+                            .px_3()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme::border())
+                            .bg(theme::bg_surface_raised())
+                            .hover(|s| s.bg(theme::glass_card()).border_color(theme::accent()))
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .gap_2()
+                            .child(Icon::new(IconName::Folder).small().text_color(theme::accent()))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(theme::text())
+                                    .child("Global Preon"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child("(~/.hadron/preons)"),
+                            )
                             .on_click(cx.listener(move |this, _, _window, cx| {
-                                let val = f_new_edit.read(cx).value().trim().to_string();
+                                let val = f_global.read(cx).value().trim().to_string();
                                 if !val.is_empty() {
-                                    let global = this.settings_new_preon_global;
-                                    if let Some(path) = this.add_custom_preon(&val, global) {
-                                        f_new_edit.update(cx, |s, cx| s.set_value("", _window, cx));
+                                    if let Some(path) = this.add_custom_preon(&val, true) {
+                                        f_global.update(cx, |s, cx| s.set_value("", _window, cx));
                                         this.open_in_editor(&path, None);
                                     }
                                 }
@@ -859,11 +861,7 @@ impl super::Chamber {
         let create_section = settings_card_section(
             "Create New Preon",
             Some(IconName::Plus),
-            settings_field(
-                "Preon Name",
-                Some("Enter preon name (creates front-matter markdown file in selected scope)"),
-                add_preon_control.into_any_element(),
-            ),
+            create_content,
         );
 
         v_flex()
