@@ -184,6 +184,13 @@ pub struct CliSpec {
     /// a model argument.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_flag: Option<String>,
+    /// Optional CLI flags for model parameters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature_flag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p_flag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens_flag: Option<String>,
     /// Optional subcommand/args to probe available models from this CLI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_probe: Option<CliProbeSpec>,
@@ -232,6 +239,10 @@ pub enum StreamFormat {
 }
 
 impl CliSpec {
+    pub fn supports_model_params(&self) -> bool {
+        self.temperature_flag.is_some() || self.top_p_flag.is_some() || self.max_tokens_flag.is_some()
+    }
+
     /// The built-in `agy` preset. Mirrors `crates/hadron-gluon/src/adapter/agy.rs`
     /// exactly, so an existing `cli-agy` seat (no explicit `cli` spec, `vendor:
     /// "agy"`) behaves byte-for-byte once seats resolve through this type.
@@ -247,6 +258,9 @@ impl CliSpec {
             args: Vec::new(),
             prompt: PromptChannel::Arg { flag: Some("--print".to_string()) },
             model_flag: Some("--model".to_string()),
+            temperature_flag: None,
+            top_p_flag: None,
+            max_tokens_flag: None,
             model_probe: Some(CliProbeSpec { args: vec!["models".to_string()] }),
             resume: ResumeMode::Continue { flag: "--continue".to_string() },
             timeout: Some(TimeoutArg {
@@ -283,6 +297,9 @@ impl CliSpec {
             args: Vec::new(),
             prompt: PromptChannel::Stdin,
             model_flag: Some("--model".to_string()),
+            temperature_flag: None,
+            top_p_flag: None,
+            max_tokens_flag: None,
             model_probe: None,
             resume: ResumeMode::None,
             timeout: None,
@@ -313,6 +330,9 @@ impl CliSpec {
             args: Vec::new(),
             prompt: PromptChannel::Stdin,
             model_flag: Some("--model".to_string()),
+            temperature_flag: None,
+            top_p_flag: None,
+            max_tokens_flag: None,
             model_probe: None,
             resume: ResumeMode::None,
             timeout: None,
@@ -350,6 +370,9 @@ impl CliSpec {
             args,
             prompt: PromptChannel::Stdin,
             model_flag: None,
+            temperature_flag: None,
+            top_p_flag: None,
+            max_tokens_flag: None,
             model_probe: None,
             resume: ResumeMode::None,
             timeout: None,

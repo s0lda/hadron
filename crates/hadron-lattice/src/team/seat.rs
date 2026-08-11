@@ -234,6 +234,25 @@ impl Seat {
             && model_params == &other.model_params
     }
 
+    /// Whether this seat supports model parameters (temperature, top_p, max_tokens).
+    /// HTTP and ACP transports support model parameters natively; CLI transport supports
+    /// parameters if the CLI spec defines at least one parameter flag.
+    pub fn supports_model_params(&self) -> bool {
+        match self.transport {
+            Transport::Http | Transport::Acp => true,
+            Transport::Cli => {
+                if let Some(spec) = &self.cli {
+                    spec.supports_model_params()
+                } else if let Some(preset) = CliSpec::preset(&self.vendor) {
+                    preset.supports_model_params()
+                } else {
+                    false
+                }
+            }
+            Transport::Sdk => false,
+        }
+    }
+
     /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
     /// (and tests) from having to spell out two ACP fields they do not care about.
     pub fn cli(id: QuarkId, vendor: impl Into<String>, model: impl Into<String>, flavor: Flavor) -> Seat {

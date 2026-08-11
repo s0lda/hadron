@@ -282,6 +282,28 @@ fn same_agent_rebuilds_on_model_params_change() {
 }
 
 #[test]
+fn seat_supports_model_params_capability() {
+    let mut http_seat = Seat::cli(QuarkId::new("h"), "http", "llama3", Flavor::Worker);
+    http_seat.transport = Transport::Http;
+    assert!(http_seat.supports_model_params(), "HTTP transport must support model params");
+
+    let mut acp_seat = Seat::cli(QuarkId::new("a"), "acp-claude", "opus", Flavor::Worker);
+    acp_seat.transport = Transport::Acp;
+    assert!(acp_seat.supports_model_params(), "ACP transport must support model params");
+
+    let mut cli_seat = Seat::cli(QuarkId::new("c"), "claude", "opus", Flavor::Worker);
+    cli_seat.transport = Transport::Cli;
+    assert!(!cli_seat.supports_model_params(), "CLI seat without parameter flags must not support model params");
+
+    let mut custom_cli_seat = Seat::cli(QuarkId::new("custom"), "mycli", "model", Flavor::Worker);
+    custom_cli_seat.transport = Transport::Cli;
+    let mut spec = CliSpec::generic("mycli".into(), vec![]);
+    spec.temperature_flag = Some("--temperature".into());
+    custom_cli_seat.cli = Some(spec);
+    assert!(custom_cli_seat.supports_model_params(), "CLI seat with temperature_flag must support model params");
+}
+
+#[test]
 fn resolve_env_pulls_values_from_the_store() {
     use crate::secrets::{MemoryStore, SecretStore};
     let mut s = seat("agy", "agy", "gemini-3-pro", Flavor::Worker);
@@ -1120,6 +1142,9 @@ mod cli_spec_tests {
             args: vec!["--flag".into()],
             prompt: PromptChannel::Arg { flag: Some("--print".into()) },
             model_flag: Some("--model".into()),
+            temperature_flag: Some("--temperature".into()),
+            top_p_flag: Some("--top-p".into()),
+            max_tokens_flag: Some("--max-tokens".into()),
             model_probe: Some(CliProbeSpec { args: vec!["models".into()] }),
             resume: ResumeMode::Continue { flag: "--continue".into() },
             timeout: Some(TimeoutArg { flag: "--timeout".into(), value: "10m".into() }),
