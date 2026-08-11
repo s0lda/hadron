@@ -984,6 +984,9 @@ mod tests {
             args: vec![],
             prompt: PromptChannel::Stdin,
             model_flag: None,
+            temperature_flag: None,
+            top_p_flag: None,
+            max_tokens_flag: None,
             model_probe: Some(hadron_lattice::CliProbeSpec {
                 args: vec!["gemini-3.6-flash Gemini 3.6 Flash\ngemini-3.6-pro Gemini 3.6 Pro".to_string()],
             }),
