@@ -2585,7 +2585,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-astro-next",
  "tree-sitter-bash",
- "tree-sitter-c",
+ "tree-sitter-c 0.24.2",
  "tree-sitter-c-sharp",
  "tree-sitter-cmake",
  "tree-sitter-cpp",
@@ -2604,7 +2604,7 @@ dependencies = [
  "tree-sitter-lua",
  "tree-sitter-make",
  "tree-sitter-md",
- "tree-sitter-php",
+ "tree-sitter-php 0.24.2",
  "tree-sitter-proto",
  "tree-sitter-python",
  "tree-sitter-ruby",
@@ -2948,8 +2948,17 @@ dependencies = [
  "libc",
  "tempfile",
  "tree-sitter",
+ "tree-sitter-c 0.23.4",
+ "tree-sitter-c-sharp",
+ "tree-sitter-cpp",
+ "tree-sitter-css",
  "tree-sitter-go",
+ "tree-sitter-html",
+ "tree-sitter-java",
+ "tree-sitter-javascript",
+ "tree-sitter-php 0.23.11",
  "tree-sitter-python",
+ "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "windows-sys 0.59.0",
@@ -7781,6 +7790,16 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-c"
+version = "0.23.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "afd2b1bf1585dc2ef6d69e87d01db8adb059006649dd5f96f31aa789ee6e9c71"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-c"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a9b2eb57a55fed6b00812912e730b7a275cf4fe98bfd6a5d76263d4438371728"
@@ -7970,6 +7989,16 @@ name = "tree-sitter-md"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2efd398be546456c814598ee56c0f51769a77241511b4a58077815d120afa882"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-php"
+version = "0.23.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f066e94e9272cfe4f1dcb07a1c50c66097eca648f2d7233d299c8ae9ed8c130c"
 dependencies = [
  "cc",
  "tree-sitter-language",
