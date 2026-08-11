@@ -534,23 +534,18 @@ pub(super) fn roster_row(
         .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
 }
 
-/// A labeled row in the Settings card: `Name | control`, with an optional muted
-/// caption below the label. The label column has a fixed width so control inputs line up,
-/// while the control gets full flex width without an artificial 460px cap.
+/// A labeled block in the Settings card: label + optional muted caption on top,
+/// with the control spanning full card width below.
 pub(super) fn settings_field(
     label: &'static str,
     description: Option<&'static str>,
     content: gpui::AnyElement,
 ) -> impl IntoElement {
-    h_flex()
+    v_flex()
         .w_full()
-        .items_start()
-        .justify_between()
-        .gap_4()
+        .gap_1p5()
         .child(
             v_flex()
-                .flex_none()
-                .w(px(150.0))
                 .gap_0p5()
                 .child(
                     div()
@@ -563,7 +558,7 @@ pub(super) fn settings_field(
                     v.child(div().text_xs().text_color(theme::text_muted()).child(desc))
                 }),
         )
-        .child(div().flex_1().min_w_0().child(content))
+        .child(div().w_full().child(content))
 }
 
 /// A container card for grouping related settings into a distinct visual section.

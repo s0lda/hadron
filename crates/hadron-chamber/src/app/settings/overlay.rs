@@ -6,7 +6,7 @@ impl super::Chamber {
     pub(crate) fn settings_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let target = self.settings_target.clone();
 
-        // Left nav: Settings (General, Providers), then Identities (Human, Quarks)
+        // Left nav: Settings (General, Providers), then Roster (Human, Quarks)
         let mut nav = v_flex()
             .gap_0p5()
             .child(
@@ -15,6 +15,7 @@ impl super::Chamber {
                     .pt_2()
                     .pb_1()
                     .text_xs()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(theme::text_muted())
                     .child("SETTINGS"),
             )
@@ -23,17 +24,47 @@ impl super::Chamber {
             .child(
                 div()
                     .px_1()
-                    .pt_2()
+                    .pt_3()
                     .pb_1()
                     .text_xs()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(theme::text_muted())
-                    .child("IDENTITIES"),
+                    .child("ROSTER"),
             )
             .child(self.settings_nav_row(SettingsTarget::Human, &target, cx));
         for r in &self.view.roster {
             nav =
                 nav.child(self.settings_nav_row(SettingsTarget::Quark(r.id.clone()), &target, cx));
         }
+
+        // "+ Add Quark" quick action at the bottom of sidebar roster list
+        nav = nav.child(
+            h_flex()
+                .id("settings-add-quark-btn")
+                .items_center()
+                .gap_2()
+                .w_full()
+                .px_2()
+                .py_1p5()
+                .mt_2()
+                .rounded_md()
+                .border_1()
+                .border_color(theme::border())
+                .bg(theme::bg_base())
+                .hover(|s| s.bg(theme::bg_surface_raised()))
+                .cursor_pointer()
+                .child(Icon::new(IconName::Plus).small().text_color(theme::accent()))
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(theme::accent())
+                        .child("Add Quark"),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.select_settings_target(SettingsTarget::Providers, window, cx)
+                })),
+        );
 
         // Live preview: the target resolved, but with the in-progress name/image
         // from the inputs so it tracks typing.
@@ -44,11 +75,6 @@ impl super::Chamber {
             preview.name = live_name;
         }
         preview.image = (!live_path.is_empty()).then_some(live_path);
-        let preview_row = h_flex()
-            .items_center()
-            .gap_3()
-            .child(identity_avatar(&preview, 44.0))
-            .child(div().text_color(preview.color).child(preview.name.clone()));
 
         // Color swatches; the stored color (if any) gets a bright ring.
         let selected = self.settings_color();
@@ -132,22 +158,131 @@ impl super::Chamber {
                 let acp_quark = matches!(&target, SettingsTarget::Quark(id) if self.is_acp_quark(id));
                 let http_quark = matches!(&target, SettingsTarget::Quark(id) if self.is_http_quark(id));
 
+                // 0. Hero Banner Header Card
+                let hero_pills = {
+                    let mut pills = h_flex().gap_2().items_center().flex_wrap();
+                    match &target {
+                        SettingsTarget::Human => {
+                            pills = pills.child(
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .bg(theme::bg_surface_raised())
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(theme::text_secondary())
+                                    .child("Human Operator"),
+                            );
+                        }
+                        SettingsTarget::Quark(id) => {
+                            if let Some(r) = self.view.roster.iter().find(|r| &r.id == id) {
+                                let transport_str = match r.transport {
+                                    hadron_lattice::Transport::Acp => "ACP Agent",
+                                    hadron_lattice::Transport::Http => "HTTP Provider",
+                                    hadron_lattice::Transport::Cli => "CLI Subprocess",
+                                    hadron_lattice::Transport::Sdk => "SDK Agent",
+                                };
+                                pills = pills.child(
+                                    div()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .bg(theme::bg_surface_raised())
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(theme::text_secondary())
+                                        .child(transport_str),
+                                );
+
+                                let current_model = self.settings_model.read(cx).value().to_string();
+                                let display_model = if current_model.trim().is_empty() {
+                                    r.model.clone()
+                                } else {
+                                    current_model
+                                };
+                                if !display_model.trim().is_empty() {
+                                    pills = pills.child(
+                                        div()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_md()
+                                            .bg(theme::bg_surface_raised())
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(theme::text_secondary())
+                                            .child(display_model),
+                                    );
+                                }
+
+                                let mode_str = format!("{:?}", r.mode);
+                                pills = pills.child(
+                                    div()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .bg(theme::bg_surface_raised())
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(theme::accent())
+                                        .child(format!("Mode: {mode_str}")),
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                    pills
+                };
+
+                let hero_card = v_flex()
+                    .w_full()
+                    .p_4()
+                    .gap_3()
+                    .rounded_lg()
+                    .bg(theme::bg_surface())
+                    .border_1()
+                    .border_color(theme::border())
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px(3.0))
+                            .bg(preview.color)
+                            .rounded_t_lg(),
+                    )
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_4()
+                            .child(identity_avatar(&preview, 56.0))
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_lg()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(preview.color)
+                                            .child(preview.name.clone()),
+                                    )
+                                    .child(hero_pills),
+                            ),
+                    );
+
                 // 1. Profile & Visual Identity Card
                 let profile_card = settings_card_section(
                     "Profile & Appearance",
                     Some(IconName::Info),
                     v_flex()
                         .gap_3()
-                        .child(settings_field("Preview", None, preview_row.into_any_element()))
                         .child(settings_field(
                             "Display name",
                             Some("Shown in chat and the roster."),
                             Input::new(&self.settings_name).w_full().into_any_element(),
                         ))
-                        .child(settings_field("Color", Some("Accent color for identity badges."), swatches.into_any_element()))
+                        .child(settings_field("Color accent", Some("Accent color for identity badges and hero banner."), swatches.into_any_element()))
                         .child(settings_field(
-                            "Image",
-                            Some("Avatar shown in the roster and chat."),
+                            "Avatar image",
+                            Some("Custom avatar image shown in the roster and chat."),
                             h_flex()
                                 .gap_2()
                                 .items_center()
@@ -164,7 +299,7 @@ impl super::Chamber {
                         )),
                 );
 
-                let mut view = v_flex().gap_4().child(profile_card);
+                let mut view = v_flex().gap_4().child(hero_card).child(profile_card);
 
                 if is_quark {
                     // 2. Model & Reasoning Card
@@ -377,8 +512,8 @@ impl super::Chamber {
             .child(card)
     }
 
-    /// One row in the Settings identity nav: avatar + name, highlighted when it's
-    /// the identity currently being edited.
+    /// One row in the Settings identity nav: avatar + name + optional status dot,
+    /// highlighted when it's the identity currently being edited.
     pub(super) fn settings_nav_row(
         &self,
         who: SettingsTarget,
@@ -388,10 +523,49 @@ impl super::Chamber {
         let resolved = self.resolve_identity(who.key());
         let selected = &who == current;
         let id = SharedString::from(format!("settings-id-{}", who.key()));
+
+        let (icon_or_avatar, status_dot) = match &who {
+            SettingsTarget::General => (
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.0))
+                    .text_color(theme::text_muted())
+                    .child(Icon::new(IconName::Settings).small())
+                    .into_any_element(),
+                None,
+            ),
+            SettingsTarget::Providers => (
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.0))
+                    .text_color(theme::text_muted())
+                    .child(Icon::new(IconName::Cpu).small())
+                    .into_any_element(),
+                None,
+            ),
+            SettingsTarget::Human => (
+                identity_avatar(&resolved, 24.0).into_any_element(),
+                None,
+            ),
+            SettingsTarget::Quark(qid) => {
+                let dot = if let Some(r) = self.view.roster.iter().find(|r| &r.id == qid) {
+                    let effective_state = effective_presence_state(r.state, r.adopted, r.enabled, false);
+                    Some(self.render_halo_dot(effective_state, r.enabled).into_any_element())
+                } else {
+                    None
+                };
+                (identity_avatar(&resolved, 24.0).into_any_element(), dot)
+            }
+        };
+
         h_flex()
             .id(id)
             .items_center()
-            .gap_2()
+            .justify_between()
             .w_full()
             .px_2()
             .py_1p5()
@@ -402,41 +576,32 @@ impl super::Chamber {
                 theme::bg_base()
             })
             .hover(|s| s.bg(theme::bg_surface()))
-            .child(match &who {
-                SettingsTarget::General => div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(24.0))
-                    .text_color(theme::text_muted())
-                    .child(Icon::new(IconName::Settings).small())
-                    .into_any_element(),
-                SettingsTarget::Providers => div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(24.0))
-                    .text_color(theme::text_muted())
-                    .child(Icon::new(IconName::Cpu).small())
-                    .into_any_element(),
-                _ => identity_avatar(&resolved, 24.0).into_any_element(),
-            })
             .child(
-                div()
+                h_flex()
+                    .items_center()
+                    .gap_2()
                     .flex_1()
                     .min_w_0()
-                    .text_sm()
-                    .text_color(if selected {
-                        theme::text()
-                    } else {
-                        theme::text_secondary()
-                    })
-                    .child(match &who {
-                        SettingsTarget::General => "General".to_string(),
-                        SettingsTarget::Providers => "Providers".to_string(),
-                        _ => resolved.name.clone(),
-                    }),
+                    .child(icon_or_avatar)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_sm()
+                            .truncate()
+                            .text_color(if selected {
+                                theme::text()
+                            } else {
+                                theme::text_secondary()
+                            })
+                            .child(match &who {
+                                SettingsTarget::General => "General".to_string(),
+                                SettingsTarget::Providers => "Providers".to_string(),
+                                _ => resolved.name.clone(),
+                            }),
+                    ),
             )
+            .when_some(status_dot, |this, dot| this.child(dot))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select_settings_target(who.clone(), window, cx)
             }))

@@ -375,7 +375,7 @@ impl super::Chamber {
     }
 
     /// Renders an 8px vector GPU-native status halo indicator dot.
-    pub(super) fn render_halo_dot(&self, state: QuarkState, enabled: bool) -> impl IntoElement {
+    pub(crate) fn render_halo_dot(&self, state: QuarkState, enabled: bool) -> impl IntoElement {
         let color = if enabled {
             theme::halo_dot(state)
         } else {
