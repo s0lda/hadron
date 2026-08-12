@@ -12,9 +12,9 @@ impl super::Chamber {
             .gap_1()
             .p_1()
             .rounded_full()
-            .bg(theme::tab_bar_bg())
+            .bg(theme::input_bg())
             .border_1()
-            .border_color(theme::glass_highlight())
+            .border_color(theme::border())
             .max_w_full()
             .overflow_x_scroll()
             .children(RightRailTab::ALL.map(|t| {
@@ -29,7 +29,7 @@ impl super::Chamber {
                     .rounded_full()
                     .cursor_pointer()
                     .when(is_selected, |s| {
-                        s.bg(theme::glass_highlight())
+                        s.bg(theme::bg_elevated())
                             .text_color(theme::accent())
                             .font_weight(gpui::FontWeight::BOLD)
                     })
@@ -90,10 +90,9 @@ impl super::Chamber {
                     .w_full()
                     .items_center()
                     .justify_between()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(theme::tab_bar_bg())
+                    .p_1()
+                    .rounded_lg()
+                    .bg(theme::input_bg())
                     .border_1()
                     .border_color(theme::border())
                     .child(
@@ -104,9 +103,9 @@ impl super::Chamber {
                             .children(self.terminals.iter().enumerate().map(|(ix, tab)| {
                                 let is_active = ix == self.active_terminal_index;
                                 let bg_color = if is_active {
-                                    theme::glass_card()
+                                    theme::bg_elevated()
                                 } else {
-                                    theme::canvas_base()
+                                    theme::bg_base()
                                 };
                                 let text_col = if is_active {
                                     theme::accent()
@@ -119,12 +118,13 @@ impl super::Chamber {
                                     .flex_shrink_0()
                                     .items_center()
                                     .gap_1()
-                                    .px_2()
-                                    .py_0p5()
+                                    .px_2p5()
+                                    .py_1()
                                     .rounded_md()
                                     .bg(bg_color)
                                     .text_xs()
                                     .text_color(text_col)
+                                    .when(is_active, |s| s.font_weight(gpui::FontWeight::BOLD))
                                     .cursor_pointer()
                                     .on_click(cx.listener(move |this, _, _window, cx| {
                                         this.select_terminal(ix, cx);
@@ -135,7 +135,7 @@ impl super::Chamber {
                                             .id(SharedString::from(format!("close-terminal-tab-{ix}")))
                                             .px_1()
                                             .rounded_sm()
-                                            .hover(|s| s.bg(theme::glass_highlight()))
+                                            .hover(|s| s.bg(theme::bg_surface_raised()))
                                             .text_color(theme::text_muted())
                                             .child("×")
                                             .on_click(cx.listener(move |this, _, _window, cx| {
@@ -148,13 +148,15 @@ impl super::Chamber {
                         div()
                             .id("add-terminal-tab")
                             .flex_shrink_0()
-                            .px_2()
-                            .py_0p5()
+                            .px_2p5()
+                            .py_1()
                             .rounded_md()
-                            .bg(theme::glass_card())
+                            .bg(theme::bg_base())
+                            .border_1()
+                            .border_color(theme::border())
                             .text_xs()
                             .text_color(theme::text_muted())
-                            .hover(|s| s.text_color(theme::text()))
+                            .hover(|s| s.bg(theme::bg_elevated()).text_color(theme::text()))
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.add_terminal(cx);
@@ -184,9 +186,12 @@ impl super::Chamber {
                         for run in &line.runs {
                             if !run.text.is_empty() {
                                 line_empty = false;
+                                let bg_val = pack_rgb(run.bg);
                                 let mut run_div = div()
-                                    .text_color(gpui::rgb(pack_rgb(run.fg)))
-                                    .bg(gpui::rgb(pack_rgb(run.bg)));
+                                    .text_color(gpui::rgb(pack_rgb(run.fg)));
+                                if bg_val != 0 {
+                                    run_div = run_div.bg(gpui::rgb(bg_val));
+                                }
                                 if run.has_cursor {
                                     run_div = run_div
                                         .border_l(px(2.0))

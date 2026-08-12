@@ -390,43 +390,49 @@ impl super::Chamber {
         // whose panel this is), and one section shows at a time below it.
         let info_selected = self.info_tab;
         let info_tabs = h_flex()
-            .id("info-capsule-tabs")
-            .items_center()
-            .gap_1()
-            .p_1()
-            .rounded_full()
-            .bg(theme::tab_bar_bg())
-            .border_1()
-            .border_color(theme::glass_highlight())
-            .max_w_full()
-            .overflow_x_scroll()
-            .children(InfoTab::ALL.map(|t| {
-                let is_selected = t.index() == info_selected.index();
-                let label = t.label();
-                let ix = t.index();
-                div()
-                    .id(("info-tab-pill", ix))
-                    .flex_shrink_0()
-                    .px_3()
-                    .py_1()
+            .w_full()
+            .justify_start()
+            .child(
+                h_flex()
+                    .id("info-capsule-tabs")
+                    .flex_none()
+                    .items_center()
+                    .gap_1()
+                    .p_1()
                     .rounded_full()
-                    .cursor_pointer()
-                    .when(is_selected, |s| {
-                        s.bg(theme::glass_highlight())
-                            .text_color(theme::accent())
-                            .font_weight(gpui::FontWeight::BOLD)
-                    })
-                    .when(!is_selected, |s| {
-                        s.text_color(theme::text_muted())
-                            .hover(|h| h.text_color(theme::text()))
-                    })
-                    .text_xs()
-                    .child(label)
-                    .on_click(cx.listener(move |this, _, _window, cx| {
-                        this.info_tab = InfoTab::from_index(ix);
-                        cx.notify();
-                    }))
-            }));
+                    .bg(theme::input_bg())
+                    .border_1()
+                    .border_color(theme::border())
+                    .max_w_full()
+                    .overflow_x_scroll()
+                    .children(InfoTab::ALL.map(|t| {
+                        let is_selected = t.index() == info_selected.index();
+                        let label = t.label();
+                        let ix = t.index();
+                        div()
+                            .id(("info-tab-pill", ix))
+                            .flex_shrink_0()
+                            .px_3()
+                            .py_1()
+                            .rounded_full()
+                            .cursor_pointer()
+                            .when(is_selected, |s| {
+                                s.bg(theme::bg_elevated())
+                                    .text_color(theme::accent())
+                                    .font_weight(gpui::FontWeight::BOLD)
+                            })
+                            .when(!is_selected, |s| {
+                                s.text_color(theme::text_muted())
+                                    .hover(|h| h.text_color(theme::text()))
+                            })
+                            .text_xs()
+                            .child(label)
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.info_tab = InfoTab::from_index(ix);
+                                cx.notify();
+                            }))
+                    })),
+            );
 
         let body = match info_selected {
             InfoTab::Identity => identity_section.into_any_element(),
@@ -549,9 +555,9 @@ impl super::Chamber {
                 .gap_1()
                 .p_1()
                 .rounded_full()
-                .bg(theme::glass_card())
+                .bg(theme::input_bg())
                 .border_1()
-                .border_color(theme::glass_highlight())
+                .border_color(theme::border())
                 .max_w_full()
                 .overflow_x_scroll()
                 .children(StatsWindow::ALL.map(|w| {
@@ -566,7 +572,7 @@ impl super::Chamber {
                         .rounded_full()
                         .cursor_pointer()
                         .when(is_selected, |s| {
-                            s.bg(theme::glass_highlight())
+                            s.bg(theme::bg_elevated())
                                 .text_color(theme::accent())
                                 .font_weight(gpui::FontWeight::BOLD)
                         })
