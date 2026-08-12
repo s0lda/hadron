@@ -243,7 +243,7 @@ impl super::Chamber {
                             .w_full()
                             .p_2()
                             .rounded_xl()
-                            .bg(theme::glass_card())
+                            .bg(theme::input_bg())
                             .border_1()
                             .border_color(if is_focused {
                                 gpui::rgba(0xffffff38).into()
