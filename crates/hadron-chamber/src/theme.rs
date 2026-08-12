@@ -1,8 +1,8 @@
-//! The chamber's color system — **neutral dark surfaces floating on a black field**.
-//! The housing is near-black; instrument panels use a restrained gray ladder, with state hues
-//! reserved for status indicators rather than surface tint. The quark-state hues (blue =
-//! working, purple = thinking, green = available, amber = waiting) survive only as a whisper
-//! in the corners, so the field reads black but still has life.
+//! The chamber's color system — **white frosted glass floating on a black field**.
+//! The housing is near-black; instrument panels are white at low alpha (so they frost to a
+//! subtle dark glass rather than turning opaque-white), edged with a clean white sheen. The
+//! quark-state hues (blue = working, purple = thinking, green = available, amber = waiting)
+//! survive only as a whisper in the corners, so the field reads black but still has life.
 //!
 //! **What translucency is allowed — and what is NOT.** Under WSL the app software-renders
 //! (llvmpipe, no GPU), so a repaint is expensive; the discipline is to keep repaints RARE,
@@ -58,9 +58,10 @@ pub fn glow_green() -> Rgba {
 }
 
 // --- surfaces (recessed → raised) --- borderless glass surface hierarchy over cosmic obsidian base.
-/// Recessed inner surface (deepest wells), the neutral panel tone (`#0b0b0b`).
+/// Recessed inner surface (deepest wells). The least white in the ladder, so the black
+/// field shows through most and it reads as the deepest well.
 pub fn bg_base() -> Rgba {
-    rgb(0x0b0b0b)
+    rgba(0xffffff08) // ~0.03 white over black
 }
 
 /// The window/content backdrop token — the opaque housing behind the whole scene. (Kept
@@ -68,14 +69,15 @@ pub fn bg_base() -> Rgba {
 pub fn window_glint() -> Rgba {
     field_base()
 }
-/// A step-lighter neutral tone for lifted chrome and selected controls (`#242424`).
+/// A step-lighter smoked tone for lifted chrome: the titlebar/status bars, tab strips, and
+/// the small inner cards (message chips, the changed-files card).
 pub fn bg_elevated() -> Rgba {
-    rgb(0x242424)
+    rgba(0xffffff1a) // ~0.10 white — lifted chrome, the brightest frost in the ladder
 }
 
-/// Layer 1 (Panels & Rails): Neutral dark panel layer (`#0b0b0bf2`).
+/// Layer 1 (Panels & Rails): Translucent obsidian panel layer matching main bg (`#050505f2`).
 pub fn glass_surface() -> Hsla {
-    rgba(0x0b0b0bf2).into()
+    rgba(0x050505f2).into()
 }
 
 /// Tab bar background token matching main obsidian field (`#050505`).
@@ -83,14 +85,14 @@ pub fn tab_bar_bg() -> Rgba {
     rgb(0x050505)
 }
 
-/// Layer 2 (Floating Cards & Modals): Elevated neutral dark cards (`#0b0b0bf8`).
+/// Layer 2 (Floating Cards & Modals): Elevated dark glass cards (`#0c0d11f8`).
 pub fn glass_card() -> Hsla {
-    rgba(0x0b0b0bf8).into()
+    rgba(0x0c0d11f8).into()
 }
 
-/// Highlights / rims: Neutral low-alpha border sheen (`rgba(36, 36, 36, 0.12)`).
+/// Highlights / rims: Crisp 1px highlight rim (`rgba(255, 255, 255, 0.12)`).
 pub fn glass_highlight() -> Hsla {
-    rgba(0x2424241f).into()
+    rgba(0xffffff1f).into()
 }
 
 // --- vector status halo indicators ---
@@ -135,9 +137,9 @@ pub fn modal_surface() -> Rgba {
 pub fn term_bg() -> Rgba {
     rgb(0x050505)
 }
-/// Default terminal output foreground — softened primary text (`#e8e8e8`).
+/// Default terminal output foreground — `#fcfcfc` text.
 pub fn term_fg() -> Rgba {
-    rgb(0xe8e8e8)
+    rgb(0xfcfcfc)
 }
 /// The shell prompt (`user@host: cwd$`) — the classic terminal green.
 pub fn term_prompt() -> Rgba {
@@ -147,7 +149,7 @@ pub fn bg_surface() -> Rgba {
     rgb(0x101113)
 }
 pub fn bg_surface_raised() -> Rgba {
-    rgb(0x1c1c1c)
+    rgb(0x101113)
 }
 pub fn input_bg() -> Rgba {
     rgb(0x141414)
@@ -156,18 +158,18 @@ pub fn popover() -> Rgba {
     rgb(0x101113)
 }
 pub fn border() -> Rgba {
-    rgb(0x242424)
+    rgb(0x27272a)
 }
 
 // --- text tiers ---
 pub fn text() -> Rgba {
-    rgb(0xe8e8e8)
+    rgb(0xfcfcfc)
 }
 pub fn text_secondary() -> Rgba {
-    rgb(0xa8a8a8)
+    rgba(0xfcfcfcc2)
 }
 pub fn text_muted() -> Rgba {
-    rgb(0x707070)
+    rgba(0xfcfcfc94)
 }
 
 // --- accents (the energy gradient) ---
@@ -282,7 +284,7 @@ mod tests {
     #[test]
     fn test_glass_surface_token() {
         let surface = glass_surface();
-        let expected: Hsla = rgba(0x0b0b0bf2).into();
+        let expected: Hsla = rgba(0x050505f2).into();
         assert_eq!(surface, expected);
     }
 
@@ -296,26 +298,14 @@ mod tests {
     #[test]
     fn test_glass_card_token() {
         let card = glass_card();
-        let expected: Hsla = rgba(0x0b0b0bf8).into();
+        let expected: Hsla = rgba(0x0c0d11f8).into();
         assert_eq!(card, expected);
-    }
-
-    #[test]
-    fn test_neutral_palette_tokens() {
-        assert_eq!(modal_surface(), rgb(0x101113));
-        assert_eq!(input_bg(), rgb(0x141414));
-        assert_eq!(bg_surface_raised(), rgb(0x1c1c1c));
-        assert_eq!(border(), rgb(0x242424));
-        assert_eq!(text(), rgb(0xe8e8e8));
-        assert_eq!(term_fg(), rgb(0xe8e8e8));
-        assert_eq!(text_secondary(), rgb(0xa8a8a8));
-        assert_eq!(text_muted(), rgb(0x707070));
     }
 
     #[test]
     fn test_glass_highlight_token() {
         let highlight = glass_highlight();
-        let expected: Hsla = rgba(0x2424241f).into();
+        let expected: Hsla = rgba(0xffffff1f).into();
         assert_eq!(highlight, expected);
     }
 
@@ -385,3 +375,4 @@ mod tests {
         assert_eq!(modal_surface().a, 1.0, "Modal surface must be opaque");
     }
 }
+
