@@ -88,9 +88,9 @@ pub fn glass_card() -> Hsla {
     rgba(0x0b0b0bf8).into()
 }
 
-/// Highlights / rims: Neutral low-alpha border sheen (`rgba(46, 46, 46, 0.22)`).
+/// Highlights / rims: Neutral low-alpha border sheen (`rgba(36, 36, 36, 0.12)`).
 pub fn glass_highlight() -> Hsla {
-    rgba(0x2e2e2e38).into()
+    rgba(0x2424241f).into()
 }
 
 // --- vector status halo indicators ---
@@ -131,9 +131,9 @@ pub fn modal_surface() -> Rgba {
 }
 
 // --- terminal (a Zed-like screen) ---
-/// The terminal screen surface — `#080808` main bg.
+/// The terminal screen surface — `#050505` main bg.
 pub fn term_bg() -> Rgba {
-    rgb(0x080808)
+    rgb(0x050505)
 }
 /// Default terminal output foreground — softened primary text (`#e8e8e8`).
 pub fn term_fg() -> Rgba {
@@ -156,7 +156,7 @@ pub fn popover() -> Rgba {
     rgb(0x101113)
 }
 pub fn border() -> Rgba {
-    rgb(0x2e2e2e)
+    rgb(0x242424)
 }
 
 // --- text tiers ---
@@ -305,7 +305,7 @@ mod tests {
         assert_eq!(modal_surface(), rgb(0x101113));
         assert_eq!(input_bg(), rgb(0x141414));
         assert_eq!(bg_surface_raised(), rgb(0x1c1c1c));
-        assert_eq!(border(), rgb(0x2e2e2e));
+        assert_eq!(border(), rgb(0x242424));
         assert_eq!(text(), rgb(0xe8e8e8));
         assert_eq!(term_fg(), rgb(0xe8e8e8));
         assert_eq!(text_secondary(), rgb(0xa8a8a8));
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn test_glass_highlight_token() {
         let highlight = glass_highlight();
-        let expected: Hsla = rgba(0x2e2e2e38).into();
+        let expected: Hsla = rgba(0x2424241f).into();
         assert_eq!(highlight, expected);
     }
 
