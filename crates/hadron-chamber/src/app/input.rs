@@ -623,6 +623,16 @@ mod tests {
             "diff",
             "export",
             "add-skill",
+            "retry",
+            "doctor",
+            "prune",
+            "compact-nucleus",
+            "stop",
+            "kill",
+            "cancel",
+            "gate-cancel",
+            "revert",
+            "unabandon",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(

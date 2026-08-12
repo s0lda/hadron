@@ -951,6 +951,9 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
+            "retry" | "doctor" | "prune" | "compact-nucleus" | "stop" | "kill" | "cancel" | "gate-cancel" | "revert" | "unabandon" => {
+                true
+            }
             _ => {
                 // If it contains a slash, it's probably a path. 
                 // Return false to let it pass through as a normal message.

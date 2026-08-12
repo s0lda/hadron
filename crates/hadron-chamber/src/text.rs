@@ -142,6 +142,16 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "diff", detail: "Summarize a seat's branch diff against the default branch, or the working tree if no seat is given", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "export", detail: "Export the current session (or a named archived session) as a Markdown transcript", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "add-skill", detail: "Add a custom skill (e.g. /add-skill @path/to/file.md, or /add-skill my-skill then paste the file content)", arity: Arity::Body, arg: ArgSource::File, listed: true },
+    Command { name: "retry", detail: "Re-dispatch the last failed message or turn for a seat or global", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "doctor", detail: "Run automated system diagnostics on daemon, locks, nucleus, fonts, and git worktrees", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "prune", detail: "Preview or clean up merged/stale quark worktrees and branches safely", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "compact-nucleus", detail: "Audit and compact nucleus index against target budget limit", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "stop", detail: "Gracefully stop a quark's in-flight turn", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "kill", detail: "Immediately force-kill a quark's subprocess group", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "cancel", detail: "Cancel pending unhandled dispatch for a seat", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "gate-cancel", detail: "Force cancel a hung merge-gate run by killing its process group", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "revert", detail: "Revert the last landed commit on main via git revert", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "unabandon", detail: "Restore an archived branch from its archive tag", arity: Arity::Line, arg: ArgSource::None, listed: true },
 ];
 
 /// A short kebab-case id for a lesson line: the first few words, lowercased,
