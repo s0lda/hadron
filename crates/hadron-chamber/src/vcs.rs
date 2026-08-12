@@ -1262,31 +1262,34 @@ index a1b2c3d..e4f5g6h 100644
     #[test]
     fn test_revert_and_unabandon() {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().to_path_buf();
-        let git_run = |args: &[&str]| {
-            std::process::Command::new("git")
-                .current_dir(&root)
+        let root = dir.path();
+        let run_git_cmd = |args: &[&str]| {
+            Command::new("git")
+                .current_dir(root)
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.com")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.com")
                 .args(args)
-                .status()
-                .expect("git execution failed")
+                .output()
+                .unwrap()
         };
+        assert!(run_git_cmd(&["init", "-q", "-b", "main"]).status.success());
+        assert!(run_git_cmd(&["config", "user.name", "Test"]).status.success());
+        assert!(run_git_cmd(&["config", "user.email", "test@example.com"]).status.success());
+        std::fs::write(root.join("file1.txt"), "1\n").unwrap();
+        assert!(run_git_cmd(&["add", "."]).status.success());
+        assert!(run_git_cmd(&["commit", "-q", "-m", "init"]).status.success());
+        std::fs::write(root.join("file2.txt"), "2\n").unwrap();
+        assert!(run_git_cmd(&["add", "."]).status.success());
+        assert!(run_git_cmd(&["commit", "-q", "-m", "second"]).status.success());
 
-        assert!(git_run(&["init", "-q", "-b", "main"]).success());
-        assert!(git_run(&["config", "user.email", "test@example.com"]).success());
-        assert!(git_run(&["config", "user.name", "Test"]).success());
-        std::fs::write(root.join("f.txt"), "init\n").unwrap();
-        assert!(git_run(&["add", "."]).success());
-        assert!(git_run(&["commit", "-q", "-m", "init"]).success());
+        let res_revert = revert_last_landed_commit(root);
+        assert!(res_revert.contains("Successfully created revert commit"), "res_revert: {res_revert}");
 
-        std::fs::write(root.join("f.txt"), "change\n").unwrap();
-        assert!(git_run(&["add", "."]).success());
-        assert!(git_run(&["commit", "-q", "-m", "landed feature"]).success());
-
-        let res_revert = revert_last_landed_commit(&root);
-        assert!(res_revert.contains("Successfully created revert commit"), "got {res_revert}");
-
-        let res_unabandon = unabandon_branch(&root, "nonexistent-slug");
+        let res_unabandon = unabandon_branch(root, "nonexistent-slug");
         assert!(res_unabandon.contains("No archive tag found"));
     }
 }
+
 
