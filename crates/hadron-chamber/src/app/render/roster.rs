@@ -179,7 +179,7 @@ impl super::Chamber {
                         div()
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_sm()
-                            .text_color(if r.enabled { theme::text() } else { theme::text_muted() })
+                            .text_color(if r.enabled { identity.color } else { theme::text_muted().into() })
                             .truncate()
                             .child(identity.name.clone()),
                     )
@@ -278,7 +278,7 @@ impl super::Chamber {
             .p_2p5()
             .gap_1p5()
             .rounded_lg()
-            .bg(theme::glass_card())
+            .bg(theme::term_bg())
             .border_1()
             .cursor_pointer()
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -286,7 +286,7 @@ impl super::Chamber {
                 cx.notify();
             }))
             .border_color(if is_selected {
-                gpui::rgba(0xffffff38).into()
+                identity.color
             } else {
                 theme::glass_highlight()
             })

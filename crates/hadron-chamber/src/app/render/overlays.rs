@@ -253,7 +253,7 @@ impl super::Chamber {
             .mb_2()
             .occlude()
             .max_h(px(280.0))
-            .bg(theme::glass_card())
+            .bg(theme::term_bg())
             .border_1()
             .border_color(theme::glass_highlight())
             .rounded_xl()
