@@ -1261,10 +1261,31 @@ index a1b2c3d..e4f5g6h 100644
 
     #[test]
     fn test_revert_and_unabandon() {
-        let res_revert = revert_last_landed_commit(Path::new("."));
-        assert!(!res_revert.is_empty());
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let git_run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .current_dir(&root)
+                .args(args)
+                .status()
+                .expect("git execution failed")
+        };
 
-        let res_unabandon = unabandon_branch(Path::new("."), "nonexistent-slug");
+        assert!(git_run(&["init", "-q", "-b", "main"]).success());
+        assert!(git_run(&["config", "user.email", "test@example.com"]).success());
+        assert!(git_run(&["config", "user.name", "Test"]).success());
+        std::fs::write(root.join("f.txt"), "init\n").unwrap();
+        assert!(git_run(&["add", "."]).success());
+        assert!(git_run(&["commit", "-q", "-m", "init"]).success());
+
+        std::fs::write(root.join("f.txt"), "change\n").unwrap();
+        assert!(git_run(&["add", "."]).success());
+        assert!(git_run(&["commit", "-q", "-m", "landed feature"]).success());
+
+        let res_revert = revert_last_landed_commit(&root);
+        assert!(res_revert.contains("Successfully created revert commit"), "got {res_revert}");
+
+        let res_unabandon = unabandon_branch(&root, "nonexistent-slug");
         assert!(res_unabandon.contains("No archive tag found"));
     }
 }
