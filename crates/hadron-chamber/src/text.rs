@@ -930,9 +930,10 @@ pub fn line_start_mentions(text: &str) -> Vec<&str> {
 pub fn skill_command_body(trigger: &str, target: &str, task: &str) -> Option<String> {
     let task = task.trim();
     if task.is_empty() {
-        return None;
+        Some(format!("@{target} Let's {trigger}"))
+    } else {
+        Some(format!("@{target} Let's {trigger}: {task}"))
     }
-    Some(format!("@{target} Let's {trigger}: {task}"))
 }
 
 /// What the chamber prints when a skill command was typed with no task.
@@ -1676,10 +1677,10 @@ mod tests {
     /// the old version composed one ("@team Let's brainstorm."), which is how three
     /// workers came to be dispatched on a sentence nobody typed.
     #[test]
-    fn a_skill_command_with_no_task_composes_nothing() {
-        assert_eq!(skill_command_body("brainstorm", "team", ""), None);
-        assert_eq!(skill_command_body("brainstorm", "team", "   \n "), None);
-        assert_eq!(skill_command_body("write a plan", "Sonnet", ""), None);
+    fn a_skill_command_with_no_task_composes_zero_arg_message() {
+        assert_eq!(skill_command_body("brainstorm", "team", ""), Some("@team Let's brainstorm".to_string()));
+        assert_eq!(skill_command_body("brainstorm", "team", "   \n "), Some("@team Let's brainstorm".to_string()));
+        assert_eq!(skill_command_body("write a plan", "Sonnet", ""), Some("@Sonnet Let's write a plan".to_string()));
     }
 
     /// With a task, the body carries the human's own words verbatim after the
