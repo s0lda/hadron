@@ -139,7 +139,7 @@ git commit -m "feat(chamber): implement /doctor diagnostic command"
 
 ---
 
-### Task 4: Implement `/prune` Worktree and Branch Cleanup
+### Task 4: Implement `/prune` Worktree and Branch Cleanup (commit 1dd99400)
 
 **Files:**
 - Modify: `crates/hadron-chamber/src/vcs.rs` (add `prune_merged_worktrees_and_branches`)
@@ -150,26 +150,11 @@ git commit -m "feat(chamber): implement /doctor diagnostic command"
 - Consumes: `git branch` and `git worktree` info.
 - Produces: Safe deletion with `archive/<slug>` tag and `git branch -d`.
 
-- [ ] **Step 1: Write the failing unit test**
-
-In `crates/hadron-chamber/src/vcs.rs` tests module, add `test_prune_merged_branches_creates_archive_tags`.
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cargo test -p hadron-chamber --lib vcs::tests::test_prune_merged_branches_creates_archive_tags`
-Expected: FAIL
-
-- [ ] **Step 3: Write minimal implementation**
-
-1. Implement `prune_merged_worktrees_and_branches` in `crates/hadron-chamber/src/vcs.rs`.
-2. Connect `"prune"` arm in `crates/hadron-chamber/src/app/actions.rs`.
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cargo test -p hadron-chamber --lib vcs::tests::test_prune_merged_branches_creates_archive_tags`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
+- [x] **Step 1: Write the failing unit test** (commit 1dd99400)
+- [x] **Step 2: Run test to verify it fails** (commit 1dd99400)
+- [x] **Step 3: Write minimal implementation** (commit 1dd99400)
+- [x] **Step 4: Run test to verify it passes** (commit 1dd99400)
+- [x] **Step 5: Commit** (commit 1dd99400)
 
 ```bash
 git add crates/hadron-chamber/src/vcs.rs crates/hadron-chamber/src/app/actions.rs
