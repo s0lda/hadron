@@ -92,9 +92,10 @@ impl super::Chamber {
                     .justify_between()
                     .px_2()
                     .py_1()
+                    .rounded_md()
                     .bg(theme::tab_bar_bg())
-                    .border_b_1()
-                    .border_color(theme::glass_highlight())
+                    .border_1()
+                    .border_color(theme::border())
                     .child(
                         h_flex()
                             .items_center()
@@ -171,7 +172,9 @@ impl super::Chamber {
                         .text_size(px(TERM_FONT))
                         .line_height(px(TERM_CELL_H))
                         .size_full()
-                        .p_3();
+                        .p_3()
+                        .pb_4()
+                        .pr_4();
                     for line in &snap.lines {
                         let mut row = h_flex()
                             .h(px(TERM_CELL_H))
