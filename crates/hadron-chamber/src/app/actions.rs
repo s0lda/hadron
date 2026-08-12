@@ -961,7 +961,13 @@ impl Chamber {
                 }
                 true
             }
-            "doctor" | "prune" | "compact-nucleus" | "stop" | "kill" | "cancel" | "gate-cancel" | "revert" | "unabandon" => {
+            "doctor" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let body = crate::text::doctor_body(&repo_root, &self.view.roster);
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "prune" | "compact-nucleus" | "stop" | "kill" | "cancel" | "gate-cancel" | "revert" | "unabandon" => {
                 true
             }
             _ => {
