@@ -974,7 +974,13 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
-            "compact-nucleus" | "stop" | "kill" | "cancel" | "gate-cancel" | "revert" | "unabandon" => {
+            "compact-nucleus" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let body = crate::text::compact_nucleus_index(&repo_root, args.trim());
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "stop" | "kill" | "cancel" | "gate-cancel" | "revert" | "unabandon" => {
                 true
             }
             _ => {

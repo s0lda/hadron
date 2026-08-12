@@ -672,6 +672,63 @@ pub fn doctor_body(repo_root: &std::path::Path, roster: &[crate::model::RosterRo
     out
 }
 
+/// Compacts `.hadron/nucleus/index.md` by removing orphan pointers pointing to non-existent notes.
+pub fn compact_nucleus_index(workspace_root: &std::path::Path, _target_arg: &str) -> String {
+    let index_path = workspace_root.join(".hadron").join("nucleus").join("index.md");
+    let notes_dir = workspace_root.join(".hadron").join("nucleus").join("notes");
+
+    let content = match std::fs::read_to_string(&index_path) {
+        Ok(c) => c,
+        Err(e) => return format!("Could not read nucleus index at `{}`: {e}", index_path.display()),
+    };
+
+    let orig_bytes = content.len();
+    let lines: Vec<&str> = content.lines().collect();
+    let orig_lines = lines.len();
+    let mut kept_lines = Vec::new();
+    let mut pruned_count = 0;
+
+    for line in lines {
+        if hadron_gluon::nucleus_status::is_lesson_line(line) {
+            if let Some(start) = line.find("(notes/") {
+                if let Some(end) = line[start..].find(".md)") {
+                    let slug = &line[start + 7..start + end];
+                    let note_file = notes_dir.join(format!("{slug}.md"));
+                    if !note_file.exists() {
+                        pruned_count += 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        kept_lines.push(line);
+    }
+
+    let new_content = if kept_lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", kept_lines.join("\n"))
+    };
+    let new_bytes = new_content.len();
+
+    if let Err(e) = std::fs::write(&index_path, new_content) {
+        return format!("Failed to write compacted index to `{}`: {e}", index_path.display());
+    }
+
+    format!(
+        "**Nucleus Index Compacted**\n\n\
+         - **Lines**: {} -> {}\n\
+         - **Orphan Pointers Pruned**: {}\n\
+         - **Size**: {} B -> {} B (saved {} B)\n",
+        orig_lines,
+        kept_lines.len(),
+        pruned_count,
+        orig_bytes,
+        new_bytes,
+        orig_bytes.saturating_sub(new_bytes)
+    )
+}
+
 /// Format `/sessions` output.
 pub fn sessions_body(sessions: &[crate::model::SessionInfo]) -> String {
     if sessions.is_empty() {
@@ -2399,6 +2456,21 @@ mod tests {
         assert!(body.contains("Daemon"));
         assert!(body.contains("Nucleus"));
         assert!(body.contains("Fonts"));
+    }
+
+    #[test]
+    fn test_compact_nucleus_index_removes_invalid_pointers() {
+        let dir = std::env::temp_dir().join("test_compact_nucleus");
+        let n_dir = dir.join(".hadron").join("nucleus");
+        let _ = std::fs::create_dir_all(n_dir.join("notes"));
+        let index_path = n_dir.join("index.md");
+        let _ = std::fs::write(&index_path, "- [valid](notes/valid.md) — hook\n- [orphan](notes/orphan.md) — hook\n");
+        let _ = std::fs::write(n_dir.join("notes").join("valid.md"), "content");
+
+        let res = compact_nucleus_index(&dir, "");
+        assert!(res.contains("Orphan Pointers Pruned") && res.contains(": 1"));
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
