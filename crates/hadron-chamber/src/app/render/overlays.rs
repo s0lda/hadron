@@ -20,6 +20,19 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.2.4",
+        date: Some("2026-08-12"),
+        added: &[
+            "10 new operational slash commands (`/retry`, `/doctor`, `/prune`, `/compact-nucleus`, `/stop`, `/kill`, `/cancel`, `/gate-cancel`, `/revert`, `/unabandon`)",
+        ],
+        changed: &[
+            "Applied terminal background (`#080808`) across roster cards, live preview cards, and completion overlay",
+        ],
+        fixed: &[
+            "Isolated `test_revert_and_unabandon` inside tempdir to prevent auto-revert commits on live repo during test runs",
+        ],
+    },
+    Release {
         version: "0.2.3",
         date: Some("2026-08-11"),
         added: &[

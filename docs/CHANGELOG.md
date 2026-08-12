@@ -5,6 +5,17 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-08-12
+
+### Added
+- **New Operational Slash Commands**: Added 10 operational slash commands (`/retry`, `/doctor`, `/prune`, `/compact-nucleus`, `/stop`, `/kill`, `/cancel`, `/gate-cancel`, `/revert`, `/unabandon`).
+
+### Changed
+- **Terminal Background Styling**: Applied terminal background (`#080808` / `theme::term_bg()`) across Roster Quark Cards, Live View Cards, and Autocomplete Overlays with identity color highlights bound to Quark titles and selected borders.
+
+### Fixed
+- **Unit Test Execution Safety**: Isolated `test_revert_and_unabandon` inside `tempdir` repository to prevent `git revert` from running against the live working tree during `cargo test`.
+
 ## [0.2.3] - 2026-08-11
 
 ### Added
