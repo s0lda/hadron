@@ -92,7 +92,7 @@ git commit -m "feat(chamber): register 10 new operational commands in COMMANDS t
 
 ---
 
-### Task 2: Implement `/retry` Command
+### Task 2: Implement `/retry` Command (commit 745495f1)
 
 **Files:**
 - Modify: `crates/hadron-chamber/src/app/actions.rs:500`
@@ -102,44 +102,11 @@ git commit -m "feat(chamber): register 10 new operational commands in COMMANDS t
 - Consumes: `self.view.messages` in `Chamber`.
 - Produces: `post_chat_message(Actor::Human, body, cx)` re-dispatching previous failed prompt.
 
-- [ ] **Step 1: Write the failing unit test**
-
-In `crates/hadron-chamber/src/app/actions.rs` tests module, add `test_retry_command_finds_last_failed_message`.
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cargo test -p hadron-chamber --lib app::actions::tests::test_retry_command_finds_last_failed_message`
-Expected: FAIL
-
-- [ ] **Step 3: Write minimal implementation**
-
-Implement `"retry"` arm in `handle_chat_command` in `crates/hadron-chamber/src/app/actions.rs`:
-```rust
-"retry" => {
-    let target = args.trim().trim_start_matches('@');
-    if let Some(msg) = self.view.messages.iter().rev().find(|m| {
-        if target.is_empty() {
-            m.is_error || m.body.contains("excite error")
-        } else {
-            (m.to.as_ref().map(|q| q.as_str()) == Some(target) || m.from.as_str() == target)
-                && (m.is_error || m.body.contains("excite error"))
-        }
-    }) {
-        let text = msg.body.clone();
-        self.post_chat_message(Actor::Human, text, cx);
-    } else {
-        self.post_chat_message(Actor::Gluon, "No failed message found to retry.".to_string(), cx);
-    }
-    true
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cargo test -p hadron-chamber --lib app::actions::tests::test_retry_command_finds_last_failed_message`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
+- [x] **Step 1: Write the failing unit test** (commit 745495f1)
+- [x] **Step 2: Run test to verify it fails** (commit 745495f1)
+- [x] **Step 3: Write minimal implementation** (commit 745495f1)
+- [x] **Step 4: Run test to verify it passes** (commit 745495f1)
+- [x] **Step 5: Commit** (commit 745495f1)
 
 ```bash
 git add crates/hadron-chamber/src/app/actions.rs
