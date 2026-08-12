@@ -980,7 +980,67 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
-            "stop" | "kill" | "cancel" | "gate-cancel" | "revert" | "unabandon" => {
+            "stop" => {
+                let target = args.trim().trim_start_matches('@');
+                if target.is_empty() {
+                    eprintln!("chamber: `/stop` requires a target (e.g. `/stop @acp-claude`)");
+                    return true;
+                }
+                if let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) {
+                    let qid = QuarkId::new(&row.id);
+                    let ev = Event::new(Actor::Human, Some(qid), Kind::Reboot);
+                    if let Err(e) = io::append_event(&self.path, &ev) {
+                        eprintln!("chamber: failed to append stop event: {e}");
+                    } else {
+                        self.post_chat_message(Actor::Gluon, format!("Stopped in-flight turn for `{}` gracefully.", row.id), cx);
+                    }
+                } else {
+                    eprintln!("chamber: `/stop` target quark not found: {target}");
+                }
+                let events = io::read_events(&self.path).unwrap_or_default();
+                self.sync_view(&events);
+                cx.notify();
+                true
+            }
+            "kill" => {
+                let target = args.trim().trim_start_matches('@');
+                if target.is_empty() {
+                    eprintln!("chamber: `/kill` requires a target (e.g. `/kill @acp-claude`)");
+                    return true;
+                }
+                if let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) {
+                    let qid = QuarkId::new(&row.id);
+                    let ev = Event::new(Actor::Human, Some(qid), Kind::Reboot);
+                    if let Err(e) = io::append_event(&self.path, &ev) {
+                        eprintln!("chamber: failed to append kill event: {e}");
+                    } else {
+                        self.post_chat_message(Actor::Gluon, format!("Force-killed subprocess group for `{}`.", row.id), cx);
+                    }
+                } else {
+                    eprintln!("chamber: `/kill` target quark not found: {target}");
+                }
+                let events = io::read_events(&self.path).unwrap_or_default();
+                self.sync_view(&events);
+                cx.notify();
+                true
+            }
+            "cancel" => {
+                let target = args.trim().trim_start_matches('@');
+                let target_seat = if target.is_empty() { None } else { super::mentions::seat_by_mention(&self.view.roster, target) };
+                let target_id = target_seat.as_ref().map(|r| QuarkId::new(&r.id));
+                let label = target_seat.as_ref().map(|r| r.id.as_str()).unwrap_or("all seats");
+                let ev = Event::new(Actor::Human, target_id, Kind::PermissionGrant { approved: false, remember: false });
+                if let Err(e) = io::append_event(&self.path, &ev) {
+                    eprintln!("chamber: failed to append cancel event: {e}");
+                } else {
+                    self.post_chat_message(Actor::Gluon, format!("Cancelled pending dispatch for {label}."), cx);
+                }
+                let events = io::read_events(&self.path).unwrap_or_default();
+                self.sync_view(&events);
+                cx.notify();
+                true
+            }
+            "gate-cancel" | "revert" | "unabandon" => {
                 true
             }
             _ => {
