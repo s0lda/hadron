@@ -1361,9 +1361,26 @@ pub fn completion_candidates(
     Some(Completions { start, candidates: out })
 }
 
+/// Scans messages from newest to oldest for the last chat message matching an optional seat target.
+pub fn find_retryable_message(messages: &[crate::model::MessageRow], target_seat: Option<&str>) -> Option<String> {
+    for m in messages.iter().rev() {
+        if m.is_chat() {
+            if let Some(target) = target_seat {
+                if m.to.as_deref() == Some(target) || m.from == target {
+                    return Some(m.body.clone());
+                }
+            } else if m.to.is_some() || m.from != "Gluon" {
+                return Some(m.body.clone());
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::MessageRow;
     use hadron_lattice::{Actor, Event, Kind};
 
     fn gating_notice(branch: &str, quark: &str, ts: chrono::DateTime<chrono::Utc>) -> Event {
@@ -2327,6 +2344,35 @@ mod tests {
     fn add_skill_written_body_warns_about_unenforced_tools() {
         let body = add_skill_written_body(std::path::Path::new("/tmp/x.md"), true, true);
         assert!(body.contains("not enforced"));
+    }
+
+    #[test]
+    fn find_retryable_message_finds_last_matching_chat_message() {
+        let msg1 = MessageRow {
+            from: "Human".to_string(),
+            to: Some("acp-claude".to_string()),
+            body: "@acp-claude first prompt".to_string(),
+            kind_label: "message",
+            usage: None,
+            ts: chrono::Utc::now(),
+            legacy_used_tokens: None,
+            turn: None,
+            severity: None,
+        };
+        let msg2 = MessageRow {
+            from: "Human".to_string(),
+            to: Some("Sonnet".to_string()),
+            body: "@Sonnet second prompt".to_string(),
+            kind_label: "message",
+            usage: None,
+            ts: chrono::Utc::now(),
+            legacy_used_tokens: None,
+            turn: None,
+            severity: None,
+        };
+        let msgs = vec![msg1, msg2];
+        assert_eq!(find_retryable_message(&msgs, Some("acp-claude")), Some("@acp-claude first prompt".to_string()));
+        assert_eq!(find_retryable_message(&msgs, None), Some("@Sonnet second prompt".to_string()));
     }
 
     #[test]

@@ -951,7 +951,17 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
-            "retry" | "doctor" | "prune" | "compact-nucleus" | "stop" | "kill" | "cancel" | "gate-cancel" | "revert" | "unabandon" => {
+            "retry" => {
+                let target = args.trim().trim_start_matches('@');
+                let target_seat = if target.is_empty() { None } else { Some(target) };
+                if let Some(body) = crate::text::find_retryable_message(&self.view.messages, target_seat) {
+                    self.post_chat_message(Actor::Human, body, cx);
+                } else {
+                    self.post_chat_message(Actor::Gluon, "No retryable message found.".to_string(), cx);
+                }
+                true
+            }
+            "doctor" | "prune" | "compact-nucleus" | "stop" | "kill" | "cancel" | "gate-cancel" | "revert" | "unabandon" => {
                 true
             }
             _ => {
