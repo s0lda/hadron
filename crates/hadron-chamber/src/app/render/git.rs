@@ -38,9 +38,9 @@ impl super::Chamber {
             .gap_1()
             .p_1()
             .rounded_full()
-            .bg(theme::input_bg())
+            .bg(theme::tab_bar_bg())
             .border_1()
-            .border_color(theme::border())
+            .border_color(theme::glass_highlight())
             .max_w_full()
             .overflow_x_scroll()
             .children(GitSubtab::ALL.map(|t| {
@@ -55,7 +55,7 @@ impl super::Chamber {
                     .rounded_full()
                     .cursor_pointer()
                     .when(is_selected, |s| {
-                        s.bg(theme::bg_elevated())
+                        s.bg(theme::glass_highlight())
                             .text_color(theme::accent())
                             .font_weight(gpui::FontWeight::BOLD)
                     })
