@@ -424,10 +424,13 @@ impl super::Chamber {
                             Some("Authority level, from asking every time to full autonomy."),
                             self.mode_select(target.key(), window, cx),
                         ))
-                        .child(settings_field(
+                        .child(settings_field_stacked(
                             "Skills",
-                            Some("Skills assigned / active for this quark in the swarm."),
-                            self.skill_selector(cx),
+                            v_flex()
+                                .gap_1p5()
+                                .child(div().text_xs().text_color(theme::text_muted()).child("Skills assigned / active for this quark in the swarm."))
+                                .child(self.skill_selector(cx))
+                                .into_any_element(),
                         ))
                         .child(settings_field(
                             "Denied skills",
@@ -728,6 +731,7 @@ impl super::Chamber {
                                             .text_xs()
                                             .font_weight(gpui::FontWeight::BOLD)
                                             .text_color(theme::accent())
+                                            .flex_none()
                                             .child(b.id.clone()),
                                     )
                                     .child(

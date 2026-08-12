@@ -553,7 +553,7 @@ pub(super) fn settings_field(
         .child(
             v_flex()
                 .flex_1()
-                .min_w_0()
+                .min_w(px(140.0))
                 .gap_0p5()
                 .child(
                     div()

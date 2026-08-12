@@ -221,7 +221,7 @@ impl super::Chamber {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let mut row = h_flex().gap_1p5().flex_wrap();
+        let mut row = h_flex().w_full().gap_1p5().flex_wrap();
         for skill in &available {
             let selected = current_roles.iter().any(|r| r.eq_ignore_ascii_case(skill));
             let f = self.settings_roles.clone();
@@ -236,6 +236,7 @@ impl super::Chamber {
                     .rounded_md()
                     .border_1()
                     .text_xs()
+                    .flex_none()
                     .cursor_pointer()
                     .when(selected, |d| {
                         d.bg(theme::bg_elevated())
