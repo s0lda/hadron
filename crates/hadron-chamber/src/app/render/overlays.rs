@@ -27,6 +27,8 @@ const RELEASES: &[Release] = &[
         ],
         changed: &[
             "Applied terminal background (`#080808`) across roster cards, live preview cards, and completion overlay",
+            "Refined surface and card tokens to neutral dark obsidian palette (`#050505`, `#141414`, `#101113`, `#fcfcfc`), aligned panel backgrounds, and updated settings input contrast",
+            "Standardized capsule tabs alignment across all view panels, styled terminal sub-tabs, and applied borderless dark tab bar background (`tab_bar_bg`)",
         ],
         fixed: &[
             "Isolated `test_revert_and_unabandon` inside tempdir to prevent auto-revert commits on live repo during test runs",

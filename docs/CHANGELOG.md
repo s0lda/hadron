@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Terminal Background Styling**: Applied terminal background (`#080808` / `theme::term_bg()`) across Roster Quark Cards, Live View Cards, and Autocomplete Overlays with identity color highlights bound to Quark titles and selected borders.
+- **Obsidian Theme & Palette Refinements**: Refined surface and card tokens to neutral dark obsidian palette (`#050505`, `#141414`, `#101113`, `#fcfcfc`), aligned panel backgrounds across Roster, Chat, and Inspector panels, and updated Settings input contrast.
+- **Capsule Tabs & Navigation Styling**: Standardized capsule tabs alignment across all view panels, styled terminal sub-tabs with rounded borders, and applied borderless dark tab bar background (`tab_bar_bg`).
 
 ### Fixed
 - **Unit Test Execution Safety**: Isolated `test_revert_and_unabandon` inside `tempdir` repository to prevent `git revert` from running against the live working tree during `cargo test`.
