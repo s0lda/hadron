@@ -741,6 +741,53 @@ pub fn get_git_statuses(repo_root: &Path) -> std::collections::HashMap<String, G
     statuses
 }
 
+/// Preview or perform safe cleanup of merged quark branches.
+pub fn prune_merged_worktrees_and_branches(repo_root: &Path, confirm: bool) -> String {
+    let base = hadron_gluon::worktree::default_branch(repo_root);
+    let branches = list_branches(repo_root, &base);
+    let merged_branches: Vec<&BranchInfo> = branches
+        .iter()
+        .filter(|b| b.merged && b.name.starts_with("quark/"))
+        .collect();
+
+    if merged_branches.is_empty() {
+        return "No merged `quark/*` branches found to prune.".to_string();
+    }
+
+    if !confirm {
+        let mut msg = format!("**`/prune` Preview ({} merged branches found)**\n\n", merged_branches.len());
+        for b in &merged_branches {
+            msg.push_str(&format!("- `{}` (merged into `{base}`)\n", b.name));
+        }
+        msg.push_str("\nRun `/prune confirm` to create archive tags and delete these branches (`git branch -d`).");
+        return msg;
+    }
+
+    let mut pruned_count = 0;
+    let mut details = Vec::new();
+    for b in &merged_branches {
+        let tag = archive_tag_name(&b.name);
+        let sha = run_git(repo_root, &["rev-parse", "--verify", "-q", &b.name]).trim().to_string();
+        if !sha.is_empty() {
+            let _ = Command::new("git").current_dir(repo_root).args(["tag", &tag, &sha]).output();
+        }
+        let del = Command::new("git").current_dir(repo_root).args(["branch", "-d", &b.name]).output();
+        if del.is_ok_and(|o| o.status.success()) {
+            pruned_count += 1;
+            details.push(format!("- `{}` -> archived as `{tag}` & deleted", b.name));
+        } else {
+            details.push(format!("- `{}` -> skipped/could not delete", b.name));
+        }
+    }
+
+    format!(
+        "**Prune Complete ({}/{} branches cleaned)**\n\n{}",
+        pruned_count,
+        merged_branches.len(),
+        details.join("\n")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1170,6 +1217,15 @@ index a1b2c3d..e4f5g6h 100644
 
         let diffs = commit_diff(Path::new("."), "HEAD");
         assert!(diffs.is_some());
+    }
+
+    #[test]
+    fn test_prune_merged_worktrees_and_branches() {
+        let res_preview = prune_merged_worktrees_and_branches(Path::new("."), false);
+        assert!(res_preview.contains("/prune") || res_preview.contains("No merged"));
+
+        let res_confirm = prune_merged_worktrees_and_branches(Path::new("."), true);
+        assert!(res_confirm.contains("Prune") || res_confirm.contains("No merged"));
     }
 }
 

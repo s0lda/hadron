@@ -967,7 +967,14 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
-            "prune" | "compact-nucleus" | "stop" | "kill" | "cancel" | "gate-cancel" | "revert" | "unabandon" => {
+            "prune" => {
+                let confirm = args.trim().eq_ignore_ascii_case("confirm");
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let body = crate::vcs::prune_merged_worktrees_and_branches(&repo_root, confirm);
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "compact-nucleus" | "stop" | "kill" | "cancel" | "gate-cancel" | "revert" | "unabandon" => {
                 true
             }
             _ => {
