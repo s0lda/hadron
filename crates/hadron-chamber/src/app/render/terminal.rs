@@ -87,17 +87,14 @@ impl super::Chamber {
         let content = match selected {
             RightRailTab::Terminal => {
                 let sub_tab_bar = h_flex()
-                    .id("terminal-capsule-tabs")
+                    .w_full()
                     .items_center()
                     .justify_between()
-                    .gap_1()
-                    .p_1()
-                    .rounded_full()
-                    .bg(theme::tab_bar_bg())
-                    .border_1()
+                    .px_2()
+                    .py_1()
+                    .bg(theme::glass_surface())
+                    .border_b_1()
                     .border_color(theme::glass_highlight())
-                    .max_w_full()
-                    .overflow_x_scroll()
                     .child(
                         h_flex()
                             .items_center()
@@ -105,25 +102,29 @@ impl super::Chamber {
                             .overflow_x_scrollbar()
                             .children(self.terminals.iter().enumerate().map(|(ix, tab)| {
                                 let is_active = ix == self.active_terminal_index;
+                                let bg_color = if is_active {
+                                    theme::glass_card()
+                                } else {
+                                    theme::canvas_base()
+                                };
+                                let text_col = if is_active {
+                                    theme::accent()
+                                } else {
+                                    theme::text_muted()
+                                };
+
                                 h_flex()
                                     .id(SharedString::from(format!("terminal-tab-{ix}")))
                                     .flex_shrink_0()
                                     .items_center()
                                     .gap_1()
-                                    .px_3()
-                                    .py_1()
-                                    .rounded_full()
-                                    .cursor_pointer()
-                                    .when(is_active, |s| {
-                                        s.bg(theme::glass_highlight())
-                                            .text_color(theme::accent())
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                    })
-                                    .when(!is_active, |s| {
-                                        s.text_color(theme::text_muted())
-                                            .hover(|h| h.text_color(theme::text()))
-                                    })
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .bg(bg_color)
                                     .text_xs()
+                                    .text_color(text_col)
+                                    .cursor_pointer()
                                     .on_click(cx.listener(move |this, _, _window, cx| {
                                         this.select_terminal(ix, cx);
                                     }))
@@ -132,8 +133,8 @@ impl super::Chamber {
                                         div()
                                             .id(SharedString::from(format!("close-terminal-tab-{ix}")))
                                             .px_1()
-                                            .rounded_full()
-                                            .hover(|s| s.bg(theme::glass_surface()))
+                                            .rounded_sm()
+                                            .hover(|s| s.bg(theme::glass_highlight()))
                                             .text_color(theme::text_muted())
                                             .child("×")
                                             .on_click(cx.listener(move |this, _, _window, cx| {
@@ -147,12 +148,13 @@ impl super::Chamber {
                             .id("add-terminal-tab")
                             .flex_shrink_0()
                             .px_2()
-                            .py_1()
-                            .rounded_full()
-                            .cursor_pointer()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(theme::glass_card())
                             .text_xs()
                             .text_color(theme::text_muted())
-                            .hover(|s| s.bg(theme::glass_highlight()).text_color(theme::text()))
+                            .hover(|s| s.text_color(theme::text()))
+                            .cursor_pointer()
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.add_terminal(cx);
                             }))
@@ -230,10 +232,10 @@ impl super::Chamber {
                     .min_h_0()
                     .min_w_0()
                     .relative()
-                    .rounded_lg()
+                    .rounded_md()
                     .overflow_hidden()
                     .border_1()
-                    .border_color(theme::glass_highlight())
+                    .border_color(theme::border())
                     .bg(theme::term_bg())
                     .on_mouse_down(
                         MouseButton::Left,
