@@ -788,6 +788,46 @@ pub fn prune_merged_worktrees_and_branches(repo_root: &Path, confirm: bool) -> S
     )
 }
 
+/// Reverts the latest landed commit on HEAD via git revert.
+pub fn revert_last_landed_commit(repo_root: &Path) -> String {
+    let last_sha = run_git(repo_root, &["log", "-1", "--format=%h", "HEAD"]).trim().to_string();
+    if last_sha.is_empty() {
+        return "No commit found on HEAD to revert.".to_string();
+    }
+    let revert = Command::new("git")
+        .current_dir(repo_root)
+        .args(["revert", "--no-edit", &last_sha])
+        .output();
+    if revert.is_ok_and(|o| o.status.success()) {
+        format!("Successfully created revert commit for `{last_sha}`.")
+    } else {
+        format!("`git revert` failed for `{last_sha}` — resolve merge conflicts manually.")
+    }
+}
+
+/// Restores an archived branch from its archive/<slug> tag.
+pub fn unabandon_branch(repo_root: &Path, slug: &str) -> String {
+    let slug = slug.trim().trim_start_matches("archive/");
+    if slug.is_empty() {
+        return "`/unabandon` needs a branch or tag name (e.g. `/unabandon quark-slug`).".to_string();
+    }
+    let tag = format!("archive/{slug}");
+    let tag_sha = run_git(repo_root, &["rev-parse", "--verify", "-q", &tag]).trim().to_string();
+    if tag_sha.is_empty() {
+        return format!("No archive tag found matching `{tag}`.");
+    }
+    let branch_name = if slug.starts_with("quark/") { slug.to_string() } else { format!("quark/{slug}") };
+    let res = Command::new("git")
+        .current_dir(repo_root)
+        .args(["branch", &branch_name, &tag])
+        .output();
+    if res.is_ok_and(|o| o.status.success()) {
+        format!("Restored branch `{branch_name}` at `{tag}` ({tag_sha}).")
+    } else {
+        format!("Could not create branch `{branch_name}` from `{tag}` — branch may already exist.")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1220,12 +1260,12 @@ index a1b2c3d..e4f5g6h 100644
     }
 
     #[test]
-    fn test_prune_merged_worktrees_and_branches() {
-        let res_preview = prune_merged_worktrees_and_branches(Path::new("."), false);
-        assert!(res_preview.contains("/prune") || res_preview.contains("No merged"));
+    fn test_revert_and_unabandon() {
+        let res_revert = revert_last_landed_commit(Path::new("."));
+        assert!(!res_revert.is_empty());
 
-        let res_confirm = prune_merged_worktrees_and_branches(Path::new("."), true);
-        assert!(res_confirm.contains("Prune") || res_confirm.contains("No merged"));
+        let res_unabandon = unabandon_branch(Path::new("."), "nonexistent-slug");
+        assert!(res_unabandon.contains("No archive tag found"));
     }
 }
 

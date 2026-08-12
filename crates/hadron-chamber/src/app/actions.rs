@@ -1046,7 +1046,16 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
-            "revert" | "unabandon" => {
+            "revert" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let body = crate::vcs::revert_last_landed_commit(&repo_root);
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "unabandon" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let body = crate::vcs::unabandon_branch(&repo_root, args.trim());
+                self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
             _ => {
