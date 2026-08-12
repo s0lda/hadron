@@ -19,7 +19,7 @@
 
 ---
 
-### Task 1: Command Table Registrations & SSOT Guard Update
+### Task 1: Command Table Registrations & SSOT Guard Update (commit 35cf2dfd)
 
 **Files:**
 - Modify: `crates/hadron-chamber/src/text.rs:145-146`
@@ -31,7 +31,11 @@
 - Consumes: Existing `Command`, `Arity`, `ArgSource` definitions in `crates/hadron-chamber/src/text.rs`.
 - Produces: 10 new registered commands in `COMMANDS` table (`retry`, `doctor`, `prune`, `compact-nucleus`, `stop`, `kill`, `cancel`, `gate-cancel`, `revert`, `unabandon`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test** (commit 35cf2dfd)
+- [x] **Step 2: Run test to verify it fails** (commit 35cf2dfd)
+- [x] **Step 3: Write minimal implementation** (commit 35cf2dfd)
+- [x] **Step 4: Run test to verify it passes** (commit 35cf2dfd)
+- [x] **Step 5: Commit** (commit 35cf2dfd)
 
 In `crates/hadron-chamber/src/app/input.rs`, add the 10 new command names to `HANDLED` array inside test `every_listed_command_is_handled`:
 ```rust
