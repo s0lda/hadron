@@ -395,7 +395,7 @@ impl super::Chamber {
             .gap_1()
             .p_1()
             .rounded_full()
-            .bg(theme::glass_card())
+            .bg(theme::tab_bar_bg())
             .border_1()
             .border_color(theme::glass_highlight())
             .max_w_full()
