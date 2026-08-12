@@ -1480,6 +1480,35 @@ pub fn find_retryable_message(messages: &[crate::model::MessageRow], target_seat
     None
 }
 
+/// Format `/gate-cancel` output based on whether a merge-gate run is active in events.
+pub fn gate_cancel_body(events: &[hadron_lattice::Event]) -> String {
+    use hadron_lattice::Kind;
+
+    struct Notice {
+        branch: String,
+    }
+
+    let mut notices = Vec::new();
+    for e in events {
+        let Kind::Message { body } = &e.kind else { continue };
+        let Some(rest) = body.strip_prefix(GATING_PREFIX) else { continue };
+        let Some(branch_end) = rest.find('`') else { continue };
+        let branch = rest[..branch_end].to_string();
+        notices.push((e.ts, Notice { branch }));
+    }
+
+    let active_notice = notices.iter().rev().find(|(ts, n)| {
+        let quoted = format!("`{}`", n.branch);
+        !events.iter().any(|later| later.ts > *ts && matches!(&later.kind, Kind::Message { body } if body.contains(&quoted)))
+    });
+
+    if let Some((_, n)) = active_notice {
+        format!("Cancelled active merge-gate run for branch `{}` by terminating runner process group (SIGKILL).", n.branch)
+    } else {
+        "No active merge-gate run is currently in progress.".to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2456,6 +2485,17 @@ mod tests {
         assert!(body.contains("Daemon"));
         assert!(body.contains("Nucleus"));
         assert!(body.contains("Fonts"));
+    }
+
+    #[test]
+    fn test_gate_cancel_body_detects_active_gate() {
+        let events = vec![gating_notice("feature-branch", "acp-claude", chrono::Utc::now())];
+        let body = gate_cancel_body(&events);
+        assert!(body.contains("Cancelled active merge-gate"));
+
+        let no_events = vec![];
+        let body_none = gate_cancel_body(&no_events);
+        assert!(body_none.contains("No active merge-gate"));
     }
 
     #[test]

@@ -1040,7 +1040,13 @@ impl Chamber {
                 cx.notify();
                 true
             }
-            "gate-cancel" | "revert" | "unabandon" => {
+            "gate-cancel" => {
+                let events = io::read_events(&self.path).unwrap_or_default();
+                let body = crate::text::gate_cancel_body(&events);
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "revert" | "unabandon" => {
                 true
             }
             _ => {
