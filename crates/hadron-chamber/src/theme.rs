@@ -75,14 +75,9 @@ pub fn bg_elevated() -> Rgba {
     rgba(0xffffff1a) // ~0.10 white — lifted chrome, the brightest frost in the ladder
 }
 
-/// Layer 1 (Panels & Rails): Translucent obsidian panel layer matching main bg (`#050505f2`).
+/// Layer 1 (Panels & Rails): Translucent obsidian panel layer (`#08090df2`).
 pub fn glass_surface() -> Hsla {
-    rgba(0x050505f2).into()
-}
-
-/// Tab bar background token matching main obsidian field (`#050505`).
-pub fn tab_bar_bg() -> Rgba {
-    rgb(0x050505)
+    rgba(0x08090df2).into()
 }
 
 /// Layer 2 (Floating Cards & Modals): Elevated dark glass cards (`#0c0d11f8`).
@@ -284,15 +279,8 @@ mod tests {
     #[test]
     fn test_glass_surface_token() {
         let surface = glass_surface();
-        let expected: Hsla = rgba(0x050505f2).into();
+        let expected: Hsla = rgba(0x08090df2).into();
         assert_eq!(surface, expected);
-    }
-
-    #[test]
-    fn test_tab_bar_bg_token() {
-        let bg = tab_bar_bg();
-        let expected = rgb(0x050505);
-        assert_eq!(bg, expected);
     }
 
     #[test]
