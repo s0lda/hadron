@@ -24,23 +24,26 @@ use gpui::{rgb, rgba, Hsla, Rgba};
 use hadron_lattice::QuarkState;
 
 // --- the ambient field: a flat black housing (the frosted-glass-on-black look) ---
-/// Layer 0 (Canvas Base): Deep obsidian canvas base fill (`#050505`).
+/// Layer 0 (Canvas Base): Deep graphite obsidian canvas base fill (`#0C0D10`).
 pub fn canvas_base() -> Hsla {
-    rgb(0x050505).into()
+    rgb(0x0c0d10).into()
 }
 
 /// The near-black base — the opaque tone painted behind the rounded corners and the dark
-/// end of the field wash (`#050505`).
+/// end of the field wash. Must NOT be translucent (it is the window fill; translucency
+/// here would show the desktop, not the field). Just off pure black so the rounded corners
+/// and any panel seam still read against it.
 pub fn field_base() -> Rgba {
-    rgb(0x050505)
+    rgb(0x0d0e12) // flat near-black — the field the frosted panels float on
 }
-/// The top of the field wash (`#050505`).
+/// The top of the field wash — a barely-lifted near-black, so the housing is a whisper
+/// lighter at the top than behind the panels rather than a bright glow.
 pub fn field_bright() -> Rgba {
-    rgb(0x050505)
+    rgb(0x131419)
 }
-/// The near-black the wash settles into at the bottom / behind the panels (`#050505`).
+/// The near-black the wash settles into at the bottom / behind the panels.
 pub fn field_deep() -> Rgba {
-    rgb(0x050505)
+    rgb(0x08080a)
 }
 
 /// The quark-state hues, kept as a faint corner whisper — the same palette the presence
@@ -75,14 +78,14 @@ pub fn bg_elevated() -> Rgba {
     rgba(0xffffff1a) // ~0.10 white — lifted chrome, the brightest frost in the ladder
 }
 
-/// Layer 1 (Panels & Rails): Translucent obsidian layer (`#101113f2`).
+/// Layer 1 (Panels & Rails): Translucent graphite glass containers (`#131519f2`).
 pub fn glass_surface() -> Hsla {
-    rgba(0x101113f2).into()
+    rgba(0x131519f2).into()
 }
 
-/// Layer 2 (Floating Cards & Modals): Elevated dark glass cards (`#101113f8`).
+/// Layer 2 (Floating Cards & Modals): Elevated warm dark charcoal glass cards (`#1A1C22f2`).
 pub fn glass_card() -> Hsla {
-    rgba(0x101113f8).into()
+    rgba(0x1a1c22f2).into()
 }
 
 /// Highlights / rims: Crisp 1px highlight rim (`rgba(255, 255, 255, 0.12)`).
@@ -122,49 +125,55 @@ pub fn halo_dot(state: QuarkState) -> Hsla {
     }
 }
 
-/// The fill for a **focused modal** (Settings card, Processes overlay, app menu) (`#101113`).
+/// The fill for a **focused modal** (Settings card, Processes overlay, app menu) — opaque,
+/// NOT glass. A modal the human is reading needs the field to stop dead behind it; a
+/// low-alpha glass surface let the corner glows bleed through and washed out the text.
+/// Anchored to [`field_base`] so every modal reads as the SAME flat near-black as the
+/// quark-info and About panels (Jake's request — the old raised `0x161619` tone did not
+/// match them). One token so every modal matches and none can drift back to transparent.
 pub fn modal_surface() -> Rgba {
-    rgb(0x101113)
+    field_base() // flat #101010 — matches the quark-info / About panels
 }
 
 // --- terminal (a Zed-like screen) ---
-/// The terminal screen surface — `#050505` main bg.
+/// The terminal screen surface — a touch off pure black so text has contrast.
 pub fn term_bg() -> Rgba {
-    rgb(0x050505)
+    rgb(0x0c0c0e)
 }
-/// Default terminal output foreground — `#fcfcfc` text.
+/// Default terminal output foreground — a soft off-white, brighter than muted
+/// body text so command output reads like a real console.
 pub fn term_fg() -> Rgba {
-    rgb(0xfcfcfc)
+    rgb(0xd0d3d8)
 }
 /// The shell prompt (`user@host: cwd$`) — the classic terminal green.
 pub fn term_prompt() -> Rgba {
     rgb(0x4ade80)
 }
 pub fn bg_surface() -> Rgba {
-    rgb(0x101113)
+    rgb(0x27272a) // zinc-800 - modals, cards, chips
 }
 pub fn bg_surface_raised() -> Rgba {
-    rgb(0x181a1f)
+    rgb(0x3f3f46) // zinc-700 - hover / active
 }
 pub fn input_bg() -> Rgba {
-    rgb(0x141414)
+    rgb(0x18181b) // zinc-900
 }
 pub fn popover() -> Rgba {
-    rgb(0x101113)
+    rgb(0x22242b) // elevated solid dark surface tone so select dropdowns and popover menus stand out clearly
 }
 pub fn border() -> Rgba {
-    rgb(0x27272a)
+    rgb(0x3f3f46) // zinc-700
 }
 
 // --- text tiers ---
 pub fn text() -> Rgba {
-    rgb(0xfcfcfc)
+    rgb(0xd4d4d8) // soft off-white (zinc-300)
 }
 pub fn text_secondary() -> Rgba {
-    rgba(0xfcfcfcc2)
+    rgba(0xd4d4d8c2) // 0.76
 }
 pub fn text_muted() -> Rgba {
-    rgba(0xfcfcfc94)
+    rgba(0xd4d4d894) // 0.58
 }
 
 // --- accents (the energy gradient) ---
@@ -271,7 +280,7 @@ mod tests {
     #[test]
     fn test_canvas_base_token() {
         let base = canvas_base();
-        let expected: Hsla = rgb(0x050505).into();
+        let expected: Hsla = rgb(0x0c0d10).into();
         assert_eq!(base, expected);
         assert_eq!(base.a, 1.0);
     }
@@ -279,14 +288,14 @@ mod tests {
     #[test]
     fn test_glass_surface_token() {
         let surface = glass_surface();
-        let expected: Hsla = rgba(0x101113f2).into();
+        let expected: Hsla = rgba(0x131519f2).into();
         assert_eq!(surface, expected);
     }
 
     #[test]
     fn test_glass_card_token() {
         let card = glass_card();
-        let expected: Hsla = rgba(0x101113f8).into();
+        let expected: Hsla = rgba(0x1a1c22f2).into();
         assert_eq!(card, expected);
     }
 
