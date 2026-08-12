@@ -144,7 +144,7 @@ pub fn bg_surface() -> Rgba {
     rgb(0x101113)
 }
 pub fn bg_surface_raised() -> Rgba {
-    rgb(0x181a1f)
+    rgb(0x101113)
 }
 pub fn input_bg() -> Rgba {
     rgb(0x141414)
