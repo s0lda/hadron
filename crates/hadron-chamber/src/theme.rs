@@ -24,23 +24,23 @@ use gpui::{rgb, rgba, Hsla, Rgba};
 use hadron_lattice::QuarkState;
 
 // --- the ambient field: a flat black housing (the frosted-glass-on-black look) ---
-/// Layer 0 (Canvas Base): Deep obsidian canvas base fill (`#050505`).
+/// Layer 0 (Canvas Base): Deep obsidian canvas base fill (`#06080e`).
 pub fn canvas_base() -> Hsla {
-    rgb(0x050505).into()
+    rgb(0x06080e).into()
 }
 
 /// The near-black base — the opaque tone painted behind the rounded corners and the dark
-/// end of the field wash (`#050505`).
+/// end of the field wash (`#06080e`).
 pub fn field_base() -> Rgba {
-    rgb(0x050505)
+    rgb(0x06080e)
 }
-/// The top of the field wash (`#050505`).
+/// The top of the field wash (`#06080e`).
 pub fn field_bright() -> Rgba {
-    rgb(0x050505)
+    rgb(0x06080e)
 }
-/// The near-black the wash settles into at the bottom / behind the panels (`#050505`).
+/// The near-black the wash settles into at the bottom / behind the panels (`#06080e`).
 pub fn field_deep() -> Rgba {
-    rgb(0x050505)
+    rgb(0x06080e)
 }
 
 /// The quark-state hues, kept as a faint corner whisper — the same palette the presence
@@ -75,9 +75,9 @@ pub fn bg_elevated() -> Rgba {
     rgba(0xffffff1a) // ~0.10 white — lifted chrome, the brightest frost in the ladder
 }
 
-/// Layer 1 (Panels & Rails): Translucent obsidian panel layer matching main bg (`#050505f2`).
+/// Layer 1 (Panels & Rails): Translucent dark midnight blue panel layer (`#090d16f2`).
 pub fn glass_surface() -> Hsla {
-    rgba(0x050505f2).into()
+    rgba(0x090d16f2).into()
 }
 
 /// Tab bar background token matching main obsidian field (`#050505`).
@@ -85,9 +85,9 @@ pub fn tab_bar_bg() -> Rgba {
     rgb(0x050505)
 }
 
-/// Layer 2 (Floating Cards & Modals): Elevated dark glass cards (`#0c0d11f8`).
+/// Layer 2 (Floating Cards & Modals): Elevated dark slate blue glass cards (`#0f1422f8`).
 pub fn glass_card() -> Hsla {
-    rgba(0x0c0d11f8).into()
+    rgba(0x0f1422f8).into()
 }
 
 /// Highlights / rims: Crisp 1px highlight rim (`rgba(255, 255, 255, 0.12)`).
@@ -127,15 +127,15 @@ pub fn halo_dot(state: QuarkState) -> Hsla {
     }
 }
 
-/// The fill for a **focused modal** (Settings card, Processes overlay, app menu) (`#101113`).
+/// The fill for a **focused modal** (Settings card, Processes overlay, app menu) (`#101420`).
 pub fn modal_surface() -> Rgba {
-    rgb(0x101113)
+    rgb(0x101420)
 }
 
 // --- terminal (a Zed-like screen) ---
-/// The terminal screen surface — `#050505` main bg.
+/// The terminal screen surface — `#06080e` main bg.
 pub fn term_bg() -> Rgba {
-    rgb(0x050505)
+    rgb(0x06080e)
 }
 /// Default terminal output foreground — `#fcfcfc` text.
 pub fn term_fg() -> Rgba {
@@ -146,19 +146,19 @@ pub fn term_prompt() -> Rgba {
     rgb(0x4ade80)
 }
 pub fn bg_surface() -> Rgba {
-    rgb(0x101113)
+    rgb(0x101420)
 }
 pub fn bg_surface_raised() -> Rgba {
-    rgb(0x101113)
+    rgb(0x101420)
 }
 pub fn input_bg() -> Rgba {
-    rgb(0x141414)
+    rgb(0x121726)
 }
 pub fn popover() -> Rgba {
-    rgb(0x101113)
+    rgb(0x101420)
 }
 pub fn border() -> Rgba {
-    rgb(0x27272a)
+    rgb(0x1e2638)
 }
 
 // --- text tiers ---
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn test_canvas_base_token() {
         let base = canvas_base();
-        let expected: Hsla = rgb(0x050505).into();
+        let expected: Hsla = rgb(0x06080e).into();
         assert_eq!(base, expected);
         assert_eq!(base.a, 1.0);
     }
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn test_glass_surface_token() {
         let surface = glass_surface();
-        let expected: Hsla = rgba(0x050505f2).into();
+        let expected: Hsla = rgba(0x090d16f2).into();
         assert_eq!(surface, expected);
     }
 
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn test_glass_card_token() {
         let card = glass_card();
-        let expected: Hsla = rgba(0x0c0d11f8).into();
+        let expected: Hsla = rgba(0x0f1422f8).into();
         assert_eq!(card, expected);
     }
 
