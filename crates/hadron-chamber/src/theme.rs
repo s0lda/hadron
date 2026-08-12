@@ -78,14 +78,14 @@ pub fn bg_elevated() -> Rgba {
     rgba(0xffffff1a) // ~0.10 white — lifted chrome, the brightest frost in the ladder
 }
 
-/// Layer 1 (Panels & Rails): Translucent obsidian layer (`#101113f2`).
+/// Layer 1 (Panels & Rails): Translucent graphite glass containers (`#131519f2`).
 pub fn glass_surface() -> Hsla {
-    rgba(0x101113f2).into()
+    rgba(0x131519f2).into()
 }
 
-/// Layer 2 (Floating Cards & Modals): Elevated dark glass cards (`#101113f8`).
+/// Layer 2 (Floating Cards & Modals): Elevated warm dark charcoal glass cards (`#1A1C22f2`).
 pub fn glass_card() -> Hsla {
-    rgba(0x101113f8).into()
+    rgba(0x1a1c22f2).into()
 }
 
 /// Highlights / rims: Crisp 1px highlight rim (`rgba(255, 255, 255, 0.12)`).
@@ -288,14 +288,14 @@ mod tests {
     #[test]
     fn test_glass_surface_token() {
         let surface = glass_surface();
-        let expected: Hsla = rgba(0x101113f2).into();
+        let expected: Hsla = rgba(0x131519f2).into();
         assert_eq!(surface, expected);
     }
 
     #[test]
     fn test_glass_card_token() {
         let card = glass_card();
-        let expected: Hsla = rgba(0x101113f8).into();
+        let expected: Hsla = rgba(0x1a1c22f2).into();
         assert_eq!(card, expected);
     }
 
