@@ -125,9 +125,9 @@ pub fn halo_dot(state: QuarkState) -> Hsla {
     }
 }
 
-/// The fill for a **focused modal** (Settings card, Processes overlay, app menu) (`#101113`).
+/// The fill for a **focused modal** (Settings card, Processes overlay, app menu) (`#101010`).
 pub fn modal_surface() -> Rgba {
-    rgb(0x101113)
+    rgb(0x101010)
 }
 
 // --- terminal (a Zed-like screen) ---
@@ -144,7 +144,7 @@ pub fn term_prompt() -> Rgba {
     rgb(0x4ade80)
 }
 pub fn bg_surface() -> Rgba {
-    rgb(0x101113)
+    rgb(0x101010)
 }
 pub fn bg_surface_raised() -> Rgba {
     rgb(0x1c1c1c)
@@ -153,10 +153,10 @@ pub fn input_bg() -> Rgba {
     rgb(0x141414)
 }
 pub fn popover() -> Rgba {
-    rgb(0x101113)
+    rgb(0x101010)
 }
 pub fn border() -> Rgba {
-    rgb(0x242424)
+    rgb(0x2a2a2a)
 }
 
 // --- text tiers ---
@@ -302,14 +302,37 @@ mod tests {
 
     #[test]
     fn test_neutral_palette_tokens() {
-        assert_eq!(modal_surface(), rgb(0x101113));
+        assert_eq!(modal_surface(), rgb(0x101010));
         assert_eq!(input_bg(), rgb(0x141414));
         assert_eq!(bg_surface_raised(), rgb(0x1c1c1c));
-        assert_eq!(border(), rgb(0x242424));
+        assert_eq!(border(), rgb(0x2a2a2a));
         assert_eq!(text(), rgb(0xe8e8e8));
         assert_eq!(term_fg(), rgb(0xe8e8e8));
         assert_eq!(text_secondary(), rgb(0xa8a8a8));
         assert_eq!(text_muted(), rgb(0x707070));
+    }
+
+    #[test]
+    fn test_neutral_surface_tokens_have_no_color_tint() {
+        let tokens = [
+            ("modal_surface", modal_surface()),
+            ("bg_surface", bg_surface()),
+            ("popover", popover()),
+            ("input_bg", input_bg()),
+            ("border", border()),
+            ("tab_bar_bg", tab_bar_bg()),
+            ("term_bg", term_bg()),
+            ("bg_base", bg_base()),
+        ];
+        for (name, color) in tokens {
+            let r = (color.r * 255.0).round() as i32;
+            let g = (color.g * 255.0).round() as i32;
+            let b = (color.b * 255.0).round() as i32;
+            assert!(
+                (r - g).abs() <= 1 && (g - b).abs() <= 1,
+                "Surface token '{name}' has color tint: R={r}, G={g}, B={b}"
+            );
+        }
     }
 
     #[test]
