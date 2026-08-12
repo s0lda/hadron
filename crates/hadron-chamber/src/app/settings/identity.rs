@@ -44,13 +44,13 @@ impl super::Chamber {
                     .text_xs()
                     .cursor_pointer()
                     .when(selected, |d| {
-                        d.bg(theme::glass_card())
+                        d.bg(theme::bg_elevated())
                             .border_color(theme::accent())
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::accent())
                     })
                     .when(!selected, |d| {
-                        d.bg(theme::bg_surface())
+                        d.bg(theme::input_bg())
                             .border_color(theme::border())
                             .text_color(theme::text_secondary())
                             .hover(|s| s.bg(theme::bg_surface_raised()))
@@ -238,13 +238,13 @@ impl super::Chamber {
                     .text_xs()
                     .cursor_pointer()
                     .when(selected, |d| {
-                        d.bg(theme::glass_card())
+                        d.bg(theme::bg_elevated())
                             .border_color(theme::accent())
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::accent())
                     })
                     .when(!selected, |d| {
-                        d.bg(theme::bg_surface())
+                        d.bg(theme::input_bg())
                             .border_color(theme::border())
                             .text_color(theme::text_secondary())
                             .hover(|s| s.bg(theme::bg_surface_raised()))
