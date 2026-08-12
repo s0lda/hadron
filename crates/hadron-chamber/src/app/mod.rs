@@ -1221,13 +1221,13 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             // Titlebar shares the sidebar's colour; the search bar (a darker
             // recessed pill) uses the base bg. `tokens.title_bar` is what the
             // TitleBar actually paints.
-            t.title_bar = rgb(0x191a1b).into();
-            t.tokens.title_bar = gpui::Hsla::from(rgb(0x191a1b)).into();
-            t.title_bar_border = rgb(0x252627).into();
-            t.background = rgb(0x121314).into();
-            t.input = rgb(0x191a1b).into();
-            t.secondary = rgb(0x191a1b).into();
-            t.secondary_hover = rgb(0x252627).into();
+            t.title_bar = theme::bg_surface().into();
+            t.tokens.title_bar = gpui::Hsla::from(theme::bg_surface()).into();
+            t.title_bar_border = theme::border().into();
+            t.background = theme::field_base().into();
+            t.input = theme::input_bg().into();
+            t.secondary = theme::bg_surface().into();
+            t.secondary_hover = theme::bg_surface_raised().into();
             t.popover = theme::popover().into();
             t.popover_foreground = theme::text().into();
             // Context menus, dropdown menus and tooltips paint from `tokens.popover`, which
@@ -1253,7 +1253,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             // invisible against its own card. Re-anchor all three to the chamber's own
             // neutral/amethyst ramp so nothing on these panels still carries the fork's
             // stock accent.
-            t.input = theme::border().into();
+            t.input = theme::input_bg().into();
             t.selection = theme::accent_soft().into();
             t.list_active = gpui::rgba(0xc084fc33).into();
             t.list_active_border = theme::accent().into();
@@ -1264,7 +1264,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             // the control is visible. The active tab reads as a darker cutout (its
             // sliding indicator paints `tokens.background`, which we keep
             // transparent for the frame — so it shows the card behind).
-            t.tokens.tab_bar_segmented = gpui::Hsla::from(rgb(0x202122)).into();
+            t.tokens.tab_bar_segmented = gpui::Hsla::from(theme::bg_surface_raised()).into();
             // Close-button hover: red *background*, but keep the X light so it
             // stays legible (was red-on-red).
             t.danger = rgb(0xef4444).into();
