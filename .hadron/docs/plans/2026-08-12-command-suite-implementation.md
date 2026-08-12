@@ -115,7 +115,7 @@ git commit -m "feat(chamber): implement /retry chat command"
 
 ---
 
-### Task 3: Implement `/doctor` Diagnostic Suite
+### Task 3: Implement `/doctor` Diagnostic Suite (commit 16945587)
 
 **Files:**
 - Modify: `crates/hadron-chamber/src/text.rs:160` (add `doctor_body` formatter)
@@ -126,33 +126,11 @@ git commit -m "feat(chamber): implement /retry chat command"
 - Consumes: System stats (`gluon.lock`, nucleus size, font resolution, ACP paths).
 - Produces: `doctor_body(...) -> String` formatted report.
 
-- [ ] **Step 1: Write the failing unit test**
-
-In `crates/hadron-chamber/src/text.rs` tests module, add `test_doctor_body_formatting`.
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cargo test -p hadron-chamber --lib text::tests::test_doctor_body_formatting`
-Expected: FAIL
-
-- [ ] **Step 3: Write minimal implementation**
-
-1. Implement `doctor_body` in `crates/hadron-chamber/src/text.rs`.
-2. Update `"doctor"` arm in `crates/hadron-chamber/src/app/actions.rs`:
-```rust
-"doctor" => {
-    let body = crate::text::doctor_body(&self.path, &self.view.roster);
-    self.post_chat_message(Actor::Gluon, body, cx);
-    true
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cargo test -p hadron-chamber --lib text::tests::test_doctor_body_formatting`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
+- [x] **Step 1: Write the failing unit test** (commit 16945587)
+- [x] **Step 2: Run test to verify it fails** (commit 16945587)
+- [x] **Step 3: Write minimal implementation** (commit 16945587)
+- [x] **Step 4: Run test to verify it passes** (commit 16945587)
+- [x] **Step 5: Commit** (commit 16945587)
 
 ```bash
 git add crates/hadron-chamber/src/text.rs crates/hadron-chamber/src/app/actions.rs
