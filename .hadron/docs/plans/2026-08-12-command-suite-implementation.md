@@ -163,7 +163,7 @@ git commit -m "feat(chamber): implement /prune worktree and branch cleanup comma
 
 ---
 
-### Task 5: Implement `/compact-nucleus`
+### Task 5: Implement `/compact-nucleus` (commit 0a2204a3)
 
 **Files:**
 - Modify: `crates/hadron-chamber/src/text.rs` (add `compact_nucleus_index`)
@@ -174,26 +174,11 @@ git commit -m "feat(chamber): implement /prune worktree and branch cleanup comma
 - Consumes: Path to `.hadron/nucleus/index.md` and target size string (e.g. `24kb`).
 - Produces: Compacted `index.md` file and audit report.
 
-- [ ] **Step 1: Write the failing unit test**
-
-In `crates/hadron-chamber/src/text.rs` tests module, add `test_compact_nucleus_index_removes_invalid_pointers`.
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cargo test -p hadron-chamber --lib text::tests::test_compact_nucleus_index_removes_invalid_pointers`
-Expected: FAIL
-
-- [ ] **Step 3: Write minimal implementation**
-
-1. Implement `compact_nucleus_index` helper in `crates/hadron-chamber/src/text.rs`.
-2. Wire `"compact-nucleus"` arm in `crates/hadron-chamber/src/app/actions.rs`.
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cargo test -p hadron-chamber --lib text::tests::test_compact_nucleus_index_removes_invalid_pointers`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
+- [x] **Step 1: Write the failing unit test** (commit 0a2204a3)
+- [x] **Step 2: Run test to verify it fails** (commit 0a2204a3)
+- [x] **Step 3: Write minimal implementation** (commit 0a2204a3)
+- [x] **Step 4: Run test to verify it passes** (commit 0a2204a3)
+- [x] **Step 5: Commit** (commit 0a2204a3)
 
 ```bash
 git add crates/hadron-chamber/src/text.rs crates/hadron-chamber/src/app/actions.rs
