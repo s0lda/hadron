@@ -275,13 +275,13 @@ impl super::Chamber {
                     .text_xs()
                     .cursor_pointer()
                     .when(selected, |d| {
-                        d.bg(theme::bg_elevated())
+                        d.bg(theme::glass_card())
                             .border_color(theme::accent())
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::accent())
                     })
                     .when(!selected, |d| {
-                        d.bg(theme::input_bg())
+                        d.bg(theme::bg_surface())
                             .border_color(theme::border())
                             .text_color(theme::text_secondary())
                             .hover(|s| s.bg(theme::bg_surface_raised()))
