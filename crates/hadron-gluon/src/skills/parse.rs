@@ -81,12 +81,17 @@ pub(super) fn parse_skill_file(text: &str) -> Option<ResolvedSkill> {
     // matching, and built-in triggers are already all-lowercase in source — a custom
     // skill authored with `triggers: [Foo]` must not silently never match because its
     // author capitalised it.
-    let triggers = front_matter_value(front, "triggers")
+    let mut triggers: Vec<String> = front_matter_value(front, "triggers")
         .map(parse_list_value)
         .unwrap_or_default()
         .into_iter()
         .map(|t| t.to_lowercase())
         .collect();
+    if triggers.is_empty() {
+        triggers.push(id.to_lowercase());
+        triggers.push(format!("/{}", id.to_lowercase()));
+    }
+
     let tools = front_matter_value(front, "tools").map(parse_list_value).unwrap_or_default();
 
     Some(ResolvedSkill {

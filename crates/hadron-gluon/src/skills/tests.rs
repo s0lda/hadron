@@ -3,7 +3,7 @@ use std::path::Path;
 
 use hadron_lattice::QuarkId;
 
-use super::parse::parse_list_value;
+use super::parse::{parse_list_value, parse_skill_file};
 
 fn skill_with_tools(tools: &[&str]) -> ResolvedSkill {
     ResolvedSkill {
@@ -538,3 +538,19 @@ fn skills_map_to_their_preferred_role() {
     assert_eq!(preferred_role("subagent-driven-development"), Some("executor"));
     assert_eq!(preferred_role("systematic-debugging"), None);
 }
+
+#[test]
+fn custom_skill_omitting_triggers_defaults_to_name_and_slash_command() {
+    let raw = "---\nname: joke\ndescription: Tell a joke\n---\n\nJOKE PROCEDURE BODY.\n";
+    let skill = parse_skill_file(raw).expect("parsed skill");
+    assert_eq!(skill.triggers, vec!["joke".to_string(), "/joke".to_string()]);
+
+    let matched = select("/joke", &[skill.clone()]).expect("selects by slash trigger");
+    assert_eq!(matched.id, "joke");
+    assert_eq!(matched.trigger, "/joke");
+
+    let matched_plain = select("tell a joke", &[skill]).expect("selects by name trigger");
+    assert_eq!(matched_plain.id, "joke");
+    assert_eq!(matched_plain.trigger, "joke");
+}
+
