@@ -233,7 +233,7 @@ git commit -m "feat(chamber): implement /gate-cancel command"
 
 ---
 
-### Task 8: Implement `/revert` & `/unabandon`
+### Task 8: Implement `/revert` & `/unabandon` (commit c3c211f2)
 
 **Files:**
 - Modify: `crates/hadron-chamber/src/vcs.rs` (add `revert_last_landed_commit` and `restore_archived_branch`)
@@ -244,25 +244,11 @@ git commit -m "feat(chamber): implement /gate-cancel command"
 - Consumes: Gate history and `git tag -l "archive/*"`.
 - Produces: Revert commit passed to gate, or restored branch SHA from archive tag.
 
-- [ ] **Step 1: Write failing test**
-
-Add tests `test_revert_last_landed_commit` and `test_unabandon_restores_archive_tag` in `crates/hadron-chamber/src/vcs.rs`.
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cargo test -p hadron-chamber --lib vcs::tests::test_revert_and_unabandon`
-Expected: FAIL
-
-- [ ] **Step 3: Write minimal implementation**
-
-Implement `revert_last_landed_commit` and `restore_archived_branch` in `crates/hadron-chamber/src/vcs.rs`, and wire `"revert"` and `"unabandon"` arms in `crates/hadron-chamber/src/app/actions.rs`.
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cargo test -p hadron-chamber --lib vcs::tests::test_revert_and_unabandon`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
+- [x] **Step 1: Write failing test** (commit c3c211f2)
+- [x] **Step 2: Run test to verify it fails** (commit c3c211f2)
+- [x] **Step 3: Write minimal implementation** (commit c3c211f2)
+- [x] **Step 4: Run test to verify it passes** (commit c3c211f2)
+- [x] **Step 5: Commit** (commit c3c211f2)
 
 ```bash
 git add crates/hadron-chamber/src/vcs.rs crates/hadron-chamber/src/app/actions.rs
