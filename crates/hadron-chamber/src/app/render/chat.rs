@@ -115,9 +115,7 @@ impl super::Chamber {
             .gap_1()
             .p_1()
             .rounded_full()
-            .bg(theme::input_bg())
-            .border_1()
-            .border_color(theme::border())
+            .bg(theme::tab_bar_bg())
             .max_w_full()
             .overflow_x_scroll()
             .children(ChatTab::ALL.map(|t| {
