@@ -78,17 +78,16 @@ impl super::Chamber {
                 .py_2()
                 .mb_2()
                 .rounded_lg()
-                .bg(theme::term_bg())
+                .bg(theme::glass_surface())
                 .border_1()
                 .border_color(theme::glass_highlight())
                 .children(active.into_iter().map(|(quark_id_str, text)| {
                     let identity = self.resolve_identity(&quark_id_str);
-                    let name = identity.name.clone();
+                    let name = identity.name;
                     h_flex()
                         .w_full()
                         .items_center()
                         .gap_2()
-                        .child(identity_avatar(&identity, 18.0))
                         .child(
                             div()
                                 .flex_none()
