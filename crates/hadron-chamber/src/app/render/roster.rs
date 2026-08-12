@@ -278,7 +278,7 @@ impl super::Chamber {
             .p_2p5()
             .gap_1p5()
             .rounded_lg()
-            .bg(theme::term_bg())
+            .bg(theme::glass_card())
             .border_1()
             .cursor_pointer()
             .on_click(cx.listener(move |this, _, _, cx| {
