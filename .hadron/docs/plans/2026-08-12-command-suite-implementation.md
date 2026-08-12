@@ -210,7 +210,7 @@ git commit -m "feat(chamber): implement /stop, /kill, and /cancel process contro
 
 ---
 
-### Task 7: Implement `/gate-cancel`
+### Task 7: Implement `/gate-cancel` (commit f7e23f0b)
 
 **Files:**
 - Modify: `crates/hadron-chamber/src/app/actions.rs` (`"gate-cancel"` arm)
@@ -220,25 +220,11 @@ git commit -m "feat(chamber): implement /stop, /kill, and /cancel process contro
 - Consumes: Merge gate process group state.
 - Produces: `kill(-pgid, SIGKILL)` on hung gate runner process group.
 
-- [ ] **Step 1: Write failing test**
-
-Add unit test `test_gate_cancel_kills_gate_process_group` in `crates/hadron-chamber/src/app/actions.rs`.
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cargo test -p hadron-chamber --lib app::actions::tests::test_gate_cancel_kills_gate_process_group`
-Expected: FAIL
-
-- [ ] **Step 3: Write minimal implementation**
-
-Implement `"gate-cancel"` arm in `crates/hadron-chamber/src/app/actions.rs`.
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cargo test -p hadron-chamber --lib app::actions::tests::test_gate_cancel_kills_gate_process_group`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
+- [x] **Step 1: Write failing test** (commit f7e23f0b)
+- [x] **Step 2: Run test to verify it fails** (commit f7e23f0b)
+- [x] **Step 3: Write minimal implementation** (commit f7e23f0b)
+- [x] **Step 4: Run test to verify it passes** (commit f7e23f0b)
+- [x] **Step 5: Commit** (commit f7e23f0b)
 
 ```bash
 git add crates/hadron-chamber/src/app/actions.rs
