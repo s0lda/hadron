@@ -187,7 +187,7 @@ git commit -m "feat(chamber): implement /compact-nucleus command"
 
 ---
 
-### Task 6: Implement `/stop`, `/kill`, `/cancel` Process Controls
+### Task 6: Implement `/stop`, `/kill`, `/cancel` Process Controls (commit 2ca11a69)
 
 **Files:**
 - Modify: `crates/hadron-chamber/src/app/actions.rs` (`"stop"`, `"kill"`, `"cancel"` arms)
@@ -197,25 +197,11 @@ git commit -m "feat(chamber): implement /compact-nucleus command"
 - Consumes: Target `@quark` handle.
 - Produces: Graceful stop signal, `SIGKILL` process group signal, or event retraction.
 
-- [ ] **Step 1: Write failing test**
-
-In `crates/hadron-chamber/src/app/actions.rs` tests, add test for process control commands.
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cargo test -p hadron-chamber --lib app::actions::tests::test_stop_kill_cancel_commands`
-Expected: FAIL
-
-- [ ] **Step 3: Write minimal implementation**
-
-Wire `"stop"`, `"kill"`, and `"cancel"` arms in `handle_chat_command`.
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cargo test -p hadron-chamber --lib app::actions::tests::test_stop_kill_cancel_commands`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
+- [x] **Step 1: Write failing test** (commit 2ca11a69)
+- [x] **Step 2: Run test to verify it fails** (commit 2ca11a69)
+- [x] **Step 3: Write minimal implementation** (commit 2ca11a69)
+- [x] **Step 4: Run test to verify it passes** (commit 2ca11a69)
+- [x] **Step 5: Commit** (commit 2ca11a69)
 
 ```bash
 git add crates/hadron-chamber/src/app/actions.rs
