@@ -314,8 +314,25 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
         let mut consumed = false;
         loop {
             let head = rest.trim_start();
-            let tok_end = head.find(char::is_whitespace).unwrap_or(head.len());
-            let Some(cmd) = head[..tok_end]
+            let mut leading_mention = None;
+            let check_head = if head.starts_with('@') {
+                if let Some(space_idx) = head.find(char::is_whitespace) {
+                    let candidate_target = &head[..space_idx];
+                    if space_idx + 1 < head.len() && head[space_idx..].trim_start().starts_with('/') {
+                        leading_mention = Some(candidate_target);
+                        head[space_idx..].trim_start()
+                    } else {
+                        head
+                    }
+                } else {
+                    head
+                }
+            } else {
+                head
+            };
+
+            let tok_end = check_head.find(char::is_whitespace).unwrap_or(check_head.len());
+            let Some(cmd) = check_head[..tok_end]
                 .strip_prefix('/')
                 .filter(|c| !c.is_empty())
                 .and_then(crate::text::command)
@@ -326,32 +343,32 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
             match cmd.arity {
                 crate::text::Arity::None => {
                     cmds.push((cmd.name.to_string(), String::new()));
-                    rest = &head[tok_end..];
+                    rest = &check_head[tok_end..];
                 }
                 crate::text::Arity::Line => {
-                    cmds.push((cmd.name.to_string(), head[tok_end..].trim().to_string()));
+                    let raw_args = check_head[tok_end..].trim();
+                    let args = match leading_mention {
+                        Some(mention) if raw_args.is_empty() => mention.to_string(),
+                        Some(mention) => format!("{mention} {raw_args}"),
+                        None => raw_args.to_string(),
+                    };
+                    cmds.push((cmd.name.to_string(), args));
                     rest = "";
                     break;
                 }
                 crate::text::Arity::Body => {
-                    // The rest of THIS line (the command's own "first line" —
-                    // e.g. a skill's `<name>`) is trimmed once, same as
-                    // `Arity::Line`. Every following line is joined verbatim —
-                    // no per-line trim — because indentation inside a body
-                    // (a skill's front-matter block, for instance) is content,
-                    // not whitespace to discard.
-                    let first = head[tok_end..].trim();
+                    let first = check_head[tok_end..].trim();
+                    let first_arg = match leading_mention {
+                        Some(mention) if first.is_empty() => mention.to_string(),
+                        Some(mention) => format!("{mention} {first}"),
+                        None => first.to_string(),
+                    };
                     let arg = if i + 1 < lines.len() {
-                        format!("{first}\n{}", lines[i + 1..].join("\n"))
+                        format!("{first_arg}\n{}", lines[i + 1..].join("\n"))
                     } else {
-                        first.to_string()
+                        first_arg
                     };
                     cmds.push((cmd.name.to_string(), arg));
-                    // Break the OUTER loop, not just this line's inner one:
-                    // every remaining line already belongs to the body just
-                    // captured, so none of it should be re-scanned for
-                    // commands (`Arity::Line` only breaks the inner loop,
-                    // which is exactly the bug this arity exists to avoid).
                     break 'lines;
                 }
             }
@@ -649,4 +666,16 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn split_leading_commands_handles_leading_mentions() {
+        let (cmds, body) = split_leading_commands("@team /brainstorm");
+        assert_eq!(cmds, vec![("brainstorm".to_string(), "@team".to_string())]);
+        assert_eq!(body, None);
+
+        let (cmds2, body2) = split_leading_commands("@Sonnet /writing-plans fix the bug");
+        assert_eq!(cmds2, vec![("writing-plans".to_string(), "@Sonnet fix the bug".to_string())]);
+        assert_eq!(body2, None);
+    }
 }
+
