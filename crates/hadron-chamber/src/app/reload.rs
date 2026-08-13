@@ -214,24 +214,11 @@ impl super::Chamber {
             }
 
             if events.len() != self.view.messages.len() {
-                // Decide *before* the content changes: if the user is parked at the
-                // bottom, keep them there as new messages land; if they've scrolled up
-                // to read history, leave their position alone. `sync_view` splices on a
-                // pure append and falls back to a full resync otherwise — e.g. a swap
-                // this window only observes here, through the tick, rather than through
-                // `/clear`/`/resume`'s own explicit call.
-                let follow = self.chat_at_bottom();
                 self.sync_view(&events);
-
-                if follow {
-                    for scroll in &self.chat_scrolls {
-                        scroll.scroll_to_bottom();
-                    }
-                    self.chat_list_state
-                        .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
-                    self.log_list_state
-                        .scroll_to_reveal_item(self.view.messages.len().saturating_sub(1));
-                }
+                self.chat_list_state
+                    .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
+                self.log_list_state
+                    .scroll_to_reveal_item(self.view.messages.len().saturating_sub(1));
                 changed = true;
             } else if team_changed {
                 // The message list is unchanged (same events) but the resolved team is

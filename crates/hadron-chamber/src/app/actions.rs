@@ -157,11 +157,10 @@ impl Chamber {
     /// `chat_message_ixs`/`chat_list_state` in step with it.
     pub(super) fn post_chat_message(&mut self, from: Actor, body: String, cx: &mut Context<Self>) {
         self.append_and_reload(Event::new(from, None, Kind::Message { body }), cx);
-        for scroll in &self.chat_scrolls {
-            scroll.scroll_to_bottom();
-        }
         self.chat_list_state
             .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
+        self.log_list_state
+            .scroll_to_reveal_item(self.view.messages.len().saturating_sub(1));
         cx.notify();
     }
 
@@ -248,9 +247,6 @@ impl Chamber {
                         // The just-archived field is now part of history: fold it into the
                         // wider Stats windows and offer it in the Sessions submenu.
                         self.reload_archives();
-                        for scroll in &self.chat_scrolls {
-                            scroll.scroll_to_bottom();
-                        }
                         cx.notify();
                     }
                 }
@@ -448,9 +444,6 @@ impl Chamber {
                 // force the unconditional resync rather than trust the append heuristic.
                 self.resync_lists_to_projection();
                 self.reload_archives();
-                for scroll in &self.chat_scrolls {
-                    scroll.scroll_to_bottom();
-                }
                 cx.notify();
                 true
             }
@@ -1494,9 +1487,10 @@ impl Chamber {
         }
         let events = io::read_events(&self.path).unwrap_or_default();
         self.sync_view(&events);
-        for scroll in &self.chat_scrolls {
-            scroll.scroll_to_bottom();
-        }
+        self.chat_list_state
+            .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
+        self.log_list_state
+            .scroll_to_reveal_item(self.view.messages.len().saturating_sub(1));
         cx.notify();
     }
 

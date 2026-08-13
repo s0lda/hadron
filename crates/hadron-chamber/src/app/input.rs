@@ -48,10 +48,10 @@ impl super::Chamber {
             return;
         }
         if *shift {
-            let selected_idx = self.chat_tab.index();
-            let scroll = self.chat_scrolls[selected_idx].clone();
+            let last = self.chat_message_ixs.len().saturating_sub(1);
+            let chat_state = self.chat_list_state.clone();
             cx.on_next_frame(window, move |_, _, cx: &mut Context<Self>| {
-                scroll.scroll_to_bottom();
+                chat_state.scroll_to_reveal_item(last);
                 cx.notify();
             });
             return;
@@ -130,9 +130,6 @@ impl super::Chamber {
         }
 
         // The human just spoke — always snap to their new message.
-        for scroll in &self.chat_scrolls {
-            scroll.scroll_to_bottom();
-        }
         self.chat_list_state
             .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
         self.log_list_state
@@ -149,14 +146,14 @@ impl super::Chamber {
     /// updated first.
     pub(super) fn on_input_paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let input = self.input.clone();
-        let selected_idx = self.chat_tab.index();
-        let scroll = self.chat_scrolls[selected_idx].clone();
+        let last = self.chat_message_ixs.len().saturating_sub(1);
+        let chat_state = self.chat_list_state.clone();
         cx.on_next_frame(window, move |_, _, cx: &mut Context<Self>| {
             input.update(cx, |state, cx| {
                 let end = state.value().len();
                 state.set_selected_range(end..end, cx);
             });
-            scroll.scroll_to_bottom();
+            chat_state.scroll_to_reveal_item(last);
             cx.notify();
         });
     }

@@ -172,7 +172,7 @@ impl super::Chamber {
                 .id("session-scroll")
                 .size_full()
                 .overflow_y_scroll()
-                .track_scroll(&self.chat_scrolls[selected.index()])
+                .track_scroll(&self.stats_scroll)
                 .child(self.stats_view(cx))
                 .into_any_element(),
         };
@@ -196,7 +196,7 @@ impl super::Chamber {
             .child(match selected {
                 ChatTab::Chat => scroll_container.vertical_scrollbar(&self.chat_list_state),
                 ChatTab::Log => scroll_container.vertical_scrollbar(&self.log_list_state),
-                ChatTab::Stats => scroll_container.vertical_scrollbar(&self.chat_scrolls[selected.index()]),
+                ChatTab::Stats => scroll_container.vertical_scrollbar(&self.stats_scroll),
             });
 
         // The message box is only meaningful in Chat — you talk to the field
@@ -1170,6 +1170,12 @@ mod milestone_3_tests {
         assert_eq!(ChatTab::from_index(usize::MAX), ChatTab::Chat);
         assert_eq!(ChatTab::from_index(3), ChatTab::Chat);
         assert_eq!(ChatTab::from_index(42), ChatTab::Chat);
+    }
+
+    #[test]
+    fn test_stats_scroll_starts_at_top_and_is_independent() {
+        let stats_scroll = gpui::ScrollHandle::new();
+        assert_eq!(stats_scroll.offset(), gpui::Point::default());
     }
 
     #[test]

@@ -266,8 +266,8 @@ struct Chamber {
     log_expanded_ixs: std::collections::HashSet<usize>,
     /// Maps a virtual list item index to the message's true index in `view.messages`.
     chat_message_ixs: Vec<usize>,
-    /// Scroll position for each of the three tabs.
-    chat_scrolls: [ScrollHandle; 4],
+    /// Scroll position for the Stats tab.
+    stats_scroll: ScrollHandle,
     /// Cache of parsed Markdown to HTML, keyed by message index, storing (raw_body, resolved_content)
     parsed_markdown: std::cell::RefCell<std::collections::HashMap<usize, (String, String)>>,
     /// A debounced window-bounds save is already in flight, so a drag (which
@@ -810,15 +810,7 @@ impl Chamber {
         let git_graph_list = gpui::ListState::new(0, gpui::ListAlignment::Top, px(400.))
             .measure_all();
 
-        // Open showing the newest message: honoured on the first paint, once the
-        // content is laid out.
-        let chat_scrolls = [
-            ScrollHandle::new(),
-            ScrollHandle::new(),
-            ScrollHandle::new(),
-            ScrollHandle::new(),
-        ];
-        chat_scrolls[0].scroll_to_bottom(); // Chat tab
+        let stats_scroll = ScrollHandle::new();
         // The Configured Providers list is every ADOPTED quark (resolved), so a
         // migrated repo whose seats are now overrides still lists them.
         let providers = configured_providers(&resolve_team(&team, &global));
@@ -889,7 +881,7 @@ impl Chamber {
             log_expanded: std::collections::HashSet::new(),
             log_expanded_ixs: std::collections::HashSet::new(),
             chat_message_ixs,
-            chat_scrolls,
+            stats_scroll,
             parsed_markdown: std::cell::RefCell::new(std::collections::HashMap::new()),
             bounds_save_pending: false,
             process_manager_open: false,
@@ -987,16 +979,6 @@ impl Chamber {
         chamber.update_active_plan();
         chamber.check_for_updates(cx);
         chamber
-    }
-
-    /// Whether the chat viewport is scrolled to (or within a message-height of)
-    /// the bottom. `offset.y` grows more negative scrolling down and bottoms out
-    /// at `-max_offset.y`, so their sum is ~0 at the bottom.
-    fn chat_at_bottom(&self) -> bool {
-        let scroll = &self.chat_scrolls[self.chat_tab.index()];
-        let off = scroll.offset().y;
-        let max = scroll.max_offset().y;
-        off + max <= px(48.0)
     }
 
     /// Resolve an actor's display identity: prefs overrides over code defaults.
