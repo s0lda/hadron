@@ -102,7 +102,11 @@ pub trait MergeRunner: Send + Sync {
         base: &str,
         strategy: MergeStrategy,
     ) -> anyhow::Result<Landed> {
-        land_with_strategy(repo_root, wt, base, strategy)
+        match strategy {
+            MergeStrategy::FastForward => self.land(repo_root, wt, base),
+            MergeStrategy::Squash => land_squash(repo_root, wt, base),
+            MergeStrategy::GitHubPr => land_github_pr(repo_root, wt, base),
+        }
     }
 }
 
