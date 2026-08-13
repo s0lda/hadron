@@ -84,7 +84,15 @@ pub fn git_with_env(repo_root: &Path, args: &[&str], envs: &[(&str, &str)]) -> a
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if stdout.is_empty() {
+        Ok(stderr)
+    } else if stderr.is_empty() {
+        Ok(stdout)
+    } else {
+        Ok(format!("{stdout}\n{stderr}"))
+    }
 }
 
 /// True if HEAD resolves to a commit (i.e. the repo has at least one commit).

@@ -1027,7 +1027,14 @@ impl Chamber {
                 };
                 let output = hadron_gluon::snapshot::git(&repo_root, &git_args);
                 let body = match output {
-                    Ok(out) => format!("### Git Push Output\n```text\n{}\n```", out.trim()),
+                    Ok(out) => {
+                        let trimmed = out.trim();
+                        if trimmed.is_empty() {
+                            "### Git Push Output\nEverything up-to-date".to_string()
+                        } else {
+                            format!("### Git Push Output\n```text\n{trimmed}\n```")
+                        }
+                    }
                     Err(e) => format!("Git push failed: {e}"),
                 };
                 self.post_chat_message(Actor::Gluon, body, cx);
