@@ -634,6 +634,10 @@ mod tests {
             "gate-cancel",
             "revert",
             "unabandon",
+            "git-status",
+            "git-log",
+            "push",
+            "pr",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(
