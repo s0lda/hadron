@@ -205,6 +205,9 @@ pub const STANDARD_MODEL: &str = include_str!("../invariants/standard_model.md")
 /// It reads the file as an **index**, not whole: see [`features_index`].
 pub fn build_nucleus_digest(workspace_root: &Path) -> String {
     let path = workspace_root.join(".hadron").join("nucleus").join("features.md");
+    if !path.exists() {
+        return String::new();
+    }
     features_index(&std::fs::read_to_string(path).unwrap_or_default())
 }
 

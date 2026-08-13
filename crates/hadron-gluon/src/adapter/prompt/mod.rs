@@ -252,7 +252,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
 
     // 7. Nucleus Digest
     if !projection.nucleus_digest.trim().is_empty() {
-        p.push_str("# Project knowledge (nucleus) — index only, open `.hadron/nucleus/features.md` (if present) before touching a feature\n");
+        p.push_str("# Project knowledge (nucleus) — index only, open `.hadron/nucleus/features.md` before touching a feature\n");
         p.push_str(projection.nucleus_digest.trim());
         p.push_str("\n\n");
     }
