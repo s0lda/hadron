@@ -639,6 +639,7 @@ mod tests {
             "push",
             "pr",
             "release",
+            "review",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(

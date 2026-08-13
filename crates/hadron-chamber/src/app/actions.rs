@@ -1149,6 +1149,17 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
+            "review" => {
+                let (named, task) = crate::text::split_target(args);
+                let target = named.unwrap_or(hadron_gluon::router::ORCHESTRATOR_ALIAS);
+                let body = if task.is_empty() {
+                    format!("@{target} please review the active branch and record verdict.")
+                } else {
+                    format!("@{target} please review the active branch: {task}")
+                };
+                self.post_chat_message(Actor::Human, body, cx);
+                true
+            }
             _ => {
                 // If it contains a slash, it's probably a path. 
                 // Return false to let it pass through as a normal message.

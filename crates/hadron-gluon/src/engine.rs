@@ -18,6 +18,7 @@ use crate::quark::Quark;
 // prompt actually enforces travels on `Projection::nucleus_index_budget_bytes`
 // instead — see `Engine::nucleus_index_budget_bytes`.
 pub(crate) mod nucleus;
+pub mod review;
 mod routing;
 mod turn;
 mod merge;
