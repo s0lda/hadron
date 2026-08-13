@@ -164,6 +164,7 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
             .submenu("Sessions", window, cx, {
                 let view = view.clone();
                 move |menu, _, cx| {
+                    let menu = menu.scrollable(true);
                     let chamber = view.read(cx);
                     // `/resume` swaps the live field out from under a running daemon, so
                     // it refuses mid-turn — and it refuses to `eprintln!`, which nobody
@@ -182,6 +183,18 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
                         .rev()
                         .map(|s| (s.id.clone(), s.label()))
                         .collect();
+                    let clear_history = view.clone();
+                    let menu = menu
+                        .item(
+                            PopupMenuItem::new("Clear Session History")
+                                .disabled(rows.is_empty())
+                                .on_click(move |_, window, cx| {
+                                    clear_history.update(cx, |this, cx| {
+                                        this.handle_chat_command("clear-history", "", window, cx);
+                                    });
+                                }),
+                        )
+                        .separator();
                     if rows.is_empty() {
                         return menu
                             .item(PopupMenuItem::new("No archived sessions").disabled(true));

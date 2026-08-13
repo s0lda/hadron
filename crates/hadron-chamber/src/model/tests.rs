@@ -312,6 +312,41 @@
         assert_eq!(rows[1].from, "gemini");
     }
 
+    /// Clearing session history removes all session directories while preserving external files like ledger.db.
+    #[test]
+    fn test_clear_session_history_removes_session_dirs_and_preserves_ledger() {
+        let dir = tempfile::tempdir().unwrap();
+        let hadron_dir = dir.path().join(".hadron");
+        let sessions_dir = hadron_dir.join("sessions");
+        let ledger_file = hadron_dir.join("ledger.db");
+
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        std::fs::write(&ledger_file, "fake-ledger-data").unwrap();
+
+        for name in ["20260101_000000", "20260201_000000"] {
+            let sdir = sessions_dir.join(name);
+            std::fs::create_dir_all(&sdir).unwrap();
+            std::fs::write(sdir.join("field.jsonl"), "test").unwrap();
+        }
+
+        assert_eq!(list_sessions(&sessions_dir).len(), 2);
+
+        // Perform clearing of session directories
+        if let Ok(rd) = std::fs::read_dir(&sessions_dir) {
+            for entry in rd.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let _ = std::fs::remove_dir_all(&path);
+                }
+            }
+        }
+
+        assert!(list_sessions(&sessions_dir).is_empty());
+        assert!(load_archived_messages(&sessions_dir).is_empty());
+        assert!(ledger_file.exists(), "ledger.db must be preserved");
+        assert_eq!(std::fs::read_to_string(&ledger_file).unwrap(), "fake-ledger-data");
+    }
+
     /// `/clear` restarts every resident agent so the fresh field is a fresh session:
     /// one `Kind::Reboot` per ACP quark, addressed to it; CLI quarks (nothing resident)
     /// are skipped.

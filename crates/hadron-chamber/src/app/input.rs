@@ -618,6 +618,7 @@ mod tests {
             "nucleus",
             "health",
             "sessions",
+            "clear-history",
             "spend",
             "search",
             "diff",

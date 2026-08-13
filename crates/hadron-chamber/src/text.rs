@@ -137,6 +137,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "nucleus", detail: "Show nucleus index size vs resolved budget, lesson count, notes count, and index path", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "health", detail: "Show daemon PID, daemon process state, repo root, and worktree count", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "sessions", detail: "List archived sessions with labels", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "clear-history", detail: "Delete all archived sessions while preserving token usage ledger", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "spend", detail: "Show spend per seat over a window: today (session), week, or all (e.g. /spend @acp-claude week)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "search", detail: "Search this session's messages for text", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "diff", detail: "Summarize a seat's branch diff against the default branch, or the working tree if no seat is given", arity: Arity::Line, arg: ArgSource::Quark, listed: true },

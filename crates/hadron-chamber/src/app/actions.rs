@@ -792,6 +792,24 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
+            "clear-history" => {
+                let sessions_dir = self.sessions_dir();
+                let mut cleared = 0;
+                if let Ok(rd) = std::fs::read_dir(&sessions_dir) {
+                    for entry in rd.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            if std::fs::remove_dir_all(&path).is_ok() {
+                                cleared += 1;
+                            }
+                        }
+                    }
+                }
+                self.reload_archives();
+                let body = format!("Cleared {cleared} archived session(s). Token usage ledger was preserved.");
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
             "spend" => {
                 let (seat, window) = crate::text::parse_spend_arg(args);
                 let stats = self.view.stats_for(&self.archived_messages, window, chrono::Utc::now());
