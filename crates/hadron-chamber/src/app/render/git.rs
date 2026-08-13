@@ -298,9 +298,11 @@ impl super::Chamber {
         let toggled_off = previous.as_deref() == Some(hash.as_str());
         if toggled_off {
             self.git_commit_diff = None;
+            self.git_commit_message = None;
         } else {
             let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
             self.git_commit_diff = crate::vcs::commit_diff(&root, &hash);
+            self.git_commit_message = crate::vcs::commit_message(&root, &hash);
             self.git_commit_open_ixs.clear();
             self.git_selected_commit = Some(hash.clone());
         }
@@ -386,6 +388,7 @@ impl super::Chamber {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.git_selected_commit = None;
                         this.git_commit_diff = None;
+                        this.git_commit_message = None;
                         cx.notify();
                     }))
                     .child(
@@ -404,6 +407,32 @@ impl super::Chamber {
                             .child("close ×"),
                     ),
             )
+            .when_some(self.git_commit_message.as_ref(), |this, msg| {
+                if msg.trim().is_empty() {
+                    return this;
+                }
+                let mut msg_box = v_flex().gap_0p5().w_full();
+                for (ix, line) in msg.lines().enumerate() {
+                    let is_subject = ix == 0;
+                    msg_box = msg_box.child(
+                        div()
+                            .text_xs()
+                            .when(is_subject, |d| d.text_color(theme::text()).font_weight(gpui::FontWeight::BOLD))
+                            .when(!is_subject, |d| d.text_color(theme::text_muted()))
+                            .child(if line.is_empty() { " ".to_string() } else { line.to_string() }),
+                    );
+                }
+                this.child(
+                    v_flex()
+                        .w_full()
+                        .p_2()
+                        .rounded_md()
+                        .bg(theme::glass_card())
+                        .border_1()
+                        .border_color(theme::glass_highlight())
+                        .child(msg_box),
+                )
+            })
             .child(body)
     }
 
@@ -651,8 +680,12 @@ impl super::Chamber {
             line = line.child(Self::ref_pill(dec));
         }
         if overflow_count > 0 {
+            let overflow_names: Vec<String> = refs[2..].iter().map(|d| d.name.clone()).collect();
+            let overflow_tip = overflow_names.join(", ");
+            let elem_id = SharedString::from(format!("overflow-tags-{}", row.hash.as_deref().unwrap_or("")));
             line = line.child(
                 div()
+                    .id(elem_id)
                     .flex_none()
                     .px_1p5()
                     .py_0p5()
@@ -660,6 +693,7 @@ impl super::Chamber {
                     .text_xs()
                     .bg(gpui::rgba(0x94a3b822))
                     .text_color(gpui::rgb(0x94a3b8))
+                    .tooltip(move |window, cx| Tooltip::new(overflow_tip.clone()).build(window, cx))
                     .child(format!("+{}", overflow_count)),
             );
         }
@@ -745,7 +779,7 @@ impl super::Chamber {
                         for &col in &active_cols {
                             let x = bounds.origin.x + px((col as f32) * LANE_W + LANE_W / 2.0);
                             let y1 = bounds.origin.y;
-                            let y2 = bounds.origin.y + h;
+                            let _y2 = bounds.origin.y + h;
                             let color = gpui::rgb(LANE_COLORS[col % LANE_COLORS.len()]);
 
                             let line_w = px(2.0);
@@ -1304,5 +1338,15 @@ mod tests {
         };
         // Verify continuation canvas helper constructs without panicking for multiple lanes
         let _elem = Chamber::render_rail_continuation_canvas(&row, 2);
+    }
+
+    #[test]
+    fn select_commit_populates_message_and_diff() {
+        let root = crate::vcs::repo_root_of(std::path::Path::new("."));
+        let msg = crate::vcs::commit_message(root, "HEAD");
+        let diff = crate::vcs::commit_diff(root, "HEAD");
+        assert!(msg.is_some());
+        assert!(!msg.unwrap().is_empty());
+        assert!(diff.is_some());
     }
 }

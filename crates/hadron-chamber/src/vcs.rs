@@ -91,6 +91,18 @@ pub fn commit_diff(repo_root: &Path, commit: &str) -> Option<Vec<FileDiff>> {
     Some(parse_diff(&String::from_utf8_lossy(&out.stdout)))
 }
 
+/// The full raw commit message for a single commit (`git show -s --format=%B <commit>`).
+pub fn commit_message(repo_root: &Path, commit: &str) -> Option<String> {
+    let out = Command::new("git")
+        .current_dir(repo_root)
+        .args(["show", "-s", "--format=%B", commit])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+}
 
 pub fn parse_diff(raw: &str) -> Vec<FileDiff> {
     let mut files = Vec::new();
@@ -1289,6 +1301,13 @@ index a1b2c3d..e4f5g6h 100644
 
         let res_unabandon = unabandon_branch(root, "nonexistent-slug");
         assert!(res_unabandon.contains("No archive tag found"));
+    }
+
+    #[test]
+    fn test_commit_message() {
+        let msg = commit_message(Path::new("."), "HEAD");
+        assert!(msg.is_some());
+        assert!(!msg.unwrap().is_empty());
     }
 }
 
