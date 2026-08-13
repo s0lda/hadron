@@ -61,7 +61,10 @@ impl super::Chamber {
                     // moment later, in the list, where it belongs.
                     .child(
                         div()
+                            .id(SharedString::from(format!("draft-text-{}", quark_id_str)))
                             .w_full()
+                            .max_h(px(100.0))
+                            .overflow_y_scroll()
                             .text_sm()
                             .text_color(theme::text_secondary())
                             .child(text),

@@ -680,8 +680,7 @@ impl super::Chamber {
             line = line.child(Self::ref_pill(dec));
         }
         if overflow_count > 0 {
-            let overflow_names: Vec<String> = refs[2..].iter().map(|d| d.name.clone()).collect();
-            let overflow_tip = overflow_names.join(", ");
+            let overflow_decos: Vec<crate::vcs::RefDecoration> = refs[2..].to_vec();
             let elem_id = SharedString::from(format!("overflow-tags-{}", row.hash.as_deref().unwrap_or("")));
             line = line.child(
                 div()
@@ -693,7 +692,17 @@ impl super::Chamber {
                     .text_xs()
                     .bg(gpui::rgba(0x94a3b822))
                     .text_color(gpui::rgb(0x94a3b8))
-                    .tooltip(move |window, cx| Tooltip::new(overflow_tip.clone()).build(window, cx))
+                    .tooltip(move |window, cx| {
+                        let decos = overflow_decos.clone();
+                        Tooltip::element(move |_window, _cx| {
+                            let mut col = v_flex().gap_1().py_0p5();
+                            for dec in &decos {
+                                col = col.child(Self::ref_badge(dec, true));
+                            }
+                            col
+                        })
+                        .build(window, cx)
+                    })
                     .child(format!("+{}", overflow_count)),
             );
         }
@@ -937,8 +946,8 @@ impl super::Chamber {
         name.to_string()
     }
 
-    /// A styled ref pill badge depending on decoration kind (HEAD, Local, Remote, Tag).
-    fn ref_pill(dec: &crate::vcs::RefDecoration) -> impl IntoElement {
+    /// A styled ref badge element with decoration kind styling (HEAD, Local, Remote, Tag).
+    fn ref_badge(dec: &crate::vcs::RefDecoration, full_name: bool) -> gpui::Div {
         let (bg, text_color) = match dec.kind {
             crate::vcs::RefKind::Head => (gpui::rgba(0x34d39922), gpui::rgb(0x34d399)),
             crate::vcs::RefKind::LocalBranch => (gpui::rgba(0xa78bfa22), gpui::rgb(0xa78bfa)),
@@ -946,32 +955,41 @@ impl super::Chamber {
             crate::vcs::RefKind::Tag => (gpui::rgba(0xfbbf2422), gpui::rgb(0xfbbf24)),
         };
 
-        let short_name = Self::elide_ref_name(&dec.name);
-        let full_name = dec.name.clone();
+        let name = if full_name {
+            dec.name.clone()
+        } else {
+            Self::elide_ref_name(&dec.name)
+        };
 
         let label_element = if dec.kind == crate::vcs::RefKind::Head {
             h_flex()
                 .gap_1()
                 .items_center()
                 .child(div().child("●"))
-                .child(div().child(short_name))
+                .child(div().child(name))
         } else {
-            h_flex().child(short_name)
+            h_flex().items_center().child(name)
         };
 
         div()
-            .id(SharedString::from(format!("ref-pill-{}", dec.name)))
             .flex_none()
-            .max_w(px(DECO_CHIP_MAX_W))
-            .truncate()
             .px_1p5()
             .py_0p5()
             .rounded_md()
             .text_xs()
             .bg(bg)
             .text_color(text_color)
-            .tooltip(move |window, cx| Tooltip::new(full_name.clone()).build(window, cx))
             .child(label_element)
+    }
+
+    /// A styled ref pill badge depending on decoration kind (HEAD, Local, Remote, Tag).
+    fn ref_pill(dec: &crate::vcs::RefDecoration) -> impl IntoElement {
+        let full_name = dec.name.clone();
+        Self::ref_badge(dec, false)
+            .id(SharedString::from(format!("ref-pill-{}", dec.name)))
+            .max_w(px(DECO_CHIP_MAX_W))
+            .truncate()
+            .tooltip(move |window, cx| Tooltip::new(full_name.clone()).build(window, cx))
     }
 
     // ── Shared collapsible file-diff list (Changes + branch panel, SSOT) ──────────
@@ -1245,6 +1263,20 @@ mod tests {
             Chamber::elide_ref_name("quark/cli-agy/01KY8CCE0YZV5X8NXMYNNNJMHF"),
             "cli-agy"
         );
+    }
+
+    #[test]
+    fn ref_badge_builds_for_all_ref_kinds() {
+        let decos = vec![
+            deco("main", RefKind::Head),
+            deco("quark/cli-agy/01KY8CCE0YZV5X8NXMYNNNJMHF", RefKind::LocalBranch),
+            deco("origin/main", RefKind::RemoteBranch),
+            deco("v1.0.0", RefKind::Tag),
+        ];
+        for d in &decos {
+            let _el_short = Chamber::ref_badge(d, false);
+            let _el_full = Chamber::ref_badge(d, true);
+        }
     }
 
     fn authored(author: &str, subject: &str) -> crate::vcs::GraphRow {
