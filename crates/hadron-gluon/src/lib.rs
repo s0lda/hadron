@@ -21,4 +21,5 @@ pub mod merge;
 pub mod statusline;
 pub mod nucleus_status;
 pub mod proc;
+pub mod env;
 

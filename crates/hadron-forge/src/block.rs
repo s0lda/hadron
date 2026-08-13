@@ -6,7 +6,7 @@ use crate::lang::Lang;
 pub const HASH_LEN: usize = 8;
 
 /// The kind of top-level item a [`Block`] represents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlockKind {
     Function,
     Struct,

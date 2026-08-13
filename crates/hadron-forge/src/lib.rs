@@ -11,6 +11,11 @@ pub mod git;
 pub mod inspect;
 pub mod lang;
 pub mod nucleus;
+pub mod ast_merge;
+pub mod tia;
+
+pub use ast_merge::*;
+pub use tia::*;
 
 
 

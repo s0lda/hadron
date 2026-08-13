@@ -27,6 +27,9 @@ use hadron_lattice::QuarkId;
 
 use crate::snapshot::{git, git_ok};
 
+pub mod pool;
+pub use pool::*;
+
 /// Where a quark works. Stable per quark; the branch inside it changes per assignment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Worktree {
