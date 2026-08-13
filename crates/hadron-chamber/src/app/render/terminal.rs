@@ -322,7 +322,7 @@ impl super::Chamber {
                                         .child(self.markdown_body(
                                             "file-tree-open",
                                             usize::MAX,
-                                            content,
+                                            &crate::sys::format_file_preview(path, content),
                                             &[],
                                         )),
                                 )

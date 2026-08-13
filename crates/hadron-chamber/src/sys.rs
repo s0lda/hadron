@@ -200,6 +200,81 @@ pub fn read_workspace_file(repo_root: &Path, file_path: &str) -> Option<String> 
     }
 }
 
+/// Prepares workspace file content for preview rendering in the file tree viewer.
+///
+/// Markdown files (`.md`, `.markdown`) are returned verbatim so they render formatted prose.
+/// Source code, configuration, markup, and text files are wrapped in a Markdown code block
+/// with their corresponding tree-sitter language identifier so `TextView::markdown` renders
+/// full syntax highlighting. Enclosing backtick fences dynamically scale if the content contains
+/// backticks.
+pub fn format_file_preview(path: &str, content: &str) -> String {
+    let path_obj = Path::new(path);
+    let ext = path_obj.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let file_name = path_obj.file_name().and_then(|f| f.to_str()).unwrap_or("");
+
+    let lower_ext = ext.to_lowercase();
+    let lower_name = file_name.to_lowercase();
+
+    if lower_ext == "md" || lower_ext == "markdown" {
+        return content.to_string();
+    }
+
+    let lang = match lower_ext.as_str() {
+        "rs" => "rust",
+        "toml" => "toml",
+        "json" => "json",
+        "js" | "mjs" | "cjs" => "javascript",
+        "jsx" => "jsx",
+        "ts" | "mts" | "cts" => "typescript",
+        "tsx" => "tsx",
+        "css" => "css",
+        "scss" => "scss",
+        "html" | "htm" => "html",
+        "cpp" | "cxx" | "cc" | "c" | "h" | "hpp" => "cpp",
+        "py" => "python",
+        "sh" | "bash" | "zsh" => "bash",
+        "yaml" | "yml" => "yaml",
+        "sql" => "sql",
+        "go" => "go",
+        "java" => "java",
+        "kt" | "kts" => "kotlin",
+        "rb" => "ruby",
+        "php" => "php",
+        "diff" | "patch" => "diff",
+        "xml" => "xml",
+        "lua" => "lua",
+        "zig" => "zig",
+        "wgsl" => "wgsl",
+        _ => {
+            if lower_name == "dockerfile" {
+                "dockerfile"
+            } else if lower_name == "makefile" {
+                "makefile"
+            } else {
+                lower_ext.as_str()
+            }
+        }
+    };
+
+    // Determine backtick fence length to avoid collisions with backticks inside content
+    let mut fence_len = 3;
+    let mut cur_len = 0;
+    for ch in content.chars() {
+        if ch == '`' {
+            cur_len += 1;
+            if cur_len >= fence_len {
+                fence_len = cur_len + 1;
+            }
+        } else {
+            cur_len = 0;
+        }
+    }
+
+    let fence = "`".repeat(fence_len);
+    format!("{}{}\n{}\n{}", fence, lang, content, fence)
+}
+
+
 /// Which program opens a source file the human clicked — a chat message's
 /// `file://` link, or the file tree's "Open in editor".
 ///
@@ -706,4 +781,39 @@ mod tests {
         assert!(content.is_some());
         assert!(content.unwrap().contains("hadron"));
     }
+
+    #[test]
+    fn format_file_preview_handles_markdown_and_code_extensions() {
+        // Markdown returns verbatim
+        assert_eq!(
+            format_file_preview("doc.md", "# Hello\nWorld"),
+            "# Hello\nWorld"
+        );
+
+        // Rust extension wraps in ```rust
+        assert_eq!(
+            format_file_preview("src/main.rs", "fn main() {}"),
+            "```rust\nfn main() {}\n```"
+        );
+
+        // CPP extension wraps in ```cpp
+        assert_eq!(
+            format_file_preview("main.cpp", "int main() {}"),
+            "```cpp\nint main() {}\n```"
+        );
+
+        // CSS extension wraps in ```css
+        assert_eq!(
+            format_file_preview("style.css", "body { margin: 0; }"),
+            "```css\nbody { margin: 0; }\n```"
+        );
+
+        // Backtick collision expands fence length
+        let code_with_backticks = "/// ```\n/// example\n/// ```";
+        assert_eq!(
+            format_file_preview("lib.rs", code_with_backticks),
+            "````rust\n/// ```\n/// example\n/// ```\n````"
+        );
+    }
 }
+
