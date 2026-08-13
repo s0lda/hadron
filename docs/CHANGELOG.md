@@ -5,6 +5,18 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-08-13
+
+### Added
+- **File Tree Preview Syntax Highlighting**: Added tree-sitter language detection and syntax highlighting for file previews (`.rs`, `.cpp`, `.css`, `.json`, `.ts`, `.py`, `.sh`, etc.).
+- **Unified Skills Toggle in Settings**: Combined skills selection and denied skills in Settings; skills are enabled by default and unselecting a skill toggles it on the deny list.
+- **Scrollable Sessions Menu & History Cleanup**: Made the Sessions menu scrollable and added `/clear-history` command to clear archived session logs while preserving telemetry token spend.
+
+### Changed
+- **Event Log Single Line Collapse**: Collapsed Event Log rows to a clean single line with markdown header stripping, expanding on click for detailed output.
+- **Git Inspector UI Polish**: Removed redundant Git subtab headers, indented expanded commit diff panels with continuous rail graph canvas rendering, and added symmetric padding in Branches and Worktrees views.
+- **Roster & Settings Header Simplification**: Removed raw file path and branch labels from the Roster header and removed misleading green "Ready" status dots from configured providers.
+
 ## [0.2.4] - 2026-08-12
 
 ### Added
