@@ -19,6 +19,7 @@ use crate::quark::Quark;
 // instead — see `Engine::nucleus_index_budget_bytes`.
 pub(crate) mod nucleus;
 pub mod review;
+pub mod cross_exam;
 mod routing;
 mod turn;
 mod merge;
