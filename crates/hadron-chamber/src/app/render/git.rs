@@ -699,9 +699,61 @@ impl super::Chamber {
 
         let mut entry = v_flex().w_full().child(line);
         if is_selected {
-            entry = entry.child(self.commit_diff_panel(&full_hash, cx));
+            let continuation_rail = Self::render_rail_continuation_canvas(row, max_lanes);
+            let expanded_panel = h_flex()
+                .w_full()
+                .child(continuation_rail)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(self.commit_diff_panel(&full_hash, cx)),
+                );
+            entry = entry.child(expanded_panel);
         }
         entry.into_any_element()
+    }
+
+    /// Render vertical continuation lanes for an expanded commit row's diff panel
+    /// so the commit graph line continues uninterrupted alongside the indented changes panel.
+    fn render_rail_continuation_canvas(
+        row: &crate::vcs::GraphRow,
+        max_lanes: usize,
+    ) -> impl IntoElement {
+        let gutter_w = (max_lanes.max(1) as f32) * LANE_W;
+        let mut active_cols = Vec::new();
+        for lane in &row.lanes {
+            if !active_cols.contains(&lane.to_col) {
+                active_cols.push(lane.to_col);
+            }
+        }
+
+        div()
+            .w(px(gutter_w))
+            .h_full()
+            .flex_none()
+            .child(
+                gpui::canvas(
+                    move |bounds, _, _| bounds,
+                    move |bounds, _, window, _cx| {
+                        let h = bounds.size.height;
+                        for &col in &active_cols {
+                            let x = bounds.origin.x + px((col as f32) * LANE_W + LANE_W / 2.0);
+                            let y1 = bounds.origin.y;
+                            let y2 = bounds.origin.y + h;
+                            let color = gpui::rgb(LANE_COLORS[col % LANE_COLORS.len()]);
+
+                            let line_w = px(2.0);
+                            let line_bounds = gpui::Bounds {
+                                origin: gpui::point(x - line_w / 2.0, y1),
+                                size: gpui::size(line_w, h),
+                            };
+                            window.paint_quad(gpui::fill(line_bounds, color));
+                        }
+                    },
+                )
+                .size_full(),
+            )
     }
 
     /// Render graph lanes and commit dot on a GPUI canvas.
@@ -1233,5 +1285,19 @@ mod tests {
         assert_eq!(Chamber::lane_color_index(&LaneSeg { from_col: 0, to_col: 1 }), 1);
         // Creation connector (branch col 1 -> main col 0) -> blue (1)
         assert_eq!(Chamber::lane_color_index(&LaneSeg { from_col: 1, to_col: 0 }), 1);
+    }
+
+    #[test]
+    fn render_rail_continuation_canvas_constructs_element() {
+        use crate::vcs::LaneSeg;
+        let row = crate::vcs::GraphRow {
+            lanes: vec![
+                LaneSeg { from_col: 0, to_col: 0 },
+                LaneSeg { from_col: 1, to_col: 1 },
+            ],
+            ..Default::default()
+        };
+        // Verify continuation canvas helper constructs without panicking for multiple lanes
+        let _elem = Chamber::render_rail_continuation_canvas(&row, 2);
     }
 }
