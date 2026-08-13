@@ -638,6 +638,7 @@ mod tests {
             "git-log",
             "push",
             "pr",
+            "release",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(

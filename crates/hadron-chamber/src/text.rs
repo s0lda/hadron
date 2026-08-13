@@ -121,6 +121,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "using-superpowers", detail: "Discover and activate available superpowers/skills", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "verification-before-completion", detail: "Run verification commands before claiming work is complete", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "writing-skills", detail: "Create, edit, or verify custom skill procedures", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "release", detail: "Execute project release procedure in .hadron/nucleus/release.md", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "reboot", detail: "Force-restart a resident quark (e.g. /reboot @acp-claude or /reboot all)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "approve", detail: "Approve a pending permission request (e.g. /approve @worker or /approve @worker remember)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "deny", detail: "Deny a pending permission request (e.g. /deny @worker)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
