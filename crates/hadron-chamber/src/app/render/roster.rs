@@ -52,7 +52,7 @@ impl super::Chamber {
         v_flex().w_full().h_full().min_h_0().p_2().child(card)
     }
 
-    /// Renders the floating roster header chip with nucleus budget status and sidebar toggle.
+    /// Renders the roster header with nucleus budget status and sidebar toggle.
     pub(super) fn render_worktree_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut left_child = h_flex().items_center().gap_1p5();
 
@@ -80,15 +80,13 @@ impl super::Chamber {
             .px_3()
             .py_2()
             .text_xs()
-            .bg(theme::glass_card())
-            .rounded_lg()
-            .border_1()
-            .border_color(theme::glass_highlight())
+            .text_color(theme::text_muted())
             .child(left_child)
             .child(
                 div()
                     .id("roster-toggle")
                     .cursor_pointer()
+                    .text_color(theme::text_muted())
                     .active(|s| s.opacity(0.6))
                     .child(Icon::new(IconName::PanelLeftClose).small())
                     .on_click(cx.listener(|this, _, window, cx| {
