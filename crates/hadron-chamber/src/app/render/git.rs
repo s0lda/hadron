@@ -702,6 +702,7 @@ impl super::Chamber {
             let continuation_rail = Self::render_rail_continuation_canvas(row, max_lanes);
             let expanded_panel = h_flex()
                 .w_full()
+                .px_1()
                 .child(continuation_rail)
                 .child(
                     div()
