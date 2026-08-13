@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.2.9",
+        date: Some("2026-08-13"),
+        added: &[
+            "Interactive file mentions in chat messages rendering as clickable links with path tooltips",
+        ],
+        changed: &[],
+        fixed: &[
+            "Release workflow synchronizes worktree HEAD:main directly with remote origin",
+        ],
+    },
+    Release {
         version: "0.2.8",
         date: Some("2026-08-13"),
         added: &[

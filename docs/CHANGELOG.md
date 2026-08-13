@@ -5,6 +5,14 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.9] - 2026-08-13
+
+### Added
+- **Interactive File Mentions in Chat**: Converted `@file` path mentions (e.g. `@docs/CHANGELOG.md`, `@src/main.rs:123`) into clickable markdown links displaying the filename basename and showing full paths on hover.
+
+### Fixed
+- **Worktree Release Remote Synchronization**: Fixed release workflow to push `HEAD:main` and release tags directly to origin, ensuring worktree release commits are published to remote GitHub `main` branches immediately.
+
 ## [0.2.8] - 2026-08-13
 
 ### Added
