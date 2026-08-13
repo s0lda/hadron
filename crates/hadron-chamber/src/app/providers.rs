@@ -405,6 +405,7 @@ mod tests {
             roster: vec![],
             max_exchanges: None,
             nucleus_index_budget_kb: None,
+            merge_strategy: None,
         };
 
         let providers = configured_providers(&team);

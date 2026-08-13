@@ -1786,6 +1786,7 @@ mod tests {
             ],
             max_exchanges: None,
             nucleus_index_budget_kb: None,
+            merge_strategy: None,
         };
 
         let global = Team {
@@ -1795,6 +1796,7 @@ mod tests {
             roster: vec![],
             max_exchanges: None,
             nucleus_index_budget_kb: None,
+            merge_strategy: None,
         };
 
         apply_orchestrator_exclusivity(&mut team, &global, &QuarkId::new("override-one"));

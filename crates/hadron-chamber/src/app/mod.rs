@@ -372,7 +372,7 @@ struct Chamber {
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
-    _settings_subs: [Subscription; 16],
+    _settings_subs: [Subscription; 17],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
     /// Offered-model probe for the ACP quark whose Settings are open — drives the model
@@ -409,6 +409,9 @@ struct Chamber {
     /// Native SelectState dropdown for General Settings Nucleus Index Budget.
     nucleus_budget_select_state: Entity<SelectState<ModelSelectDelegate>>,
     nucleus_budget_select_key: Option<usize>,
+    /// Native SelectState dropdown for General Settings Merge Strategy.
+    merge_strategy_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    merge_strategy_select_key: Option<hadron_lattice::MergeStrategy>,
     /// In-progress `agy` ACP bridge venv provisioning for the seat whose Settings are
     /// open, if any. `None` for any other kind of seat, before the first attempt, or
     /// once already provisioned — see `start_agy_bridge_provision`. This runs off the
@@ -575,6 +578,9 @@ impl Chamber {
         let nucleus_budget_select_state = cx.new(|cx| {
             SelectState::new(create_model_delegate("32 KiB", &["16 KiB".into(), "64 KiB".into(), "128 KiB".into()], None), None, window, cx).searchable(false)
         });
+        let merge_strategy_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Fast-forward", &["Squash commit".into(), "GitHub PR mirror".into()], None), None, window, cx).searchable(false)
+        });
         let custom_cli_model = cx.new(|cx| InputState::new(window, cx).placeholder("model name (optional)"));
         let custom_cli_flag = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. --prompt (blank = positional)"));
         let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
@@ -677,6 +683,18 @@ impl Chamber {
                         this.save_repo_team(cx);
                     }
                 }
+                cx.notify();
+            }),
+            cx.subscribe_in(&merge_strategy_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                let strategy = match val {
+                    "Squash commit" => hadron_lattice::MergeStrategy::Squash,
+                    "GitHub PR mirror" => hadron_lattice::MergeStrategy::GitHubPr,
+                    _ => hadron_lattice::MergeStrategy::FastForward,
+                };
+                this.team.merge_strategy = Some(strategy);
+                this.save_repo_team(cx);
                 cx.notify();
             }),
             // Same reason: the custom-CLI form's "Save" button is only wired up once
@@ -938,6 +956,8 @@ impl Chamber {
             editor_select_key: None,
             nucleus_budget_select_state,
             nucleus_budget_select_key: None,
+            merge_strategy_select_state,
+            merge_strategy_select_key: None,
             agy_bridge_probe: None,
             file_tree_paths: files,
             _lock_file: lock_file,

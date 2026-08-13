@@ -93,6 +93,13 @@ impl super::Chamber {
                          counts instead of the index.",
                     ),
                     self.nucleus_budget_select(window, cx),
+                ))
+                .child(settings_field(
+                    "Merge strategy",
+                    Some(
+                        "Strategy for landing merged quark branches onto main: Fast-forward (default), Squash commit, or GitHub PR mirror.",
+                    ),
+                    self.merge_strategy_select(window, cx),
                 )),
         );
 
@@ -222,6 +229,34 @@ impl super::Chamber {
             .w_full()
             .min_w(px(180.0))
             .placeholder("Select budget...")
+            .into_any_element()
+    }
+
+    /// The merge strategy picker using native Select dropdown component.
+    pub(super) fn merge_strategy_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current_strategy = self.team.merge_strategy();
+        if self.merge_strategy_select_key != Some(current_strategy) {
+            self.merge_strategy_select_key = Some(current_strategy);
+            let choices: Vec<String> = vec![
+                "Fast-forward".to_string(),
+                "Squash commit".to_string(),
+                "GitHub PR mirror".to_string(),
+            ];
+            let current_label = match current_strategy {
+                hadron_lattice::MergeStrategy::FastForward => "Fast-forward",
+                hadron_lattice::MergeStrategy::Squash => "Squash commit",
+                hadron_lattice::MergeStrategy::GitHubPr => "GitHub PR mirror",
+            }.to_string();
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.merge_strategy_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.merge_strategy_select_state)
+            .w_full()
+            .min_w(px(180.0))
+            .placeholder("Select strategy...")
             .into_any_element()
     }
 
