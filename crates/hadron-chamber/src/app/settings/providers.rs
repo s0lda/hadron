@@ -230,18 +230,10 @@ impl super::Chamber {
             WizardState::None => {
                 let mut list = v_flex().gap_3();
                 for provider in &self.providers {
-                    let (state_text, state_color) = match &provider.state {
-                        ProviderState::NotConnected => {
-                            ("Not Connected".to_string(), theme::text_muted())
-                        }
-                        ProviderState::Connecting => {
-                            ("Connecting…".to_string(), theme::text_muted())
-                        }
-                        ProviderState::NeedsAuth(_) => ("Needs Auth".to_string(), theme::accent()),
-                        ProviderState::Ready { model } => {
-                            (format!("Ready ({})", model), gpui::rgb(0x22c55e))
-                        }
-                        ProviderState::Failed(e) => (format!("Failed: {}", e), theme::danger()),
+                    let model_text = if provider.model.trim().is_empty() {
+                        "—".to_string()
+                    } else {
+                        provider.model.clone()
                     };
                     list = list.child(
                         h_flex()
@@ -273,21 +265,10 @@ impl super::Chamber {
                                     .items_center()
                                     .gap_3()
                                     .child(
-                                        h_flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(
-                                                div()
-                                                    .size(px(8.0))
-                                                    .rounded_full()
-                                                    .bg(state_color),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .text_color(theme::text_secondary())
-                                                    .child(state_text),
-                                            ),
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme::text_secondary())
+                                            .child(format!("Model: {}", model_text)),
                                     )
                                     .child({
                                         let pid = provider.id.clone();
@@ -848,7 +829,7 @@ impl super::Chamber {
                                     this.providers.push(ConfiguredQuark {
                                         id: seat_id.clone(),
                                         transport: "acp".to_string(),
-                                        state: state_inner.clone(),
+                                        model: model_inner.clone(),
                                     });
 
                                     // An ACP seat, and it carries the command the wizard
@@ -1113,7 +1094,7 @@ impl super::Chamber {
                             this.providers.push(ConfiguredQuark {
                                 id: seat.id.0.clone(),
                                 transport: seat.transport.code().to_string(),
-                                state: ProviderState::Ready { model: seat.model.clone() },
+                                model: seat.model.clone(),
                             });
 
                             this.add_configured_quark(seat, cx);
@@ -1209,7 +1190,7 @@ impl super::Chamber {
                                     this.providers.push(ConfiguredQuark {
                                         id: seat_id.clone(),
                                         transport: "http".to_string(),
-                                        state: ProviderState::Ready { model: model.clone() },
+                                        model: model.clone(),
                                     });
 
                                     let seat = hadron_lattice::Seat {

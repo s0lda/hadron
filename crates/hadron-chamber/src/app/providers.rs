@@ -38,7 +38,7 @@ pub(super) enum ProviderState {
 pub(super) struct ConfiguredQuark {
     pub id: String,
     pub transport: String,
-    pub state: ProviderState,
+    pub model: String,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -297,9 +297,7 @@ pub(super) fn configured_providers(team: &Team) -> Vec<ConfiguredQuark> {
         .map(|seat| ConfiguredQuark {
             id: seat.id.0.clone(),
             transport: seat.transport.code().to_string(),
-            state: ProviderState::Ready {
-                model: seat.model.clone(),
-            },
+            model: seat.model.clone(),
         })
         .collect()
 }
@@ -420,10 +418,7 @@ mod tests {
         assert_eq!(sdk.transport, "sdk", "the transport code, not the vendor \"codex\"");
 
         for (p, model) in [(cli, "gemini-3-pro"), (acp, "opus-4.8"), (sdk, "gpt-5")] {
-            match &p.state {
-                ProviderState::Ready { model: m } => assert_eq!(m, model),
-                _ => panic!("expected ProviderState::Ready"),
-            }
+            assert_eq!(p.model, model);
         }
     }
 
