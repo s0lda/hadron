@@ -9,8 +9,6 @@ description: Use when starting feature work that needs isolation from current wo
 
 Detect existing isolation first → Prefer native harness tools → Fall back to manual git worktrees.
 
-**Announce at start:** "I'm using the using-git-worktrees skill to set up an isolated workspace."
-
 ## Execution Steps
 
 ### Step 0: Detect Existing Workspace Isolation
