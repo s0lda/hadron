@@ -52,36 +52,12 @@ impl super::Chamber {
         v_flex().w_full().h_full().min_h_0().p_2().child(card)
     }
 
-    /// Renders the floating active worktree selector chip header displaying workspace dir & git branch.
+    /// Renders the floating roster header chip with nucleus budget status and sidebar toggle.
     pub(super) fn render_worktree_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let repo_dir = self
-            .path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("hadron");
-        let branch = hadron_gluon::worktree::current_branch(&self.path)
-            .unwrap_or_else(|| "main".to_string());
-
-        let mut title_child = h_flex()
-            .items_center()
-            .gap_1p5()
-            .child(Icon::new(IconName::Folder).small())
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(theme::text())
-                    .child(repo_dir.to_string()),
-            )
-            .child(div().text_color(theme::text_muted()).child("/"))
-            .child(Icon::new(IconName::FolderOpen).small())
-            .child(
-                div()
-                    .text_color(theme::text_muted())
-                    .child(branch),
-            );
+        let mut left_child = h_flex().items_center().gap_1p5();
 
         if self.nucleus_over_budget {
-            title_child = title_child.child(
+            left_child = left_child.child(
                 div()
                     .id("nucleus-over-budget-warning")
                     .text_xs()
@@ -108,7 +84,7 @@ impl super::Chamber {
             .rounded_lg()
             .border_1()
             .border_color(theme::glass_highlight())
-            .child(title_child)
+            .child(left_child)
             .child(
                 div()
                     .id("roster-toggle")
