@@ -219,7 +219,7 @@ git commit -m "feat(gluon): implement squash and github_pr options in merge gate
 
 ---
 
-### Task 3: Expose `Merge Strategy` Selector in `hadron-chamber` Settings UI
+- [x] **Task 3: Expose `Merge Strategy` Selector in `hadron-chamber` Settings UI** (commit 31e3fbd1)
 
 **Files:**
 - Modify: `crates/hadron-chamber/src/app/settings/providers.rs:200-300`
