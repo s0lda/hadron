@@ -8,63 +8,6 @@ pub(super) struct SkillInfo {
 }
 
 impl super::Chamber {
-    /// A compact segmented picker for a free-string session field (Effort / Mode),
-    /// replacing the old free-text input. The seat field stays an `Option<String>`;
-    /// the "Default" chip clears it. A stored value that is not one of `options` is
-    /// preserved as its own selected chip, so editing an agent's uncommon value here
-    /// never silently blanks it (the daemon matches the string against what the agent
-    /// advertises, so an off-list value is simply not applied — never destructive).
-    pub(super) fn session_select(
-        &self,
-        key: &'static str,
-        field: &Entity<InputState>,
-        options: &[&'static str],
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let current = field.read(cx).value().trim().to_string();
-        // (label, value-to-store, selected)
-        let mut chips: Vec<(String, String, bool)> =
-            vec![("Default".to_string(), String::new(), current.is_empty())];
-        for o in options {
-            chips.push((o.to_string(), o.to_string(), current.eq_ignore_ascii_case(o)));
-        }
-        if !current.is_empty() && !options.iter().any(|o| current.eq_ignore_ascii_case(o)) {
-            chips.push((current.clone(), current.clone(), true));
-        }
-        let mut row = h_flex().gap_1p5().flex_wrap();
-        for (label, store, selected) in chips {
-            let f = field.clone();
-            row = row.child(
-                div()
-                    .id(SharedString::from(format!("sel-{key}-{label}")))
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .border_1()
-                    .text_xs()
-                    .cursor_pointer()
-                    .when(selected, |d| {
-                        d.bg(theme::bg_elevated())
-                            .border_color(theme::accent())
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(theme::accent())
-                    })
-                    .when(!selected, |d| {
-                        d.bg(theme::input_bg())
-                            .border_color(theme::border())
-                            .text_color(theme::text_secondary())
-                            .hover(|s| s.bg(theme::bg_surface_raised()))
-                    })
-                    .child(label)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        f.update(cx, |s, cx| s.set_value(store.clone(), window, cx));
-                        this.commit_settings_inputs(cx);
-                        cx.notify();
-                    })),
-            );
-        }
-        row.into_any_element()
-    }
 
     /// Open the native file picker to choose an avatar image; the choice is parked
     /// in `pending_image_pick` for `render` to apply (see the field's doc — the

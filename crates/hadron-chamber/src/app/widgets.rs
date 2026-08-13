@@ -916,13 +916,6 @@ pub(super) fn effort_tag(effort: &Option<String>) -> gpui::AnyElement {
         .child(label)
         .into_any_element()
 }
-
-/// The permission-mode ladder in ascending order of delegated authority, for a UI
-/// that offers all four at once (the Settings "Default permission mode" picker)
-/// rather than cycling. [`next_global_mode`] walks the same order as a cycle and
-/// stays separate: one answers "what comes next", this one answers "what are they".
-pub(super) const MODE_LADDER: [Mode; 4] = [Mode::Ask, Mode::Write, Mode::Auto, Mode::Bypass];
-
 /// The short badge label for a permission mode, e.g. `Mode::Bypass` → `"BYPASS"`.
 /// One source of truth for the ladder's labels, shared by the roster tag and the
 /// Settings picker.

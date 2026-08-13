@@ -828,7 +828,6 @@ impl super::Chamber {
                     }
                     ProviderState::Ready { model } => {
                         let desc_inner = desc.clone();
-                        let state_inner = state.clone();
                         let model_inner = model.clone();
                         v_flex()
                             .gap_4()
