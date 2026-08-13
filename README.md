@@ -62,6 +62,20 @@ cd ~/dev/my_project && hadron
 
 ---
 
+## 📚 Documentation & Deep Dives
+
+Explore Hadron's mechanics, architecture, and developer guides in the [`/docs`](docs/) directory:
+
+| Section | Description | Links |
+| :--- | :--- | :--- |
+| 📜 **Changelog** | Release history & version notes | [`Changelog`](docs/CHANGELOG.md) |
+| 🏛️ **Architecture** | 2-Tier Daemon/GUI split & Swarm Event Loop | [`Decoupled Architecture`](docs/architecture/decoupled-architecture.md) · [`System Diagrams`](docs/architecture/system-diagrams.md) |
+| ⚛️ **Concepts & Physics** | Particle Physics Mental Model & Glossary | [`Physics Metaphor`](docs/concepts/physics-metaphor.md) · [`Vocabulary`](docs/concepts/vocabulary.md) |
+| 🛠️ **Hadron Forge** | AST Edit-by-Hash Engine & MCP Server | [`Edit-by-Hash Engine`](docs/forge/edit-by-hash.md) |
+| 🌿 **Development** | Building from Source & Git Worktrees | [`Building from Source`](docs/development/building-from-source.md) · [`Git Worktrees`](docs/development/git-worktree-usage.md) |
+
+---
+
 ## 🔌 Provider & Model Ecosystem
 
 Hadron natively bridges **30+ AI agents, local models, and cloud APIs** into a single orchestrated chat workspace. Any agent, model, or tool speaking **ACP (Agent Client Protocol)**, **OpenAI-compatible HTTP**, or **Stdio/PTY** can be seated directly into your swarm.
@@ -85,20 +99,6 @@ Connect to any cloud model provider or API proxy via `Authorization: Bearer` key
 ### 💻 Custom Coding CLIs & PTY Transports
 - **CLI Transport (`CliSpec`)**: Data-driven stdio wrapper for one-shot or interactive CLI coding tools (`aider`, custom scripts, dockerized agents).
 - **PTY Terminal Seats**: Interactive bash/zsh PTY terminals seated right alongside LLM agents in the chat room.
-
----
-
-## 📚 Documentation & Deep Dives
-
-Explore Hadron's mechanics, architecture, and developer guides in the [`/docs`](docs/) directory:
-
-| Section | Description | Links |
-| :--- | :--- | :--- |
-| 📜 **Changelog** | Release history & version notes | [`Changelog`](docs/CHANGELOG.md) |
-| 🏛️ **Architecture** | 2-Tier Daemon/GUI split & Swarm Event Loop | [`Decoupled Architecture`](docs/architecture/decoupled-architecture.md) · [`System Diagrams`](docs/architecture/system-diagrams.md) |
-| ⚛️ **Concepts & Physics** | Particle Physics Mental Model & Glossary | [`Physics Metaphor`](docs/concepts/physics-metaphor.md) · [`Vocabulary`](docs/concepts/vocabulary.md) |
-| 🛠️ **Hadron Forge** | AST Edit-by-Hash Engine & MCP Server | [`Edit-by-Hash Engine`](docs/forge/edit-by-hash.md) |
-| 🌿 **Development** | Building from Source & Git Worktrees | [`Building from Source`](docs/development/building-from-source.md) · [`Git Worktrees`](docs/development/git-worktree-usage.md) |
 
 ---
 
