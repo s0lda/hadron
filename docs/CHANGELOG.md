@@ -5,6 +5,15 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.8] - 2026-08-13
+
+### Added
+- **Git Graph Overflow Ref Tooltips**: Render hidden overflow git branch and tag refs (`+N`) as a vertical column of distinct badges styled by ref kind (HEAD, Local, Remote, Tag).
+- **Streaming Draft Preview Line Cap**: Constrain streaming draft preview text in chat pane to 5 lines (~100px max height) with vertical scrolling to prevent viewport expansion during long generations.
+
+### Fixed
+- **Stats Tab Scroll Anchoring**: Isolated `Stats` tab scrolling to a dedicated scroll handle initialized at top (offset 0) and removed errant background auto-scroll triggers in reload ticks and chat postings.
+
 ## [0.2.7] - 2026-08-13
 
 ### Added

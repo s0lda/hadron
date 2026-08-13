@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.2.8",
+        date: Some("2026-08-13"),
+        added: &[
+            "Git Graph overflow ref tooltips displaying hidden branch and tag refs as styled badges in a vertical list",
+            "Streaming draft preview line cap (~5 lines) with vertical scrolling in live chat view",
+        ],
+        changed: &[],
+        fixed: &[
+            "Stats tab scroll anchoring at top with dedicated scroll handle and removed background auto-scroll triggers",
+        ],
+    },
+    Release {
         version: "0.2.7",
         date: Some("2026-08-13"),
         added: &[
