@@ -640,6 +640,8 @@ mod tests {
             "pr",
             "release",
             "review",
+            "replay",
+            "fork-field",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(

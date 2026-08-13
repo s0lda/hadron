@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 hadron-forge = { path = "../hadron-forge" }
+hadron-lattice = { path = "../hadron-lattice" }
 rmcp = { version = "2.2.0", features = ["server", "transport-io", "macros"] }
 schemars = "1"
 serde = { version = "1.0", features = ["derive"] }

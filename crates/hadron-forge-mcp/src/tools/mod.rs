@@ -12,6 +12,7 @@ pub mod exec;
 pub mod git;
 pub mod inspect;
 pub mod nucleus;
+pub mod semantic;
 
 use hadron_forge::file::Root;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -50,7 +51,8 @@ impl ForgeMcpServer {
                 + Self::nucleus_router()
                 + Self::git_router()
                 + Self::diagnostics_router()
-                + Self::cargo_tree_router(),
+                + Self::cargo_tree_router()
+                + Self::semantic_router(),
             root: Root::new(root_path),
             nucleus_root: Root::new(nucleus_root),
         }

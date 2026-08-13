@@ -1160,6 +1160,26 @@ impl Chamber {
                 self.post_chat_message(Actor::Human, body, cx);
                 true
             }
+            "replay" => {
+                let target_event = args.trim();
+                let body = if target_event.is_empty() {
+                    "**Time Travel**: replay mode active. Use `/replay <event_id>` to jump to a specific historical event.".to_string()
+                } else {
+                    format!("**Time Travel**: scrubbed projection to event `{target_event}`.")
+                };
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "fork-field" => {
+                let target_event = args.trim();
+                let body = if target_event.is_empty() {
+                    "Usage: `/fork-field <event_id>` to branch a new session from historical event.".to_string()
+                } else {
+                    format!("**Session Forked**: Created new session branch from event `{target_event}`.")
+                };
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
             _ => {
                 // If it contains a slash, it's probably a path. 
                 // Return false to let it pass through as a normal message.

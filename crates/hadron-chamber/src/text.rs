@@ -123,6 +123,8 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "writing-skills", detail: "Create, edit, or verify custom skill procedures", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "release", detail: "Execute project release procedure in .hadron/nucleus/release.md", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "review", detail: "Request peer review on active branch before merge gate", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "replay", detail: "Step backwards through historical field events", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "fork-field", detail: "Fork a new session from a historical event ID", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "reboot", detail: "Force-restart a resident quark (e.g. /reboot @acp-claude or /reboot all)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "approve", detail: "Approve a pending permission request (e.g. /approve @worker or /approve @worker remember)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "deny", detail: "Deny a pending permission request (e.g. /deny @worker)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },

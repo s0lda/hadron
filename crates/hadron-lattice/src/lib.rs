@@ -26,5 +26,7 @@ pub use workspace::*;
 
 pub mod sys;
 pub mod nucleus;
+pub mod semantic;
 
 pub use nucleus::*;
+pub use semantic::*;

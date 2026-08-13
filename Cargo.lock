@@ -2970,6 +2970,7 @@ version = "0.2.6"
 dependencies = [
  "anyhow",
  "hadron-forge",
+ "hadron-lattice",
  "rmcp",
  "schemars 1.2.1",
  "serde",
