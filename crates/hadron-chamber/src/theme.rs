@@ -88,9 +88,9 @@ pub fn glass_card() -> Hsla {
     rgba(0x0b0b0bf8).into()
 }
 
-/// Highlights / rims: Neutral border sheen (`rgba(56, 56, 56, 0.22)`).
+/// Highlights / rims: Neutral border sheen (`rgba(96, 96, 96, 0.22)`).
 pub fn glass_highlight() -> Hsla {
-    rgba(0x38383838).into()
+    rgba(0x60606038).into()
 }
 
 // --- vector status halo indicators ---
@@ -156,7 +156,7 @@ pub fn popover() -> Rgba {
     rgb(0x101010)
 }
 pub fn border() -> Rgba {
-    rgb(0x383838)
+    rgb(0x444444)
 }
 
 // --- text tiers ---
@@ -307,7 +307,7 @@ mod tests {
         assert_eq!(popover(), rgb(0x101010));
         assert_eq!(input_bg(), rgb(0x181818));
         assert_eq!(bg_surface_raised(), rgb(0x1c1c1c));
-        assert_eq!(border(), rgb(0x383838));
+        assert_eq!(border(), rgb(0x444444));
         assert_eq!(text(), rgb(0xe8e8e8));
         assert_eq!(term_fg(), rgb(0xe8e8e8));
         assert_eq!(text_secondary(), rgb(0xa8a8a8));
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn test_glass_highlight_token() {
         let highlight = glass_highlight();
-        let expected: Hsla = rgba(0x38383838).into();
+        let expected: Hsla = rgba(0x60606038).into();
         assert_eq!(highlight, expected);
     }
 
