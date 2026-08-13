@@ -5,6 +5,24 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.7] - 2026-08-13
+
+### Added
+- **Automated Peer Review & Quorum Gate (`/review`)**: Added `ReviewGate` enforcing peer approvals before merge gate execution, and registered `/review` slash command in Chamber and Gluon router.
+- **Adversarial Cross-Examination Lane**: Added `CrossExaminationLane` with structured critic prompt synthesis and change triage rules.
+- **Dynamic Smart Nucleus Prompt Injector**: Added `DynamicNucleusInjector` in `hadron-lattice` for relevance-ranked prompt memory injection within configured token budgets.
+- **Dynamic Preon Synthesis**: Added on-the-fly markdown specialist persona generator in `hadron-gluon` for domain-tailored ad-hoc tasks.
+- **Isolated `sccache` Builds & Worktree Pool**: Added per-worktree target directory configuration with shared `sccache` compiler cache, and thread-safe `WorktreePool` recycling in `hadron-gluon`.
+- **AST-Aware Semantic Merge & Test Impact Analysis**: Added 3-way `merge_rust_ast` and test impact analysis (`compute_impacted_tests`) in `hadron-forge`.
+- **Live Swarm Topology DAG & Chamber Time-Travel**: Added GPUI live swarm topology visualizer, `/replay` and `/fork-field` time-travel commands, interactive 3-way AST conflict resolver, and live token gauge.
+- **Embedded Semantic Code & Memory Graph**: Added in-memory `SemanticGraphIndex` in `hadron-lattice` and `hadron_forge_semantic_search` MCP tool in `hadron-forge-mcp`.
+
+### Changed
+- **README & Provider Ecosystem Overhaul**: Reorganized provider docs around transports (ACP, HTTP, Local/Cloud) with updated architecture diagram and 400+ OpenRouter model support.
+
+### Fixed
+- **Git Push Stderr Output Handling**: Fixed stderr capture and empty output handling in Chamber `/push` command.
+
 ## [0.2.6] - 2026-08-13
 
 ### Added
@@ -16,6 +34,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Nucleus Feature Map Prompt Evaluation**: Explicitly checked `features.md` filesystem existence before prompt digest inclusion.
 - **VCS Spec & Plan Clean Up**: Untracked internal `.hadron/docs` files from git repository index.
+
+## [0.2.5] - 2026-08-13
+
+### Added
+- **File Tree Preview Syntax Highlighting**: Added tree-sitter language detection and syntax highlighting for file previews (`.rs`, `.cpp`, `.css`, `.json`, `.ts`, `.py`, `.sh`, etc.).
+- **Unified Skills Toggle in Settings**: Combined skills selection and denied skills in Settings; skills are enabled by default and unselecting a skill toggles it on the deny list.
+- **Scrollable Sessions Menu & History Cleanup**: Made the Sessions menu scrollable and added `/clear-history` command to clear archived session logs while preserving telemetry token spend.
+
+### Changed
+- **Event Log Single Line Collapse**: Collapsed Event Log rows to a clean single line with markdown header stripping, expanding on click for detailed output.
+- **Git Inspector UI Polish**: Removed redundant Git subtab headers, indented expanded commit diff panels with continuous rail graph canvas rendering, and added symmetric padding in Branches and Worktrees views.
+- **Roster & Settings Header Simplification**: Removed raw file path and branch labels from the Roster header and removed misleading green "Ready" status dots from configured providers.
 
 ## [0.2.4] - 2026-08-12
 

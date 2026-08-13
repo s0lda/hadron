@@ -20,6 +20,26 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.2.7",
+        date: Some("2026-08-13"),
+        added: &[
+            "Automated Peer Review & Quorum Gate (`/review`) enforcing peer review before merge gate",
+            "Adversarial Cross-Examination Lane with structured critic prompt synthesis and change triage",
+            "Dynamic Smart Nucleus Prompt Injector with relevance ranking and token budget enforcement",
+            "Dynamic Preon Synthesis generating on-the-fly markdown specialist personas",
+            "Worktree-isolated `sccache` compilation and thread-safe `WorktreePool`",
+            "3-way semantic AST merge (`merge_rust_ast`) and Test Impact Analysis (TIA)",
+            "Chamber Live Swarm Topology DAG, Event Time-Travel (`/replay`, `/fork-field`), and 3-Way AST Conflict Resolver",
+            "Embedded Semantic Code & Memory Graph with `hadron_forge_semantic_search` MCP tool",
+        ],
+        changed: &[
+            "Reorganized README and Provider Ecosystem around ACP, HTTP, and Cloud transports with 400+ OpenRouter models",
+        ],
+        fixed: &[
+            "Captured stderr in Chamber `/push` command and handled empty output cleanly",
+        ],
+    },
+    Release {
         version: "0.2.6",
         date: Some("2026-08-13"),
         added: &[
@@ -33,6 +53,21 @@ const RELEASES: &[Release] = &[
             "Nucleus Feature Map prompt evaluation and explicit filesystem checking",
             "VCS spec and plan cleanup (untracked internal `.hadron/docs` files from git index)",
         ],
+    },
+    Release {
+        version: "0.2.5",
+        date: Some("2026-08-13"),
+        added: &[
+            "File tree preview syntax highlighting for Rust, C++, CSS, JSON, TS, Python, Bash, and source code files",
+            "Unified Skills selection in Settings: enabled by default, unselecting toggles skill to deny list",
+            "Scrollable Sessions submenu and `/clear-history` command preserving token spend telemetry",
+        ],
+        changed: &[
+            "Collapsed Event Log rows to a clean single line with markdown header stripping (expands on click)",
+            "Indented Git Graph commit diffs with continuous rail graph lines and removed redundant Git subtab headers",
+            "Cleaned up Roster panel header and removed misleading Ready status indicator from configured providers",
+        ],
+        fixed: &[],
     },
     Release {
         version: "0.2.4",
