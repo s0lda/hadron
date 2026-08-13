@@ -122,6 +122,14 @@ fn writing_a_plan_selects_the_writing_skill() {
 }
 
 #[test]
+fn release_skill_selects_and_is_builtin() {
+    let builtins = builtins();
+    let m = select("execute project release procedure", &builtins).expect("release skill matches");
+    assert_eq!(m.id, "release");
+    assert!(m.body.contains("release procedure"));
+}
+
+#[test]
 fn executing_a_plan_selects_the_executing_skill() {
     let m = select("Execute the plan at docs/plans/2026-07-14-acp-auth.md", &builtins()).expect("match");
     assert_eq!(m.id, "executing-plans");

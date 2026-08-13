@@ -189,6 +189,11 @@ pub const SKILLS: &[Skill] = &[
         triggers: &["write a skill", "create skill", "edit skill", "create a skill", "new skill"],
         body: include_str!("../invariants/skills/writing-skills.md"),
     },
+    Skill {
+        id: "release",
+        triggers: &["release", "project release", "execute release", "run release", "make release"],
+        body: include_str!("../invariants/skills/release.md"),
+    },
 ];
 
 /// The canonical trigger phrase for a built-in skill id, or `None` if no such id.
