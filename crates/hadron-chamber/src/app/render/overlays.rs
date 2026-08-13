@@ -20,6 +20,21 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.2.6",
+        date: Some("2026-08-13"),
+        added: &[
+            "Built-in `/release` slash command and builtin `release` skill backing project release automation",
+            "Operational Git slash commands (`/git-status`, `/git-log`, `/push`, `/pr`)",
+            "Configurable Merge Strategy selector (FastForward, Squash, GitHub PR) in Settings UI",
+            "GitHub repository search topics on `s0lda/hadron` (`ai`, `llm`, `ai-agents`, `multi-agent`, `rust`, etc.)",
+        ],
+        changed: &[],
+        fixed: &[
+            "Nucleus Feature Map prompt evaluation and explicit filesystem checking",
+            "VCS spec and plan cleanup (untracked internal `.hadron/docs` files from git index)",
+        ],
+    },
+    Release {
         version: "0.2.4",
         date: Some("2026-08-12"),
         added: &[

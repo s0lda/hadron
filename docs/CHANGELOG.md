@@ -5,6 +5,18 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] - 2026-08-13
+
+### Added
+- **Built-in `/release` Command and Skill**: Added `/release` slash command and builtin `release` skill backing project release automation via `.hadron/nucleus/release.md`.
+- **Operational Git Slash Commands**: Added `/git-status`, `/git-log`, `/push`, and `/pr` slash commands for fast terminal Git workflow.
+- **Configurable Merge Strategy Selector**: Added FastForward, Squash, and GitHub PR merge strategy options in Settings UI and Gluon merge gate.
+- **GitHub Topics Integration**: Configured repository search topics on `s0lda/hadron` (`ai`, `llm`, `ai-agents`, `multi-agent`, `developer-tools`, `rust`, `gpui`, `mcp`, `acp`, etc.).
+
+### Fixed
+- **Nucleus Feature Map Prompt Evaluation**: Explicitly checked `features.md` filesystem existence before prompt digest inclusion.
+- **VCS Spec & Plan Clean Up**: Untracked internal `.hadron/docs` files from git repository index.
+
 ## [0.2.4] - 2026-08-12
 
 ### Added
