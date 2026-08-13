@@ -14,6 +14,7 @@
 use std::path::Path;
 
 use async_trait::async_trait;
+use hadron_lattice::MergeStrategy;
 
 use crate::snapshot::{git, git_ok};
 use crate::worktree::Worktree;
@@ -45,6 +46,10 @@ pub enum Landed {
     /// first) — the branch was rebased onto it and then fast-forwarded. Under
     /// concurrency this is the *common* case, not the edge case.
     RebasedThenFastForward,
+    /// Multi-commit branch collapsed into a single squash commit on base.
+    SquashAndMerge,
+    /// Branch pushed to remote origin and PR opened/updated.
+    GitHubPrOpened(String),
     /// The rebase hit conflicts a machine must not resolve. Nothing was landed and
     /// nothing was lost: the branch is exactly where the quark left it.
     Conflicted(String),
@@ -61,6 +66,8 @@ impl Landed {
                 "merged `{branch}` → `{base}` (`{base}` had moved, so the branch was rebased \
                  onto it and re-tested first)."
             ),
+            Landed::SquashAndMerge => format!("merged `{branch}` → `{base}` (squash commit)."),
+            Landed::GitHubPrOpened(detail) => format!("mirrored `{branch}` → origin ({detail})."),
             Landed::Conflicted(err) => format!(
                 "could not merge `{branch}` → `{base}`: rebasing onto `{base}` conflicts, and \
                  a machine must not guess at a resolution. The branch is untouched.\n\n{err}"
@@ -86,6 +93,17 @@ pub trait MergeRunner: Send + Sync {
 
     /// Land the branch on `base`, in `repo_root`.
     fn land(&self, repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Landed>;
+
+    /// Land the branch using the specified [`MergeStrategy`].
+    fn land_with_strategy(
+        &self,
+        repo_root: &Path,
+        wt: &Worktree,
+        base: &str,
+        strategy: MergeStrategy,
+    ) -> anyhow::Result<Landed> {
+        land_with_strategy(repo_root, wt, base, strategy)
+    }
 }
 
 /// True when the repo has any remote configured. FALSE for hadron today (`git
@@ -291,6 +309,46 @@ pub fn land(repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Lande
     Ok(Landed::RebasedThenFastForward)
 }
 
+/// Land `wt.branch` on `base` in the parent repo using the specified strategy.
+pub fn land_with_strategy(
+    repo_root: &Path,
+    wt: &Worktree,
+    base: &str,
+    strategy: MergeStrategy,
+) -> anyhow::Result<Landed> {
+    match strategy {
+        MergeStrategy::FastForward => land(repo_root, wt, base),
+        MergeStrategy::Squash => land_squash(repo_root, wt, base),
+        MergeStrategy::GitHubPr => land_github_pr(repo_root, wt, base),
+    }
+}
+
+fn land_squash(repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Landed> {
+    if git(repo_root, &["merge-base", "--is-ancestor", &wt.branch, base]).is_ok() {
+        return Ok(Landed::AlreadyLanded);
+    }
+    if let Err(e) = git(&wt.path, &["rebase", base]) {
+        let _ = git(&wt.path, &["rebase", "--abort"]);
+        return Ok(Landed::Conflicted(format!("{e:#}")));
+    }
+    let commit_msg = format!("squash: merge branch '{}' into '{}'", wt.branch, base);
+    git(repo_root, &["merge", "--squash", &wt.branch])?;
+    git(repo_root, &["commit", "-m", &commit_msg])?;
+    Ok(Landed::SquashAndMerge)
+}
+
+fn land_github_pr(_repo_root: &Path, wt: &Worktree, _base: &str) -> anyhow::Result<Landed> {
+    if !has_remote(&wt.path) {
+        return Ok(Landed::GitHubPrOpened(format!("No remote origin configured for branch {}", wt.branch)));
+    }
+    git(&wt.path, &["push", "-u", "origin", &wt.branch])?;
+    let pr_url = match git_ok(&wt.path, &["config", "--get", "remote.origin.url"]) {
+        Ok(Some(url)) => format!("Branch {} pushed to origin ({url})", wt.branch),
+        _ => format!("Pushed branch {} to origin", wt.branch),
+    };
+    Ok(Landed::GitHubPrOpened(pr_url))
+}
+
 /// Bring `wt`'s branch up to date with `base` **before** the gate tests it.
 ///
 /// **Why before, and not only inside [`land`].** The gate used to test the branch
@@ -475,6 +533,33 @@ mod tests {
             "the rebase drops a patch already upstream"
         );
         assert_eq!(land(repo.path(), &wt, "main").unwrap(), Landed::AlreadyLanded);
+    }
+
+    #[test]
+    fn land_with_strategy_squash_collapses_commits() {
+        let repo = git_repo();
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+        std::fs::write(wt.path.join("a.txt"), "commit 1\n").unwrap();
+        worktree::commit_turn(&wt, "opus: commit 1").unwrap();
+        std::fs::write(wt.path.join("b.txt"), "commit 2\n").unwrap();
+        worktree::commit_turn(&wt, "opus: commit 2").unwrap();
+
+        let landed = land_with_strategy(repo.path(), &wt, "main", hadron_lattice::MergeStrategy::Squash).unwrap();
+        assert_eq!(landed, Landed::SquashAndMerge);
+
+        let log = git(repo.path(), &["log", "--oneline", "main"]).unwrap();
+        assert!(log.contains("squash: merge branch"));
+    }
+
+    #[test]
+    fn land_with_strategy_github_pr_mirrors_branch() {
+        let repo = git_repo();
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+        std::fs::write(wt.path.join("a.txt"), "commit 1\n").unwrap();
+        worktree::commit_turn(&wt, "opus: commit 1").unwrap();
+
+        let landed = land_with_strategy(repo.path(), &wt, "main", hadron_lattice::MergeStrategy::GitHubPr).unwrap();
+        assert!(matches!(landed, Landed::GitHubPrOpened(_)));
     }
 
     /// A rebase a machine must not resolve. Report it; preserve the branch.

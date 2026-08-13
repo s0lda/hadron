@@ -319,7 +319,10 @@ impl super::Engine {
                     return Ok(true);
                 }
 
-                let landed = match runner.land(root, &t.wt, &t.base) {
+                let strategy = hadron_lattice::team_for_field(&self.field_path)
+                    .map(|p| hadron_lattice::load_team(&p).merge_strategy())
+                    .unwrap_or_default();
+                let landed = match runner.land_with_strategy(root, &t.wt, &t.base, strategy) {
                     Ok(landed) => landed,
                     Err(e) => {
                         // **Deliberately NOT a hand-back.** This failure is in the TARGET
