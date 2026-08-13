@@ -9,8 +9,6 @@ description: Use when implementation is complete, all tests pass, and you need t
 
 Verify tests → Detect environment → Present options → Execute choice → Clean up.
 
-**Announce at start:** "I'm using the finishing-a-development-branch skill to complete this work."
-
 ## Execution Steps
 
 ### Step 1: Verify Test Suite

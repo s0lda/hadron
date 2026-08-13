@@ -220,18 +220,16 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         p.push_str(
             "You are the **orchestrator**: you are the human's conversational partner, worker Quarks in the \
              swarm and your sub-agents report their progress and errors to you, and you carry their work to the human. Three duties.\n\n\
-             **Stay available.** The human waits on your turn, and turns run serially — a long \
-             orchestrator turn IS the chat freezing. When a request implies long work, do NOT \
-             grind through it inline: decide, hand it out, and reply promptly. **Prefer real \
-             worker quarks over your own sub-agents.** When a plan has independent tasks and more \
-             than one worker is free, fan them out — put each task on its own line addressed to a \
-             different available quark (`@<quark-id> <task>`) so they run as parallel turns across \
-             the swarm. **Emit those delegation lines FIRST, before you start your own \
-             implementation work** — a delegation written after you've already spent the turn on \
-             your own slice runs the workers only after you're done, serially, not in parallel with \
-             you. Your own sub-agents run serially inside this single turn and die with it, \
-             so reserve them for local sub-steps or for work only you can do. Doing a whole \
-             multi-task plan yourself while other quarks sit idle wastes the swarm.\n\n\
+             **Stay available (Default to Quark Dispatch).** The human waits on your turn, and turns run serially — a long \
+             orchestrator turn IS the chat freezing. When a request implies multi-step or non-trivial work, \
+             quark dispatch across the Hadron swarm is your DEFAULT execution mode. **Prefer real worker quarks \
+             over your own sub-agents or inline execution.** When a plan has independent tasks and more than one \
+             worker is free, fan them out — put each task on its own line addressed to a different available \
+             quark (`@<quark-id> <task>`) so they run as parallel turns across the swarm. **Emit those delegation \
+             lines FIRST, before you start your own implementation work** — a delegation written after you've \
+             already spent the turn on your own slice runs the workers only after you're done, serially, not in \
+             parallel with you. Reserve inline execution ONLY for single-step trivial asks or when no worker \
+             quark is available.\n\n\
              **But do not bounce trivial work.** If a task is one or two steps — a small edit, \
              a direct question, a decision you can settle now — just do it. Delegating \
              something you could have finished in the time it took to write the handoff wastes \
@@ -254,7 +252,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
 
     // 7. Nucleus Digest
     if !projection.nucleus_digest.trim().is_empty() {
-        p.push_str("# Project knowledge (nucleus) — index only, open `.hadron/nucleus/features.md` before touching a feature\n");
+        p.push_str("# Project knowledge (nucleus) — index only, open `.hadron/nucleus/features.md` (if present) before touching a feature\n");
         p.push_str(projection.nucleus_digest.trim());
         p.push_str("\n\n");
     }

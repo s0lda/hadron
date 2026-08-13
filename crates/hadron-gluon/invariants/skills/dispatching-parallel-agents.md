@@ -6,7 +6,7 @@ description: Use when facing 2+ independent tasks that can be worked on without 
 # Dispatching Parallel Agents
 
 ## Core Principle
-Dispatch one specialized subagent per independent problem domain. Agents run concurrently in isolated contexts without inheriting session history.
+Dispatch one task per independent domain across worker Quarks in the Hadron swarm using `@<quark-id> <task>` lines. Workers run concurrently in isolated worktrees.
 
 ## Applicability
 
@@ -28,9 +28,9 @@ Dispatch one specialized subagent per independent problem domain. Agents run con
    - **Context**: Exact failure trace and line references.
    - **Constraints**: Do not modify outside scope.
    - **Output Contract**: Return root cause summary and exact code diff/changes.
-3. **Dispatch Concurrently**: Issue all subagent calls in a single response to execute them in parallel.
+3. **Dispatch Concurrently**: Emit delegation lines (`@<quark-id> <task>`) at the start of your message to fan them out across the Hadron swarm.
 4. **Review & Integrate**:
-   - Verify agent summaries for correctness and lack of file conflict.
+   - Verify worker reports for correctness and lack of file conflict.
    - Re-run full test suite across the workspace.
 
 ## Agent Prompt Checklist

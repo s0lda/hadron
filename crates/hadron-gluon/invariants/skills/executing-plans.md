@@ -8,9 +8,7 @@ description: Use when you have a written implementation plan to execute in a sep
 ## Overview
 Load plan, review critically, execute all tasks, report when complete.
 
-**Announce at start:** "I'm using the executing-plans skill to implement this plan."
-
-> **Recommendation:** If subagents are available, prefer `superpowers:subagent-driven-development`.
+> **Recommendation:** In a Hadron swarm, prefer Quark Swarm Dispatch (`@<quark-id> <task>`). Otherwise, use `subagent-driven-development` or inline execution.
 
 ## Execution Workflow
 
@@ -28,8 +26,7 @@ For each task in the plan:
 
 ### Step 3: Branch Completion
 When all tasks are complete and verified:
-- **Announce:** "I'm using the finishing-a-development-branch skill to complete this work."
-- **REQUIRED SUB-SKILL:** Execute `superpowers:finishing-a-development-branch`.
+- **REQUIRED SUB-SKILL:** Execute `finishing-a-development-branch`.
 
 ## Stop Conditions (Hard Gates)
 STOP execution immediately and request clarification when:
@@ -42,6 +39,6 @@ STOP execution immediately and request clarification when:
 - **Strict Verification:** Never skip verification steps specified in task steps.
 
 ## Workflow Integration
-- **Workspace Isolation:** `superpowers:using-git-worktrees`
-- **Plan Authoring:** `superpowers:writing-plans`
-- **Branch Finalization:** `superpowers:finishing-a-development-branch`
+- **Workspace Isolation:** `using-git-worktrees`
+- **Plan Authoring:** `writing-plans`
+- **Branch Finalization:** `finishing-a-development-branch`

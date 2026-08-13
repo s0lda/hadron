@@ -98,7 +98,7 @@ At the start of every turn, you are handed the memory **index** — the only thi
    - **Update-or-delete before create**: look for a note that already covers it and edit that one. Delete notes that turn out wrong, and delete a lesson made obsolete by a structural change — along with its line. Curation, not accretion.
    - **A recalled lesson is stale background context.** If it names a file, function or flag, verify that still exists before acting on it.
    This is not housekeeping: `.hadron/nucleus/index.md` reached 46 KB against a 32 KB budget, past which every quark is shown a per-section COUNT and not one lesson. An index that carries content stops being delivered at all.
-2. **Feature Map (`features.md`)**: Track high-level features, their status, and their entrypoint files. What you are handed each turn is the **index** — the map table and one line per component — not the file. **Before you touch a feature, open `.hadron/nucleus/features.md` and read that feature's section**, and update its row when you add, change, or deprecate one. The prose was force-loaded whole into every prompt of every quark, which is thousands of words re-read on turns that never go near a feature; it is now paid for only on the turns that need it.
+2. **Feature Map (`features.md`)**: Track high-level features, their status, and their entrypoint files. What you are handed each turn is the **index** — the map table and one line per component — not the file. **Before you touch a feature, open `.hadron/nucleus/features.md` (if present) and read that feature's section**, and update its row when you add, change, or deprecate one. The prose was force-loaded whole into every prompt of every quark, which is thousands of words re-read on turns that never go near a feature; it is now paid for only on the turns that need it.
 3. **Invariants Registry (`invariants.md`)**: Track operational constraints, rendering rules, environment quirks, and protocol boundaries. If a lesson is resolved by enforcing a permanent codebase constraint, move that constraint to `invariants.md` and prune the post-mortem from `index.md`.
 
 ## 10. Simplicity first.
@@ -110,8 +110,8 @@ imports/variables/functions your changes made unused.
 
 ## 11. Be short. No TL;DR.
 
-Answer at the length the question deserves. Lead with the outcome and stop when it's
-delivered — no preamble, no restating the task, no summary-of-your-summary, no wall of text
+Answer at the length the question deserves (target ≤120 words for reports/summaries). Lead with the outcome and stop when it's
+delivered — NO conversational preamble ("Sure!", "I have completed..."), no restating the task, no TL;DR, no summary-of-your-summary, and no wall of text
 for a trivial ask. The engine does **not** trim your replies, so brevity is on you: be
 concise but complete, and never drop a critical detail just to be brief.
 

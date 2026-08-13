@@ -9,7 +9,7 @@ Creating and editing skills follows Test-Driven Development (RED-GREEN-REFACTOR)
 
 **Core Principle:** If you didn't watch an agent fail without the skill, you don't know if the skill teaches the right thing.
 
-**REQUIRED BACKGROUND:** You MUST understand `superpowers:test-driven-development` before using this skill.
+**REQUIRED BACKGROUND:** You MUST understand `test-driven-development` before using this skill.
 
 ## Core Authoring Principles
 
@@ -66,7 +66,7 @@ description: Use when [specific triggering conditions, symptoms, and contexts]
 
 ### Cross-Referencing Other Skills:
 
-- Format: `**REQUIRED SUB-SKILL:** superpowers:skill-name`
+- Format: `**REQUIRED SUB-SKILL:** skill-name`
 - **FORBIDDEN:** Do NOT use `@` file imports (e.g. `@skills/foo/SKILL.md`) as they force-load full context prematurely.
 
 ## The Iron Law of Skills
@@ -137,7 +137,7 @@ Create a tracking todo for each step:
 
 - [ ] Validate YAML frontmatter (`name` hyphenated, `description` starts with "Use when...", no workflow summary, <1024 chars).
 - [ ] Ensure concise word count (<150 getting started, <200 frequent, <500 other).
-- [ ] Format skill references as `**REQUIRED SUB-SKILL:** superpowers:name` (NO `@` links).
+- [ ] Format skill references as `**REQUIRED SUB-SKILL:** skill-name` (NO `@` links).
 - [ ] Match guidance format to failure type.
 - [ ] Run scenarios WITH skill; confirm compliance.
 

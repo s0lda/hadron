@@ -8,8 +8,6 @@ description: Use when you have a spec or requirements for a multi-step task, bef
 ## Core Principle
 Write comprehensive, bite-sized implementation plans with explicit file paths, exact code blocks, and verification steps.
 
-**Announce at start:** "I'm using the writing-plans skill to create the implementation plan."
-
 **Save path:** `.hadron/docs/plans/YYYY-MM-DD-<feature-name>.md`
 
 ## Pre-Plan Checks & Architecture
@@ -28,7 +26,7 @@ status: draft
 
 # [Feature Name] Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use Swarm Quark Dispatch (recommended) or subagent-driven-development or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** [One sentence describing what this builds]
 
@@ -101,6 +99,7 @@ Before saving:
 - [ ] **Type Consistency:** Confirm function signatures match across all tasks.
 
 ## Execution Handoff Options
-Offer user choice of execution model:
-1. **Subagent-Driven (Recommended):** `superpowers:subagent-driven-development`
-2. **Inline Execution:** `superpowers:executing-plans`
+Offer execution options:
+1. **Swarm Quark Dispatch (Recommended for Hadron Swarms):** Dispatch independent tasks to available worker Quarks (`@<quark-id> <task>`), review each result, then integrate.
+2. **Subagent-Driven:** `subagent-driven-development`
+3. **Inline Execution:** `executing-plans`

@@ -125,9 +125,9 @@ Critical = must fix; Important = incorrect/fragile behavior, missed requirement,
 
 After all tasks complete:
 1. Generate whole-branch review package against `MERGE_BASE` (`git merge-base main HEAD`).
-2. Pass package and Minor findings list from progress ledger to `superpowers:requesting-code-review` skill on most capable model.
+2. Pass package and Minor findings list from progress ledger to `requesting-code-review` skill on most capable model.
 3. If findings returned, dispatch ONE fix subagent covering all findings, then verify.
-4. Finish branch using `superpowers:finishing-a-development-branch`.
+4. Finish branch using `finishing-a-development-branch`.
 
 ## Red Flags - FORBIDDEN Actions
 
@@ -141,8 +141,8 @@ After all tasks complete:
 
 ## Integration Skills
 
-- `superpowers:using-git-worktrees` - Isolated workspace setup.
-- `superpowers:writing-plans` - Plan creation.
-- `superpowers:requesting-code-review` - Final review template.
-- `superpowers:finishing-a-development-branch` - Branch integration.
-- `superpowers:test-driven-development` - Subagent implementation TDD.
+- `using-git-worktrees` - Isolated workspace setup.
+- `writing-plans` - Plan creation.
+- `requesting-code-review` - Final review template.
+- `finishing-a-development-branch` - Branch integration.
+- `test-driven-development` - Subagent implementation TDD.

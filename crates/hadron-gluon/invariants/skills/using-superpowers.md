@@ -16,12 +16,11 @@ IF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.
 Invoke relevant or requested skills BEFORE any response or action — including asking clarifying questions, exploring the codebase, or inspecting files.
 
 - **Before Plan Mode:** If you have not already brainstormed, invoke `brainstorming` first.
-- **Announcement:** State `"Using [skill] to [purpose]"` and follow procedure exactly. Create a todo per checklist item.
 
 ## Skill Selection Order
 Process skills govern approach and take precedence over domain/implementation skills:
-- Feature Creation / Specs → `superpowers:brainstorming` first.
-- Bug Investigation / Failures → `superpowers:systematic-debugging` first.
+- Feature Creation / Specs → `brainstorming` first.
+- Bug Investigation / Failures → `systematic-debugging` first.
 
 ## Red Flag Rationalizations (STOP Instantly)
 - "This is just a simple question" → Check for applicable skill first.
