@@ -24,6 +24,16 @@ pub use migrate::{migrate_to_catalogue, seat_override_delta, orphan_overrides, l
 
 pub(crate) use seat::is_false;
 
+/// Strategy used by the merge gate to land a quark's branch onto main.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeStrategy {
+    #[default]
+    FastForward,
+    Squash,
+    GitHubPr,
+}
+
 /// The full team: every seat the human has added.
 ///
 /// Two ways to name a seat, and they coexist:
@@ -55,6 +65,9 @@ pub struct Team {
     /// positive value is honoured, not rejected.
     #[serde(default)]
     pub nucleus_index_budget_kb: Option<usize>,
+    /// Configured merge strategy for landing quark branches onto base.
+    #[serde(default)]
+    pub merge_strategy: Option<MergeStrategy>,
 }
 
 impl Team {
@@ -66,6 +79,11 @@ impl Team {
     /// Whether the team has any seats.
     pub fn is_empty(&self) -> bool {
         self.quarks.is_empty()
+    }
+
+    /// The configured merge strategy for landing quark branches, defaulting to `FastForward`.
+    pub fn merge_strategy(&self) -> MergeStrategy {
+        self.merge_strategy.unwrap_or_default()
     }
 }
 
@@ -155,7 +173,8 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
     Team {
         quarks,
         roster: Vec::new(),
-        max_exchanges: repo.max_exchanges,
-        nucleus_index_budget_kb: repo.nucleus_index_budget_kb,
+        max_exchanges: repo.max_exchanges.or(global.max_exchanges),
+        nucleus_index_budget_kb: repo.nucleus_index_budget_kb.or(global.nucleus_index_budget_kb),
+        merge_strategy: repo.merge_strategy.or(global.merge_strategy),
     }
 }
