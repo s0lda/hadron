@@ -217,6 +217,18 @@ pub(crate) fn hook(text: &str) -> String {
     flat.chars().take(HOOK_MAX_CHARS).chain(std::iter::once('…')).collect()
 }
 
+/// Flatten a multiline text or markdown string into a clean single line for compact list previews.
+/// Replaces newlines and consecutive whitespace with a single space, and strips leading markdown header hashes.
+pub(crate) fn flatten_to_single_line(text: &str) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = flat.trim_start_matches('#').trim_start();
+    if trimmed.is_empty() {
+        flat
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// One nucleus-index line: a POINTER, never the lesson. `- [<slug>](notes/<slug>.md)
 /// — <hook>`. Content in the index is a bug — the index is a routing table that every
 /// quark pays for on every turn, and the fact belongs in the note the engine never
@@ -2567,6 +2579,16 @@ mod tests {
         assert!(!is_safe_session_arg("foo\\bar"));
         assert!(!is_safe_session_arg(".."));
     }
+
+    #[test]
+    fn flatten_to_single_line_flattens_multiline_and_strips_markdown_headers() {
+        assert_eq!(flatten_to_single_line("hello\nworld"), "hello world");
+        assert_eq!(flatten_to_single_line("  #  Header Title  \n- item 1\n- item 2"), "Header Title - item 1 - item 2");
+        assert_eq!(flatten_to_single_line("### Section"), "Section");
+        assert_eq!(flatten_to_single_line("#####"), "#####");
+        assert_eq!(flatten_to_single_line(""), "");
+    }
 }
+
 
 

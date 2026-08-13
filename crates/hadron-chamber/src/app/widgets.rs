@@ -1104,6 +1104,12 @@ where
     Tz::Offset: std::fmt::Display,
 {
     let time = m.ts.with_timezone(&tz).format("%H:%M:%S").to_string();
+    let body_text = if expanded {
+        m.body.clone()
+    } else {
+        crate::text::flatten_to_single_line(&m.body)
+    };
+
     h_flex()
         .w_full()
         .items_start()
@@ -1148,7 +1154,7 @@ where
                 // Truncated to one line by default; an expanded row (click) wraps in full.
                 .when(!expanded, |d| d.truncate())
                 .child(
-                    gpui_component::text::TextView::markdown(("log-body", ix), m.body.clone())
+                    gpui_component::text::TextView::markdown(("log-body", ix), body_text)
                         .selectable(true),
                 ),
         )
