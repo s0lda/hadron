@@ -15,6 +15,9 @@ use hadron_lattice::term::{self, Source};
 
 use crate::skills::{front_matter_value, split_front_matter};
 
+pub mod synth;
+pub use synth::*;
+
 /// One loaded preon: a name a human can address, an optional role it prefers to
 /// route through, and the body a quark speaking as this preon is handed.
 #[derive(Debug, Clone, PartialEq, Eq)]
