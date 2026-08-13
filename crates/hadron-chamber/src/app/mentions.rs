@@ -105,27 +105,28 @@ pub(super) fn parse_plan_tasks(content: &str) -> Vec<(String, Vec<(String, bool)
     tasks
 }
 
-/// Rewrite `@<seat-id>` mentions to `@<display-name>` so a mention typed or stored by
-/// its raw seat id (e.g. `@acp-claude-2`) reads the way the human names the quark
-/// (`@Sonnet`). Matching keys on the id; only the shown text changes. Everything else is
-/// passed through untouched.
+/// Rewrite `@<seat-id>` mentions to `@<display-name>` for quarks in the roster, and
+/// rewrite file mentions (like `@path/to/file.md`, `@src/main.rs:123`, `@Cargo.toml`)
+/// into clickable markdown links (`[file.md](file:///abs/path "path/to/file.md")`)
+/// so that users can open referenced files with one click from chat while hovering shows
+/// the full path in a tooltip.
 ///
-/// This deliberately does *not* colour anything. The forked markdown renderer marks
-/// `@mention` and `/command` tokens natively at parse time (`push_mention_and_command_marks`
-/// in gpui-component's `markdown.rs`), so wrapping them in HTML `<span>`s here would only
-/// feed that parser tags it mangles — the bug that left mentions plain after chat moved to
-/// `TextView::markdown`. We stay code-block-aware only so a mention inside a fence or inline
-/// code is left as literal text rather than silently renamed.
-pub(super) fn resolve_mention_names(body: &str, roster: &[crate::model::RosterRow]) -> String {
-    let mut out = String::with_capacity(body.len());
-    let mut chars = body.chars().peekable();
+/// Code blocks (fenced ``` and inline `...`) are passed through unmodified.
+pub(super) fn resolve_mention_names(
+    body: &str,
+    roster: &[crate::model::RosterRow],
+    repo_root: Option<&std::path::Path>,
+) -> String {
+    let mut out = String::with_capacity(body.len() + 64);
+    let mut chars = body.char_indices().peekable();
     let mut in_code_block = false;
     let mut in_inline_code = false;
+    let mut prev_char: Option<char> = None;
 
-    while let Some(c) = chars.next() {
+    while let Some((idx, c)) = chars.next() {
         if c == '`' {
             let mut backtick_count = 1;
-            while chars.peek() == Some(&'`') {
+            while let Some(&(_, '`')) = chars.peek() {
                 chars.next();
                 backtick_count += 1;
             }
@@ -137,53 +138,203 @@ pub(super) fn resolve_mention_names(body: &str, roster: &[crate::model::RosterRo
             for _ in 0..backtick_count {
                 out.push('`');
             }
+            prev_char = Some('`');
             continue;
         }
 
-        if c == '@' && !in_code_block && !in_inline_code {
-            let mut name = String::new();
-            while let Some(&nc) = chars.peek() {
-                if nc.is_alphanumeric() || nc == '.' || nc == '/' || nc == '-' || nc == '_' || nc == ' ' || nc == '(' || nc == ')' {
-                    name.push(chars.next().unwrap());
+        let is_mention_start = c == '@'
+            && !in_code_block
+            && !in_inline_code
+            && !prev_char.is_some_and(|ch| ch.is_alphanumeric());
+
+        if is_mention_start {
+            let rest = &body[idx + 1..];
+            let mut matched_quark: Option<(&str, usize)> = None;
+
+            for q in roster {
+                let q_id = q.id.as_str();
+                let q_name = q.display_name.as_deref().unwrap_or(q_id);
+                for candidate_str in [q_name, q_id] {
+                    if rest.starts_with(candidate_str) {
+                        let len = candidate_str.len();
+                        let is_boundary = rest[len..]
+                            .chars()
+                            .next()
+                            .map_or(true, |nc| !nc.is_alphanumeric() && nc != '-' && nc != '_');
+                        if is_boundary && matched_quark.map_or(true, |(_, clen)| len > clen) {
+                            matched_quark = Some((q_name, len));
+                        }
+                    }
+                }
+            }
+
+            if let Some((shown, consumed)) = matched_quark {
+                out.push('@');
+                out.push_str(shown);
+                let target_idx = idx + 1 + consumed;
+                while let Some(&(curr_idx, _)) = chars.peek() {
+                    if curr_idx < target_idx {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                prev_char = shown.chars().next_back();
+                continue;
+            }
+
+            let mut matched_alias = false;
+            for (alias, _) in crate::text::MENTION_ALIASES {
+                if rest.starts_with(alias) {
+                    let len = alias.len();
+                    let is_boundary = rest[len..]
+                        .chars()
+                        .next()
+                        .map_or(true, |nc| !nc.is_alphanumeric() && nc != '-' && nc != '_');
+                    if is_boundary {
+                        out.push('@');
+                        out.push_str(alias);
+                        let target_idx = idx + 1 + len;
+                        while let Some(&(curr_idx, _)) = chars.peek() {
+                            if curr_idx < target_idx {
+                                chars.next();
+                            } else {
+                                break;
+                            }
+                        }
+                        prev_char = alias.chars().next_back();
+                        matched_alias = true;
+                        break;
+                    }
+                }
+            }
+            if matched_alias {
+                continue;
+            }
+
+            let mut raw_token = String::new();
+            while let Some(&(_, nc)) = chars.peek() {
+                if !nc.is_whitespace()
+                    && nc != '<'
+                    && nc != '>'
+                    && nc != '"'
+                    && nc != '\''
+                    && nc != '`'
+                    && nc != '['
+                    && nc != '{'
+                {
+                    raw_token.push(nc);
+                    chars.next();
                 } else {
                     break;
                 }
             }
 
-            // We greedily consumed spaces and parens, so `name` may run past the mention
-            // (e.g. "@Agy said hi"). Show the longest roster display-name or id it starts
-            // with; matching keys on the id, only the shown text changes. Anything with no
-            // roster match (a plain `@word`, a `@file/path`) is emitted verbatim for the
-            // renderer to mark — we no longer classify quark vs file, the renderer marks
-            // every `@token` the same.
-            let mut best_match_len = 0;
-            let mut matched_display: Option<&str> = None;
+            if raw_token.is_empty() {
+                out.push('@');
+                prev_char = Some('@');
+                continue;
+            }
 
-            for q in roster {
-                let q_id = &q.id;
-                let q_name = q.display_name.as_deref().unwrap_or(q_id.as_str());
-                if name.starts_with(q_name) && q_name.len() > best_match_len {
-                    best_match_len = q_name.len();
-                    matched_display = Some(q_name);
-                } else if name.starts_with(q_id.as_str()) && q_id.len() > best_match_len {
-                    best_match_len = q_id.len();
-                    matched_display = Some(q_name);
+            let mut token = raw_token.as_str();
+            let mut trailing = String::new();
+            while !token.is_empty() {
+                let last_char = token.chars().next_back().unwrap();
+                if matches!(last_char, ',' | ';' | '!' | '?' | ')' | ']' | '}' | '>' | '\'' | '"') {
+                    trailing.insert(0, last_char);
+                    token = &token[..token.len() - last_char.len_utf8()];
+                } else if last_char == '.' {
+                    let rest_str = &token[..token.len() - 1];
+                    if rest_str.contains('.') {
+                        trailing.insert(0, last_char);
+                        token = rest_str;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
                 }
             }
 
-            out.push('@');
-            match matched_display {
-                Some(shown) => {
-                    out.push_str(shown);
-                    out.push_str(&name[best_match_len..]);
-                }
-                None => out.push_str(&name),
+            if is_file_mention(token, repo_root) {
+                let (path_str, line_frag, line_display) = parse_line_fragment(token);
+                let is_dir = path_str.ends_with('/') || path_str.ends_with('\\');
+                let bare_path = path_str.trim_end_matches(['/', '\\']);
+                let file_name = std::path::Path::new(bare_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(bare_path);
+                let display_name = if is_dir {
+                    format!("{file_name}/{line_display}")
+                } else {
+                    format!("{file_name}{line_display}")
+                };
+
+                let abs_path = if path_str.starts_with('/') {
+                    std::path::PathBuf::from(path_str)
+                } else if let Some(root) = repo_root {
+                    root.join(path_str)
+                } else {
+                    std::path::Path::new("/").join(path_str)
+                };
+
+                let url = format!("file://{}{}", abs_path.display(), line_frag);
+                let title = token.replace('"', "&quot;");
+                out.push_str(&format!("[{display_name}]({url} \"{title}\")"));
+                out.push_str(&trailing);
+                prev_char = trailing.chars().next_back().or_else(|| ")".chars().next());
+            } else {
+                out.push('@');
+                out.push_str(token);
+                out.push_str(&trailing);
+                prev_char = trailing.chars().next_back().or_else(|| token.chars().next_back());
             }
-        } else {
-            out.push(c);
+            continue;
         }
+
+        out.push(c);
+        prev_char = Some(c);
     }
     out
+}
+
+fn parse_line_fragment(token: &str) -> (&str, String, String) {
+    if let Some((p, num)) = token.rsplit_once(':') {
+        if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
+            return (p, format!("#L{num}"), format!(":{num}"));
+        }
+    }
+    if let Some((p, frag)) = token.split_once('#') {
+        return (p, format!("#{frag}"), format!("#{frag}"));
+    }
+    (token, String::new(), String::new())
+}
+
+fn is_file_mention(token: &str, repo_root: Option<&std::path::Path>) -> bool {
+    let (path_str, _, _) = parse_line_fragment(token);
+    if path_str.is_empty() || path_str == "." || path_str == ".." {
+        return false;
+    }
+    if path_str.starts_with('/') || path_str.starts_with('~') || path_str.starts_with("./") || path_str.starts_with("../") {
+        return true;
+    }
+    if path_str.contains('/') || path_str.contains('\\') {
+        return true;
+    }
+    if path_str.starts_with('.') && path_str.len() > 1 && !path_str.chars().skip(1).all(|c| c == '.') {
+        return true;
+    }
+    if let Some((stem, ext)) = path_str.rsplit_once('.') {
+        if !stem.is_empty() && !ext.is_empty() && ext.len() <= 10 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return true;
+        }
+    }
+    if let Some(root) = repo_root {
+        if root.join(path_str).exists() {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -309,20 +460,23 @@ mod tests {
     }
 
     /// The renderer, not this pass, colours `@mention`s and `/command`s now. Text with no
-    /// seat-id to resolve must come out byte-for-byte identical (no HTML, no `<span>`), so
+    /// seat-id or file-mention to resolve must come out byte-for-byte identical (no HTML, no `<span>`), so
     /// the forked markdown parser sees the bare tokens it marks natively.
     #[test]
     fn text_with_nothing_to_resolve_passes_through_untouched() {
         assert_eq!(
-            resolve_mention_names("Please run /plan and /grill-me today.", &[]),
+            resolve_mention_names("Please run /plan and /grill-me today.", &[], None),
             "Please run /plan and /grill-me today."
         );
         // A quark whose id already matches the shown name is unchanged.
-        assert_eq!(resolve_mention_names("Hello @opus!", &opus_roster()), "Hello @opus!");
-        // Unknown mentions and file paths are left for the renderer to mark.
         assert_eq!(
-            resolve_mention_names("@team and @orchestrator and @src/main.rs", &[]),
-            "@team and @orchestrator and @src/main.rs"
+            resolve_mention_names("Hello @opus!", &opus_roster(), None),
+            "Hello @opus!"
+        );
+        // Routing aliases and plain non-file mentions stay plain tokens.
+        assert_eq!(
+            resolve_mention_names("@team and @orchestrator and @everyone", &[], None),
+            "@team and @orchestrator and @everyone"
         );
     }
 
@@ -348,18 +502,99 @@ mod tests {
             unknown_turns: 0,
         }];
 
-        assert_eq!(resolve_mention_names("Hello @acp-claude-2!", &roster), "Hello @Sonnet!");
+        assert_eq!(
+            resolve_mention_names("Hello @acp-claude-2!", &roster, None),
+            "Hello @Sonnet!"
+        );
         // Trailing words after the mention are preserved.
         assert_eq!(
-            resolve_mention_names("@acp-claude-2 please review", &roster),
+            resolve_mention_names("@acp-claude-2 please review", &roster, None),
             "@Sonnet please review"
         );
         // Mentioning by the display name itself is already resolved, unchanged.
-        assert_eq!(resolve_mention_names("Hello @Sonnet!", &roster), "Hello @Sonnet!");
+        assert_eq!(
+            resolve_mention_names("Hello @Sonnet!", &roster, None),
+            "Hello @Sonnet!"
+        );
     }
 
-    /// Resolution must not fire inside inline code or a fenced block: a `@seat-id` there is
-    /// literal text a human wrote, not a mention to rename.
+    /// File mentions like `@path/to/some/file.md` or `@src/main.rs:123` must be rewritten
+    /// into clickable markdown links (`[file.md](file:///... "path/to/some/file.md")`)
+    /// showing the basename in chat and full path in a tooltip.
+    #[test]
+    fn file_mentions_resolve_to_interactive_markdown_links_with_tooltips() {
+        let root = std::path::Path::new("/workspace");
+
+        // Relative file path with directory
+        assert_eq!(
+            resolve_mention_names("@path/to/some/file.md", &[], Some(root)),
+            "[file.md](file:///workspace/path/to/some/file.md \"path/to/some/file.md\")"
+        );
+
+        // Root file
+        assert_eq!(
+            resolve_mention_names("@Cargo.toml", &[], Some(root)),
+            "[Cargo.toml](file:///workspace/Cargo.toml \"Cargo.toml\")"
+        );
+
+        // Dotfile
+        assert_eq!(
+            resolve_mention_names("@.gitignore", &[], Some(root)),
+            "[.gitignore](file:///workspace/.gitignore \".gitignore\")"
+        );
+
+        // File with line number
+        assert_eq!(
+            resolve_mention_names("@src/main.rs:123", &[], Some(root)),
+            "[main.rs:123](file:///workspace/src/main.rs#L123 \"src/main.rs:123\")"
+        );
+
+        // File with hash fragment
+        assert_eq!(
+            resolve_mention_names("@src/lib.rs#L42", &[], Some(root)),
+            "[lib.rs#L42](file:///workspace/src/lib.rs#L42 \"src/lib.rs#L42\")"
+        );
+
+        // Absolute path
+        assert_eq!(
+            resolve_mention_names("@/home/Jake/dev/hadron/Cargo.lock", &[], Some(root)),
+            "[Cargo.lock](file:///home/Jake/dev/hadron/Cargo.lock \"/home/Jake/dev/hadron/Cargo.lock\")"
+        );
+
+        // Directory mention
+        assert_eq!(
+            resolve_mention_names("@crates/hadron-chamber/", &[], Some(root)),
+            "[hadron-chamber/](file:///workspace/crates/hadron-chamber/ \"crates/hadron-chamber/\")"
+        );
+
+        // Trailing sentence punctuation is preserved outside the link
+        assert_eq!(
+            resolve_mention_names("Check @src/main.rs. And (@crates/Cargo.toml), see @file.md!", &[], Some(root)),
+            "Check [main.rs](file:///workspace/src/main.rs \"src/main.rs\"). And ([Cargo.toml](file:///workspace/crates/Cargo.toml \"crates/Cargo.toml\")), see [file.md](file:///workspace/file.md \"file.md\")!"
+        );
+
+        // Mixed with quark mentions
+        let roster = vec![RosterRow {
+            id: "acp-claude-2".to_string(),
+            display_name: Some("Sonnet".to_string()),
+            ..opus_roster().pop().unwrap()
+        }];
+        assert_eq!(
+            resolve_mention_names("Hey @acp-claude-2, please look at @crates/hadron-chamber/src/app/mod.rs:50", &roster, Some(root)),
+            "Hey @Sonnet, please look at [mod.rs:50](file:///workspace/crates/hadron-chamber/src/app/mod.rs#L50 \"crates/hadron-chamber/src/app/mod.rs:50\")"
+        );
+    }
+
+    #[test]
+    fn email_addresses_are_not_treated_as_mentions() {
+        assert_eq!(
+            resolve_mention_names("Contact support@hadron.dev for help.", &[], None),
+            "Contact support@hadron.dev for help."
+        );
+    }
+
+    /// Resolution must not fire inside inline code or a fenced block: a `@seat-id` or file mention
+    /// there is literal text a human wrote, not a mention to rename.
     #[test]
     fn resolution_is_suppressed_inside_code() {
         let roster = vec![RosterRow {
@@ -369,17 +604,17 @@ mod tests {
         }];
 
         assert_eq!(
-            resolve_mention_names("Here is `@acp-claude-2` inline.", &roster),
-            "Here is `@acp-claude-2` inline."
+            resolve_mention_names("Here is `@acp-claude-2` and `@src/main.rs` inline.", &roster, None),
+            "Here is `@acp-claude-2` and `@src/main.rs` inline."
         );
         assert_eq!(
-            resolve_mention_names("```\n@acp-claude-2\n```", &roster),
-            "```\n@acp-claude-2\n```"
+            resolve_mention_names("```\n@acp-claude-2\n@src/main.rs\n```", &roster, None),
+            "```\n@acp-claude-2\n@src/main.rs\n```"
         );
         // Inside code stays literal; outside resolves in the same string.
         assert_eq!(
-            resolve_mention_names("`@acp-claude-2` then @acp-claude-2.", &roster),
-            "`@acp-claude-2` then @Sonnet."
+            resolve_mention_names("`@acp-claude-2` then @acp-claude-2 with @src/main.rs.", &roster, None),
+            "`@acp-claude-2` then @Sonnet with [main.rs](file:///src/main.rs \"src/main.rs\")."
         );
     }
 
@@ -397,7 +632,7 @@ mod tests {
         let res1 = match cache.get(&0) {
             Some((b, c)) if b == body1 => c.clone(),
             _ => {
-                let content = resolve_mention_names(body1, &roster);
+                let content = resolve_mention_names(body1, &roster, None);
                 cache.insert(0, (body1.to_string(), content.clone()));
                 content
             }
@@ -409,7 +644,7 @@ mod tests {
         let res2 = match cache.get(&0) {
             Some((b, c)) if b == body2 => c.clone(),
             _ => {
-                let content = resolve_mention_names(body2, &roster);
+                let content = resolve_mention_names(body2, &roster, None);
                 cache.insert(0, (body2.to_string(), content.clone()));
                 content
             }

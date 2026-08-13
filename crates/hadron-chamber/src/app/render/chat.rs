@@ -560,7 +560,8 @@ impl super::Chamber {
         let content = match cache.get(&ix) {
             Some((cached_body, cached_content)) if cached_body == body => cached_content.clone(),
             _ => {
-                let content = resolve_mention_names(body, roster);
+                let repo_root = crate::vcs::repo_root_of(&self.path);
+                let content = resolve_mention_names(body, roster, Some(repo_root));
                 cache.insert(ix, (body.to_string(), content.clone()));
                 content
             }
