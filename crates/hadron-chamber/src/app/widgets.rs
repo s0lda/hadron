@@ -1136,6 +1136,7 @@ where
                 .when(!expanded, |d| d.truncate())
                 .child(
                     gpui_component::text::TextView::markdown(("log-body", ix), m.body.clone())
+                        .style(markdown_style())
                         .selectable(true),
                 ),
         )
@@ -1218,21 +1219,19 @@ pub(super) fn kind_icon(kind_label: &str) -> IconName {
 
 pub(super) fn markdown_style() -> gpui_component::text::TextViewStyle {
     let mut style = gpui_component::text::TextViewStyle::default();
-    style.highlight_theme = gpui_component::highlighter::HighlightTheme::default_dark();
+    style.highlight_theme = theme::github_dark_syntax_theme();
+    style.is_dark = true;
     style.table = {
         let mut s = gpui::StyleRefinement::default();
         s.overflow.x = Some(gpui::Overflow::Scroll);
         s
     };
-    // Fenced code blocks: a solid dark card (header row with language label +
-    // copy button, divider, then the code body) so they read as a distinct
-    // block over the flat #101010 field instead of blending into body text.
-    // Padding lives inside the header/body rows in the fork's `CodeBlock`
-    // render, not here.
+    // Fenced code blocks: GitHub Dark container styling (#161b22 bg with #30363d border)
+    // so code blocks read like GitHub's dark theme code cards.
     style.code_block = gpui::StyleRefinement::default()
-        .bg(theme::input_bg())
+        .bg(theme::github_code_bg())
         .border_1()
-        .border_color(theme::border())
+        .border_color(theme::github_code_border())
         .rounded_md();
     style
 }
@@ -1240,6 +1239,13 @@ pub(super) fn markdown_style() -> gpui_component::text::TextViewStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_markdown_style_uses_github_dark_theme() {
+        let style = markdown_style();
+        assert_eq!(style.highlight_theme.name, "GitHub Dark");
+        assert!(style.is_dark);
+    }
 
     #[test]
     fn format_num_is_human_readable_with_trimmed_units() {

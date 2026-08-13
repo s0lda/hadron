@@ -159,6 +159,70 @@ pub fn border() -> Rgba {
     rgb(0x444444)
 }
 
+// --- GitHub code block & syntax highlighting styling ---
+/// GitHub Dark code block background (`#161b22`).
+pub fn github_code_bg() -> Rgba {
+    rgb(0x161b22)
+}
+
+/// GitHub Dark code block border (`#30363d`).
+pub fn github_code_border() -> Rgba {
+    rgb(0x30363d)
+}
+
+/// GitHub Dark syntax highlighting theme matching GitHub's web code block appearance:
+/// `#ff7b72` keywords, `#a5d6ff` strings, `#d2a8ff` functions/methods, `#ffa657` types, `#79c0ff` constants/numbers, `#8b949e` comments.
+pub fn github_dark_syntax_theme() -> std::sync::Arc<gpui_component::highlighter::HighlightTheme> {
+    static THEME: std::sync::LazyLock<std::sync::Arc<gpui_component::highlighter::HighlightTheme>> =
+        std::sync::LazyLock::new(|| {
+            let json = serde_json::json!({
+                "name": "GitHub Dark",
+                "appearance": "dark",
+                "style": {
+                    "editor.background": "#161b22",
+                    "editor.foreground": "#e6edf3",
+                    "syntax": {
+                        "attribute": { "color": "#79c0ff" },
+                        "boolean": { "color": "#ff7b72" },
+                        "comment": { "color": "#8b949e", "font_style": "italic" },
+                        "comment.doc": { "color": "#8b949e", "font_style": "italic" },
+                        "constant": { "color": "#79c0ff" },
+                        "constructor": { "color": "#d2a8ff" },
+                        "embedded": { "color": "#e6edf3" },
+                        "emphasis": { "font_style": "italic" },
+                        "emphasis.strong": { "font_weight": 700 },
+                        "enum": { "color": "#ffa657" },
+                        "function": { "color": "#d2a8ff" },
+                        "keyword": { "color": "#ff7b72" },
+                        "label": { "color": "#79c0ff" },
+                        "number": { "color": "#79c0ff" },
+                        "operator": { "color": "#ff7b72" },
+                        "property": { "color": "#79c0ff" },
+                        "punctuation": { "color": "#c9d1d9" },
+                        "punctuation.bracket": { "color": "#c9d1d9" },
+                        "punctuation.delimiter": { "color": "#c9d1d9" },
+                        "punctuation.special": { "color": "#ff7b72" },
+                        "string": { "color": "#a5d6ff" },
+                        "string.escape": { "color": "#79c0ff" },
+                        "string.regex": { "color": "#a5d6ff" },
+                        "string.special": { "color": "#79c0ff" },
+                        "tag": { "color": "#7ee787" },
+                        "text.code.span": { "color": "#e6edf3" },
+                        "title": { "color": "#d2a8ff" },
+                        "type": { "color": "#ffa657" },
+                        "variable": { "color": "#e6edf3" },
+                        "variable.special": { "color": "#79c0ff" },
+                        "variant": { "color": "#79c0ff" }
+                    }
+                }
+            });
+            std::sync::Arc::new(
+                serde_json::from_value(json).expect("GitHub Dark syntax theme JSON must deserialize"),
+            )
+        });
+    THEME.clone()
+}
+
 // --- text tiers ---
 pub fn text() -> Rgba {
     rgb(0xe8e8e8)
@@ -405,5 +469,17 @@ mod tests {
         // underneath read through the open model list.
         assert_eq!(popover().a, 1.0, "Popover surface must be opaque");
         assert_eq!(modal_surface().a, 1.0, "Modal surface must be opaque");
+    }
+
+    #[test]
+    fn test_github_dark_syntax_theme() {
+        let theme = github_dark_syntax_theme();
+        assert_eq!(theme.name, "GitHub Dark");
+        assert!(theme.style.syntax.keyword.is_some(), "keyword style must be defined");
+        assert!(theme.style.syntax.string.is_some(), "string style must be defined");
+        assert!(theme.style.syntax.function.is_some(), "function style must be defined");
+        assert!(theme.style.syntax.comment.is_some(), "comment style must be defined");
+        assert_eq!(github_code_bg(), rgb(0x161b22));
+        assert_eq!(github_code_border(), rgb(0x30363d));
     }
 }
