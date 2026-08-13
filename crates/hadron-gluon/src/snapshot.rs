@@ -12,7 +12,7 @@ const SNAPSHOT_REF_PREFIX: &str = "refs/hadron/snapshots/";
 ///
 /// `pub(crate)` so `worktree.rs` and `merge.rs` reuse the one git wrapper (with
 /// its pinned identity) instead of growing a third `Command::new("git")`.
-pub(crate) fn git(repo_root: &Path, args: &[&str]) -> anyhow::Result<String> {
+pub fn git(repo_root: &Path, args: &[&str]) -> anyhow::Result<String> {
     git_with_env(repo_root, args, &[])
 }
 
@@ -57,7 +57,7 @@ fn run_bounded(
     Ok(out)
 }
 
-fn git_with_env(repo_root: &Path, args: &[&str], envs: &[(&str, &str)]) -> anyhow::Result<String> {
+pub fn git_with_env(repo_root: &Path, args: &[&str], envs: &[(&str, &str)]) -> anyhow::Result<String> {
     let clean_root = hadron_lattice::sys::paths::simplified(repo_root);
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(clean_root);

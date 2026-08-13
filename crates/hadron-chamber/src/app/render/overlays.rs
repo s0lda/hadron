@@ -20,21 +20,6 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
-        version: "0.2.5",
-        date: Some("2026-08-13"),
-        added: &[
-            "File tree preview syntax highlighting for Rust, C++, CSS, JSON, TS, Python, Bash, and source code files",
-            "Unified Skills selection in Settings: enabled by default, unselecting toggles skill to deny list",
-            "Scrollable Sessions submenu and `/clear-history` command preserving token spend telemetry",
-        ],
-        changed: &[
-            "Collapsed Event Log rows to a clean single line with markdown header stripping (expands on click)",
-            "Indented Git Graph commit diffs with continuous rail graph lines and removed redundant Git subtab headers",
-            "Cleaned up Roster panel header and removed misleading Ready status indicator from configured providers",
-        ],
-        fixed: &[],
-    },
-    Release {
         version: "0.2.4",
         date: Some("2026-08-12"),
         added: &[

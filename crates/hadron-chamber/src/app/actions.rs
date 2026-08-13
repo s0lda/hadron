@@ -992,6 +992,72 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
+            "git-status" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let output = hadron_gluon::snapshot::git(&repo_root, &["status", "--short", "--branch"]);
+                let body = match output {
+                    Ok(out) => format!("```text\n{}\n```", out.trim()),
+                    Err(e) => format!("Failed to get git status: {e}"),
+                };
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "git-log" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let count: usize = args.trim().parse().unwrap_or(5).min(50);
+                let count_str = count.to_string();
+                let output = hadron_gluon::snapshot::git(&repo_root, &["log", "-n", &count_str, "--oneline"]);
+                let body = match output {
+                    Ok(out) => format!("### Git Log (Last {count})\n```text\n{}\n```", out.trim()),
+                    Err(e) => format!("Failed to get git log: {e}"),
+                };
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "push" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let target_arg = args.trim();
+                let git_args = if target_arg.is_empty() {
+                    vec!["push", "origin", "HEAD"]
+                } else {
+                    let parts: Vec<&str> = target_arg.split_whitespace().collect();
+                    let mut a = vec!["push"];
+                    a.extend(parts);
+                    a
+                };
+                let output = hadron_gluon::snapshot::git(&repo_root, &git_args);
+                let body = match output {
+                    Ok(out) => format!("### Git Push Output\n```text\n{}\n```", out.trim()),
+                    Err(e) => format!("Git push failed: {e}"),
+                };
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "pr" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let title_arg = args.trim();
+                let pr_args = if title_arg.is_empty() {
+                    vec!["pr", "create", "--fill"]
+                } else {
+                    vec!["pr", "create", "--title", title_arg, "--fill"]
+                };
+                let mut cmd = std::process::Command::new("gh");
+                cmd.args(&pr_args).current_dir(&repo_root);
+                let body = match cmd.output() {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        if out.status.success() {
+                            format!("### GitHub PR Created\n{}", stdout.trim())
+                        } else {
+                            format!("GitHub PR creation failed:\n```text\n{}\n```", stderr.trim())
+                        }
+                    }
+                    Err(e) => format!("Failed to execute `gh` CLI: {e}. Is `gh` installed?"),
+                };
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
             "compact-nucleus" => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
                 let body = crate::text::compact_nucleus_index(&repo_root, args.trim());
