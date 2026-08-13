@@ -14,7 +14,7 @@
 
   <br />
 
-  <img src="assets/demo_2.png" alt="Hadron Orchestrated Multi-Provider Chat Workspace" width="900" />
+  <img src="assets/demo_3.png" alt="Hadron Orchestrated Multi-Provider Chat Workspace" width="900" />
 
 </div>
 
