@@ -18,3 +18,4 @@ These are your built-in procedures. The engine hands you a starting one below; i
 - **using-superpowers** — Use when starting any conversation - establishes how to find and use skills, requiring skill invocation before ANY response including clarifying questions
 - **verification-before-completion** — Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always
 - **writing-skills** — Use when creating new skills, editing existing skills, or verifying skills work before deployment
+- **release** — Execute project release procedure (updating CHANGELOG, bumping version, merging main, tagging, and pushing)
