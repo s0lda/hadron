@@ -8,9 +8,9 @@ description: Execute project release procedure (updating CHANGELOG, bumping vers
 Execute the repository release workflow strictly following instructions in `.hadron/nucleus/release.md`.
 
 ## Procedure Steps:
-1. **Pre-flight Check:** Verify working tree is clean, on `main`, and up-to-date with `origin/main`.
-2. **Version & Changelog:** Update `docs/CHANGELOG.md` with release notes and bump project version in workspace manifests (e.g., `Cargo.toml`).
-3. **Commit Prep:** Commit version bump and changelog updates with commit message `chore(release): prepare vX.Y.Z`.
-4. **Merge Sync:** Sync and merge local `main` with `origin/main`.
-5. **Tagging:** Create annotated release tag `vX.Y.Z` with commit message `Release vX.Y.Z`.
-6. **Push:** Push `main` and release tags to remote `origin`.
+1. **Pre-flight Check:** Verify working tree is clean and up-to-date with `origin/main`.
+2. **Version & Changelog:** Update `docs/CHANGELOG.md` with release notes, update in-app `RELEASES` in `crates/hadron-chamber/src/app/render/overlays.rs`, and bump project version in workspace manifests (`Cargo.toml`, `Cargo.lock`).
+3. **Commit Prep:** Commit version bump, changelog, and overlay updates with commit message `chore(release): prepare vX.Y.Z`.
+4. **Tagging:** Create annotated release tag `vX.Y.Z` on HEAD with message `Release vX.Y.Z`.
+5. **Push:** Push current worktree commit to remote `main` branch (`git push origin HEAD:main`) and push release tag (`git push origin vX.Y.Z`).
+
