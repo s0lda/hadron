@@ -99,6 +99,10 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "quit", detail: "Exit Hadron Chamber", arity: Arity::None, arg: ArgSource::None, listed: false },
     Command { name: "toggle-roster", detail: "Toggle the Roster sidebar", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "toggle-inspector", detail: "Toggle the Inspector sidebar", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "git-status", detail: "Show working tree status and branch info", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "git-log", detail: "Display last N commits (default 5)", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "push", detail: "Push local commits to remote origin", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "pr", detail: "Create a GitHub Pull Request for active branch", arity: Arity::Line, arg: ArgSource::None, listed: true },
     // The skill commands. Each posts a message carrying the skill's own canonical
     // trigger, so the engine selects the procedure — see `skill_command_body`.
     Command { name: "brainstorm", detail: "Explore a design before any code (e.g. /brainstorm @Sonnet the new menu)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
