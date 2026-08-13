@@ -428,14 +428,9 @@ impl super::Chamber {
                             "Skills",
                             v_flex()
                                 .gap_1p5()
-                                .child(div().text_xs().text_color(theme::text_muted()).child("Skills assigned / active for this quark in the swarm."))
+                                .child(div().text_xs().text_color(theme::text_muted()).child("Skills active for this quark in the swarm. Unselect a skill to disable (deny) it."))
                                 .child(self.skill_selector(cx))
                                 .into_any_element(),
-                        ))
-                        .child(settings_field(
-                            "Denied skills",
-                            Some("Comma-separated skill names this quark may not invoke."),
-                            Input::new(&self.settings_deny_skills).w_full().into_any_element(),
                         ))
                         .when(self.settings_secret_applies, |v| {
                             v.child(settings_field(

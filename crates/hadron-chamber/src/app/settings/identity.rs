@@ -213,20 +213,28 @@ impl super::Chamber {
     }
 
     pub(super) fn skill_selector(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let available = self.available_skills();
-        let current_roles_val = self.settings_roles.read(cx).value().trim().to_string();
-        let current_roles: Vec<String> = current_roles_val
+        let mut available = self.available_skills();
+        let deny_skills_val = self.settings_deny_skills.read(cx).value();
+        let current_deny_skills: Vec<String> = deny_skills_val
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
 
+        // Also include any off-list denied skills so they can be viewed/re-enabled
+        for d in &current_deny_skills {
+            if !available.iter().any(|a| a.eq_ignore_ascii_case(d)) {
+                available.push(d.clone());
+            }
+        }
+
         let mut row = h_flex().w_full().gap_1p5().flex_wrap();
         for skill in &available {
-            let selected = current_roles.iter().any(|r| r.eq_ignore_ascii_case(skill));
-            let f = self.settings_roles.clone();
+            let denied = current_deny_skills.iter().any(|d| d.eq_ignore_ascii_case(skill));
+            let selected = !denied;
+            let f = self.settings_deny_skills.clone();
             let p = skill.clone();
-            let current_roles_clone = current_roles.clone();
+            let current_deny_clone = current_deny_skills.clone();
 
             row = row.child(
                 div()
@@ -247,19 +255,23 @@ impl super::Chamber {
                     .when(!selected, |d| {
                         d.bg(theme::input_bg())
                             .border_color(theme::border())
-                            .text_color(theme::text_secondary())
+                            .text_color(theme::text_muted())
                             .hover(|s| s.bg(theme::bg_surface_raised()))
                     })
                     .child(skill.clone())
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        let mut new_roles = current_roles_clone.clone();
+                        let mut new_deny = current_deny_clone.clone();
                         let target_skill = p.to_string();
-                        if let Some(pos) = new_roles.iter().position(|x| x.eq_ignore_ascii_case(&target_skill)) {
-                            new_roles.remove(pos);
+                        if selected {
+                            // Currently ON -> user unselected it -> add to deny_skills
+                            if !new_deny.iter().any(|x| x.eq_ignore_ascii_case(&target_skill)) {
+                                new_deny.push(target_skill);
+                            }
                         } else {
-                            new_roles.push(target_skill);
+                            // Currently OFF (denied) -> user selected it -> remove from deny_skills
+                            new_deny.retain(|x| !x.eq_ignore_ascii_case(&target_skill));
                         }
-                        f.update(cx, |s, cx| s.set_value(new_roles.join(", "), window, cx));
+                        f.update(cx, |s, cx| s.set_value(new_deny.join(", "), window, cx));
                         this.commit_settings_inputs(cx);
                         cx.notify();
                     })),

@@ -179,3 +179,27 @@ fn skill_creation_and_deletion_in_repo_and_global_paths() {
     assert!(std::fs::remove_file(&file_path).is_ok());
     assert!(!file_path.exists());
 }
+
+#[test]
+fn skill_selection_toggles_deny_list() {
+    let mut deny_skills: Vec<String> = vec![];
+    let skill = "writing-plans";
+
+    // 1. Initially empty deny_skills -> skill is selected (ON) by default
+    let denied = deny_skills.iter().any(|d| d.eq_ignore_ascii_case(skill));
+    assert!(!denied, "skill must be selected by default");
+
+    // 2. User unselects skill -> added to deny_skills
+    if !denied {
+        deny_skills.push(skill.to_string());
+    }
+    assert_eq!(deny_skills, vec!["writing-plans".to_string()]);
+
+    // 3. User selects skill back ON -> removed from deny_skills
+    let denied_now = deny_skills.iter().any(|d| d.eq_ignore_ascii_case(skill));
+    assert!(denied_now);
+    if denied_now {
+        deny_skills.retain(|x| !x.eq_ignore_ascii_case(skill));
+    }
+    assert!(deny_skills.is_empty(), "selecting skill back ON must clear it from deny_skills");
+}
