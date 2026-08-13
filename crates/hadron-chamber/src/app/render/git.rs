@@ -129,13 +129,6 @@ impl super::Chamber {
             .child(git_pane)
     }
 
-    fn git_section_title(title: &'static str) -> impl IntoElement {
-        div()
-            .text_xs()
-            .text_color(theme::text_muted())
-            .child(title)
-    }
-
     fn muted(text: &'static str) -> impl IntoElement {
         div().text_color(theme::text_muted()).child(text)
     }
@@ -205,11 +198,7 @@ impl super::Chamber {
             }
         };
 
-        v_flex()
-            .w_full()
-            .gap_1()
-            .child(Self::git_section_title("Branches"))
-            .child(rows)
+        rows
     }
 
     /// Compute (or toggle off) the diff of a branch against `main`. Clicking the
@@ -502,11 +491,7 @@ impl super::Chamber {
             }
         };
 
-        v_flex()
-            .w_full()
-            .gap_1()
-            .child(Self::git_section_title("Worktrees"))
-            .child(rows)
+        rows
     }
 
     /// Whether a branch (by name) has landed in `main` — looked up in the already-loaded
@@ -562,9 +547,8 @@ impl super::Chamber {
         let show_snapshots = self.git_show_snapshots;
         let header = h_flex()
             .w_full()
-            .justify_between()
+            .justify_end()
             .items_center()
-            .child(Self::git_section_title("Commit graph"))
             .child(
                 h_flex()
                     .id("snapshot-toggle")
@@ -1013,12 +997,7 @@ impl super::Chamber {
         use crate::app::delegation::DelegationState;
 
         if self.delegations.is_empty() {
-            return v_flex()
-                .w_full()
-                .gap_1()
-                .child(Self::git_section_title("Delegations"))
-                .child(Self::muted("No delegations recorded."))
-                .into_any_element();
+            return Self::muted("No delegations recorded.").into_any_element();
         }
 
         let mut list = v_flex().w_full().gap_2();
@@ -1108,12 +1087,7 @@ impl super::Chamber {
             list = list.child(card);
         }
 
-        v_flex()
-            .w_full()
-            .gap_2()
-            .child(Self::git_section_title("Delegations"))
-            .child(list)
-            .into_any_element()
+        list.into_any_element()
     }
 }
 
