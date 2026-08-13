@@ -62,17 +62,29 @@ cd ~/dev/my_project && hadron
 
 ---
 
-## 🔌 Provider Ecosystem
+## 🔌 Provider & Model Ecosystem
 
-Hadron seamlessly bridges different model architectures and transport protocols into one chat:
+Hadron natively bridges **30+ AI agents, local models, and cloud APIs** into a single orchestrated chat workspace. Any agent, model, or tool speaking **ACP (Agent Client Protocol)**, **OpenAI-compatible HTTP**, or **Stdio/PTY** can be seated directly into your swarm.
 
-| Provider / Model | Transport Protocol | Capabilities |
-| :--- | :--- | :--- |
-| **Anthropic (Claude)** | ACP (`claude-code`) / HTTP API | Code editing, multi-file reasoning, sub-agent delegation |
-| **Google Antigravity** | ACP / CLI Transport / SDK | Architecture design, multi-agent orchestration, web research |
-| **Ollama** | Local HTTP (`localhost:11434`) | Offline execution, privacy-first local model swarms |
-| **OpenAI & OpenRouter** | OpenAI Compatible HTTP | GPT-4o, Claude 3.5 Sonnet, DeepSeek, custom endpoints |
-| **Custom Coding CLIs** | Resident PTY / Stdio Transport | Script execution, custom CLI coding wrappers |
+### 🤖 ACP Agent Swarm (Native Presets & ACP Registry)
+Hadron boots and orchestrates resident ACP agents with automatic session resumption, model selection, and tool calls:
+- **Featured ACP Agents**: `Claude Code` (`claude`), `Codex CLI` (`codex`), `Gemini CLI` (`gemini`), `GitHub Copilot` (`copilot`), `Google Antigravity` (`agy`)
+- **Supported Ecosystem ACP Agents**: `Goose`, `Cursor`, `Cline`, `OpenHands`, `OpenCode`, `Kimi CLI`, `Mistral Vibe`, `Qwen Code`, `Factory Droid`, `Augment Code`, `Blackbox AI`, `Pi`, `Poolside`, `Qoder CLI`, `Hermes Agent`, `Junie`, `Kiro`, `OpenClaw`, `AgentPool`, `AutoDev`, `cagent (Docker)`, `stdio Bus`, `VT Code`, and any custom binary speaking ACP!
+
+### 🏠 Local Models (Offline & Private)
+Direct zero-config local server integration:
+- **Ollama**: Auto-detects local models (`llama3.3`, `deepseek-r1`, `qwen2.5-coder`, `mistral`, `phi-4`) over `localhost:11434`
+- **LM Studio**: Local OpenAI-compatible server (`localhost:1234/v1`) with zero-latency local token streaming
+
+### ☁️ Cloud HTTP & OpenAI-Compatible Endpoints
+Connect to any cloud model provider or API proxy via `Authorization: Bearer` keys:
+- **OpenAI**: `GPT-4o`, `o1`, `o3-mini`, `GPT-4-turbo`
+- **OpenRouter**: Access 200+ models (`DeepSeek R1/V3`, `Claude 3.5 Sonnet`, `Llama 3.3 70B`, `Qwen 2.5 72B`)
+- **Cloud APIs**: Direct support for `Groq`, `Together AI`, `Fireworks AI`, `DeepSeek API`, `Mistral API`, `SambaNova`, or self-hosted vLLM / TGI endpoints
+
+### 💻 Custom Coding CLIs & PTY Transports
+- **CLI Transport (`CliSpec`)**: Data-driven stdio wrapper for one-shot or interactive CLI coding tools (`aider`, custom scripts, dockerized agents).
+- **PTY Terminal Seats**: Interactive bash/zsh PTY terminals seated right alongside LLM agents in the chat room.
 
 ---
 
