@@ -87,13 +87,13 @@ Hadron boots and orchestrates resident ACP agents with automatic session resumpt
 
 ### 🏠 Local Models (Offline & Private)
 Direct zero-config local server integration:
-- **Ollama**: Auto-detects local models (`llama3.3`, `deepseek-r1`, `qwen2.5-coder`, `mistral`, `phi-4`) over `localhost:11434`
+- **Ollama**: Auto-detects local models over `localhost:11434`
 - **LM Studio**: Local OpenAI-compatible server (`localhost:1234/v1`) with zero-latency local token streaming
 
 ### ☁️ Cloud HTTP & OpenAI-Compatible Endpoints
 Connect to any cloud model provider or API proxy via `Authorization: Bearer` keys:
-- **OpenAI**: `GPT-4o`, `o1`, `o3-mini`, `GPT-4-turbo`
-- **OpenRouter**: Access 200+ models (`DeepSeek R1/V3`, `Claude 3.5 Sonnet`, `Llama 3.3 70B`, `Qwen 2.5 72B`)
+- **OpenAI**: Native OpenAI API endpoints
+- **OpenRouter**: Access 400+ models across all major AI providers
 - **Cloud APIs**: Direct support for `Groq`, `Together AI`, `Fireworks AI`, `DeepSeek API`, `Mistral API`, `SambaNova`, or self-hosted vLLM / TGI endpoints
 
 ### 💻 Custom Coding CLIs & PTY Transports
