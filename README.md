@@ -78,23 +78,22 @@ Explore Hadron's mechanics, architecture, and developer guides in the [`/docs`](
 
 ## 🔌 Provider & Model Ecosystem
 
-Hadron natively bridges **30+ AI agents, local models, and cloud APIs** into a single orchestrated chat workspace. Any agent, model, or tool speaking **ACP (Agent Client Protocol)**, **OpenAI-compatible HTTP**, or **Stdio/PTY** can be seated directly into your swarm.
+Hadron connects AI agents, local models, cloud APIs, and terminal workflows into a single orchestrated chat workspace. Any agent, model, or tool speaking **ACP (Agent Client Protocol)**, **OpenAI-compatible HTTP**, or **Stdio/PTY** can be seated directly into your swarm.
 
-### 🤖 ACP Agent Swarm (Native Presets & ACP Registry)
-Hadron boots and orchestrates resident ACP agents with automatic session resumption, model selection, and tool calls:
-- **Featured ACP Agents**: `Claude Code` (`claude`), `Codex CLI` (`codex`), `Gemini CLI` (`gemini`), `GitHub Copilot` (`copilot`), `Google Antigravity` (`agy`)
-- **Supported Ecosystem ACP Agents**: `Goose`, `Cursor`, `Cline`, `OpenHands`, `OpenCode`, `Kimi CLI`, `Mistral Vibe`, `Qwen Code`, `Factory Droid`, `Augment Code`, `Blackbox AI`, `Pi`, `Poolside`, `Qoder CLI`, `Hermes Agent`, `Junie`, `Kiro`, `OpenClaw`, `AgentPool`, `AutoDev`, `cagent (Docker)`, `stdio Bus`, `VT Code`, and any custom binary speaking ACP!
+### 🤖 ACP Agents & Custom Bridges
+Hadron boots and orchestrates resident agents with automatic session resumption, context tracking, and tool calls:
+- **ACP Agents**: Launch any Agent Client Protocol (ACP) compliant agent via built-in presets or the dynamic ACP registry (e.g. `Claude Code`, `Codex CLI`, `Gemini CLI`, `GitHub Copilot`, `Goose`, `Cursor`, `Cline`, `OpenHands`, `OpenCode`, and custom binaries).
+- **Custom Bridges**: Dedicated adapters for SDK-based agents, such as **Google Antigravity** via Hadron's embedded Python bridge.
 
 ### 🏠 Local Models (Offline & Private)
-Direct zero-config local server integration:
-- **Ollama**: Auto-detects local models over `localhost:11434`
-- **LM Studio**: Local OpenAI-compatible server (`localhost:1234/v1`) with zero-latency local token streaming
+Connect local HTTP model servers with zero-latency streaming:
+- **Ollama**: Auto-detects local models running over `localhost:11434`.
+- **LM Studio & Local Proxies**: Connect local OpenAI-compatible endpoints (`localhost:1234/v1`).
 
 ### ☁️ Cloud HTTP & OpenAI-Compatible Endpoints
 Connect to any cloud model provider or API proxy via `Authorization: Bearer` keys:
-- **OpenAI**: Native OpenAI API endpoints
-- **OpenRouter**: Access 400+ models across all major AI providers
-- **Cloud APIs**: Direct support for `Groq`, `Together AI`, `Fireworks AI`, `DeepSeek API`, `Mistral API`, `SambaNova`, or self-hosted vLLM / TGI endpoints
+- **OpenAI & OpenRouter**: Native support for OpenAI endpoints and OpenRouter (accessing 400+ models across providers).
+- **OpenAI-Compatible Providers**: Support for any cloud provider or self-hosted server (e.g. Groq, Together AI, Fireworks AI, DeepSeek API, Mistral API, SambaNova, vLLM, TGI) accepting standard OpenAI chat completions format.
 
 ### 💻 Custom Coding CLIs & PTY Transports
 - **CLI Transport (`CliSpec`)**: Data-driven stdio wrapper for one-shot or interactive CLI coding tools (`aider`, custom scripts, dockerized agents).
