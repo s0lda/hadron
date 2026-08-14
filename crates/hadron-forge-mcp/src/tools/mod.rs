@@ -5,6 +5,7 @@
 //! is not cosmetic: it is what lets separate families be written, reviewed and
 //! landed independently without three branches all editing one file.
 
+pub mod browser;
 pub mod cargo_tree;
 pub mod diagnostics;
 pub mod edit;
@@ -61,7 +62,8 @@ impl ForgeMcpServer {
                 + Self::cargo_tree_router()
                 + Self::process_router()
                 + Self::semantic_router()
-                + Self::symbols_router(),
+                + Self::symbols_router()
+                + Self::browser_router(),
             root,
             nucleus_root,
             process_manager,
