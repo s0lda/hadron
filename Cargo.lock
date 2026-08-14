@@ -2946,7 +2946,10 @@ version = "0.3.1"
 dependencies = [
  "blake3",
  "libc",
+ "serde",
+ "serde_json",
  "tempfile",
+ "tokio",
  "tree-sitter",
  "tree-sitter-c 0.23.4",
  "tree-sitter-c-sharp",
