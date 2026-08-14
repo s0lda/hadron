@@ -57,6 +57,8 @@ pub struct CachedStats {
 }
 
 pub(super) mod delegation;
+pub(crate) mod toasts;
+use toasts::{ToastKind, ToastManager};
 
 mod mentions;
 use mentions::{parse_plan_progress, parse_plan_tasks, resolve_mention_names};
@@ -387,7 +389,7 @@ struct Chamber {
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
-    _settings_subs: [Subscription; 21],
+    _settings_subs: [Subscription; 23],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
     /// Offered-model probe for the ACP quark whose Settings are open — drives the model
@@ -427,6 +429,12 @@ struct Chamber {
     /// Native SelectState dropdown for General Settings Merge Strategy.
     merge_strategy_select_state: Entity<SelectState<ModelSelectDelegate>>,
     merge_strategy_select_key: Option<hadron_lattice::MergeStrategy>,
+    /// Native SelectState dropdown for General Settings Theme Preset.
+    theme_preset_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    theme_preset_select_key: Option<Option<config::ThemePreset>>,
+    /// Native SelectState dropdown for General Settings Primary Accent Choice.
+    accent_choice_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    accent_choice_select_key: Option<Option<config::AccentChoice>>,
     /// Native SelectState dropdown for General Settings UI Font Family.
     ui_font_select_state: Entity<SelectState<ModelSelectDelegate>>,
     ui_font_select_key: Option<Option<String>>,
@@ -439,6 +447,8 @@ struct Chamber {
     /// Native SelectState dropdown for General Settings Mono Font Size.
     mono_font_size_select_state: Entity<SelectState<ModelSelectDelegate>>,
     mono_font_size_select_key: Option<Option<f32>>,
+    /// Active in-app toast notification queue.
+    pub(super) toast_manager: ToastManager,
     /// In-progress `agy` ACP bridge venv provisioning for the seat whose Settings are
     /// open, if any. `None` for any other kind of seat, before the first attempt, or
     /// once already provisioned — see `start_agy_bridge_provision`. This runs off the
@@ -608,6 +618,12 @@ impl Chamber {
         let merge_strategy_select_state = cx.new(|cx| {
             SelectState::new(create_model_delegate("Fast-forward", &["Squash commit".into(), "GitHub PR mirror".into()], None), None, window, cx).searchable(false)
         });
+        let theme_preset_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Obsidian Neutral (Default)", &[], None), None, window, cx).searchable(false)
+        });
+        let accent_choice_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Amethyst (Default)", &[], None), None, window, cx).searchable(false)
+        });
         let ui_font_select_state = cx.new(|cx| {
             SelectState::new(create_model_delegate("Inter (Default)", &[], None), None, window, cx).searchable(true)
         });
@@ -736,6 +752,40 @@ impl Chamber {
                 this.save_repo_team(cx);
                 cx.notify();
             }),
+            cx.subscribe_in(&theme_preset_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                let preset = config::ThemePreset::from_str(val);
+                this.prefs.theme_preset = preset;
+                let _ = config::save(&this.prefs);
+                Self::apply_theme_and_typography(cx, &this.prefs);
+                let label = preset.unwrap_or_default().label();
+                this.show_toast(
+                    toasts::ToastKind::Success,
+                    format!("Theme set to {label}"),
+                    Some(3),
+                    cx,
+                );
+                cx.refresh_windows();
+                cx.notify();
+            }),
+            cx.subscribe_in(&accent_choice_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                let accent = config::AccentChoice::from_str(val);
+                this.prefs.accent_choice = accent;
+                let _ = config::save(&this.prefs);
+                Self::apply_theme_and_typography(cx, &this.prefs);
+                let label = accent.unwrap_or_default().label();
+                this.show_toast(
+                    toasts::ToastKind::Success,
+                    format!("Accent set to {label}"),
+                    Some(3),
+                    cx,
+                );
+                cx.refresh_windows();
+                cx.notify();
+            }),
             cx.subscribe_in(&ui_font_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
                 let SelectEvent::Confirm(selected) = event;
                 let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
@@ -745,7 +795,7 @@ impl Chamber {
                     this.prefs.ui_font_family = Some(val.to_string());
                 }
                 let _ = config::save(&this.prefs);
-                Self::apply_typography(cx, &this.prefs);
+                Self::apply_theme_and_typography(cx, &this.prefs);
                 cx.refresh_windows();
                 cx.notify();
             }),
@@ -760,7 +810,7 @@ impl Chamber {
                         this.prefs.ui_font_size = Some(sz);
                     }
                     let _ = config::save(&this.prefs);
-                    Self::apply_typography(cx, &this.prefs);
+                    Self::apply_theme_and_typography(cx, &this.prefs);
                     cx.refresh_windows();
                     cx.notify();
                 }
@@ -774,7 +824,7 @@ impl Chamber {
                     this.prefs.mono_font_family = Some(val.to_string());
                 }
                 let _ = config::save(&this.prefs);
-                Self::apply_typography(cx, &this.prefs);
+                Self::apply_theme_and_typography(cx, &this.prefs);
                 cx.refresh_windows();
                 cx.notify();
             }),
@@ -789,7 +839,7 @@ impl Chamber {
                         this.prefs.mono_font_size = Some(sz);
                     }
                     let _ = config::save(&this.prefs);
-                    Self::apply_typography(cx, &this.prefs);
+                    Self::apply_theme_and_typography(cx, &this.prefs);
                     cx.refresh_windows();
                     cx.notify();
                 }
@@ -1049,6 +1099,10 @@ impl Chamber {
             nucleus_budget_select_key: None,
             merge_strategy_select_state,
             merge_strategy_select_key: None,
+            theme_preset_select_state,
+            theme_preset_select_key: None,
+            accent_choice_select_state,
+            accent_choice_select_key: None,
             ui_font_select_state,
             ui_font_select_key: None,
             ui_font_size_select_state,
@@ -1057,6 +1111,7 @@ impl Chamber {
             mono_font_select_key: None,
             mono_font_size_select_state,
             mono_font_size_select_key: None,
+            toast_manager: ToastManager::new(),
             agy_bridge_probe: None,
             file_tree_paths: files,
             _lock_file: lock_file,
@@ -1264,14 +1319,66 @@ fn mono_family_with_a_real_bold(cx: &App, preferred: Option<&str>) -> SharedStri
 }
 
 impl Chamber {
-    /// Apply typography preferences (families and font sizes) to gpui-component's Theme.
-    pub(super) fn apply_typography(cx: &mut App, prefs: &ChamberPrefs) {
+    /// Show a lightweight floating toast notification.
+    pub fn show_toast(
+        &mut self,
+        kind: ToastKind,
+        message: impl Into<String>,
+        duration_secs: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
+        self.toast_manager.push(kind, message, duration_secs);
+        cx.notify();
+    }
+
+    /// Dismiss a toast notification by id.
+    pub fn dismiss_toast(&mut self, id: usize, cx: &mut Context<Self>) {
+        self.toast_manager.dismiss(id);
+        cx.notify();
+    }
+
+    /// Apply typography preferences (families and font sizes) and color presets to gpui-component's Theme.
+    pub(super) fn apply_theme_and_typography(cx: &mut App, prefs: &ChamberPrefs) {
         let ui_font = font_family_with_a_real_bold(cx, prefs.ui_font_family.as_deref());
         let mono_font = mono_family_with_a_real_bold(cx, prefs.mono_font_family.as_deref());
         let ui_size = prefs.ui_font_size.unwrap_or(14.0);
         let mono_size = prefs.mono_font_size.unwrap_or(13.0);
+        let preset = prefs.theme_preset.unwrap_or_default();
+        let palette = theme::palette_for_preset(preset);
+        let accent_color = prefs.accent_choice.unwrap_or_default().rgb();
 
         let t = gpui_component::Theme::global_mut(cx);
+        t.title_bar = palette.bg_surface.into();
+        t.tokens.title_bar = gpui::Hsla::from(palette.bg_surface).into();
+        t.title_bar_border = palette.border.into();
+        t.background = palette.canvas_base.into();
+        t.input = palette.input_bg.into();
+        t.secondary = palette.bg_surface.into();
+        t.secondary_hover = palette.bg_surface_raised.into();
+        t.popover = palette.bg_surface.into();
+        t.popover_foreground = theme::text().into();
+        t.tokens.popover = gpui::Hsla::from(palette.bg_surface).into();
+        t.tokens.popover_foreground = gpui::Hsla::from(theme::text()).into();
+        t.border = palette.border.into();
+        t.drag_border = accent_color.into();
+        t.selection = accent_color.opacity(0.3).into();
+        t.list_active = accent_color.opacity(0.2).into();
+        t.list_active_border = accent_color.into();
+        t.accent = gpui::rgba(0xffffff20).into();
+        t.tokens.tab_bar_segmented = gpui::Hsla::from(palette.bg_surface_raised).into();
+        t.danger = rgb(0xef4444).into();
+        t.danger_foreground = rgb(0xf5f5f6).into();
+        t.link = theme::link().into();
+        t.link_hover = theme::link_hover().into();
+        t.link_active = theme::link_active().into();
+        t.scrollbar_show = ScrollbarShow::Hover;
+        t.scrollbar = gpui::rgba(0x00000000).into();
+        t.scrollbar_thumb = gpui::rgba(0xffffff40).into();
+        t.scrollbar_thumb_hover = gpui::rgba(0xffffffa0).into();
+        t.tokens.scrollbar_thumb = gpui::Hsla::from(gpui::rgba(0xffffff40)).into();
+        t.tokens.scrollbar_thumb_hover = gpui::Hsla::from(gpui::rgba(0xffffffa0)).into();
+        t.window_border = rgb(0x2a2b2c).into();
+        t.tokens.background = gpui::Hsla::from(palette.bg_surface).into();
         t.font_family = ui_font;
         t.mono_font_family = mono_font;
         t.font_size = px(ui_size);
@@ -1351,106 +1458,8 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
         if let Err(e) = cx.text_system().add_fonts(crate::fonts::embedded()) {
             eprintln!("hadron: could not register bundled fonts ({e:#}); falling back to system fonts");
         }
-        // Probed before the theme block below, which holds `cx` mutably. Logged because
-        // this bug is invisible from inside the app — the only symptom is flat bold.
-        let ui_font = font_family_with_a_real_bold(cx, prefs.ui_font_family.as_deref());
-        let mono_font = mono_family_with_a_real_bold(cx, prefs.mono_font_family.as_deref());
-        let ui_size = prefs.ui_font_size.unwrap_or(14.0);
-        let mono_size = prefs.mono_font_size.unwrap_or(13.0);
-        hadron_lattice::term::info(
-            hadron_lattice::term::Source::Chamber,
-            &format!("UI font family {ui_font} ({ui_size}px), Mono font family {mono_font} ({mono_size}px) (bold verified)"),
-        );
-        // Align gpui-component's own component colors (titlebar, inputs, window
-        // controls) to Jake's palette so they blend with our hand-drawn surfaces.
-        {
-            let t = gpui_component::Theme::global_mut(cx);
-            // Titlebar shares the sidebar's colour; the search bar (a darker
-            // recessed pill) uses the base bg. `tokens.title_bar` is what the
-            // TitleBar actually paints.
-            t.title_bar = theme::bg_surface().into();
-            t.tokens.title_bar = gpui::Hsla::from(theme::bg_surface()).into();
-            t.title_bar_border = theme::border().into();
-            t.background = theme::field_base().into();
-            t.input = theme::input_bg().into();
-            t.secondary = theme::bg_surface().into();
-            t.secondary_hover = theme::bg_surface_raised().into();
-            t.popover = theme::popover().into();
-            t.popover_foreground = theme::text().into();
-            // Context menus, dropdown menus and tooltips paint from `tokens.popover`, which
-            // is computed once at theme construction and does NOT re-derive from the mutated
-            // `colors.popover` above — so without this line they stay the stock-dark theme
-            // colour (near-black) instead of our surface. Same gotcha as `tokens.title_bar`.
-            t.tokens.popover = gpui::Hsla::from(theme::popover()).into();
-            t.tokens.popover_foreground = gpui::Hsla::from(theme::text()).into();
-            // `border` is ONE shared token: every popup menu, dialog, tab, table and
-            // input outline reads it, not just the chat/right-rail resize handle. It was
-            // previously zeroed out here to hide that one handle at rest, which silently
-            // killed borders everywhere else too — including context-menu edges, which
-            // is why they read as bleeding into the field with no outline. Fixed at the
-            // source instead: `resize_handle.rs` (the fork) now paints its own idle
-            // handle transparent directly rather than reading this token, so `border`
-            // can go back to a real, visible value for everyone else.
-            t.border = theme::border().into();
-            t.drag_border = theme::accent().into();
-            // Stock dark theme's `input`/`selection`/`list_active` are deep blues
-            // (`#1d4ed8`-family) that never got re-themed, which is the "blue tint" in
-            // the Settings/Processes/File-Tree surfaces — `input` in particular sat only
-            // two hex steps from `modal_surface()`, so a Settings text field was nearly
-            // invisible against its own card. Re-anchor all three to the chamber's own
-            // neutral/amethyst ramp so nothing on these panels still carries the fork's
-            // stock accent.
-            t.input = theme::input_bg().into();
-            t.selection = theme::accent_soft().into();
-            t.list_active = gpui::rgba(0xc084fc33).into();
-            t.list_active_border = theme::accent().into();
-            // Markdown inline code blocks use `accent` for background in gpui-component.
-            // Override it to a very soft white overlay so it's slightly brighter than the background.
-            t.accent = gpui::rgba(0xffffff20).into();
-            // The chat's segmented tab track: a step above the dark card (bg) so
-            // the control is visible. The active tab reads as a darker cutout (its
-            // sliding indicator paints `tokens.background`, which we keep
-            // transparent for the frame — so it shows the card behind).
-            t.tokens.tab_bar_segmented = gpui::Hsla::from(theme::bg_surface_raised()).into();
-            // Close-button hover: red *background*, but keep the X light so it
-            // stays legible (was red-on-red).
-            t.danger = rgb(0xef4444).into();
-            t.danger_foreground = rgb(0xf5f5f6).into();
-            // Chat markdown links — light blue instead of the fork's stock
-            // near-white, so a link reads as a link against chat prose.
-            t.link = theme::link().into();
-            t.link_hover = theme::link_hover().into();
-            t.link_active = theme::link_active().into();
-            // Scrollbar thumb theme tokens — frosted white over dark background
-            // so scrollbars are clearly visible on hover or scrolling.
-            t.scrollbar_show = ScrollbarShow::Hover;
-            t.scrollbar = gpui::rgba(0x00000000).into();
-            t.scrollbar_thumb = gpui::rgba(0xffffff40).into();
-            t.scrollbar_thumb_hover = gpui::rgba(0xffffffa0).into();
-            t.tokens.scrollbar_thumb = gpui::Hsla::from(gpui::rgba(0xffffff40)).into();
-            t.tokens.scrollbar_thumb_hover = gpui::Hsla::from(gpui::rgba(0xffffffa0)).into();
-            // Subtle dark window frame (Zed-style CSD border), matching the UI.
-            t.window_border = rgb(0x2a2b2c).into();
-            // `tokens.background` must stay OPAQUE. It is ONE token with several
-            // consumers in the fork, and the one that matters here is the `Select`
-            // popup: `select.rs` fills its dropdown with `.bg(tokens.background)`
-            // (NOT `tokens.popover`, which is what the name suggests and what the
-            // local fork checkout — which does not build this binary — was edited to
-            // use). Zeroing this token therefore made every model dropdown a
-            // see-through pane: the settings panel's own Effort/Permission/Roles
-            // chips read straight through the open list, which is exactly the
-            // "barely possible to read the list" report. It was zeroed so the
-            // rounded window frame (`crate::window_frame`) showed through the
-            // corners instead of a square fill — a requirement of the window ROOT
-            // alone, now stated at the root itself (`Root::new(..).bg(..)` below)
-            // rather than by blanking a token nine other widgets paint with.
-            t.tokens.background = gpui::Hsla::from(theme::popover()).into();
-            // ONE family, never a comma list — see `font_family_with_a_real_bold`.
-            t.font_family = ui_font;
-            t.mono_font_family = mono_font;
-            t.font_size = px(ui_size);
-            t.mono_font_size = px(mono_size);
-        }
+        // Apply initial theme palette, accent, and verified typography.
+        Chamber::apply_theme_and_typography(cx, &prefs);
         // Keyboard navigation. The chords still scoped to `KEY_CONTEXT` are ones
         // the text input's own key context (`gpui_component::input::state::CONTEXT`)
         // does NOT claim, so they fall through to this Chamber context even while

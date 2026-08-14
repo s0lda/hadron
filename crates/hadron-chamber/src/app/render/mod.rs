@@ -79,6 +79,7 @@ impl Render for Chamber {
         let processes = self
             .process_manager_open
             .then(|| self.process_overlay(cx));
+        let toasts = self.render_toasts(cx);
 
         let content = v_flex()
             .key_context(KEY_CONTEXT)
@@ -133,7 +134,8 @@ impl Render for Chamber {
             .children(about)
             .children(changelog)
             .children(app_menu)
-            .children(processes);
+            .children(processes)
+            .children(toasts);
 
         let wrapped_content = crate::window_frame::window_frame(window, cx, content);
 

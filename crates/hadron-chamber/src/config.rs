@@ -95,6 +95,129 @@ pub struct ChamberPrefs {
     /// Optional custom monospace font size in pixels (defaults to 13.0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mono_font_size: Option<f32>,
+    /// Optional color theme preset (defaults to Obsidian Neutral).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme_preset: Option<ThemePreset>,
+    /// Optional primary accent color choice (defaults to Amethyst).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent_choice: Option<AccentChoice>,
+}
+
+/// Curated color theme presets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ThemePreset {
+    #[default]
+    Obsidian,
+    Oled,
+    Midnight,
+    Tokyo,
+}
+
+impl ThemePreset {
+    pub const ALL: [ThemePreset; 4] = [
+        ThemePreset::Obsidian,
+        ThemePreset::Oled,
+        ThemePreset::Midnight,
+        ThemePreset::Tokyo,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemePreset::Obsidian => "Obsidian Neutral",
+            ThemePreset::Oled => "OLED True Black",
+            ThemePreset::Midnight => "Midnight Slate",
+            ThemePreset::Tokyo => "Tokyo Dark",
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            ThemePreset::Obsidian => "obsidian",
+            ThemePreset::Oled => "oled",
+            ThemePreset::Midnight => "midnight",
+            ThemePreset::Tokyo => "tokyo",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "obsidian" | "obsidian-neutral" | "default" => Some(ThemePreset::Obsidian),
+            "oled" | "oled-black" | "black" => Some(ThemePreset::Oled),
+            "midnight" | "midnight-slate" | "slate" => Some(ThemePreset::Midnight),
+            "tokyo" | "tokyo-dark" | "indigo" => Some(ThemePreset::Tokyo),
+            _ => None,
+        }
+    }
+}
+
+/// Primary accent color choices for highlights, focus borders, and active indicators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AccentChoice {
+    #[default]
+    Amethyst,
+    Sapphire,
+    Emerald,
+    Amber,
+    Rose,
+    Coral,
+}
+
+impl AccentChoice {
+    pub const ALL: [AccentChoice; 6] = [
+        AccentChoice::Amethyst,
+        AccentChoice::Sapphire,
+        AccentChoice::Emerald,
+        AccentChoice::Amber,
+        AccentChoice::Rose,
+        AccentChoice::Coral,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            AccentChoice::Amethyst => "Amethyst",
+            AccentChoice::Sapphire => "Sapphire",
+            AccentChoice::Emerald => "Emerald",
+            AccentChoice::Amber => "Amber",
+            AccentChoice::Rose => "Rose",
+            AccentChoice::Coral => "Coral",
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            AccentChoice::Amethyst => "amethyst",
+            AccentChoice::Sapphire => "sapphire",
+            AccentChoice::Emerald => "emerald",
+            AccentChoice::Amber => "amber",
+            AccentChoice::Rose => "rose",
+            AccentChoice::Coral => "coral",
+        }
+    }
+
+    pub fn rgb(self) -> gpui::Rgba {
+        match self {
+            AccentChoice::Amethyst => gpui::rgb(0xc084fc),
+            AccentChoice::Sapphire => gpui::rgb(0x60a5fa),
+            AccentChoice::Emerald => gpui::rgb(0x34d399),
+            AccentChoice::Amber => gpui::rgb(0xfbbf24),
+            AccentChoice::Rose => gpui::rgb(0xf472b6),
+            AccentChoice::Coral => gpui::rgb(0xf87171),
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "amethyst" | "purple" => Some(AccentChoice::Amethyst),
+            "sapphire" | "blue" => Some(AccentChoice::Sapphire),
+            "emerald" | "green" => Some(AccentChoice::Emerald),
+            "amber" | "yellow" => Some(AccentChoice::Amber),
+            "rose" | "pink" => Some(AccentChoice::Rose),
+            "coral" | "red" => Some(AccentChoice::Coral),
+            _ => None,
+        }
+    }
 }
 
 /// An `editor` value we do not understand resolves to the default instead of
@@ -153,6 +276,8 @@ impl Default for ChamberPrefs {
             ui_font_size: None,
             mono_font_family: None,
             mono_font_size: None,
+            theme_preset: None,
+            accent_choice: None,
         }
     }
 }
@@ -241,6 +366,8 @@ mod tests {
             ui_font_size: Some(14.0),
             mono_font_family: Some("Cascadia Code".into()),
             mono_font_size: Some(13.0),
+            theme_preset: None,
+            accent_choice: None,
         };
         let json = serde_json::to_string(&prefs).unwrap();
         let back: ChamberPrefs = serde_json::from_str(&json).unwrap();
@@ -439,4 +566,27 @@ mod tests {
         assert_eq!(loaded.mono_font_family.as_deref(), Some("JetBrains Mono"));
         assert_eq!(loaded.mono_font_size, Some(12.5));
     }
+
+    #[test]
+    fn theme_and_accent_preferences_round_trip() {
+        let prefs = ChamberPrefs::default();
+        assert_eq!(prefs.theme_preset, None);
+        assert_eq!(prefs.accent_choice, None);
+
+        let custom = ChamberPrefs {
+            theme_preset: Some(ThemePreset::Tokyo),
+            accent_choice: Some(AccentChoice::Sapphire),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&custom).unwrap();
+        let loaded: ChamberPrefs = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.theme_preset, Some(ThemePreset::Tokyo));
+        assert_eq!(loaded.accent_choice, Some(AccentChoice::Sapphire));
+
+        assert_eq!(ThemePreset::from_str("oled"), Some(ThemePreset::Oled));
+        assert_eq!(ThemePreset::from_str("tokyo-dark"), Some(ThemePreset::Tokyo));
+        assert_eq!(AccentChoice::from_str("blue"), Some(AccentChoice::Sapphire));
+        assert_eq!(AccentChoice::from_str("emerald"), Some(AccentChoice::Emerald));
+    }
 }
+

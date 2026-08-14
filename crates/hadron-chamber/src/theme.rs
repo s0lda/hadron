@@ -175,9 +175,67 @@ pub fn text_muted() -> Rgba {
     rgb(0x707070)
 }
 
-// --- accents (the energy gradient) ---
+/// Accent color gradient and token ramp.
 pub fn accent() -> Rgba {
     rgb(0xc084fc) // soft amethyst — active / addressed
+}
+
+/// Palette tokens resolved from a curated ThemePreset.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PresetPalette {
+    pub canvas_base: Rgba,
+    pub bg_base: Rgba,
+    pub bg_surface: Rgba,
+    pub bg_surface_raised: Rgba,
+    pub bg_elevated: Rgba,
+    pub input_bg: Rgba,
+    pub term_bg: Rgba,
+    pub border: Rgba,
+}
+
+pub fn palette_for_preset(preset: crate::config::ThemePreset) -> PresetPalette {
+    match preset {
+        crate::config::ThemePreset::Obsidian => PresetPalette {
+            canvas_base: rgb(0x050505),
+            bg_base: rgb(0x0b0b0b),
+            bg_surface: rgb(0x101010),
+            bg_surface_raised: rgb(0x1c1c1c),
+            bg_elevated: rgb(0x242424),
+            input_bg: rgb(0x181818),
+            term_bg: rgb(0x080808),
+            border: rgb(0x444444),
+        },
+        crate::config::ThemePreset::Oled => PresetPalette {
+            canvas_base: rgb(0x000000),
+            bg_base: rgb(0x050505),
+            bg_surface: rgb(0x0a0a0a),
+            bg_surface_raised: rgb(0x141414),
+            bg_elevated: rgb(0x1a1a1a),
+            input_bg: rgb(0x101010),
+            term_bg: rgb(0x000000),
+            border: rgb(0x383838),
+        },
+        crate::config::ThemePreset::Midnight => PresetPalette {
+            canvas_base: rgb(0x090d16),
+            bg_base: rgb(0x0f172a),
+            bg_surface: rgb(0x1e293b),
+            bg_surface_raised: rgb(0x283548),
+            bg_elevated: rgb(0x334155),
+            input_bg: rgb(0x172033),
+            term_bg: rgb(0x0b1120),
+            border: rgb(0x475569),
+        },
+        crate::config::ThemePreset::Tokyo => PresetPalette {
+            canvas_base: rgb(0x0d0f18),
+            bg_base: rgb(0x131622),
+            bg_surface: rgb(0x1a1e2e),
+            bg_surface_raised: rgb(0x24293e),
+            bg_elevated: rgb(0x2f354f),
+            input_bg: rgb(0x181c2b),
+            term_bg: rgb(0x0f121d),
+            border: rgb(0x414868),
+        },
+    }
 }
 /// A muted, low-alpha amethyst for chrome that should whisper rather than shout —
 /// the focused chat-input border.
@@ -415,4 +473,18 @@ mod tests {
         assert_eq!(popover().a, 1.0, "Popover surface must be opaque");
         assert_eq!(modal_surface().a, 1.0, "Modal surface must be opaque");
     }
+
+    #[test]
+    fn test_theme_presets_have_distinct_palettes() {
+        let obsidian = palette_for_preset(crate::config::ThemePreset::Obsidian);
+        let oled = palette_for_preset(crate::config::ThemePreset::Oled);
+        let midnight = palette_for_preset(crate::config::ThemePreset::Midnight);
+        let tokyo = palette_for_preset(crate::config::ThemePreset::Tokyo);
+
+        assert_ne!(obsidian.canvas_base, oled.canvas_base);
+        assert_ne!(obsidian.bg_base, midnight.bg_base);
+        assert_ne!(midnight.bg_surface, tokyo.bg_surface);
+        assert_eq!(oled.canvas_base, rgb(0x000000));
+    }
 }
+

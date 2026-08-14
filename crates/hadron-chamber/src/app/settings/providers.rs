@@ -79,6 +79,16 @@ impl super::Chamber {
             v_flex()
                 .gap_3()
                 .child(settings_field(
+                    "Color theme preset",
+                    Some("Curated dark surfaces: Obsidian Neutral (Default), OLED True Black, Midnight Slate, Tokyo Dark."),
+                    self.theme_preset_select(window, cx),
+                ))
+                .child(settings_field(
+                    "Primary accent color",
+                    Some("Accent hue for active indicators, focus outlines, and badges."),
+                    self.accent_choice_select(window, cx),
+                ))
+                .child(settings_field(
                     "UI font family",
                     Some("Font used across buttons, menus, labels, and chat prose. Verified regular + bold faces."),
                     self.ui_font_select(window, cx),
@@ -285,6 +295,48 @@ impl super::Chamber {
             .w_full()
             .min_w(px(180.0))
             .placeholder("Select strategy...")
+            .into_any_element()
+    }
+
+    /// The color theme preset picker.
+    pub(super) fn theme_preset_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current_pref = self.prefs.theme_preset;
+        if self.theme_preset_select_key != Some(current_pref) {
+            self.theme_preset_select_key = Some(current_pref);
+            let choices: Vec<String> = config::ThemePreset::ALL.iter().map(|p| p.label().to_string()).collect();
+            let current_preset = current_pref.unwrap_or_default();
+            let current_label = current_preset.label().to_string();
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.theme_preset_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.theme_preset_select_state)
+            .w_full()
+            .min_w(px(180.0))
+            .placeholder("Select theme preset...")
+            .into_any_element()
+    }
+
+    /// The primary accent color picker.
+    pub(super) fn accent_choice_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current_pref = self.prefs.accent_choice;
+        if self.accent_choice_select_key != Some(current_pref) {
+            self.accent_choice_select_key = Some(current_pref);
+            let choices: Vec<String> = config::AccentChoice::ALL.iter().map(|a| a.label().to_string()).collect();
+            let current_accent = current_pref.unwrap_or_default();
+            let current_label = current_accent.label().to_string();
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.accent_choice_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.accent_choice_select_state)
+            .w_full()
+            .min_w(px(180.0))
+            .placeholder("Select accent color...")
             .into_any_element()
     }
 

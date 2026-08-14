@@ -288,6 +288,10 @@ impl super::Chamber {
                 changed = true;
             }
 
+            if self.toast_manager.prune(std::time::Instant::now()) {
+                changed = true;
+            }
+
             if changed {
                 cx.notify();
             }

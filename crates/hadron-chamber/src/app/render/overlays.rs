@@ -514,6 +514,79 @@ impl super::Chamber {
         )
     }
 
+    /// Floating non-blocking toast notification stack.
+    pub(super) fn render_toasts(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if self.toast_manager.is_empty() {
+            return None;
+        }
+
+        let toasts: Vec<_> = self.toast_manager.iter().cloned().collect();
+
+        Some(
+            v_flex()
+                .absolute()
+                .top_12()
+                .right_6()
+                .gap_2()
+                .items_end()
+                .max_w(px(380.0))
+                .children(toasts.into_iter().map(|t| {
+                    let toast_id = t.id;
+                    let (icon, border_color, icon_color) = match t.kind {
+                        toasts::ToastKind::Success => (IconName::CircleCheck, rgb(0x34d399), rgb(0x34d399)),
+                        toasts::ToastKind::Info => (IconName::Info, rgb(0x60a5fa), rgb(0x60a5fa)),
+                        toasts::ToastKind::Warning => (IconName::Info, rgb(0xfbbf24), rgb(0xfbbf24)),
+                        toasts::ToastKind::Error => (IconName::WindowClose, rgb(0xf87171), rgb(0xf87171)),
+                    };
+
+                    h_flex()
+                        .id(("toast", toast_id))
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .px_3()
+                        .py_2()
+                        .rounded_lg()
+                        .bg(theme::bg_surface_raised())
+                        .border_1()
+                        .border_color(border_color.opacity(0.4))
+                        .shadow_lg()
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    Icon::new(icon)
+                                        .size(px(14.0))
+                                        .text_color(icon_color),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text())
+                                        .child(t.message),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id(("toast-dismiss", toast_id))
+                                .cursor_pointer()
+                                .p_1()
+                                .rounded_md()
+                                .hover(|h| h.bg(theme::bg_elevated()))
+                                .child(
+                                    Icon::new(IconName::WindowClose)
+                                        .size(px(11.0))
+                                        .text_color(theme::text_muted()),
+                                )
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.dismiss_toast(toast_id, cx);
+                                })),
+                        )
+                })),
+        )
+    }
+
     /// The About dialog. Every value here is read from the build, not typed in: the
     /// version comes from the crate's own manifest, so it cannot drift from what
     /// shipped.

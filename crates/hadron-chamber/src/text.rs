@@ -164,6 +164,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "gate-cancel", detail: "Force cancel a hung merge-gate run by killing its process group", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "revert", detail: "Revert the last landed commit on main via git revert", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "unabandon", detail: "Restore an archived branch from its archive tag", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "theme", detail: "Switch color theme preset (e.g. /theme oled, /theme tokyo, /theme obsidian, /theme midnight)", arity: Arity::Line, arg: ArgSource::None, listed: true },
 ];
 
 /// A short kebab-case id for a lesson line: the first few words, lowercased,
@@ -891,6 +892,25 @@ pub fn render_session_markdown(messages: &[crate::model::MessageRow]) -> String 
 /// Format `/export`'s confirmation.
 pub fn export_body(dest: &std::path::Path, count: usize) -> String {
     format!("**Exported** {count} message(s) to `{}`\n", dest.display())
+}
+
+/// The markdown `/theme` prints.
+pub fn theme_body(arg: &str, current: crate::config::ThemePreset) -> String {
+    let trimmed = arg.trim();
+    if trimmed.is_empty() {
+        let mut out = format!("**Current Theme:** {}\n\n**Available Presets:**\n", current.label());
+        for p in crate::config::ThemePreset::ALL {
+            let marker = if p == current { " (active)" } else { "" };
+            out.push_str(&format!("- `{}` — {}{}\n", p.id(), p.label(), marker));
+        }
+        out
+    } else if let Some(preset) = crate::config::ThemePreset::from_str(trimmed) {
+        format!("Theme set to **{}** (`{}`).", preset.label(), preset.id())
+    } else {
+        format!(
+            "Unknown theme preset `{trimmed}`. Available presets: `obsidian`, `oled`, `midnight`, `tokyo`."
+        )
+    }
 }
 
 /// What `/add-skill`'s captured `Arity::Body` argument turned out to name.
@@ -2440,6 +2460,21 @@ mod tests {
         let body = export_body(std::path::Path::new("/tmp/x.md"), 7);
         assert!(body.contains("7 message"));
         assert!(body.contains("/tmp/x.md"));
+    }
+
+    #[test]
+    fn theme_body_formats_presets_and_updates() {
+        let body = theme_body("", crate::config::ThemePreset::Obsidian);
+        assert!(body.contains("Obsidian Neutral"));
+        assert!(body.contains("oled"));
+        assert!(body.contains("midnight"));
+        assert!(body.contains("tokyo"));
+
+        let set_body = theme_body("tokyo", crate::config::ThemePreset::Obsidian);
+        assert!(set_body.contains("Tokyo Dark"));
+
+        let unknown = theme_body("neon", crate::config::ThemePreset::Obsidian);
+        assert!(unknown.contains("Unknown theme preset"));
     }
 
     #[test]

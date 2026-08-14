@@ -788,6 +788,30 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
+            "theme" => {
+                let current = self.prefs.theme_preset.unwrap_or_default();
+                let trimmed = args.trim();
+                if trimmed.is_empty() {
+                    let body = crate::text::theme_body("", current);
+                    self.post_chat_message(Actor::Gluon, body, cx);
+                } else if let Some(preset) = crate::config::ThemePreset::from_str(trimmed) {
+                    self.prefs.theme_preset = Some(preset);
+                    let _ = config::save(&self.prefs);
+                    Self::apply_theme_and_typography(cx, &self.prefs);
+                    self.show_toast(
+                        toasts::ToastKind::Success,
+                        format!("Theme set to {}", preset.label()),
+                        Some(3),
+                        cx,
+                    );
+                    let body = crate::text::theme_body(trimmed, preset);
+                    self.post_chat_message(Actor::Gluon, body, cx);
+                } else {
+                    let body = crate::text::theme_body(trimmed, current);
+                    self.post_chat_message(Actor::Gluon, body, cx);
+                }
+                true
+            }
             "nucleus" => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
                 // The ONE resolver. `/nucleus` must report the same number the prompt

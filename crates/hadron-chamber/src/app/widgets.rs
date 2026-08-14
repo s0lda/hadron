@@ -317,6 +317,55 @@ pub(super) fn needs_activity_placeholder(
 /// us — or the gap between two ACP publishes) gets the `"working…"` placeholder
 /// instead, since there is no stream to show. `live` is injected so this stays a
 /// pure function testable without touching disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct QuarkLiveCapsule {
+    pub quark_id: String,
+    pub doing: hadron_lattice::live::Doing,
+    pub detail: String,
+    pub elapsed_secs: Option<u64>,
+}
+
+pub(super) fn active_quarks_rich(
+    roster: &[RosterRow],
+    live: impl Fn(&str) -> Option<hadron_lattice::live::Activity>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Vec<QuarkLiveCapsule> {
+    roster
+        .iter()
+        .filter(|r| r.adopted && r.enabled)
+        .filter_map(|r| {
+            if let Some(act) = live(&r.id) {
+                let detail = if act.detail.is_empty() {
+                    act.doing.label().to_string()
+                } else {
+                    act.detail
+                };
+                let elapsed_secs = act.started.map(|st| (now - st).num_seconds().max(0) as u64);
+                Some(QuarkLiveCapsule {
+                    quark_id: act.quark.as_str().to_string(),
+                    doing: act.doing,
+                    detail,
+                    elapsed_secs,
+                })
+            } else if matches!(r.state, QuarkState::Excited | QuarkState::Thinking) {
+                let doing = if r.state == QuarkState::Thinking {
+                    hadron_lattice::live::Doing::Thinking
+                } else {
+                    hadron_lattice::live::Doing::Working
+                };
+                Some(QuarkLiveCapsule {
+                    quark_id: r.id.clone(),
+                    doing,
+                    detail: "working…".to_string(),
+                    elapsed_secs: None,
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 pub(super) fn active_quarks(
     roster: &[RosterRow],
     live: impl Fn(&str) -> Option<hadron_lattice::live::Activity>,
@@ -1406,6 +1455,23 @@ mod tests {
                 ("cli-agy".to_string(), "working…".to_string()),
             ]
         );
+
+        let now = chrono::Utc::now();
+        let rich = active_quarks_rich(&roster, |id| match id {
+            "acp-claude" => Some(hadron_lattice::live::Activity::new(
+                hadron_lattice::QuarkId::new("acp-claude"),
+                hadron_lattice::live::Doing::Working,
+                "Terminal",
+            )),
+            _ => None,
+        }, now);
+
+        assert_eq!(rich.len(), 2);
+        assert_eq!(rich[0].quark_id, "acp-claude");
+        assert_eq!(rich[0].doing, hadron_lattice::live::Doing::Working);
+        assert_eq!(rich[0].detail, "Terminal");
+        assert_eq!(rich[1].quark_id, "cli-agy");
+        assert_eq!(rich[1].doing, hadron_lattice::live::Doing::Working);
     }
 
     /// **The double-dialog bug.** Cancelling gpui's picker used to be indistinguishable

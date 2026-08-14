@@ -18,7 +18,7 @@ impl super::Chamber {
                 }
             }
         }
-        let active = active_quarks(&self.view.roster, |id| live_map.get(id).cloned());
+        let active = widgets::active_quarks_rich(&self.view.roster, |id| live_map.get(id).cloned(), now);
 
         // The reply as it arrives. A sibling of the Live card rather than a row in the
         // message list: `chat_list_state`'s count is derived from `chat_message_ixs`
@@ -67,11 +67,7 @@ impl super::Chamber {
                     // moment later, in the list, where it belongs.
                     .child(
                         div()
-                            .id(SharedString::from(format!("draft-text-{}", quark_id_str)))
-                            .w_full()
-                            .max_h(px(100.0))
-                            .overflow_y_scroll()
-                            .text_sm()
+                            .text_xs()
                             .text_color(theme::text_secondary())
                             .child(text),
                     )
@@ -79,41 +75,85 @@ impl super::Chamber {
         });
 
         let live_card = (!active.is_empty()).then(|| {
-            v_flex()
+            h_flex()
                 .w_full()
-                .overflow_hidden()
                 .gap_1p5()
-                .px_3()
-                .py_2()
                 .mb_2()
-                .rounded_lg()
-                .bg(theme::term_bg())
-                .border_1()
-                .border_color(theme::glass_highlight())
-                .children(active.into_iter().map(|(quark_id_str, text)| {
-                    let identity = self.resolve_identity(&quark_id_str);
-                    let name = identity.name;
+                .items_center()
+                .flex_wrap()
+                .overflow_hidden()
+                .children(active.into_iter().map(|cap| {
+                    let identity = self.resolve_identity(&cap.quark_id);
+                    let (icon, state_color) = match cap.doing {
+                        hadron_lattice::live::Doing::Thinking => (IconName::Bot, theme::halo_reasoning()),
+                        hadron_lattice::live::Doing::Working => (IconName::SquareTerminal, theme::halo_active()),
+                        hadron_lattice::live::Doing::Planning => (IconName::File, theme::halo_active()),
+                        hadron_lattice::live::Doing::Speaking => (IconName::Bot, theme::halo_reasoning()),
+                        hadron_lattice::live::Doing::Gating => (IconName::CircleCheck, theme::halo_active()),
+                    };
+
                     h_flex()
-                        .w_full()
                         .items_center()
-                        .gap_2()
+                        .gap_1p5()
+                        .px_2p5()
+                        .py_1()
+                        .rounded_full()
+                        .bg(theme::bg_surface_raised())
+                        .border_1()
+                        .border_color(state_color.opacity(0.35))
+                        .shadow_sm()
                         .child(
-                            div()
-                                .flex_none()
-                                .text_xs()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(identity.color)
-                                .child(format!("{}:", name)),
+                            h_flex()
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .w_1p5()
+                                        .h_1p5()
+                                        .rounded_full()
+                                        .bg(state_color),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(identity.color)
+                                        .child(identity.name),
+                                ),
                         )
                         .child(
                             div()
-                                .flex_1()
-                                .min_w_0()
                                 .text_xs()
                                 .text_color(theme::text_muted())
-                                .truncate()
-                                .child(text),
+                                .child("•"),
                         )
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    Icon::new(icon)
+                                        .size(px(11.0))
+                                        .text_color(theme::text_muted()),
+                                )
+                                .child(
+                                    div()
+                                        .max_w(px(240.0))
+                                        .text_xs()
+                                        .text_color(theme::text_secondary())
+                                        .truncate()
+                                        .child(cap.detail),
+                                ),
+                        )
+                        .when_some(cap.elapsed_secs, |el, secs| {
+                            el.child(
+                                div()
+                                    .text_xs()
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .text_color(theme::text_muted())
+                                    .child(format!("{secs}s")),
+                            )
+                        })
                 }))
         });
 

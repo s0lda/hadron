@@ -105,6 +105,67 @@ pub(super) fn parse_plan_tasks(content: &str) -> Vec<(String, Vec<(String, bool)
     tasks
 }
 
+/// Preprocess Markdown alert callouts (e.g. `> [!NOTE]`, `> [!TIP]`, `> [!WARNING]`,
+/// `> [!IMPORTANT]`, `> [!CAUTION]`, `> [!DANGER]`, `> [!INFO]`) inside blockquotes
+/// into clean, readable styled headers (`> ℹ️ **Note**`, etc.).
+///
+/// Fenced code blocks are preserved unmodified.
+pub(super) fn format_markdown_callouts(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 32);
+    let mut in_code_block = false;
+
+    for (i, line) in text.lines().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_code_block = !in_code_block;
+            out.push_str(line);
+            continue;
+        }
+        if in_code_block {
+            out.push_str(line);
+            continue;
+        }
+
+        if let Some(bq_content) = trimmed.strip_prefix('>') {
+            let bq_trimmed = bq_content.trim_start();
+            if bq_trimmed.starts_with("[!") {
+                if let Some(end_bracket) = bq_trimmed.find(']') {
+                    let tag = &bq_trimmed[2..end_bracket];
+                    let after_tag = bq_trimmed[end_bracket + 1..].trim();
+                    let (icon, default_title) = match tag.to_ascii_uppercase().as_str() {
+                        "NOTE" | "INFO" => ("ℹ️", "Note"),
+                        "TIP" => ("💡", "Tip"),
+                        "IMPORTANT" => ("📌", "Important"),
+                        "WARNING" => ("⚠️", "Warning"),
+                        "CAUTION" | "DANGER" => ("🛑", "Caution"),
+                        _ => ("", ""),
+                    };
+                    if !icon.is_empty() {
+                        let title = if after_tag.is_empty() {
+                            default_title
+                        } else {
+                            after_tag
+                        };
+                        let indent_len = line.len() - trimmed.len();
+                        let indent = &line[..indent_len];
+                        out.push_str(indent);
+                        out.push_str(&format!("> {icon} **{title}**"));
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push_str(line);
+    }
+    if text.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
 /// Rewrite `@<seat-id>` mentions to `@<display-name>` for quarks in the roster, and
 /// rewrite file mentions (like `@path/to/file.md`, `@src/main.rs:123`, `@Cargo.toml`)
 /// into clickable markdown links (`[file.md](file:///abs/path "path/to/file.md")`)
@@ -117,6 +178,8 @@ pub(super) fn resolve_mention_names(
     roster: &[crate::model::RosterRow],
     repo_root: Option<&std::path::Path>,
 ) -> String {
+    let preprocessed = format_markdown_callouts(body);
+    let body = preprocessed.as_str();
     let mut out = String::with_capacity(body.len() + 64);
     let mut chars = body.char_indices().peekable();
     let mut in_code_block = false;
@@ -655,4 +718,23 @@ mod tests {
         cache.clear();
         assert!(cache.is_empty());
     }
+
+    #[test]
+    fn format_markdown_callouts_formats_all_alert_types() {
+        let input = "> [!NOTE]\n> This is a note.\n\n> [!TIP] Pro Tip\n> This is a tip.\n\n> [!WARNING]\n> Watch out!\n\n> [!IMPORTANT]\n> Critical info.\n\n> [!CAUTION]\n> Danger!";
+        let formatted = format_markdown_callouts(input);
+        assert_eq!(
+            formatted,
+            "> ℹ️ **Note**\n> This is a note.\n\n> 💡 **Pro Tip**\n> This is a tip.\n\n> ⚠️ **Warning**\n> Watch out!\n\n> 📌 **Important**\n> Critical info.\n\n> 🛑 **Caution**\n> Danger!"
+        );
+
+        // Code block callout suppression
+        let code_input = "```markdown\n> [!NOTE]\n> Inside code\n```\n> [!NOTE]\n> Outside code";
+        let code_formatted = format_markdown_callouts(code_input);
+        assert_eq!(
+            code_formatted,
+            "```markdown\n> [!NOTE]\n> Inside code\n```\n> ℹ️ **Note**\n> Outside code"
+        );
+    }
 }
+
