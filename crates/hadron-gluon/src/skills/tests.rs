@@ -206,6 +206,14 @@ fn plan_ref_finds_a_path_through_human_punctuation() {
         plan_ref("execute `docs/plans/2026-07-14-foo.md`, please."),
         Some("docs/plans/2026-07-14-foo.md".to_string())
     );
+    assert_eq!(
+        plan_ref("see [Plan](.hadron/docs/plans/2026-08-14-plan.md) for details"),
+        Some(".hadron/docs/plans/2026-08-14-plan.md".to_string())
+    );
+    assert_eq!(
+        plan_ref("check <docs/plans/2026-08-14-plan.md>"),
+        Some("docs/plans/2026-08-14-plan.md".to_string())
+    );
     assert_eq!(plan_ref("no plan here"), None);
     // A directory is not a plan, and a non-markdown file is not one either.
     assert_eq!(plan_ref("look in docs/plans/ for it"), None);

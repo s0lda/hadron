@@ -8,25 +8,28 @@ description: "You MUST use this before any creative work - creating features, bu
 Turn ideas into validated designs and specs through structured collaborative dialogue before implementation.
 
 <HARD-GATE>
-Do NOT invoke any implementation skill, write any code, scaffold any project, or take any implementation action until you have presented a design and the user has approved it. This applies to EVERY project regardless of perceived simplicity.
+Role & Posture Execution Gate:
+- **Worker Quarks:** If you are a worker Quark assigned a specific task, DO NOT brainstorm or stall for human approval — execute your assignment directly using your implementation skill. Brainstorming is for design/architecture phases.
+- **Bypass Mode (Autonomous):** Do NOT pause for turn-by-turn human approvals or conversational back-and-forth. Autonomously explore project context, select the recommended architecture approach, write and commit the design spec to `.hadron/docs/specs/YYYY-MM-DD-<topic>-design.md`, and immediately transition to `writing-plans` to generate the implementation plan.
+- **Auto Mode (Semi-Autonomous):** Explore context, evaluate approaches, and prompt the human only when critical ambiguities or permission boundaries arise. Otherwise draft the spec and proceed to planning.
+- **Ask / Interactive Mode:** Follow collaborative dialogue: ask questions one at a time, present 2-3 approaches with trade-offs, and confirm section approval before proceeding to plan authoring.
+- Under NO circumstance may implementation code be written before the design spec is committed to `.hadron/docs/specs/` and converted to an actionable plan via `writing-plans`.
 </HARD-GATE>
 
 ## Mandatory Rule
 
-Every project must go through this process regardless of size (todo lists, utilities, config changes). Simple projects carry hidden assumptions. The design may be brief for simple tasks, but MUST be presented and approved.
+Every project must go through this process regardless of size (todo lists, utilities, config changes). Simple projects carry hidden assumptions. In interactive mode, the design may be brief for simple tasks, but MUST be presented and approved. In Bypass mode, synthesize the spec and plan autonomously without pausing.
 
 ## Checklist
 
-Create a task for each item and complete sequentially:
+Execute sequentially:
 
 1. **Explore project context** — check files, docs, recent commits
-2. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
-3. **Propose 2-3 approaches** — with trade-offs and explicit recommendation
-4. **Present design** — in sections scaled to complexity, get user approval after each section
-5. **Write design doc** — save to `.hadron/docs/specs/YYYY-MM-DD-<topic>-design.md` and commit
-6. **Spec self-review** — inline check for placeholders, contradictions, ambiguity, scope
-7. **User reviews written spec** — ask user to review the spec file before proceeding
-8. **Transition to implementation** — invoke `writing-plans` skill to create implementation plan
+2. **Clarifying & approaches** — in Ask mode, ask questions and propose 2-3 approaches; in Bypass mode, autonomously select best approach based on repo patterns
+3. **Write design doc** — save to `.hadron/docs/specs/YYYY-MM-DD-<topic>-design.md` and commit
+4. **Spec self-review** — inline check for placeholders, contradictions, ambiguity, scope
+5. **Review Gate** — in Ask mode, request user review before proceeding; in Bypass mode, proceed immediately
+6. **Transition to implementation** — invoke `writing-plans` skill to create implementation plan
 
 The ONLY skill to invoke after brainstorming is `writing-plans`. Do NOT invoke implementation skills directly.
 

@@ -84,7 +84,7 @@ pub struct Handoff {
 /// Punctuation and markdown backticks are trimmed, because a task written by a human
 /// says "execute `docs/plans/2026-07-14-foo.md`." with the quotes and the full stop.
 pub fn plan_ref(task: &str) -> Option<String> {
-    task.split_whitespace()
+    task.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '[' || c == ']' || c == '<' || c == '>' || c == '"' || c == '\'' || c == '`')
         .map(|tok| tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_'))
         .find(|tok| tok.contains("plans/") && tok.ends_with(".md"))
         .map(str::to_string)

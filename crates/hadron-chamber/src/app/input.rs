@@ -559,6 +559,17 @@ mod tests {
         assert_eq!(body, None);
     }
 
+    #[test]
+    fn goal_and_loop_commands_split_correctly() {
+        let (cmds, body) = split_leading_commands("/goal Build user auth with JWT");
+        assert_eq!(cmds, vec![("goal".to_string(), "Build user auth with JWT".to_string())]);
+        assert_eq!(body, None);
+
+        let (cmds2, body2) = split_leading_commands("/loop 5 fix compiler errors");
+        assert_eq!(cmds2, vec![("loop".to_string(), "5 fix compiler errors".to_string())]);
+        assert_eq!(body2, None);
+    }
+
     /// **The guard that closes the loop the compiler cannot.** `COMMANDS` is the
     /// source of truth for the menu and this parser, but `handle_chat_command`'s
     /// `match` is plain control flow — nothing makes a table entry have an arm. This
@@ -579,6 +590,8 @@ mod tests {
             "toggle-roster",
             "toggle-inspector",
             "clear",
+            "goal",
+            "loop",
             "team-brainstorm",
             "brainstorm",
             "writing-plans",

@@ -685,20 +685,12 @@ impl super::Chamber {
             RightRailTab::Plan => {
                 let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
 
-                // The active plan is the most-recently-mentioned plan file in the field:
-                // scan message bodies newest-first for a `plans/….md` reference. This
-                // covers the orchestrator's assignment ("execute docs/…/plan.md") and any
-                // later re-reference. The projection has no `task` field, so the field's
-                // messages are the source of truth.
+                // The active plan is the plan tracked by Chamber reload, or resolved from
+                // recent field messages and `.hadron/docs/plans/` directory scan.
                 let active_plan_path = self
-                    .view
-                    .messages
-                    .iter()
-                    .rev()
-                    .find_map(|m| {
-                        hadron_gluon::skills::plan_ref(&m.body)
-                            .filter(|rel_path| repo.join(rel_path).is_file())
-                    });
+                    .last_plan_path
+                    .clone()
+                    .or_else(|| crate::app::reload::resolve_active_plan(&repo, &self.view.messages));
 
                 // Resolve the referenced plan to its on-disk content in one step; either
                 // the reference or the file may be absent (a plan can be named before it

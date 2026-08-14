@@ -5,17 +5,18 @@ description: Use when executing implementation plans with independent tasks in t
 
 # Subagent-Driven Development
 
-Execute an implementation plan by dispatching a fresh implementer subagent per task, a two-verdict task review (spec compliance + code quality) after each task, and a broad whole-branch review upon completion.
+Execute an implementation plan by leveraging the Hadron Swarm (Quark Dispatch) alongside Subagents for maximum parallelism, quality, and speed.
 
-**Core Principle:** Fresh subagent per task + two-verdict task review + final whole-branch review = fast, high-quality execution.
+**Core Principle:** Quark Swarm Dispatch (`@<quark-id>`) across worktrees is Hadron's primary mechanism for parallel task execution. Subagents can be deployed by the Orchestrator (for isolated research/verification or fallback) AND by Worker Quarks (to break down tasks into subagent workflows).
 
 **Execution Directives:**
-- **Narration:** Narrate at most one short line between tool calls.
-- **Continuous Execution:** Do NOT pause to check in with human partner between tasks. Execute all tasks sequentially without stopping unless BLOCKED, genuinely ambiguous, or complete.
+- **Swarm Priority:** If worker Quarks are active and free, Orchestrator delegates tasks via `@<quark-id> <task>` first. Quarks run concurrently across isolated worktrees.
+- **Subagent Flexibility:** Both Orchestrator and worker Quarks may freely invoke internal subagents to explore codebases, implement sub-components, or run verification in parallel.
+- **Continuous Execution:** Do NOT pause to check in with the human partner between tasks in Bypass mode. Drive all plan tasks to 100% completion autonomously.
 
 ## Pre-Flight Plan Review
 
-Before dispatching Task 1, scan the plan once for contradictions or global constraint conflicts. Present all findings to human partner as a single batched question before execution begins. If clean, proceed directly.
+Before dispatching Task 1, scan the plan once for contradictions or global constraint conflicts. If clean, proceed directly to dispatching tasks across Quarks and subagents.
 
 ## Model Selection Rules
 

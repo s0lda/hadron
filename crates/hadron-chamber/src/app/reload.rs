@@ -1,3 +1,4 @@
+use std::path::Path;
 use super::*;
 
 #[derive(Debug, Clone)]
@@ -64,21 +65,7 @@ impl super::Chamber {
 
     pub(super) fn update_active_plan(&mut self) {
         let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let active_plan_path = self.view
-            .messages
-            .iter()
-            .rev()
-            .find_map(|m| {
-                hadron_gluon::skills::plan_ref(&m.body)
-                    .filter(|rel_path| {
-                        let full_path = repo.join(rel_path);
-                        if let (Ok(canon_repo), Ok(canon_full)) = (repo.canonicalize(), full_path.canonicalize()) {
-                            canon_full.is_file() && canon_full.starts_with(canon_repo)
-                        } else {
-                            false
-                        }
-                    })
-            });
+        let active_plan_path = resolve_active_plan(&repo, &self.view.messages);
 
         if let Some(rel_path) = active_plan_path {
             let path_str = rel_path.clone();
@@ -311,6 +298,129 @@ impl super::Chamber {
 /// Whether `last → now` crosses a gluon running/stopped edge: `Some(now)` on a
 /// transition (so the caller re-toasts once, not every poll it stays down),
 /// `None` on steady state.
+/// Resolve the active implementation plan for a workspace:
+/// 1. Newest-first scan of messages for an explicit plan file reference (`plan_ref`) that exists on disk.
+/// 2. If no plan is explicitly referenced in messages, scan `.hadron/docs/plans/`, `docs/plans/`, and worktrees for the newest plan on disk.
+pub(crate) fn resolve_active_plan(repo: &Path, messages: &[crate::model::MessageRow]) -> Option<String> {
+    let from_msg = messages.iter().rev().find_map(|m| {
+        hadron_gluon::skills::plan_ref(&m.body).and_then(|raw_path| {
+            let joined = repo.join(&raw_path);
+            if let (Ok(canon_repo), Ok(canon_full)) = (repo.canonicalize(), joined.canonicalize()) {
+                if canon_full.is_file() && canon_full.starts_with(&canon_repo) {
+                    if let Ok(rel) = canon_full.strip_prefix(&canon_repo) {
+                        return Some(rel.to_string_lossy().to_string());
+                    }
+                    return Some(raw_path);
+                }
+            }
+            let abs_p = Path::new(&raw_path);
+            if abs_p.is_file() {
+                if let (Ok(canon_repo), Ok(canon_abs)) = (repo.canonicalize(), abs_p.canonicalize()) {
+                    if canon_abs.starts_with(&canon_repo) {
+                        if let Ok(rel) = canon_abs.strip_prefix(&canon_repo) {
+                            return Some(rel.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+            None
+        })
+    });
+
+    if from_msg.is_some() {
+        return from_msg;
+    }
+
+    scan_newest_plan(repo)
+}
+
+/// Scan `.hadron/docs/plans/`, `docs/plans/`, and worktree trees for the most recently modified `.md` plan.
+pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
+    let mut candidates: Vec<(std::time::SystemTime, String, String)> = Vec::new();
+
+    let check_dirs = [
+        repo.join(".hadron").join("docs").join("plans"),
+        repo.join("docs").join("plans"),
+    ];
+
+    for dir in &check_dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
+                    let file_name = path
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if file_name.starts_with('.') {
+                        continue;
+                    }
+                    let mtime = entry
+                        .metadata()
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    if let (Ok(canon_repo), Ok(canon_file)) =
+                        (repo.canonicalize(), path.canonicalize())
+                    {
+                        if let Ok(rel) = canon_file.strip_prefix(&canon_repo) {
+                            candidates.push((mtime, file_name, rel.to_string_lossy().to_string()));
+                        }
+                    } else if let Ok(rel) = path.strip_prefix(repo) {
+                        candidates.push((mtime, file_name, rel.to_string_lossy().to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    let trees_dir = repo.join(".hadron").join("trees");
+    if let Ok(tree_entries) = std::fs::read_dir(&trees_dir) {
+        for tree_entry in tree_entries.flatten() {
+            if tree_entry.path().is_dir() {
+                let tree_path = tree_entry.path();
+                let tree_plan_dirs = [
+                    tree_path.join(".hadron").join("docs").join("plans"),
+                    tree_path.join("docs").join("plans"),
+                ];
+                for dir in &tree_plan_dirs {
+                    if let Ok(entries) = std::fs::read_dir(dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
+                                let file_name = path
+                                    .file_name()
+                                    .and_then(|f| f.to_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                if file_name.starts_with('.') {
+                                    continue;
+                                }
+                                let mtime = entry
+                                    .metadata()
+                                    .and_then(|m| m.modified())
+                                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                                if let (Ok(canon_repo), Ok(canon_file)) =
+                                    (repo.canonicalize(), path.canonicalize())
+                                {
+                                    if let Ok(rel) = canon_file.strip_prefix(&canon_repo) {
+                                        candidates.push((mtime, file_name, rel.to_string_lossy().to_string()));
+                                    }
+                                } else if let Ok(rel) = path.strip_prefix(repo) {
+                                    candidates.push((mtime, file_name, rel.to_string_lossy().to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    candidates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    candidates.into_iter().next().map(|(_, _, rel)| rel)
+}
+
 fn gluon_running_edge(last: bool, now: bool) -> Option<bool> {
     (last != now).then_some(now)
 }
@@ -378,5 +488,42 @@ mod tests {
         assert!(plan_collapsed_tasks.contains("Task 2"));
         assert!(!plan_collapsed_tasks.contains("Task 1"));
         assert_eq!(last_incomplete_task, Some("Task 1".to_string()));
+    }
+
+    #[test]
+    fn test_scan_newest_plan_finds_latest_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let hadron_plans = root.join(".hadron").join("docs").join("plans");
+        std::fs::create_dir_all(&hadron_plans).unwrap();
+
+        let plan1 = hadron_plans.join("2026-08-01-old-plan.md");
+        std::fs::write(&plan1, "# Old Plan\n- [x] Step 1\n").unwrap();
+
+        let plan2 = hadron_plans.join("2026-08-14-new-plan.md");
+        std::fs::write(&plan2, "# New Plan\n- [ ] Step 1\n").unwrap();
+
+        let found = scan_newest_plan(root);
+        assert!(found.is_some());
+        let found_str = found.unwrap();
+        assert!(found_str.contains("2026-08-14-new-plan.md"), "expected new plan, got {found_str}");
+
+        // Now test resolve_active_plan with messages referencing the older plan explicitly
+        let messages = vec![
+            crate::model::MessageRow {
+                from: "Human".to_string(),
+                to: None,
+                body: "Execute `2026-08-01-old-plan.md` in .hadron/docs/plans/2026-08-01-old-plan.md".to_string(),
+                kind_label: "message",
+                usage: None,
+                ts: chrono::Utc::now(),
+                legacy_used_tokens: None,
+                turn: None,
+                severity: None,
+            }
+        ];
+        let resolved = resolve_active_plan(root, &messages);
+        assert!(resolved.is_some());
+        assert!(resolved.unwrap().contains("2026-08-01-old-plan.md"));
     }
 }

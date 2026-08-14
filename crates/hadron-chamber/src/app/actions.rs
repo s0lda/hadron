@@ -263,6 +263,40 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, crate::text::help_body(), cx);
                 true
             }
+            "goal" => {
+                let trimmed = args.trim();
+                if trimmed.is_empty() {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/goal <objective>`\nLaunch an end-to-end autonomous swarm mission: research, spec, plan, and dispatch across Quarks to 100% completion.\n\n*Tip: Works best when the orchestrator/swarm is in Bypass mode (`/mode bypass`), or Auto mode if you prefer interactive permission prompts.*".to_string(),
+                        cx,
+                    );
+                } else {
+                    let msg = format!(
+                        "@orchestrator /writing-plans /executing-plans /goal Objective: {trimmed}\n\nExecute this end-to-end goal autonomously across the swarm: research context, write design spec in `.hadron/docs/specs/`, create actionable plan in `.hadron/docs/plans/`, dispatch tasks across available worker quarks (`@<quark>`), verify each task, and drive to 100% completion."
+                    );
+                    self.post_chat_message(Actor::Human, msg, cx);
+                }
+                true
+            }
+            "loop" => {
+                let trimmed = args.trim();
+                if trimmed.is_empty() {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/loop [count] <task>`\nExecute an iterative autonomous execution loop until complete or test suite passes.\n\n*Tip: Works best in Bypass mode (`/mode bypass`).*".to_string(),
+                        cx,
+                    );
+                } else {
+                    let (named, rest) = crate::text::split_target(trimmed);
+                    let target = named.unwrap_or(hadron_gluon::router::ORCHESTRATOR_ALIAS);
+                    let msg = format!(
+                        "@{target} /loop {rest}\n\nIterate autonomously on this task until complete or verification passes, checking progress and fixing any errors in a continuous execution loop."
+                    );
+                    self.post_chat_message(Actor::Human, msg, cx);
+                }
+                true
+            }
             cmd if cmd == "team-brainstorm" || cmd == "brainstorm" || self.skill_corpus().iter().any(|s| s.id == cmd) => {
                 let skill_id = match cmd {
                     "team-brainstorm" | "brainstorm" => "brainstorming",
