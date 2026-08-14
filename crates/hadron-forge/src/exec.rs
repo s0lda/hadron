@@ -41,6 +41,18 @@ pub const OUTPUT_BUDGET_BYTES: usize = 16 * 1024;
 pub enum Program {
     Cargo,
     Git,
+    Node,
+    Npm,
+    Npx,
+    Pnpm,
+    Yarn,
+    Bun,
+    Deno,
+    Python,
+    Python3,
+    Pytest,
+    Ruff,
+    Go,
 }
 
 impl Program {
@@ -48,6 +60,18 @@ impl Program {
         match self {
             Program::Cargo => "cargo",
             Program::Git => "git",
+            Program::Node => "node",
+            Program::Npm => "npm",
+            Program::Npx => "npx",
+            Program::Pnpm => "pnpm",
+            Program::Yarn => "yarn",
+            Program::Bun => "bun",
+            Program::Deno => "deno",
+            Program::Python => "python",
+            Program::Python3 => "python3",
+            Program::Pytest => "pytest",
+            Program::Ruff => "ruff",
+            Program::Go => "go",
         }
     }
 
@@ -57,6 +81,18 @@ impl Program {
         match name.trim() {
             "cargo" => Some(Program::Cargo),
             "git" => Some(Program::Git),
+            "node" => Some(Program::Node),
+            "npm" => Some(Program::Npm),
+            "npx" => Some(Program::Npx),
+            "pnpm" => Some(Program::Pnpm),
+            "yarn" => Some(Program::Yarn),
+            "bun" => Some(Program::Bun),
+            "deno" => Some(Program::Deno),
+            "python" => Some(Program::Python),
+            "python3" => Some(Program::Python3),
+            "pytest" => Some(Program::Pytest),
+            "ruff" => Some(Program::Ruff),
+            "go" => Some(Program::Go),
             _ => None,
         }
     }
@@ -282,9 +318,20 @@ mod tests {
     fn only_the_allowlist_parses() {
         assert_eq!(Program::parse("cargo"), Some(Program::Cargo));
         assert_eq!(Program::parse(" git "), Some(Program::Git));
-        for denied in ["sh", "bash", "python3", "sed", "tee", "rm", "cargo;rm", ""] {
+        assert_eq!(Program::parse("node"), Some(Program::Node));
+        assert_eq!(Program::parse("python3"), Some(Program::Python3));
+        assert_eq!(Program::parse("go"), Some(Program::Go));
+        for denied in ["sh", "bash", "zsh", "sed", "tee", "rm", "cargo;rm", ""] {
             assert_eq!(Program::parse(denied), None, "{denied:?} must not be runnable");
         }
+    }
+
+    #[test]
+    fn parses_polyglot_runtimes_and_rejects_unjailed_args() {
+        assert_eq!(Program::parse("node"), Some(Program::Node));
+        assert_eq!(Program::parse("python3"), Some(Program::Python3));
+        assert_eq!(Program::parse("go"), Some(Program::Go));
+        assert_eq!(Program::parse("rm"), None);
     }
 
     #[test]
