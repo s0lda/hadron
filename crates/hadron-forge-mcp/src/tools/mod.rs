@@ -18,8 +18,10 @@ pub mod semantic;
 pub mod symbols;
 pub mod screenshot;
 pub mod pty;
+pub mod mock;
 
 use hadron_forge::file::Root;
+use hadron_forge::mock::MockServerManager;
 use hadron_forge::process::ProcessManager;
 use hadron_forge::pty::PtyManager;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -37,6 +39,7 @@ pub struct ForgeMcpServer {
     pub nucleus_root: Root,
     pub process_manager: ProcessManager,
     pub pty_manager: PtyManager,
+    pub mock_manager: MockServerManager,
 }
 
 impl ForgeMcpServer {
@@ -57,6 +60,7 @@ impl ForgeMcpServer {
         let nucleus_root = Root::new(nucleus_root);
         let process_manager = ProcessManager::new(root.clone());
         let pty_manager = PtyManager::new(root.clone());
+        let mock_manager = MockServerManager::new();
         Self {
             tool_router: Self::edit_router()
                 + Self::exec_router()
@@ -70,11 +74,13 @@ impl ForgeMcpServer {
                 + Self::symbols_router()
                 + Self::browser_router()
                 + Self::screenshot_router()
-                + Self::pty_router(),
+                + Self::pty_router()
+                + Self::mock_router(),
             root,
             nucleus_root,
             process_manager,
             pty_manager,
+            mock_manager,
         }
     }
 
@@ -92,6 +98,7 @@ impl ForgeMcpServer {
         }
         self.process_manager = ProcessManager::new(self.root.clone());
         self.pty_manager = PtyManager::new(self.root.clone());
+        self.mock_manager = MockServerManager::new();
         self
     }
 }
