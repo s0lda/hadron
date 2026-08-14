@@ -13,6 +13,7 @@ pub mod lang;
 pub mod nucleus;
 pub mod process;
 pub mod ast_symbols;
+pub mod lsp;
 pub mod ast_merge;
 pub mod conflict_resolve;
 pub mod tia;
