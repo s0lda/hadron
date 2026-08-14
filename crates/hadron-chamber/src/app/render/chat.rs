@@ -710,7 +710,7 @@ impl super::Chamber {
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(id.color)
-                                    .child(format!("@{}", id.name.trim_start_matches('@'))),
+                                    .child(id.name.trim_start_matches('@').to_string()),
                             )
                             .child(
                                 div()
@@ -727,7 +727,7 @@ impl super::Chamber {
                                         .rounded_sm()
                                         .bg(theme::bg_surface())
                                         .text_color(theme::text_muted())
-                                        .child(format!("→ @{}", to.trim_start_matches('@'))),
+                                        .child(format!("→ {}", to.trim_start_matches('@'))),
                                 )
                             })
                             .when_some(m.usage.as_ref(), |this, u| {
