@@ -17,9 +17,11 @@ pub mod process;
 pub mod semantic;
 pub mod symbols;
 pub mod screenshot;
+pub mod pty;
 
 use hadron_forge::file::Root;
 use hadron_forge::process::ProcessManager;
+use hadron_forge::pty::PtyManager;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::schemars::JsonSchema;
 use rmcp::{tool_handler, ServerHandler};
@@ -34,6 +36,7 @@ pub struct ForgeMcpServer {
     pub root: Root,
     pub nucleus_root: Root,
     pub process_manager: ProcessManager,
+    pub pty_manager: PtyManager,
 }
 
 impl ForgeMcpServer {
@@ -53,6 +56,7 @@ impl ForgeMcpServer {
         let root = Root::new(root_path);
         let nucleus_root = Root::new(nucleus_root);
         let process_manager = ProcessManager::new(root.clone());
+        let pty_manager = PtyManager::new(root.clone());
         Self {
             tool_router: Self::edit_router()
                 + Self::exec_router()
@@ -65,10 +69,12 @@ impl ForgeMcpServer {
                 + Self::semantic_router()
                 + Self::symbols_router()
                 + Self::browser_router()
-                + Self::screenshot_router(),
+                + Self::screenshot_router()
+                + Self::pty_router(),
             root,
             nucleus_root,
             process_manager,
+            pty_manager,
         }
     }
 
@@ -85,6 +91,7 @@ impl ForgeMcpServer {
             self.root = self.root.allowing(root);
         }
         self.process_manager = ProcessManager::new(self.root.clone());
+        self.pty_manager = PtyManager::new(self.root.clone());
         self
     }
 }
