@@ -36,7 +36,7 @@ Categorize discovered artifacts into Hadron target structures:
 - **Format:** Frontmatter with `name`, `description`, `metadata.type` (`user | feedback | project | reference`), followed by the lesson body with **Why:** and **How to apply:** lines.
 - **Index Pointer:** Add a single routing line per note to `.hadron/nucleus/index.md`:
   `- [<slug>](notes/<slug>.md) — <hook>` (hook capped at ~100 characters).
-- **Budget Control:** Keep `.hadron/nucleus/index.md` strictly under the 32 KB budget limit.
+- **Budget Control:** Keep `.hadron/nucleus/index.md` within the workspace's configured budget limit (default 32 KB, or 16 / 64 / 128 KB configured in Settings / `team.json`).
 - **Deduplication:** Check existing notes in `notes/` before creating a new one. Update existing notes rather than creating duplicate entries.
 
 ### 2. Invariants, Quirks & Operational Constraints → `.hadron/nucleus/invariants.md`
@@ -61,7 +61,7 @@ Categorize discovered artifacts into Hadron target structures:
 
 1. **Verify Integrity:**
    - Verify all generated notes have valid YAML frontmatter and pointers in `index.md`.
-   - Verify `index.md` size is within the 32 KB budget.
+   - Verify `index.md` size is within the configured budget limit.
    - Run `cargo test` if applicable to ensure no syntax/schema invariants are violated.
 2. **Preserve Original Data:**
    - Keep source files intact by default (or move to an archive folder if explicitly requested). Never perform destructive deletions.
