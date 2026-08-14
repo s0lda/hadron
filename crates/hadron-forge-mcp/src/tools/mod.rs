@@ -12,9 +12,11 @@ pub mod exec;
 pub mod git;
 pub mod inspect;
 pub mod nucleus;
+pub mod process;
 pub mod semantic;
 
 use hadron_forge::file::Root;
+use hadron_forge::process::ProcessManager;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::schemars::JsonSchema;
 use rmcp::{tool_handler, ServerHandler};
@@ -28,6 +30,7 @@ pub struct ForgeMcpServer {
     tool_router: ToolRouter<Self>,
     pub root: Root,
     pub nucleus_root: Root,
+    pub process_manager: ProcessManager,
 }
 
 impl ForgeMcpServer {
@@ -44,6 +47,9 @@ impl ForgeMcpServer {
         root_path: impl Into<std::path::PathBuf>,
         nucleus_root: impl Into<std::path::PathBuf>,
     ) -> Self {
+        let root = Root::new(root_path);
+        let nucleus_root = Root::new(nucleus_root);
+        let process_manager = ProcessManager::new(root.clone());
         Self {
             tool_router: Self::edit_router()
                 + Self::exec_router()
@@ -52,9 +58,11 @@ impl ForgeMcpServer {
                 + Self::git_router()
                 + Self::diagnostics_router()
                 + Self::cargo_tree_router()
+                + Self::process_router()
                 + Self::semantic_router(),
-            root: Root::new(root_path),
-            nucleus_root: Root::new(nucleus_root),
+            root,
+            nucleus_root,
+            process_manager,
         }
     }
 
@@ -70,6 +78,7 @@ impl ForgeMcpServer {
         for root in roots {
             self.root = self.root.allowing(root);
         }
+        self.process_manager = ProcessManager::new(self.root.clone());
         self
     }
 }
