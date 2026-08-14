@@ -5,6 +5,14 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-14
+
+### Added
+- **Background Process Manager**: Added managed thread-safe supervisor (`ProcessManager`) in `hadron-forge` with process-group isolation (`libc::kill(-pgid)`), non-blocking ring-buffer streaming logs, and MCP tools (`process_start`, `process_logs`, `process_list`, `process_send_stdin`, `process_kill`).
+- **3-Tier Polyglot Code Intelligence**: Added embedded Tree-Sitter AST symbol engine covering 15+ programming languages for instant caller and definition resolution, generic STDIO JSON-RPC 2.0 LSP client in `hadron-forge`, and MCP tools (`symbols_definition`, `symbols_references`, `symbols_document`, `symbols_callers`).
+- **Polyglot Tooling & Structured Diagnostics**: Expanded jailed execution allowlist to JavaScript/TypeScript, Python, and Go runtimes (`node`, `npm`, `npx`, `pnpm`, `yarn`, `bun`, `deno`, `python`, `python3`, `pytest`, `ruff`, `go`), and added multi-language structured compiler and test diagnostic parser (`diagnostics.rs`).
+- **Headless Browser Verification Bridge**: Added local-origin CDP browser automation bridge in `hadron-forge-mcp` with accessibility tree snapshotting, full-page screenshots, element clicks, form fills, and script evaluations for autonomous UI and web verification.
+
 ## [0.3.1] - 2026-08-14
 
 ### Added

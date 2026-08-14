@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.4.0",
+        date: Some("2026-08-14"),
+        added: &[
+            "Background Process Manager with supervisor, PGID isolation, and MCP streaming tools",
+            "3-Tier polyglot code intelligence with Tree-Sitter AST symbols and generic STDIO LSP client",
+            "Polyglot tooling allowlist expansion (Node, Python, Go, Bun) and structured diagnostic parser",
+            "Headless browser verification bridge with accessibility snapshots and visual interaction",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.3.1",
         date: Some("2026-08-14"),
         added: &[
