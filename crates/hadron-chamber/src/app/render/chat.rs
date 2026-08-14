@@ -75,38 +75,37 @@ impl super::Chamber {
         });
 
         let live_card = (!active.is_empty()).then(|| {
-            h_flex()
+            v_flex()
                 .w_full()
-                .gap_1p5()
-                .mb_2()
-                .items_center()
-                .flex_wrap()
                 .overflow_hidden()
+                .gap_1p5()
+                .px_3()
+                .py_2()
+                .mb_2()
+                .rounded_lg()
+                .bg(theme::term_bg())
+                .border_1()
+                .border_color(theme::glass_highlight())
                 .children(active.into_iter().map(|cap| {
                     let identity = self.resolve_identity(&cap.quark_id);
-                    let (icon, state_color) = match cap.doing {
-                        hadron_lattice::live::Doing::Thinking => (IconName::Bot, theme::halo_reasoning()),
-                        hadron_lattice::live::Doing::Working => (IconName::SquareTerminal, theme::halo_active()),
-                        hadron_lattice::live::Doing::Planning => (IconName::File, theme::halo_active()),
-                        hadron_lattice::live::Doing::Speaking => (IconName::Bot, theme::halo_reasoning()),
-                        hadron_lattice::live::Doing::Gating => (IconName::CircleCheck, theme::halo_active()),
+                    let name = identity.name;
+                    let state_color = match cap.doing {
+                        hadron_lattice::live::Doing::Thinking => theme::halo_reasoning(),
+                        hadron_lattice::live::Doing::Working => theme::halo_active(),
+                        hadron_lattice::live::Doing::Planning => theme::halo_active(),
+                        hadron_lattice::live::Doing::Speaking => theme::halo_reasoning(),
+                        hadron_lattice::live::Doing::Gating => theme::halo_active(),
                     };
 
                     h_flex()
-                        .flex_shrink_0()
+                        .w_full()
                         .items_center()
-                        .gap_1p5()
-                        .px_2p5()
-                        .py_1()
-                        .rounded_full()
-                        .bg(theme::bg_surface_raised())
-                        .border_1()
-                        .border_color(state_color.opacity(0.35))
-                        .shadow_sm()
+                        .gap_2()
                         .child(
                             h_flex()
+                                .flex_none()
                                 .items_center()
-                                .gap_1()
+                                .gap_1p5()
                                 .child(
                                     div()
                                         .w_1p5()
@@ -119,36 +118,22 @@ impl super::Chamber {
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_color(identity.color)
-                                        .child(identity.name),
+                                        .child(format!("{}:", name)),
                                 ),
                         )
                         .child(
                             div()
+                                .flex_1()
+                                .min_w_0()
                                 .text_xs()
                                 .text_color(theme::text_muted())
-                                .child("•"),
-                        )
-                        .child(
-                            h_flex()
-                                .items_center()
-                                .gap_1()
-                                .child(
-                                    Icon::new(icon)
-                                        .size(px(11.0))
-                                        .text_color(theme::text_muted()),
-                                )
-                                .child(
-                                    div()
-                                        .max_w(px(180.0))
-                                        .text_xs()
-                                        .text_color(theme::text_secondary())
-                                        .truncate()
-                                        .child(cap.detail),
-                                ),
+                                .truncate()
+                                .child(cap.detail),
                         )
                         .when_some(cap.elapsed_secs, |el, secs| {
                             el.child(
                                 div()
+                                    .flex_none()
                                     .text_xs()
                                     .font_family(cx.theme().mono_font_family.clone())
                                     .text_color(theme::text_muted())
