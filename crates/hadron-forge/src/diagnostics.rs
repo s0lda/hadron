@@ -5,6 +5,18 @@
 use crate::exec::{exec, Program, EXEC_DEADLINE};
 use crate::file::{ForgeError, Root};
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiagnosticItem {
+    pub file: String,
+    pub line: usize,
+    pub col: usize,
+    pub severity: String,
+    pub message: String,
+    pub code: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub file: String,
@@ -285,6 +297,145 @@ pub fn parse_diagnostics_json(raw_json: &str) -> Vec<Diagnostic> {
 }
 
 /// Run `cargo check --message-format=json` (optionally targeting `package`) and return parsed diagnostics.
+/// Parse multi-language compiler and linter diagnostic outputs into structured items.
+pub fn parse_diagnostics(toolchain: &str, output: &str) -> Vec<DiagnosticItem> {
+    let mut items = Vec::new();
+    let norm_tool = toolchain.trim().to_lowercase();
+
+    if norm_tool == "cargo" || norm_tool == "rust" || norm_tool == "rustc" {
+        let json_diags = parse_diagnostics_json(output);
+        if !json_diags.is_empty() {
+            for d in json_diags {
+                items.push(DiagnosticItem {
+                    file: d.file,
+                    line: d.line,
+                    col: 1,
+                    severity: d.level,
+                    message: d.message,
+                    code: d.code,
+                });
+            }
+            return items;
+        }
+    }
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // 1. TSC format: src/app.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.
+        if let Some((file, rest)) = trimmed.split_once('(') {
+            if let Some((coords, msg_part)) = rest.split_once("):") {
+                if let Some((line_s, col_s)) = coords.split_once(',') {
+                    if let (Ok(line_num), Ok(col_num)) = (
+                        line_s.trim().parse::<usize>(),
+                        col_s.trim().parse::<usize>(),
+                    ) {
+                        let msg_clean = msg_part.trim();
+                        let (sev, code, message) = parse_message_severity_code(msg_clean);
+                        items.push(DiagnosticItem {
+                            file: file.trim().to_string(),
+                            line: line_num,
+                            col: col_num,
+                            severity: sev,
+                            message,
+                            code,
+                        });
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // 2. Colon-separated format: file:line:col: [error/code] message
+        // e.g. src/app.py:10:5: F401 [*] 'os' imported but unused
+        // e.g. main.go:14:2: undefined: fmt.Printl
+        let parts: Vec<&str> = trimmed.splitn(4, ':').collect();
+        if parts.len() >= 4 {
+            if let (Ok(line_num), Ok(col_num)) = (
+                parts[1].trim().parse::<usize>(),
+                parts[2].trim().parse::<usize>(),
+            ) {
+                let file = parts[0].trim().to_string();
+                let msg_clean = parts[3].trim();
+                let (sev, code, message) = parse_message_severity_code(msg_clean);
+                items.push(DiagnosticItem {
+                    file,
+                    line: line_num,
+                    col: col_num,
+                    severity: sev,
+                    message,
+                    code,
+                });
+                continue;
+            }
+        }
+
+        // 3. Pytest format: FAILED tests/test_calc.py::test_add - AssertionError: ...
+        if let Some(rest) = trimmed.strip_prefix("FAILED ") {
+            let (target, msg) = rest.split_once(" - ").unwrap_or((rest, ""));
+            let file = target.split("::").next().unwrap_or(target).trim().to_string();
+            items.push(DiagnosticItem {
+                file,
+                line: 1,
+                col: 1,
+                severity: "error".to_string(),
+                message: if msg.is_empty() {
+                    target.to_string()
+                } else {
+                    msg.to_string()
+                },
+                code: None,
+            });
+            continue;
+        }
+    }
+
+    items
+}
+
+fn parse_message_severity_code(msg: &str) -> (String, Option<String>, String) {
+    let lower = msg.to_lowercase();
+    let severity = if lower.starts_with("error") {
+        "error".to_string()
+    } else if lower.starts_with("warning") || lower.starts_with("warn") {
+        "warning".to_string()
+    } else if lower.starts_with("note") || lower.starts_with("info") {
+        "info".to_string()
+    } else {
+        "error".to_string()
+    };
+
+    let mut code = None;
+    let mut message = msg.to_string();
+
+    for token in msg.split_whitespace() {
+        let clean_token = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+        if (clean_token.starts_with("TS") && clean_token.len() > 2)
+            || (clean_token.starts_with('E')
+                && clean_token.len() > 3
+                && clean_token[1..].chars().all(|c| c.is_ascii_digit()))
+            || (clean_token.starts_with('F')
+                && clean_token.len() > 3
+                && clean_token[1..].chars().all(|c| c.is_ascii_digit()))
+        {
+            code = Some(clean_token.to_string());
+            break;
+        }
+    }
+
+    if let Some((_, rest)) = msg.split_once(':') {
+        if !rest.trim().is_empty() {
+            message = rest.trim().to_string();
+        }
+    }
+
+    (severity, code, message)
+}
+
+/// Run `cargo check --message-format=json` (optionally targeting `package`) and return parsed diagnostics.
 pub fn get_diagnostics(
     root: &Root,
     package: Option<&str>,
@@ -303,6 +454,22 @@ pub fn get_diagnostics(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_tsc_and_python_diagnostics() {
+        let tsc_err =
+            "src/app.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.";
+        let items = parse_diagnostics("tsc", tsc_err);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].line, 12);
+        assert_eq!(items[0].col, 5);
+        assert_eq!(items[0].code.as_deref(), Some("TS2322"));
+
+        let py_err = "FAILED tests/test_calc.py::test_add - AssertionError: assert 1 == 2";
+        let py_items = parse_diagnostics("pytest", py_err);
+        assert_eq!(py_items.len(), 1);
+        assert_eq!(py_items[0].file, "tests/test_calc.py");
+    }
 
     #[test]
     fn parse_diagnostics_json_extracts_messages_and_filters_artifacts() {
