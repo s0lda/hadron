@@ -16,6 +16,7 @@ pub mod nucleus;
 pub mod process;
 pub mod semantic;
 pub mod symbols;
+pub mod screenshot;
 
 use hadron_forge::file::Root;
 use hadron_forge::process::ProcessManager;
@@ -63,7 +64,8 @@ impl ForgeMcpServer {
                 + Self::process_router()
                 + Self::semantic_router()
                 + Self::symbols_router()
-                + Self::browser_router(),
+                + Self::browser_router()
+                + Self::screenshot_router(),
             root,
             nucleus_root,
             process_manager,
