@@ -75,6 +75,24 @@ impl super::Chamber {
         });
 
         let live_card = (!active.is_empty()).then(|| {
+            let active_items: Vec<_> = active
+                .into_iter()
+                .map(|cap| {
+                    let identity = self.resolve_identity(&cap.quark_id);
+                    (cap, identity)
+                })
+                .collect();
+
+            let max_name_len = active_items
+                .iter()
+                .map(|(_, identity)| identity.name.chars().count())
+                .max()
+                .unwrap_or(0);
+
+            // Base width: 6px dot + 6px gap + ~8px per bold char + 4px breathing room.
+            // Clamped between 38px (fits 3-letter names like Agy compactly) and 130px.
+            let name_col_w = (max_name_len as f32 * 8.0 + 16.0).clamp(38.0, 130.0);
+
             v_flex()
                 .w_full()
                 .overflow_hidden()
@@ -86,8 +104,7 @@ impl super::Chamber {
                 .bg(theme::term_bg())
                 .border_1()
                 .border_color(theme::glass_highlight())
-                .children(active.into_iter().map(|cap| {
-                    let identity = self.resolve_identity(&cap.quark_id);
+                .children(active_items.into_iter().map(|(cap, identity)| {
                     let name = identity.name;
                     let (state_color, action_icon, action_label) = match cap.doing {
                         hadron_lattice::live::Doing::Thinking => {
@@ -117,7 +134,7 @@ impl super::Chamber {
                         .hover(|s| s.bg(theme::glass_highlight()))
                         .child(
                             h_flex()
-                                .w(px(100.0))
+                                .w(px(name_col_w))
                                 .flex_none()
                                 .items_center()
                                 .gap_1p5()
