@@ -117,6 +117,7 @@ impl super::Chamber {
                         .hover(|s| s.bg(theme::glass_highlight()))
                         .child(
                             h_flex()
+                                .w(px(100.0))
                                 .flex_none()
                                 .items_center()
                                 .gap_1p5()
@@ -124,21 +125,27 @@ impl super::Chamber {
                                     div()
                                         .w_1p5()
                                         .h_1p5()
+                                        .flex_none()
                                         .rounded_full()
                                         .bg(state_color),
                                 )
                                 .child(
                                     div()
+                                        .flex_1()
+                                        .min_w_0()
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_color(identity.color)
+                                        .truncate()
                                         .child(name),
                                 ),
                         )
                         .child(
                             h_flex()
+                                .w(px(78.0))
                                 .flex_none()
                                 .items_center()
+                                .justify_center()
                                 .gap_1()
                                 .px_1p5()
                                 .py_0p5()
