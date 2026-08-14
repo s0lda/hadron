@@ -53,7 +53,9 @@ impl super::ChamberView {
         } else {
             self.messages.iter().filter(in_window).collect()
         };
-        msgs.sort_by_key(|m| m.ts);
+        if !msgs.windows(2).all(|w| w[0].ts <= w[1].ts) {
+            msgs.sort_by_key(|m| m.ts);
+        }
         if window == StatsWindow::Current {
             if let Some(pos) = msgs.iter().rposition(|m| m.from == "human") {
                 msgs = msgs[pos..].to_vec();
@@ -116,11 +118,13 @@ impl super::ChamberView {
     /// The shared fold behind [`Self::session_stats`] and [`Self::stats_for`]: sum the
     /// given messages per quark (attributed via the live roster) and in total.
     fn fold_stats<'a>(&self, messages: impl Iterator<Item = &'a MessageRow>) -> SessionStats {
+        let roster_map: HashMap<&str, &super::RosterRow> =
+            self.roster.iter().map(|r| (r.id.as_str(), r)).collect();
         let mut stats: HashMap<&str, QuarkStats> = HashMap::new();
         let mut out = SessionStats::default();
 
         for m in messages {
-            let Some(row) = self.roster.iter().find(|r| r.id == m.from) else {
+            let Some(row) = roster_map.get(m.from.as_str()) else {
                 continue; // human, gluon, or an actor with no seat
             };
             let s = stats.entry(row.id.as_str()).or_default();
@@ -185,4 +189,72 @@ impl super::ChamberView {
             .collect();
         out
     }
+}
+
+/// Downsample a slice of [`SpendPoint`]s to at most `max_count` points for efficient
+/// CPU software rasterized rendering in `AreaChart`. Preserves the first and last points
+/// and uniformly samples intermediate steps.
+pub fn downsample_spend_points(points: &[SpendPoint], max_count: usize) -> Vec<SpendPoint> {
+    if points.len() <= max_count || max_count < 2 {
+        return points.to_vec();
+    }
+    let mut res = Vec::with_capacity(max_count);
+    res.push(points[0].clone());
+    let step = (points.len() - 1) as f64 / (max_count - 1) as f64;
+    for i in 1..(max_count - 1) {
+        let idx = (i as f64 * step).round() as usize;
+        if idx > 0 && idx < points.len() - 1 && res.last().map_or(true, |p: &SpendPoint| p.step != points[idx].step) {
+            res.push(points[idx].clone());
+        }
+    }
+    if let Some(last) = points.last() {
+        if res.last().map_or(true, |p| p.step != last.step) {
+            res.push(last.clone());
+        }
+    }
+    res
+}
+
+/// Downsample a slice of [`TurnSpend`]s to at most `max_count` points.
+pub fn downsample_turn_spend(points: &[TurnSpend], max_count: usize) -> Vec<TurnSpend> {
+    if points.len() <= max_count || max_count < 2 {
+        return points.to_vec();
+    }
+    let mut res = Vec::with_capacity(max_count);
+    res.push(points[0].clone());
+    let step = (points.len() - 1) as f64 / (max_count - 1) as f64;
+    for i in 1..(max_count - 1) {
+        let idx = (i as f64 * step).round() as usize;
+        if idx > 0 && idx < points.len() - 1 && res.last().map_or(true, |p: &TurnSpend| p.turn != points[idx].turn) {
+            res.push(points[idx].clone());
+        }
+    }
+    if let Some(last) = points.last() {
+        if res.last().map_or(true, |p| p.turn != last.turn) {
+            res.push(last.clone());
+        }
+    }
+    res
+}
+
+/// Downsample context points `(index, percentage)` to at most `max_count` points.
+pub fn downsample_context_points(points: &[(usize, f64)], max_count: usize) -> Vec<(usize, f64)> {
+    if points.len() <= max_count || max_count < 2 {
+        return points.to_vec();
+    }
+    let mut res = Vec::with_capacity(max_count);
+    res.push(points[0]);
+    let step = (points.len() - 1) as f64 / (max_count - 1) as f64;
+    for i in 1..(max_count - 1) {
+        let idx = (i as f64 * step).round() as usize;
+        if idx > 0 && idx < points.len() - 1 && res.last().map_or(true, |p| p.0 != points[idx].0) {
+            res.push(points[idx]);
+        }
+    }
+    if let Some(last) = points.last() {
+        if res.last().map_or(true, |p| p.0 != last.0) {
+            res.push(*last);
+        }
+    }
+    res
 }

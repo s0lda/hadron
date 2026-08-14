@@ -9,9 +9,16 @@ impl super::Chamber {
         // One row per quark mid-turn, not just the first — the card and the
         // roster's blue dot must agree on who counts as "working".
         let live_dir = hadron_lattice::live::live_dir(&self.path);
-        let active = active_quarks(&self.view.roster, |id| {
-            hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(id), chrono::Utc::now())
-        });
+        let now = chrono::Utc::now();
+        let mut live_map = std::collections::HashMap::new();
+        for r in &self.view.roster {
+            if r.adopted && r.enabled {
+                if let Some(act) = hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), now) {
+                    live_map.insert(r.id.as_str(), act);
+                }
+            }
+        }
+        let active = active_quarks(&self.view.roster, |id| live_map.get(id).cloned());
 
         // The reply as it arrives. A sibling of the Live card rather than a row in the
         // message list: `chat_list_state`'s count is derived from `chat_message_ixs`
@@ -19,9 +26,7 @@ impl super::Chamber {
         // not a field event — inventing a list row for one would put a third,
         // untracked writer on caches that only `resync_lists_to_projection` may rebuild.
         // Pinned above the input, so it is where the human is already looking.
-        let drafts = streaming_drafts(&self.view.roster, |id| {
-            hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(id), chrono::Utc::now())
-        });
+        let drafts = streaming_drafts(&self.view.roster, |id| live_map.get(id).cloned());
         let draft_card = (!drafts.is_empty()).then(|| {
             v_flex().w_full().gap_2().mb_2().children(drafts.into_iter().map(|(quark_id_str, text)| {
                 let identity = self.resolve_identity(&quark_id_str);
@@ -625,7 +630,17 @@ impl super::Chamber {
     where
         Tz::Offset: std::fmt::Display,
     {
-        let summary_chip = turn_summary_parts(&self.view.messages, ix).and_then(|(duration_secs, num_tools)| {
+        let summary = {
+            let mut cache = self.turn_summaries.borrow_mut();
+            if let Some(&res) = cache.get(&ix) {
+                res
+            } else {
+                let res = turn_summary_parts(&self.view.messages, ix);
+                cache.insert(ix, res);
+                res
+            }
+        };
+        let summary_chip = summary.and_then(|(duration_secs, num_tools)| {
             if duration_secs > 0 || num_tools > 0 {
                 let mut parts = Vec::new();
                 parts.push(format!("thought for {}", format_duration(duration_secs)));

@@ -13,6 +13,7 @@ pub mod tasks;
 #[cfg(test)]
 mod tests;
 
+pub use stats::{downsample_context_points, downsample_spend_points, downsample_turn_spend};
 pub use tasks::{SwarmTask, TaskState};
 
 /// Wall-clock of an event, to the second.
@@ -357,7 +358,7 @@ pub struct QuarkStats {
 /// A time window over the swarm's telemetry. `Session` is bounded by *source* — the
 /// live field only, i.e. the current post-`/clear` session — while the wider windows
 /// fold archived sessions in and bound by *time* ([`StatsWindow::cutoff`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StatsWindow {
     /// The current run: since the last human message. No archives, no time bound.
     Current,

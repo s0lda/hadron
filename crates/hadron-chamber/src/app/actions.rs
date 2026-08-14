@@ -33,6 +33,7 @@ impl Chamber {
         let dir = self.sessions_dir();
         self.archived_messages = crate::model::load_archived_messages(&dir);
         self.sessions = crate::model::list_sessions(&dir);
+        self.cached_stats.borrow_mut().clear();
     }
 
     /// Resync every list cache to the current projection after the field was **replaced
@@ -55,6 +56,8 @@ impl Chamber {
         self.chat_list_state.reset(self.chat_message_ixs.len());
         self.log_list_state.reset(self.view.messages.len());
         self.parsed_markdown.borrow_mut().clear();
+        self.turn_summaries.borrow_mut().clear();
+        self.cached_stats.borrow_mut().clear();
     }
 
     /// Re-project the field and bring `chat_list_state`/`log_list_state`/
@@ -87,6 +90,7 @@ impl Chamber {
             if new_log_count > old_log_count {
                 self.log_list_state
                     .splice(old_log_count..old_log_count, new_log_count - old_log_count);
+                self.cached_stats.borrow_mut().clear();
             }
         } else {
             self.resync_lists_to_projection();

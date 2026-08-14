@@ -46,6 +46,16 @@ use crate::config::{self, ChamberPrefs, Identity};
 use crate::model::{self, ChamberView, MessageRow, RosterRow, StatsWindow, SwarmTask, TaskState};
 use crate::theme;
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct CachedStats {
+    pub window: StatsWindow,
+    pub messages_len: usize,
+    pub archived_len: usize,
+    pub roster_len: usize,
+    pub stats: crate::model::SessionStats,
+    pub timeline: crate::model::SpendTimeline,
+}
+
 pub(super) mod delegation;
 
 mod mentions;
@@ -270,6 +280,12 @@ struct Chamber {
     stats_scroll: ScrollHandle,
     /// Cache of parsed Markdown to HTML, keyed by message index, storing (raw_body, resolved_content)
     parsed_markdown: std::cell::RefCell<std::collections::HashMap<usize, (String, String)>>,
+    /// Memoized turn summary (thought duration, tool count) keyed by message index.
+    turn_summaries: std::cell::RefCell<std::collections::HashMap<usize, Option<(i64, usize)>>>,
+    /// Cached aggregated statistics and spend timeline per time window.
+    cached_stats: std::cell::RefCell<std::collections::HashMap<StatsWindow, CachedStats>>,
+    /// Which stats windows are currently computing in the background.
+    stats_computing: std::cell::RefCell<std::collections::HashSet<StatsWindow>>,
     /// A debounced window-bounds save is already in flight, so a drag (which
     /// re-renders every frame) coalesces into one write instead of one per frame.
     bounds_save_pending: bool,
@@ -965,6 +981,9 @@ impl Chamber {
             chat_message_ixs,
             stats_scroll,
             parsed_markdown: std::cell::RefCell::new(std::collections::HashMap::new()),
+            turn_summaries: std::cell::RefCell::new(std::collections::HashMap::new()),
+            cached_stats: std::cell::RefCell::new(std::collections::HashMap::new()),
+            stats_computing: std::cell::RefCell::new(std::collections::HashSet::new()),
             bounds_save_pending: false,
             process_manager_open: false,
             settings_open: false,

@@ -165,6 +165,61 @@
         assert_eq!(last.team, 190.0);
     }
 
+    /// `downsample_spend_points` reduces point count while strictly preserving first/last points and monotonicity.
+    #[test]
+    fn downsample_spend_points_preserves_bounds_and_decimates() {
+        let pts: Vec<SpendPoint> = (1..=500)
+            .map(|i| SpendPoint {
+                step: i,
+                per_quark: vec![i as f64 * 10.0],
+                team: i as f64 * 10.0,
+            })
+            .collect();
+
+        // Downsample to max 50 points
+        let downsampled = downsample_spend_points(&pts, 50);
+        assert!(downsampled.len() <= 50);
+        assert_eq!(downsampled.first().unwrap().step, 1);
+        assert_eq!(downsampled.first().unwrap().team, 10.0);
+        assert_eq!(downsampled.last().unwrap().step, 500);
+        assert_eq!(downsampled.last().unwrap().team, 5000.0);
+
+        // Monotonicity preserved
+        for w in downsampled.windows(2) {
+            assert!(w[0].step < w[1].step);
+            assert!(w[0].team <= w[1].team);
+        }
+
+        // Small input is untouched
+        let small = vec![
+            SpendPoint { step: 1, per_quark: vec![10.0], team: 10.0 },
+            SpendPoint { step: 2, per_quark: vec![20.0], team: 20.0 },
+        ];
+        assert_eq!(downsample_spend_points(&small, 50), small);
+    }
+
+    /// `downsample_turn_spend` and `downsample_context_points` preserve ends and bound lengths.
+    #[test]
+    fn downsample_turn_spend_and_context_points_preserve_ends() {
+        let turns: Vec<TurnSpend> = (1..=300)
+            .map(|t| TurnSpend {
+                turn: t,
+                fresh: (t * 5) as u32,
+                cost_usd: Some(t as f64 * 0.01),
+            })
+            .collect();
+        let ds_turns = downsample_turn_spend(&turns, 40);
+        assert!(ds_turns.len() <= 40);
+        assert_eq!(ds_turns.first().unwrap().turn, 1);
+        assert_eq!(ds_turns.last().unwrap().turn, 300);
+
+        let ctx: Vec<(usize, f64)> = (0..200).map(|i| (i, (i as f64) * 0.5)).collect();
+        let ds_ctx = downsample_context_points(&ctx, 30);
+        assert!(ds_ctx.len() <= 30);
+        assert_eq!(ds_ctx.first().unwrap().0, 0);
+        assert_eq!(ds_ctx.last().unwrap().0, 199);
+    }
+
     /// `list_sessions` reads each archived session's directory-name id and the last
     /// `Kind::SessionName` event in its field, if any — `/rename` can run more than
     /// once, and the latest one is what the sessions menu/`/resume` should show.

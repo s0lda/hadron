@@ -57,9 +57,20 @@ impl super::Chamber {
         let q_color = self.color_for(&qid);
         let resolved = self.resolve_identity(&qid);
 
-        let stats =
+        let stats = if let Some(cached) = self.cached_stats.borrow().get(&self.stats_window) {
+            if cached.messages_len == self.view.messages.len()
+                && cached.archived_len == self.archived_messages.len()
+                && cached.roster_len == self.view.roster.len()
+            {
+                cached.stats.clone()
+            } else {
+                self.view
+                    .stats_for(&self.archived_messages, self.stats_window, chrono::Utc::now())
+            }
+        } else {
             self.view
-                .stats_for(&self.archived_messages, self.stats_window, chrono::Utc::now());
+                .stats_for(&self.archived_messages, self.stats_window, chrono::Utc::now())
+        };
         let q_stats = stats
             .per_quark
             .into_iter()
@@ -323,7 +334,8 @@ impl super::Chamber {
                 // history as a line when we have one; fall back to a meter for a lone reading.
                 let history = context_history(&self.view.messages, &qid);
                 if history.len() >= 2 {
-                    let points: Vec<(usize, f64)> = history.into_iter().enumerate().collect();
+                    let raw_points: Vec<(usize, f64)> = history.into_iter().enumerate().collect();
+                    let points = crate::model::downsample_context_points(&raw_points, 80);
                     stats_block = stats_block.child(
                         div().h(px(96.0)).w_full().mt_1().child(
                             AreaChart::new(points)
@@ -353,9 +365,10 @@ impl super::Chamber {
             // trend reads as a filled shape, not a thin line. `linear_gradient` angle 0
             // points up, so the strong stop sits at position 1.0 (top, at the curve) and
             // fades toward the baseline.
+            let display_spend = crate::model::downsample_turn_spend(&q_stats.spend_history, 80);
             stats_block = stats_block.child(
                 div().h(px(96.0)).w_full().mt_1().child(
-                    AreaChart::new(q_stats.spend_history.clone())
+                    AreaChart::new(display_spend)
                         .id(format!("info-spend-chart-{qid}"))
                         .name("Fresh Spent")
                         .x(|d| format!("T{}", d.turn))
@@ -590,14 +603,118 @@ impl super::Chamber {
         )
     }
 
+    /// Ensure statistics for the currently selected window are aggregated, computing in
+    /// the background on `cx.background_executor()` for archive windows so the UI thread
+    /// never freezes regardless of archive size.
+    pub(super) fn ensure_stats_computed(&self, cx: &mut Context<Self>) {
+        let window = self.stats_window;
+        let msgs_len = self.view.messages.len();
+        let arch_len = self.archived_messages.len();
+        let rost_len = self.view.roster.len();
+
+        let is_cached = self.cached_stats.borrow().get(&window).is_some_and(|c| {
+            c.messages_len == msgs_len && c.archived_len == arch_len && c.roster_len == rost_len
+        });
+
+        if is_cached || self.stats_computing.borrow().contains(&window) {
+            return;
+        }
+
+        // Fast synchronous path for current session with small message count
+        if !window.includes_archives() && msgs_len < 100 {
+            let stats = self.view.stats_for(&self.archived_messages, window, chrono::Utc::now());
+            let timeline = self.view.spend_timeline(&self.archived_messages, window, chrono::Utc::now());
+            self.cached_stats.borrow_mut().insert(
+                window,
+                CachedStats {
+                    window,
+                    messages_len: msgs_len,
+                    archived_len: arch_len,
+                    roster_len: rost_len,
+                    stats,
+                    timeline,
+                },
+            );
+            return;
+        }
+
+        // Asynchronous background computation for archives or larger datasets
+        self.stats_computing.borrow_mut().insert(window);
+        let view = self.view.clone();
+        let archived = self.archived_messages.clone();
+        let now = chrono::Utc::now();
+
+        cx.spawn(async move |this, cx| {
+            let (stats, timeline) = cx
+                .background_executor()
+                .spawn(async move {
+                    let stats = view.stats_for(&archived, window, now);
+                    let timeline = view.spend_timeline(&archived, window, now);
+                    (stats, timeline)
+                })
+                .await;
+
+            let _ = this.update(cx, |chamber, cx| {
+                chamber.stats_computing.borrow_mut().remove(&window);
+                chamber.cached_stats.borrow_mut().insert(
+                    window,
+                    CachedStats {
+                        window,
+                        messages_len: msgs_len,
+                        archived_len: arch_len,
+                        roster_len: rost_len,
+                        stats,
+                        timeline,
+                    },
+                );
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// The chat column's Stats tab: team-wide telemetry over the selected window.
     pub(super) fn stats_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let stats =
-            self.view
-                .stats_for(&self.archived_messages, self.stats_window, chrono::Utc::now());
+        self.ensure_stats_computed(cx);
+
+        let window = self.stats_window;
+        let cached = self.cached_stats.borrow().get(&window).cloned();
 
         let mut col = v_flex().p_4().gap_4();
         col = col.child(self.stats_window_tabs("chat-stats-window-tabs", cx));
+
+        let Some(cached) = cached else {
+            // Sleek loading state while background task aggregates archives
+            return col.child(
+                session_card()
+                    .items_center()
+                    .justify_center()
+                    .p_8()
+                    .gap_3()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::accent())
+                                    .child("⟳"),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme::text_secondary())
+                                    .child(format!("Calculating telemetry for {}…", window.label())),
+                            ),
+                    ),
+            );
+        };
+
+        let stats = &cached.stats;
+        let timeline = &cached.timeline;
+
         // Session totals as a row of KPI tiles.
         col = col.child(
             h_flex()
@@ -631,11 +748,9 @@ impl super::Chamber {
         // Combined spend chart: cumulative fresh spend over turns, one translucent area
         // per quark (its colour) with the team total as a stroke-only line on top — being
         // the running sum it sits above every quark band without hiding them.
-        let timeline =
-            self.view
-                .spend_timeline(&self.archived_messages, self.stats_window, chrono::Utc::now());
         if !timeline.points.is_empty() {
-            let mut chart = AreaChart::new(timeline.points.clone())
+            let display_points = crate::model::downsample_spend_points(&timeline.points, 120);
+            let mut chart = AreaChart::new(display_points)
                 .id("session-spend-area")
                 .x(|d| format!("T{}", d.step));
             for (i, q) in timeline.quarks.iter().enumerate() {
