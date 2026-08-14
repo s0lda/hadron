@@ -646,10 +646,10 @@ pub(super) fn settings_field_stacked(
 pub(super) fn panel_eyebrow(label: &'static str) -> impl IntoElement {
     div()
         .mt_1()
-        .text_xs()
+        .text_size(px(10.0))
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .text_color(theme::text_muted())
-        .child(label)
+        .child(label.to_uppercase())
 }
 
 /// One label→value row: muted label on the left, value right-aligned. The shared row
@@ -1172,7 +1172,7 @@ pub(super) fn session_card() -> gpui::Div {
     v_flex()
         .p_3()
         .gap_2()
-        .rounded(px(12.0))
+        .rounded_lg()
         .bg(theme::glass_surface())
         .border_1()
         .border_color(theme::glass_highlight())
@@ -1202,8 +1202,10 @@ pub(super) fn stat_tile(label: &str, value: String, accent: gpui::Rgba) -> impl 
         .flex_1()
         .gap_1()
         .p_3()
-        .rounded(px(10.0))
-        .bg(theme::bg_base())
+        .rounded_lg()
+        .bg(theme::term_bg())
+        .border_1()
+        .border_color(theme::glass_highlight())
         .child(
             div()
                 .text_lg()
@@ -1214,6 +1216,7 @@ pub(super) fn stat_tile(label: &str, value: String, accent: gpui::Rgba) -> impl 
         .child(
             div()
                 .text_xs()
+                .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(theme::text_muted())
                 .child(label.to_string()),
         )

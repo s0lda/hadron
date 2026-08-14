@@ -63,7 +63,7 @@ use mentions::{parse_plan_progress, parse_plan_tasks, resolve_mention_names};
 
 mod identity;
 use identity::{
-    hsla_to_hex, identity_avatar, pack_rgb, parse_hex, ResolvedIdentity, IDENTITY_SWATCHES,
+    hsla_to_hex, identity_avatar, identity_avatar_with_state, pack_rgb, parse_hex, ResolvedIdentity, IDENTITY_SWATCHES,
 };
 
 mod tabs;

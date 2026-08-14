@@ -85,7 +85,17 @@ pub(super) fn avatar_source(path: &str) -> gpui::ImageSource {
 /// Render an identity's avatar: the chosen image if set, else a colored circle
 /// with the name's initials.
 pub(super) fn identity_avatar(id: &ResolvedIdentity, diameter: f32) -> gpui::AnyElement {
-    match &id.image {
+    identity_avatar_with_state(id, diameter, None, true)
+}
+
+/// Render an identity's avatar with state-driven ring styling (active soft sapphire/amethyst ring, idle muted ring).
+pub(super) fn identity_avatar_with_state(
+    id: &ResolvedIdentity,
+    diameter: f32,
+    state: Option<QuarkState>,
+    enabled: bool,
+) -> gpui::AnyElement {
+    let base_avatar = match &id.image {
         Some(path) => Avatar::new()
             .src(avatar_source(path))
             .with_size(Size::Size(px(diameter)))
@@ -97,12 +107,44 @@ pub(super) fn identity_avatar(id: &ResolvedIdentity, diameter: f32) -> gpui::Any
             .flex_shrink_0()
             .size(px(diameter))
             .rounded_full()
-            .bg(id.color.opacity(0.2))
+            .bg(id.color.opacity(0.18))
+            .border_1()
+            .border_color(id.color.opacity(0.35))
             .text_color(id.color)
             .text_size(px(diameter * 0.4))
+            .font_weight(gpui::FontWeight::BOLD)
             .child(initials(&id.name))
             .into_any_element(),
-    }
+    };
+
+    let Some(st) = state else {
+        if enabled {
+            return base_avatar;
+        } else {
+            return div().opacity(0.6).child(base_avatar).into_any_element();
+        }
+    };
+
+    let is_active = matches!(st, QuarkState::Excited | QuarkState::Thinking);
+    let ring_color = if !enabled {
+        theme::presence_disabled()
+    } else if is_active {
+        theme::halo_dot(st).into()
+    } else {
+        gpui::rgba(0xffffff15)
+    };
+
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .p(px(1.5))
+        .border_1()
+        .border_color(ring_color)
+        .map(|this| if enabled { this } else { this.opacity(0.6) })
+        .child(base_avatar)
+        .into_any_element()
 }
 
 #[cfg(test)]

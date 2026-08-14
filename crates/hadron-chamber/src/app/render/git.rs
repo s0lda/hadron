@@ -245,8 +245,8 @@ impl super::Chamber {
                         .py_1()
                         .rounded_md()
                         .cursor_pointer()
-                        .hover(|s| s.bg(theme::border()))
-                        .when(is_selected, |d| d.bg(theme::border()))
+                        .hover(|s| s.bg(theme::bg_surface_raised()))
+                        .when(is_selected, |d| d.bg(theme::bg_surface_raised()))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.select_branch(name.clone());
                             cx.notify();
@@ -552,16 +552,16 @@ impl super::Chamber {
                         .py_1()
                         .px_2()
                         .border_b_1()
-                        .border_color(theme::border())
+                        .border_color(theme::glass_highlight())
                         .when_some(selects, |d, name| {
                             d.cursor_pointer()
-                                .hover(|s| s.bg(theme::border()))
+                                .hover(|s| s.bg(theme::bg_surface_raised()))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.select_branch(name.clone());
                                     cx.notify();
                                 }))
                         })
-                        .when(is_selected, |d| d.bg(theme::border()))
+                        .when(is_selected, |d| d.bg(theme::bg_surface_raised()))
                         .child(
                             h_flex()
                                 .w_full()
@@ -1087,9 +1087,40 @@ impl super::Chamber {
                 .gap_2()
                 .items_center()
                 .min_w_0()
-                .child(div().flex_1().min_w_0().child(file.path.clone()))
-                .child(div().text_color(gpui::rgb(ADD_COLOR)).child(format!("+{}", file.added)))
-                .child(div().text_color(gpui::rgb(DEL_COLOR)).child(format!("−{}", file.removed)));
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .child(file.path.clone()),
+                )
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(
+                            div()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded_sm()
+                                .bg(gpui::rgba(0x22c55e18))
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(gpui::rgb(ADD_COLOR))
+                                .child(format!("+{}", file.added)),
+                        )
+                        .child(
+                            div()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded_sm()
+                                .bg(gpui::rgba(0xf43f5e18))
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(gpui::rgb(DEL_COLOR))
+                                .child(format!("−{}", file.removed)),
+                        ),
+                );
 
             let is_open = open.contains(&ix);
             let header = h_flex()
@@ -1098,8 +1129,11 @@ impl super::Chamber {
                 .gap_2()
                 .justify_between()
                 .items_center()
-                .py_1()
+                .px_2()
+                .py_1p5()
+                .rounded_md()
                 .cursor_pointer()
+                .hover(|s| s.bg(theme::bg_surface_raised()))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let set = match panel {
                         DiffPanel::Changes => &mut this.changes_open_ixs,
@@ -1136,7 +1170,8 @@ impl super::Chamber {
                 let mut lines = v_flex()
                     .w_full()
                     .text_sm()
-                    .pt_2()
+                    .pt_1()
+                    .pb_2()
                     .font_family(cx.theme().mono_font_family.clone());
                 for hunk in &file.hunks {
                     lines = lines.child(
@@ -1144,34 +1179,81 @@ impl super::Chamber {
                             .w_full()
                             .px_2()
                             .py_1()
+                            .my_1()
+                            .rounded_sm()
+                            .bg(theme::bg_surface())
+                            .border_y_1()
+                            .border_color(theme::glass_highlight())
+                            .text_xs()
                             .text_color(theme::text_muted())
                             .child(hunk.header.clone()),
                     );
                     for line in &hunk.lines {
                         lines = lines.child(match line {
-                            crate::vcs::DiffLine::Context(c) => div()
+                            crate::vcs::DiffLine::Context(c) => h_flex()
                                 .w_full()
-                                .px_2()
-                                .text_color(theme::text())
-                                .child(format!(" {c}")),
-                            crate::vcs::DiffLine::Added(a) => div()
+                                .items_start()
+                                .child(
+                                    div()
+                                        .w(px(20.0))
+                                        .flex_none()
+                                        .text_color(theme::text_muted())
+                                        .text_xs()
+                                        .child(" "),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_color(theme::text())
+                                        .child(c.clone()),
+                                ),
+                            crate::vcs::DiffLine::Added(a) => h_flex()
                                 .w_full()
-                                .px_2()
-                                .bg(gpui::rgba(0x34d39922))
-                                .text_color(gpui::rgb(ADD_COLOR))
-                                .child(format!("+{a}")),
-                            crate::vcs::DiffLine::Removed(r) => div()
+                                .items_start()
+                                .bg(gpui::rgba(0x22c55e14))
+                                .child(
+                                    div()
+                                        .w(px(20.0))
+                                        .flex_none()
+                                        .text_color(gpui::rgb(ADD_COLOR))
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .child("+"),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_color(gpui::rgb(ADD_COLOR))
+                                        .child(a.clone()),
+                                ),
+                            crate::vcs::DiffLine::Removed(r) => h_flex()
                                 .w_full()
-                                .px_2()
-                                .bg(gpui::rgba(0xfb718522))
-                                .text_color(gpui::rgb(DEL_COLOR))
-                                .child(format!("−{r}")),
+                                .items_start()
+                                .bg(gpui::rgba(0xf43f5e14))
+                                .child(
+                                    div()
+                                        .w(px(20.0))
+                                        .flex_none()
+                                        .text_color(gpui::rgb(DEL_COLOR))
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .child("−"),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_color(gpui::rgb(DEL_COLOR))
+                                        .child(r.clone()),
+                                ),
                         });
                     }
                 }
                 row = row.child(lines);
             }
-            list = list.child(row.border_b_1().border_color(theme::border()));
+            list = list.child(row.border_b_1().border_color(theme::glass_highlight()));
         }
         list.into_any_element()
     }

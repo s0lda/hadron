@@ -137,9 +137,7 @@ impl super::Chamber {
                         div()
                             .relative()
                             .child(
-                                div()
-                                    .child(identity_avatar(&identity, 24.0))
-                                    .map(|el| if r.enabled { el } else { el.opacity(0.6) }),
+                                identity_avatar_with_state(&identity, 24.0, Some(effective_state), r.enabled),
                             )
                             .child(
                                 div()
@@ -252,13 +250,21 @@ impl super::Chamber {
             .p_2p5()
             .gap_1p5()
             .rounded_lg()
-            .bg(theme::term_bg())
+            .bg(if is_selected {
+                theme::bg_surface_raised()
+            } else {
+                theme::term_bg()
+            })
             .border_1()
             .cursor_pointer()
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.selected_quark_ix = Some(ix);
                 cx.notify();
             }))
+            .hover(|s| {
+                s.bg(theme::bg_surface_raised())
+                    .border_color(theme::glass_highlight())
+            })
             .border_color(if is_selected {
                 identity.color
             } else {

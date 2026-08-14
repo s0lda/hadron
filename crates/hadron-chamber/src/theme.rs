@@ -93,6 +93,11 @@ pub fn glass_highlight() -> Hsla {
     rgba(0x60606038).into()
 }
 
+/// Subtle 1px hairline border for dark elevated cards (`rgba(255, 255, 255, 0.07)`).
+pub fn hairline_border() -> Hsla {
+    rgba(0xffffff12).into()
+}
+
 // --- vector status halo indicators ---
 /// Active status halo (Soft Sapphire Blue `#60a5fa`) for tool execution / active state.
 pub fn halo_active() -> Hsla {
@@ -399,6 +404,10 @@ mod tests {
         assert!(
             glass_highlight().a < 0.25,
             "Glass highlight rim must be low-alpha white (<25%)"
+        );
+        assert!(
+            hairline_border().a < 0.20,
+            "Hairline border must be subtle (<20%)"
         );
         // The dropdown/menu surface. The fork's `Select` fills its popup from a
         // theme token, so anything less than fully opaque here lets the panel

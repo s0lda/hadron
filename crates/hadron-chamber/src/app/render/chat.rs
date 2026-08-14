@@ -643,21 +643,35 @@ impl super::Chamber {
         let summary_chip = summary.and_then(|(duration_secs, num_tools)| {
             if duration_secs > 0 || num_tools > 0 {
                 let mut parts = Vec::new();
-                parts.push(format!("thought for {}", format_duration(duration_secs)));
+                if duration_secs > 0 {
+                    parts.push(format!("thought for {}", format_duration(duration_secs)));
+                }
                 if num_tools > 0 {
                     parts.push(format!("ran {} tool{}", num_tools, if num_tools == 1 { "" } else { "s" }));
                 }
                 Some(
                     h_flex()
-                        .gap_1()
+                        .gap_1p5()
                         .items_center()
+                        .px_2()
+                        .py_0p5()
                         .mb_1()
+                        .rounded_md()
+                        .bg(theme::bg_surface())
+                        .border_1()
+                        .border_color(theme::glass_highlight())
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::accent())
+                                .child("⟳"),
+                        )
                         .child(
                             div()
                                 .text_xs()
                                 .text_color(theme::text_muted())
-                                .child(format!("⟳ {}", parts.join(" · ")))
-                        )
+                                .child(parts.join(" · ")),
+                        ),
                 )
             } else {
                 None
@@ -671,12 +685,24 @@ impl super::Chamber {
             .child(
                 v_flex()
                     .min_w_0()
-                    .gap_0p5()
+                    .gap_1()
                     .child(
                         h_flex()
                             .items_center()
                             .gap_2()
-                            .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).text_color(id.color).child(id.name.clone()))
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .bg(id.color.opacity(0.12))
+                                    .border_1()
+                                    .border_color(id.color.opacity(0.28))
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(id.color)
+                                    .child(format!("@{}", id.name.trim_start_matches('@'))),
+                            )
                             .child(
                                 div()
                                     .text_xs()
@@ -687,8 +713,12 @@ impl super::Chamber {
                                 this.child(
                                     div()
                                         .text_xs()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::bg_surface())
                                         .text_color(theme::text_muted())
-                                        .child(format!("→ {to}")),
+                                        .child(format!("→ @{}", to.trim_start_matches('@'))),
                                 )
                             })
                             .when_some(m.usage.as_ref(), |this, u| {
@@ -780,7 +810,7 @@ impl super::Chamber {
         v_flex()
             .w_full()
             .rounded_lg()
-            .bg(theme::glass_card())
+            .bg(theme::term_bg())
             .border_1()
             .border_color(theme::glass_highlight())
             .overflow_hidden()
@@ -790,7 +820,7 @@ impl super::Chamber {
                     .items_center()
                     .px_3()
                     .py_1p5()
-                    .bg(theme::glass_surface())
+                    .bg(theme::bg_surface_raised())
                     .border_b_1()
                     .border_color(theme::glass_highlight())
                     .child(
