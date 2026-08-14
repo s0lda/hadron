@@ -73,6 +73,33 @@ impl super::Chamber {
     }
 
     pub(super) fn general_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let typography_card = settings_card_section(
+            "Typography & Appearance",
+            Some(IconName::Palette),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "UI font family",
+                    Some("Font used across buttons, menus, labels, and chat prose. Verified regular + bold faces."),
+                    self.ui_font_select(window, cx),
+                ))
+                .child(settings_field(
+                    "UI font size",
+                    Some("Base font size for application interface elements."),
+                    self.ui_font_size_select(window, cx),
+                ))
+                .child(settings_field(
+                    "Code / Monospace font family",
+                    Some("Font used for terminals, diffs, hashes, and code blocks."),
+                    self.mono_font_select(window, cx),
+                ))
+                .child(settings_field(
+                    "Code / Monospace font size",
+                    Some("Font size for code blocks, terminal grid, and inspector diffs."),
+                    self.mono_font_size_select(window, cx),
+                )),
+        );
+
         let execution_card = settings_card_section(
             "Execution & Swarm Limits",
             Some(IconName::Cpu),
@@ -140,6 +167,7 @@ impl super::Chamber {
         v_flex()
             .w_full()
             .gap_4()
+            .child(typography_card)
             .child(execution_card)
             .child(environment_card)
     }
@@ -257,6 +285,173 @@ impl super::Chamber {
             .w_full()
             .min_w(px(180.0))
             .placeholder("Select strategy...")
+            .into_any_element()
+    }
+
+    /// The UI font picker listing bundled fonts first, then bold-verified system fonts.
+    pub(super) fn ui_font_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current_pref = self.prefs.ui_font_family.clone();
+        if self.ui_font_select_key != Some(current_pref.clone()) {
+            self.ui_font_select_key = Some(current_pref.clone());
+            let mut choices = vec![
+                "Inter (Default)".to_string(),
+                "Geist".to_string(),
+                "Noto Sans".to_string(),
+            ];
+            let text_system = cx.text_system();
+            let mut sys_names = text_system.all_font_names();
+            sys_names.sort();
+            sys_names.dedup();
+            for name in sys_names {
+                if crate::fonts::BUNDLED_UI_FAMILIES.contains(&name.as_str()) || name == ".SystemUIFont" {
+                    continue;
+                }
+                let regular = gpui::font(&name);
+                if text_system.resolve_font(&regular.clone().bold()) != text_system.resolve_font(&regular) {
+                    choices.push(name);
+                }
+            }
+            let current_label = match &current_pref {
+                Some(name) => {
+                    if name == "Inter" {
+                        "Inter (Default)".to_string()
+                    } else {
+                        name.clone()
+                    }
+                }
+                None => "Inter (Default)".to_string(),
+            };
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.ui_font_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.ui_font_select_state)
+            .w_full()
+            .min_w(px(180.0))
+            .placeholder("Select UI font...")
+            .into_any_element()
+    }
+
+    /// The UI font size picker (12px - 20px, default 14px).
+    pub(super) fn ui_font_size_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current_pref = self.prefs.ui_font_size;
+        if self.ui_font_size_select_key != Some(current_pref) {
+            self.ui_font_size_select_key = Some(current_pref);
+            let choices = vec![
+                "12px".to_string(),
+                "13px".to_string(),
+                "14px (Default)".to_string(),
+                "15px".to_string(),
+                "16px".to_string(),
+                "18px".to_string(),
+                "20px".to_string(),
+            ];
+            let current_label = match current_pref {
+                Some(sz) => {
+                    if (sz - 14.0).abs() < 0.01 {
+                        "14px (Default)".to_string()
+                    } else {
+                        format!("{sz}px")
+                    }
+                }
+                None => "14px (Default)".to_string(),
+            };
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.ui_font_size_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.ui_font_size_select_state)
+            .w_full()
+            .min_w(px(140.0))
+            .placeholder("Select UI font size...")
+            .into_any_element()
+    }
+
+    /// The code / monospace font picker listing bundled fonts first, then bold-verified system fonts.
+    pub(super) fn mono_font_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current_pref = self.prefs.mono_font_family.clone();
+        if self.mono_font_select_key != Some(current_pref.clone()) {
+            self.mono_font_select_key = Some(current_pref.clone());
+            let mut choices = vec![
+                "Cascadia Code (Default)".to_string(),
+                "JetBrains Mono".to_string(),
+                "Fira Code".to_string(),
+            ];
+            let text_system = cx.text_system();
+            let mut sys_names = text_system.all_font_names();
+            sys_names.sort();
+            sys_names.dedup();
+            for name in sys_names {
+                if crate::fonts::BUNDLED_MONO_FAMILIES.contains(&name.as_str()) {
+                    continue;
+                }
+                let regular = gpui::font(&name);
+                if text_system.resolve_font(&regular.clone().bold()) != text_system.resolve_font(&regular) {
+                    choices.push(name);
+                }
+            }
+            let current_label = match &current_pref {
+                Some(name) => {
+                    if name == "Cascadia Code" {
+                        "Cascadia Code (Default)".to_string()
+                    } else {
+                        name.clone()
+                    }
+                }
+                None => "Cascadia Code (Default)".to_string(),
+            };
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.mono_font_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.mono_font_select_state)
+            .w_full()
+            .min_w(px(180.0))
+            .placeholder("Select code font...")
+            .into_any_element()
+    }
+
+    /// The code / monospace font size picker (10px - 18px, default 13px).
+    pub(super) fn mono_font_size_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current_pref = self.prefs.mono_font_size;
+        if self.mono_font_size_select_key != Some(current_pref) {
+            self.mono_font_size_select_key = Some(current_pref);
+            let choices = vec![
+                "10px".to_string(),
+                "11px".to_string(),
+                "12px".to_string(),
+                "13px (Default)".to_string(),
+                "14px".to_string(),
+                "15px".to_string(),
+                "16px".to_string(),
+                "18px".to_string(),
+            ];
+            let current_label = match current_pref {
+                Some(sz) => {
+                    if (sz - 13.0).abs() < 0.01 {
+                        "13px (Default)".to_string()
+                    } else {
+                        format!("{sz}px")
+                    }
+                }
+                None => "13px (Default)".to_string(),
+            };
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.mono_font_size_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.mono_font_size_select_state)
+            .w_full()
+            .min_w(px(140.0))
+            .placeholder("Select code font size...")
             .into_any_element()
     }
 

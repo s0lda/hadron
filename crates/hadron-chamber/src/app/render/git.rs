@@ -1,4 +1,5 @@
 use super::*;
+use gpui_component::ActiveTheme;
 
 /// Which collapsible-diff panel a toggle click targets. The Changes rail and the
 /// per-branch diff share one renderer (`file_diff_rows`) but keep independent
@@ -208,7 +209,7 @@ impl super::Chamber {
 
     /// A commit marker: a filled dot plus the short hash, both in `color`. The shared
     /// motif across branches, worktrees and the graph — status lives in the colour.
-    fn commit_token(head: &str, color: u32) -> impl IntoElement {
+    fn commit_token(head: &str, color: u32, mono_font: &gpui::SharedString) -> impl IntoElement {
         let short: String = head.chars().take(7).collect();
         h_flex()
             .flex_none()
@@ -216,12 +217,13 @@ impl super::Chamber {
             .items_center()
             .text_color(gpui::rgb(color))
             .child(div().child("●"))
-            .child(div().font_family("Cascadia Code").child(short))
+            .child(div().font_family(mono_font.clone()).child(short))
     }
 
     // ── Branches ───────────────────────────────────────────────────────────────
 
     fn git_branches_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mono_font = cx.theme().mono_font_family.clone();
         let rows: gpui::AnyElement = match &self.git_branches {
             None => Self::muted("Loading branches...").into_any_element(),
             Some(branches) if branches.is_empty() => {
@@ -249,7 +251,7 @@ impl super::Chamber {
                             this.select_branch(name.clone());
                             cx.notify();
                         }))
-                        .child(Self::commit_token(&branch.head, color))
+                        .child(Self::commit_token(&branch.head, color, &mono_font))
                         .child(
                             div()
                                 .flex_1()
@@ -525,6 +527,7 @@ impl super::Chamber {
                 Self::muted("No worktrees.").into_any_element()
             }
             Some(worktrees) => {
+                let mono_font = cx.theme().mono_font_family.clone();
                 let mut list = v_flex().w_full().gap_1();
                 for (ix, wt) in worktrees.iter().enumerate() {
                     // Colour the commit token by the branch's merged status; a
@@ -565,7 +568,7 @@ impl super::Chamber {
                                 .gap_2()
                                 .justify_between()
                                 .items_center()
-                                .child(Self::commit_token(&wt.head, color))
+                                .child(Self::commit_token(&wt.head, color, &mono_font))
                                 .child(
                                     div()
                                         .flex_1()
@@ -580,7 +583,7 @@ impl super::Chamber {
                             div()
                                 .w_full()
                                 .text_xs()
-                                .font_family("Cascadia Code")
+                                .font_family(mono_font.clone())
                                 .text_color(theme::text_muted())
                                 .child(wt.path.clone()),
                         );
@@ -737,7 +740,7 @@ impl super::Chamber {
         line = line.child(
             div()
                 .flex_none()
-                .font_family("Cascadia Code")
+                .font_family(cx.theme().mono_font_family.clone())
                 .text_color(gpui::rgb(lane_color))
                 .child(hash.clone()),
         );
@@ -1134,7 +1137,7 @@ impl super::Chamber {
                     .w_full()
                     .text_sm()
                     .pt_2()
-                    .font_family("Cascadia Code");
+                    .font_family(cx.theme().mono_font_family.clone());
                 for hunk in &file.hunks {
                     lines = lines.child(
                         div()

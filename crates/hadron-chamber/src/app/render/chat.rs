@@ -1,4 +1,5 @@
 use super::*;
+use gpui_component::ActiveTheme;
 
 impl super::Chamber {
     /// The center column: a segmented Chat / Log / Timeline tab bar over the
@@ -436,6 +437,7 @@ impl super::Chamber {
                                         real_ix,
                                         &this.view.roster,
                                         local_offset,
+                                        &cx.theme().mono_font_family,
                                     ))
                                     .into_any_element();
                             }
@@ -521,7 +523,7 @@ impl super::Chamber {
                                                 cx.notify();
                                             });
                                         })
-                                        .child(log_row(ix, m, expanded, color, local_offset)),
+                                        .child(log_row(ix, m, expanded, color, local_offset, &cx.theme().mono_font_family)),
                                 )
                                 .into_any_element();
                         }
@@ -618,6 +620,7 @@ impl super::Chamber {
         ix: usize,
         roster: &[crate::model::RosterRow],
         tz: Tz,
+        mono_font: &gpui::SharedString,
     ) -> impl IntoElement
     where
         Tz::Offset: std::fmt::Display,
@@ -705,7 +708,7 @@ impl super::Chamber {
                     )
                     .when_some(summary_chip, |this, chip| this.child(chip))
                     .child(if m.kind_label == "edit" {
-                        self.ast_diff_card(&m.body).into_any_element()
+                        self.ast_diff_card(&m.body, mono_font).into_any_element()
                     } else {
                         self.severity_card(
                             m.severity,
@@ -744,7 +747,7 @@ impl super::Chamber {
     }
 
     /// Render an embedded AST Forge Edit-by-Hash diff card displaying target file path, 8-character blake3 hash badge, and code diff preview.
-    pub(super) fn ast_diff_card(&self, body: &str) -> impl IntoElement {
+    pub(super) fn ast_diff_card(&self, body: &str, mono_font: &gpui::SharedString) -> impl IntoElement {
         let file_path = body
             .lines()
             .next()
@@ -809,7 +812,7 @@ impl super::Chamber {
                 div()
                     .p_3()
                     .text_xs()
-                    .font_family("Cascadia Code")
+                    .font_family(mono_font.clone())
                     .text_color(theme::text_secondary())
                     .child(body.to_string()),
             )

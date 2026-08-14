@@ -371,7 +371,7 @@ struct Chamber {
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
-    _settings_subs: [Subscription; 17],
+    _settings_subs: [Subscription; 21],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
     /// Offered-model probe for the ACP quark whose Settings are open — drives the model
@@ -411,6 +411,18 @@ struct Chamber {
     /// Native SelectState dropdown for General Settings Merge Strategy.
     merge_strategy_select_state: Entity<SelectState<ModelSelectDelegate>>,
     merge_strategy_select_key: Option<hadron_lattice::MergeStrategy>,
+    /// Native SelectState dropdown for General Settings UI Font Family.
+    ui_font_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    ui_font_select_key: Option<Option<String>>,
+    /// Native SelectState dropdown for General Settings UI Font Size.
+    ui_font_size_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    ui_font_size_select_key: Option<Option<f32>>,
+    /// Native SelectState dropdown for General Settings Mono Font Family.
+    mono_font_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    mono_font_select_key: Option<Option<String>>,
+    /// Native SelectState dropdown for General Settings Mono Font Size.
+    mono_font_size_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    mono_font_size_select_key: Option<Option<f32>>,
     /// In-progress `agy` ACP bridge venv provisioning for the seat whose Settings are
     /// open, if any. `None` for any other kind of seat, before the first attempt, or
     /// once already provisioned — see `start_agy_bridge_provision`. This runs off the
@@ -580,6 +592,18 @@ impl Chamber {
         let merge_strategy_select_state = cx.new(|cx| {
             SelectState::new(create_model_delegate("Fast-forward", &["Squash commit".into(), "GitHub PR mirror".into()], None), None, window, cx).searchable(false)
         });
+        let ui_font_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Inter (Default)", &[], None), None, window, cx).searchable(true)
+        });
+        let ui_font_size_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("14px (Default)", &[], None), None, window, cx).searchable(false)
+        });
+        let mono_font_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Cascadia Code (Default)", &[], None), None, window, cx).searchable(true)
+        });
+        let mono_font_size_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("13px (Default)", &[], None), None, window, cx).searchable(false)
+        });
         let custom_cli_model = cx.new(|cx| InputState::new(window, cx).placeholder("model name (optional)"));
         let custom_cli_flag = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. --prompt (blank = positional)"));
         let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
@@ -695,6 +719,64 @@ impl Chamber {
                 this.team.merge_strategy = Some(strategy);
                 this.save_repo_team(cx);
                 cx.notify();
+            }),
+            cx.subscribe_in(&ui_font_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                if val.is_empty() || val == "Inter (Default)" || val == "Inter" {
+                    this.prefs.ui_font_family = None;
+                } else {
+                    this.prefs.ui_font_family = Some(val.to_string());
+                }
+                let _ = config::save(&this.prefs);
+                Self::apply_typography(cx, &this.prefs);
+                cx.refresh_windows();
+                cx.notify();
+            }),
+            cx.subscribe_in(&ui_font_size_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                let stripped = val.strip_suffix("px (Default)").or_else(|| val.strip_suffix("px")).unwrap_or(val);
+                if let Ok(sz) = stripped.trim().parse::<f32>() {
+                    if (sz - 14.0).abs() < 0.01 {
+                        this.prefs.ui_font_size = None;
+                    } else {
+                        this.prefs.ui_font_size = Some(sz);
+                    }
+                    let _ = config::save(&this.prefs);
+                    Self::apply_typography(cx, &this.prefs);
+                    cx.refresh_windows();
+                    cx.notify();
+                }
+            }),
+            cx.subscribe_in(&mono_font_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                if val.is_empty() || val == "Cascadia Code (Default)" || val == "Cascadia Code" {
+                    this.prefs.mono_font_family = None;
+                } else {
+                    this.prefs.mono_font_family = Some(val.to_string());
+                }
+                let _ = config::save(&this.prefs);
+                Self::apply_typography(cx, &this.prefs);
+                cx.refresh_windows();
+                cx.notify();
+            }),
+            cx.subscribe_in(&mono_font_size_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                let stripped = val.strip_suffix("px (Default)").or_else(|| val.strip_suffix("px")).unwrap_or(val);
+                if let Ok(sz) = stripped.trim().parse::<f32>() {
+                    if (sz - 13.0).abs() < 0.01 {
+                        this.prefs.mono_font_size = None;
+                    } else {
+                        this.prefs.mono_font_size = Some(sz);
+                    }
+                    let _ = config::save(&this.prefs);
+                    Self::apply_typography(cx, &this.prefs);
+                    cx.refresh_windows();
+                    cx.notify();
+                }
             }),
             // Same reason: the custom-CLI form's "Save" button is only wired up once
             // vendor + program are non-empty (`can_save` in `providers_view`), so typing
@@ -948,6 +1030,14 @@ impl Chamber {
             nucleus_budget_select_key: None,
             merge_strategy_select_state,
             merge_strategy_select_key: None,
+            ui_font_select_state,
+            ui_font_select_key: None,
+            ui_font_size_select_state,
+            ui_font_size_select_key: None,
+            mono_font_select_state,
+            mono_font_select_key: None,
+            mono_font_size_select_state,
+            mono_font_size_select_key: None,
             agy_bridge_probe: None,
             file_tree_paths: files,
             _lock_file: lock_file,
@@ -1114,30 +1204,60 @@ fn first_family_with_a_real_bold(cx: &App, candidates: &[&str]) -> SharedString 
         .unwrap_or_else(|| ".SystemUIFont".into())
 }
 
-fn font_family_with_a_real_bold(cx: &App) -> SharedString {
-    // Platform-typical UI faces first, then the ones a Linux desktop nearly always ships.
-    const CANDIDATES: [&str; 8] = [
+fn font_family_with_a_real_bold(cx: &App, preferred: Option<&str>) -> SharedString {
+    let mut candidates: Vec<&str> = Vec::new();
+    if let Some(p) = preferred {
+        if !p.trim().is_empty() {
+            candidates.push(p);
+        }
+    }
+    candidates.extend_from_slice(&[
         crate::fonts::UI_FAMILY,
-        ".SystemUIFont", // the real system face on macOS/Windows; "IBM Plex Sans" on Linux
         "Inter",
+        "Geist",
+        "Noto Sans",
+        ".SystemUIFont", // the real system face on macOS/Windows; "IBM Plex Sans" on Linux
         "Segoe UI",
         "Ubuntu",
         "Cantarell",
-        "Noto Sans",
         "DejaVu Sans",
-    ];
-    first_family_with_a_real_bold(cx, &CANDIDATES)
+    ]);
+    first_family_with_a_real_bold(cx, &candidates)
 }
 
-fn mono_family_with_a_real_bold(cx: &App) -> SharedString {
-    const CANDIDATES: [&str; 5] = [
+fn mono_family_with_a_real_bold(cx: &App, preferred: Option<&str>) -> SharedString {
+    let mut candidates: Vec<&str> = Vec::new();
+    if let Some(p) = preferred {
+        if !p.trim().is_empty() {
+            candidates.push(p);
+        }
+    }
+    candidates.extend_from_slice(&[
         crate::fonts::MONO_FAMILY,
         "Cascadia Code",
+        "JetBrains Mono",
+        "Fira Code",
         "DejaVu Sans Mono",
         "Liberation Mono",
         "monospace",
-    ];
-    first_family_with_a_real_bold(cx, &CANDIDATES)
+    ]);
+    first_family_with_a_real_bold(cx, &candidates)
+}
+
+impl Chamber {
+    /// Apply typography preferences (families and font sizes) to gpui-component's Theme.
+    pub(super) fn apply_typography(cx: &mut App, prefs: &ChamberPrefs) {
+        let ui_font = font_family_with_a_real_bold(cx, prefs.ui_font_family.as_deref());
+        let mono_font = mono_family_with_a_real_bold(cx, prefs.mono_font_family.as_deref());
+        let ui_size = prefs.ui_font_size.unwrap_or(14.0);
+        let mono_size = prefs.mono_font_size.unwrap_or(13.0);
+
+        let t = gpui_component::Theme::global_mut(cx);
+        t.font_family = ui_font;
+        t.mono_font_family = mono_font;
+        t.font_size = px(ui_size);
+        t.mono_font_size = px(mono_size);
+    }
 }
 
 /// Launch the chamber window against a field file path.
@@ -1214,11 +1334,13 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
         }
         // Probed before the theme block below, which holds `cx` mutably. Logged because
         // this bug is invisible from inside the app — the only symptom is flat bold.
-        let ui_font = font_family_with_a_real_bold(cx);
-        let mono_font = mono_family_with_a_real_bold(cx);
+        let ui_font = font_family_with_a_real_bold(cx, prefs.ui_font_family.as_deref());
+        let mono_font = mono_family_with_a_real_bold(cx, prefs.mono_font_family.as_deref());
+        let ui_size = prefs.ui_font_size.unwrap_or(14.0);
+        let mono_size = prefs.mono_font_size.unwrap_or(13.0);
         hadron_lattice::term::info(
             hadron_lattice::term::Source::Chamber,
-            &format!("UI font family {ui_font}, Mono font family {mono_font} (bold verified)"),
+            &format!("UI font family {ui_font} ({ui_size}px), Mono font family {mono_font} ({mono_size}px) (bold verified)"),
         );
         // Align gpui-component's own component colors (titlebar, inputs, window
         // controls) to Jake's palette so they blend with our hand-drawn surfaces.
@@ -1307,6 +1429,8 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
             // ONE family, never a comma list — see `font_family_with_a_real_bold`.
             t.font_family = ui_font;
             t.mono_font_family = mono_font;
+            t.font_size = px(ui_size);
+            t.mono_font_size = px(mono_size);
         }
         // Keyboard navigation. The chords still scoped to `KEY_CONTEXT` are ones
         // the text input's own key context (`gpui_component::input::state::CONTEXT`)
@@ -1562,7 +1686,10 @@ mod tests {
         let mut cx = gpui::HeadlessAppContext::new(text_system);
         cx.update(|cx| {
             cx.text_system().add_fonts(crate::fonts::embedded()).expect("register bundled fonts");
-            for family in [crate::fonts::UI_FAMILY, crate::fonts::MONO_FAMILY] {
+            for family in crate::fonts::BUNDLED_UI_FAMILIES
+                .into_iter()
+                .chain(crate::fonts::BUNDLED_MONO_FAMILIES)
+            {
                 let regular = gpui::font(family);
                 let bold = regular.clone().bold();
                 assert_ne!(

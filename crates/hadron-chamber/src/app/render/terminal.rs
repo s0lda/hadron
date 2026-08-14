@@ -395,7 +395,7 @@ impl super::Chamber {
                                     None => theme::text(),
                                 }
                             })
-                            .font_family("Cascadia Code")
+                            .font_family(cx.theme().mono_font_family.clone())
                             .text_size(gpui::px(13.56))
                             .gap_2()
                             .child(if node.is_file {
@@ -899,16 +899,17 @@ impl super::Chamber {
                     };
                     div().p_4().child(empty_hint(hint)).into_any_element()
                 } else {
+                    let mono_font = cx.theme().mono_font_family.clone();
                     let mut col = v_flex().gap_1().p_2().w_full();
                     for t in &live_gate_rows {
                         let to = self.resolve_identity(&t.to);
                         let from = self.resolve_identity(&t.from);
-                        col = col.child(task_row(t, render_now, &to, &from));
+                        col = col.child(task_row(t, render_now, &to, &from, &mono_font));
                     }
                     for t in tasks_to_render {
                         let to = self.resolve_identity(&t.to);
                         let from = self.resolve_identity(&t.from);
-                        col = col.child(task_row(t, render_now, &to, &from));
+                        col = col.child(task_row(t, render_now, &to, &from, &mono_font));
                     }
                     col.into_any_element()
                 };
@@ -1018,7 +1019,7 @@ impl super::Chamber {
         let time_label = div()
             .text_xs()
             .text_color(theme::text_muted())
-            .font_family("Cascadia Code")
+            .font_family(cx.theme().mono_font_family.clone())
             .child(current_at.format("%H:%M:%S").to_string());
 
         let header = h_flex()

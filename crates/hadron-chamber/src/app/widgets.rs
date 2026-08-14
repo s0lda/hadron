@@ -461,12 +461,12 @@ pub(super) fn roster_row(
     };
 
     let detail_2: gpui::AnyElement = if flavor_str.is_empty() {
-        div().font_family("Cascadia Code").child(format!("{} tokens{}", tokens_str, unknown_str)).into_any_element()
+        div().font_family(crate::fonts::MONO_FAMILY).child(format!("{} tokens{}", tokens_str, unknown_str)).into_any_element()
     } else {
         h_flex().gap_1()
             .child(flavor_str)
             .child("·")
-            .child(div().font_family("Cascadia Code").child(format!("{} tokens{}", tokens_str, unknown_str)))
+            .child(div().font_family(crate::fonts::MONO_FAMILY).child(format!("{} tokens{}", tokens_str, unknown_str)))
             .into_any_element()
     };
 
@@ -998,11 +998,13 @@ pub(super) fn task_state_tag(state: TaskState) -> gpui::AnyElement {
 /// is the one place a display name and a colour come from — nucleus
 /// `presence-dot-was-computed-in-three-places` and `mentions-render-raw-id-not-display-name`.
 /// `SwarmTask` carries raw seat ids (`acp-claude-2`), never the name a human reads.
+/// `SwarmTask` carries raw seat ids (`acp-claude-2`), never the name a human reads.
 pub(super) fn task_row(
     t: &SwarmTask,
     now: chrono::DateTime<chrono::Utc>,
     to: &ResolvedIdentity,
     from: &ResolvedIdentity,
+    mono_font: &gpui::SharedString,
 ) -> impl IntoElement {
     let time = t
         .asked_at
@@ -1060,14 +1062,14 @@ pub(super) fn task_row(
                         .child(
                             div()
                                 .text_xs()
-                                .font_family("Cascadia Code")
+                                .font_family(mono_font.clone())
                                 .text_color(theme::text_muted())
                                 .child(time),
                         )
                         .child(
                             div()
                                 .text_xs()
-                                .font_family("Cascadia Code")
+                                .font_family(mono_font.clone())
                                 .text_color(theme::text_muted())
                                 .child(elapsed),
                         )
@@ -1092,6 +1094,7 @@ pub(super) fn log_row<Tz: chrono::TimeZone>(
     expanded: bool,
     author_color: Hsla,
     tz: Tz,
+    mono_font: &gpui::SharedString,
 ) -> impl IntoElement
 where
     Tz::Offset: std::fmt::Display,
@@ -1116,7 +1119,7 @@ where
                 .flex_none()
                 .w(px(58.0))
                 .text_xs()
-                .font_family("Cascadia Code")
+                .font_family(mono_font.clone())
                 .text_color(theme::text_muted())
                 .child(time),
         )

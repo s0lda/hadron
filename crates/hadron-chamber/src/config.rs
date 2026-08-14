@@ -83,6 +83,18 @@ pub struct ChamberPrefs {
     /// with no such key behaves exactly as it always has.
     #[serde(default)]
     pub default_mode: hadron_lattice::Mode,
+    /// Optional custom UI font family (defaults to bundled Inter).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_font_family: Option<String>,
+    /// Optional custom UI font size in pixels (defaults to 14.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_font_size: Option<f32>,
+    /// Optional custom monospace font family (defaults to bundled Cascadia Code).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mono_font_family: Option<String>,
+    /// Optional custom monospace font size in pixels (defaults to 13.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mono_font_size: Option<f32>,
 }
 
 /// An `editor` value we do not understand resolves to the default instead of
@@ -137,6 +149,10 @@ impl Default for ChamberPrefs {
             human: Identity::default(),
             quarks: BTreeMap::new(),
             editor: crate::sys::EditorChoice::default(),
+            ui_font_family: None,
+            ui_font_size: None,
+            mono_font_family: None,
+            mono_font_size: None,
         }
     }
 }
@@ -221,6 +237,10 @@ mod tests {
             },
             quarks,
             editor: crate::sys::EditorChoice::Zed,
+            ui_font_family: Some("Inter".into()),
+            ui_font_size: Some(14.0),
+            mono_font_family: Some("Cascadia Code".into()),
+            mono_font_size: Some(13.0),
         };
         let json = serde_json::to_string(&prefs).unwrap();
         let back: ChamberPrefs = serde_json::from_str(&json).unwrap();
@@ -395,5 +415,28 @@ mod tests {
         // Idempotent: a second run finds nothing to move.
         prefs.rename_quark_ids(hadron_lattice::legacy_id_renames());
         assert!(prefs.quarks.contains_key("cli-agy"));
+    }
+
+    #[test]
+    fn typography_preferences_round_trip_and_default_to_none() {
+        let prefs = ChamberPrefs::default();
+        assert_eq!(prefs.ui_font_family, None);
+        assert_eq!(prefs.ui_font_size, None);
+        assert_eq!(prefs.mono_font_family, None);
+        assert_eq!(prefs.mono_font_size, None);
+
+        let custom = ChamberPrefs {
+            ui_font_family: Some("Geist".to_string()),
+            ui_font_size: Some(15.0),
+            mono_font_family: Some("JetBrains Mono".to_string()),
+            mono_font_size: Some(12.5),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&custom).unwrap();
+        let loaded: ChamberPrefs = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.ui_font_family.as_deref(), Some("Geist"));
+        assert_eq!(loaded.ui_font_size, Some(15.0));
+        assert_eq!(loaded.mono_font_family.as_deref(), Some("JetBrains Mono"));
+        assert_eq!(loaded.mono_font_size, Some(12.5));
     }
 }
