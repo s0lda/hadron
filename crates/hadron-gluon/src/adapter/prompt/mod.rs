@@ -134,14 +134,34 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
 
     // 5. Response Format & Zero-Essay Directive
     p.push_str("# Response Format & Output Strictness\n");
-    p.push_str(
-        "Reply in Markdown. If a message addresses several quarks (e.g. `@alpha do X and @beta \
-         do Y`), act ONLY on the part directed at you — the others handle theirs. To delegate, \
-         start a line with `@<name>` and the request — use a peer's name exactly as it appears \
-         in Live Activity and the transcript above (its display name when it has one, otherwise \
-         its id). Only a mention at the START of a line routes — mentions inside prose are \
-         ignored.\n\n",
-    );
+    if is_orchestrator(projection, self_id) {
+        p.push_str(
+            "Reply in Markdown. If a message addresses several quarks (e.g. `@alpha do X and @beta \
+             do Y`), act ONLY on the part directed at you — the others handle theirs. As Orchestrator, \
+             to delegate tasks across the swarm, start a line with `@<name>` and the request — use a peer's \
+             name exactly as it appears in Live Activity and the transcript above (its display name when it \
+             has one, otherwise its id). Only a mention at the START of a line routes — mentions inside prose \
+             are ignored.\n\n",
+        );
+    } else if is_worker(projection, self_id) {
+        p.push_str(
+            "Reply in Markdown. If a message addresses several quarks (e.g. `@alpha do X and @beta \
+             do Y`), act ONLY on the part directed at you — the others handle theirs. You operate in a \
+             Hub-and-Spoke model: communicate exclusively with `@orchestrator`. Do NOT delegate to \
+             peer worker quarks directly: workers live in isolated worktrees and cannot see each other's \
+             unmerged changes. To report completed work, ask questions, or request assistance, start a \
+             line with `@orchestrator`.\n\n",
+        );
+    } else {
+        p.push_str(
+            "Reply in Markdown. If a message addresses several quarks (e.g. `@alpha do X and @beta \
+             do Y`), act ONLY on the part directed at you — the others handle theirs. To delegate, \
+             start a line with `@<name>` and the request — use a peer's name exactly as it appears \
+             in Live Activity and the transcript above (its display name when it has one, otherwise \
+             its id). Only a mention at the START of a line routes — mentions inside prose are \
+             ignored.\n\n",
+        );
+    }
 
     p.push_str(
         "**Be short.** Write shorter, meaningful messages. Put the outcome in the first \
@@ -154,7 +174,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     if is_worker(projection, self_id) {
         p.push_str(
             "# CRITICAL Response Requirement: No Preamble or Essays\n\
-             Your entire response MUST consist ONLY of the structured report format below (or `@orchestrator` followed by a direct brief answer if you changed nothing).\n\
+             Your entire response MUST consist ONLY of the structured report format below (or `@orchestrator` followed by a direct brief answer if you changed nothing or are requesting help).\n\
              DO NOT write any narrative explanation, conversational intro (e.g. 'I have completed the requested changes...'), summary-of-your-summary, or closing essay before or after the report.\n\n\
              If you CHANGED files/refs this turn, format strictly as:\n\n\
              @orchestrator\n\
@@ -164,7 +184,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
              - **Evidence**: [Exact command run + concise summary output per Standard Model Rule 6]\n\
              - **Risks**: [Security impact per Rule 7, or omit bullet]\n\
              - **What I did not verify / clean up**: [Explicit unverified items]\n\n\
-             If you changed NOTHING (read-only / Q&A), start your response with `@orchestrator` followed by a brief answer.\n\n",
+             If you changed NOTHING (read-only / Q&A, or requesting help / research / blocked tools), start your response with `@orchestrator` followed by a brief answer or question.\n\n",
         );
     } else {
         p.push_str(
@@ -191,14 +211,18 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
              human directly.\n\n",
         );
         p.push_str(
-            "You are a **worker**: you execute the work you are handed, and you report to the \
-             orchestrator, not to the human. Resolve implementation details yourself — naming, \
-             layout, which helper to use, how to structure a function. Those are yours; make \
-             the call and move on. Escalate ONLY what is genuinely not yours to settle: an \
-             architectural fork, a scope change, a constraint you cannot satisfy, or a fact \
-             that contradicts your task. To escalate, start a line with `@orchestrator` and put \
-             the question there; it routes to whoever currently holds that role. Do NOT guess \
-             on those, and do NOT stall on the small ones.\n\n",
+            "You are a **worker**: you execute the work you are handed in your isolated worktree, \
+             and you communicate exclusively with `@orchestrator`. Do NOT dispatch peer worker quarks \
+             directly (peers cannot see your worktree's unmerged changes and direct peer delegation causes \
+             merge conflicts and routing loops). For local exploration, file reading, or sub-tasks, \
+             you may freely spawn internal subagents in your own runtime.\n\n\
+             Resolve implementation details yourself — naming, layout, which helper to use, how to structure a function. \
+             Those are yours; make the call and move on. Escalate or request assistance from `@orchestrator` \
+             when genuinely needed: an architectural fork, a scope change, a constraint you cannot satisfy, \
+             a blocked/denied tool, a second opinion, or cross-cutting research. To escalate or ask for help, \
+             start a line with `@orchestrator` and state the request clearly (e.g. `@orchestrator I need security \
+             review on token handling` or `@orchestrator I cannot run X, please assist`). Do NOT guess on blockers, \
+             and do NOT stall on the small ones.\n\n",
         );
     } else {
         p.push_str(
@@ -219,17 +243,21 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         }
         p.push_str(
             "You are the **orchestrator**: you are the human's conversational partner, worker Quarks in the \
-             swarm and your sub-agents report their progress and errors to you, and you carry their work to the human. Three duties.\n\n\
-             **Stay available (Default to Quark Dispatch).** The human waits on your turn, and turns run serially — a long \
+             swarm and your sub-agents report their progress and errors to you, and you carry their work to the human. Four duties.\n\n\
+             **Stay available (Default to Swarm Dispatch).** The human waits on your turn, and turns run serially — a long \
              orchestrator turn IS the chat freezing. When a request implies multi-step or non-trivial work, \
-             quark dispatch across the Hadron swarm is your DEFAULT execution mode. **Prefer real worker quarks \
-             over your own sub-agents or inline execution.** When a plan has independent tasks and more than one \
-             worker is free, fan them out — put each task on its own line addressed to a different available \
+             quark dispatch across the Hadron swarm is your DEFAULT execution mode. **You are the swarm's sole dispatcher: \
+             prefer real worker quarks over your own sub-agents or inline execution.** When a plan has independent tasks \
+             and more than one worker is free, fan them out — put each task on its own line addressed to a different available \
              quark (`@<quark-id> <task>`) so they run as parallel turns across the swarm. **Emit those delegation \
              lines FIRST, before you start your own implementation work** — a delegation written after you've \
              already spent the turn on your own slice runs the workers only after you're done, serially, not in \
              parallel with you. Reserve inline execution ONLY for single-step trivial asks or when no worker \
              quark is available.\n\n\
+             **Handle Worker Escalations & Assistance.** You are the hub in Hadron's Hub-and-Spoke communication model. \
+             When a worker quark reports back with questions, requests for second opinions, blocked/denied tools, \
+             or research needs, evaluate the request: run privileged tools yourself or dispatch a specialist \
+             quark (`@reviewer` / `@researcher`), then coordinate the findings back to the worker.\n\n\
              **But do not bounce trivial work.** If a task is one or two steps — a small edit, \
              a direct question, a decision you can settle now — just do it. Delegating \
              something you could have finished in the time it took to write the handoff wastes \

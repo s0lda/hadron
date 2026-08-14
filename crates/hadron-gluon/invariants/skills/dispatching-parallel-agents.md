@@ -6,7 +6,7 @@ description: Use when facing 2+ independent tasks that can be worked on without 
 # Dispatching Parallel Agents
 
 ## Core Principle
-Dispatch one task per independent domain across worker Quarks in the Hadron swarm using `@<quark-id> <task>` lines. Workers run concurrently in isolated worktrees.
+The Orchestrator dispatches one task per independent domain across worker Quarks in the Hadron swarm using `@<quark-id> <task>` lines. Workers run concurrently in isolated worktrees and report back to `@orchestrator`.
 
 ## Applicability
 

@@ -303,6 +303,36 @@ fn orchestrator_is_told_to_delegate_before_implementing() {
     );
 }
 
+#[test]
+fn worker_prompt_prescribes_hub_and_spoke_and_forbids_peer_delegation() {
+    let mut proj = projection("implement auth");
+    proj.roster.push(QuarkCard {
+        id: QuarkId::new("opus"),
+        display_name: None,
+        flavor: Flavor::Orchestrator,
+        energy: EnergyState::Available,
+        provider: String::new(),
+        model: String::new(),
+        roles: vec![],
+        exclusive: false,
+        commands: Default::default(),
+        energy_limit: None,
+        deny_skills: vec![],
+        has_forge_tools: false,
+    });
+
+    let worker_prompt = build(&proj, &QuarkId::new("agy"));
+    assert!(worker_prompt.contains("Hub-and-Spoke"));
+    assert!(worker_prompt.contains("Do NOT delegate to peer worker quarks directly"));
+    assert!(worker_prompt.contains("communicate exclusively with `@orchestrator`"));
+    assert!(worker_prompt.contains("freely spawn internal subagents"));
+
+    let orch_prompt = build(&proj, &QuarkId::new("opus"));
+    assert!(orch_prompt.contains("You are the swarm's sole dispatcher"));
+    assert!(orch_prompt.contains("Handle Worker Escalations & Assistance"));
+    assert!(orch_prompt.contains("Hub-and-Spoke"));
+}
+
 /// **Broadcast means think, not do.** A worker reached only via `@team` (or any
 /// unaddressed message) — `named_specifically == false` — must be told to
 /// analyse and report to the orchestrator, not to implement, edit files, or

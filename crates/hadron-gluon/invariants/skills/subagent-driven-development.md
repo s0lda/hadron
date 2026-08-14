@@ -7,11 +7,12 @@ description: Use when executing implementation plans with independent tasks in t
 
 Execute an implementation plan by leveraging the Hadron Swarm (Quark Dispatch) alongside Subagents for maximum parallelism, quality, and speed.
 
-**Core Principle:** Quark Swarm Dispatch (`@<quark-id>`) across worktrees is Hadron's primary mechanism for parallel task execution. Subagents can be deployed by the Orchestrator (for isolated research/verification or fallback) AND by Worker Quarks (to break down tasks into subagent workflows).
+**Core Principle:** Quark Swarm Dispatch (`@<quark-id>`) across worktrees is Hadron's primary mechanism for parallel task execution. The Orchestrator is the single swarm dispatcher, and worker Quarks communicate via Hub-and-Spoke with `@orchestrator`. Subagents can be deployed by the Orchestrator (for isolated research/verification or fallback) AND by Worker Quarks (to break down tasks into subagent workflows).
 
 **Execution Directives:**
-- **Swarm Priority:** If worker Quarks are active and free, Orchestrator delegates tasks via `@<quark-id> <task>` first. Quarks run concurrently across isolated worktrees.
-- **Subagent Flexibility:** Both Orchestrator and worker Quarks may freely invoke internal subagents to explore codebases, implement sub-components, or run verification in parallel.
+- **Swarm Priority (Orchestrator):** The Orchestrator is the single swarm dispatcher. If worker Quarks are active and free, Orchestrator delegates tasks via `@<quark-id> <task>` first. Quarks run concurrently across isolated worktrees.
+- **Hub-and-Spoke Communication:** Worker Quarks communicate exclusively with `@orchestrator`. Workers do NOT dispatch peer worker Quarks directly (peers cannot see isolated worktree diffs). Workers report completion or escalate blockers, assistance requests, and research needs to `@orchestrator`.
+- **Subagent Flexibility:** Both Orchestrator and worker Quarks may freely invoke internal subagents within their own runtime to explore codebases, implement sub-components, or run verification in parallel.
 - **Continuous Execution:** Do NOT pause to check in with the human partner between tasks in Bypass mode. Drive all plan tasks to 100% completion autonomously.
 
 ## Pre-Flight Plan Review
