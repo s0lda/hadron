@@ -5,6 +5,21 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-15
+
+### Added
+- **Developer Environment Power Tools Suite (`hadron-forge` & MCP)**:
+  - **Jailed Desktop & Window Screenshot Engine**: Jailed screen capture manager enforcing strict containment within `<repo_root>/.hadron/screenshots/` (gitignored) with window-specific scoping and MCP tools (`hadron_forge_screenshot_capture`, `hadron_forge_screenshot_list`, `hadron_forge_screenshot_prune`).
+  - **Interactive PTY Session Manager**: Native pseudo-terminal management (`libc::openpty`) with non-blocking stream readers, terminal resizing, ANSI pass-through, and MCP tools (`hadron_forge_pty_start`, `hadron_forge_pty_write`, `hadron_forge_pty_read`, `hadron_forge_pty_resize`, `hadron_forge_pty_kill`, `hadron_forge_pty_list`).
+  - **In-Process Mock HTTP/WebSocket Server**: Local-origin mock server strictly bound to `127.0.0.1` supporting dynamic routes, request journaling, response assertion matching, and MCP tools (`hadron_forge_mock_start`, `hadron_forge_mock_route_add`, `hadron_forge_mock_requests_list`, `hadron_forge_mock_assert`, `hadron_forge_mock_stop`, `hadron_forge_mock_list`).
+  - **Local SQLite Engine & Migration Runner**: Embedded SQLite engine with schema introspection, transactional migrations, multi-format export (Markdown/CSV/JSON), and MCP tools (`hadron_forge_sqlite_query`, `hadron_forge_sqlite_schema`, `hadron_forge_sqlite_migrate`, `hadron_forge_sqlite_export`).
+- **Universal Assistant Absorption (`/absorb`)**: Universal assistant skill and `/absorb` chat command to dynamically scan and migrate foreign assistant memory and configurations (`.agents/`, `.claude/`, `CLAUDE.md`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`) into standard Hadron Nucleus notes, invariants, and skills respecting configured budget limits (16–128 KB).
+- **Canonical Commands & Power Tools Documentation**: Added comprehensive documentation in `docs/commands.md` and `docs/forge/power-tools.md` covering all slash commands and Forge MCP tools.
+
+### Changed
+- **Neutral Quark Naming**: Standardized all command completions, glosses, error messages, and documentation on neutral `@Quark` identifiers.
+- **Automated Documentation Release Protocol**: Added mandatory documentation audits and verification to the release procedure (`.hadron/nucleus/release.md`).
+
 ## [0.4.0] - 2026-08-14
 
 ### Added

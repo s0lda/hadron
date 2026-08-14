@@ -20,6 +20,20 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.5.0",
+        date: Some("2026-08-15"),
+        added: &[
+            "Developer Power Tools suite: Jailed screenshots, PTY sessions, Mock HTTP/WS, and SQLite engine",
+            "Universal Assistant Absorption (`/absorb`) across foreign assistant memory and configurations",
+            "Canonical documentation for all slash commands and Developer Power Tools MCP tools",
+        ],
+        changed: &[
+            "Neutral Quark naming across commands, glosses, error messages, and documentation",
+            "Automated documentation audit requirement in project release procedure",
+        ],
+        fixed: &[],
+    },
+    Release {
         version: "0.4.0",
         date: Some("2026-08-14"),
         added: &[
