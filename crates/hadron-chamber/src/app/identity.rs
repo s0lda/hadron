@@ -95,10 +95,28 @@ pub(super) fn identity_avatar_with_state(
     state: Option<QuarkState>,
     enabled: bool,
 ) -> gpui::AnyElement {
+    let is_active = state.map_or(false, |st| {
+        matches!(st, QuarkState::Excited | QuarkState::Thinking)
+    });
+
+    let (border_width, border_color) = if !enabled {
+        (1.0, theme::presence_disabled().into())
+    } else if let Some(st) = state {
+        if is_active {
+            (2.0, theme::halo_dot(st))
+        } else {
+            (1.0, id.color.opacity(0.35))
+        }
+    } else {
+        (1.0, id.color.opacity(0.35))
+    };
+
     let base_avatar = match &id.image {
         Some(path) => Avatar::new()
             .src(avatar_source(path))
             .with_size(Size::Size(px(diameter)))
+            .border(px(border_width))
+            .border_color(border_color)
             .into_any_element(),
         None => div()
             .flex()
@@ -108,8 +126,8 @@ pub(super) fn identity_avatar_with_state(
             .size(px(diameter))
             .rounded_full()
             .bg(id.color.opacity(0.18))
-            .border_1()
-            .border_color(id.color.opacity(0.35))
+            .border(px(border_width))
+            .border_color(border_color)
             .text_color(id.color)
             .text_size(px(diameter * 0.4))
             .font_weight(gpui::FontWeight::BOLD)
@@ -117,34 +135,11 @@ pub(super) fn identity_avatar_with_state(
             .into_any_element(),
     };
 
-    let Some(st) = state else {
-        if enabled {
-            return base_avatar;
-        } else {
-            return div().opacity(0.6).child(base_avatar).into_any_element();
-        }
-    };
-
-    let is_active = matches!(st, QuarkState::Excited | QuarkState::Thinking);
-    let ring_color = if !enabled {
-        theme::presence_disabled()
-    } else if is_active {
-        theme::halo_dot(st).into()
+    if enabled {
+        base_avatar
     } else {
-        gpui::rgba(0xffffff15)
-    };
-
-    div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_full()
-        .p(px(1.5))
-        .border_1()
-        .border_color(ring_color)
-        .map(|this| if enabled { this } else { this.opacity(0.6) })
-        .child(base_avatar)
-        .into_any_element()
+        div().opacity(0.6).child(base_avatar).into_any_element()
+    }
 }
 
 #[cfg(test)]
