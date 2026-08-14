@@ -37,7 +37,7 @@ Agents in Hadron communicate by appending structured NDJSON events to `field.jso
    - `hadron-gluon` utilizes OS-native kernel events via the `notify` crate (`inotify` on Linux, `kqueue` on macOS).
    - When no events are posted, processes sleep with 0% CPU consumption.
 
-3. **Multi-Agent Orchestration**:
-   - An **Orchestrator Quark** inspects user input and @mentions **Worker Quarks**.
-   - Workers execute tasks concurrently in separate git worktrees, posting intermediate events back to `field.jsonl`.
+3. **Multi-Agent Orchestration & Hub-and-Spoke Routing**:
+   - An **Orchestrator Quark** serves as the swarm coordinator, evaluating user input, creating plans in `.hadron/docs/plans/`, and fanning out assignments to **Worker Quarks** via `@mentions`.
+   - Workers execute tasks concurrently in separate git worktrees, posting intermediate events back to `field.jsonl` and reporting results or escalating blockers directly to `@orchestrator`.
    - Results pass through the **Merge Gate** for verification before merging to the main branch.

@@ -53,4 +53,16 @@ The non-negotiable base invariants (`standard_model.md`) injected into every age
 An automated verification step in `hadron-gluon` that rebases completed agent branches onto `main`, runs the native project test suite, and fast-forwards clean code.
 
 ### **Hadron Forge**
-An AST-level code editing tool that uses `blake3` item block hashing to perform race-free compare-and-swap edits on source files.
+An AST-level code editing tool that uses `blake3` item block hashing to perform race-free compare-and-swap edits across 14+ languages.
+
+### **Hub-and-Spoke**
+The swarm communication architecture where the **Orchestrator Quark** acts as the central hub: fanning out parallel tasks to Worker Quarks, receiving completion reports and blocker escalations, and maintaining the single master execution plan.
+
+### **Swarm Commands**
+Interactive slash commands available in Chamber chat:
+- `/goal <prompt>`: Synthesize an end-to-end mission, generate a structured plan in `.hadron/docs/plans/`, and fan out tasks across worker Quarks.
+- `/loop [N] <prompt>`: Execute an autonomous iterative evaluation loop until completion criteria are met or iterations expire.
+- `/git-init`: Initialize a Git repository on `main` with standard `.gitignore` and initial commit to enable worktree isolation.
+- `/clear`: Clear the active chat field history.
+- `/resume [id]`: Switch to or restore a previous session history.
+- `/help`: Display the single-source-of-truth command reference and shortcuts table.

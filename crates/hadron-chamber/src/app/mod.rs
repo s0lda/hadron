@@ -1069,9 +1069,13 @@ fn default_key_bindings() -> Vec<KeyBinding> {
         // Multi-terminal PTY shortcuts
         KeyBinding::new("ctrl-shift-t", NewTerminalTab, None),
         KeyBinding::new("ctrl-shift-w", CloseTerminalTab, None),
-        KeyBinding::new("ctrl-tab", NextTerminalTab, None),
-        KeyBinding::new("ctrl-shift-tab", PrevTerminalTab, None),
-        // Chat input <-> terminal focus toggle (`ctrl-``).
+        KeyBinding::new("ctrl-pagedown", NextTerminalTab, None),
+        KeyBinding::new("ctrl-pageup", PrevTerminalTab, None),
+        KeyBinding::new("ctrl-shift-]", NextTerminalTab, None),
+        KeyBinding::new("ctrl-shift-[", PrevTerminalTab, None),
+        // Chat input <-> terminal focus toggle (`ctrl-tab` / `ctrl-``).
+        // Global so it fires from either side.
+        KeyBinding::new("ctrl-tab", ToggleFocus, None),
         KeyBinding::new("ctrl-`", ToggleFocus, None),
     ]
 }
@@ -1524,6 +1528,28 @@ mod tests {
                 .iter()
                 .any(|b| b.contains("control: true") && b.contains(r#"key: "m""#)),
             "ctrl-m missing: {bound:?}"
+        );
+    }
+
+    #[test]
+    fn the_toggle_focus_answers_to_both_ctrl_tab_and_ctrl_backtick() {
+        let bound: Vec<String> = super::default_key_bindings()
+            .iter()
+            .map(|b| format!("{:?}", b))
+            .filter(|b| b.contains("ToggleFocus"))
+            .collect();
+        assert_eq!(bound.len(), 2, "expected exactly two ToggleFocus chords: {bound:?}");
+        assert!(
+            bound
+                .iter()
+                .any(|b| b.contains("control: true") && b.contains(r#"key: "tab""#)),
+            "ctrl-tab missing for ToggleFocus: {bound:?}"
+        );
+        assert!(
+            bound
+                .iter()
+                .any(|b| b.contains("control: true") && b.contains(r#"key: "`""#)),
+            "ctrl-` missing for ToggleFocus: {bound:?}"
         );
     }
 

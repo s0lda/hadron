@@ -30,11 +30,11 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 
 ## 💡 Key Superpowers
 
-- 💬 **Collaborative Multi-LLM Chat**: Mix models in a single thread — `@claude`, `@ollama`, `@agy`, and `@openai` see each other's output, share context, and execute parallel sub-tasks.
+- 💬 **Collaborative Multi-LLM Chat**: Mix models in a single thread — `@claude`, `@ollama`, `@agy`, and `@openai` see each other's output, share context, and execute parallel sub-tasks via Hub-and-Spoke orchestration.
 - 🛡️ **Git Worktrees & Automated Merge Gate**: Agents work in isolated git worktree branches. The Merge Gate automatically rebases onto `main` and runs your test suite before clean code lands.
-- ⚡ **Native GPUI Desktop App**: Lightning-fast GPU-accelerated UI with interactive PTY terminals, live git visualizer, and real-time per-agent token telemetry.
-- 🛠️ **Hadron Forge (Edit-by-Hash)**: AST-level precision code edits using `blake3` cryptographic hashes for zero-drift mutations.
-- 🧠 **Context7 & Superpowers**: Integrated documentation search and 15 bundled workflow skills (TDD, systematic debugging, design specs).
+- ⚡ **Native GPUI Desktop App**: Lightning-fast GPU-accelerated UI with multi-tab PTY terminals, interactive git commit graph, live plan tracking, and real-time per-agent token telemetry.
+- 🛠️ **Hadron Forge (Edit-by-Hash)**: AST-level precision code edits across 14+ languages (`Rust`, `Python`, `TypeScript`/`JS`, `Go`, `C`/`C++`, `Java`, `C#`, `Ruby`, `PHP`, `HTML`/`CSS`, `SQL`, and text fallback) using `blake3` cryptographic hashes for zero-drift mutations.
+- 🎯 **Autonomous Swarm Control**: Built-in slash commands (`/goal`, `/loop`, `/git-init`, `/resume`, `/clear`) and 15 bundled workflow skills (TDD, systematic debugging, design specs).
 
 ---
 
@@ -43,7 +43,7 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 ### Prerequisites
 
 - **Rust**: Toolchain (edition 2021, tested on Rust 1.80+).
-- **OS**: Linux (X11/Wayland), macOS, or Windows (native MSVC or WSL2).
+- **OS**: Linux (X11/Wayland), macOS, or Windows (WSL2 / WSLg).
 - **LLM Access**: Any ACP agent (e.g. Claude Code), Antigravity, local Ollama, or API key for OpenAI / OpenRouter / Anthropic.
 
 ### 1. Install Hadron
@@ -91,10 +91,15 @@ Hadron connects an expanding ecosystem of AI agents, local models, cloud APIs, a
 
 | Shortcut | Action |
 | :--- | :--- |
-| `Ctrl+Tab` / `Ctrl+\` | Toggle focus between Chat Input and PTY Terminal |
-| `Alt+Left` / `Alt+Right` | Switch Chat column tabs |
-| `Alt+PageUp` / `Alt+PageDown` | Switch Right-Rail Inspector tabs (Git / Files / Telemetry) |
-| `Alt+Up` / `Alt+Down` | Cycle Telemetry & Stats time windows |
+| `Ctrl+Tab` / `Ctrl+\`` | Toggle focus between Chat Input and PTY Terminal |
+| `Ctrl+Shift+T` / `Ctrl+Shift+W` | New / Close Terminal Tab |
+| `Ctrl+PageDown` / `Ctrl+PageUp` | Next / Previous Terminal Tab (also `Ctrl+Shift+]` / `Ctrl+Shift+[`) |
+| `Alt+Left` / `Alt+Right` | Switch Chat column tabs (`Chat` / `Log` / `Stats`) |
+| `Alt+PageUp` / `Alt+PageDown` | Switch Right-Rail Inspector tabs (`Terminal` / `Files` / `Changes` / `Plan`) |
+| `Alt+Up` / `Alt+Down` | Cycle Telemetry & Stats time windows (`Session` / `Week` / `Month` / `All`) |
+| `Ctrl+J` / `Ctrl+K` | Move selection in Quark Roster |
+| `Ctrl+Alt+Enter` | Toggle selected Quark enabled / disabled |
+| `Ctrl+M` / `F10` | Open App Menu overlay |
 | `F6` | Cycle global permission mode (`Ask` / `Write` / `Auto` / `Bypass`) |
 
 ---
