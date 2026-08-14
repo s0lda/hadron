@@ -318,6 +318,44 @@ impl super::Chamber {
                 let selected = i == sel;
                 let label = cand.label.clone();
                 let detail = cand.detail.clone();
+
+                let left_content = if let Some(stripped) = label.strip_prefix("📄 ") {
+                    h_flex()
+                        .items_center()
+                        .gap_1p5()
+                        .child(Icon::new(IconName::File).small().text_color(theme::text_muted()))
+                        .child(div().text_sm().text_color(theme::text()).child(stripped.to_string()))
+                } else if let Some(stripped) = label.strip_prefix("📁 ") {
+                    h_flex()
+                        .items_center()
+                        .gap_1p5()
+                        .child(Icon::new(IconName::Folder).small().text_color(theme::text_muted()))
+                        .child(div().text_sm().text_color(theme::text()).child(stripped.to_string()))
+                } else if label.starts_with('@') {
+                    h_flex()
+                        .items_center()
+                        .gap_1p5()
+                        .child(Icon::new(IconName::Bot).small().text_color(theme::accent()))
+                        .child(div().text_sm().text_color(theme::text()).child(label))
+                } else if label.starts_with('/') {
+                    h_flex()
+                        .items_center()
+                        .gap_1p5()
+                        .child(Icon::new(IconName::SquareTerminal).small().text_color(theme::text_muted()))
+                        .child(div().text_sm().text_color(theme::text()).child(label))
+                } else if cand.detail == "Session" {
+                    h_flex()
+                        .items_center()
+                        .gap_1p5()
+                        .child(Icon::new(IconName::Inbox).small().text_color(theme::text_muted()))
+                        .child(div().text_sm().text_color(theme::text()).child(label))
+                } else {
+                    h_flex()
+                        .items_center()
+                        .gap_1p5()
+                        .child(div().text_sm().text_color(theme::text()).child(label))
+                };
+
                 list = list.child(
                     div()
                         .id(("completion-row", i))
@@ -329,7 +367,7 @@ impl super::Chamber {
                         .rounded_md()
                         .when(selected, |s| s.bg(theme::glass_highlight()))
                         .hover(|s| s.bg(theme::glass_highlight()))
-                        .child(div().text_sm().text_color(theme::text()).child(label))
+                        .child(left_content)
                         .child(
                             div()
                                 .text_xs()

@@ -292,8 +292,10 @@ impl super::Chamber {
                                                     .child(mode_tag(self.view.global_mode, false)),
                                             )
                                             .child(
-                                                 div()
+                                                 h_flex()
                                                      .id("picker-quark")
+                                                     .items_center()
+                                                     .gap_1()
                                                      .px_2()
                                                      .py_0p5()
                                                      .rounded_md()
@@ -304,14 +306,17 @@ impl super::Chamber {
                                                      .text_color(theme::text_muted())
                                                      .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
                                                      .cursor_pointer()
+                                                     .child(Icon::new(IconName::Bot).xsmall())
                                                      .child("@Quark")
                                                      .on_click(cx.listener(|this, _, window, cx| {
                                                          this.insert_completion_trigger("@", window, cx);
                                                      })),
                                              )
                                              .child(
-                                                 div()
+                                                 h_flex()
                                                      .id("picker-file")
+                                                     .items_center()
+                                                     .gap_1()
                                                      .px_2()
                                                      .py_0p5()
                                                      .rounded_md()
@@ -322,14 +327,17 @@ impl super::Chamber {
                                                      .text_color(theme::text_muted())
                                                      .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
                                                      .cursor_pointer()
+                                                     .child(Icon::new(IconName::File).xsmall())
                                                      .child("@File")
                                                      .on_click(cx.listener(|this, _, window, cx| {
                                                          this.insert_completion_trigger("@", window, cx);
                                                      })),
                                              )
                                              .child(
-                                                 div()
+                                                 h_flex()
                                                      .id("picker-command")
+                                                     .items_center()
+                                                     .gap_1()
                                                      .px_2()
                                                      .py_0p5()
                                                      .rounded_md()
@@ -340,6 +348,7 @@ impl super::Chamber {
                                                      .text_color(theme::text_muted())
                                                      .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
                                                      .cursor_pointer()
+                                                     .child(Icon::new(IconName::SquareTerminal).xsmall())
                                                      .child("/Command")
                                                      .on_click(cx.listener(|this, _, window, cx| {
                                                          this.insert_completion_trigger("/", window, cx);
