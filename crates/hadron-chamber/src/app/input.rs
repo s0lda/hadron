@@ -644,6 +644,7 @@ mod tests {
             "gate-cancel",
             "revert",
             "unabandon",
+            "git-init",
             "git-status",
             "git-log",
             "push",

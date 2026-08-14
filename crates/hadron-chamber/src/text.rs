@@ -99,6 +99,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "quit", detail: "Exit Hadron Chamber", arity: Arity::None, arg: ArgSource::None, listed: false },
     Command { name: "toggle-roster", detail: "Toggle the Roster sidebar", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "toggle-inspector", detail: "Toggle the Inspector sidebar", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "git-init", detail: "Initialize a git repository with default .gitignore and initial commit", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "git-status", detail: "Show working tree status and branch info", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "git-log", detail: "Display last N commits (default 5)", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "push", detail: "Push local commits to remote origin", arity: Arity::Line, arg: ArgSource::None, listed: true },

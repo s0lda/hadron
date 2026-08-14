@@ -840,6 +840,125 @@ pub fn unabandon_branch(repo_root: &Path, slug: &str) -> String {
     }
 }
 
+/// True if the given directory is inside a valid git working tree.
+pub fn is_git_repo(repo_root: &Path) -> bool {
+    let out = Command::new("git")
+        .current_dir(repo_root)
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output();
+    match out {
+        Ok(o) => o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true",
+        Err(_) => false,
+    }
+}
+
+/// True if HEAD points to a valid commit (repository has at least one commit).
+pub fn has_commits(repo_root: &Path) -> bool {
+    let out = Command::new("git")
+        .current_dir(repo_root)
+        .args(["rev-parse", "--verify", "HEAD"])
+        .output();
+    match out {
+        Ok(o) => o.status.success(),
+        Err(_) => false,
+    }
+}
+
+/// Initialize a git repository in `repo_root` if not already initialized, seed a `.gitignore`,
+/// and ensure an initial commit exists on `main`.
+pub fn init_repository(repo_root: &Path) -> anyhow::Result<String> {
+    if !repo_root.exists() {
+        std::fs::create_dir_all(repo_root)?;
+    }
+
+    let is_repo = is_git_repo(repo_root);
+    if !is_repo {
+        let init_main = Command::new("git")
+            .current_dir(repo_root)
+            .args(["init", "-b", "main"])
+            .output();
+        let init_ok = match init_main {
+            Ok(ref o) if o.status.success() => true,
+            _ => {
+                let init_plain = Command::new("git")
+                    .current_dir(repo_root)
+                    .arg("init")
+                    .output();
+                init_plain.is_ok_and(|o| o.status.success())
+            }
+        };
+        if !init_ok {
+            anyhow::bail!("`git init` failed in {}", repo_root.display());
+        }
+    }
+
+    // Ensure .gitignore exists with .hadron/trees/ and .hadron/gluon.lock
+    let gitignore_path = repo_root.join(".gitignore");
+    if gitignore_path.exists() {
+        let existing = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
+        let mut to_append = Vec::new();
+        if !existing.contains(".hadron/trees") {
+            to_append.push(".hadron/trees/");
+        }
+        if !existing.contains(".hadron/gluon.lock") {
+            to_append.push(".hadron/gluon.lock");
+        }
+        if !to_append.is_empty() {
+            let mut updated = existing;
+            if !updated.ends_with('\n') && !updated.is_empty() {
+                updated.push('\n');
+            }
+            for item in to_append {
+                updated.push_str(item);
+                updated.push('\n');
+            }
+            std::fs::write(&gitignore_path, updated)?;
+        }
+    } else {
+        let content = "# Hadron worktrees and daemon runtime lock\n.hadron/trees/\n.hadron/gluon.lock\n";
+        std::fs::write(&gitignore_path, content)?;
+    }
+
+    if !has_commits(repo_root) {
+        let _ = Command::new("git")
+            .current_dir(repo_root)
+            .args(["checkout", "-B", "main"])
+            .output();
+
+        let _ = Command::new("git")
+            .current_dir(repo_root)
+            .args(["add", ".gitignore"])
+            .output();
+
+        let commit_res = Command::new("git")
+            .current_dir(repo_root)
+            .env("GIT_AUTHOR_NAME", "hadron")
+            .env("GIT_AUTHOR_EMAIL", "hadron@localhost")
+            .env("GIT_COMMITTER_NAME", "hadron")
+            .env("GIT_COMMITTER_EMAIL", "hadron@localhost")
+            .args(["commit", "-m", "chore: initialize repository for Hadron"])
+            .output();
+
+        if let Ok(out) = commit_res {
+            if !out.status.success() {
+                let _ = Command::new("git")
+                    .current_dir(repo_root)
+                    .env("GIT_AUTHOR_NAME", "hadron")
+                    .env("GIT_AUTHOR_EMAIL", "hadron@localhost")
+                    .env("GIT_COMMITTER_NAME", "hadron")
+                    .env("GIT_COMMITTER_EMAIL", "hadron@localhost")
+                    .args(["commit", "--allow-empty", "-m", "chore: initialize repository for Hadron"])
+                    .output();
+            }
+        }
+        Ok("Initialized Git repository on branch `main` with `.gitignore` and initial commit.".to_string())
+    } else if !is_repo {
+        Ok("Initialized Git repository on branch `main` with `.gitignore`.".to_string())
+    } else {
+        Ok("Git repository is already initialized.".to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1308,6 +1427,31 @@ index a1b2c3d..e4f5g6h 100644
         let msg = commit_message(Path::new("."), "HEAD");
         assert!(msg.is_some());
         assert!(!msg.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_is_git_repo_and_init_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        // Non-git directory initially
+        assert!(!is_git_repo(root));
+        assert!(!has_commits(root));
+
+        // Initialize repository
+        let res = init_repository(root).unwrap();
+        assert!(res.contains("Initialized Git repository"), "res: {res}");
+        assert!(is_git_repo(root));
+        assert!(has_commits(root));
+
+        // .gitignore created and contains .hadron/trees/
+        let gitignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
+        assert!(gitignore.contains(".hadron/trees/"));
+        assert!(gitignore.contains(".hadron/gluon.lock"));
+
+        // Idempotent re-initialization
+        let res2 = init_repository(root).unwrap();
+        assert!(res2.contains("already initialized"), "res2: {res2}");
     }
 }
 

@@ -30,7 +30,79 @@ impl super::Chamber {
     /// every worktree of this repo, and a coloured commit graph — so "is it merged?",
     /// "what did this branch change?" and "who else has a checkout" are answerable
     /// without leaving the chamber.
-    pub(super) fn git_tab_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn git_tab_content(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let repo_root = crate::vcs::repo_root_of(&self.path);
+        if !crate::vcs::is_git_repo(repo_root) {
+            return v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .p_6()
+                .gap_4()
+                .child(
+                    v_flex()
+                        .max_w(px(380.0))
+                        .w_full()
+                        .p_4()
+                        .gap_3()
+                        .rounded_lg()
+                        .bg(theme::bg_surface())
+                        .border_1()
+                        .border_color(theme::border())
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .text_color(theme::accent())
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .child(div().child("⚠ Git Workspace Required")),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child("Hadron uses Git worktrees to isolate Quark execution and track swarm progress. This workspace is not yet a Git repository."),
+                        )
+                        .child(
+                            div()
+                                .id("init-git-btn")
+                                .px_3()
+                                .py_2()
+                                .rounded_md()
+                                .bg(theme::accent())
+                                .text_color(gpui::rgb(0x050505))
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_xs()
+                                .text_center()
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.85))
+                                .child("Initialize Git Workspace")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let root = crate::vcs::repo_root_of(&this.path).to_path_buf();
+                                    match crate::vcs::init_repository(&root) {
+                                        Ok(msg) => {
+                                            this.post_chat_message(Actor::Gluon, msg, cx);
+                                            let repo = crate::vcs::repo_root_of(&this.path).to_path_buf();
+                                            this.git_branches = Some(crate::vcs::list_branches(&repo, "main"));
+                                            this.git_worktrees = Some(crate::vcs::list_worktrees(&repo));
+                                            this.git_log_graph = crate::vcs::commit_graph(&repo);
+                                            this.rebuild_graph_rows();
+                                        }
+                                        Err(e) => {
+                                            this.post_chat_message(
+                                                Actor::Gluon,
+                                                format!("Failed to initialize git repository: {e}"),
+                                                cx,
+                                            );
+                                        }
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .into_any_element();
+        }
+
         let selected = self.git_subtab;
         let subtabs = h_flex()
             .id("git-capsule-subtabs")
@@ -127,6 +199,7 @@ impl super::Chamber {
             .min_h_0()
             .child(h_flex().flex_none().px_3().py_2().child(subtabs))
             .child(git_pane)
+            .into_any_element()
     }
 
     fn muted(text: &'static str) -> impl IntoElement {

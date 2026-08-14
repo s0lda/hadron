@@ -1019,6 +1019,27 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
+            "git-init" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                match crate::vcs::init_repository(&repo_root) {
+                    Ok(msg) => {
+                        self.post_chat_message(Actor::Gluon, msg, cx);
+                        let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                        self.git_branches = Some(crate::vcs::list_branches(&repo, "main"));
+                        self.git_worktrees = Some(crate::vcs::list_worktrees(&repo));
+                        self.git_log_graph = crate::vcs::commit_graph(&repo);
+                        self.rebuild_graph_rows();
+                    }
+                    Err(e) => {
+                        self.post_chat_message(
+                            Actor::Gluon,
+                            format!("Failed to initialize git repository: {e}"),
+                            cx,
+                        );
+                    }
+                }
+                true
+            }
             "git-status" => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
                 let output = hadron_gluon::snapshot::git(&repo_root, &["status", "--short", "--branch"]);
