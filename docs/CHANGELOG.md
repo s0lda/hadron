@@ -5,6 +5,23 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-08-14
+
+### Added
+- **Keyboard-First Workflow & History Navigation**: Added global prompt focus (`Cmd+L` / `Ctrl+L`), chat input history navigation (`Up` / `Down` arrows), Tab autocompletion for slash commands/arguments, circular wrap-around autocomplete cycling, and Escape-to-dismiss for overlays and completions.
+- **Modern Chamber UI Suite & Theme Presets**: Added dynamic Theme Presets (Obsidian Neutral, OLED True Black, Midnight Slate, Tokyo Dark) and customizable Accent Color picker in Settings and via `/theme` slash command, floating toast notifications, and GitHub-style markdown callouts (`[!NOTE]`, `[!TIP]`, `[!WARNING]`, `[!IMPORTANT]`, `[!CAUTION]`).
+- **Surface Gluon Operations & Multi-Stage Gate Progress**: Real-time heartbeat tracking and live status reporting for Gluon daemon operations, worktree provisioning, syncs, test suite runs, AST conflict checks, and branch pruning.
+- **Nucleus Linter & Core DAG Engine**: Added `NucleusLinter` in `hadron-lattice` enforcing memory budgets and pointer validity, channel-based event segmentation for tool bursts, `TaskDag` scheduler in `hadron-gluon`, and auto-reconciliation in `hadron-forge`.
+
+### Changed
+- **Vector Icons & UI Polish**: Replaced Unicode emoji across autocompletions, action pills, and callouts with crisp vector icons, refined avatar state rings, diff gutters, and streamlined live activity columns with fixed-width alignment.
+- **Documentation Suite & Keybinding Mapping**: Updated documentation across README, vocabulary, architecture, and forge edit-by-hash guide, restoring `Ctrl+Tab` / `Ctrl+\`` chat-terminal focus toggling and multi-terminal tab navigation.
+
+### Fixed
+- **Terminal Focus & Escape Handling**: Preserved active terminal focus and forwarded Escape sequences directly to PTY sessions without erroneously stealing focus back to chat.
+- **Async Stats & Chart Downsampling**: Offloaded telemetry stats aggregation to background executor and implemented chart point downsampling to eliminate software rasterization lag under Lavapipe.
+- **Theme Persistence & Dynamic Token Updates**: Resolved theme and accent label parsing and token reactivity during configuration updates.
+
 ## [0.3.0] - 2026-08-14
 
 ### Added

@@ -20,6 +20,25 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.3.1",
+        date: Some("2026-08-14"),
+        added: &[
+            "Keyboard-first workflow with history navigation, hotkeys, dismiss, and completion cycling",
+            "Modern Chamber UI suite with toasts, theme presets, callouts, and activity micro-capsules",
+            "Surfaced Gluon operations and multi-stage merge gate progress in live activity",
+            "Nucleus linter, channel segmentation, TaskDag scheduler, and AST auto-conflict resolver",
+        ],
+        changed: &[
+            "Vector icons across completions, pills, and callouts, with polished UI layering and diff gutters",
+            "Restored `Ctrl+Tab` focus toggle and updated documentation suite",
+        ],
+        fixed: &[
+            "Terminal focus preservation and direct Escape forwarding to active PTY sessions",
+            "Async stats computation with chart downsampling for smooth software rendering",
+            "Theme preset and accent label configuration persistence and token reactivity",
+        ],
+    },
+    Release {
         version: "0.3.0",
         date: Some("2026-08-14"),
         added: &[
