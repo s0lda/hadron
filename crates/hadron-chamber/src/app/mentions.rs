@@ -107,7 +107,7 @@ pub(super) fn parse_plan_tasks(content: &str) -> Vec<(String, Vec<(String, bool)
 
 /// Preprocess Markdown alert callouts (e.g. `> [!NOTE]`, `> [!TIP]`, `> [!WARNING]`,
 /// `> [!IMPORTANT]`, `> [!CAUTION]`, `> [!DANGER]`, `> [!INFO]`) inside blockquotes
-/// into clean, readable styled headers (`> ℹ️ **Note**`, etc.).
+/// into clean, readable styled headers (`> **Note:**`, `> **Important:**`, etc.).
 ///
 /// Fenced code blocks are preserved unmodified.
 pub(super) fn format_markdown_callouts(text: &str) -> String {
@@ -135,24 +135,24 @@ pub(super) fn format_markdown_callouts(text: &str) -> String {
                 if let Some(end_bracket) = bq_trimmed.find(']') {
                     let tag = &bq_trimmed[2..end_bracket];
                     let after_tag = bq_trimmed[end_bracket + 1..].trim();
-                    let (icon, default_title) = match tag.to_ascii_uppercase().as_str() {
-                        "NOTE" | "INFO" => ("ℹ️", "Note"),
-                        "TIP" => ("💡", "Tip"),
-                        "IMPORTANT" => ("📌", "Important"),
-                        "WARNING" => ("⚠️", "Warning"),
-                        "CAUTION" | "DANGER" => ("🛑", "Caution"),
-                        _ => ("", ""),
+                    let default_title = match tag.to_ascii_uppercase().as_str() {
+                        "NOTE" | "INFO" => "Note",
+                        "TIP" => "Tip",
+                        "IMPORTANT" => "Important",
+                        "WARNING" => "Warning",
+                        "CAUTION" | "DANGER" => "Caution",
+                        _ => "",
                     };
-                    if !icon.is_empty() {
-                        let title = if after_tag.is_empty() {
-                            default_title
+                    if !default_title.is_empty() {
+                        let header = if after_tag.is_empty() {
+                            format!("**{default_title}:**")
                         } else {
-                            after_tag
+                            format!("**{default_title}: {after_tag}**")
                         };
                         let indent_len = line.len() - trimmed.len();
                         let indent = &line[..indent_len];
                         out.push_str(indent);
-                        out.push_str(&format!("> {icon} **{title}**"));
+                        out.push_str(&format!("> {header}"));
                         continue;
                     }
                 }
@@ -725,7 +725,7 @@ mod tests {
         let formatted = format_markdown_callouts(input);
         assert_eq!(
             formatted,
-            "> ℹ️ **Note**\n> This is a note.\n\n> 💡 **Pro Tip**\n> This is a tip.\n\n> ⚠️ **Warning**\n> Watch out!\n\n> 📌 **Important**\n> Critical info.\n\n> 🛑 **Caution**\n> Danger!"
+            "> **Note:**\n> This is a note.\n\n> **Tip: Pro Tip**\n> This is a tip.\n\n> **Warning:**\n> Watch out!\n\n> **Important:**\n> Critical info.\n\n> **Caution:**\n> Danger!"
         );
 
         // Code block callout suppression
@@ -733,7 +733,7 @@ mod tests {
         let code_formatted = format_markdown_callouts(code_input);
         assert_eq!(
             code_formatted,
-            "```markdown\n> [!NOTE]\n> Inside code\n```\n> ℹ️ **Note**\n> Outside code"
+            "```markdown\n> [!NOTE]\n> Inside code\n```\n> **Note:**\n> Outside code"
         );
     }
 }

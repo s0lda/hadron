@@ -804,6 +804,8 @@ impl Chamber {
                         Some(3),
                         cx,
                     );
+                    cx.refresh_windows();
+                    cx.notify();
                     let body = crate::text::theme_body(trimmed, preset);
                     self.post_chat_message(Actor::Gluon, body, cx);
                 } else {

@@ -93,6 +93,7 @@ impl super::Chamber {
                     };
 
                     h_flex()
+                        .flex_shrink_0()
                         .items_center()
                         .gap_1p5()
                         .px_2p5()
@@ -138,7 +139,7 @@ impl super::Chamber {
                                 )
                                 .child(
                                     div()
-                                        .max_w(px(240.0))
+                                        .max_w(px(180.0))
                                         .text_xs()
                                         .text_color(theme::text_secondary())
                                         .truncate()

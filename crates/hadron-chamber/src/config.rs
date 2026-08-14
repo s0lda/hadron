@@ -142,10 +142,10 @@ impl ThemePreset {
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "obsidian" | "obsidian-neutral" | "default" => Some(ThemePreset::Obsidian),
-            "oled" | "oled-black" | "black" => Some(ThemePreset::Oled),
-            "midnight" | "midnight-slate" | "slate" => Some(ThemePreset::Midnight),
-            "tokyo" | "tokyo-dark" | "indigo" => Some(ThemePreset::Tokyo),
+            "obsidian" | "obsidian neutral" | "obsidian-neutral" | "default" => Some(ThemePreset::Obsidian),
+            "oled" | "oled true black" | "oled-true-black" | "oled-black" | "black" => Some(ThemePreset::Oled),
+            "midnight" | "midnight slate" | "midnight-slate" | "slate" => Some(ThemePreset::Midnight),
+            "tokyo" | "tokyo dark" | "tokyo-dark" | "indigo" => Some(ThemePreset::Tokyo),
             _ => None,
         }
     }
@@ -209,7 +209,7 @@ impl AccentChoice {
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "amethyst" | "purple" => Some(AccentChoice::Amethyst),
+            "amethyst" | "purple" | "default" => Some(AccentChoice::Amethyst),
             "sapphire" | "blue" => Some(AccentChoice::Sapphire),
             "emerald" | "green" => Some(AccentChoice::Emerald),
             "amber" | "yellow" => Some(AccentChoice::Amber),
@@ -584,9 +584,15 @@ mod tests {
         assert_eq!(loaded.accent_choice, Some(AccentChoice::Sapphire));
 
         assert_eq!(ThemePreset::from_str("oled"), Some(ThemePreset::Oled));
+        assert_eq!(ThemePreset::from_str("OLED True Black"), Some(ThemePreset::Oled));
         assert_eq!(ThemePreset::from_str("tokyo-dark"), Some(ThemePreset::Tokyo));
+        assert_eq!(ThemePreset::from_str("Tokyo Dark"), Some(ThemePreset::Tokyo));
+        assert_eq!(ThemePreset::from_str("Midnight Slate"), Some(ThemePreset::Midnight));
+        assert_eq!(ThemePreset::from_str("Obsidian Neutral"), Some(ThemePreset::Obsidian));
         assert_eq!(AccentChoice::from_str("blue"), Some(AccentChoice::Sapphire));
+        assert_eq!(AccentChoice::from_str("Sapphire"), Some(AccentChoice::Sapphire));
         assert_eq!(AccentChoice::from_str("emerald"), Some(AccentChoice::Emerald));
+        assert_eq!(AccentChoice::from_str("Amethyst"), Some(AccentChoice::Amethyst));
     }
 }
 

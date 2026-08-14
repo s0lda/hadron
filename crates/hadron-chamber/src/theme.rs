@@ -19,28 +19,72 @@
 //! named token, not a raw hex.
 #![allow(dead_code)]
 
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+
 use gpui::{rgb, rgba, Hsla, Rgba};
 
 use hadron_lattice::QuarkState;
 
+static ACTIVE_PRESET: AtomicU8 = AtomicU8::new(0); // 0: Obsidian, 1: Oled, 2: Midnight, 3: Tokyo
+static ACTIVE_ACCENT: AtomicU32 = AtomicU32::new(0xc084fc); // 0xRRGGBB (soft amethyst default)
+
+pub fn set_active_preset(preset: crate::config::ThemePreset) {
+    let val = match preset {
+        crate::config::ThemePreset::Obsidian => 0,
+        crate::config::ThemePreset::Oled => 1,
+        crate::config::ThemePreset::Midnight => 2,
+        crate::config::ThemePreset::Tokyo => 3,
+    };
+    ACTIVE_PRESET.store(val, Ordering::Relaxed);
+}
+
+pub fn active_preset() -> crate::config::ThemePreset {
+    match ACTIVE_PRESET.load(Ordering::Relaxed) {
+        1 => crate::config::ThemePreset::Oled,
+        2 => crate::config::ThemePreset::Midnight,
+        3 => crate::config::ThemePreset::Tokyo,
+        _ => crate::config::ThemePreset::Obsidian,
+    }
+}
+
+pub fn set_active_accent(choice: crate::config::AccentChoice) {
+    set_active_accent_rgb(choice.rgb());
+}
+
+pub fn set_active_accent_rgb(color: Rgba) {
+    let r = (color.r * 255.0).round() as u32;
+    let g = (color.g * 255.0).round() as u32;
+    let b = (color.b * 255.0).round() as u32;
+    let val = (r << 16) | (g << 8) | b;
+    ACTIVE_ACCENT.store(val, Ordering::Relaxed);
+}
+
+pub fn active_accent() -> Rgba {
+    let val = ACTIVE_ACCENT.load(Ordering::Relaxed);
+    let r = ((val >> 16) & 0xff) as f32 / 255.0;
+    let g = ((val >> 8) & 0xff) as f32 / 255.0;
+    let b = (val & 0xff) as f32 / 255.0;
+    Rgba { r, g, b, a: 1.0 }
+}
+
 // --- the ambient field: a flat black housing (the frosted-glass-on-black look) ---
 /// Layer 0 (Canvas Base): Deep obsidian canvas base fill (`#050505`).
 pub fn canvas_base() -> Hsla {
-    rgb(0x050505).into()
+    palette_for_preset(active_preset()).canvas_base.into()
 }
 
 /// The near-black base — the opaque tone painted behind the rounded corners and the dark
 /// end of the field wash (`#050505`).
 pub fn field_base() -> Rgba {
-    rgb(0x050505)
+    palette_for_preset(active_preset()).canvas_base
 }
 /// The top of the field wash (`#050505`).
 pub fn field_bright() -> Rgba {
-    rgb(0x050505)
+    palette_for_preset(active_preset()).canvas_base
 }
 /// The near-black the wash settles into at the bottom / behind the panels (`#050505`).
 pub fn field_deep() -> Rgba {
-    rgb(0x050505)
+    palette_for_preset(active_preset()).canvas_base
 }
 
 /// The quark-state hues, kept as a faint corner whisper — the same palette the presence
@@ -60,7 +104,7 @@ pub fn glow_green() -> Rgba {
 // --- surfaces (recessed → raised) --- borderless glass surface hierarchy over cosmic obsidian base.
 /// Recessed inner surface (deepest wells), the neutral panel tone (`#0b0b0b`).
 pub fn bg_base() -> Rgba {
-    rgb(0x0b0b0b)
+    palette_for_preset(active_preset()).bg_base
 }
 
 /// The window/content backdrop token — the opaque housing behind the whole scene. (Kept
@@ -70,22 +114,36 @@ pub fn window_glint() -> Rgba {
 }
 /// A step-lighter neutral tone for lifted chrome and selected controls (`#242424`).
 pub fn bg_elevated() -> Rgba {
-    rgb(0x242424)
+    palette_for_preset(active_preset()).bg_elevated
 }
 
 /// Layer 1 (Panels & Rails): Neutral dark panel layer (`#0b0b0bf2`).
 pub fn glass_surface() -> Hsla {
-    rgba(0x0b0b0bf2).into()
+    let base = palette_for_preset(active_preset()).bg_base;
+    rgba(
+        ((base.r * 255.0).round() as u32) << 24
+            | ((base.g * 255.0).round() as u32) << 16
+            | ((base.b * 255.0).round() as u32) << 8
+            | 0xf2,
+    )
+    .into()
 }
 
 /// Tab bar background token matching main obsidian field (`#050505`).
 pub fn tab_bar_bg() -> Rgba {
-    rgb(0x050505)
+    palette_for_preset(active_preset()).canvas_base
 }
 
 /// Layer 2 (Floating Cards & Modals): Elevated neutral dark cards (`#0b0b0bf8`).
 pub fn glass_card() -> Hsla {
-    rgba(0x0b0b0bf8).into()
+    let base = palette_for_preset(active_preset()).bg_base;
+    rgba(
+        ((base.r * 255.0).round() as u32) << 24
+            | ((base.g * 255.0).round() as u32) << 16
+            | ((base.b * 255.0).round() as u32) << 8
+            | 0xf8,
+    )
+    .into()
 }
 
 /// Highlights / rims: Neutral border sheen (`rgba(96, 96, 96, 0.22)`).
@@ -132,13 +190,13 @@ pub fn halo_dot(state: QuarkState) -> Hsla {
 
 /// The fill for a **focused modal** (Settings card, Processes overlay, app menu) (`#101010`).
 pub fn modal_surface() -> Rgba {
-    rgb(0x101010)
+    palette_for_preset(active_preset()).bg_surface
 }
 
 // --- terminal (a Zed-like screen) ---
 /// The terminal screen surface — `#080808` main bg.
 pub fn term_bg() -> Rgba {
-    rgb(0x080808)
+    palette_for_preset(active_preset()).term_bg
 }
 /// Default terminal output foreground — softened primary text (`#e8e8e8`).
 pub fn term_fg() -> Rgba {
@@ -149,19 +207,19 @@ pub fn term_prompt() -> Rgba {
     rgb(0x4ade80)
 }
 pub fn bg_surface() -> Rgba {
-    rgb(0x101010)
+    palette_for_preset(active_preset()).bg_surface
 }
 pub fn bg_surface_raised() -> Rgba {
-    rgb(0x1c1c1c)
+    palette_for_preset(active_preset()).bg_surface_raised
 }
 pub fn input_bg() -> Rgba {
-    rgb(0x181818)
+    palette_for_preset(active_preset()).input_bg
 }
 pub fn popover() -> Rgba {
-    rgb(0x101010)
+    palette_for_preset(active_preset()).bg_surface
 }
 pub fn border() -> Rgba {
-    rgb(0x444444)
+    palette_for_preset(active_preset()).border
 }
 
 // --- text tiers ---
@@ -177,7 +235,7 @@ pub fn text_muted() -> Rgba {
 
 /// Accent color gradient and token ramp.
 pub fn accent() -> Rgba {
-    rgb(0xc084fc) // soft amethyst — active / addressed
+    active_accent()
 }
 
 /// Palette tokens resolved from a curated ThemePreset.
@@ -240,7 +298,7 @@ pub fn palette_for_preset(preset: crate::config::ThemePreset) -> PresetPalette {
 /// A muted, low-alpha amethyst for chrome that should whisper rather than shout —
 /// the focused chat-input border.
 pub fn accent_soft() -> Rgba {
-    rgba(0xc084fc66) // ~0.40 alpha amethyst
+    active_accent().opacity(0.40)
 }
 pub fn accent_secondary() -> Rgba {
     rgb(0xa855f7) // purple — thinking
@@ -485,6 +543,26 @@ mod tests {
         assert_ne!(obsidian.bg_base, midnight.bg_base);
         assert_ne!(midnight.bg_surface, tokyo.bg_surface);
         assert_eq!(oled.canvas_base, rgb(0x000000));
+    }
+
+    #[test]
+    fn test_dynamic_preset_and_accent_switching() {
+        set_active_preset(crate::config::ThemePreset::Obsidian);
+        set_active_accent(crate::config::AccentChoice::Amethyst);
+        assert_eq!(active_preset(), crate::config::ThemePreset::Obsidian);
+        assert_eq!(accent(), rgb(0xc084fc));
+
+        set_active_preset(crate::config::ThemePreset::Oled);
+        assert_eq!(active_preset(), crate::config::ThemePreset::Oled);
+        assert_eq!(canvas_base(), rgb(0x000000).into());
+        assert_eq!(bg_base(), rgb(0x050505));
+
+        set_active_accent(crate::config::AccentChoice::Emerald);
+        assert_eq!(accent(), rgb(0x34d399));
+
+        // Restore default obsidian for subsequent tests
+        set_active_preset(crate::config::ThemePreset::Obsidian);
+        set_active_accent(crate::config::AccentChoice::Amethyst);
     }
 }
 

@@ -1344,8 +1344,11 @@ impl Chamber {
         let ui_size = prefs.ui_font_size.unwrap_or(14.0);
         let mono_size = prefs.mono_font_size.unwrap_or(13.0);
         let preset = prefs.theme_preset.unwrap_or_default();
+        let accent = prefs.accent_choice.unwrap_or_default();
+        theme::set_active_preset(preset);
+        theme::set_active_accent(accent);
         let palette = theme::palette_for_preset(preset);
-        let accent_color = prefs.accent_choice.unwrap_or_default().rgb();
+        let accent_color = accent.rgb();
 
         let t = gpui_component::Theme::global_mut(cx);
         t.title_bar = palette.bg_surface.into();
