@@ -343,9 +343,9 @@ async fn handle_client(
         response.push_str(&format!("{k}: {v}\r\n"));
     }
     response.push_str("\r\n");
+    response.push_str(&resp_body);
 
     stream.write_all(response.as_bytes()).await?;
-    stream.write_all(body_bytes).await?;
     stream.flush().await?;
 
     Ok(())
@@ -377,12 +377,12 @@ mod tests {
         let addr = format!("127.0.0.1:{}", summary.port);
         let mut client = TcpStream::connect(&addr).await.unwrap();
 
-        let req = "POST /webhook HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 15\r\n\r\n{\"event\":\"test\"}";
+        let req = "POST /webhook HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"event\":\"test\"}";
         client.write_all(req.as_bytes()).await.unwrap();
 
-        let mut resp_buf = [0u8; 1024];
-        let n = client.read(&mut resp_buf).await.unwrap();
-        let resp = String::from_utf8_lossy(&resp_buf[..n]);
+        let mut resp_vec = Vec::new();
+        client.read_to_end(&mut resp_vec).await.unwrap();
+        let resp = String::from_utf8_lossy(&resp_vec);
 
         assert!(resp.contains("201 Created"));
         assert!(resp.contains(r#"{"accepted":true}"#));
