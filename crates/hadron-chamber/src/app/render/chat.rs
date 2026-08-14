@@ -9,6 +9,7 @@ impl super::Chamber {
         // One row per quark mid-turn, not just the first — the card and the
         // roster's blue dot must agree on who counts as "working".
         let live_dir = hadron_lattice::live::live_dir(&self.path);
+        let gates_dir = hadron_lattice::live::gates_dir(&self.path);
         let now = chrono::Utc::now();
         let mut live_map = std::collections::HashMap::new();
         for r in &self.view.roster {
@@ -18,7 +19,41 @@ impl super::Chamber {
                 }
             }
         }
-        let active = widgets::active_quarks_rich(&self.view.roster, |id| live_map.get(id).cloned(), now);
+        let mut active = widgets::active_quarks_rich(&self.view.roster, |id| live_map.get(id).cloned(), now);
+
+        // Surface in-flight merge gates and Gluon system operations
+        let gate_activities = hadron_lattice::live::gates(&gates_dir, now);
+        for gate_act in &gate_activities {
+            let detail = if gate_act.detail.is_empty() {
+                format!("merging `{}`", gate_act.quark.as_str())
+            } else {
+                gate_act.detail.clone()
+            };
+            let elapsed_secs = gate_act.started.map(|st| (now - st).num_seconds().max(0) as u64);
+            active.push(widgets::QuarkLiveCapsule {
+                quark_id: "gluon".to_string(),
+                doing: hadron_lattice::live::Doing::Gating,
+                detail,
+                elapsed_secs,
+            });
+        }
+
+        if let Some(gluon_act) = hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new("gluon"), now) {
+            if gate_activities.is_empty() {
+                let detail = if gluon_act.detail.is_empty() {
+                    gluon_act.doing.label().to_string()
+                } else {
+                    gluon_act.detail
+                };
+                let elapsed_secs = gluon_act.started.map(|st| (now - st).num_seconds().max(0) as u64);
+                active.push(widgets::QuarkLiveCapsule {
+                    quark_id: "gluon".to_string(),
+                    doing: gluon_act.doing,
+                    detail,
+                    elapsed_secs,
+                });
+            }
+        }
 
         // The reply as it arrives. A sibling of the Live card rather than a row in the
         // message list: `chat_list_state`'s count is derived from `chat_message_ixs`
@@ -111,7 +146,12 @@ impl super::Chamber {
                             (theme::halo_reasoning(), IconName::Bot, "thinking")
                         }
                         hadron_lattice::live::Doing::Working => {
-                            (theme::halo_active(), IconName::SquareTerminal, "exec")
+                            let icon = if cap.quark_id == "gluon" {
+                                IconName::Cpu
+                            } else {
+                                IconName::SquareTerminal
+                            };
+                            (theme::halo_active(), icon, "exec")
                         }
                         hadron_lattice::live::Doing::Planning => {
                             (theme::halo_active(), IconName::Folder, "planning")

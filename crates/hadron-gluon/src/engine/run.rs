@@ -542,6 +542,16 @@ impl super::Engine {
                             }
                         }
 
+                        let live_dir = hadron_lattice::live::live_dir(&self.field_path);
+                        let _ = hadron_lattice::live::publish(
+                            &live_dir,
+                            &hadron_lattice::Activity::new(
+                                QuarkId::new("gluon"),
+                                hadron_lattice::live::Doing::Working,
+                                &format!("provisioning worktree for @{}", target.as_str()),
+                            ),
+                        );
+
                         let wt = match crate::worktree::ensure(
                             &root,
                             &target,
@@ -549,6 +559,7 @@ impl super::Engine {
                         ) {
                             Ok(wt) => wt,
                             Err(e) => {
+                                let _ = hadron_lattice::live::clear(&live_dir, &QuarkId::new("gluon"));
                                 self.reroute_blocked_with_severity(
                                     &target,
                                     &format!(
@@ -568,6 +579,7 @@ impl super::Engine {
                             &wt.path,
                             &format!("before {}", target.as_str()),
                         )?;
+                        let _ = hadron_lattice::live::clear(&live_dir, &QuarkId::new("gluon"));
                         self.append(Event::new(
                             Actor::Gluon,
                             None,
@@ -852,6 +864,11 @@ impl super::Engine {
                 }
             }
         }
+
+        let _ = hadron_lattice::live::clear(
+            &hadron_lattice::live::live_dir(&self.field_path),
+            &QuarkId::new("gluon"),
+        );
 
         if let Some(err) = first_err {
             return Err(err);

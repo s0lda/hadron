@@ -1475,6 +1475,29 @@ mod tests {
         assert_eq!(rich[1].doing, hadron_lattice::live::Doing::Working);
     }
 
+    #[test]
+    fn test_gluon_and_gate_live_capsules() {
+        let started = chrono::Utc::now() - chrono::Duration::seconds(15);
+        let gate_act = hadron_lattice::Activity::gating(
+            hadron_lattice::QuarkId::new("cli-agy"),
+            "running test suite · quark/cli-agy/01M",
+            started,
+        );
+        assert_eq!(gate_act.doing, hadron_lattice::live::Doing::Gating);
+        assert_eq!(gate_act.detail, "running test suite · quark/cli-agy/01M");
+        assert!(gate_act.started.is_some());
+
+        let cap = QuarkLiveCapsule {
+            quark_id: "gluon".to_string(),
+            doing: hadron_lattice::live::Doing::Gating,
+            detail: gate_act.detail.clone(),
+            elapsed_secs: gate_act.started.map(|st| (chrono::Utc::now() - st).num_seconds().max(0) as u64),
+        };
+        assert_eq!(cap.quark_id, "gluon");
+        assert_eq!(cap.doing, hadron_lattice::live::Doing::Gating);
+        assert!(cap.elapsed_secs.unwrap_or(0) >= 15);
+    }
+
     /// **The double-dialog bug.** Cancelling gpui's picker used to be indistinguishable
     /// from having no picker at all, so Cancel immediately opened a second folder browser
     /// the human had to cancel again (reported live against "Open Workspace"). Only

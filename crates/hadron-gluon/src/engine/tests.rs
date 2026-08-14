@@ -4107,6 +4107,58 @@ async fn a_running_gate_publishes_a_fresh_gating_activity() {
     );
 }
 
+/// The gate publishes distinct stage details (e.g. syncing, running test suite, landing)
+/// during execution rather than only a bare branch name.
+#[tokio::test]
+async fn a_running_gate_publishes_stage_progression() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w write w.txt".into() }),
+    )
+    .unwrap();
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![
+            Box::new(MockQuark::repeating(QuarkId::new("orch"), Flavor::Orchestrator, "ok")),
+            Box::new(ReportingWriter { id: QuarkId::new("w"), file: "w.txt", reply: "@orchestrator done" }),
+        ],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(SlowGreenLandingRunner(std::time::Duration::from_millis(400))));
+
+    let gates_dir = hadron_lattice::live::gates_dir(&field);
+    let seen_stage = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let poller = {
+        let gates_dir = gates_dir.clone();
+        let seen_stage = seen_stage.clone();
+        tokio::spawn(async move {
+            for _ in 0..100 {
+                let fresh = hadron_lattice::live::gates(&gates_dir, chrono::Utc::now());
+                if fresh.iter().any(|a| a.detail.contains("running test suite") || a.detail.contains("syncing")) {
+                    seen_stage.store(true, std::sync::atomic::Ordering::SeqCst);
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+    };
+
+    engine.run_until_quiesce().await.unwrap();
+    poller.await.unwrap();
+
+    assert!(
+        seen_stage.load(std::sync::atomic::Ordering::SeqCst),
+        "the gate never published stage details in its live heartbeat"
+    );
+}
+
 /// Red tests, like `RedTestRunner`, but slow — so a heartbeat is guaranteed to have
 /// actually published before the gate finishes and cleans up (see the comment on
 /// `SlowGreenLandingRunner`: without a delay the spawned heartbeat task may never

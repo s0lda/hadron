@@ -140,8 +140,8 @@ impl super::Engine {
     /// the republishing task on EVERY exit path of the body below, including the `?`
     /// early-returns and the error path — there is no explicit cleanup call to forget.
     pub(super) async fn merge_gate(&self, target: &QuarkId, t: &TurnTree) -> anyhow::Result<bool> {
-        let _heartbeat = self.start_gate_heartbeat(target, &t.wt.branch);
-        self.merge_gate_body(target, t).await
+        let heartbeat = self.start_gate_heartbeat(target, &t.wt.branch);
+        self.merge_gate_body(target, t, &heartbeat).await
     }
 
     /// The decision + effects the gate actually performs. See [`Engine::merge_gate`]
@@ -155,7 +155,12 @@ impl super::Engine {
     /// the quark, surfaced by `gatekeeper::pending_permission`, rendered by the chamber
     /// the human already has, answered by the same `PermissionGrant`. No second
     /// approval mechanism.
-    async fn merge_gate_body(&self, target: &QuarkId, t: &TurnTree) -> anyhow::Result<bool> {
+    async fn merge_gate_body(
+        &self,
+        target: &QuarkId,
+        t: &TurnTree,
+        heartbeat: &GateHeartbeat,
+    ) -> anyhow::Result<bool> {
         use hadron_gatekeeper::{BlockReason, BranchState, MergeVerdict};
         let Some(runner) = &self.merge else { return Ok(false) };
         let Some(root) = &self.repo_root else { return Ok(false) };
@@ -182,6 +187,7 @@ impl super::Engine {
         let state = if state.dirty {
             state
         } else {
+            heartbeat.set_stage(&format!("syncing branch onto {}", t.base));
             match runner.sync(&t.wt, &t.base) {
                 crate::merge::Synced::Conflicted(err) => {
                     // A conflict a machine must not resolve *unattended* — but the quark
@@ -265,6 +271,7 @@ impl super::Engine {
 
         // Tests run IN the quark's worktree, on the branch as it now stands — so we
         // never land untested commits, even on the re-asked second pass.
+        heartbeat.set_stage("running test suite");
         let (tests_passed, tail) = runner.tests(&t.wt).await?;
 
         match hadron_gatekeeper::merge_decision(tests_passed, approved, &state) {
@@ -300,6 +307,7 @@ impl super::Engine {
                 // live hot loop: many `Excited`, never a `Ground`). Reroute it to
                 // `Blocked` instead — a turn-completion, which answers the grant and
                 // closes the loop — exactly as every other merge refusal already does.
+                heartbeat.set_stage("checking AST conflicts");
                 let conflicts = forge_block_conflicts(&root, &t.wt.path, root);
                 if !conflicts.is_empty() {
                     let details = conflicts
@@ -319,6 +327,7 @@ impl super::Engine {
                     return Ok(true);
                 }
 
+                heartbeat.set_stage(&format!("landing branch onto {}", t.base));
                 let strategy = hadron_lattice::team_for_field(&self.field_path)
                     .map(|p| hadron_lattice::load_team(&p).merge_strategy())
                     .unwrap_or_default();
@@ -388,6 +397,7 @@ impl super::Engine {
                 // (a new assignment only moves it off at the next `ensure`), so `-d`
                 // will safely refuse to delete it and this pass sweeps everyone ELSE's
                 // already-landed, now-idle branches instead.
+                heartbeat.set_stage("pruning merged branches");
                 if let Err(e) = crate::worktree::prune_merged_branches(root, &t.base) {
                     term::warn(Source::Gluon, &format!("branch prune after land failed (non-fatal): {e:#}"));
                 }
@@ -463,16 +473,39 @@ impl super::Engine {
         let quark = target.clone();
         let branch = branch.to_string();
         let started = chrono::Utc::now();
+        let stage = Arc::new(std::sync::Mutex::new("evaluating branch".to_string()));
+
+        let initial_detail = format!("evaluating branch · {branch}");
+        let initial_activity = hadron_lattice::Activity::gating(quark.clone(), &initial_detail, started);
+        let _ = hadron_lattice::live::publish_gate(&dir, &branch, &initial_activity);
+
         let task_dir = dir.clone();
         let task_branch = branch.clone();
+        let task_quark = quark.clone();
+        let task_stage = stage.clone();
         let handle = tokio::spawn(async move {
             loop {
-                let activity = hadron_lattice::Activity::gating(quark.clone(), &task_branch, started);
-                let _ = hadron_lattice::live::publish_gate(&task_dir, &task_branch, &activity);
                 tokio::time::sleep(GATE_HEARTBEAT_INTERVAL).await;
+                let detail = {
+                    let s = task_stage.lock().unwrap();
+                    if s.is_empty() {
+                        task_branch.clone()
+                    } else {
+                        format!("{} · {}", *s, task_branch)
+                    }
+                };
+                let activity = hadron_lattice::Activity::gating(task_quark.clone(), &detail, started);
+                let _ = hadron_lattice::live::publish_gate(&task_dir, &task_branch, &activity);
             }
         });
-        GateHeartbeat { dir, branch, handle }
+        GateHeartbeat {
+            dir,
+            branch,
+            quark,
+            started,
+            stage,
+            handle,
+        }
     }
 }
 
@@ -488,7 +521,29 @@ const GATE_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_s
 struct GateHeartbeat {
     dir: std::path::PathBuf,
     branch: String,
+    quark: QuarkId,
+    started: chrono::DateTime<chrono::Utc>,
+    stage: Arc<std::sync::Mutex<String>>,
     handle: tokio::task::JoinHandle<()>,
+}
+
+impl GateHeartbeat {
+    pub fn set_stage(&self, stage_text: &str) {
+        if let Ok(mut g) = self.stage.lock() {
+            *g = stage_text.to_string();
+        }
+        let detail = if stage_text.is_empty() {
+            self.branch.clone()
+        } else {
+            format!("{stage_text} · {}", self.branch)
+        };
+        let activity = hadron_lattice::Activity::gating(
+            self.quark.clone(),
+            &detail,
+            self.started,
+        );
+        let _ = hadron_lattice::live::publish_gate(&self.dir, &self.branch, &activity);
+    }
 }
 
 impl Drop for GateHeartbeat {

@@ -263,6 +263,11 @@ impl super::Chamber {
                     live_activity_changed = true;
                 }
             }
+            let gluon_activity = hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new("gluon"), chrono::Utc::now());
+            if self.last_live_activities.get("gluon") != Some(&gluon_activity) {
+                self.last_live_activities.insert("gluon".to_string(), gluon_activity);
+                live_activity_changed = true;
+            }
             if live_activity_changed {
                 changed = true;
             }
