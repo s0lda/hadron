@@ -20,6 +20,20 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.3.0",
+        date: Some("2026-08-14"),
+        added: &[
+            "Hub-and-Spoke swarm routing with Orchestrator-exclusive dispatch and worker escalation",
+            "Git Workspace Initializer (`/git-init`) with one-click UI banner in empty workspaces",
+            "Autonomous mission and iterative execution slash commands (`/goal` and `/loop`)",
+            "Automatic Plan tab directory scanning across `.hadron/docs/plans/` and worktrees",
+        ],
+        changed: &[
+            "Posture-aware workflow skills tailored for uninterrupted autonomy in Bypass mode",
+        ],
+        fixed: &[],
+    },
+    Release {
         version: "0.2.9",
         date: Some("2026-08-13"),
         added: &[

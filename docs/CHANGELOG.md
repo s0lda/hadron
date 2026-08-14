@@ -5,6 +5,17 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-14
+
+### Added
+- **Hub-and-Spoke Swarm Routing & Orchestrator Dispatch**: Restricted swarm-level quark delegation (`@<quark>`) exclusively to the Orchestrator prompt, and directed worker Quarks to communicate exclusively with `@orchestrator` to prevent unmerged worktree collisions and runaway loops while permitting internal subagents.
+- **Git Workspace Initializer (`/git-init`)**: Added `/git-init` slash command and interactive "Git Workspace Required" banner with one-click repository initialization, automatic `.gitignore` seeding, and initial commit creation.
+- **Autonomous Mission & Iteration Commands (`/goal` & `/loop`)**: Added `/goal` slash command for objective-driven planning and `/loop` command for iterative autonomous cycles with mode-aware execution recommendations.
+- **Automatic Plan Tab Directory Scanning**: Enhanced Plan inspector tab to automatically scan and resolve the newest plan across `.hadron/docs/plans/`, `docs/plans/`, and worktrees.
+
+### Changed
+- **Posture-Aware Workflow Skills**: Refactored `brainstorming`, `subagent-driven-development`, and `finishing-a-development-branch` to support seamless autonomy in Bypass mode while maintaining interactive gates in Ask mode and aligning with the automated Gluon Merge Gate.
+
 ## [0.2.9] - 2026-08-13
 
 ### Added
