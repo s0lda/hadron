@@ -37,8 +37,7 @@ impl super::Chamber {
                     .pl(px(8.0))
                     .gap_2()
                     .child(menu_button(&cx.entity()))
-                    .children(self.update_pill(cx))
-                    .child(self.swarm_activity_pill(cx)),
+                    .children(self.update_pill(cx)),
             )
             .child(drag_region("drag-c"))
             .child(
@@ -257,77 +256,5 @@ impl super::Chamber {
                 .child(label)
                 .tooltip(move |window, cx| Tooltip::new(SharedString::from(tip.clone())).build(window, cx)),
         )
-    }
-
-    /// Minimalist swarm activity status indicator for the titlebar header.
-    pub(super) fn swarm_activity_pill(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        let live_dir = hadron_lattice::live::live_dir(&self.path);
-        let now = chrono::Utc::now();
-        let mut active_count = 0;
-        let mut active_name: Option<String> = None;
-
-        for r in &self.view.roster {
-            if r.adopted && r.enabled {
-                let has_live = hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), now).is_some();
-                let is_active = has_live || matches!(r.state, QuarkState::Excited | QuarkState::Thinking);
-                if is_active {
-                    active_count += 1;
-                    if active_name.is_none() {
-                        let id = self.resolve_identity(&r.id);
-                        active_name = Some(id.name);
-                    }
-                }
-            }
-        }
-
-        let (dot_color, label, border_col) = if active_count == 1 {
-            let name = active_name.unwrap_or_else(|| "Quark".to_string());
-            (
-                theme::halo_active(),
-                format!("Active · {}", name),
-                theme::halo_active().opacity(0.35),
-            )
-        } else if active_count > 1 {
-            (
-                theme::halo_active(),
-                format!("{} Quarks Active", active_count),
-                theme::halo_active().opacity(0.35),
-            )
-        } else {
-            (
-                theme::halo_idle(),
-                "Swarm Idle".to_string(),
-                theme::glass_highlight(),
-            )
-        };
-
-        div()
-            .id("swarm-activity-pill")
-            .flex()
-            .items_center()
-            .gap_1p5()
-            .px_2p5()
-            .py_0p5()
-            .rounded_full()
-            .bg(theme::bg_surface())
-            .border_1()
-            .border_color(border_col)
-            .child(
-                div()
-                    .size(px(6.0))
-                    .rounded_full()
-                    .bg(dot_color),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(if active_count > 0 {
-                        theme::text()
-                    } else {
-                        theme::text_muted()
-                    })
-                    .child(label),
-            )
     }
 }
