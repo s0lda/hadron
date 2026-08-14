@@ -78,8 +78,8 @@ impl super::Chamber {
             v_flex()
                 .w_full()
                 .overflow_hidden()
-                .gap_1p5()
-                .px_3()
+                .gap_1()
+                .px_2p5()
                 .py_2()
                 .mb_2()
                 .rounded_lg()
@@ -89,18 +89,32 @@ impl super::Chamber {
                 .children(active.into_iter().map(|cap| {
                     let identity = self.resolve_identity(&cap.quark_id);
                     let name = identity.name;
-                    let state_color = match cap.doing {
-                        hadron_lattice::live::Doing::Thinking => theme::halo_reasoning(),
-                        hadron_lattice::live::Doing::Working => theme::halo_active(),
-                        hadron_lattice::live::Doing::Planning => theme::halo_active(),
-                        hadron_lattice::live::Doing::Speaking => theme::halo_reasoning(),
-                        hadron_lattice::live::Doing::Gating => theme::halo_active(),
+                    let (state_color, action_icon, action_label) = match cap.doing {
+                        hadron_lattice::live::Doing::Thinking => {
+                            (theme::halo_reasoning(), IconName::Bot, "thinking")
+                        }
+                        hadron_lattice::live::Doing::Working => {
+                            (theme::halo_active(), IconName::SquareTerminal, "exec")
+                        }
+                        hadron_lattice::live::Doing::Planning => {
+                            (theme::halo_active(), IconName::Folder, "planning")
+                        }
+                        hadron_lattice::live::Doing::Speaking => {
+                            (theme::halo_reasoning(), IconName::Bot, "speaking")
+                        }
+                        hadron_lattice::live::Doing::Gating => {
+                            (theme::halo_active(), IconName::CircleCheck, "gating")
+                        }
                     };
 
                     h_flex()
                         .w_full()
                         .items_center()
                         .gap_2()
+                        .px_1p5()
+                        .py_1()
+                        .rounded_md()
+                        .hover(|s| s.bg(theme::glass_highlight()))
                         .child(
                             h_flex()
                                 .flex_none()
@@ -118,7 +132,31 @@ impl super::Chamber {
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_color(identity.color)
-                                        .child(format!("{}:", name)),
+                                        .child(name),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .flex_none()
+                                .items_center()
+                                .gap_1()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded_sm()
+                                .bg(theme::glass_card())
+                                .border_1()
+                                .border_color(theme::glass_highlight())
+                                .child(
+                                    Icon::new(action_icon)
+                                        .xsmall()
+                                        .text_color(state_color),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(state_color)
+                                        .child(action_label),
                                 ),
                         )
                         .child(
@@ -126,18 +164,28 @@ impl super::Chamber {
                                 .flex_1()
                                 .min_w_0()
                                 .text_xs()
-                                .text_color(theme::text_muted())
+                                .text_color(theme::text_secondary())
                                 .truncate()
                                 .child(cap.detail),
                         )
                         .when_some(cap.elapsed_secs, |el, secs| {
                             el.child(
-                                div()
+                                h_flex()
                                     .flex_none()
-                                    .text_xs()
-                                    .font_family(cx.theme().mono_font_family.clone())
-                                    .text_color(theme::text_muted())
-                                    .child(format!("{secs}s")),
+                                    .items_center()
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .bg(theme::bg_surface())
+                                    .border_1()
+                                    .border_color(theme::hairline_border())
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_family(cx.theme().mono_font_family.clone())
+                                            .text_color(theme::text_muted())
+                                            .child(format!("{secs}s")),
+                                    ),
                             )
                         })
                 }))
