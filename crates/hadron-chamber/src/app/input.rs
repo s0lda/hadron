@@ -725,6 +725,7 @@ mod tests {
             "push",
             "pr",
             "release",
+            "absorb",
             "review",
             "replay",
             "fork-field",

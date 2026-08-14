@@ -193,6 +193,14 @@ fn the_phrasings_a_human_actually_types_all_land() {
             "missed: {task:?}"
         );
     }
+
+    for task in ["absorb memories from .agents", "migrate assistant configs", "import skills from claude", "absorb", "Let's absorb: scan all folders"] {
+        assert_eq!(
+            select(task, &skills).map(|m| m.id),
+            Some("absorb".to_string()),
+            "missed: {task:?}"
+        );
+    }
 }
 
 #[test]

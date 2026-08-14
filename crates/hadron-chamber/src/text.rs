@@ -127,6 +127,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "verification-before-completion", detail: "Run verification commands before claiming work is complete", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "writing-skills", detail: "Create, edit, or verify custom skill procedures", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "release", detail: "Execute project release procedure in .hadron/nucleus/release.md", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "absorb", detail: "Absorb foreign assistant skills, memories, lessons, rules, and plans into .hadron/", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "review", detail: "Request peer review on active branch before merge gate", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "replay", detail: "Step backwards through historical field events", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "fork-field", detail: "Fork a new session from a historical event ID", arity: Arity::Line, arg: ArgSource::None, listed: true },

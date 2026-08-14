@@ -19,3 +19,4 @@ These are your built-in procedures. The engine hands you a starting one below; i
 - **verification-before-completion** — Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always
 - **writing-skills** — Use when creating new skills, editing existing skills, or verifying skills work before deployment
 - **release** — Execute project release procedure (updating CHANGELOG, bumping version, merging main, tagging, and pushing)
+- **absorb** — Use when migrating or absorbing foreign assistant configurations, skills, memories, lessons, rules, or plans from other AI tools into .hadron/
