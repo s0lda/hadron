@@ -19,12 +19,14 @@ pub mod conflict_resolve;
 pub mod tia;
 pub mod screenshot;
 pub mod pty;
+pub mod mock;
 
 pub use ast_merge::*;
 pub use conflict_resolve::*;
 pub use tia::*;
 pub use screenshot::*;
 pub use pty::*;
+pub use mock::*;
 
 
 
