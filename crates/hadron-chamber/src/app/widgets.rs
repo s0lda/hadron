@@ -366,6 +366,7 @@ pub(super) fn active_quarks_rich(
         .collect()
 }
 
+#[allow(dead_code)]
 pub(super) fn active_quarks(
     roster: &[RosterRow],
     live: impl Fn(&str) -> Option<hadron_lattice::live::Activity>,

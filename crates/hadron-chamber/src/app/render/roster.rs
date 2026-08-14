@@ -263,10 +263,14 @@ impl super::Chamber {
             }))
             .hover(|s| {
                 s.bg(theme::bg_surface_raised())
-                    .border_color(theme::glass_highlight())
+                    .border_color(if is_selected {
+                        identity.color.opacity(0.6)
+                    } else {
+                        theme::glass_highlight()
+                    })
             })
             .border_color(if is_selected {
-                identity.color
+                identity.color.opacity(0.45)
             } else {
                 theme::glass_highlight()
             })

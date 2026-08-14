@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastKind {
     Info,
@@ -74,6 +75,7 @@ impl ToastManager {
         self.toasts.is_empty()
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.toasts.len()
     }

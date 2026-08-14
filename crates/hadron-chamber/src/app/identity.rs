@@ -103,7 +103,7 @@ pub(super) fn identity_avatar_with_state(
         (1.0, theme::presence_disabled().into())
     } else if let Some(st) = state {
         if is_active {
-            (2.0, theme::halo_dot(st))
+            (1.0, theme::halo_dot(st))
         } else {
             (1.0, id.color.opacity(0.35))
         }

@@ -185,6 +185,7 @@ impl AccentChoice {
         }
     }
 
+    #[allow(dead_code)]
     pub fn id(self) -> &'static str {
         match self {
             AccentChoice::Amethyst => "amethyst",
