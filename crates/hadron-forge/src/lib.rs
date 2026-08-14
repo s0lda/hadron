@@ -12,9 +12,11 @@ pub mod inspect;
 pub mod lang;
 pub mod nucleus;
 pub mod ast_merge;
+pub mod conflict_resolve;
 pub mod tia;
 
 pub use ast_merge::*;
+pub use conflict_resolve::*;
 pub use tia::*;
 
 

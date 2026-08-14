@@ -20,6 +20,7 @@ use crate::quark::Quark;
 pub(crate) mod nucleus;
 pub mod review;
 pub mod cross_exam;
+pub mod dag;
 mod routing;
 mod turn;
 mod merge;

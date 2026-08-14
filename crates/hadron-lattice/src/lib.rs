@@ -26,7 +26,11 @@ pub use workspace::*;
 
 pub mod sys;
 pub mod nucleus;
+pub mod nucleus_lint;
+pub mod field_channel;
 pub mod semantic;
 
 pub use nucleus::*;
+pub use nucleus_lint::*;
+pub use field_channel::*;
 pub use semantic::*;
