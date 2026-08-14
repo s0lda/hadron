@@ -85,6 +85,30 @@ impl super::Chamber {
     }
 
 
+    /// Handle Escape key (or Dismiss action) while the terminal is focused.
+    /// Sends `0x1b` (ASCII ESC) to the active PTY unless a modal/overlay is open,
+    /// and stops action propagation so focus is not stolen away to the chat prompt.
+    pub(super) fn on_terminal_escape(&mut self, cx: &mut Context<Self>) {
+        if self.settings_open
+            || self.info_panel.is_some()
+            || self.about_open
+            || self.changelog_open
+            || self.app_menu_open
+            || self.process_manager_open
+            || self.file_tree_open.is_some()
+        {
+            return;
+        }
+        let active_ix = self.active_terminal_index;
+        if let Some(term) = self.terminals.get_mut(active_ix).and_then(|tab| tab.term.as_mut()) {
+            term.selection_clear();
+            term.scroll_to_bottom();
+            term.send_input(&[0x1b]);
+            cx.notify();
+        }
+        cx.stop_propagation();
+    }
+
     /// Translate a keystroke into the bytes a TTY expects and stream them to the
     /// child. Covers the printable range, the essential control keys, Ctrl+letter
     /// control codes, and the arrow/nav escape sequences. (Function keys, mouse

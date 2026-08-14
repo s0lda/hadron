@@ -235,6 +235,9 @@ impl super::Chamber {
                     .border_1()
                     .border_color(theme::glass_highlight())
                     .bg(theme::term_bg())
+                    .on_action(cx.listener(|this, _: &Dismiss, _window, cx| {
+                        this.on_terminal_escape(cx);
+                    }))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, ev: &gpui::MouseDownEvent, window, cx| {

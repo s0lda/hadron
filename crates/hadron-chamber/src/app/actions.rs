@@ -1447,6 +1447,9 @@ impl Chamber {
             cx.notify();
             return;
         }
+        if self.terminal_focus.is_focused(window) {
+            return;
+        }
         window.focus(&self.input.focus_handle(cx), cx);
         cx.notify();
     }
@@ -2097,5 +2100,12 @@ mod tests {
         // fine (it degenerates to the same splice-from-0 a resync would do).
         let grown = [row_at(1, "Human")];
         assert!(is_pure_append(None, 0, &grown));
+    }
+
+    #[test]
+    fn dismiss_does_not_steal_focus_from_active_terminal() {
+        // Verify toggle_focus_target properly targets Terminal when on Terminal tab
+        let (target, _) = toggle_focus_target(RightRailTab::Terminal);
+        assert_eq!(target, FocusTarget::Terminal);
     }
 }
