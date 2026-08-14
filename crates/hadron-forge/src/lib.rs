@@ -17,10 +17,12 @@ pub mod lsp;
 pub mod ast_merge;
 pub mod conflict_resolve;
 pub mod tia;
+pub mod screenshot;
 
 pub use ast_merge::*;
 pub use conflict_resolve::*;
 pub use tia::*;
+pub use screenshot::*;
 
 
 
