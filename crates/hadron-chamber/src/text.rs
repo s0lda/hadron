@@ -58,6 +58,8 @@ pub enum ArgSource {
     /// Argument completes from project files (`@file`) — `/add-skill`'s
     /// `@path/to/file.md` form.
     File,
+    /// Argument completes from theme presets.
+    Theme,
 }
 
 /// One chat `/command`.
@@ -164,7 +166,9 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "gate-cancel", detail: "Force cancel a hung merge-gate run by killing its process group", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "revert", detail: "Revert the last landed commit on main via git revert", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "unabandon", detail: "Restore an archived branch from its archive tag", arity: Arity::Line, arg: ArgSource::None, listed: true },
-    Command { name: "theme", detail: "Switch color theme preset (e.g. /theme oled, /theme tokyo, /theme obsidian, /theme midnight)", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "theme", detail: "Switch color theme preset (e.g. /theme oled, /theme tokyo, /theme obsidian, /theme midnight)", arity: Arity::Line, arg: ArgSource::Theme, listed: true },
+    Command { name: "stats", detail: "Switch to telemetry and token spend statistics tab", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "team", detail: "Display active swarm roster, models, and seats", arity: Arity::None, arg: ArgSource::None, listed: true },
 ];
 
 /// A short kebab-case id for a lesson line: the first few words, lowercased,
@@ -1499,6 +1503,23 @@ pub fn completion_candidates(
                 }
             }
         }
+        CompletionTrigger::Arg(ArgSource::Theme) => {
+            let presets = [
+                ("obsidian", "Obsidian Neutral (Default dark obsidian palette)"),
+                ("oled", "OLED True Black (Pure black contrast)"),
+                ("midnight", "Midnight Slate (Subtle cool slate)"),
+                ("tokyo", "Tokyo Dark (Deep indigo-tinted dark)"),
+            ];
+            for (name, detail) in presets {
+                if query_lower.is_empty() || name.contains(&query_lower) {
+                    out.push(Candidate {
+                        label: name.to_string(),
+                        detail: detail.into(),
+                        new_text: format!("{name} "),
+                    });
+                }
+            }
+        }
         CompletionTrigger::Arg(ArgSource::None) => {}
     }
 
@@ -2633,6 +2654,32 @@ mod tests {
         assert_eq!(flatten_to_single_line("### Section"), "Section");
         assert_eq!(flatten_to_single_line("#####"), "#####");
         assert_eq!(flatten_to_single_line(""), "");
+    }
+
+    #[test]
+    fn theme_completion_yields_presets() {
+        let comp = completion_candidates("/theme ", 7, &[], &[], &[]).expect("theme candidates");
+        let labels: Vec<String> = comp.candidates.iter().map(|c| c.label.clone()).collect();
+        assert!(labels.contains(&"obsidian".to_string()));
+        assert!(labels.contains(&"oled".to_string()));
+        assert!(labels.contains(&"midnight".to_string()));
+        assert!(labels.contains(&"tokyo".to_string()));
+
+        let comp_oled = completion_candidates("/theme ol", 9, &[], &[], &[]).expect("filtered candidates");
+        assert_eq!(comp_oled.candidates.len(), 1);
+        assert_eq!(comp_oled.candidates[0].label, "oled");
+        assert_eq!(comp_oled.candidates[0].new_text, "oled ");
+    }
+
+    #[test]
+    fn stats_and_team_commands_listed_in_commands_table() {
+        assert!(command("stats").is_some());
+        assert!(command("team").is_some());
+        assert!(command("theme").is_some());
+        assert!(command("abandon").is_some());
+        assert!(command("clear").is_some());
+        assert!(command("resume").is_some());
+        assert!(command("diff").is_some());
     }
 }
 

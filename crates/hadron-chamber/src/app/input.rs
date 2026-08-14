@@ -61,6 +61,12 @@ impl super::Chamber {
             return;
         }
 
+        if self.prompt_history.last().map(|s| s.as_str()) != Some(&full) {
+            self.prompt_history.push(full.clone());
+        }
+        self.history_index = None;
+        self.history_draft.clear();
+
         // A line may begin with chained UI commands, then a normal message, e.g.
         // "/toggle-roster /clear ping the team". `split_leading_commands` peels the
         // leading `/command` tokens; the returned body is the untouched remainder, so a
@@ -194,17 +200,83 @@ impl super::Chamber {
         });
     }
 
-    /// Move the card's highlight by `delta`, clamped to the list. No-op with no card.
+    /// Move the card's highlight by `delta`, cycling/wrapping around the list. No-op with no card.
     pub(super) fn move_completion_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
         if let Some(card) = &mut self.completion {
             let len = card.candidates.len();
             if len == 0 {
                 return;
             }
-            let max = len as isize - 1;
-            card.selected = (card.selected as isize + delta).clamp(0, max) as usize;
+            let next = card.selected as isize + delta;
+            card.selected = if next < 0 {
+                len - 1
+            } else if next >= len as isize {
+                0
+            } else {
+                next as usize
+            };
             self.completion_scroll.scroll_to_item(card.selected);
             cx.notify();
+        }
+    }
+
+    /// Navigate prompt submission history using Up/Down arrows when cursor is at the prompt boundary.
+    pub(super) fn navigate_prompt_history(
+        &mut self,
+        delta: isize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.prompt_history.is_empty() {
+            return false;
+        }
+        let n = self.prompt_history.len();
+        if delta < 0 {
+            let next_idx = match self.history_index {
+                None => {
+                    self.history_draft = self.input.read(cx).value().to_string();
+                    n.saturating_sub(1)
+                }
+                Some(idx) => idx.saturating_sub(1),
+            };
+            self.history_index = Some(next_idx);
+            let text = self.prompt_history[next_idx].clone();
+            let len = text.len();
+            self.input.update(cx, |state, cx| {
+                state.set_value(&text, window, cx);
+                state.set_selected_range(len..len, cx);
+            });
+            cx.notify();
+            true
+        } else if delta > 0 {
+            if let Some(idx) = self.history_index {
+                if idx + 1 < n {
+                    let next_idx = idx + 1;
+                    self.history_index = Some(next_idx);
+                    let text = self.prompt_history[next_idx].clone();
+                    let len = text.len();
+                    self.input.update(cx, |state, cx| {
+                        state.set_value(&text, window, cx);
+                        state.set_selected_range(len..len, cx);
+                    });
+                    cx.notify();
+                    true
+                } else {
+                    self.history_index = None;
+                    let text = std::mem::take(&mut self.history_draft);
+                    let len = text.len();
+                    self.input.update(cx, |state, cx| {
+                        state.set_value(&text, window, cx);
+                        state.set_selected_range(len..len, cx);
+                    });
+                    cx.notify();
+                    true
+                }
+            } else {
+                false
+            }
+        } else {
+            false
         }
     }
 
@@ -645,6 +717,8 @@ mod tests {
             "revert",
             "unabandon",
             "theme",
+            "stats",
+            "team",
             "git-init",
             "git-status",
             "git-log",
@@ -707,6 +781,76 @@ mod tests {
         let (cmds2, body2) = split_leading_commands("@Sonnet /writing-plans fix the bug");
         assert_eq!(cmds2, vec![("writing-plans".to_string(), "@Sonnet fix the bug".to_string())]);
         assert_eq!(body2, None);
+    }
+
+    #[test]
+    fn test_prompt_history_navigation_logic() {
+        let history = vec![
+            "cargo check".to_string(),
+            "/stats".to_string(),
+            "implement new feature".to_string(),
+        ];
+        let n = history.len();
+        let mut history_index: Option<usize> = None;
+        let mut draft = "in-progress draft".to_string();
+
+        // 1. Move Up from draft: saves draft, sets index to n - 1 (2)
+        let idx = match history_index {
+            None => n.saturating_sub(1),
+            Some(i) => i.saturating_sub(1),
+        };
+        history_index = Some(idx);
+        assert_eq!(history_index, Some(2));
+        assert_eq!(history[idx], "implement new feature");
+
+        // 2. Move Up again: index 2 -> 1
+        let idx = match history_index {
+            None => n.saturating_sub(1),
+            Some(i) => i.saturating_sub(1),
+        };
+        history_index = Some(idx);
+        assert_eq!(history_index, Some(1));
+        assert_eq!(history[idx], "/stats");
+
+        // 3. Move Up again: index 1 -> 0
+        let idx = match history_index {
+            None => n.saturating_sub(1),
+            Some(i) => i.saturating_sub(1),
+        };
+        history_index = Some(idx);
+        assert_eq!(history_index, Some(0));
+        assert_eq!(history[idx], "cargo check");
+
+        // 4. Move Down: index 0 -> 1
+        if let Some(i) = history_index {
+            if i + 1 < n {
+                history_index = Some(i + 1);
+            }
+        }
+        assert_eq!(history_index, Some(1));
+        assert_eq!(history[history_index.unwrap()], "/stats");
+
+        // 5. Move Down: index 1 -> 2
+        if let Some(i) = history_index {
+            if i + 1 < n {
+                history_index = Some(i + 1);
+            }
+        }
+        assert_eq!(history_index, Some(2));
+        assert_eq!(history[history_index.unwrap()], "implement new feature");
+
+        // 6. Move Down past newest: restores draft, history_index becomes None
+        let mut restored = String::new();
+        if let Some(i) = history_index {
+            if i + 1 < n {
+                history_index = Some(i + 1);
+            } else {
+                history_index = None;
+                restored = std::mem::take(&mut draft);
+            }
+        }
+        assert_eq!(history_index, None);
+        assert_eq!(restored, "in-progress draft");
     }
 }
 

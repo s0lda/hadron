@@ -814,6 +814,17 @@ impl Chamber {
                 }
                 true
             }
+            "stats" => {
+                self.chat_tab = ChatTab::Stats;
+                cx.notify();
+                true
+            }
+            "team" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let body = crate::text::whoami_body(&self.view.roster, &repo_root, &self.path);
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
             "nucleus" => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
                 // The ONE resolver. `/nucleus` must report the same number the prompt
@@ -1395,6 +1406,48 @@ impl Chamber {
             FocusTarget::Terminal => window.focus(&self.terminal_focus, cx),
             FocusTarget::Chat => window.focus(&self.input.focus_handle(cx), cx),
         }
+        cx.notify();
+    }
+
+    /// Focus the chat input prompt from anywhere in the application (Cmd+L / Ctrl+L).
+    /// Switches to the Chat tab if currently on Log or Stats.
+    pub(super) fn focus_chat_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.chat_tab != ChatTab::Chat {
+            self.chat_tab = ChatTab::Chat;
+        }
+        window.focus(&self.input.focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    /// Global keyboard dismiss (Escape): drops active completions, closes open modals
+    /// and overlays, closes file previews, or restores focus to the main chat input.
+    pub(super) fn handle_escape_dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.completion.take().is_some() {
+            cx.notify();
+            return;
+        }
+        if self.settings_open
+            || self.info_panel.is_some()
+            || self.about_open
+            || self.changelog_open
+            || self.app_menu_open
+            || self.process_manager_open
+        {
+            self.settings_open = false;
+            self.info_panel = None;
+            self.about_open = false;
+            self.changelog_open = false;
+            self.app_menu_open = false;
+            self.process_manager_open = false;
+            cx.notify();
+            return;
+        }
+        if self.file_tree_open.take().is_some() {
+            self.parsed_markdown.borrow_mut().remove(&usize::MAX);
+            cx.notify();
+            return;
+        }
+        window.focus(&self.input.focus_handle(cx), cx);
         cx.notify();
     }
 

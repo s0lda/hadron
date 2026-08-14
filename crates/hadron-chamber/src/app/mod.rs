@@ -117,6 +117,8 @@ actions!(
         ToggleSelectedQuark,
         OpenMenu,
         ToggleFocus,
+        FocusChat,
+        Dismiss,
         ToggleProcessManager,
         NewTerminalTab,
         CloseTerminalTab,
@@ -197,6 +199,12 @@ struct Chamber {
     secret_store: Box<dyn hadron_lattice::secrets::SecretStore>,
     /// The human's message box at the foot of the chat column.
     input: Entity<InputState>,
+    /// The prompt history list for Up/Down arrow recall in the chat prompt.
+    pub(super) prompt_history: Vec<String>,
+    /// Active position in `prompt_history` when navigating with Up/Down arrows.
+    pub(super) history_index: Option<usize>,
+    /// In-progress prompt text saved when history navigation begins.
+    pub(super) history_draft: String,
     /// The completion card floating above the message box, or `None` when no
     /// `@`/`:`/`/` query is live. Our own overlay, not the fork's LSP menu.
     completion: Option<CompletionCard>,
@@ -978,6 +986,17 @@ impl Chamber {
         let sessions_dir = path.parent().map(|p| p.join("sessions")).unwrap_or_default();
         let archived_messages = crate::model::load_archived_messages(&sessions_dir);
         let sessions = crate::model::list_sessions(&sessions_dir);
+        let prompt_history: Vec<String> = view
+            .messages
+            .iter()
+            .filter_map(|m| {
+                if m.is_chat() && m.from.eq_ignore_ascii_case("human") {
+                    Some(m.body.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         let mut chamber = Chamber {
             view,
@@ -987,6 +1006,9 @@ impl Chamber {
             path,
             secret_store,
             input,
+            prompt_history,
+            history_index: None,
+            history_draft: String::new(),
             completion: None,
             focus_handle,
             chat_tab: ChatTab::Chat,
@@ -1241,6 +1263,11 @@ fn default_key_bindings() -> Vec<KeyBinding> {
         // Global so it fires from either side.
         KeyBinding::new("ctrl-tab", ToggleFocus, None),
         KeyBinding::new("ctrl-`", ToggleFocus, None),
+        // Global chat prompt focus hotkey (Cmd+L / Ctrl+L) to focus chat from anywhere.
+        KeyBinding::new("cmd-l", FocusChat, None),
+        KeyBinding::new("ctrl-l", FocusChat, None),
+        // Global keyboard dismiss (Escape) to drop completions, modals, overlays, or return focus.
+        KeyBinding::new("escape", Dismiss, None),
     ]
 }
 
@@ -1730,5 +1757,20 @@ mod tests {
                 );
             }
         });
+    }
+
+    #[test]
+    fn default_key_bindings_include_global_focus_and_dismiss_chords() {
+        let bindings: Vec<String> = default_key_bindings()
+            .iter()
+            .map(|b| format!("{:?}", b))
+            .collect();
+        // Global Focus Hotkey: Cmd+L / Ctrl+L -> FocusChat
+        assert!(bindings.iter().any(|b| b.contains("FocusChat") && b.contains(r#"key: "l""#)));
+        // Global Keyboard Dismiss: Escape -> Dismiss
+        assert!(bindings.iter().any(|b| b.contains("Dismiss") && b.contains(r#"key: "escape""#)));
+        // Focus Toggle: Ctrl+Tab and Ctrl+` -> ToggleFocus
+        assert!(bindings.iter().any(|b| b.contains("ToggleFocus") && b.contains(r#"key: "tab""#)));
+        assert!(bindings.iter().any(|b| b.contains("ToggleFocus") && b.contains(r#"key: "`""#)));
     }
 }

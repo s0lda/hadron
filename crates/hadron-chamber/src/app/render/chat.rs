@@ -301,21 +301,43 @@ impl super::Chamber {
                     // while a card is open — move the highlight / close it instead of
                     // moving the caret. Gated on `is_some()` so normal cursor movement
                     // is untouched when there is no card (advisor's trap #1).
-                    .capture_action(cx.listener(|this, _: &MoveDown, _window, cx| {
+                    .capture_action(cx.listener(|this, _: &MoveDown, window, cx| {
                         if this.completion.is_some() {
                             this.move_completion_selection(1, cx);
                             cx.stop_propagation();
+                        } else if this.history_index.is_some() {
+                            let state = this.input.read(cx);
+                            let text = state.value().to_string();
+                            let cursor = state.cursor().min(text.len());
+                            let on_last_line = !text[cursor..].contains('\n');
+                            if on_last_line && this.navigate_prompt_history(1, window, cx) {
+                                cx.stop_propagation();
+                            }
                         }
                     }))
-                    .capture_action(cx.listener(|this, _: &MoveUp, _window, cx| {
+                    .capture_action(cx.listener(|this, _: &MoveUp, window, cx| {
                         if this.completion.is_some() {
                             this.move_completion_selection(-1, cx);
                             cx.stop_propagation();
+                        } else {
+                            let state = this.input.read(cx);
+                            let text = state.value().to_string();
+                            let cursor = state.cursor().min(text.len());
+                            let on_line_0 = !text[..cursor].contains('\n');
+                            if on_line_0 && this.navigate_prompt_history(-1, window, cx) {
+                                cx.stop_propagation();
+                            }
                         }
                     }))
                     .capture_action(cx.listener(|this, _: &Escape, _window, cx| {
                         if this.completion.take().is_some() {
                             cx.notify();
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                        if (event.keystroke.key == "tab" || event.keystroke.key == "Tab") && this.completion.is_some() {
+                            this.accept_completion(window, cx);
                             cx.stop_propagation();
                         }
                     }))
@@ -1382,25 +1404,36 @@ mod milestone_3_tests {
     }
 
     #[test]
-    fn test_completion_overlay_selection_bounds_clamping() {
-        // Test selection index clamping logic used by move_completion_selection
+    fn test_completion_overlay_selection_bounds_cycling() {
+        // Test selection index circular wrap-around logic used by move_completion_selection
         let candidates_count = 3;
-        let max = candidates_count as isize - 1;
+        let cycle = |cur: usize, delta: isize| -> usize {
+            let next = cur as isize + delta;
+            if next < 0 {
+                candidates_count - 1
+            } else if next >= candidates_count as isize {
+                0
+            } else {
+                next as usize
+            }
+        };
 
-        let mut selected: isize = 0;
-        // Move up from 0 -> stays 0
-        selected = (selected - 1).clamp(0, max);
-        assert_eq!(selected, 0);
+        let mut selected = 0;
+        // Move up from 0 -> wraps around to last index (2)
+        selected = cycle(selected, -1);
+        assert_eq!(selected, 2);
 
-        // Move down twice: 0 -> 1 -> 2
-        selected = (selected + 1).clamp(0, max);
+        // Move up again -> 1
+        selected = cycle(selected, -1);
         assert_eq!(selected, 1);
-        selected = (selected + 1).clamp(0, max);
+
+        // Move down: 1 -> 2
+        selected = cycle(selected, 1);
         assert_eq!(selected, 2);
 
-        // Move down past end -> clamps at max (2)
-        selected = (selected + 1).clamp(0, max);
-        assert_eq!(selected, 2);
+        // Move down past end from 2 -> wraps around to 0
+        selected = cycle(selected, 1);
+        assert_eq!(selected, 0);
     }
 }
 
