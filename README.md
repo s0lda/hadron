@@ -22,7 +22,7 @@
 
 ## ⚡ What is Hadron?
 
-**Hadron** is a native, GPU-accelerated desktop workspace built in Rust for **orchestrated multi-provider LLM chat**. It brings models from **Anthropic (Claude)**, **Google Antigravity**, **OpenAI**, **Ollama**, **OpenRouter**, and custom **coding CLIs** into a unified room where agents collaborate, exchange context, and delegate tasks using `@mentions`.
+**Hadron** is a native, GPU-accelerated desktop workspace built in Rust for **orchestrated multi-provider LLM swarms**. It brings models from **Anthropic (Claude)**, **Google Antigravity**, **OpenAI**, **Ollama**, **OpenRouter**, and custom **coding CLIs** into a unified room where agents collaborate, exchange context, and delegate tasks using `@mentions`.
 
 Behind the interface, agents (called **Quarks**) execute concurrently over a zero-CPU filesystem event bus (`field.jsonl`), work safely in isolated git worktrees, and submit code changes through an automated **Merge Gate** that runs tests before landing anything on `main`.
 
@@ -33,8 +33,9 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 - 💬 **Collaborative Multi-LLM Chat**: Mix models in a single thread — `@claude`, `@ollama`, `@agy`, and `@openai` see each other's output, share context, and execute parallel sub-tasks via Hub-and-Spoke orchestration.
 - 🛡️ **Git Worktrees & Automated Merge Gate**: Agents work in isolated git worktree branches. The Merge Gate automatically rebases onto `main` and runs your test suite before clean code lands.
 - ⚡ **Native GPUI Desktop App**: Lightning-fast GPU-accelerated UI with multi-tab PTY terminals, interactive git commit graph, live plan tracking, and real-time per-agent token telemetry.
-- 🛠️ **Hadron Forge (Edit-by-Hash)**: AST-level precision code edits across 14+ languages (`Rust`, `Python`, `TypeScript`/`JS`, `Go`, `C`/`C++`, `Java`, `C#`, `Ruby`, `PHP`, `HTML`/`CSS`, `SQL`, and text fallback) using `blake3` cryptographic hashes for zero-drift mutations.
-- 🎯 **Autonomous Swarm Control**: Built-in slash commands (`/goal`, `/loop`, `/git-init`, `/resume`, `/clear`) and 15 bundled workflow skills (TDD, systematic debugging, design specs).
+- 🛠️ **Hadron Forge & Developer Power Tools**: AST-level precision code edits across 14+ languages using `blake3` hashes, background process supervisor, 3-tier polyglot code intelligence/LSP, headless browser testing, jailed screenshot capture, interactive PTY sessions, loopback mock servers, and local SQLite engine.
+- 🧠 **Persistent Nucleus Memory & Universal Absorption**: Cross-session shared memory within a configurable budget (16/32/64/128 KiB), plus `/absorb` to seamlessly import memories, invariants, skills, and plans from `.agents/`, `.claude/`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`.
+- 🎯 **Autonomous Swarm Control**: Built-in slash commands (`/goal`, `/loop`, `/absorb`, `/release`, `/git-init`, `/resume`, `/clear`) and 17 bundled workflow skills (TDD, systematic debugging, design specs).
 
 ---
 
@@ -69,9 +70,10 @@ Explore Hadron's mechanics, architecture, and developer guides in the [`/docs`](
 | Section | Description | Links |
 | :--- | :--- | :--- |
 | 📜 **Changelog** | Release history & version notes | [`Changelog`](docs/CHANGELOG.md) |
+| 🕹️ **Commands** | Full interactive chat commands reference | [`Commands Reference`](docs/commands.md) |
 | 🏛️ **Architecture** | 2-Tier Daemon/GUI split & Swarm Event Loop | [`Decoupled Architecture`](docs/architecture/decoupled-architecture.md) · [`System Diagrams`](docs/architecture/system-diagrams.md) |
 | ⚛️ **Concepts & Physics** | Particle Physics Mental Model & Glossary | [`Physics Metaphor`](docs/concepts/physics-metaphor.md) · [`Vocabulary`](docs/concepts/vocabulary.md) |
-| 🛠️ **Hadron Forge** | AST Edit-by-Hash Engine & MCP Server | [`Edit-by-Hash Engine`](docs/forge/edit-by-hash.md) |
+| 🛠️ **Hadron Forge** | AST Edit-by-Hash & Developer Power Tools | [`Edit-by-Hash Engine`](docs/forge/edit-by-hash.md) · [`Power Tools Suite`](docs/forge/power-tools.md) |
 | 🌿 **Development** | Building from Source & Git Worktrees | [`Building from Source`](docs/development/building-from-source.md) · [`Git Worktrees`](docs/development/git-worktree-usage.md) |
 
 ---
@@ -111,3 +113,4 @@ Hadron connects an expanding ecosystem of AI agents, local models, cloud APIs, a
 - **Security**: [SECURITY.md](.github/SECURITY.md)
 - **Code of Conduct**: [CODE_OF_CONDUCT.md](.github/CODE_OF_CONDUCT.md)
 - **Glossary**: [Physics Metaphor & Vocabulary](docs/concepts/vocabulary.md)
+- **Commands**: [Chat Commands Reference](docs/commands.md)

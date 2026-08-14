@@ -379,7 +379,7 @@ impl Chamber {
                 let target = args.trim();
                 let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) else {
                     eprintln!(
-                        "chamber: `/toggle` needs a quark (e.g. `/toggle @Sonnet`); no roster seat matches {target:?}"
+                        "chamber: `/toggle` needs a quark (e.g. `/toggle @Quark`); no roster seat matches {target:?}"
                     );
                     return true;
                 };
@@ -488,7 +488,7 @@ impl Chamber {
             "reboot" => {
                 let target = args.trim().trim_start_matches('@');
                 if target.is_empty() {
-                    eprintln!("chamber: `/reboot` requires a target (e.g. `/reboot @acp-claude` or `/reboot all`)_");
+                    eprintln!("chamber: `/reboot` requires a target (e.g. `/reboot @Quark` or `/reboot all`)");
                     return true;
                 }
                 
@@ -544,8 +544,8 @@ impl Chamber {
                 let confirm = rest.trim().eq_ignore_ascii_case("confirm");
                 let Some(target) = target else {
                     eprintln!(
-                        "chamber: `/abandon` needs a quark (e.g. `/abandon @acp-claude`, then \
-                         `/abandon @acp-claude confirm` to force)"
+                        "chamber: `/abandon` needs a quark (e.g. `/abandon @Quark`, then \
+                         `/abandon @Quark confirm` to force)"
                     );
                     return true;
                 };
@@ -1163,7 +1163,7 @@ impl Chamber {
             "stop" => {
                 let target = args.trim().trim_start_matches('@');
                 if target.is_empty() {
-                    eprintln!("chamber: `/stop` requires a target (e.g. `/stop @acp-claude`)");
+                    eprintln!("chamber: `/stop` requires a target (e.g. `/stop @Quark`)");
                     return true;
                 }
                 if let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) {
@@ -1185,7 +1185,7 @@ impl Chamber {
             "kill" => {
                 let target = args.trim().trim_start_matches('@');
                 if target.is_empty() {
-                    eprintln!("chamber: `/kill` requires a target (e.g. `/kill @acp-claude`)");
+                    eprintln!("chamber: `/kill` requires a target (e.g. `/kill @Quark`)");
                     return true;
                 }
                 if let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) {

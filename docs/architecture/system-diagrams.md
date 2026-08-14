@@ -26,8 +26,8 @@ hadron/
 - **`hadron-lattice`**: The foundational protocol crate containing shared data structures, event models, NDJSON wire protocols, and Edit-by-Hash schemas.
 - **`hadron-gluon`**: The background daemon engine that manages process execution, git worktrees, turn routing, skills injection, and event bus watching. Its entrypoint is `hadron_gluon::cli::run`.
 - **`hadron-chamber`**: The primary workspace crate (`package hadron`) containing the GPUI desktop interface, PTY terminal components, telemetry graphs, and binary target entrypoints (`hadron`, `hadron-gluon`, `hadron-forge-mcp`).
-- **`hadron-forge`**: The AST parser and hash-indexing engine. It parses source files into AST item blocks and computes `blake3` hashes for precise edits.
-- **`hadron-forge-mcp`**: The stdio Model Context Protocol (MCP) server that exposes Hadron Forge tools to ACP agents. Its entrypoint is `hadron_forge_mcp::run`.
+- **`hadron-forge`**: The AST parser, hash-indexing, and developer power tools engine. It manages AST item block hashing, background process supervision, 3-tier polyglot code intelligence/LSP, browser bridges, jailed screenshots, PTY allocation, loopback mock servers, and local SQLite query engines.
+- **`hadron-forge-mcp`**: The stdio Model Context Protocol (MCP) server that exposes Hadron Forge editing and developer tools to ACP agents. Its entrypoint is `hadron_forge_mcp::run`.
 - **`hadron-gatekeeper`**: Security policy enforcement engine that manages global permission states (Ask / Write / Auto / Bypass) and path sandbox limits.
 
 ---
