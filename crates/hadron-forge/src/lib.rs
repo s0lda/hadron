@@ -28,6 +28,7 @@ pub mod spec_compiler;
 pub mod e2e;
 pub mod preview;
 pub mod scaffold;
+pub mod security_audit;
 
 pub use ast_merge::*;
 pub use conflict_resolve::*;
@@ -43,6 +44,7 @@ pub use spec_compiler::*;
 pub use e2e::*;
 pub use preview::*;
 pub use scaffold::*;
+pub use security_audit::*;
 
 
 
