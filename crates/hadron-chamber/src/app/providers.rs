@@ -266,9 +266,12 @@ pub(super) const DEFAULT_SECRET_VAR: &str = "GEMINI_API_KEY";
 pub(super) const CLOUD_API_KEY_VAR: &str = "API_KEY";
 
 /// Which identity or setting tab the Settings overlay is currently editing.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) enum SettingsTarget {
     General,
+    Appearance,
+    Execution,
+    Environment,
     Providers,
     Skills,
     Human,
@@ -280,6 +283,9 @@ impl SettingsTarget {
     pub(super) fn key(&self) -> &str {
         match self {
             SettingsTarget::General => "general",
+            SettingsTarget::Appearance => "appearance",
+            SettingsTarget::Execution => "execution",
+            SettingsTarget::Environment => "environment",
             SettingsTarget::Providers => "providers",
             SettingsTarget::Skills => "skills",
             SettingsTarget::Human => "human",

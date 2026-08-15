@@ -72,7 +72,7 @@ impl super::Chamber {
         .detach();
     }
 
-    pub(super) fn general_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn appearance_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let typography_card = settings_card_section(
             "Typography & Appearance",
             Some(IconName::Palette),
@@ -110,6 +110,10 @@ impl super::Chamber {
                 )),
         );
 
+        v_flex().w_full().gap_4().child(typography_card)
+    }
+
+    pub(super) fn execution_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let execution_card = settings_card_section(
             "Execution & Swarm Limits",
             Some(IconName::Cpu),
@@ -140,6 +144,10 @@ impl super::Chamber {
                 )),
         );
 
+        v_flex().w_full().gap_4().child(execution_card)
+    }
+
+    pub(super) fn environment_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let environment_card = settings_card_section(
             "Environment & Defaults",
             Some(IconName::Settings),
@@ -174,12 +182,20 @@ impl super::Chamber {
                 )),
         );
 
+        v_flex().w_full().gap_4().child(environment_card)
+    }
+
+    pub(super) fn general_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let typography = self.appearance_settings_view(window, cx);
+        let execution = self.execution_settings_view(window, cx);
+        let environment = self.environment_settings_view(window, cx);
+
         v_flex()
             .w_full()
             .gap_4()
-            .child(typography_card)
-            .child(execution_card)
-            .child(environment_card)
+            .child(typography)
+            .child(execution)
+            .child(environment)
     }
 
     /// The default-permission-mode picker using native Select dropdown component

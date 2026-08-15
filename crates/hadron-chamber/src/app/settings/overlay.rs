@@ -6,7 +6,14 @@ impl super::Chamber {
     pub(crate) fn settings_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let target = self.settings_target.clone();
 
-        // Left nav: Settings (General, Providers), then Roster (Human, Quarks)
+        // Left nav: Settings (General: Appearance, Execution, Environment; Providers; Skills), then Roster (Human, Quarks)
+        let is_general_active = matches!(
+            target,
+            SettingsTarget::General
+                | SettingsTarget::Appearance
+                | SettingsTarget::Execution
+                | SettingsTarget::Environment
+        );
         let mut nav = v_flex()
             .gap_0p5()
             .child(
@@ -19,7 +26,82 @@ impl super::Chamber {
                     .text_color(theme::text_muted())
                     .child("SETTINGS"),
             )
-            .child(self.settings_nav_row(SettingsTarget::General, &target, cx))
+            .child(
+                h_flex()
+                    .id("settings-group-general")
+                    .items_center()
+                    .justify_between()
+                    .w_full()
+                    .px_2()
+                    .py_1p5()
+                    .rounded_md()
+                    .bg(if is_general_active && !self.settings_general_expanded {
+                        theme::bg_surface_raised()
+                    } else if is_general_active {
+                        theme::bg_surface()
+                    } else {
+                        theme::bg_base()
+                    })
+                    .hover(|s| s.bg(theme::bg_surface()))
+                    .cursor_pointer()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .size(px(24.0))
+                                    .text_color(if is_general_active {
+                                        theme::accent()
+                                    } else {
+                                        theme::text_muted()
+                                    })
+                                    .child(Icon::new(IconName::Settings).small()),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(if is_general_active {
+                                        theme::text()
+                                    } else {
+                                        theme::text_secondary()
+                                    })
+                                    .child("General"),
+                            ),
+                    )
+                    .child(
+                        Icon::new(if self.settings_general_expanded {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .xsmall()
+                        .text_color(theme::text_muted()),
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.settings_general_expanded = !this.settings_general_expanded;
+                        if this.settings_general_expanded
+                            && !matches!(
+                                this.settings_target,
+                                SettingsTarget::Appearance
+                                    | SettingsTarget::Execution
+                                    | SettingsTarget::Environment
+                            )
+                        {
+                            this.select_settings_target(SettingsTarget::Appearance, window, cx);
+                        }
+                        cx.notify();
+                    })),
+            )
+            .when(self.settings_general_expanded, |nav| {
+                nav.child(self.settings_sub_nav_row(SettingsTarget::Appearance, &target, cx))
+                    .child(self.settings_sub_nav_row(SettingsTarget::Execution, &target, cx))
+                    .child(self.settings_sub_nav_row(SettingsTarget::Environment, &target, cx))
+            })
             .child(self.settings_nav_row(SettingsTarget::Providers, &target, cx))
             .child(self.settings_nav_row(SettingsTarget::Skills, &target, cx))
             .child(
@@ -149,6 +231,9 @@ impl super::Chamber {
             .child(div().text_color(theme::text_secondary()).child(
                 match target {
                     SettingsTarget::General => "General Settings".to_string(),
+                    SettingsTarget::Appearance => "Appearance & Typography".to_string(),
+                    SettingsTarget::Execution => "Execution & Swarm Limits".to_string(),
+                    SettingsTarget::Environment => "Environment & Defaults".to_string(),
                     SettingsTarget::Providers => "Providers".to_string(),
                     SettingsTarget::Skills => "Skills".to_string(),
                     _ => format!("Editing {}", preview.name),
@@ -170,6 +255,9 @@ impl super::Chamber {
 
         let fields = match target {
             SettingsTarget::General => self.general_settings_view(window, cx).into_any_element(),
+            SettingsTarget::Appearance => self.appearance_settings_view(window, cx).into_any_element(),
+            SettingsTarget::Execution => self.execution_settings_view(window, cx).into_any_element(),
+            SettingsTarget::Environment => self.environment_settings_view(window, cx).into_any_element(),
             SettingsTarget::Providers => self.providers_view(window, cx).into_any_element(),
             SettingsTarget::Skills => self.skills_settings_view(window, cx).into_any_element(),
             _ => {
@@ -460,7 +548,15 @@ impl super::Chamber {
         // fields commit on nav-away or on close via ✕/backdrop — see
         // `commit_settings_inputs`), so there is nothing left for a "Done" button to do
         // that closing the panel any other way doesn't already do.
-        let footer = if target == SettingsTarget::Providers || target == SettingsTarget::Skills {
+        let footer = if matches!(
+            target,
+            SettingsTarget::General
+                | SettingsTarget::Appearance
+                | SettingsTarget::Execution
+                | SettingsTarget::Environment
+                | SettingsTarget::Providers
+                | SettingsTarget::Skills
+        ) {
             div().into_any_element()
         } else {
             h_flex()
@@ -528,6 +624,81 @@ impl super::Chamber {
             .child(card)
     }
 
+    /// One indented sub-row under a category group (e.g. Appearance under General).
+    pub(super) fn settings_sub_nav_row(
+        &self,
+        who: SettingsTarget,
+        current: &SettingsTarget,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let selected = &who == current;
+        let id = SharedString::from(format!("settings-sub-{}", who.key()));
+
+        let (icon, label) = match &who {
+            SettingsTarget::Appearance => (IconName::Palette, "Appearance"),
+            SettingsTarget::Execution => (IconName::Cpu, "Execution"),
+            SettingsTarget::Environment => (IconName::Settings, "Environment"),
+            _ => (IconName::Info, "Details"),
+        };
+
+        h_flex()
+            .id(id)
+            .items_center()
+            .w_full()
+            .pl(px(24.0))
+            .pr_2()
+            .py_1()
+            .rounded_md()
+            .bg(if selected {
+                theme::bg_surface_raised()
+            } else {
+                theme::bg_base()
+            })
+            .hover(|s| s.bg(theme::bg_surface()))
+            .cursor_pointer()
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(18.0))
+                            .text_color(if selected {
+                                theme::accent()
+                            } else {
+                                theme::text_muted()
+                            })
+                            .child(Icon::new(icon).xsmall()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .font_weight(if selected {
+                                gpui::FontWeight::SEMIBOLD
+                            } else {
+                                gpui::FontWeight::NORMAL
+                            })
+                            .truncate()
+                            .text_color(if selected {
+                                theme::text()
+                            } else {
+                                theme::text_secondary()
+                            })
+                            .child(label),
+                    ),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.select_settings_target(who.clone(), window, cx)
+            }))
+    }
+
     /// One row in the Settings identity nav: avatar + name + optional status dot,
     /// highlighted when it's the identity currently being edited.
     pub(super) fn settings_nav_row(
@@ -542,6 +713,39 @@ impl super::Chamber {
 
         let (icon_or_avatar, status_dot) = match &who {
             SettingsTarget::General => (
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.0))
+                    .text_color(theme::text_muted())
+                    .child(Icon::new(IconName::Settings).small())
+                    .into_any_element(),
+                None,
+            ),
+            SettingsTarget::Appearance => (
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.0))
+                    .text_color(theme::text_muted())
+                    .child(Icon::new(IconName::Palette).small())
+                    .into_any_element(),
+                None,
+            ),
+            SettingsTarget::Execution => (
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.0))
+                    .text_color(theme::text_muted())
+                    .child(Icon::new(IconName::Cpu).small())
+                    .into_any_element(),
+                None,
+            ),
+            SettingsTarget::Environment => (
                 div()
                     .flex()
                     .items_center()
@@ -623,6 +827,9 @@ impl super::Chamber {
                             })
                             .child(match &who {
                                 SettingsTarget::General => "General".to_string(),
+                                SettingsTarget::Appearance => "Appearance".to_string(),
+                                SettingsTarget::Execution => "Execution".to_string(),
+                                SettingsTarget::Environment => "Environment".to_string(),
                                 SettingsTarget::Providers => "Providers".to_string(),
                                 SettingsTarget::Skills => "Skills".to_string(),
                                 _ => resolved.name.clone(),

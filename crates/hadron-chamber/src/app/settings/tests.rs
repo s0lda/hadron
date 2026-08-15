@@ -203,3 +203,41 @@ fn skill_selection_toggles_deny_list() {
     }
     assert!(deny_skills.is_empty(), "selecting skill back ON must clear it from deny_skills");
 }
+
+#[test]
+fn settings_target_keys_and_equality() {
+    assert_eq!(SettingsTarget::General.key(), "general");
+    assert_eq!(SettingsTarget::Appearance.key(), "appearance");
+    assert_eq!(SettingsTarget::Execution.key(), "execution");
+    assert_eq!(SettingsTarget::Environment.key(), "environment");
+    assert_eq!(SettingsTarget::Providers.key(), "providers");
+    assert_eq!(SettingsTarget::Skills.key(), "skills");
+    assert_eq!(SettingsTarget::Human.key(), "human");
+    assert_eq!(SettingsTarget::Quark("acp-agy".to_string()).key(), "acp-agy");
+
+    assert_eq!(SettingsTarget::Appearance, SettingsTarget::Appearance);
+    assert_ne!(SettingsTarget::Appearance, SettingsTarget::Execution);
+    assert_ne!(SettingsTarget::Execution, SettingsTarget::Environment);
+}
+
+#[test]
+fn general_subtargets_belong_to_general_group() {
+    let is_general_subtarget = |t: &SettingsTarget| {
+        matches!(
+            t,
+            SettingsTarget::General
+                | SettingsTarget::Appearance
+                | SettingsTarget::Execution
+                | SettingsTarget::Environment
+        )
+    };
+
+    assert!(is_general_subtarget(&SettingsTarget::General));
+    assert!(is_general_subtarget(&SettingsTarget::Appearance));
+    assert!(is_general_subtarget(&SettingsTarget::Execution));
+    assert!(is_general_subtarget(&SettingsTarget::Environment));
+    assert!(!is_general_subtarget(&SettingsTarget::Providers));
+    assert!(!is_general_subtarget(&SettingsTarget::Skills));
+    assert!(!is_general_subtarget(&SettingsTarget::Human));
+    assert!(!is_general_subtarget(&SettingsTarget::Quark("acp-claude".to_string())));
+}
