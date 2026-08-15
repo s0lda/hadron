@@ -20,6 +20,16 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.6.1",
+        date: Some("2026-08-15"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Wired chat, markdown bodies, headings, and terminal file trees to configured UI font size preferences",
+            "Scoped GPUI test-support to dev-dependencies, preventing LeakDetector panics on exit",
+        ],
+    },
+    Release {
         version: "0.6.0",
         date: Some("2026-08-15"),
         added: &[
