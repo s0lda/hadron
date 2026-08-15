@@ -25,6 +25,7 @@ pub mod peers;
 pub mod nucleus_lint;
 pub mod spec;
 pub mod e2e;
+pub mod preview;
 
 use hadron_forge::file::Root;
 use hadron_forge::mock::MockServerManager;
@@ -87,7 +88,8 @@ impl ForgeMcpServer {
                 + Self::peers_router()
                 + Self::nucleus_lint_router()
                 + Self::spec_router()
-                + Self::e2e_router(),
+                + Self::e2e_router()
+                + Self::preview_router(),
             root,
             nucleus_root,
             process_manager,
