@@ -1,6 +1,7 @@
-//! Tier 1 Tree-Sitter multi-language symbol extraction and caller detection engine.
+//! Tier 1 Tree-Sitter multi-language symbol extraction, caller detection, and hierarchy engine.
 //!
-//! Provides zero-config AST-level symbol outline and caller discovery across 12+ programming languages.
+//! Provides zero-config AST-level symbol outline, type hierarchy, trait implementation discovery,
+//! and caller discovery across 12+ programming languages.
 //! Directly operationalizes Standard Model Rule 1 ("Find its caller") without requiring external LSP daemons.
 
 use std::fs;
@@ -31,6 +32,36 @@ pub struct SymbolCallSite {
     pub line: usize,
     pub col: usize,
     pub line_content: String,
+}
+
+/// Information about a struct/class/interface member (field, variant, method).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeMemberInfo {
+    pub name: String,
+    pub kind: String, // "field", "variant", "method"
+    pub type_annotation: Option<String>,
+    pub line: usize,
+}
+
+/// Information about an implementation block or trait implementation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitImplInfo {
+    pub trait_name: Option<String>,
+    pub target_type: String,
+    pub file: String,
+    pub line: usize,
+    pub methods: Vec<String>,
+}
+
+/// Comprehensive type hierarchy report for a struct, enum, class, or trait.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeHierarchyInfo {
+    pub type_name: String,
+    pub kind: String, // "struct", "enum", "class", "trait", "interface"
+    pub file: String,
+    pub line: usize,
+    pub members: Vec<TypeMemberInfo>,
+    pub implementations: Vec<TraitImplInfo>,
 }
 
 fn tree_sitter_language_for(lang: Lang) -> Option<tree_sitter::Language> {
@@ -172,6 +203,193 @@ fn simplify_kind(kind: &str) -> String {
     }
 }
 
+/// Extract detailed type definition (members, fields, enum variants) from source string.
+pub fn extract_type_members(lang: Lang, source: &str, target_type: &str) -> Option<(String, usize, Vec<TypeMemberInfo>)> {
+    let language = tree_sitter_language_for(lang)?;
+    let mut parser = Parser::new();
+    parser.set_language(&language).ok()?;
+    let tree = parser.parse(source, None)?;
+
+    let mut result = None;
+    find_type_node(tree.root_node(), source, target_type, lang, &mut result);
+    result
+}
+
+fn find_type_node(
+    node: Node,
+    source: &str,
+    target_type: &str,
+    lang: Lang,
+    result: &mut Option<(String, usize, Vec<TypeMemberInfo>)>,
+) {
+    if result.is_some() {
+        return;
+    }
+
+    let kind_str = node.kind();
+    let is_type_def = match lang {
+        Lang::Rust => matches!(kind_str, "struct_item" | "enum_item" | "trait_item"),
+        Lang::TypeScript | Lang::JavaScript => matches!(kind_str, "class_declaration" | "interface_declaration" | "enum_declaration"),
+        Lang::Python => matches!(kind_str, "class_definition"),
+        _ => false,
+    };
+
+    if is_type_def {
+        let name = node
+            .child_by_field_name("name")
+            .map(|n| &source[n.byte_range()])
+            .unwrap_or("");
+
+        if name == target_type {
+            let start = node.start_position();
+            let mut members = Vec::new();
+            collect_type_members(node, source, lang, &mut members);
+            *result = Some((simplify_kind(kind_str), start.row + 1, members));
+            return;
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        find_type_node(child, source, target_type, lang, result);
+    }
+}
+
+fn collect_type_members(
+    node: Node,
+    source: &str,
+    lang: Lang,
+    members: &mut Vec<TypeMemberInfo>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        let kind = child.kind();
+        match lang {
+            Lang::Rust => {
+                if kind == "field_declaration_list" || kind == "ordered_field_declaration_list" {
+                    let mut field_cursor = child.walk();
+                    for field in child.children(&mut field_cursor) {
+                        if field.kind() == "field_declaration" {
+                            let name = field
+                                .child_by_field_name("name")
+                                .map(|n| source[n.byte_range()].to_string())
+                                .unwrap_or_else(|| "_".into());
+                            let type_annot = field
+                                .child_by_field_name("type")
+                                .map(|n| source[n.byte_range()].to_string());
+                            members.push(TypeMemberInfo {
+                                name,
+                                kind: "field".into(),
+                                type_annotation: type_annot,
+                                line: field.start_position().row + 1,
+                            });
+                        }
+                    }
+                } else if kind == "enum_variant_list" {
+                    let mut var_cursor = child.walk();
+                    for variant in child.children(&mut var_cursor) {
+                        if variant.kind() == "enum_variant" {
+                            let name = variant
+                                .child_by_field_name("name")
+                                .map(|n| source[n.byte_range()].to_string())
+                                .unwrap_or_default();
+                            members.push(TypeMemberInfo {
+                                name,
+                                kind: "variant".into(),
+                                type_annotation: None,
+                                line: variant.start_position().row + 1,
+                            });
+                        }
+                    }
+                }
+            }
+            Lang::TypeScript | Lang::JavaScript => {
+                if kind == "class_body" || kind == "interface_body" || kind == "object_type" {
+                    let mut body_cursor = child.walk();
+                    for m in child.children(&mut body_cursor) {
+                        let m_kind = m.kind();
+                        if matches!(m_kind, "method_definition" | "property_signature" | "public_field_definition") {
+                            let name = m
+                                .child_by_field_name("name")
+                                .map(|n| source[n.byte_range()].to_string())
+                                .unwrap_or_default();
+                            let member_kind = if m_kind == "method_definition" { "method" } else { "field" };
+                            members.push(TypeMemberInfo {
+                                name,
+                                kind: member_kind.into(),
+                                type_annotation: m.child_by_field_name("type").map(|n| source[n.byte_range()].to_string()),
+                                line: m.start_position().row + 1,
+                            });
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Extract all `impl` blocks (both inherent and trait implementations) from source text.
+pub fn extract_impl_blocks(lang: Lang, rel_path: &str, source: &str) -> Vec<TraitImplInfo> {
+    if lang != Lang::Rust {
+        return Vec::new();
+    }
+    let Some(language) = tree_sitter_language_for(lang) else {
+        return Vec::new();
+    };
+
+    let mut parser = Parser::new();
+    if parser.set_language(&language).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(source, None) else {
+        return Vec::new();
+    };
+
+    let mut impls = Vec::new();
+    walk_impl_blocks(tree.root_node(), source, rel_path, &mut impls);
+    impls
+}
+
+fn walk_impl_blocks(node: Node, source: &str, file: &str, impls: &mut Vec<TraitImplInfo>) {
+    if node.kind() == "impl_item" {
+        let trait_name = node
+            .child_by_field_name("trait")
+            .map(|n| source[n.byte_range()].trim().to_string());
+        let target_type = node
+            .child_by_field_name("type")
+            .map(|n| source[n.byte_range()].trim().to_string())
+            .unwrap_or_default();
+
+        let mut methods = Vec::new();
+        if let Some(body) = node.child_by_field_name("body") {
+            let mut cursor = body.walk();
+            for item in body.children(&mut cursor) {
+                if item.kind() == "function_item" {
+                    if let Some(name_node) = item.child_by_field_name("name") {
+                        methods.push(source[name_node.byte_range()].to_string());
+                    }
+                }
+            }
+        }
+
+        if !target_type.is_empty() {
+            impls.push(TraitImplInfo {
+                trait_name,
+                target_type,
+                file: file.to_string(),
+                line: node.start_position().row + 1,
+                methods,
+            });
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_impl_blocks(child, source, file, impls);
+    }
+}
+
 /// Find all caller invocations or references to `target_symbol` in the given source text.
 pub fn find_callers_in_source(
     lang: Lang,
@@ -219,7 +437,6 @@ fn walk_callers(
 ) {
     let kind = node.kind();
 
-    // Check if this node establishes an enclosing scope (function/method)
     let is_scope = matches!(
         kind,
         "function_item"
@@ -238,7 +455,6 @@ fn walk_callers(
 
     let active_enclosing = scope_name.or(current_enclosing);
 
-    // Check if this node is a reference/call to the target symbol
     let is_ident = matches!(
         kind,
         "identifier" | "field_identifier" | "property_identifier" | "type_identifier"
@@ -290,12 +506,86 @@ pub fn extract_file_symbols(root: &Root, rel_path: &str) -> Result<Vec<SymbolDef
     Ok(extract_source_symbols(lang, rel_path, &content))
 }
 
+/// Query complete type hierarchy (definition, fields/variants, and implementations) across workspace.
+pub fn query_type_hierarchy(root: &Root, type_name: &str) -> Result<Option<TypeHierarchyInfo>, ForgeError> {
+    let base_path = root.path();
+    let mut files_to_scan = Vec::new();
+    collect_code_files(base_path, base_path, &mut files_to_scan)?;
+
+    let mut found_type = None;
+    let mut all_impls = Vec::new();
+
+    for rel in files_to_scan {
+        let abs = base_path.join(&rel);
+        let Ok(content) = fs::read_to_string(&abs) else { continue };
+        let lang = lang_for_path(&rel);
+
+        if found_type.is_none() {
+            if let Some((kind, line, members)) = extract_type_members(lang, &content, type_name) {
+                found_type = Some((kind, line, members, rel.clone()));
+            }
+        }
+
+        let impls = extract_impl_blocks(lang, &rel, &content);
+        for im in impls {
+            if im.target_type == type_name || im.trait_name.as_deref() == Some(type_name) {
+                all_impls.push(im);
+            }
+        }
+    }
+
+    if let Some((kind, line, members, file)) = found_type {
+        Ok(Some(TypeHierarchyInfo {
+            type_name: type_name.to_string(),
+            kind,
+            file,
+            line,
+            members,
+            implementations: all_impls,
+        }))
+    } else if !all_impls.is_empty() {
+        Ok(Some(TypeHierarchyInfo {
+            type_name: type_name.to_string(),
+            kind: "trait".into(),
+            file: all_impls[0].file.clone(),
+            line: all_impls[0].line,
+            members: Vec::new(),
+            implementations: all_impls,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Search the entire worktree for callers and references to `symbol`.
 pub fn find_symbol_callers(root: &Root, symbol: &str) -> Result<Vec<SymbolCallSite>, ForgeError> {
     let mut callers = Vec::new();
     let base_path = root.path();
     walk_dir_callers(base_path, base_path, symbol, &mut callers)?;
     Ok(callers)
+}
+
+fn collect_code_files(base: &Path, current: &Path, acc: &mut Vec<String>) -> Result<(), ForgeError> {
+    if !current.exists() || !current.is_dir() {
+        return Ok(());
+    }
+    let entries = fs::read_dir(current).map_err(|e| ForgeError::Io(e.to_string()))?;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if p.is_dir() {
+            if matches!(name, ".git" | "target" | "node_modules" | "dist" | ".hadron" | "vendor" | ".cache") {
+                continue;
+            }
+            collect_code_files(base, &p, acc)?;
+        } else if p.is_file() {
+            let rel = p.strip_prefix(base).unwrap_or(&p).to_string_lossy().to_string();
+            if lang_for_path(&rel) != Lang::Opaque {
+                acc.push(rel);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn walk_dir_callers(
@@ -313,7 +603,6 @@ fn walk_dir_callers(
         let path = entry.path();
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-        // Skip ignored directories
         if path.is_dir() {
             if matches!(file_name, ".git" | "target" | "node_modules" | "dist" | ".hadron" | "vendor" | ".cache") {
                 continue;
@@ -362,6 +651,56 @@ mod tests {
         assert_eq!(py_syms.len(), 2);
         assert_eq!(py_syms[0].name, "format_response");
         assert_eq!(py_syms[1].name, "ResponseFormatter");
+    }
+
+    #[test]
+    fn ast_symbols_extracts_struct_fields_and_enum_variants() {
+        let rust_src = r#"
+pub struct UserConfig {
+    pub username: String,
+    pub retries: u32,
+}
+
+pub enum ConfigMode {
+    Strict,
+    Permissive,
+}
+"#;
+        let (kind, line, members) = extract_type_members(Lang::Rust, rust_src, "UserConfig").unwrap();
+        assert_eq!(kind, "struct");
+        assert_eq!(line, 2);
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].name, "username");
+        assert_eq!(members[0].type_annotation.as_deref(), Some("String"));
+        assert_eq!(members[1].name, "retries");
+
+        let (enum_kind, _enum_line, enum_members) = extract_type_members(Lang::Rust, rust_src, "ConfigMode").unwrap();
+        assert_eq!(enum_kind, "enum");
+        assert_eq!(enum_members.len(), 2);
+        assert_eq!(enum_members[0].name, "Strict");
+        assert_eq!(enum_members[1].name, "Permissive");
+    }
+
+    #[test]
+    fn ast_symbols_extracts_trait_implementations() {
+        let rust_src = r#"
+pub trait Describable {
+    fn describe(&self) -> String;
+}
+
+pub struct Item;
+
+impl Describable for Item {
+    fn describe(&self) -> String {
+        "item".into()
+    }
+}
+"#;
+        let impls = extract_impl_blocks(Lang::Rust, "src/item.rs", rust_src);
+        assert_eq!(impls.len(), 1);
+        assert_eq!(impls[0].trait_name.as_deref(), Some("Describable"));
+        assert_eq!(impls[0].target_type, "Item");
+        assert_eq!(impls[0].methods, vec!["describe"]);
     }
 
     #[test]

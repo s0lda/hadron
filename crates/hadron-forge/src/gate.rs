@@ -7,7 +7,6 @@
 //!    `.rlib` artifacts in the shared target directory.
 //! 4. Executes cargo check or test within the jailed execution boundary.
 
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
 

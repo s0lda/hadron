@@ -1,10 +1,12 @@
-//! The **symbols** family: code intelligence and caller detection across 12+ languages.
+//! The **symbols** family: code intelligence, caller detection, and type hierarchy across 12+ languages.
 //!
 //! Operationalizes Standard Model Rule 1 ("Find its caller") using Tier 1 Tree-Sitter AST inspection
 //! with zero external setup, plus Tier 2 LSP integration when available.
 
 use super::{ForgeMcpServer, ToolResponse};
-use hadron_forge::ast_symbols::{extract_file_symbols, find_symbol_callers};
+use hadron_forge::ast_symbols::{
+    extract_file_symbols, find_symbol_callers, query_type_hierarchy,
+};
 use hadron_forge::file::resolve_jailed_path;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::schemars::JsonSchema;
@@ -31,6 +33,22 @@ pub struct SymbolDefinitionArgs {
     pub line: usize,
     /// 1-indexed column number.
     pub col: usize,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SymbolHierarchyArgs {
+    /// Name of the struct, enum, trait, or class to inspect across the workspace.
+    pub type_name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LspQueryArgs {
+    /// Symbol name or keyword to query across the codebase
+    pub query: String,
+    /// Query kind: "callers", "hierarchy", or "outline" (defaults to "callers")
+    pub kind: Option<String>,
+    /// Optional file path (required for outline queries)
+    pub path: Option<String>,
 }
 
 #[tool_router(router = symbols_router, vis = "pub(super)")]
@@ -75,6 +93,69 @@ impl ForgeMcpServer {
                 }
             }
             Err(e) => Json(ToolResponse::error(e.to_string())),
+        }
+    }
+
+    #[tool(
+        name = "hadron_forge_symbol_hierarchy",
+        description = "Query type hierarchy, struct fields, enum variants, and trait implementations across the workspace."
+    )]
+    pub async fn symbol_hierarchy(
+        &self,
+        Parameters(args): Parameters<SymbolHierarchyArgs>,
+    ) -> Json<ToolResponse> {
+        let root = self.root.clone();
+        let type_name = args.type_name;
+        let t_name = type_name.clone();
+
+        let res = tokio::task::spawn_blocking(move || {
+            query_type_hierarchy(&root, &t_name)
+        })
+        .await;
+
+        match res {
+            Ok(Ok(Some(hierarchy))) => {
+                let json = serde_json::to_string_pretty(&hierarchy).unwrap_or_default();
+                Json(ToolResponse::success(Some(json)))
+            }
+            Ok(Ok(None)) => Json(ToolResponse::success(Some(format!(
+                "No type definition or implementation found for `{}`",
+                type_name
+            )))),
+            Ok(Err(e)) => Json(ToolResponse::error(e.to_string())),
+            Err(e) => Json(ToolResponse::error(format!("Symbol hierarchy query task failed: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "hadron_forge_lsp_query",
+        description = "Unified code intelligence query (callers, hierarchy, or document outline)."
+    )]
+    pub async fn lsp_query(
+        &self,
+        Parameters(args): Parameters<LspQueryArgs>,
+    ) -> Json<ToolResponse> {
+        let kind = args.kind.unwrap_or_else(|| "callers".to_string());
+        match kind.as_str() {
+            "hierarchy" => {
+                self.symbol_hierarchy(Parameters(SymbolHierarchyArgs {
+                    type_name: args.query,
+                }))
+                .await
+            }
+            "outline" => {
+                let file_path = args.path.unwrap_or(args.query);
+                self.symbol_document_outline(Parameters(SymbolDocumentOutlineArgs {
+                    path: file_path,
+                }))
+                .await
+            }
+            _ => {
+                self.symbol_find_callers(Parameters(SymbolFindCallersArgs {
+                    symbol_name: args.query,
+                }))
+                .await
+            }
         }
     }
 
@@ -179,5 +260,53 @@ mod tests {
         assert!(outline_res.0.ok);
         assert!(outline_res.0.blocks.as_ref().unwrap().contains("merge_gate"));
         assert!(outline_res.0.blocks.as_ref().unwrap().contains("orchestrate"));
+    }
+
+    #[tokio::test]
+    async fn mcp_symbol_hierarchy_and_lsp_query_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        fs::create_dir_all(&src_dir).unwrap();
+
+        fs::write(
+            src_dir.join("models.rs"),
+            r#"
+pub struct User {
+    pub id: u64,
+    pub name: String,
+}
+
+pub trait Auth {
+    fn check(&self) -> bool;
+}
+
+impl Auth for User {
+    fn check(&self) -> bool { true }
+}
+"#,
+        )
+        .unwrap();
+
+        let server = ForgeMcpServer::new(dir.path());
+
+        let hier_res = server
+            .symbol_hierarchy(Parameters(SymbolHierarchyArgs {
+                type_name: "User".into(),
+            }))
+            .await;
+        assert!(hier_res.0.ok);
+        let blocks = hier_res.0.blocks.unwrap();
+        assert!(blocks.contains("User"));
+        assert!(blocks.contains("Auth"));
+        assert!(blocks.contains("name"));
+
+        let lsp_res = server
+            .lsp_query(Parameters(LspQueryArgs {
+                query: "User".into(),
+                kind: Some("hierarchy".into()),
+                path: None,
+            }))
+            .await;
+        assert!(lsp_res.0.ok);
     }
 }

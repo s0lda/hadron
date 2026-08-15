@@ -7,7 +7,6 @@
 //! 4. Orphan note detection: flags `.md` files in `notes/` missing from `index.md`.
 
 use std::collections::HashSet;
-use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::file::{ForgeError, Root};
