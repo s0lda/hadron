@@ -102,7 +102,6 @@ mod reload;
 pub mod update;
 pub use update::UpdateState;
 pub mod replay;
-pub use replay::*;
 
 actions!(
     chamber,

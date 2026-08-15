@@ -160,18 +160,15 @@ impl super::Chamber {
                             h_flex()
                                 .id(SharedString::from(format!("orch-badge-{}", r.id)))
                                 .items_center()
-                                .gap_1()
-                                .px_1p5()
+                                .justify_center()
+                                .px_1()
                                 .py_0p5()
                                 .rounded_md()
                                 .bg(theme::accent().opacity(0.12))
                                 .border_1()
                                 .border_color(theme::accent().opacity(0.35))
-                                .text_xs()
-                                .font_weight(gpui::FontWeight::MEDIUM)
                                 .text_color(theme::accent())
                                 .child(Icon::new(IconName::Network).xsmall())
-                                .child("orch")
                                 .tooltip(|window, cx| {
                                     Tooltip::new(
                                         "Swarm Orchestrator (leads research, planning, dispatch, and escalation)",

@@ -5,11 +5,12 @@
 //! - Synchronized indexing between `messages`, `chat_message_indices`, and `chat_list_state`
 //! - Deterministic state projection without display server dependencies.
 
-use hadron_lattice::{Actor, Event, Kind, Mode, QuarkId, QuarkState, Team};
-use crate::model::{self, ChamberView, MessageRow, chat_message_indices};
+use hadron_lattice::{Event, Team};
+use crate::model::{self, ChamberView, chat_message_indices};
 
 /// Headless simulation session that replays event logs and validates UI projection invariants.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct HeadlessReplaySession {
     pub events: Vec<Event>,
     pub team: Team,
@@ -20,6 +21,7 @@ pub struct HeadlessReplaySession {
     pub total_log_count: usize,
 }
 
+#[allow(dead_code)]
 impl HeadlessReplaySession {
     pub fn new() -> Self {
         let team = Team::default();
@@ -120,6 +122,7 @@ impl HeadlessReplaySession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hadron_lattice::{Actor, Kind, QuarkId, QuarkState};
 
     #[test]
     fn replay_session_maintains_list_caches_on_append_and_clear() {
