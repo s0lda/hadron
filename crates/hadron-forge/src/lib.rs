@@ -21,6 +21,7 @@ pub mod screenshot;
 pub mod pty;
 pub mod mock;
 pub mod sqlite;
+pub mod gate;
 
 pub use ast_merge::*;
 pub use conflict_resolve::*;
@@ -29,6 +30,7 @@ pub use screenshot::*;
 pub use pty::*;
 pub use mock::*;
 pub use sqlite::*;
+pub use gate::*;
 
 
 

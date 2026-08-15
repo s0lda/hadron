@@ -20,6 +20,7 @@ pub mod screenshot;
 pub mod pty;
 pub mod mock;
 pub mod sqlite;
+pub mod gate;
 
 use hadron_forge::file::Root;
 use hadron_forge::mock::MockServerManager;
@@ -77,7 +78,8 @@ impl ForgeMcpServer {
                 + Self::screenshot_router()
                 + Self::pty_router()
                 + Self::mock_router()
-                + Self::sqlite_router(),
+                + Self::sqlite_router()
+                + Self::gate_router(),
             root,
             nucleus_root,
             process_manager,
