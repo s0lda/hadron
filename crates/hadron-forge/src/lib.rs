@@ -23,6 +23,7 @@ pub mod mock;
 pub mod sqlite;
 pub mod gate;
 pub mod peers;
+pub mod nucleus_lint;
 
 pub use ast_merge::*;
 pub use conflict_resolve::*;
@@ -33,6 +34,7 @@ pub use mock::*;
 pub use sqlite::*;
 pub use gate::*;
 pub use peers::*;
+pub use nucleus_lint::*;
 
 
 
