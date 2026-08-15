@@ -299,6 +299,7 @@ async fn probe_http_endpoint(url_str: &str, timeout: Duration) -> Result<bool, F
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::file::Root;
     use tempfile::tempdir;
 
     #[tokio::test]
