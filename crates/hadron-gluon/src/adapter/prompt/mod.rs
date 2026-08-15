@@ -114,16 +114,13 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     if projection.has_forge_tools {
         p.push_str(
             "# Available Hadron Forge Tools\n\
-             The `hadron-forge-mcp` suite provides:\n\
-             - `hadron_forge_read_file`: read file contents\n\
-             - `hadron_forge_list_dir`: list directory contents\n\
-             - `hadron_forge_grep`: search codebase pattern\n\
-             - `hadron_forge_exec`: run jailed project command\n\
-             - `hadron_forge_diagnostics`: run cargo check compiler messages\n\
-             - `hadron_forge_cargo_tree`: inspect workspace dependencies & features\n\
-             - `hadron_forge_query_nucleus`: search nucleus knowledge notes\n\
-             - `hadron_forge_read_blocks`: read line-bounded file blocks\n\
-             - `hadron_forge_edit`: replace-by-hash file modification\n\n",
+             The `hadron-forge-mcp` suite provides 62 tools across 24 families:\n\
+             - **Inspect & Edit**: `hadron_forge_read_file`, `hadron_forge_list_dir`, `hadron_forge_grep`, `hadron_forge_edit`, `hadron_forge_write_file`, `hadron_forge_create_file`, `hadron_forge_delete_file`, `hadron_forge_read_blocks`\n\
+             - **Exec & PTY**: `hadron_forge_exec`, `hadron_forge_pty_start`, `hadron_forge_pty_write`, `hadron_forge_pty_read`, `hadron_forge_pty_resize`, `hadron_forge_pty_kill`, `hadron_forge_pty_list`, `hadron_forge_process_start`, `hadron_forge_process_logs`, `hadron_forge_process_list`, `hadron_forge_process_send_stdin`, `hadron_forge_process_kill`\n\
+             - **Code Intelligence**: `hadron_forge_diagnostics`, `hadron_forge_cargo_tree`, `hadron_forge_symbol_find_callers`, `hadron_forge_symbol_hierarchy`, `hadron_forge_symbol_document_outline`, `hadron_forge_symbol_definition`, `hadron_forge_lsp_query`, `hadron_forge_semantic_search`, `hadron_forge_semantic_index_status`\n\
+             - **Testing & Verification**: `hadron_forge_gate_run`, `hadron_forge_gate_status`, `hadron_forge_mock_start`, `hadron_forge_mock_route_add`, `hadron_forge_mock_requests_list`, `hadron_forge_mock_assert`, `hadron_forge_mock_stop`, `hadron_forge_e2e_assert`, `hadron_forge_security_audit`, `hadron_forge_service_watchdog`\n\
+             - **Browser & UI**: `hadron_forge_browser_navigate`, `hadron_forge_browser_snapshot`, `hadron_forge_browser_screenshot`, `hadron_forge_browser_evaluate`, `hadron_forge_browser_click`, `hadron_forge_browser_fill`, `hadron_forge_screenshot_capture`, `hadron_forge_screenshot_list`, `hadron_forge_screenshot_prune`, `hadron_forge_preview_launch`\n\
+             - **Nucleus & Swarm**: `hadron_forge_query_nucleus`, `hadron_forge_note_create`, `hadron_forge_note_update`, `hadron_forge_note_read`, `hadron_forge_index_read`, `hadron_forge_nucleus_lint`, `hadron_forge_peer_inspect`, `hadron_forge_peers_detect_conflicts`, `hadron_forge_spec_compile`, `hadron_forge_sqlite_query`, `hadron_forge_sqlite_schema`, `hadron_forge_sqlite_migrate`, `hadron_forge_sqlite_export`, `hadron_forge_scaffold`\n\n",
         );
     }
 
