@@ -22,6 +22,7 @@ pub mod pty;
 pub mod mock;
 pub mod sqlite;
 pub mod gate;
+pub mod peers;
 
 pub use ast_merge::*;
 pub use conflict_resolve::*;
@@ -31,6 +32,7 @@ pub use pty::*;
 pub use mock::*;
 pub use sqlite::*;
 pub use gate::*;
+pub use peers::*;
 
 
 
