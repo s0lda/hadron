@@ -30,6 +30,253 @@ pub struct TaskNode {
     pub state: TaskState,
 }
 
+/// A single actionable step in a plan task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanStep {
+    pub number: usize,
+    pub description: String,
+    pub completed: bool,
+    pub commit: Option<String>,
+}
+
+/// A task within a markdown plan document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanTask {
+    pub id: String,
+    pub title: String,
+    pub dependencies: Vec<String>,
+    pub files_create: Vec<String>,
+    pub files_modify: Vec<String>,
+    pub files_test: Vec<String>,
+    pub steps: Vec<PlanStep>,
+}
+
+impl PlanTask {
+    pub fn is_completed(&self) -> bool {
+        !self.steps.is_empty() && self.steps.iter().all(|s| s.completed)
+    }
+}
+
+/// A parsed markdown implementation plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanDocument {
+    pub title: String,
+    pub goal: Option<String>,
+    pub tasks: Vec<PlanTask>,
+}
+
+impl PlanDocument {
+    pub fn to_dag(&self) -> Result<TaskDag, DagError> {
+        let mut dag = TaskDag::new();
+        for task in &self.tasks {
+            dag.add_task(&task.id, &task.title, task.dependencies.iter().map(|s| s.as_str()))?;
+            if task.is_completed() {
+                dag.complete_task(&task.id)?;
+            }
+        }
+        Ok(dag)
+    }
+}
+
+/// Parse a markdown plan string into a structured `PlanDocument`.
+pub fn parse_plan_markdown(content: &str) -> Result<PlanDocument, DagError> {
+    let mut title = String::new();
+    let mut goal = None;
+    let mut tasks = Vec::new();
+    let mut current_task: Option<PlanTask> = None;
+    let mut in_files = false;
+    let mut in_interfaces = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("# ") && title.is_empty() {
+            title = trimmed.trim_start_matches("# ").trim().to_string();
+            continue;
+        }
+
+        if trimmed.starts_with("**Goal:**") {
+            goal = Some(trimmed.trim_start_matches("**Goal:**").trim().to_string());
+            continue;
+        }
+
+        if trimmed.starts_with("### Task ") || trimmed.starts_with("### Task") {
+            if let Some(t) = current_task.take() {
+                tasks.push(t);
+            }
+            in_files = false;
+            in_interfaces = false;
+
+            let header_content = trimmed.trim_start_matches("###").trim();
+            let (id, task_title) = if let Some((id_part, title_part)) = header_content.split_once(':') {
+                (id_part.trim().to_string(), title_part.trim().to_string())
+            } else {
+                (header_content.to_string(), header_content.to_string())
+            };
+
+            current_task = Some(PlanTask {
+                id,
+                title: task_title,
+                dependencies: Vec::new(),
+                files_create: Vec::new(),
+                files_modify: Vec::new(),
+                files_test: Vec::new(),
+                steps: Vec::new(),
+            });
+            continue;
+        }
+
+        if let Some(ref mut task) = current_task {
+            if trimmed.starts_with("**Files:**") {
+                in_files = true;
+                in_interfaces = false;
+                continue;
+            }
+            if trimmed.starts_with("**Interfaces:**") {
+                in_interfaces = true;
+                in_files = false;
+                continue;
+            }
+
+            if in_files {
+                if let Some(rest) = trimmed.strip_prefix("- Create:") {
+                    task.files_create.push(rest.trim().trim_matches('`').to_string());
+                } else if let Some(rest) = trimmed.strip_prefix("- Modify:") {
+                    task.files_modify.push(rest.trim().trim_matches('`').to_string());
+                } else if let Some(rest) = trimmed.strip_prefix("- Test:") {
+                    task.files_test.push(rest.trim().trim_matches('`').to_string());
+                } else if !trimmed.starts_with('-') && !trimmed.is_empty() {
+                    in_files = false;
+                }
+            }
+
+            if in_interfaces || trimmed.contains("Consumes:") || trimmed.contains("Depends on:") {
+                let dep_line = if let Some(rest) = trimmed.strip_prefix("- Consumes:") {
+                    rest
+                } else if let Some(rest) = trimmed.strip_prefix("Consumes:") {
+                    rest
+                } else if let Some(rest) = trimmed.strip_prefix("- Depends on:") {
+                    rest
+                } else if let Some(rest) = trimmed.strip_prefix("Depends on:") {
+                    rest
+                } else {
+                    ""
+                };
+
+                for dep in dep_line.split(',') {
+                    let d = dep.trim();
+                    if !d.is_empty() && !task.dependencies.iter().any(|existing| existing == d) {
+                        task.dependencies.push(d.to_string());
+                    }
+                }
+            }
+
+            // Checkbox parsing
+            let (is_step, completed, after_box) = if let Some(rest) = trimmed.strip_prefix("- [x]") {
+                (true, true, rest.trim())
+            } else if let Some(rest) = trimmed.strip_prefix("- [X]") {
+                (true, true, rest.trim())
+            } else if let Some(rest) = trimmed.strip_prefix("- [ ]") {
+                (true, false, rest.trim())
+            } else {
+                (false, false, "")
+            };
+
+            if is_step {
+                let step_num = if after_box.starts_with("**Step ") {
+                    let num_part = after_box.trim_start_matches("**Step ").split([':', ' ']).next().unwrap_or("0");
+                    num_part.parse::<usize>().unwrap_or(task.steps.len() + 1)
+                } else {
+                    task.steps.len() + 1
+                };
+
+                let commit = if let Some(idx) = after_box.find("commit") {
+                    let tail = &after_box[idx..];
+                    tail.split('`').nth(1).map(|c| c.to_string())
+                } else {
+                    None
+                };
+
+                task.steps.push(PlanStep {
+                    number: step_num,
+                    description: after_box.to_string(),
+                    completed,
+                    commit,
+                });
+            }
+        }
+    }
+
+    if let Some(t) = current_task {
+        tasks.push(t);
+    }
+
+    Ok(PlanDocument {
+        title,
+        goal,
+        tasks,
+    })
+}
+
+/// Synchronize a plan step's checkbox to `- [x]` on disk in the markdown content.
+pub fn sync_plan_checkbox(
+    markdown: &str,
+    task_id: &str,
+    step_number: usize,
+    commit: Option<&str>,
+) -> Result<String, DagError> {
+    let mut lines = Vec::new();
+    let mut in_target_task = false;
+    let mut found = false;
+
+    let target_needle = format!("### {}", task_id);
+
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("### ") {
+            if trimmed.starts_with(&target_needle) || trimmed.contains(task_id) {
+                in_target_task = true;
+            } else if in_target_task {
+                in_target_task = false;
+            }
+        }
+
+        if in_target_task && (trimmed.starts_with("- [ ]") || trimmed.starts_with("- [ ] **Step")) {
+            let step_matches = trimmed.contains(&format!("Step {step_number}:"))
+                || trimmed.contains(&format!("Step {step_number}"))
+                || (!trimmed.contains("Step ") && !found);
+
+            if step_matches {
+                let commit_suffix = match commit {
+                    Some(c) => format!(" (commit `{c}`)"),
+                    None => String::new(),
+                };
+                let replaced = line.replace("- [ ]", "- [x]");
+                if !replaced.contains("commit") && !commit_suffix.is_empty() {
+                    lines.push(format!("{replaced}{commit_suffix}"));
+                } else {
+                    lines.push(replaced);
+                }
+                found = true;
+                continue;
+            }
+        }
+
+        lines.push(line.to_string());
+    }
+
+    if !found {
+        return Err(DagError::TaskNotFound(format!("{task_id} step {step_number}")));
+    }
+
+    let mut result = lines.join("\n");
+    if markdown.ends_with('\n') {
+        result.push('\n');
+    }
+    Ok(result)
+}
+
 /// Directed acyclic graph of interdependent swarm tasks.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDag {
@@ -43,6 +290,7 @@ pub enum DagError {
     CycleDetected(String),
     MissingDependency(String, String),
 }
+
 
 impl fmt::Display for DagError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -254,4 +502,48 @@ mod tests {
         let err = dag.add_task("task_2", "Task 2", vec!["task_1"]).unwrap_err();
         assert!(matches!(err, DagError::CycleDetected(_)));
     }
+
+    #[test]
+    fn plan_markdown_parser_builds_dag_and_syncs_checkboxes() {
+        let sample_plan = r#"# Sample Plan
+**Goal:** Build test feature
+
+### Task 1: Create Scaffolding
+**Files:**
+- Create: `src/scaffold.rs`
+- Test: `tests/scaffold_test.rs`
+
+- [x] **Step 1: Write failing test** (commit `abc12345`)
+- [x] **Step 2: Implement scaffolding** (commit `abc12345`)
+
+### Task 2: Implement Logic
+**Files:**
+- Modify: `src/scaffold.rs`
+
+**Interfaces:**
+- Consumes: Task 1
+
+- [ ] **Step 1: Write logic test**
+- [ ] **Step 2: Implement logic**
+"#;
+
+        let doc = parse_plan_markdown(sample_plan).expect("plan must parse");
+        assert_eq!(doc.tasks.len(), 2);
+        assert_eq!(doc.tasks[0].id, "Task 1");
+        assert_eq!(doc.tasks[0].steps.len(), 2);
+        assert!(doc.tasks[0].is_completed());
+        assert_eq!(doc.tasks[1].id, "Task 2");
+        assert!(!doc.tasks[1].is_completed());
+        assert_eq!(doc.tasks[1].dependencies, vec!["Task 1"]);
+
+        let dag = doc.to_dag().expect("DAG must build");
+        let ready = dag.ready_tasks();
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].id, "Task 2");
+
+        // Sync checkbox on disk
+        let updated = sync_plan_checkbox(sample_plan, "Task 2", 1, Some("def67890")).expect("sync success");
+        assert!(updated.contains("- [x] **Step 1: Write logic test** (commit `def67890`)"));
+    }
 }
+
