@@ -28,6 +28,49 @@ pub struct GatePreflightReport {
     pub output_tail: String,
 }
 
+/// Configuration for the multi-modal acceptance verification suite.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcceptanceSuiteConfig {
+    pub base: Option<String>,
+    pub run_unit_tests: bool,
+    pub run_lint_check: bool,
+    pub verify_process_lifecycle: Option<ProcessLifecycleCheck>,
+    pub verify_screenshots: Option<ScreenshotVerificationCheck>,
+    pub custom_commands: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessLifecycleCheck {
+    pub command: String,
+    pub args: Vec<String>,
+    pub ready_match: String,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScreenshotVerificationCheck {
+    pub min_count: usize,
+    pub check_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcceptanceStageResult {
+    pub stage_name: String,
+    pub passed: bool,
+    pub duration_ms: u64,
+    pub details: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcceptanceReport {
+    pub ok: bool,
+    pub total_stages: usize,
+    pub passed_stages: usize,
+    pub stages: Vec<AcceptanceStageResult>,
+    pub summary: String,
+}
+
+
 /// Recursively find and touch all `src/lib.rs` and `src/main.rs` entrypoints in `root`
 /// to prevent shared `target/` cache reuse bugs.
 pub fn touch_crate_entrypoints(root: &Root) -> Result<Vec<String>, ForgeError> {
@@ -160,6 +203,129 @@ pub fn run_preflight_gate(
     })
 }
 
+/// Run a multi-modal acceptance verification suite.
+pub fn run_acceptance_suite(
+    root: &Root,
+    config: &AcceptanceSuiteConfig,
+) -> Result<AcceptanceReport, ForgeError> {
+    let start_all = std::time::Instant::now();
+    let mut stages = Vec::new();
+
+    // 1. Stage: Preflight Rebase & Worktree Integrity
+    let t0 = std::time::Instant::now();
+    let preflight = run_preflight_gate(root, config.base.as_deref(), true)?;
+    stages.push(AcceptanceStageResult {
+        stage_name: "Preflight Rebase & Worktree Integrity".to_string(),
+        passed: preflight.rebase_clean && !preflight.is_dirty,
+        duration_ms: t0.elapsed().as_millis() as u64,
+        details: preflight.summary.clone(),
+    });
+
+    // 2. Stage: Unit Tests (if enabled)
+    if config.run_unit_tests {
+        let t0 = std::time::Instant::now();
+        let cargo_out = exec(root, Program::Cargo, &["test".to_string(), "--workspace".to_string()], EXEC_DEADLINE)?;
+        let passed = cargo_out.code == Some(0) && !cargo_out.timed_out;
+        let details = if passed {
+            "Cargo test workspace suite passed cleanly".to_string()
+        } else {
+            cargo_out.stderr.lines().take(10).collect::<Vec<_>>().join("\n")
+        };
+        stages.push(AcceptanceStageResult {
+            stage_name: "Unit & Workspace Tests".to_string(),
+            passed,
+            duration_ms: t0.elapsed().as_millis() as u64,
+            details,
+        });
+    }
+
+    // 3. Stage: Lint & Compiler Check (if enabled)
+    if config.run_lint_check {
+        let t0 = std::time::Instant::now();
+        let check_out = exec(root, Program::Cargo, &["check".to_string(), "--workspace".to_string()], EXEC_DEADLINE)?;
+        let passed = check_out.code == Some(0) && !check_out.timed_out;
+        stages.push(AcceptanceStageResult {
+            stage_name: "Cargo Workspace Lint & Type Check".to_string(),
+            passed,
+            duration_ms: t0.elapsed().as_millis() as u64,
+            details: if passed { "0 compiler errors".to_string() } else { check_out.stderr },
+        });
+    }
+
+    // 4. Stage: Screenshot Artifact Validation (if enabled)
+    if let Some(ref screen_check) = config.verify_screenshots {
+        let t0 = std::time::Instant::now();
+        let dir_path = match &screen_check.check_dir {
+            Some(custom) => root.path().join(custom),
+            None => root.path().join(".hadron").join("screenshots"),
+        };
+        let count = if dir_path.is_dir() {
+            std::fs::read_dir(&dir_path)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .filter(|e| {
+                            let name = e.file_name().to_string_lossy().to_string();
+                            name.ends_with(".png") || name.ends_with(".jpg") || name.ends_with(".webp")
+                        })
+                        .count()
+                })
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let passed = count >= screen_check.min_count;
+        stages.push(AcceptanceStageResult {
+            stage_name: "Screenshot Artifact Validation".to_string(),
+            passed,
+            duration_ms: t0.elapsed().as_millis() as u64,
+            details: format!("Found {count} screenshots (required minimum: {})", screen_check.min_count),
+        });
+    }
+
+    // 5. Stage: Custom Command Validations
+    for cmd in &config.custom_commands {
+        let t0 = std::time::Instant::now();
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        if let Some((prog_str, args)) = parts.split_first() {
+            let prog = match *prog_str {
+                "cargo" => Program::Cargo,
+                "git" => Program::Git,
+                "node" => Program::Node,
+                "npm" => Program::Npm,
+                "python" | "python3" => Program::Python3,
+                _ => Program::Git,
+            };
+            let arg_strings: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+            let out = exec(root, prog, &arg_strings, Duration::from_secs(30))?;
+            let passed = out.code == Some(0) && !out.timed_out;
+            stages.push(AcceptanceStageResult {
+                stage_name: format!("Custom Command `{cmd}`"),
+                passed,
+                duration_ms: t0.elapsed().as_millis() as u64,
+                details: if passed { "Command succeeded (exit 0)".to_string() } else { out.stderr },
+            });
+        }
+    }
+
+    let total_stages = stages.len();
+    let passed_stages = stages.iter().filter(|s| s.passed).count();
+    let ok = total_stages > 0 && passed_stages == total_stages;
+    let summary = if ok {
+        format!("Acceptance verification PASSED: all {passed_stages}/{total_stages} stages green in {}ms", start_all.elapsed().as_millis())
+    } else {
+        format!("Acceptance verification FAILED: {passed_stages}/{total_stages} stages passed")
+    };
+
+    Ok(AcceptanceReport {
+        ok,
+        total_stages,
+        passed_stages,
+        stages,
+        summary,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,8 +342,10 @@ mod tests {
             assert!(status.success(), "git {args:?} failed");
         };
         run(&["init", "-q"]);
+        run(&["branch", "-M", "main"]);
         run(&["config", "user.email", "test@example.com"]);
         run(&["config", "user.name", "Test"]);
+        std::fs::write(dir.path().join(".gitignore"), ".hadron/\n").unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
         std::fs::write(dir.path().join("src/lib.rs"), "pub fn add(a: i32, b: i32) -> i32 { a + b }\n").unwrap();
         std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
@@ -201,4 +369,33 @@ mod tests {
         let report = run_preflight_gate(&root, Some("main"), true).unwrap();
         assert!(report.touched_entrypoints.contains(&"src/lib.rs".to_string()));
     }
+
+    #[test]
+    fn acceptance_gate_runs_multi_stage_checks() {
+        let dir = fixture_repo();
+        let root = Root::new(dir.path());
+
+        // Create screenshot fixture in .hadron/screenshots/
+        let screen_dir = dir.path().join(".hadron").join("screenshots");
+        std::fs::create_dir_all(&screen_dir).unwrap();
+        std::fs::write(screen_dir.join("smoke_test.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+
+        let config = AcceptanceSuiteConfig {
+            base: Some("main".to_string()),
+            run_unit_tests: false,
+            run_lint_check: false,
+            verify_process_lifecycle: None,
+            verify_screenshots: Some(ScreenshotVerificationCheck {
+                min_count: 1,
+                check_dir: None,
+            }),
+            custom_commands: vec!["git status".to_string()],
+        };
+
+        let report = run_acceptance_suite(&root, &config).expect("acceptance suite should run");
+        assert!(report.ok);
+        assert_eq!(report.passed_stages, report.total_stages);
+        assert!(report.stages.iter().any(|s| s.stage_name == "Screenshot Artifact Validation"));
+    }
 }
+
