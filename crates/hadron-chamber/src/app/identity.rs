@@ -88,28 +88,37 @@ pub(super) fn identity_avatar(id: &ResolvedIdentity, diameter: f32) -> gpui::Any
     identity_avatar_with_state(id, diameter, None, true)
 }
 
-/// Render an identity's avatar with state-driven ring styling (active soft sapphire/amethyst ring, idle muted ring).
+/// Resolve the border (width, color) for an identity avatar's aura ring based on quark state and enabled status.
+///
+/// When excited (working), the ring adopts the quark's own assigned identity color (`id_color`)
+/// so it seamlessly blends with the UI while active. When thinking, it uses the reasoning halo.
+/// When idle/disabled, it falls back to muted/disabled ring styling.
+pub(super) fn avatar_ring_border(
+    id_color: Hsla,
+    state: Option<QuarkState>,
+    enabled: bool,
+) -> (f32, Hsla) {
+    if !enabled {
+        (1.0, theme::presence_disabled().into())
+    } else if let Some(st) = state {
+        match st {
+            QuarkState::Excited => (1.0, id_color),
+            QuarkState::Thinking => (1.0, theme::halo_dot(st)),
+            _ => (1.0, id_color.opacity(0.35)),
+        }
+    } else {
+        (1.0, id_color.opacity(0.35))
+    }
+}
+
+/// Render an identity's avatar with state-driven ring styling (active quark color / reasoning ring, idle muted ring).
 pub(super) fn identity_avatar_with_state(
     id: &ResolvedIdentity,
     diameter: f32,
     state: Option<QuarkState>,
     enabled: bool,
 ) -> gpui::AnyElement {
-    let is_active = state.map_or(false, |st| {
-        matches!(st, QuarkState::Excited | QuarkState::Thinking)
-    });
-
-    let (border_width, border_color) = if !enabled {
-        (1.0, theme::presence_disabled().into())
-    } else if let Some(st) = state {
-        if is_active {
-            (1.0, theme::halo_dot(st))
-        } else {
-            (1.0, id.color.opacity(0.35))
-        }
-    } else {
-        (1.0, id.color.opacity(0.35))
-    };
+    let (border_width, border_color) = avatar_ring_border(id.color, state, enabled);
 
     let base_avatar = match &id.image {
         Some(path) => Avatar::new()
@@ -175,5 +184,35 @@ mod tests {
             ImageSource::Resource(Resource::Uri(_)) => {}
             _ => panic!("expected an http(s) URL to remain a Uri source"),
         }
+    }
+
+    #[test]
+    fn avatar_ring_border_styling_per_state() {
+        let custom_color = gpui::hsla(0.8, 0.7, 0.6, 1.0);
+
+        // Excited (working): adopts the quark's own identity color
+        let (width, color) = avatar_ring_border(custom_color, Some(QuarkState::Excited), true);
+        assert_eq!(width, 1.0);
+        assert_eq!(color, custom_color);
+
+        // Thinking (reasoning): uses reasoning halo dot color
+        let (width, color) = avatar_ring_border(custom_color, Some(QuarkState::Thinking), true);
+        assert_eq!(width, 1.0);
+        assert_eq!(color, theme::halo_dot(QuarkState::Thinking));
+
+        // Ground / idle: uses muted quark color (opacity 0.35)
+        let (width, color) = avatar_ring_border(custom_color, Some(QuarkState::Ground), true);
+        assert_eq!(width, 1.0);
+        assert_eq!(color, custom_color.opacity(0.35));
+
+        // None state: uses muted quark color
+        let (width, color) = avatar_ring_border(custom_color, None, true);
+        assert_eq!(width, 1.0);
+        assert_eq!(color, custom_color.opacity(0.35));
+
+        // Disabled seat: uses presence_disabled
+        let (width, color) = avatar_ring_border(custom_color, Some(QuarkState::Excited), false);
+        assert_eq!(width, 1.0);
+        assert_eq!(color, theme::presence_disabled().into());
     }
 }
