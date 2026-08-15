@@ -241,3 +241,103 @@ fn general_subtargets_belong_to_general_group() {
     assert!(!is_general_subtarget(&SettingsTarget::Human));
     assert!(!is_general_subtarget(&SettingsTarget::Quark("acp-claude".to_string())));
 }
+
+#[test]
+fn first_added_quark_automatically_becomes_orchestrator_when_team_has_none() {
+    use hadron_lattice::{resolve_team, Flavor, QuarkId, Seat, Team};
+
+    let mut repo = Team::default();
+    let global = Team::default();
+
+    // Initially no orchestrators in resolved team
+    let has_orch = resolve_team(&repo, &global)
+        .quarks
+        .iter()
+        .any(|s| s.flavor == Flavor::Orchestrator);
+    assert!(!has_orch, "initially empty team has no orchestrator");
+
+    // When 1st quark is added:
+    let mut seat1 = Seat::cli(QuarkId::new("acp-claude"), "claude", "opus", Flavor::Worker);
+    if !has_orch {
+        seat1.flavor = Flavor::Orchestrator;
+    }
+    repo.quarks.push(seat1.clone());
+
+    let resolved = resolve_team(&repo, &global);
+    assert_eq!(resolved.quarks.len(), 1);
+    assert_eq!(
+        resolved.quarks[0].flavor,
+        Flavor::Orchestrator,
+        "1st added quark must automatically be promoted to Orchestrator"
+    );
+
+    // When 2nd quark is added:
+    let has_orch2 = resolve_team(&repo, &global)
+        .quarks
+        .iter()
+        .any(|s| s.flavor == Flavor::Orchestrator);
+    assert!(has_orch2, "now team has an orchestrator");
+
+    let mut seat2 = Seat::cli(QuarkId::new("acp-agy"), "agy", "gemini", Flavor::Worker);
+    if !has_orch2 {
+        seat2.flavor = Flavor::Orchestrator;
+    }
+    repo.quarks.push(seat2.clone());
+
+    let resolved2 = resolve_team(&repo, &global);
+    assert_eq!(resolved2.quarks.len(), 2);
+    assert_eq!(
+        resolved2.quarks[0].flavor,
+        Flavor::Orchestrator,
+        "1st quark remains Orchestrator"
+    );
+    assert_eq!(
+        resolved2.quarks[1].flavor,
+        Flavor::Worker,
+        "2nd quark remains Worker"
+    );
+}
+
+#[test]
+fn first_adopted_catalogue_quark_becomes_orchestrator_when_team_has_none() {
+    use hadron_lattice::{resolve_team, Flavor, QuarkId, Seat, SeatOverride, Team};
+
+    let mut repo = Team::default();
+    let global = Team {
+        quarks: vec![
+            Seat::cli(QuarkId::new("acp-claude"), "claude", "opus", Flavor::Worker),
+            Seat::cli(QuarkId::new("acp-agy"), "agy", "gemini", Flavor::Worker),
+        ],
+        roster: vec![],
+        max_exchanges: None,
+        nucleus_index_budget_kb: None,
+        merge_strategy: None,
+    };
+
+    // When adopting first quark into empty repo:
+    let has_orch = resolve_team(&repo, &global)
+        .quarks
+        .iter()
+        .any(|s| s.flavor == Flavor::Orchestrator);
+    assert!(!has_orch);
+
+    let flavor_override = if !has_orch {
+        Some(Flavor::Orchestrator)
+    } else {
+        None
+    };
+
+    repo.roster.push(SeatOverride {
+        enabled: Some(true),
+        flavor: flavor_override,
+        ..SeatOverride::role(QuarkId::new("acp-claude"))
+    });
+
+    let resolved = resolve_team(&repo, &global);
+    assert_eq!(resolved.quarks.len(), 1);
+    assert_eq!(
+        resolved.quarks[0].flavor,
+        Flavor::Orchestrator,
+        "First adopted quark in repo without orchestrator must be promoted to Orchestrator"
+    );
+}

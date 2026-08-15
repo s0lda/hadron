@@ -72,6 +72,117 @@ impl super::Chamber {
         .detach();
     }
 
+    /// Connect and probe an ACP agent in the background, automatically saving and adopting
+    /// the quark upon successful model detection without requiring manual confirmation.
+    pub(super) fn start_acp_preset_probe(
+        &mut self,
+        desc: AgentDescriptor,
+        cx: &mut Context<Self>,
+    ) {
+        self.wizard_state = WizardState::Connecting(desc.clone(), ProviderState::Connecting);
+        cx.notify();
+
+        let target = hadron_gluon::adapter::registry::AcpTarget {
+            program: desc.command.clone(),
+            args: desc.args.clone(),
+            env: Vec::new(),
+        };
+        let desc_for_task = desc.clone();
+        cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                let result = cx
+                    .background_spawn(async move {
+                        hadron_gluon::adapter::acp::probe(&target)
+                    })
+                    .await
+                    .map_err(|e| e.to_string());
+
+                this.update(&mut cx, |this, cx| {
+                    if !matches!(&this.wizard_state, WizardState::Connecting(d, _) if d.id == desc_for_task.id) {
+                        return;
+                    }
+                    match result {
+                        Ok(model) => {
+                            this.save_and_add_acp_quark(&desc_for_task, &model, cx);
+                        }
+                        Err(e) => {
+                            this.wizard_state = WizardState::Connecting(
+                                desc_for_task,
+                                ProviderState::Failed(e),
+                            );
+                            cx.notify();
+                        }
+                    }
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Save a probed ACP seat directly into the global catalogue and current repo team.
+    pub(super) fn save_and_add_acp_quark(
+        &mut self,
+        desc: &AgentDescriptor,
+        model: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let base_id = hadron_lattice::Transport::Acp.conventional_id(&desc.id);
+        let seat_id = {
+            let taken = |id: &str| {
+                self.providers.iter().any(|p| p.id == id)
+                    || self.global.quarks.iter().any(|s| s.id.as_str() == id)
+                    || self.team.quarks.iter().any(|s| s.id.as_str() == id)
+                    || self.team.roster.iter().any(|o| o.id.as_str() == id)
+            };
+            unique_seat_id(&base_id, &taken)
+        };
+
+        self.providers.push(ConfiguredQuark {
+            id: seat_id.clone(),
+            transport: "acp".to_string(),
+            model: model.to_string(),
+        });
+
+        let mut seat = hadron_lattice::Seat {
+            id: hadron_lattice::QuarkId::new(&seat_id),
+            display_name: None,
+            vendor: desc.id.clone(),
+            model: model.to_string(),
+            flavor: hadron_lattice::Flavor::Worker,
+            transport: hadron_lattice::Transport::Acp,
+            command: Some(hadron_lattice::AcpCommand {
+                program: desc.command.clone(),
+                args: desc.args.clone(),
+            }),
+            cli: None,
+            enabled: true,
+            effort: None,
+            mode_config: None,
+            roles: vec![],
+            exclusive: false,
+            commands: hadron_lattice::SeatCommands::default(),
+            secret_env: Vec::new(),
+            energy_limit: None,
+            deny_skills: vec![],
+            external_roots: vec![],
+            http_base_url: None,
+            model_params: hadron_lattice::ModelParams::default(),
+        };
+        seat.normalize_vendor();
+        if !hadron_lattice::id_follows_convention(seat.id.as_str(), seat.transport) {
+            eprintln!(
+                "chamber: note — id '{}' does not match the '{}-' convention",
+                seat.id.as_str(),
+                seat.transport.code()
+            );
+        }
+        self.add_configured_quark(seat, cx);
+        self.wizard_state = WizardState::None;
+        cx.notify();
+    }
+
     pub(super) fn appearance_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let typography_card = settings_card_section(
             "Typography & Appearance",
@@ -766,14 +877,10 @@ impl super::Chamber {
                                     div()
                                         .text_sm()
                                         .text_color(theme::text_muted())
-                                        .child("Configure →"),
+                                        .child("Connect →"),
                                 )
                                 .on_click(cx.listener(move |this, _, _window, cx| {
-                                    this.wizard_state = WizardState::Connecting(
-                                        preset.clone(),
-                                        ProviderState::NotConnected,
-                                    );
-                                    cx.notify();
+                                    this.start_acp_preset_probe(preset.clone(), cx);
                                 }))
                         }
                         // No command we can synthesise — a `binary`-only registry row
@@ -965,53 +1072,7 @@ impl super::Chamber {
                             .children(command_form)
                             .child(text_button("connect-btn", "Connect").when(command_ready, |b| b.on_click(cx.listener(
                                 move |this, _, _window, cx| {
-                                    this.wizard_state = WizardState::Connecting(
-                                        desc_clone.clone(),
-                                        ProviderState::Connecting,
-                                    );
-                                    cx.notify();
-
-                                    // Connect = boot the agent and complete ACP's `initialize`.
-                                    // The probe lives in the daemon (`hadron-gluon`), which is the
-                                    // thing that will actually drive this agent — so the UI cannot
-                                    // claim a provider works over a client the daemon never uses.
-                                    let target = hadron_gluon::adapter::registry::AcpTarget {
-                                        program: desc_clone.command.clone(),
-                                        args: desc_clone.args.clone(),
-                                        env: Vec::new(),
-                                    };
-                                    let desc_for_task = desc_clone.clone();
-                                    cx.spawn(
-                                        |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                                            // The async block outlives the borrow, so it gets its own
-                                            // handle on the app rather than holding a reference.
-                                            let mut cx = cx.clone();
-                                            async move {
-                                                // Blocking boot, off the UI thread: a slow `npx` must not
-                                                // freeze the window.
-                                                let result = cx
-                                                    .background_spawn(async move {
-                                                        hadron_gluon::adapter::acp::probe(&target)
-                                                    })
-                                                    .await
-                                                    .map_err(|e| e.to_string());
-
-                                                this.update(&mut cx, |this, cx| {
-                                                    let state = match result {
-                                                        Ok(model) => ProviderState::Ready { model },
-                                                        Err(e) => ProviderState::Failed(e),
-                                                    };
-                                                    this.wizard_state = WizardState::Connecting(
-                                                        desc_for_task,
-                                                        state,
-                                                    );
-                                                    cx.notify();
-                                                })
-                                                .ok();
-                                            }
-                                        },
-                                    )
-                                    .detach();
+                                    this.start_acp_preset_probe(desc_clone.clone(), cx);
                                 },
                             ))))
                             .into_any_element()
@@ -1043,45 +1104,7 @@ impl super::Chamber {
                                         )
                                         .on_click(cx.listener(
                                             move |this, _, _, cx| {
-                                                this.wizard_state = WizardState::Connecting(
-                                                    desc_inner.clone(),
-                                                    ProviderState::Connecting,
-                                                );
-                                                cx.notify();
-
-                                                let target = hadron_gluon::adapter::registry::AcpTarget {
-                                                    program: desc_inner.command.clone(),
-                                                    args: desc_inner.args.clone(),
-                                                    env: Vec::new(),
-                                                };
-                                                let desc_for_task = desc_inner.clone();
-                                                cx.spawn(
-                                                    |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                                                        let mut cx = cx.clone();
-                                                        async move {
-                                                            let result = cx
-                                                                .background_spawn(async move {
-                                                                    hadron_gluon::adapter::acp::probe(&target)
-                                                                })
-                                                                .await
-                                                                .map_err(|e| e.to_string());
-
-                                                            this.update(&mut cx, |this, cx| {
-                                                                let state = match result {
-                                                                    Ok(model) => ProviderState::Ready { model },
-                                                                    Err(e) => ProviderState::Failed(e),
-                                                                };
-                                                                this.wizard_state = WizardState::Connecting(
-                                                                    desc_for_task,
-                                                                    state,
-                                                                );
-                                                                cx.notify();
-                                                            })
-                                                            .ok();
-                                                        }
-                                                    },
-                                                )
-                                                .detach();
+                                                this.start_acp_preset_probe(desc_inner.clone(), cx);
                                             },
                                         )),
                                     ),
@@ -1101,86 +1124,7 @@ impl super::Chamber {
                             )
                             .child(text_button("save-provider", "Save Provider").on_click(
                                 cx.listener(move |this, _, _window, cx| {
-                                    // `desc_inner.id` is the PURE vendor now (Task 3 re-keyed
-                                    // `available_presets()`/`AgentDescriptor` off `AcpAgentSpec.vendor`,
-                                    // e.g. "claude" — it no longer carries the old smeared "acp-claude"
-                                    // preset key). The seat's id is the `<transport>-<vendor>` form,
-                                    // derived once via `conventional_id` and reused for BOTH records
-                                    // below so they never diverge — `remove_quark` keys the roster off
-                                    // `ConfiguredQuark.id`, so it must match `Seat.id` exactly.
-                                    let base_id = hadron_lattice::Transport::Acp.conventional_id(&desc_inner.id);
-                                    // Saving the same provider again must create a SECOND seat
-                                    // (same vendor, its own model/identity), not re-adopt the
-                                    // first — so mint a fresh id when the conventional one is
-                                    // taken anywhere this chamber can see a seat.
-                                    let seat_id = {
-                                        let taken = |id: &str| {
-                                            this.providers.iter().any(|p| p.id == id)
-                                                || this.global.quarks.iter().any(|s| s.id.as_str() == id)
-                                                || this.team.quarks.iter().any(|s| s.id.as_str() == id)
-                                                || this.team.roster.iter().any(|o| o.id.as_str() == id)
-                                        };
-                                        unique_seat_id(&base_id, &taken)
-                                    };
-
-                                    this.providers.push(ConfiguredQuark {
-                                        id: seat_id.clone(),
-                                        transport: "acp".to_string(),
-                                        model: model_inner.clone(),
-                                    });
-
-                                    // An ACP seat, and it carries the command the wizard
-                                    // just proved boots — so the daemon reaches this agent
-                                    // over the same transport the human tested it on. Its
-                                    // definition lands in the global catalogue; this repo
-                                    // auto-adopts it (see `add_configured_quark`).
-                                    let mut seat = hadron_lattice::Seat {
-                                        id: hadron_lattice::QuarkId::new(&seat_id),
-                                        display_name: None,
-                                        vendor: desc_inner.id.clone(),
-                                        model: model_inner.clone(),
-                                        flavor: hadron_lattice::Flavor::Worker, // default flavor
-                                        transport: hadron_lattice::Transport::Acp,
-                                        command: Some(hadron_lattice::AcpCommand {
-                                            program: desc_inner.command.clone(),
-                                            args: desc_inner.args.clone(),
-                                        }),
-                                        cli: None,
-                                        // A seat the human just proved and saved is on.
-                                        enabled: true,
-                                        effort: None,
-                                        mode_config: None,
-                                        roles: vec![],
-                                        exclusive: false,
-                                        commands: hadron_lattice::SeatCommands::default(),
-                                        secret_env: Vec::new(),
-                                        energy_limit: None,
-                                        deny_skills: vec![],
-                                        // A brand-new seat reaches nothing outside its
-                                        // worktree until a human grants it a root.
-                                        external_roots: vec![],
-                                        http_base_url: None,
-                                        model_params: hadron_lattice::ModelParams::default(),
-                                    };
-                                    // `vendor` is already pure (Task 3's re-keyed preset list), so this
-                                    // is a no-op today — left in as a defensive strip in case a vendor
-                                    // string ever carries a transport prefix again.
-                                    seat.normalize_vendor();
-                                    // Advisory only, never blocking: `seat_id` is already built from
-                                    // `conventional_id`, so this is dormant on this common path — it
-                                    // stays as future-proofing for a later custom-CLI id path where a
-                                    // hand-typed id might not match its transport prefix.
-                                    if !hadron_lattice::id_follows_convention(seat.id.as_str(), seat.transport) {
-                                        eprintln!(
-                                            "chamber: note — id '{}' does not match the '{}-' convention",
-                                            seat.id.as_str(),
-                                            seat.transport.code()
-                                        );
-                                    }
-                                    this.add_configured_quark(seat, cx);
-
-                                    this.wizard_state = WizardState::None;
-                                    cx.notify();
+                                    this.save_and_add_acp_quark(&desc_inner, &model_inner, cx);
                                 }),
                             ))
                             .into_any_element()

@@ -1978,7 +1978,18 @@ impl Chamber {
     /// (an enabled override), matching Jake's "added quark joins the current repo".
     /// When there is no separate catalogue (the repo file *is* the global file), fall
     /// back to a self-contained legacy seat — the pre-split behaviour.
-    pub(super) fn add_configured_quark(&mut self, seat: hadron_lattice::Seat, cx: &mut Context<Self>) {
+    ///
+    /// If the resolved team currently has NO orchestrator (fresh install or empty team),
+    /// the first added quark is automatically designated as the Swarm Orchestrator.
+    pub(super) fn add_configured_quark(&mut self, mut seat: hadron_lattice::Seat, cx: &mut Context<Self>) {
+        let has_orchestrator = resolve_team(&self.team, &self.global)
+            .quarks
+            .iter()
+            .any(|s| s.flavor == hadron_lattice::Flavor::Orchestrator);
+        if !has_orchestrator {
+            seat.flavor = hadron_lattice::Flavor::Orchestrator;
+        }
+
         let repo_path = self.repo_team_path();
         let global_path = hadron_lattice::team_config_path();
         let separate = global_path.as_deref().is_some_and(|g| g != repo_path);
@@ -1997,11 +2008,18 @@ impl Chamber {
                             eprintln!("chamber: failed to save catalogue: {e}");
                         }
                     }
-                    SeatOverride { enabled: Some(true), ..SeatOverride::role(id.clone()) }
+                    SeatOverride {
+                        enabled: Some(true),
+                        flavor: (seat.flavor == hadron_lattice::Flavor::Orchestrator)
+                            .then_some(hadron_lattice::Flavor::Orchestrator),
+                        ..SeatOverride::role(id.clone())
+                    }
                 }
                 Some(def) => SeatOverride {
                     enabled: Some(true),
                     model: (seat.model != def.model).then(|| seat.model.clone()),
+                    flavor: (seat.flavor == hadron_lattice::Flavor::Orchestrator)
+                        .then_some(hadron_lattice::Flavor::Orchestrator),
                     ..SeatOverride::role(id.clone())
                 },
             };
@@ -2020,7 +2038,7 @@ impl Chamber {
 
     /// **Adopt** a catalogue quark into this repo: add an enabled override so the daemon
     /// seats it. The definition stays in the global catalogue; the repo only records
-    /// that it participates here (as a worker by default; change the role afterwards).
+    /// that it participates here (promoted to orchestrator if no orchestrator exists, else worker).
     pub(super) fn adopt_quark(&mut self, id: &str, cx: &mut Context<Self>) {
         let qid = QuarkId::new(id);
         if self.team.quarks.iter().any(|s| s.id == qid)
@@ -2028,8 +2046,18 @@ impl Chamber {
         {
             return; // already adopted here
         }
+        let has_orchestrator = resolve_team(&self.team, &self.global)
+            .quarks
+            .iter()
+            .any(|s| s.flavor == hadron_lattice::Flavor::Orchestrator);
+        let flavor_override = if !has_orchestrator {
+            Some(hadron_lattice::Flavor::Orchestrator)
+        } else {
+            None
+        };
         self.team.roster.push(SeatOverride {
             enabled: Some(true),
+            flavor: flavor_override,
             ..SeatOverride::role(qid) // inherit the catalogue's role + definition
         });
         self.save_repo_team(cx);
