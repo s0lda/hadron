@@ -1,5 +1,126 @@
 use std::path::{Path, PathBuf};
+use serde::{Deserialize, Serialize};
 use crate::file::{resolve_jailed_path, ForgeError, Root};
+
+/// Payload to author and register a new post-mortem note and 1-line index pointer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DistillLessonInput {
+    pub slug: String,
+    pub description: String,
+    pub fact: String,
+    pub why: String,
+    pub how_to_apply: String,
+    pub section: Option<String>,
+}
+
+/// Result report from distilling a lesson into nucleus.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DistillLessonOutput {
+    pub slug: String,
+    pub note_path: String,
+    pub index_line: String,
+    pub index_appended: bool,
+    pub summary: String,
+}
+
+/// Programmatically create a post-mortem note in `notes/<slug>.md` and register a 1-line pointer in `index.md`.
+pub fn distill_lesson(
+    nucleus_root: &Root,
+    input: &DistillLessonInput,
+) -> Result<DistillLessonOutput, ForgeError> {
+    let clean_slug = input.slug.trim().to_lowercase().replace(' ', "-");
+    if clean_slug.is_empty() || clean_slug.contains('/') || clean_slug.contains('\\') || clean_slug.contains("..") {
+        return Err(ForgeError::Rejected(format!("invalid slug: {:?}", input.slug)));
+    }
+
+    let notes_dir = resolve_jailed_path(nucleus_root, "notes")?;
+    if !notes_dir.exists() {
+        std::fs::create_dir_all(&notes_dir).map_err(|e| ForgeError::Io(e.to_string()))?;
+    }
+
+    let note_rel = format!("notes/{clean_slug}.md");
+    let note_file = resolve_jailed_path(nucleus_root, &note_rel)?;
+
+    // 1. Format note content with Standard Model YAML frontmatter
+    let note_content = format!(
+        "---\nname: {clean_slug}\ndescription: {}\nmetadata:\n  type: project\n---\n{}\n\n**Why:** {}\n\n**How to apply:** {}\n",
+        input.description.trim(),
+        input.fact.trim(),
+        input.why.trim(),
+        input.how_to_apply.trim()
+    );
+
+    std::fs::write(&note_file, note_content).map_err(|e| ForgeError::Io(e.to_string()))?;
+
+    // 2. Format 1-line index pointer (hook capped at ~100 characters)
+    let raw_hook = input.description.trim();
+    let hook = if raw_hook.chars().count() > 100 {
+        format!("{}…", raw_hook.chars().take(99).collect::<String>())
+    } else {
+        raw_hook.to_string()
+    };
+
+    let index_line = format!("- [{clean_slug}](notes/{clean_slug}.md) — {hook}");
+
+    let index_path = resolve_jailed_path(nucleus_root, "index.md")?;
+    let mut index_appended = false;
+
+    if index_path.exists() {
+        let index_content = std::fs::read_to_string(&index_path).unwrap_or_default();
+        let target_needle = format!("[{clean_slug}]");
+
+        if index_content.contains(&target_needle) {
+            // Replace existing line with updated hook
+            let mut updated_lines = Vec::new();
+            for line in index_content.lines() {
+                if line.contains(&target_needle) {
+                    updated_lines.push(index_line.clone());
+                } else {
+                    updated_lines.push(line.to_string());
+                }
+            }
+            std::fs::write(&index_path, updated_lines.join("\n") + "\n").map_err(|e| ForgeError::Io(e.to_string()))?;
+        } else {
+            // Append under requested section if found, else append to bottom
+            let target_section = input.section.as_deref().unwrap_or("Swarm Lessons");
+            let section_header = format!("## {target_section}");
+
+            let mut lines: Vec<String> = index_content.lines().map(ToString::to_string).collect();
+            let mut inserted = false;
+
+            if let Some(pos) = lines.iter().position(|l| l.trim() == section_header) {
+                // Insert right after section header
+                lines.insert(pos + 1, index_line.clone());
+                inserted = true;
+            }
+
+            if !inserted {
+                if !lines.iter().any(|l| l.starts_with("## ")) {
+                    lines.push(format!("\n## {target_section}"));
+                }
+                lines.push(index_line.clone());
+            }
+
+            std::fs::write(&index_path, lines.join("\n") + "\n").map_err(|e| ForgeError::Io(e.to_string()))?;
+            index_appended = true;
+        }
+    } else {
+        let content = format!("# Memory index\n\n## Swarm Lessons\n{}\n", index_line);
+        std::fs::write(&index_path, content).map_err(|e| ForgeError::Io(e.to_string()))?;
+        index_appended = true;
+    }
+
+    let summary = format!("Distilled nucleus lesson '{clean_slug}' to notes/{clean_slug}.md and registered in index.md");
+
+    Ok(DistillLessonOutput {
+        slug: clean_slug,
+        note_path: note_rel,
+        index_line,
+        index_appended,
+        summary,
+    })
+}
+
 
 /// Derive a project's `.hadron/nucleus` directory as a [`Root`].
 ///
@@ -212,4 +333,35 @@ mod tests {
             "a linked worktree must share the MAIN checkout's nucleus"
         );
     }
+
+    #[test]
+    fn distills_note_and_appends_single_line_to_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = Root::new(dir.path());
+        std::fs::write(dir.path().join("index.md"), "# Memory index\n\n## Swarm Lessons\n").unwrap();
+
+        let input = DistillLessonInput {
+            slug: "test-distill-lesson".to_string(),
+            description: "Test description retrieval key".to_string(),
+            fact: "A single distilled invariant or lesson fact.".to_string(),
+            why: "Preventing silent regressions across worktrees.".to_string(),
+            how_to_apply: "Check the registry before adding new items.".to_string(),
+            section: Some("Swarm Lessons".to_string()),
+        };
+
+        let output = distill_lesson(&root, &input).expect("distillation should succeed");
+        assert_eq!(output.slug, "test-distill-lesson");
+        assert!(output.index_appended);
+
+        // Verify note file exists with frontmatter
+        let note_content = std::fs::read_to_string(dir.path().join("notes").join("test-distill-lesson.md")).unwrap();
+        assert!(note_content.contains("name: test-distill-lesson"));
+        assert!(note_content.contains("description: Test description retrieval key"));
+        assert!(note_content.contains("**Why:** Preventing silent regressions"));
+
+        // Verify index.md has exactly one line pointer
+        let index_content = std::fs::read_to_string(dir.path().join("index.md")).unwrap();
+        assert!(index_content.contains("- [test-distill-lesson](notes/test-distill-lesson.md) — Test description retrieval key"));
+    }
 }
+
