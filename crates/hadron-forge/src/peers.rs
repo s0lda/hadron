@@ -24,6 +24,33 @@ pub struct PeerWorktreeInfo {
     pub commits_ahead_base: usize,
 }
 
+/// Conflict severity between concurrent worktrees.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConflictSeverity {
+    Warning,
+    DirectCollision,
+}
+
+/// Description of a cross-worktree file or symbol conflict.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeConflict {
+    pub file_path: String,
+    pub conflicting_peers: Vec<String>,
+    pub branches: Vec<String>,
+    pub severity: ConflictSeverity,
+    pub description: String,
+}
+
+/// Comprehensive cross-worktree collision report across .hadron/trees/*.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerConflictReport {
+    pub total_peers_inspected: usize,
+    pub conflicts_detected: usize,
+    pub conflicts: Vec<WorktreeConflict>,
+    pub summary: String,
+}
+
+
 /// Derive the `.hadron/trees` directory from any worktree or project path.
 pub fn derive_trees_dir(project: &Path) -> Result<PathBuf, ForgeError> {
     let output = Command::new("git")
@@ -93,6 +120,83 @@ pub fn list_peer_worktrees(project_root: &Root) -> Result<Vec<PeerWorktreeInfo>,
     peers.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
     Ok(peers)
 }
+
+/// Detect conflicting and overlapping file edits across all sibling worktrees.
+pub fn detect_cross_worktree_conflicts(project_root: &Root) -> Result<PeerConflictReport, ForgeError> {
+    let peers = list_peer_worktrees(project_root)?;
+    let mut file_to_peers: std::collections::HashMap<String, Vec<(String, String)>> = std::collections::HashMap::new();
+
+    for peer in &peers {
+        // Collect dirty modified files
+        for file in &peer.modified_files {
+            file_to_peers
+                .entry(file.clone())
+                .or_default()
+                .push((peer.peer_id.clone(), peer.branch.clone()));
+        }
+
+        // Check committed files ahead of base if commits_ahead_base > 0
+        if peer.commits_ahead_base > 0 {
+            let log_out = Command::new("git")
+                .arg("-C")
+                .arg(&peer.worktree_path)
+                .args(&["diff", "--name-only", "main..HEAD"])
+                .output();
+
+            if let Ok(out) = log_out {
+                if out.status.success() {
+                    for line in String::from_utf8_lossy(&out.stdout).lines() {
+                        let f = line.trim();
+                        if !f.is_empty() {
+                            let entry = file_to_peers.entry(f.to_string()).or_default();
+                            if !entry.iter().any(|(p, _)| p == &peer.peer_id) {
+                                entry.push((peer.peer_id.clone(), peer.branch.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut conflicts = Vec::new();
+    for (file_path, peer_list) in file_to_peers {
+        if peer_list.len() >= 2 {
+            let conflicting_peers: Vec<String> = peer_list.iter().map(|(p, _)| p.clone()).collect();
+            let branches: Vec<String> = peer_list.iter().map(|(_, b)| b.clone()).collect();
+            conflicts.push(WorktreeConflict {
+                file_path: file_path.clone(),
+                conflicting_peers: conflicting_peers.clone(),
+                branches,
+                severity: ConflictSeverity::DirectCollision,
+                description: format!(
+                    "File '{}' modified concurrently across {} peer worktree(s): {}",
+                    file_path,
+                    conflicting_peers.len(),
+                    conflicting_peers.join(", ")
+                ),
+            });
+        }
+    }
+
+    conflicts.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+
+    let conflicts_detected = conflicts.len();
+    let total_peers_inspected = peers.len();
+    let summary = if conflicts_detected > 0 {
+        format!("Cross-worktree collision WARNING: {conflicts_detected} file(s) concurrently modified across {total_peers_inspected} active peer trees")
+    } else {
+        format!("Cross-worktree check CLEAN: 0 file collisions across {total_peers_inspected} active peer trees")
+    };
+
+    Ok(PeerConflictReport {
+        total_peers_inspected,
+        conflicts_detected,
+        conflicts,
+        summary,
+    })
+}
+
 
 fn inspect_single_peer_dir(peer_id: &str, peer_dir: &Path) -> Result<PeerWorktreeInfo, ForgeError> {
     // 1. Branch name
@@ -241,4 +345,24 @@ mod tests {
         let err = inspect_peer_worktree(&root, "../peer-alpha");
         assert!(matches!(err, Err(ForgeError::Rejected(_))));
     }
+
+    #[test]
+    fn detects_overlapping_modified_files_across_peer_worktrees() {
+        let (_tmp, main, peer_a) = fixture_multitree_repo();
+        let peer_b = main.join(".hadron").join("trees").join("peer-beta");
+
+        // Both peer-alpha and peer-beta edit shared.rs
+        std::fs::write(peer_a.join("shared.rs"), "pub fn shared_fn() -> i32 { 1 }\n").unwrap();
+        std::fs::write(peer_b.join("shared.rs"), "pub fn shared_fn() -> i32 { 2 }\n").unwrap();
+
+        let root = Root::new(&peer_a);
+        let report = detect_cross_worktree_conflicts(&root).expect("conflict detection should run");
+
+        assert_eq!(report.conflicts_detected, 1);
+        assert_eq!(report.conflicts[0].file_path, "shared.rs");
+        assert_eq!(report.conflicts[0].conflicting_peers.len(), 2);
+        assert!(report.conflicts[0].conflicting_peers.contains(&"peer-alpha".to_string()));
+        assert!(report.conflicts[0].conflicting_peers.contains(&"peer-beta".to_string()));
+    }
 }
+

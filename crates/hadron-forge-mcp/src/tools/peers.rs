@@ -12,6 +12,9 @@ pub struct PeerInspectArgs {
     pub peer_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PeerConflictsArgs {}
+
 #[tool_router(router = peers_router, vis = "pub(super)")]
 impl ForgeMcpServer {
     #[tool(
@@ -37,6 +40,34 @@ impl ForgeMcpServer {
             Ok(Ok(json)) => Json(ToolResponse::success(Some(json))),
             Ok(Err(e)) => Json(ToolResponse::error(e.to_string())),
             Err(e) => Json(ToolResponse::error(format!("Peer inspection task failed: {e}"))),
+        }
+    }
+
+    #[tool(
+        name = "hadron_forge_peers_detect_conflicts",
+        description = "Proactively scan sibling quark worktrees in .hadron/trees/* for overlapping file edits and merge collision risks"
+    )]
+    pub async fn peers_detect_conflicts(&self, Parameters(_args): Parameters<PeerConflictsArgs>) -> Json<ToolResponse> {
+        let root = self.root.clone();
+
+        let res = tokio::task::spawn_blocking(move || {
+            hadron_forge::peers::detect_cross_worktree_conflicts(&root)
+        })
+        .await;
+
+        match res {
+            Ok(Ok(report)) => {
+                let json = serde_json::to_string_pretty(&report).unwrap_or_else(|_| report.summary.clone());
+                if report.conflicts_detected == 0 {
+                    Json(ToolResponse::success(Some(json)))
+                } else {
+                    let mut resp = ToolResponse::error(report.summary);
+                    resp.blocks = Some(json);
+                    Json(resp)
+                }
+            }
+            Ok(Err(e)) => Json(ToolResponse::error(e.to_string())),
+            Err(e) => Json(ToolResponse::error(format!("Cross-worktree conflict detection task failed: {e}"))),
         }
     }
 }
@@ -88,4 +119,17 @@ mod tests {
         assert!(res.0.ok);
         assert!(res.0.blocks.unwrap().contains("peer-alpha"));
     }
+
+    #[tokio::test]
+    async fn peers_detect_conflicts_tool_executes() {
+        let (_tmp, _main, peer_a) = fixture_multitree_repo();
+        let server = ForgeMcpServer::new(&peer_a);
+
+        let res = server
+            .peers_detect_conflicts(Parameters(PeerConflictsArgs {}))
+            .await;
+        assert!(res.0.ok);
+        assert!(res.0.blocks.unwrap().contains("Cross-worktree check CLEAN"));
+    }
 }
+
