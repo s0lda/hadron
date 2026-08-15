@@ -20,6 +20,23 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.8.0",
+        date: Some("2026-08-15"),
+        added: &[
+            "Deterministic DAG Plan Engine (hadron-gluon) for markdown plan parsing and disk state synchronization",
+            "Autonomous Self-Healing Merge Gate (hadron-gluon) with structured compiler diagnostics and remediation guidance",
+            "Autonomous Spec & DAG Plan Compiler (hadron_forge_spec_compile) translating natural language to validated plans",
+            "Visual & Behavioral E2E Asserter (hadron_forge_e2e_assert) for multi-step browser flows and DOM assertions",
+            "Packaging & Live Preview Launcher (hadron_forge_preview_launch) with release builds and loopback health probing",
+            "Autonomous Scaffolder & Dependency Resolver (hadron_forge_scaffold) across Rust, Vite, Python, and Next.js stacks",
+            "Security & Secret Scanner Gate (hadron_forge_security_audit) detecting API secrets, keys, and injection vectors",
+            "Runtime Service & Crash Watchdog (hadron_forge_service_watchdog) for log buffer panic detection and health monitoring",
+            "Acceptance verification gate, peer worktree conflict detector, and autonomous lesson distillation MCP tools",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.7.0",
         date: Some("2026-08-15"),
         added: &[

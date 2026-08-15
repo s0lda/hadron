@@ -5,6 +5,26 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-08-15
+
+### Added
+- **Deterministic DAG Plan Engine (`hadron-gluon`)**:
+  - Implemented `PlanDocument`, `parse_plan_markdown`, and `sync_plan_checkbox` in `hadron-gluon::engine::dag` for deterministic task graph parsing and bidirectional disk state synchronization with `.hadron/docs/plans/*.md`.
+- **Autonomous Self-Healing Merge Gate (`hadron-gluon`)**:
+  - Added structured compiler diagnostic extraction (`extract_structured_diagnostics`) and automated remediation instructions (`format_remediation_instructions`) into `hadron-gluon::engine::merge` to guide Quarks through autonomous self-healing loops upon gate failures.
+- **Prompt-to-Product Autonomy Suite (`hadron-forge` & MCP)**:
+  - **Autonomous Spec & DAG Plan Compiler (`hadron_forge_spec_compile`)**: Translates high-level natural language prompts into formal Design Specifications and validated Gluon DAG plans.
+  - **Visual & Behavioral E2E Asserter (`hadron_forge_e2e_assert`)**: Automates multi-step headless browser navigation, form interactions, DOM text assertions, and visual screenshot verification.
+  - **Packaging & Live Preview Launcher (`hadron_forge_preview_launch`)**: Detects build stacks (`cargo`, `npm`, `vite`), builds release artifacts, supervises isolated background servers with process-group teardown, and verifies loopback health endpoints.
+- **Autonomous Lifecycle Powerpack (`hadron-forge` & MCP)**:
+  - **Autonomous Scaffolder & Dependency Resolver (`hadron_forge_scaffold`)**: Standardizes project initialization across Rust, Vite (React, Vue, Svelte, Vanilla TS), Python, and Next.js stacks with lockfile verification.
+  - **Security & Secret Scanner Gate (`hadron_forge_security_audit`)**: Static AST and dependency scanner detecting hardcoded API secrets, private keys, command/SQL injection risks, and unjailed path traversals.
+  - **Runtime Service & Crash Watchdog (`hadron_forge_service_watchdog`)**: Real-time service log analysis detecting runtime panics, unhandled promise rejections, port binding conflicts, and emitting remediation guidance.
+- **Multi-Modal Verification & Continuous Conflict Detection (`hadron-forge` & MCP)**:
+  - Added multi-modal acceptance test suite execution with timeout and output capture (`hadron_forge_acceptance_gate`).
+  - Added continuous cross-worktree conflict detection inspecting overlapping file edits and exported symbols before merge gate submission (`hadron_forge_peers_detect_conflicts`).
+  - Added autonomous post-mortem lesson distillation into `notes/<slug>.md` while maintaining 1-line pointer formatting in `index.md` (`hadron_forge_nucleus_distill_lesson`).
+
 ## [0.7.0] - 2026-08-15
 
 ### Added
