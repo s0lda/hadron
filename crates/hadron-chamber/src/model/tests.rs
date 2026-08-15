@@ -1012,3 +1012,24 @@ fn the_default_mode_needs_no_seed() {
     assert!(default_mode_seed(Mode::default()).is_none());
     assert_eq!(hadron_gatekeeper::global_mode(&[]), Mode::default());
 }
+
+#[test]
+fn attention_required_renders_in_chat_with_error_severity() {
+    let event = Event::new(
+        Actor::Quark(QuarkId::new("agy")),
+        None,
+        Kind::AttentionRequired {
+            urgency: hadron_lattice::AttentionUrgency::Critical,
+            summary: "Database connection failed".into(),
+            action_needed: Some("Restart postgres".into()),
+        },
+    );
+    let view = project(&[event]);
+    assert_eq!(view.messages.len(), 1);
+    let row = &view.messages[0];
+    assert!(row.is_chat());
+    assert!(row.body.contains("🚨 [Attention Required - Critical]"));
+    assert!(row.body.contains("Database connection failed"));
+    assert!(row.body.contains("Restart postgres"));
+    assert_eq!(row.severity, Some(hadron_lattice::Severity::Error));
+}

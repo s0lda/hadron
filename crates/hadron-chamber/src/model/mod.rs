@@ -505,6 +505,16 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
             ),
             "permission_grant",
         ),
+        Kind::AttentionRequired { urgency, summary, action_needed } => {
+            let action_str = action_needed
+                .as_ref()
+                .map(|a| format!(" · Action: {a}"))
+                .unwrap_or_default();
+            (
+                format!("🚨 [Attention Required - {urgency:?}]: {summary}{action_str}"),
+                "message",
+            )
+        }
         Kind::ModeSet { mode } => (format!("mode → {mode:?}").to_lowercase(), "mode_set"),
         Kind::ModeClear => ("mode → default (inherit global)".to_string(), "mode_clear"),
         Kind::Reboot => ("force-restart requested".to_string(), "reboot"),
@@ -512,7 +522,9 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
         Kind::Unknown { kind, .. } => (format!("unrecognized event: {kind}"), "unrecognized"),
     };
     let severity = e.severity.or_else(|| {
-        if matches!(e.kind, Kind::PermissionReq { .. }) {
+        if matches!(e.kind, Kind::AttentionRequired { .. }) {
+            Some(hadron_lattice::Severity::Error)
+        } else if matches!(e.kind, Kind::PermissionReq { .. }) {
             Some(hadron_lattice::Severity::Warning)
         } else {
             None

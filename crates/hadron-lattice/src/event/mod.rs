@@ -89,6 +89,15 @@ pub enum Severity {
     Error,
 }
 
+/// Urgency level for an attention required field event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttentionUrgency {
+    High,
+    Blocker,
+    Critical,
+}
+
 /// The payload of an event. Known variants flatten into the envelope under a
 /// `"kind"` tag. Unknown kinds are preserved verbatim for forward-compat.
 ///
@@ -105,6 +114,12 @@ pub enum Kind {
     Assign { task: String, invariants: Vec<String> },
     PermissionReq { risk: Risk, description: String },
     PermissionGrant { approved: bool, remember: bool },
+    /// High-priority attention signal requesting human or orchestrator intervention.
+    AttentionRequired {
+        urgency: AttentionUrgency,
+        summary: String,
+        action_needed: Option<String>,
+    },
     /// Set the permission mode. The envelope's `to` field is the target:
     /// `Some(quark)` = a per-quark override, `None` = the global default.
     ModeSet { mode: Mode },
@@ -282,6 +297,14 @@ impl Serialize for Event {
                 m.serialize_entry("approved", approved)?;
                 m.serialize_entry("remember", remember)?;
             }
+            Kind::AttentionRequired { urgency, summary, action_needed } => {
+                m.serialize_entry("kind", "attention_required")?;
+                m.serialize_entry("urgency", urgency)?;
+                m.serialize_entry("summary", summary)?;
+                if let Some(action) = action_needed {
+                    m.serialize_entry("action_needed", action)?;
+                }
+            }
             Kind::ModeSet { mode } => {
                 m.serialize_entry("kind", "mode_set")?;
                 m.serialize_entry("mode", mode)?;
@@ -401,6 +424,22 @@ impl<'de> Deserialize<'de> for Event {
                     None | Some(Value::Null) => false,
                     Some(val) => serde_json::from_value(val).map_err(D::Error::custom)?,
                 },
+            },
+            "attention_required" => {
+                let urgency = match map.remove("urgency") {
+                    Some(v) => serde_json::from_value(v).map_err(D::Error::custom)?,
+                    None => AttentionUrgency::High,
+                };
+                let summary = take_field(&mut map, "summary")?;
+                let action_needed = match map.remove("action_needed") {
+                    Some(Value::String(s)) => Some(s),
+                    _ => None,
+                };
+                Kind::AttentionRequired {
+                    urgency,
+                    summary,
+                    action_needed,
+                }
             },
             "mode_set" => Kind::ModeSet {
                 mode: take_field(&mut map, "mode")?,

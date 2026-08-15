@@ -66,6 +66,29 @@ mod event_tests {
     }
 
     #[test]
+    fn attention_required_event_round_trips() {
+        let ev = Event::new(
+            Actor::Quark(QuarkId::new("agy")),
+            None,
+            Kind::AttentionRequired {
+                urgency: AttentionUrgency::Blocker,
+                summary: "Missing OAuth credentials".into(),
+                action_needed: Some("Configure GEMINI_API_KEY".into()),
+            },
+        )
+        .with_severity(Severity::Error);
+
+        let line = serde_json::to_string(&ev).unwrap();
+        assert!(line.contains(r#""kind":"attention_required""#));
+        assert!(line.contains(r#""urgency":"blocker""#));
+        assert!(line.contains(r#""summary":"Missing OAuth credentials""#));
+        assert!(line.contains(r#""action_needed":"Configure GEMINI_API_KEY""#));
+
+        let back: Event = serde_json::from_str(&line).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
     fn assign_event_round_trips() {
         let ev = Event::new(
             Actor::Human,
