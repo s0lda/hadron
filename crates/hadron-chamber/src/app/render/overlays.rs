@@ -20,6 +20,24 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.7.0",
+        date: Some("2026-08-15"),
+        added: &[
+            "Pre-Flight Merge Gate runner and MCP tool (hadron_forge_preflight_gate) for worktree self-verification",
+            "Cross-worktree peer inspector querying branches, diffs, and symbols (hadron_forge_peer_inspect)",
+            "Nucleus memory and budget linter enforcing 32 KB index limits and note YAML schema (hadron_forge_nucleus_lint)",
+            "AST and LSP symbol hierarchy intelligence and generic querying (hadron_forge_symbol_hierarchy, hadron_forge_lsp_query)",
+            "Atomic multi-branch coupled merge gate validating inter-dependent swarm branches simultaneously",
+            "Headless chamber replay harness and state projection invariant verification",
+            "Attention Required spotlight and field event for urgent human unblock requests",
+            "Automated preset seating, empty-team 1st-quark Orchestrator promotion, and Roster network icon badge",
+        ],
+        changed: &[],
+        fixed: &[
+            "Cleaned compiler warnings in hadron-chamber and streamlined Roster Orchestrator badge",
+        ],
+    },
+    Release {
         version: "0.6.1",
         date: Some("2026-08-15"),
         added: &[],

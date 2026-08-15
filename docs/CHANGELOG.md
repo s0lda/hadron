@@ -5,6 +5,30 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-15
+
+### Added
+- **Developer Pre-Flight Merge Gate (`hadron-forge` & MCP)**:
+  - Added in-worktree merge gate simulation (`hadron-forge::gate`) refreshing crate entrypoint mtimes to avoid stale `.rlib` test execution, performing `merge::sync` rebases against base, and running cargo test suites before yielding turns (`hadron_forge_preflight_gate` MCP tool).
+- **Cross-Worktree Peer Inspector (`hadron-forge` & MCP)**:
+  - Added peer worktree status querying across `.hadron/trees/*` (`git log base..HEAD`, uncommitted diffs, export symbol inspection) via `hadron_forge_peer_inspect` MCP tool without manual path navigation.
+- **Nucleus Memory & Budget Linter (`hadron-forge` & MCP)**:
+  - Added `hadron_forge_nucleus_lint` MCP tool enforcing the 32 KB `.hadron/nucleus/index.md` budget ceiling, validating YAML frontmatter schema (`name`, `description`, `metadata.type`), detecting unlinked notes, and verifying index routing invariants.
+- **AST & LSP Symbol Hierarchy Intelligence (`hadron-forge` & MCP)**:
+  - Added structured AST symbol extraction with line ranges and parent-child hierarchy across 14+ languages (`hadron_forge_symbol_hierarchy`) and generic in-process LSP queries (`hadron_forge_lsp_query`).
+- **Atomic Coupled Multi-Branch Swarm Gate (`hadron-gluon`)**:
+  - Implemented `land_coupled_branches` in `hadron-gluon::merge` supporting coordinated atomic validation and landing of coupled multi-branch features spanning multiple Quarks.
+- **Headless Chamber Replay & State Projection Harness (`hadron-chamber`)**:
+  - Added `HeadlessReplaySession` verifying model projection, list state invariants, and chat/log index resynchronization headless without requiring a display server.
+- **Attention Required Spotlight & Event (`hadron-lattice` & `hadron-chamber`)**:
+  - Added `AttentionRequired` field event and Chamber spotlight visual cue for immediate human attention on unrecoverable blockers or critical requests.
+- **Automated Preset Seating & First-Quark Orchestrator Promotion (`hadron-chamber`)**:
+  - Automated preset connection and immediate saving in the Add Quark wizard, automatically designated the 1st added Quark as Orchestrator on empty teams, and added an Orchestrator network icon badge with tooltip to the Roster rail.
+
+### Fixed
+- **Chamber Compiler Diagnostics & Badge Polish**:
+  - Cleared all compiler warnings in `hadron-chamber` and streamlined Roster Orchestrator badge presentation to a clean icon chip with hover tooltip.
+
 ## [0.6.1] - 2026-08-15
 
 ### Fixed

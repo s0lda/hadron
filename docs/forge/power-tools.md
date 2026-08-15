@@ -8,6 +8,10 @@ Hadron Forge (`crates/hadron-forge` and `crates/hadron-forge-mcp`) provides a co
 
 | Tool Subsystem | MCP Tools | Key Capabilities |
 | :--- | :--- | :--- |
+| **Pre-Flight Merge Gate** | `hadron_forge_preflight_gate` | In-worktree merge gate simulation, entrypoint mtime refreshing, branch rebase sync, test runner execution. |
+| **Peer Worktree Inspector**| `hadron_forge_peer_inspect` | Inspect peer worktree commits, uncommitted diffs, and export symbols across `.hadron/trees/*`. |
+| **Nucleus Budget Linter** | `hadron_forge_nucleus_lint` | Strict 32 KB `.hadron/nucleus/index.md` budget checking, note YAML schema validation, unlinked note detection. |
+| **AST Symbol Hierarchy** | `hadron_forge_symbol_hierarchy`, `hadron_forge_lsp_query` | Line-range scoped symbol tree with nested signatures across 14+ languages and generic in-process LSP queries. |
 | **Background Processes** | `process_start`, `process_logs`, `process_list`, `process_send_stdin`, `process_kill` | Process group isolation (`PGID`), ring-buffer streaming logs, dev server supervision. |
 | **3-Tier Code Intelligence** | `hadron_forge_symbol_lookup`, `hadron_forge_find_callers`, `hadron_forge_lsp_definition`, `hadron_forge_lsp_references` | Universal symbol indexing, caller resolution (Rule 1), and generic STDIO JSON-RPC 2.0 LSP client. |
 | **Headless Browser** | `hadron_forge_browser_navigate`, `hadron_forge_browser_snapshot`, `hadron_forge_browser_screenshot`, `hadron_forge_browser_click`, `hadron_forge_browser_fill`, `hadron_forge_browser_eval` | Local CDP bridge (`localhost`, `127.0.0.1`, `file://`), accessibility tree snapshots, DOM inspection, UI testing. |
@@ -65,3 +69,30 @@ Directly inspects and modifies SQLite databases within the worktree:
 - **Schema Introspection**: Generates markdown tables of tables, columns, indexes, and foreign keys.
 - **Transactional Migrations**: Executes migration scripts within transactions, automatically rolling back on syntax or constraint errors.
 - **Exporting**: Formats query outputs as GitHub-flavored Markdown tables, JSON, or CSV.
+
+## 8. Pre-Flight Merge Gate Runner
+
+Enables Quarks to simulate the daemon's merge gate before completing turns:
+- **Stale Target Invalidation**: Touches crate entrypoints (`src/lib.rs`) to prevent reusing foreign `.rlib` build artifacts across concurrent worktrees.
+- **Rebase Verification**: Performs `merge::sync` against the base branch to catch rebase conflicts early.
+- **Automatic Test Execution**: Runs workspace or crate test suites with environment variables matched to the Gluon Merge Gate.
+
+## 9. Cross-Worktree Peer Inspector
+
+Enables autonomous coordination and cross-examination across concurrent Quarks:
+- **Branch & Commit Inspection**: Queries commit history, ahead/behind status, and branch heads in `.hadron/trees/*`.
+- **Diff & Symbol Export**: Inspects uncommitted diffs and exported symbols without modifying sibling worktree states.
+
+## 10. Nucleus Memory & Budget Linter
+
+Guards the shared Nucleus against corruption and index budget overflow:
+- **Strict Budget Ceiling**: Verifies `.hadron/nucleus/index.md` byte size against the 32 KB threshold.
+- **Note Frontmatter Schema**: Enforces `name`, `description`, and `metadata.type` validation on notes.
+- **Orphan Note Detection**: Detects notes missing pointer lines in the index or dead pointers to non-existent note files.
+
+## 11. AST & LSP Symbol Hierarchy Intelligence
+
+Provides deep symbol navigation across large polyglot codebases:
+- **Hierarchical Outline**: Extracts symbol nesting, parent-child relationships, and exact line-range bounds.
+- **Generic LSP Query Bridge**: Interfaces with active language servers for type definitions, references, and signatures.
+
