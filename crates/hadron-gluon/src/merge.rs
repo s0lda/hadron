@@ -410,6 +410,121 @@ fn ff_only(repo_root: &Path, branch: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Result of an atomic multi-branch coupled merge gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CoupledLanded {
+    /// All branches combined cleanly and landed on base.
+    Landed {
+        total_branches: usize,
+        strategy: MergeStrategy,
+    },
+    /// A branch could not be integrated due to merge/rebase conflict.
+    Conflicted {
+        failing_branch: String,
+        details: String,
+    },
+    /// The combined test suite failed on the integrated tree.
+    TestsFailed {
+        output_tail: String,
+    },
+}
+
+/// Atomically gate and land multiple coupled branches together.
+///
+/// 1. Creates a temporary integration branch off `base`.
+/// 2. Merges all constituent branches sequentially onto the staging branch.
+/// 3. Executes workspace tests on the combined tree.
+/// 4. Fast-forwards `base` to the integration branch if green, and deletes the temporary ref.
+pub async fn land_coupled_branches(
+    repo_root: &Path,
+    branches: &[&str],
+    base: &str,
+    runner: &dyn MergeRunner,
+    strategy: MergeStrategy,
+) -> anyhow::Result<CoupledLanded> {
+    if branches.is_empty() {
+        return Ok(CoupledLanded::Landed {
+            total_branches: 0,
+            strategy,
+        });
+    }
+
+    let staging_tag = ulid::Ulid::new().to_string();
+    let staging_branch = format!("quark/staging-coupled-{staging_tag}");
+
+    // Create staging branch off base
+    git(repo_root, &["branch", &staging_branch, base])?;
+
+    // Create a temporary staging worktree directory
+    let staging_path = std::env::temp_dir().join(format!("hadron-staging-{staging_tag}"));
+    let _ = std::fs::create_dir_all(&staging_path);
+
+    if let Err(e) = git(
+        repo_root,
+        &["worktree", "add", "-q", staging_path.to_str().unwrap(), &staging_branch],
+    ) {
+        let _ = git(repo_root, &["branch", "-D", &staging_branch]);
+        let _ = std::fs::remove_dir_all(&staging_path);
+        return Err(anyhow::anyhow!("failed to create staging worktree: {e:#}"));
+    }
+
+    // Merge each branch sequentially
+    for branch in branches {
+        if let Err(e) = git(&staging_path, &["merge", "--no-edit", branch]) {
+            // Abort merge, cleanup worktree and branch
+            let _ = git(&staging_path, &["merge", "--abort"]);
+            let _ = git(repo_root, &["worktree", "remove", "-f", staging_path.to_str().unwrap()]);
+            let _ = git(repo_root, &["branch", "-D", &staging_branch]);
+            let _ = std::fs::remove_dir_all(&staging_path);
+            return Ok(CoupledLanded::Conflicted {
+                failing_branch: branch.to_string(),
+                details: format!("{e:#}"),
+            });
+        }
+    }
+
+    // Run tests on the combined tree
+    let wt = Worktree {
+        quark: hadron_lattice::QuarkId::new("coupled-gate"),
+        path: staging_path.clone(),
+        branch: staging_branch.clone(),
+    };
+
+    let (tests_passed, out) = runner.tests(&wt).await?;
+
+    // Remove worktree
+    let _ = git(repo_root, &["worktree", "remove", "-f", staging_path.to_str().unwrap()]);
+    let _ = std::fs::remove_dir_all(&staging_path);
+
+    if !tests_passed {
+        let _ = git(repo_root, &["branch", "-D", &staging_branch]);
+        return Ok(CoupledLanded::TestsFailed { output_tail: out });
+    }
+
+    // Atomically land staging branch onto base
+    let land_res = match strategy {
+        MergeStrategy::FastForward => {
+            ff_only(repo_root, &staging_branch)
+        }
+        MergeStrategy::Squash => {
+            let commit_msg = format!("squash: coupled merge of {} branches into '{}'", branches.len(), base);
+            git(repo_root, &["merge", "--squash", &staging_branch])?;
+            git(repo_root, &["commit", "-m", &commit_msg])?;
+            Ok(())
+        }
+        MergeStrategy::GitHubPr => {
+            ff_only(repo_root, &staging_branch)
+        }
+    };
+
+    let _ = git(repo_root, &["branch", "-D", &staging_branch]);
+
+    land_res?;
+    Ok(CoupledLanded::Landed {
+        total_branches: branches.len(),
+        strategy,
+    })
+}
 
 #[cfg(test)]
 mod tests {
@@ -804,6 +919,77 @@ mod tests {
         std::fs::write(repo.path().join("real.txt"), "real v1 dirty\n").unwrap();
 
         assert!(land(repo.path(), &wt, "main").is_err());
+    }
+
+    struct FakeCoupledRunner(bool);
+
+    #[async_trait]
+    impl MergeRunner for FakeCoupledRunner {
+        async fn tests(&self, _wt: &Worktree) -> anyhow::Result<(bool, String)> {
+            Ok((self.0, if self.0 { "ok".into() } else { "tests failed".into() }))
+        }
+        fn land(&self, repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Landed> {
+            land(repo_root, wt, base)
+        }
+    }
+
+    #[tokio::test]
+    async fn land_coupled_branches_integrates_multiple_branches_atomically() {
+        let repo = git_repo();
+        let wt1 = worktree::ensure(repo.path(), &q("quark1"), "01A1").unwrap();
+        std::fs::write(wt1.path.join("file1.txt"), "content1\n").unwrap();
+        worktree::commit_turn(&wt1, "quark1: work").unwrap();
+
+        let wt2 = worktree::ensure(repo.path(), &q("quark2"), "01A2").unwrap();
+        std::fs::write(wt2.path.join("file2.txt"), "content2\n").unwrap();
+        worktree::commit_turn(&wt2, "quark2: work").unwrap();
+
+        let runner = FakeCoupledRunner(true);
+        let res = land_coupled_branches(
+            repo.path(),
+            &[&wt1.branch, &wt2.branch],
+            "main",
+            &runner,
+            MergeStrategy::FastForward,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            res,
+            CoupledLanded::Landed {
+                total_branches: 2,
+                strategy: MergeStrategy::FastForward
+            }
+        );
+        assert!(repo.path().join("file1.txt").exists());
+        assert!(repo.path().join("file2.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn land_coupled_branches_aborts_on_conflict() {
+        let repo = git_repo();
+        let wt1 = worktree::ensure(repo.path(), &q("quark1"), "01A1").unwrap();
+        std::fs::write(wt1.path.join("shared.txt"), "version1\n").unwrap();
+        worktree::commit_turn(&wt1, "quark1: shared").unwrap();
+
+        let wt2 = worktree::ensure(repo.path(), &q("quark2"), "01A2").unwrap();
+        std::fs::write(wt2.path.join("shared.txt"), "version2\n").unwrap();
+        worktree::commit_turn(&wt2, "quark2: shared").unwrap();
+
+        let runner = FakeCoupledRunner(true);
+        let res = land_coupled_branches(
+            repo.path(),
+            &[&wt1.branch, &wt2.branch],
+            "main",
+            &runner,
+            MergeStrategy::FastForward,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(res, CoupledLanded::Conflicted { .. }));
+        assert!(!repo.path().join("shared.txt").exists());
     }
 }
 
