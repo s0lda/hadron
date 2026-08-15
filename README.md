@@ -35,7 +35,7 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 - ⚡ **Native GPUI Desktop App**: Lightning-fast GPU-accelerated UI with multi-tab PTY terminals, interactive git commit graph, live plan tracking, and real-time per-agent token telemetry.
 - 🛠️ **Hadron Forge & Developer Power Tools**: AST-level precision code edits across 14+ languages using `blake3` hashes, background process supervisor, 3-tier polyglot code intelligence/LSP, headless browser testing, jailed screenshot capture, interactive PTY sessions, loopback mock servers, and local SQLite engine.
 - 🧠 **Persistent Nucleus Memory & Universal Absorption**: Cross-session shared memory within a configurable budget (16/32/64/128 KiB), plus `/absorb` to seamlessly import memories, invariants, skills, and plans from `.agents/`, `.claude/`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`.
-- 🎯 **Autonomous Swarm Control**: Built-in slash commands (`/goal`, `/loop`, `/absorb`, `/release`, `/git-init`, `/resume`, `/clear`) and 17 bundled workflow skills (TDD, systematic debugging, design specs).
+- 🎯 **Autonomous Swarm Control**: Built-in slash commands (`/goal`, `/loop`, `/absorb`, `/release`, `/git-init`, `/resume`, `/clear`) and 25 bundled workflow & engineering skills (TDD, security review, architecture audit, systematic debugging, design specs).
 
 ---
 

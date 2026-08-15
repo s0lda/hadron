@@ -20,6 +20,21 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.6.0",
+        date: Some("2026-08-15"),
+        added: &[
+            "8 Built-in Engineering Skills: security-review, architecture-audit, chaos-testing, perf-audit, simplify, api-design, triage, and memory-curation",
+            "Alphabetical slash-command autocomplete with prefix-match ranking and alias deduplication",
+            "Subcategorized General Settings: Appearance (Typography & Themes), Execution (Swarm & Budgets), and Environment",
+            "Quark avatar aura rings rendering seat identity colors during excited turns",
+            "Git Inspector keyboard navigation and bundled Noto Color Emoji font for Linux/WSL",
+        ],
+        changed: &[
+            "Aligned skill paths, progress ledgers, and priority hierarchy with .hadron and Standard Model standards",
+        ],
+        fixed: &[],
+    },
+    Release {
         version: "0.5.0",
         date: Some("2026-08-15"),
         added: &[

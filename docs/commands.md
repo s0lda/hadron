@@ -36,6 +36,15 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/using-superpowers` | `/using-superpowers [@Quark] <prompt>` | Discover and activate available skills/superpowers. | `/using-superpowers @Quark` |
 | `/verification-before-completion` | `/verification-before-completion [@Quark] <prompt>` | Run verification commands and assert evidence before claiming work is complete. | `/verification-before-completion @Quark` |
 | `/writing-skills` | `/writing-skills [@Quark] <prompt>` | Create, edit, or verify custom skill procedures. | `/writing-skills @Quark new-lint-skill` |
+| `/security-review` (alias `/security`) | `/security-review [@Quark] <prompt>` | Audit authentication, permissions, secrets, and injection vectors (Rule 7). | `/security-review @Quark auth endpoints` |
+| `/architecture-audit` (alias `/arch`) | `/architecture-audit [@Quark] <prompt>` | Audit component decoupling, SSOT integrity (Rule 3), and type-system invariants (Rule 8). | `/architecture-audit @Quark state machine` |
+| `/code-review` | `/code-review [@Quark] <prompt>` | Review code changes, plans, or commit diffs. | `/code-review @Quark recent changes` |
+| `/chaos-testing` (alias `/chaos-test`) | `/chaos-testing [@Quark] <prompt>` | Stress test concurrency races, timeout handling, and edge failure modes. | `/chaos-testing @Quark event channel` |
+| `/performance-audit` (aliases `/perf-audit`, `/optimize`) | `/performance-audit [@Quark] <prompt>` | Profile CPU/memory allocations, lock contention, and render-loop lag. | `/performance-audit @Quark list rendering` |
+| `/code-simplification` (aliases `/simplify`, `/refactor`) | `/code-simplification [@Quark] <prompt>` | Prune dead abstractions, unused types/imports, and reduce complexity (Rule 10). | `/simplify @Quark router module` |
+| `/api-design` (alias `/contract`) | `/api-design [@Quark] <prompt>` | Design type-safe API contracts, wire protocols, and error schemas. | `/api-design @Quark daemon RPC` |
+| `/incident-investigation` (aliases `/triage`, `/investigate`) | `/incident-investigation [@Quark] <prompt>` | Systematic failure reproduction, log dissection, and post-mortem analysis. | `/triage @Quark flaky gate test` |
+| `/memory-curation` (alias `/curate-memory`) | `/memory-curation [@Quark] <prompt>` | Maintain Nucleus (Rule 9) — distill lessons into notes/, prune index.md, update features.md. | `/curate-memory @Quark` |
 | `/release` | `/release` | Execute repository release workflow strictly following `.hadron/nucleus/release.md`. | `/release` |
 | `/review` | `/review [@Quark]` | Request peer review on active branch before merge gate. | `/review @Quark` |
 | `/add-skill` | `/add-skill <name>` | Add a custom skill from file (`@path/to/file.md`) or paste content. | `/add-skill @skills/lint.md` |

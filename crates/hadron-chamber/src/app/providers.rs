@@ -268,6 +268,7 @@ pub(super) const CLOUD_API_KEY_VAR: &str = "API_KEY";
 /// Which identity or setting tab the Settings overlay is currently editing.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) enum SettingsTarget {
+    #[allow(dead_code)]
     General,
     Appearance,
     Execution,

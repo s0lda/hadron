@@ -5,6 +5,26 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-15
+
+### Added
+- **8 Built-in Engineering Skills & Slash Commands**:
+  - Embedded first-class skill procedures and slash commands: `security-review` (`/security-review`, `/security`), `architecture-audit` (`/architecture-audit`, `/arch`), `chaos-testing` (`/chaos-testing`, `/chaos-test`), `performance-audit` (`/performance-audit`, `/perf-audit`, `/optimize`), `code-simplification` (`/code-simplification`, `/simplify`, `/refactor`), `api-design` (`/api-design`, `/contract`), `incident-investigation` (`/incident-investigation`, `/triage`, `/investigate`), and `memory-curation` (`/memory-curation`, `/curate-memory`).
+  - Integrated specialist role routing (`architect`, `reviewer`, `qa`, `optimizer`, `triage`, `scribe`, `executor`) for automatic Quark turn selection.
+- **Alphabetical Slash-Command Autocomplete**:
+  - Implemented predictable A–Z alphabetical ordering for slash commands with prefix-match ranking and deduplicated alias presentation in the autocompletion menu.
+- **Subcategorized General Settings Overlay**:
+  - Deconstructed monolithic General settings into structured sub-pages: **Appearance** (Themes, Accent color, Typography), **Execution** (Max exchanges, Nucleus budget, Git merge strategy), and **Environment** (Code editor, Default mode, Close Gluon on Exit).
+  - Added expandable sidebar navigation hierarchy with indented sub-category rows.
+- **Quark Avatar Aura Rings**:
+  - Styled avatar state rings in chat to dynamically render the active Quark's unique identity color during excited/in-flight states.
+- **Git Inspector Keyboard Navigation & Bundled Emoji Font**:
+  - Added keyboard navigation to Git Inspector tabs and bundled `Noto Color Emoji` fallback font ensuring reliable glyph rendering on Linux and WSL.
+
+### Changed
+- **Skill Path & Invariant Alignment**:
+  - Replaced legacy foreign assistant references (`AGENTS.md`) with `.hadron` conventions and `Invariants (always.md / Standard Model)` priority hierarchy across all built-in skills.
+
 ## [0.5.0] - 2026-08-15
 
 ### Added
