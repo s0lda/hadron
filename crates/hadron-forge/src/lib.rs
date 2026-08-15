@@ -24,6 +24,7 @@ pub mod sqlite;
 pub mod gate;
 pub mod peers;
 pub mod nucleus_lint;
+pub mod spec_compiler;
 
 pub use ast_merge::*;
 pub use conflict_resolve::*;
@@ -35,6 +36,7 @@ pub use sqlite::*;
 pub use gate::*;
 pub use peers::*;
 pub use nucleus_lint::*;
+pub use spec_compiler::*;
 
 
 
