@@ -124,11 +124,21 @@ actions!(
         CloseTerminalTab,
         NextTerminalTab,
         PrevTerminalTab,
+        NextGitSubtab,
+        PrevGitSubtab,
+        SelectGitBranches,
+        SelectGitWorktrees,
+        SelectGitGraph,
+        SelectGitDelegation,
+        NextGitItem,
+        PrevGitItem,
+        OpenGitItem,
     ]
 );
 
 /// Key-dispatch context for the chamber's window-level actions.
 const KEY_CONTEXT: &str = "Chamber";
+pub(super) const GIT_KEY_CONTEXT: &str = "GitRail";
 
 /// Width of a collapsed rail's strip (just the expand affordance).
 const RAIL_STRIP: f32 = 44.0;
@@ -247,6 +257,11 @@ struct Chamber {
     git_log_graph: Option<String>,
     git_scroll: ScrollHandle,
     git_subtab: GitSubtab,
+    pub(super) git_focus: FocusHandle,
+    pub(super) git_cursor_branch: Option<usize>,
+    pub(super) git_cursor_worktree: Option<usize>,
+    pub(super) git_cursor_graph: Option<usize>,
+    pub(super) git_cursor_delegation: Option<usize>,
     /// The branch whose diff-against-`main` is expanded in the Branches subtab, with
     /// its cached diff and per-file open set (like `changes_open_ixs`).
     git_selected_branch: Option<String>,
@@ -1028,6 +1043,11 @@ impl Chamber {
             git_log_graph: None,
             git_scroll: ScrollHandle::new(),
             git_subtab: GitSubtab::Branches,
+            git_focus: cx.focus_handle(),
+            git_cursor_branch: None,
+            git_cursor_worktree: None,
+            git_cursor_graph: None,
+            git_cursor_delegation: None,
             git_selected_branch: None,
             git_branch_diff: None,
             git_branch_open_ixs: Default::default(),
@@ -1268,6 +1288,29 @@ fn default_key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-l", FocusChat, None),
         // Global keyboard dismiss (Escape) to drop completions, modals, overlays, or return focus.
         KeyBinding::new("escape", Dismiss, None),
+        // Git Rail scoped shortcuts (when Git panel has focus)
+        KeyBinding::new("1", SelectGitBranches, Some(GIT_KEY_CONTEXT)),
+        KeyBinding::new("2", SelectGitWorktrees, Some(GIT_KEY_CONTEXT)),
+        KeyBinding::new("3", SelectGitGraph, Some(GIT_KEY_CONTEXT)),
+        KeyBinding::new("4", SelectGitDelegation, Some(GIT_KEY_CONTEXT)),
+        KeyBinding::new("j", NextGitItem, Some(GIT_KEY_CONTEXT)),
+        KeyBinding::new("k", PrevGitItem, Some(GIT_KEY_CONTEXT)),
+        KeyBinding::new("down", NextGitItem, Some(GIT_KEY_CONTEXT)),
+        KeyBinding::new("up", PrevGitItem, Some(GIT_KEY_CONTEXT)),
+        KeyBinding::new("enter", OpenGitItem, Some(GIT_KEY_CONTEXT)),
+        KeyBinding::new("space", OpenGitItem, Some(GIT_KEY_CONTEXT)),
+        KeyBinding::new("]", NextGitSubtab, Some(GIT_KEY_CONTEXT)),
+        KeyBinding::new("[", PrevGitSubtab, Some(GIT_KEY_CONTEXT)),
+        // Git Rail global chords
+        KeyBinding::new("alt-1", SelectGitBranches, None),
+        KeyBinding::new("alt-2", SelectGitWorktrees, None),
+        KeyBinding::new("alt-3", SelectGitGraph, None),
+        KeyBinding::new("alt-4", SelectGitDelegation, None),
+        KeyBinding::new("alt-shift-right", NextGitSubtab, None),
+        KeyBinding::new("alt-shift-left", PrevGitSubtab, None),
+        KeyBinding::new("alt-j", NextGitItem, None),
+        KeyBinding::new("alt-k", PrevGitItem, None),
+        KeyBinding::new("alt-enter", OpenGitItem, None),
     ]
 }
 

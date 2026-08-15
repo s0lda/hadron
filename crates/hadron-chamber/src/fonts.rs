@@ -29,6 +29,8 @@ pub const JETBRAINS_MONO_BOLD: &[u8] = include_bytes!("../assets/fonts/JetBrains
 pub const FIRA_CODE_REGULAR: &[u8] = include_bytes!("../assets/fonts/FiraCode-Regular.ttf");
 pub const FIRA_CODE_BOLD: &[u8] = include_bytes!("../assets/fonts/FiraCode-Bold.ttf");
 
+pub const NOTO_COLOR_EMOJI: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji.ttf");
+
 /// Every face we ship, in registration order.
 pub fn embedded() -> Vec<Cow<'static, [u8]>> {
     vec![
@@ -44,6 +46,7 @@ pub fn embedded() -> Vec<Cow<'static, [u8]>> {
         Cow::Borrowed(JETBRAINS_MONO_BOLD),
         Cow::Borrowed(FIRA_CODE_REGULAR),
         Cow::Borrowed(FIRA_CODE_BOLD),
+        Cow::Borrowed(NOTO_COLOR_EMOJI),
     ]
 }
 
@@ -69,6 +72,7 @@ mod tests {
             ("JetBrainsMono-Bold", JETBRAINS_MONO_BOLD),
             ("FiraCode-Regular", FIRA_CODE_REGULAR),
             ("FiraCode-Bold", FIRA_CODE_BOLD),
+            ("NotoColorEmoji", NOTO_COLOR_EMOJI),
         ] {
             assert!(bytes.len() > 50_000, "{name} is only {} bytes — not a font", bytes.len());
             let magic = &bytes[..4];
@@ -87,6 +91,6 @@ mod tests {
         assert_ne!(CASCADIA_REGULAR, CASCADIA_BOLD, "Cascadia bold is the same file as regular");
         assert_ne!(JETBRAINS_MONO_REGULAR, JETBRAINS_MONO_BOLD, "JetBrains Mono bold is the same file as regular");
         assert_ne!(FIRA_CODE_REGULAR, FIRA_CODE_BOLD, "Fira Code bold is the same file as regular");
-        assert_eq!(embedded().len(), 12);
+        assert_eq!(embedded().len(), 13);
     }
 }

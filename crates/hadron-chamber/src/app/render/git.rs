@@ -196,6 +196,24 @@ impl super::Chamber {
         };
 
         v_flex()
+            .id("git-tab-panel")
+            .key_context(crate::app::GIT_KEY_CONTEXT)
+            .track_focus(&self.git_focus)
+            .on_action(cx.listener(|this, _: &NextGitSubtab, _, cx| this.cycle_git_subtab(1, cx)))
+            .on_action(cx.listener(|this, _: &PrevGitSubtab, _, cx| this.cycle_git_subtab(-1, cx)))
+            .on_action(cx.listener(|this, _: &SelectGitBranches, _, cx| this.select_git_subtab(GitSubtab::Branches, cx)))
+            .on_action(cx.listener(|this, _: &SelectGitWorktrees, _, cx| this.select_git_subtab(GitSubtab::Worktrees, cx)))
+            .on_action(cx.listener(|this, _: &SelectGitGraph, _, cx| this.select_git_subtab(GitSubtab::Graph, cx)))
+            .on_action(cx.listener(|this, _: &SelectGitDelegation, _, cx| this.select_git_subtab(GitSubtab::Delegation, cx)))
+            .on_action(cx.listener(|this, _: &NextGitItem, _, cx| this.move_git_selection(1, cx)))
+            .on_action(cx.listener(|this, _: &PrevGitItem, _, cx| this.move_git_selection(-1, cx)))
+            .on_action(cx.listener(|this, _: &OpenGitItem, _, cx| this.open_git_selection(cx)))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    window.focus(&this.git_focus, cx);
+                }),
+            )
             .flex_1()
             .min_h_0()
             .child(h_flex().flex_none().px_3().py_2().child(subtabs))
@@ -236,6 +254,7 @@ impl super::Chamber {
                     let is_selected =
                         self.git_selected_branch.as_deref() == Some(branch.name.as_str());
                     let name = branch.name.clone();
+                    let is_cursor = self.git_cursor_branch == Some(ix);
                     let row = h_flex()
                         .id(("branch-row", ix))
                         .w_full()
@@ -246,8 +265,15 @@ impl super::Chamber {
                         .rounded_md()
                         .cursor_pointer()
                         .hover(|s| s.bg(theme::bg_surface_raised()))
-                        .when(is_selected, |d| d.bg(theme::bg_surface_raised()))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                        .when(is_cursor, |d| {
+                            d.bg(theme::bg_surface_raised())
+                                .border_1()
+                                .border_color(theme::accent())
+                        })
+                        .when(is_selected && !is_cursor, |d| d.bg(theme::bg_surface_raised()))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            window.focus(&this.git_focus, cx);
+                            this.git_cursor_branch = Some(ix);
                             this.select_branch(name.clone());
                             cx.notify();
                         }))
@@ -278,7 +304,7 @@ impl super::Chamber {
 
     /// Compute (or toggle off) the diff of a branch against `main`. Clicking the
     /// already-selected branch clears the panel.
-    fn select_branch(&mut self, name: String) {
+    pub(crate) fn select_branch(&mut self, name: String) {
         if self.git_selected_branch.as_deref() == Some(name.as_str()) {
             self.git_selected_branch = None;
             self.git_branch_diff = None;
@@ -368,7 +394,7 @@ impl super::Chamber {
 
     /// Compute (or toggle off) the patch diff of a commit. Clicking the
     /// already-selected commit clears the panel.
-    fn select_commit(&mut self, hash: String) {
+    pub(crate) fn select_commit(&mut self, hash: String) {
         let previous = self.git_selected_commit.take();
         let toggled_off = previous.as_deref() == Some(hash.as_str());
         if toggled_off {
@@ -516,7 +542,7 @@ impl super::Chamber {
     /// The branch a worktree row selects when clicked, and the single home of
     /// "is this row clickable at all" — `None` for a detached HEAD, which has no
     /// branch to diff and must therefore stay inert rather than look live.
-    fn worktree_selects_branch(wt: &crate::vcs::WorktreeInfo) -> Option<String> {
+    pub(crate) fn worktree_selects_branch(wt: &crate::vcs::WorktreeInfo) -> Option<String> {
         wt.branch.clone()
     }
 
@@ -545,6 +571,7 @@ impl super::Chamber {
                     let selects = Self::worktree_selects_branch(wt);
                     let is_selected =
                         selects.is_some() && self.git_selected_branch == selects;
+                    let is_cursor = self.git_cursor_worktree == Some(ix);
                     let card = v_flex()
                         .id(("worktree-row", ix))
                         .w_full()
@@ -556,12 +583,19 @@ impl super::Chamber {
                         .when_some(selects, |d, name| {
                             d.cursor_pointer()
                                 .hover(|s| s.bg(theme::bg_surface_raised()))
-                                .on_click(cx.listener(move |this, _, _, cx| {
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    window.focus(&this.git_focus, cx);
+                                    this.git_cursor_worktree = Some(ix);
                                     this.select_branch(name.clone());
                                     cx.notify();
                                 }))
                         })
-                        .when(is_selected, |d| d.bg(theme::bg_surface_raised()))
+                        .when(is_cursor, |d| {
+                            d.bg(theme::bg_surface_raised())
+                                .border_1()
+                                .border_color(theme::accent())
+                        })
+                        .when(is_selected && !is_cursor, |d| d.bg(theme::bg_surface_raised()))
                         .child(
                             h_flex()
                                 .w_full()
@@ -810,12 +844,20 @@ impl super::Chamber {
             );
         }
 
+        let is_cursor = self.git_cursor_graph == Some(ix);
         let click_hash = full_hash.clone();
         line = line
             .cursor_pointer()
             .hover(|s| s.bg(theme::border()))
-            .when(is_selected, |d| d.bg(theme::border()))
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .when(is_cursor, |d| {
+                d.bg(theme::border())
+                    .border_1()
+                    .border_color(theme::accent())
+            })
+            .when(is_selected && !is_cursor, |d| d.bg(theme::border()))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                window.focus(&this.git_focus, cx);
+                this.git_cursor_graph = Some(ix);
                 this.select_commit(click_hash.clone());
                 cx.notify();
             }));

@@ -90,7 +90,7 @@ impl InfoTab {
 
 /// The sub-tabs of the Git rail — kept independent of [`RightRailTab`] so switching
 /// between Terminal/File Tree/Git doesn't disturb which Git section was open.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum GitSubtab {
     Branches,
     Worktrees,

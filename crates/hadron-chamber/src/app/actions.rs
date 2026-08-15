@@ -1297,6 +1297,129 @@ impl Chamber {
         cx.notify();
     }
 
+    /// Cycle the Git rail's subtab (Branches/Worktrees/Graph/Delegation) by `delta`, wrapping.
+    pub(super) fn cycle_git_subtab(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if self.right_rail_tab != RightRailTab::Git {
+            self.right_rail_tab = RightRailTab::Git;
+        }
+        let n = GitSubtab::ALL.len() as isize;
+        let cur = self.git_subtab.index() as isize;
+        self.git_subtab = GitSubtab::from_index((cur + delta).rem_euclid(n) as usize);
+        cx.notify();
+    }
+
+    /// Select a specific Git rail subtab.
+    pub(super) fn select_git_subtab(&mut self, subtab: GitSubtab, cx: &mut Context<Self>) {
+        if self.right_rail_tab != RightRailTab::Git {
+            self.right_rail_tab = RightRailTab::Git;
+        }
+        self.git_subtab = subtab;
+        cx.notify();
+    }
+
+    /// Move cursor selection in the active Git rail subtab.
+    pub(super) fn move_git_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if self.right_rail_tab != RightRailTab::Git {
+            self.right_rail_tab = RightRailTab::Git;
+        }
+        match self.git_subtab {
+            GitSubtab::Branches => {
+                let len = self.git_branches.as_ref().map(|b| b.len()).unwrap_or(0);
+                if len == 0 {
+                    self.git_cursor_branch = None;
+                    return;
+                }
+                let next = match self.git_cursor_branch {
+                    None if delta >= 0 => 0,
+                    None => len - 1,
+                    Some(cur) => (cur as isize + delta).rem_euclid(len as isize) as usize,
+                };
+                self.git_cursor_branch = Some(next);
+            }
+            GitSubtab::Worktrees => {
+                let len = self.git_worktrees.as_ref().map(|w| w.len()).unwrap_or(0);
+                if len == 0 {
+                    self.git_cursor_worktree = None;
+                    return;
+                }
+                let next = match self.git_cursor_worktree {
+                    None if delta >= 0 => 0,
+                    None => len - 1,
+                    Some(cur) => (cur as isize + delta).rem_euclid(len as isize) as usize,
+                };
+                self.git_cursor_worktree = Some(next);
+            }
+            GitSubtab::Graph => {
+                let len = self.git_graph_rows.len();
+                if len == 0 {
+                    self.git_cursor_graph = None;
+                    return;
+                }
+                let next = match self.git_cursor_graph {
+                    None if delta >= 0 => 0,
+                    None => len - 1,
+                    Some(cur) => (cur as isize + delta).rem_euclid(len as isize) as usize,
+                };
+                self.git_cursor_graph = Some(next);
+                self.git_graph_list.scroll_to_reveal_item(next);
+            }
+            GitSubtab::Delegation => {
+                let len = self.delegations.len();
+                if len == 0 {
+                    self.git_cursor_delegation = None;
+                    return;
+                }
+                let next = match self.git_cursor_delegation {
+                    None if delta >= 0 => 0,
+                    None => len - 1,
+                    Some(cur) => (cur as isize + delta).rem_euclid(len as isize) as usize,
+                };
+                self.git_cursor_delegation = Some(next);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Open or inspect the currently highlighted Git item (equivalent to clicking it).
+    pub(super) fn open_git_selection(&mut self, cx: &mut Context<Self>) {
+        if self.right_rail_tab != RightRailTab::Git {
+            self.right_rail_tab = RightRailTab::Git;
+        }
+        match self.git_subtab {
+            GitSubtab::Branches => {
+                if let Some(ix) = self.git_cursor_branch {
+                    if let Some(branch) = self.git_branches.as_ref().and_then(|b| b.get(ix)) {
+                        let name = branch.name.clone();
+                        self.select_branch(name);
+                        cx.notify();
+                    }
+                }
+            }
+            GitSubtab::Worktrees => {
+                if let Some(ix) = self.git_cursor_worktree {
+                    if let Some(wt) = self.git_worktrees.as_ref().and_then(|w| w.get(ix)) {
+                        if let Some(name) = Self::worktree_selects_branch(wt) {
+                            self.select_branch(name);
+                            cx.notify();
+                        }
+                    }
+                }
+            }
+            GitSubtab::Graph => {
+                if let Some(ix) = self.git_cursor_graph {
+                    if let Some(row) = self.git_graph_rows.get(ix) {
+                        if let Some(hash) = &row.hash {
+                            let full_hash = row.full_hash.clone().unwrap_or_else(|| hash.clone());
+                            self.select_commit(full_hash);
+                            cx.notify();
+                        }
+                    }
+                }
+            }
+            GitSubtab::Delegation => {}
+        }
+    }
+
     /// Add a new terminal tab and focus it.
     pub(super) fn add_terminal(&mut self, cx: &mut Context<Self>) {
         let dims = self
@@ -2107,5 +2230,20 @@ mod tests {
         // Verify toggle_focus_target properly targets Terminal when on Terminal tab
         let (target, _) = toggle_focus_target(RightRailTab::Terminal);
         assert_eq!(target, FocusTarget::Terminal);
+    }
+
+    #[test]
+    fn test_git_subtab_indexing_and_cycling() {
+        assert_eq!(GitSubtab::from_index(0), GitSubtab::Branches);
+        assert_eq!(GitSubtab::from_index(1), GitSubtab::Worktrees);
+        assert_eq!(GitSubtab::from_index(2), GitSubtab::Graph);
+        assert_eq!(GitSubtab::from_index(3), GitSubtab::Delegation);
+        assert_eq!(GitSubtab::from_index(99), GitSubtab::Branches);
+
+        let n = GitSubtab::ALL.len() as isize;
+        let next = (0isize + 1).rem_euclid(n) as usize;
+        assert_eq!(GitSubtab::from_index(next), GitSubtab::Worktrees);
+        let prev = (0isize - 1).rem_euclid(n) as usize;
+        assert_eq!(GitSubtab::from_index(prev), GitSubtab::Delegation);
     }
 }
