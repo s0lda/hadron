@@ -21,7 +21,7 @@ Maintain the shared swarm memory under `.hadron/nucleus/` according to Standard 
 
 ### 2. Prune Stale Lessons & Promote Invariants
 - Delete lessons made obsolete by architectural rewrites or permanent structural guards.
-- If a lesson is resolved by enforcing a permanent codebase constraint, move that constraint to `invariants.md` and remove the post-mortem.
+- If a lesson is resolved by enforcing a permanent codebase constraint, move that constraint to `.hadron/nucleus/invariants/always.md` and remove the post-mortem from `index.md`.
 
 ### 3. Upkeep Feature Map (`features.md`)
 - Update component statuses, entrypoint file paths, and high-level architectural references.

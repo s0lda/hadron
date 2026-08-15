@@ -29,5 +29,5 @@ Process skills govern approach and take precedence over domain/implementation sk
 - "I know what this skill means without reading" → Read exact skill file every time.
 
 ## Priority Hierarchy
-`User Directives (AGENTS.md / Chat instructions)` > `Skills` > `Default Behavior`.
+`Invariants (always.md / Standard Model)` > `Human Chat Instructions` > `Skills` > `Default Behavior`.
 Omit skill workflows ONLY when explicitly instructed by human partner.

@@ -39,9 +39,9 @@ Categorize discovered artifacts into Hadron target structures:
 - **Budget Control:** Keep `.hadron/nucleus/index.md` within the workspace's configured budget limit (default 32 KB, or 16 / 64 / 128 KB configured in Settings / `team.json`).
 - **Deduplication:** Check existing notes in `notes/` before creating a new one. Update existing notes rather than creating duplicate entries.
 
-### 2. Invariants, Quirks & Operational Constraints → `.hadron/nucleus/invariants.md`
+### 2. Invariants, Quirks & Operational Constraints → `.hadron/nucleus/invariants/always.md`
 - Extract codebase rules, environment quirks (e.g. Vulkan, Lavapipe, OS limits), security boundaries, and protocol constraints.
-- Merge into the appropriate sections of `.hadron/nucleus/invariants.md`.
+- Merge into `.hadron/nucleus/invariants/always.md` (or domain-specific `.hadron/nucleus/invariants/<topic>.md`).
 - Never duplicate an invariant already present.
 
 ### 3. Procedural Skills → `.hadron/skills/<slug>.md`
