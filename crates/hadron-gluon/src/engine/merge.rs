@@ -1,4 +1,6 @@
 
+use serde::{Deserialize, Serialize};
+
 use hadron_lattice::term::{self, Source};
 use hadron_lattice::{
     Actor, Event, Kind, QuarkId, QuarkState,
@@ -35,6 +37,194 @@ pub(super) const GATE_HANDBACK_MARKER: &str = "The merge gate stopped this branc
 /// this is deliberately small: a branch that cannot heal itself in two passes is not
 /// going to heal itself in five, and the loop is the expensive failure mode here.
 const MAX_GATE_HANDBACKS: usize = 2;
+
+/// Categorization of failure causes encountered at the merge gate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiagnosticErrorKind {
+    CompilerError,
+    TestFailure,
+    MergeConflict,
+    UncommittedChanges,
+    Unknown,
+}
+
+/// A specific diagnostic fault point extracted from compiler/test/git output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiagnosticItem {
+    pub kind: DiagnosticErrorKind,
+    pub location: Option<String>,
+    pub message: String,
+    pub code_snippet: Option<String>,
+}
+
+/// Structured failure diagnostics providing root-cause analysis and remediation steps.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StructuredDiagnostics {
+    pub primary_kind: DiagnosticErrorKind,
+    pub items: Vec<DiagnosticItem>,
+    pub summary: String,
+    pub suggested_remediation: String,
+}
+
+/// Parse unstructured compiler, test, or rebase error logs into structured actionable diagnostics.
+pub fn extract_structured_diagnostics(output: &str) -> StructuredDiagnostics {
+    let mut items = Vec::new();
+    let mut primary_kind = DiagnosticErrorKind::Unknown;
+
+    let lines: Vec<&str> = output.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let line = lines[i];
+
+        // 1. Rustc compiler error
+        if (line.contains("error[E") || line.starts_with("error:")) && !line.contains("could not compile") {
+            primary_kind = DiagnosticErrorKind::CompilerError;
+            let msg = line.trim().to_string();
+            let mut location = None;
+            let mut snippet_lines = Vec::new();
+
+            let mut j = i + 1;
+            while j < lines.len() && j < i + 10 {
+                let next_line = lines[j];
+                if next_line.trim().starts_with("--> ") {
+                    location = Some(next_line.trim().trim_start_matches("--> ").trim().to_string());
+                } else if next_line.trim().starts_with('|') || next_line.trim().starts_with(":::") {
+                    snippet_lines.push(next_line.to_string());
+                } else if next_line.starts_with("error[E") || next_line.starts_with("error:") {
+                    break;
+                }
+                j += 1;
+            }
+
+            let code_snippet = if snippet_lines.is_empty() {
+                None
+            } else {
+                Some(snippet_lines.join("\n"))
+            };
+
+            items.push(DiagnosticItem {
+                kind: DiagnosticErrorKind::CompilerError,
+                location,
+                message: msg,
+                code_snippet,
+            });
+            i = j;
+            continue;
+        }
+
+        // 2. Test assertion failure or panic
+        if line.contains("panicked at") {
+            if primary_kind == DiagnosticErrorKind::Unknown {
+                primary_kind = DiagnosticErrorKind::TestFailure;
+            }
+            let msg = line.trim().to_string();
+            let location = if let Some(idx) = line.find("panicked at") {
+                let tail = line[idx + 11..].trim();
+                let loc_cand = tail.split(['\'', '"', ',']).last().unwrap_or("").trim().trim_end_matches(':');
+                if loc_cand.contains(".rs:") {
+                    Some(loc_cand.to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let mut snippet_lines = Vec::new();
+            let mut j = i + 1;
+            while j < lines.len() && j < i + 6 {
+                let next_line = lines[j];
+                if next_line.starts_with("test ") || next_line.starts_with("failures:") || next_line.starts_with("----") {
+                    break;
+                }
+                snippet_lines.push(next_line.to_string());
+                j += 1;
+            }
+
+            let full_msg = if snippet_lines.is_empty() {
+                msg
+            } else {
+                format!("{}\n{}", msg, snippet_lines.join("\n"))
+            };
+
+            items.push(DiagnosticItem {
+                kind: DiagnosticErrorKind::TestFailure,
+                location,
+                message: full_msg,
+                code_snippet: None,
+            });
+            i = j;
+            continue;
+        }
+
+        // 3. Merge conflict
+        if line.contains("CONFLICT") && line.contains("Merge conflict in") {
+            primary_kind = DiagnosticErrorKind::MergeConflict;
+            let file = line.split("Merge conflict in").nth(1).unwrap_or("").trim();
+            items.push(DiagnosticItem {
+                kind: DiagnosticErrorKind::MergeConflict,
+                location: Some(file.to_string()),
+                message: line.trim().to_string(),
+                code_snippet: None,
+            });
+        }
+
+        i += 1;
+    }
+
+    if primary_kind == DiagnosticErrorKind::Unknown && output.contains("FAILED") {
+        primary_kind = DiagnosticErrorKind::TestFailure;
+    }
+
+    let summary = match primary_kind {
+        DiagnosticErrorKind::CompilerError => format!("Compilation failed with {} error(s)", items.len()),
+        DiagnosticErrorKind::TestFailure => format!("Test suite failed with {} failure(s)", items.len()),
+        DiagnosticErrorKind::MergeConflict => format!("Rebase merge conflict across {} file(s)", items.len()),
+        DiagnosticErrorKind::UncommittedChanges => "Uncommitted changes detected in worktree".to_string(),
+        DiagnosticErrorKind::Unknown => "Merge gate verification stopped".to_string(),
+    };
+
+    let suggested_remediation = match primary_kind {
+        DiagnosticErrorKind::CompilerError => {
+            "Fix compilation errors in the files listed above. Touch the crate entrypoint (src/lib.rs) and verify with `cargo check` before finishing turn.".to_string()
+        }
+        DiagnosticErrorKind::TestFailure => {
+            "Fix failing tests and assertions listed above. Run `cargo test` locally in your worktree to verify pass before finishing turn.".to_string()
+        }
+        DiagnosticErrorKind::MergeConflict => {
+            "Resolve git conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) in conflicting files and commit the resolution.".to_string()
+        }
+        DiagnosticErrorKind::UncommittedChanges => {
+            "Commit or clean up untracked/unstaged changes in your worktree before resubmitting.".to_string()
+        }
+        DiagnosticErrorKind::Unknown => {
+            "Inspect the error log output above, apply necessary fixes in your worktree, and verify tests pass.".to_string()
+        }
+    };
+
+    StructuredDiagnostics {
+        primary_kind,
+        items,
+        summary,
+        suggested_remediation,
+    }
+}
+
+/// Format structured diagnostics into a concise, actionable markdown section.
+pub fn format_remediation_instructions(diag: &StructuredDiagnostics) -> String {
+    let mut out = format!("### Remediation Guidance: {}\n\n", diag.summary);
+    if !diag.items.is_empty() {
+        out.push_str("**Specific Fault Points:**\n");
+        for (idx, item) in diag.items.iter().enumerate() {
+            let loc_str = item.location.as_deref().unwrap_or("unknown location");
+            out.push_str(&format!("{}. [{}] `{}`\n", idx + 1, loc_str, item.message.lines().next().unwrap_or("")));
+        }
+        out.push('\n');
+    }
+    out.push_str(&format!("**Action Required:**\n{}\n", diag.suggested_remediation));
+    out
+}
 
 impl super::Engine {
     /// Whether `e` is a merge-gate hand-back already issued to `target` for `assignment`.
@@ -107,6 +297,13 @@ impl super::Engine {
 
         self.park_blocked(target).await?;
         let quoted_why = super::quote_paths(why);
+        let diag = extract_structured_diagnostics(why);
+        let remediation_section = if diag.primary_kind != DiagnosticErrorKind::Unknown {
+            format!("\n\n{}", format_remediation_instructions(&diag))
+        } else {
+            String::new()
+        };
+
         self.append(
             Event::new(
                 Actor::Gluon,
@@ -114,7 +311,7 @@ impl super::Engine {
                 Kind::Message {
                     body: format!(
                         "@{id} {GATE_HANDBACK_MARKER} Nothing was merged and nothing was lost.\n\n\
-                         {quoted_why}\n\n\
+                         {quoted_why}{remediation_section}\n\n\
                          You are still on your own branch in your own worktree — fix it THERE and \
                          end your turn as you normally would; the gate retries the merge on its own. \
                          Do not touch the main checkout, and do not start new work until this lands. \
@@ -687,4 +884,49 @@ mod tests {
         let conflicts = forge_block_conflicts(base_dir.path(), branch_dir.path(), target_dir.path());
         assert_eq!(conflicts.len(), 0);
     }
+
+    #[test]
+    fn extracts_structured_diagnostics_for_compiler_and_test_failures() {
+        let rustc_error = r#"
+error[E0425]: cannot find function `calculate_sum` in this scope
+  --> crates/hadron-gluon/src/engine/calc.rs:42:15
+   |
+42 |     let res = calculate_sum(1, 2);
+   |               ^^^^^^^^^^^^^ not found in this scope
+"#;
+
+        let diag = extract_structured_diagnostics(rustc_error);
+        assert_eq!(diag.primary_kind, DiagnosticErrorKind::CompilerError);
+        assert_eq!(diag.items.len(), 1);
+        assert_eq!(
+            diag.items[0].location.as_deref(),
+            Some("crates/hadron-gluon/src/engine/calc.rs:42:15")
+        );
+        assert!(diag.items[0].message.contains("cannot find function `calculate_sum`"));
+        assert!(diag.suggested_remediation.contains("cargo check"));
+
+        let test_error = r#"
+running 1 test
+test engine::dag::tests::sample_test ... FAILED
+
+failures:
+
+---- engine::dag::tests::sample_test stdout ----
+thread 'engine::dag::tests::sample_test' panicked at crates/hadron-gluon/src/engine/dag.rs:100:9:
+assertion `left == right` failed
+  left: 1
+ right: 2
+"#;
+
+        let diag_test = extract_structured_diagnostics(test_error);
+        assert_eq!(diag_test.primary_kind, DiagnosticErrorKind::TestFailure);
+        assert_eq!(diag_test.items.len(), 1);
+        assert_eq!(
+            diag_test.items[0].location.as_deref(),
+            Some("crates/hadron-gluon/src/engine/dag.rs:100:9")
+        );
+        assert!(diag_test.items[0].message.contains("assertion `left == right` failed"));
+        assert!(diag_test.suggested_remediation.contains("cargo test"));
+    }
 }
+
