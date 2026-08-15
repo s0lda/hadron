@@ -128,6 +128,27 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "writing-skills", detail: "Create, edit, or verify custom skill procedures", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "release", detail: "Execute project release procedure in .hadron/nucleus/release.md", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "absorb", detail: "Absorb foreign assistant skills, memories, lessons, rules, and plans into .hadron/", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "security-review", detail: "Audit authentication, permissions, secrets, and injection vectors", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "security", detail: "Audit security boundaries, secrets, and injection vectors", arity: Arity::Line, arg: ArgSource::Quark, listed: false },
+    Command { name: "architecture-audit", detail: "Audit component decoupling, SSOT integrity, and type-system invariants", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "arch", detail: "Audit component decoupling, SSOT integrity, and type-system invariants", arity: Arity::Line, arg: ArgSource::Quark, listed: false },
+    Command { name: "code-review", detail: "Review code changes, plans, or commit diffs", arity: Arity::Line, arg: ArgSource::Quark, listed: false },
+    Command { name: "chaos-testing", detail: "Stress test concurrency races, timeout handling, and edge failure modes", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "chaos-test", detail: "Stress test concurrency races, timeout handling, and edge failure modes", arity: Arity::Line, arg: ArgSource::Quark, listed: false },
+    Command { name: "test-engineering", detail: "Stress test concurrency races, timeout handling, and edge failure modes", arity: Arity::Line, arg: ArgSource::Quark, listed: false },
+    Command { name: "performance-audit", detail: "Profile CPU/memory allocations, lock contention, and render-loop lag", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "perf-audit", detail: "Profile CPU/memory allocations, lock contention, and render-loop lag", arity: Arity::Line, arg: ArgSource::Quark, listed: false },
+    Command { name: "optimize", detail: "Profile CPU/memory allocations, lock contention, and render-loop lag", arity: Arity::Line, arg: ArgSource::Quark, listed: false },
+    Command { name: "code-simplification", detail: "Prune dead abstractions, unused types/imports, and reduce complexity", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "simplify", detail: "Prune dead abstractions, unused types/imports, and reduce complexity", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "refactor", detail: "Prune dead abstractions, unused types/imports, and reduce complexity", arity: Arity::Line, arg: ArgSource::Quark, listed: false },
+    Command { name: "api-design", detail: "Design type-safe API contracts, wire protocols, and error schemas", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "contract", detail: "Design type-safe API contracts, wire protocols, and error schemas", arity: Arity::Line, arg: ArgSource::Quark, listed: false },
+    Command { name: "incident-investigation", detail: "Systematic failure reproduction, log dissection, and post-mortem analysis", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "triage", detail: "Systematic failure reproduction, log dissection, and post-mortem analysis", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "investigate", detail: "Systematic failure reproduction, log dissection, and post-mortem analysis", arity: Arity::Line, arg: ArgSource::Quark, listed: false },
+    Command { name: "memory-curation", detail: "Distill lessons into notes/, prune index.md, and update features.md", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "curate-memory", detail: "Distill lessons into notes/, prune index.md, and update features.md", arity: Arity::Line, arg: ArgSource::Quark, listed: false },
     Command { name: "review", detail: "Request peer review on active branch before merge gate", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "replay", detail: "Step backwards through historical field events", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "fork-field", detail: "Fork a new session from a historical event ID", arity: Arity::Line, arg: ArgSource::None, listed: true },
@@ -1450,6 +1471,17 @@ pub fn completion_candidates(
                     }
                 }
             }
+            out.sort_by(|a, b| {
+                let a_name = a.label.strip_prefix('/').unwrap_or(&a.label);
+                let b_name = b.label.strip_prefix('/').unwrap_or(&b.label);
+                let a_prefix = a_name.to_lowercase().starts_with(&query_lower);
+                let b_prefix = b_name.to_lowercase().starts_with(&query_lower);
+                match (a_prefix, b_prefix) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => a_name.to_lowercase().cmp(&b_name.to_lowercase()),
+                }
+            });
         }
         CompletionTrigger::Arg(ArgSource::Session) => {
             for session in sessions {
@@ -1821,7 +1853,7 @@ mod tests {
             );
         }
         assert!(
-            body.chars().count() < 2_000,
+            body.chars().count() < 3_500,
             "/skills is a wall again: {} chars",
             body.chars().count()
         );
@@ -2151,6 +2183,45 @@ mod tests {
 
         let completions = completion_candidates("/res", 4, &[], &[], &[]).unwrap();
         assert!(completions.candidates.iter().any(|c| c.label == "/resume"));
+    }
+
+    #[test]
+    fn command_candidates_are_sorted_alphabetically() {
+        let completions = completion_candidates("/", 1, &[], &[], &[]).unwrap();
+        let labels: Vec<&str> = completions.candidates.iter().map(|c| c.label.as_str()).collect();
+        assert!(!labels.is_empty());
+        let mut sorted = labels.clone();
+        sorted.sort();
+        assert_eq!(labels, sorted, "command candidates must be sorted alphabetically");
+    }
+
+    #[test]
+    fn command_candidates_prioritize_prefix_matches() {
+        let completions = completion_candidates("/sec", 4, &[], &[], &[]).unwrap();
+        let labels: Vec<&str> = completions.candidates.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"/security-review"));
+        // Prefix matches like /security-review should come first
+        assert_eq!(labels.first().copied(), Some("/security-review"));
+    }
+
+    #[test]
+    fn new_builtin_skill_commands_are_available_in_completions() {
+        let completions = completion_candidates("/", 1, &[], &[], &[]).unwrap();
+        let labels: Vec<&str> = completions.candidates.iter().map(|c| c.label.as_str()).collect();
+        for expected in [
+            "/security-review",
+            "/architecture-audit",
+            "/chaos-testing",
+            "/performance-audit",
+            "/code-simplification",
+            "/simplify",
+            "/api-design",
+            "/incident-investigation",
+            "/triage",
+            "/memory-curation",
+        ] {
+            assert!(labels.contains(&expected), "missing command completion {expected}");
+        }
     }
 
     #[test]

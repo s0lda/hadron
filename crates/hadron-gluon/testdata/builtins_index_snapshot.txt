@@ -20,3 +20,11 @@ These are your built-in procedures. The engine hands you a starting one below; i
 - **writing-skills** — Use when creating new skills, editing existing skills, or verifying skills work before deployment
 - **release** — Execute project release procedure (updating CHANGELOG, bumping version, merging main, tagging, and pushing)
 - **absorb** — Use when migrating or absorbing foreign assistant configurations, skills, memories, lessons, rules, or plans from other AI tools into .hadron/
+- **security-review** — Audit auth/permission boundaries, secret scanning, injection vectors, and untrusted inputs (Rule 7)
+- **architecture-audit** — Audit component coupling, SSOT integrity (Rule 3), invariant schemas, and unrepresentable invalid states (Rule 8)
+- **chaos-testing** — Design stress harnesses, concurrency races, error-recovery paths, and boundary edge cases
+- **performance-audit** — Profile CPU/memory hot paths, heap allocations, async lock contention, and UI rasterization lag
+- **code-simplification** — Ruthless code reduction (Rule 10), pruning dead abstractions, unused imports, and over-engineered logic
+- **api-design** — Design type-safe API contracts, wire protocols, backwards compatibility, and error schemas
+- **incident-investigation** — Systematic failure reproduction, log/NDJSON dissection, bisection, and post-mortem generation
+- **memory-curation** — Maintain .hadron/nucleus (Rule 9) — distill lessons into notes/, prune index.md, and update features.md

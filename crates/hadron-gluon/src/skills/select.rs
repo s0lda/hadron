@@ -54,9 +54,13 @@ pub fn select(task: &str, skills: &[ResolvedSkill]) -> Option<Match> {
 /// The role a task of this kind prefers (spec 2026-07-20 §3.2). None = no preference.
 pub fn preferred_role(skill_name: &str) -> Option<&'static str> {
     match skill_name {
-        "writing-plans" | "brainstorming" => Some("architect"),
-        "requesting-code-review" | "reviewing-work" => Some("reviewer"),
-        "executing-plans" | "subagent-driven-development" => Some("executor"),
+        "writing-plans" | "brainstorming" | "architecture-audit" | "api-design" => Some("architect"),
+        "requesting-code-review" | "reviewing-work" | "security-review" => Some("reviewer"),
+        "executing-plans" | "subagent-driven-development" | "code-simplification" => Some("executor"),
+        "chaos-testing" | "test-driven-development" => Some("qa"),
+        "performance-audit" => Some("optimizer"),
+        "incident-investigation" | "systematic-debugging" => Some("triage"),
+        "memory-curation" => Some("scribe"),
         _ => None,
     }
 }

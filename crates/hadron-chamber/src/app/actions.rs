@@ -301,9 +301,34 @@ impl Chamber {
                 }
                 true
             }
-            cmd if cmd == "team-brainstorm" || cmd == "brainstorm" || self.skill_corpus().iter().any(|s| s.id == cmd) => {
+            cmd if cmd == "team-brainstorm"
+                || cmd == "brainstorm"
+                || cmd == "security"
+                || cmd == "arch"
+                || cmd == "code-review"
+                || cmd == "chaos-test"
+                || cmd == "test-engineering"
+                || cmd == "perf-audit"
+                || cmd == "optimize"
+                || cmd == "simplify"
+                || cmd == "refactor"
+                || cmd == "contract"
+                || cmd == "triage"
+                || cmd == "investigate"
+                || cmd == "curate-memory"
+                || self.skill_corpus().iter().any(|s| s.id == cmd) =>
+            {
                 let skill_id = match cmd {
                     "team-brainstorm" | "brainstorm" => "brainstorming",
+                    "security" => "security-review",
+                    "arch" => "architecture-audit",
+                    "code-review" => "reviewing-work",
+                    "chaos-test" | "test-engineering" => "chaos-testing",
+                    "perf-audit" | "optimize" => "performance-audit",
+                    "simplify" | "refactor" => "code-simplification",
+                    "contract" => "api-design",
+                    "triage" | "investigate" => "incident-investigation",
+                    "curate-memory" => "memory-curation",
                     other => other,
                 };
                 let corpus = self.skill_corpus();

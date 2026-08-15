@@ -201,6 +201,70 @@ fn the_phrasings_a_human_actually_types_all_land() {
             "missed: {task:?}"
         );
     }
+
+    for task in ["please do a security review", "security audit of the endpoint", "check security for auth tokens"] {
+        assert_eq!(
+            select(task, &skills).map(|m| m.id),
+            Some("security-review".to_string()),
+            "missed: {task:?}"
+        );
+    }
+
+    for task in ["run an architecture audit", "check architecture for coupling", "ssot audit on config"] {
+        assert_eq!(
+            select(task, &skills).map(|m| m.id),
+            Some("architecture-audit".to_string()),
+            "missed: {task:?}"
+        );
+    }
+
+    for task in ["run chaos test on daemon", "stress testing under load", "concurrency test on locks"] {
+        assert_eq!(
+            select(task, &skills).map(|m| m.id),
+            Some("chaos-testing".to_string()),
+            "missed: {task:?}"
+        );
+    }
+
+    for task in ["conduct a performance audit", "profile cpu allocations", "optimize performance of render loop"] {
+        assert_eq!(
+            select(task, &skills).map(|m| m.id),
+            Some("performance-audit".to_string()),
+            "missed: {task:?}"
+        );
+    }
+
+    for task in ["simplify code in router", "code simplification on engine", "prune code in utils"] {
+        assert_eq!(
+            select(task, &skills).map(|m| m.id),
+            Some("code-simplification".to_string()),
+            "missed: {task:?}"
+        );
+    }
+
+    for task in ["draft the api design", "design api for telemetry", "wire format specification"] {
+        assert_eq!(
+            select(task, &skills).map(|m| m.id),
+            Some("api-design".to_string()),
+            "missed: {task:?}"
+        );
+    }
+
+    for task in ["incident investigation for hang", "triage failure on main", "root cause analysis of deadlock"] {
+        assert_eq!(
+            select(task, &skills).map(|m| m.id),
+            Some("incident-investigation".to_string()),
+            "missed: {task:?}"
+        );
+    }
+
+    for task in ["curate memory in nucleus", "distill lessons into notes", "prune memory index"] {
+        assert_eq!(
+            select(task, &skills).map(|m| m.id),
+            Some("memory-curation".to_string()),
+            "missed: {task:?}"
+        );
+    }
 }
 
 #[test]
@@ -556,11 +620,21 @@ fn parse_list_value_accepts_bracketed_and_bare_forms() {
 fn skills_map_to_their_preferred_role() {
     assert_eq!(preferred_role("writing-plans"), Some("architect"));
     assert_eq!(preferred_role("brainstorming"), Some("architect"));
+    assert_eq!(preferred_role("architecture-audit"), Some("architect"));
+    assert_eq!(preferred_role("api-design"), Some("architect"));
     assert_eq!(preferred_role("requesting-code-review"), Some("reviewer"));
     assert_eq!(preferred_role("reviewing-work"), Some("reviewer"));
+    assert_eq!(preferred_role("security-review"), Some("reviewer"));
     assert_eq!(preferred_role("executing-plans"), Some("executor"));
     assert_eq!(preferred_role("subagent-driven-development"), Some("executor"));
-    assert_eq!(preferred_role("systematic-debugging"), None);
+    assert_eq!(preferred_role("code-simplification"), Some("executor"));
+    assert_eq!(preferred_role("chaos-testing"), Some("qa"));
+    assert_eq!(preferred_role("test-driven-development"), Some("qa"));
+    assert_eq!(preferred_role("performance-audit"), Some("optimizer"));
+    assert_eq!(preferred_role("incident-investigation"), Some("triage"));
+    assert_eq!(preferred_role("systematic-debugging"), Some("triage"));
+    assert_eq!(preferred_role("memory-curation"), Some("scribe"));
+    assert_eq!(preferred_role("release"), None);
 }
 
 #[test]
