@@ -1284,8 +1284,10 @@ pub(super) fn kind_icon(kind_label: &str) -> IconName {
     }
 }
 
-pub(super) fn markdown_style() -> gpui_component::text::TextViewStyle {
+pub(super) fn markdown_style(ui_font_size: Option<f32>) -> gpui_component::text::TextViewStyle {
+    let base_size = ui_font_size.unwrap_or(14.0);
     let mut style = gpui_component::text::TextViewStyle::default();
+    style.heading_base_font_size = px(base_size);
     style.highlight_theme = gpui_component::highlighter::HighlightTheme::default_dark();
     style.table = {
         let mut s = gpui::StyleRefinement::default();
@@ -1308,6 +1310,15 @@ pub(super) fn markdown_style() -> gpui_component::text::TextViewStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn markdown_style_heading_base_font_size_matches_preference() {
+        let default_style = markdown_style(None);
+        assert_eq!(default_style.heading_base_font_size, px(14.0));
+
+        let custom_style = markdown_style(Some(18.0));
+        assert_eq!(custom_style.heading_base_font_size, px(18.0));
+    }
 
     #[test]
     fn format_num_is_human_readable_with_trimmed_units() {

@@ -399,7 +399,7 @@ impl super::Chamber {
                                 }
                             })
                             .font_family(cx.theme().mono_font_family.clone())
-                            .text_size(gpui::px(13.56))
+                            .text_size(cx.theme().mono_font_size)
                             .gap_2()
                             .child(if node.is_file {
                                 Icon::new(IconName::File)
