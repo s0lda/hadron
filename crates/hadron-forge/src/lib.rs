@@ -27,6 +27,7 @@ pub mod nucleus_lint;
 pub mod spec_compiler;
 pub mod e2e;
 pub mod preview;
+pub mod scaffold;
 
 pub use ast_merge::*;
 pub use conflict_resolve::*;
@@ -41,6 +42,7 @@ pub use nucleus_lint::*;
 pub use spec_compiler::*;
 pub use e2e::*;
 pub use preview::*;
+pub use scaffold::*;
 
 
 
