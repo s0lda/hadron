@@ -28,6 +28,7 @@ pub mod e2e;
 pub mod preview;
 pub mod scaffold;
 pub mod security_audit;
+pub mod watchdog;
 
 use hadron_forge::file::Root;
 use hadron_forge::mock::MockServerManager;
@@ -93,7 +94,8 @@ impl ForgeMcpServer {
                 + Self::e2e_router()
                 + Self::preview_router()
                 + Self::scaffold_router()
-                + Self::security_audit_router(),
+                + Self::security_audit_router()
+                + Self::watchdog_router(),
             root,
             nucleus_root,
             process_manager,
