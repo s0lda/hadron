@@ -39,6 +39,16 @@ pub mod fuzz_harness;
 pub mod nucleus_graph;
 pub mod binary_bloat;
 pub mod release_sync;
+pub mod time_travel;
+pub mod mutation;
+pub mod benchmark_guard;
+pub mod topology;
+pub mod task_scheduler;
+pub mod preon_evolution;
+pub mod prompt_distiller;
+pub mod mesh;
+pub mod pty_pairing;
+pub mod breakpoints;
 
 use hadron_forge::file::Root;
 use hadron_forge::mock::MockServerManager;
@@ -115,7 +125,17 @@ impl ForgeMcpServer {
                 + Self::fuzz_harness_router()
                 + Self::nucleus_graph_router()
                 + Self::binary_bloat_router()
-                + Self::release_sync_router(),
+                + Self::release_sync_router()
+                + Self::time_travel_router()
+                + Self::mutation_router()
+                + Self::benchmark_guard_router()
+                + Self::topology_router()
+                + Self::task_scheduler_router()
+                + Self::preon_evolution_router()
+                + Self::prompt_distiller_router()
+                + Self::mesh_router()
+                + Self::pty_pairing_router()
+                + Self::breakpoints_router(),
             root,
             nucleus_root,
             process_manager,

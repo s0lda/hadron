@@ -22,4 +22,13 @@ pub mod statusline;
 pub mod nucleus_status;
 pub mod proc;
 pub mod env;
+pub mod mesh;
+pub mod breakpoints;
+pub mod preon_evolution;
+pub mod prompt_distiller;
+
+pub use mesh::*;
+pub use breakpoints::*;
+pub use preon_evolution::*;
+pub use prompt_distiller::*;
 

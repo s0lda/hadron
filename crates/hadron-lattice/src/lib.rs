@@ -29,8 +29,14 @@ pub mod nucleus;
 pub mod nucleus_lint;
 pub mod field_channel;
 pub mod semantic;
+pub mod time_travel;
+pub mod sync;
+pub mod task_graph;
 
 pub use nucleus::*;
 pub use nucleus_lint::*;
 pub use field_channel::*;
 pub use semantic::*;
+pub use time_travel::*;
+pub use sync::*;
+pub use task_graph::*;

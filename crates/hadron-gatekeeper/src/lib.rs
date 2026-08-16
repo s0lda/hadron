@@ -9,6 +9,8 @@
 mod gate;
 mod matrix;
 mod merge;
+pub mod mutation;
+pub mod benchmark_guard;
 
 pub use gate::{any_pending_permission, grant, grant_remembering, pending_permission, PendingPermission};
 pub use hadron_lattice::{Mode, Risk};
@@ -19,3 +21,5 @@ pub use matrix::{
 pub use merge::{
     merge_approved, merge_decision, merge_op, BlockReason, BranchState, MergeVerdict,
 };
+pub use mutation::*;
+pub use benchmark_guard::*;
