@@ -246,6 +246,7 @@ struct Chamber {
     visualizer_zoom: f32,
     visualizer_auto_spin: bool,
     visualizer_selected_quark: Option<String>,
+    visualizer_last_mouse: Option<gpui::Point<gpui::Pixels>>,
     /// Keyboard cursor over the roster (index into `view.roster`), moved by the
     /// quark-nav keys and drawn as a highlighted row. `None` = nothing selected.
     selected_quark_ix: Option<usize>,
@@ -1046,6 +1047,7 @@ impl Chamber {
             visualizer_zoom: 1.0,
             visualizer_auto_spin: true,
             visualizer_selected_quark: None,
+            visualizer_last_mouse: None,
             selected_quark_ix: None,
             app_menu_open: false,
             working_diff: None,
