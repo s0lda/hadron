@@ -266,6 +266,13 @@ mod tests {
         let _tv = gpui_component::text::TextView::markdown("test-mermaid-view", md)
             .markdown_extensions(super::plugin::chamber_markdown_extensions());
     }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn test_mermaid_card_constructs() {
+        let card = super::render::MermaidCard::new("graph TD\nA --> B\nB --> C");
+        assert!(card.diagram.is_ok());
+    }
 }
 
 

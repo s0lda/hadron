@@ -57,10 +57,10 @@ impl RenderOnce for MermaidCard {
         self.source.hash(&mut hasher);
         let hash = hasher.finish();
         let toggle_key = format!("mermaid-toggle-{hash}");
-        let is_code_mode = window
-            .use_keyed_state(SharedString::from(toggle_key.clone()), cx, |_, _| false)
-            .read(cx)
-            .clone();
+        let is_code_mode_entity = window
+            .use_keyed_state(SharedString::from(toggle_key), cx, |_, _| false);
+        let is_code_mode = *is_code_mode_entity.read(cx);
+        let toggle_state = is_code_mode_entity.clone();
 
 
 
@@ -160,14 +160,11 @@ impl RenderOnce for MermaidCard {
                                     .cursor_pointer()
                                     .hover(|s| s.bg(crate::theme::bg_surface_raised()).text_color(crate::theme::text()))
                                     .child(if is_code_mode { "Diagram View" } else { "Source Code" })
-                                    .on_click(move |_, window, cx| {
-                                        let state = window.use_keyed_state(
-                                            SharedString::from(toggle_key.clone()),
-                                            cx,
-                                            |_, _| false,
-                                        );
-                                        let current = *state.read(cx);
-                                        state.update(cx, |val, _| *val = !current);
+                                    .on_click(move |_, _window, cx| {
+                                        toggle_state.update(cx, |val, cx| {
+                                            *val = !*val;
+                                            cx.notify();
+                                        });
                                     }),
 
                             )
