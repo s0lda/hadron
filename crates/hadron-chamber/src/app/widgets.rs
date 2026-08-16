@@ -1330,15 +1330,16 @@ pub(super) fn markdown_style(ui_font_size: Option<f32>) -> gpui_component::text:
     style.heading_base_font_size = px(base_size);
     style.highlight_theme = gpui_component::highlighter::HighlightTheme::default_dark();
     style.table = {
-        let mut s = gpui::StyleRefinement::default();
+        let mut s = gpui::StyleRefinement::default()
+            .border_1()
+            .border_color(theme::border())
+            .rounded_md();
         s.overflow.x = Some(gpui::Overflow::Scroll);
         s
     };
     // Fenced code blocks: a solid dark card (header row with language label +
     // copy button, divider, then the code body) so they read as a distinct
     // block over the flat #101010 field instead of blending into body text.
-    // Padding lives inside the header/body rows in the fork's `CodeBlock`
-    // render, not here.
     style.code_block = gpui::StyleRefinement::default()
         .bg(theme::input_bg())
         .border_1()

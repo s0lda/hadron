@@ -6,7 +6,7 @@
 
 use std::f32::consts::PI;
 use super::*;
-use gpui::{canvas, fill, point, px, size, Bounds, Hsla, PathBuilder, Rgba};
+use gpui::{canvas, fill, point, px, size, Bounds, Hsla, PathBuilder};
 
 /// 3D point in virtual sphere coordinate space.
 #[derive(Debug, Clone, Copy, PartialEq)]
