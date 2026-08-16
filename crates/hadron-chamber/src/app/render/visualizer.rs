@@ -20,7 +20,7 @@ pub struct Point3D {
 }
 
 impl Point3D {
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub const fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
@@ -46,6 +46,7 @@ impl Point3D {
     }
 
     /// Rotate point around Y-axis (yaw) and X-axis (pitch).
+    #[cfg(test)]
     pub fn rotate(&self, yaw: f32, pitch: f32) -> Self {
         let cos_y = yaw.cos();
         let sin_y = yaw.sin();
