@@ -6,6 +6,7 @@
 //! traveling orbital photon belt, animated excitation halos, and dynamic delegation links.
 
 use std::f32::consts::PI;
+use std::sync::LazyLock;
 use super::*;
 use gpui::{canvas, fill, point, px, size, Bounds, Hsla, MouseButton, PathBuilder};
 use crate::model::tasks::TaskState;
@@ -24,6 +25,16 @@ impl Point3D {
         Self { x, y, z }
     }
 
+    /// Scale point coordinates by a scalar factor.
+    #[inline(always)]
+    pub fn scale(&self, factor: f32) -> Self {
+        Self {
+            x: self.x * factor,
+            y: self.y * factor,
+            z: self.z * factor,
+        }
+    }
+
     /// Spherical coordinates to Cartesian (radius, latitude theta [-pi/2, pi/2], longitude phi [0, 2pi]).
     pub fn from_spherical(radius: f32, theta: f32, phi: f32) -> Self {
         let cos_theta = theta.cos();
@@ -36,14 +47,12 @@ impl Point3D {
 
     /// Rotate point around Y-axis (yaw) and X-axis (pitch).
     pub fn rotate(&self, yaw: f32, pitch: f32) -> Self {
-        // Rotate around Y (yaw)
         let cos_y = yaw.cos();
         let sin_y = yaw.sin();
         let x1 = self.x * cos_y + self.z * sin_y;
         let y1 = self.y;
         let z1 = -self.x * sin_y + self.z * cos_y;
 
-        // Rotate around X (pitch)
         let cos_p = pitch.cos();
         let sin_p = pitch.sin();
         let x2 = x1;
@@ -65,6 +74,7 @@ impl Point3D {
     }
 
     /// Project 3D point to 2D screen coordinate with perspective depth scaling.
+    #[inline(always)]
     pub fn project(&self, center_x: f32, center_y: f32, distance: f32) -> (f32, f32, f32, f32) {
         let depth_offset = distance + 220.0;
         let scale = (distance / (depth_offset - self.z)).clamp(0.35, 2.5);
@@ -74,6 +84,7 @@ impl Point3D {
     }
 
     /// Squared Euclidean distance between two 3D points.
+    #[inline(always)]
     pub fn dist_sq(&self, other: &Point3D) -> f32 {
         let dx = self.x - other.x;
         let dy = self.y - other.y;
@@ -81,6 +92,129 @@ impl Point3D {
         dx * dx + dy * dy + dz * dz
     }
 }
+
+/// High-performance 3x3 rotation matrix for 3D sphere coordinate transformations.
+///
+/// Avoids calculating trigonometric functions (sin/cos) per point by computing the
+/// composite Euler rotation matrix once per frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rotation3D {
+    m00: f32, m01: f32, m02: f32,
+    m10: f32, m11: f32, m12: f32,
+    m20: f32, m21: f32, m22: f32,
+}
+
+impl Rotation3D {
+    /// Compute 3D rotation matrix for yaw (Y-axis) and pitch (X-axis).
+    pub fn new(yaw: f32, pitch: f32) -> Self {
+        let cy = yaw.cos();
+        let sy = yaw.sin();
+        let cp = pitch.cos();
+        let sp = pitch.sin();
+        Self {
+            m00: cy,        m01: 0.0, m02: sy,
+            m10: sy * sp,   m11: cp,  m12: -cy * sp,
+            m20: -sy * cp,  m21: sp,  m22: cy * cp,
+        }
+    }
+
+    /// Transform a 3D point using this rotation matrix.
+    #[inline(always)]
+    pub fn transform(&self, p: Point3D) -> Point3D {
+        Point3D {
+            x: self.m00 * p.x + self.m01 * p.y + self.m02 * p.z,
+            y: self.m10 * p.x + self.m11 * p.y + self.m12 * p.z,
+            z: self.m20 * p.x + self.m21 * p.y + self.m22 * p.z,
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Precomputed Static Topology & Geometry Tables
+// -----------------------------------------------------------------------------
+
+struct StarSeed {
+    unit_p: Point3D,
+    star_dist_mult: f32,
+    seed: f32,
+    color_type: u8,
+}
+
+static STAR_FIELD: LazyLock<[StarSeed; 48]> = LazyLock::new(|| {
+    std::array::from_fn(|s_ix| {
+        let seed = s_ix as f32;
+        let star_dist_mult = 1.35 + (seed * 0.027);
+        let star_theta = ((seed * 1.618).sin() * 0.9).asin();
+        let star_phi = seed * 2.39996323;
+        let unit_p = Point3D::from_spherical(star_dist_mult, star_theta, star_phi);
+        StarSeed {
+            unit_p,
+            star_dist_mult,
+            seed,
+            color_type: (s_ix % 3) as u8,
+        }
+    })
+});
+
+const LATTICE_COUNT: usize = 64;
+
+static LATTICE_UNIT_NODES: LazyLock<[Point3D; LATTICE_COUNT]> = LazyLock::new(|| {
+    std::array::from_fn(|i| {
+        let lat_frac = ((i as f32 + 0.5) / LATTICE_COUNT as f32) * 2.0 - 1.0;
+        let theta = (lat_frac * 0.94).asin();
+        let phi = i as f32 * 2.39996323;
+        Point3D::from_spherical(1.0, theta, phi)
+    })
+});
+
+static LATTICE_STATIC_EDGES: LazyLock<Vec<(usize, usize)>> = LazyLock::new(|| {
+    let nodes = &*LATTICE_UNIT_NODES;
+    let mut edges = Vec::with_capacity(160);
+    let max_link_sq = 0.44 * 0.44;
+    for i in 0..LATTICE_COUNT {
+        for j in (i + 1)..LATTICE_COUNT {
+            if nodes[i].dist_sq(&nodes[j]) < max_link_sq {
+                edges.push((i, j));
+            }
+        }
+    }
+    edges
+});
+
+const LAT_STEPS: usize = 36;
+const NUM_LATS: usize = 5;
+const MERIDIAN_STEPS: usize = 36;
+const NUM_MERIDIANS: usize = 8;
+const BELT_STEPS: usize = 48;
+
+static LATITUDE_UNIT_RINGS: LazyLock<[[Point3D; LAT_STEPS + 1]; NUM_LATS]> = LazyLock::new(|| {
+    let lats = [-0.8f32, -0.4, 0.0, 0.4, 0.8];
+    std::array::from_fn(|ring_idx| {
+        let lat_theta = lats[ring_idx] * (PI * 0.42);
+        std::array::from_fn(|step| {
+            let phi = (step as f32 / LAT_STEPS as f32) * (2.0 * PI);
+            Point3D::from_spherical(1.0, lat_theta, phi)
+        })
+    })
+});
+
+static LONGITUDE_UNIT_MERIDIANS: LazyLock<[[Point3D; MERIDIAN_STEPS + 1]; NUM_MERIDIANS]> = LazyLock::new(|| {
+    std::array::from_fn(|m_idx| {
+        let phi = (m_idx as f32 / NUM_MERIDIANS as f32) * (2.0 * PI);
+        std::array::from_fn(|step| {
+            let theta = (step as f32 / MERIDIAN_STEPS as f32) * PI - (PI / 2.0);
+            Point3D::from_spherical(1.0, theta, phi)
+        })
+    })
+});
+
+static BELT_UNIT_RING: LazyLock<[Point3D; BELT_STEPS + 1]> = LazyLock::new(|| {
+    let belt_tilt = 28.0 * (PI / 180.0);
+    std::array::from_fn(|step| {
+        let phi = (step as f32 / BELT_STEPS as f32) * (2.0 * PI);
+        Point3D::from_spherical(1.18, 0.0, phi).rotate_z(belt_tilt)
+    })
+});
 
 /// A projected node ready for depth-sorted rendering and click hit-testing.
 #[derive(Debug, Clone)]
@@ -113,6 +247,9 @@ impl super::Chamber {
             self.visualizer_yaw
         };
         let pitch = self.visualizer_pitch;
+
+        // Precompute rotation matrices for the frame
+        let rot = Rotation3D::new(yaw, pitch);
 
         let roster = &self.view.roster;
         let total_quarks = roster.len();
@@ -151,7 +288,7 @@ impl super::Chamber {
         let base_radius = 160.0 * zoom;
 
         // Build 3D sphere nodes using Fibonacci harmonic distribution
-        let mut nodes: Vec<ProjectedQuarkNode> = Vec::new();
+        let mut nodes: Vec<ProjectedQuarkNode> = Vec::with_capacity(total_quarks);
         for (ix, row) in roster.iter().enumerate() {
             let is_orchestrator = matches!(row.flavor, Some(hadron_lattice::Flavor::Orchestrator));
             let color = self.color_for(&row.id);
@@ -173,7 +310,7 @@ impl super::Chamber {
             };
 
             let p3d = Point3D::from_spherical(base_radius, theta, phi);
-            let rotated = p3d.rotate(yaw, pitch);
+            let rotated = rot.transform(p3d);
 
             nodes.push(ProjectedQuarkNode {
                 id: row.id.clone(),
@@ -412,7 +549,7 @@ impl super::Chamber {
                                                 .child(node.name),
                                         )
                                         .when(node.is_orchestrator, |this| {
-                                            this.child(
+                                             this.child(
                                                 div()
                                                     .px_1p5()
                                                     .py_0p5()
@@ -458,35 +595,33 @@ impl super::Chamber {
                 let h = bounds.size.height;
                 let cx_pt = bounds.origin.x + w / 2.0;
                 let cy_pt = bounds.origin.y + h / 2.0;
+                let cx_f32 = f32::from(cx_pt);
+                let cy_f32 = f32::from(cy_pt);
                 let distance = 420.0;
 
-                // -------------------------------------------------------------
-                // 1. Ambient Cosmic Deep-Space Star Dust Field
-                // -------------------------------------------------------------
-                for s_ix in 0..48 {
-                    let seed = s_ix as f32;
-                    let star_dist = sphere_radius * (1.35 + (seed * 0.027));
-                    let star_theta = ((seed * 1.618).sin() * 0.9).asin();
-                    let star_phi = seed * 2.39996323;
+                let star_rot = Rotation3D::new(yaw * 0.4, pitch * 0.4);
 
-                    let p = Point3D::from_spherical(star_dist, star_theta, star_phi).rotate(yaw * 0.4, pitch * 0.4);
-                    let (sx, sy, z, scale) = p.project(f32::from(cx_pt), f32::from(cy_pt), distance);
+                // -------------------------------------------------------------
+                // 1. Ambient Cosmic Deep-Space Star Dust Field (Precomputed)
+                // -------------------------------------------------------------
+                for star in STAR_FIELD.iter() {
+                    let p = star_rot.transform(star.unit_p.scale(sphere_radius));
+                    let (sx, sy, z, scale) = p.project(cx_f32, cy_f32, distance);
 
-                    let shimmer = 0.25 + 0.75 * (time_secs * 2.2 + seed * 1.4).sin().abs();
+                    let star_dist = sphere_radius * star.star_dist_mult;
+                    let shimmer = 0.25 + 0.75 * (time_secs * 2.2 + star.seed * 1.4).sin().abs();
                     let depth_a = ((z + star_dist) / (2.0 * star_dist)).clamp(0.15, 0.9);
-                    let star_r = px((1.0 + (seed % 2.0) * 0.6) * scale);
+                    let star_r = px((1.0 + (star.seed % 2.0) * 0.6) * scale);
 
                     let star_bounds = Bounds {
                         origin: point(px(sx) - star_r, px(sy) - star_r),
                         size: size(star_r * 2.0, star_r * 2.0),
                     };
 
-                    let star_color = if s_ix % 3 == 0 {
-                        gpui::rgb(0x38bdf8).opacity(0.35 * depth_a * shimmer)
-                    } else if s_ix % 3 == 1 {
-                        gpui::rgb(0x818cf8).opacity(0.28 * depth_a * shimmer)
-                    } else {
-                        gpui::rgb(0xf8fafc).opacity(0.45 * depth_a * shimmer)
+                    let star_color = match star.color_type {
+                        0 => gpui::rgb(0x38bdf8).opacity(0.35 * depth_a * shimmer),
+                        1 => gpui::rgb(0x818cf8).opacity(0.28 * depth_a * shimmer),
+                        _ => gpui::rgb(0xf8fafc).opacity(0.45 * depth_a * shimmer),
                     };
 
                     window.paint_quad(fill(star_bounds, star_color).corner_radii(star_r));
@@ -539,53 +674,50 @@ impl super::Chamber {
                 );
 
                 // -------------------------------------------------------------
-                // 3. Fibonacci Neural Surface Constellation Mesh (Wireframe Lattice)
+                // 3. Fibonacci Constellation Mesh (Precomputed Static Topology)
                 // -------------------------------------------------------------
-                let lattice_count = 64;
-                let mut lattice_projected: Vec<(f32, f32, f32, f32, Point3D)> = Vec::with_capacity(lattice_count);
-
-                for i in 0..lattice_count {
-                    let lat_frac = ((i as f32 + 0.5) / lattice_count as f32) * 2.0 - 1.0;
-                    let theta = (lat_frac * 0.94).asin();
-                    let phi = i as f32 * 2.39996323;
-
-                    let p = Point3D::from_spherical(sphere_radius, theta, phi);
-                    let rot = p.rotate(yaw, pitch);
-                    let (sx, sy, z, scale) = rot.project(f32::from(cx_pt), f32::from(cy_pt), distance);
-                    lattice_projected.push((sx, sy, z, scale, rot));
+                let mut lattice_projected = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); LATTICE_COUNT];
+                for i in 0..LATTICE_COUNT {
+                    let p = rot.transform(LATTICE_UNIT_NODES[i].scale(sphere_radius));
+                    let (sx, sy, z, scale) = p.project(cx_f32, cy_f32, distance);
+                    lattice_projected[i] = (sx, sy, z, scale);
                 }
 
-                // Connect neighboring lattice vertices to form dynamic cosmic wireframe
-                let max_link_sq = (sphere_radius * 0.44) * (sphere_radius * 0.44);
-                for i in 0..lattice_count {
-                    for j in (i + 1)..lattice_count {
-                        let p1 = &lattice_projected[i].4;
-                        let p2 = &lattice_projected[j].4;
+                // Batch front and back lattice wireframe edges into compound paths
+                let mut front_builder = PathBuilder::stroke(px(1.0));
+                let mut back_builder = PathBuilder::stroke(px(0.75));
+                let mut has_front = false;
+                let mut has_back = false;
 
-                        if p1.dist_sq(p2) < max_link_sq {
-                            let (sx1, sy1, z1, _, _) = lattice_projected[i];
-                            let (sx2, sy2, z2, _, _) = lattice_projected[j];
-                            let avg_z = (z1 + z2) / 2.0;
+                for &(i, j) in LATTICE_STATIC_EDGES.iter() {
+                    let (sx1, sy1, z1, _) = lattice_projected[i];
+                    let (sx2, sy2, z2, _) = lattice_projected[j];
+                    let avg_z = (z1 + z2) * 0.5;
 
-                            let mut builder = PathBuilder::stroke(px(if avg_z > 0.0 { 1.0 } else { 0.75 }));
-                            builder.move_to(point(px(sx1), px(sy1)));
-                            builder.line_to(point(px(sx2), px(sy2)));
+                    if avg_z > -0.15 * sphere_radius {
+                        front_builder.move_to(point(px(sx1), px(sy1)));
+                        front_builder.line_to(point(px(sx2), px(sy2)));
+                        has_front = true;
+                    } else {
+                        back_builder.move_to(point(px(sx1), px(sy1)));
+                        back_builder.line_to(point(px(sx2), px(sy2)));
+                        has_back = true;
+                    }
+                }
 
-                            if let Ok(path) = builder.build() {
-                                let depth_factor = ((avg_z + sphere_radius) / (2.0 * sphere_radius)).clamp(0.05, 1.0);
-                                let line_color = if avg_z > -0.15 * sphere_radius {
-                                    gpui::rgb(0x38bdf8).opacity(0.14 * depth_factor)
-                                } else {
-                                    gpui::rgb(0x4338ca).opacity(0.06 * depth_factor)
-                                };
-                                window.paint_path(path, line_color);
-                            }
-                        }
+                if has_back {
+                    if let Ok(path) = back_builder.build() {
+                        window.paint_path(path, gpui::rgb(0x4338ca).opacity(0.06));
+                    }
+                }
+                if has_front {
+                    if let Ok(path) = front_builder.build() {
+                        window.paint_path(path, gpui::rgb(0x38bdf8).opacity(0.14));
                     }
                 }
 
                 // Draw glowing neural data dots on lattice vertices
-                for (ix, (sx, sy, z, scale, _)) in lattice_projected.iter().enumerate() {
+                for (ix, (sx, sy, z, scale)) in lattice_projected.iter().enumerate() {
                     let depth_factor = ((*z + sphere_radius) / (2.0 * sphere_radius)).clamp(0.1, 1.0);
                     let shimmer = 0.5 + 0.5 * (time_secs * 3.0 + (ix as f32 * 0.8)).sin();
                     let dot_r = px((1.3 + shimmer * 0.8) * scale);
@@ -621,72 +753,52 @@ impl super::Chamber {
                 }
 
                 // -------------------------------------------------------------
-                // 4. 3D Wireframe Latitude Parallels & Longitude Meridians
+                // 4. Batched Wireframe Latitude Parallels & Longitude Meridians
                 // -------------------------------------------------------------
-                let lats = [-0.8f32, -0.4, 0.0, 0.4, 0.8];
-                for &lat_ratio in &lats {
-                    let lat_theta = lat_ratio * (PI * 0.42);
-                    let mut builder = PathBuilder::stroke(px(0.85));
-                    let mut first_point = true;
-
-                    for step in 0..=36 {
-                        let phi = (step as f32 / 36.0) * (2.0 * PI);
-                        let p = Point3D::from_spherical(sphere_radius, lat_theta, phi).rotate(yaw, pitch);
-                        let (sx, sy, _, _) = p.project(f32::from(cx_pt), f32::from(cy_pt), distance);
-
-                        if first_point {
-                            builder.move_to(point(px(sx), px(sy)));
-                            first_point = false;
+                let mut lat_builder = PathBuilder::stroke(px(0.85));
+                for ring in LATITUDE_UNIT_RINGS.iter() {
+                    let mut first = true;
+                    for &unit_p in ring.iter() {
+                        let p = rot.transform(unit_p.scale(sphere_radius));
+                        let (sx, sy, _, _) = p.project(cx_f32, cy_f32, distance);
+                        if first {
+                            lat_builder.move_to(point(px(sx), px(sy)));
+                            first = false;
                         } else {
-                            builder.line_to(point(px(sx), px(sy)));
+                            lat_builder.line_to(point(px(sx), px(sy)));
                         }
-                    }
-
-                    if let Ok(path) = builder.build() {
-                        let ring_color = gpui::rgb(0x0284c7).opacity(0.11);
-                        window.paint_path(path, ring_color);
                     }
                 }
+                if let Ok(path) = lat_builder.build() {
+                    window.paint_path(path, gpui::rgb(0x0284c7).opacity(0.11));
+                }
 
-                for m in 0..8 {
-                    let phi = (m as f32 / 8.0) * (2.0 * PI);
-                    let mut builder = PathBuilder::stroke(px(0.85));
-                    let mut first_point = true;
-
-                    for step in 0..=36 {
-                        let theta = (step as f32 / 36.0) * PI - (PI / 2.0);
-                        let p = Point3D::from_spherical(sphere_radius, theta, phi).rotate(yaw, pitch);
-                        let (sx, sy, _, _) = p.project(f32::from(cx_pt), f32::from(cy_pt), distance);
-
-                        if first_point {
-                            builder.move_to(point(px(sx), px(sy)));
-                            first_point = false;
+                let mut mer_builder = PathBuilder::stroke(px(0.85));
+                for meridian in LONGITUDE_UNIT_MERIDIANS.iter() {
+                    let mut first = true;
+                    for &unit_p in meridian.iter() {
+                        let p = rot.transform(unit_p.scale(sphere_radius));
+                        let (sx, sy, _, _) = p.project(cx_f32, cy_f32, distance);
+                        if first {
+                            mer_builder.move_to(point(px(sx), px(sy)));
+                            first = false;
                         } else {
-                            builder.line_to(point(px(sx), px(sy)));
+                            mer_builder.line_to(point(px(sx), px(sy)));
                         }
                     }
-
-                    if let Ok(path) = builder.build() {
-                        let meridian_color = gpui::rgb(0x0284c7).opacity(0.09);
-                        window.paint_path(path, meridian_color);
-                    }
+                }
+                if let Ok(path) = mer_builder.build() {
+                    window.paint_path(path, gpui::rgb(0x0284c7).opacity(0.09));
                 }
 
                 // -------------------------------------------------------------
                 // 5. Inclined Celestial Equator & Orbiting Quantum Photons
                 // -------------------------------------------------------------
-                let belt_radius = sphere_radius * 1.18;
-                let belt_tilt = 28.0 * (PI / 180.0);
-
                 let mut belt_builder = PathBuilder::stroke(px(1.1));
                 let mut belt_first = true;
-                for step in 0..=48 {
-                    let phi = (step as f32 / 48.0) * (2.0 * PI);
-                    let p = Point3D::from_spherical(belt_radius, 0.0, phi)
-                        .rotate_z(belt_tilt)
-                        .rotate(yaw, pitch);
-                    let (sx, sy, _, _) = p.project(f32::from(cx_pt), f32::from(cy_pt), distance);
-
+                for &unit_p in BELT_UNIT_RING.iter() {
+                    let p = rot.transform(unit_p.scale(sphere_radius));
+                    let (sx, sy, _, _) = p.project(cx_f32, cy_f32, distance);
                     if belt_first {
                         belt_builder.move_to(point(px(sx), px(sy)));
                         belt_first = false;
@@ -699,12 +811,14 @@ impl super::Chamber {
                 }
 
                 // Traveling quantum photons along the inclined celestial ring
+                let belt_radius = sphere_radius * 1.18;
+                let belt_tilt = 28.0 * (PI / 180.0);
                 for k in 0..16 {
                     let phi = 2.0 * PI * (((k as f32 / 16.0) + time_secs * 0.14) % 1.0);
-                    let p = Point3D::from_spherical(belt_radius, 0.0, phi)
-                        .rotate_z(belt_tilt)
-                        .rotate(yaw, pitch);
-                    let (sx, sy, z, scale) = p.project(f32::from(cx_pt), f32::from(cy_pt), distance);
+                    let p = rot.transform(
+                        Point3D::from_spherical(belt_radius, 0.0, phi).rotate_z(belt_tilt),
+                    );
+                    let (sx, sy, z, scale) = p.project(cx_f32, cy_f32, distance);
 
                     let depth_factor = ((z + belt_radius) / (2.0 * belt_radius)).clamp(0.15, 1.0);
                     let photon_r = px((2.0 + (k % 3) as f32 * 0.8) * scale);
@@ -733,7 +847,7 @@ impl super::Chamber {
                 // -------------------------------------------------------------
                 let mut projected_nodes = nodes_for_canvas.clone();
                 for node in &mut projected_nodes {
-                    let (sx, sy, z, scale) = node.point_3d.project(f32::from(cx_pt), f32::from(cy_pt), distance);
+                    let (sx, sy, z, scale) = node.point_3d.project(cx_f32, cy_f32, distance);
                     node.screen_x = sx;
                     node.screen_y = sy;
                     node.z_depth = z;
@@ -753,8 +867,8 @@ impl super::Chamber {
                     ) {
                         let mut builder = PathBuilder::stroke(px(1.8));
                         builder.move_to(point(px(from_node.screen_x), px(from_node.screen_y)));
-                        let mid_x = (from_node.screen_x + to_node.screen_x) / 2.0;
-                        let mid_y = (from_node.screen_y + to_node.screen_y) / 2.0 - 32.0 * from_node.scale;
+                        let mid_x = (from_node.screen_x + to_node.screen_x) * 0.5;
+                        let mid_y = (from_node.screen_y + to_node.screen_y) * 0.5 - 32.0 * from_node.scale;
                         builder.cubic_bezier_to(
                             point(px(to_node.screen_x), px(to_node.screen_y)),
                             point(px(mid_x), px(mid_y)),
@@ -980,6 +1094,31 @@ mod tests {
     }
 
     #[test]
+    fn rotation3d_matches_point3d_rotate() {
+        let test_points = [
+            Point3D::new(50.0, 30.0, 40.0),
+            Point3D::new(-120.0, 80.0, -35.0),
+            Point3D::new(0.0, 100.0, 0.0),
+            Point3D::new(10.0, -20.0, 70.0),
+        ];
+        let angles = [(0.0, 0.0), (0.75, -0.4), (1.2, 0.8), (-0.9, -1.1), (PI, -PI / 3.0)];
+
+        for &(yaw, pitch) in &angles {
+            let rot = Rotation3D::new(yaw, pitch);
+            for &p in &test_points {
+                let p_rot = p.rotate(yaw, pitch);
+                let p_mat = rot.transform(p);
+                assert!(
+                    (p_rot.x - p_mat.x).abs() < 1e-4
+                        && (p_rot.y - p_mat.y).abs() < 1e-4
+                        && (p_rot.z - p_mat.z).abs() < 1e-4,
+                    "Rotation3D::transform must match Point3D::rotate exactly for yaw={yaw}, pitch={pitch}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn point3d_rotate_z_preserves_radius() {
         let p = Point3D::new(40.0, -20.0, 30.0);
         let orig_dist = (p.x * p.x + p.y * p.y + p.z * p.z).sqrt();
@@ -1006,5 +1145,18 @@ mod tests {
         let p1 = Point3D::new(0.0, 0.0, 0.0);
         let p2 = Point3D::new(3.0, 4.0, 0.0);
         assert!((p1.dist_sq(&p2) - 25.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn precomputed_lattice_topology_invariants() {
+        assert_eq!(LATTICE_UNIT_NODES.len(), 64);
+        assert!(!LATTICE_STATIC_EDGES.is_empty());
+        // Verify all edge indices are valid
+        for &(i, j) in LATTICE_STATIC_EDGES.iter() {
+            assert!(i < 64 && j < 64);
+            assert!(i < j);
+            let dist_sq = LATTICE_UNIT_NODES[i].dist_sq(&LATTICE_UNIT_NODES[j]);
+            assert!(dist_sq < 0.44 * 0.44 + 1e-5);
+        }
     }
 }
