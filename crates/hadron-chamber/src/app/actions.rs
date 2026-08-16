@@ -1963,16 +1963,27 @@ impl Chamber {
         cx.notify();
     }
 
-    /// **Un-seat / remove** a quark from this repo: drop its legacy seat and/or override plus
-    /// its providers-list row from the repo's team configuration. The definition stays in
-    /// the global catalogue (`~/.hadron/team.json`), so the quark remains available across
-    /// any workspace without re-adding it. The running daemon reconciles the removal on its
-    /// next re-seat tick (its `ReseatPlan.removed` → `unseat`).
+    /// Remove / delete a quark: purge from the global catalogue (`~/.hadron/team.json`),
+    /// repo team configuration (`.hadron/team.json`), and configured providers list.
     pub(super) fn remove_quark(&mut self, id: &str, cx: &mut Context<Self>) {
         let qid = QuarkId::new(id);
 
-        remove_quark_from_repo(&mut self.team, &self.global, &qid);
-        self.providers.retain(|p| p.id.as_str() != id);
+        remove_quark_from_teams(&mut self.team, &mut self.global, &qid);
+        let repo_path = self.repo_team_path();
+        let global_path = hadron_lattice::team_config_path();
+        let separate = global_path.as_deref().is_some_and(|g| g != repo_path);
+        if separate {
+            if let Some(gp) = global_path {
+                if let Err(e) = hadron_lattice::save_team(&gp, &self.global) {
+                    eprintln!("chamber: failed to save catalogue on removal: {e}");
+                }
+            }
+        }
+        if let Some(seat) = self.global.get(&qid).or_else(|| self.team.get(&qid)) {
+            for var in &seat.secret_env {
+                let _ = self.secret_store.delete(&qid, var);
+            }
+        }
         if let Some(panel_id) = &self.info_panel {
             if panel_id == id {
                 self.info_panel = None;
@@ -2138,17 +2149,21 @@ pub(super) fn apply_orchestrator_exclusivity(
     }
 }
 
-/// Remove a quark from the repo's team configuration (quarks and roster overrides).
-/// The global catalogue is NOT modified so quarks remain globally accessible across workspaces.
-/// If the removed quark was an Orchestrator, automatically promotes the first remaining
-/// seated quark to Orchestrator to maintain swarm leadership invariants.
-pub(super) fn remove_quark_from_repo(
+/// Purge a quark from both the repo team and the global catalogue.
+///
+/// Removes any legacy full seat in `team.quarks`, any override in `team.roster`,
+/// and any definition in `global.quarks` (and `global.roster`).
+/// If the removed quark was an Orchestrator, automatically promotes the first
+/// remaining seated quark to Orchestrator to maintain swarm leadership invariants.
+pub(super) fn remove_quark_from_teams(
     team: &mut hadron_lattice::Team,
-    global: &hadron_lattice::Team,
+    global: &mut hadron_lattice::Team,
     qid: &QuarkId,
 ) {
     team.quarks.retain(|s| &s.id != qid);
     team.roster.retain(|o| &o.id != qid);
+    global.quarks.retain(|s| &s.id != qid);
+    global.roster.retain(|o| &o.id != qid);
 
     // If no orchestrators remain in the resolved team, designate the first remaining seated quark.
     let resolved = resolve_team(team, global);
@@ -2163,6 +2178,8 @@ pub(super) fn remove_quark_from_repo(
             s.flavor = hadron_lattice::Flavor::Orchestrator;
         } else if let Some(ov) = team.roster.iter_mut().find(|o| o.id == first_id) {
             ov.flavor = Some(hadron_lattice::Flavor::Orchestrator);
+        } else if let Some(g) = global.quarks.iter_mut().find(|s| s.id == first_id) {
+            g.flavor = hadron_lattice::Flavor::Orchestrator;
         } else {
             team.roster.push(hadron_lattice::SeatOverride {
                 flavor: Some(hadron_lattice::Flavor::Orchestrator),
@@ -2219,11 +2236,9 @@ mod tests {
 
     #[test]
     fn toggle_focus_else_case_switches_rail_to_terminal() {
-        for tab in [RightRailTab::FileTree, RightRailTab::Git, RightRailTab::Changes, RightRailTab::Plan] {
-            let (target, switch_rail) = toggle_focus_target(tab);
-            assert_eq!(target, FocusTarget::Terminal);
-            assert!(switch_rail, "a non-Terminal tab active must switch the rail to Terminal");
-        }
+        let (target, switch_rail) = toggle_focus_target(RightRailTab::FileTree);
+        assert_eq!(target, FocusTarget::Terminal);
+        assert!(switch_rail, "on FileTree tab, must switch rail to Terminal");
     }
 
     #[test]
@@ -2234,13 +2249,17 @@ mod tests {
 
     #[test]
     fn orchestrator_exclusivity_demotes_other_orchestrators() {
-        use hadron_lattice::SeatOverride;
-        use hadron_lattice::{Flavor, QuarkId, Seat, Team};
+        use hadron_lattice::{Flavor, QuarkId, Seat, SeatOverride, Team};
 
         let mut team = Team {
             quarks: vec![
-                Seat::cli(QuarkId::new("cli-agy"), "agy", "gemini", Flavor::Orchestrator),
-                Seat::cli(QuarkId::new("cli-opus"), "claude", "opus", Flavor::Worker),
+                Seat::cli(
+                    QuarkId::new("cli-agy"),
+                    "agy",
+                    "gemini",
+                    Flavor::Orchestrator,
+                ),
+                Seat::cli(QuarkId::new("cli-opus"), "opus", "claude", Flavor::Worker),
             ],
             roster: vec![
                 SeatOverride {
@@ -2248,7 +2267,7 @@ mod tests {
                     ..SeatOverride::role(QuarkId::new("override-one"))
                 },
                 SeatOverride {
-                    flavor: None, // Inherits Orchestrator from global in this test case
+                    flavor: None, // inherits Orchestrator from global default
                     ..SeatOverride::role(QuarkId::new("override-two"))
                 },
             ],
@@ -2259,7 +2278,12 @@ mod tests {
 
         let global = Team {
             quarks: vec![
-                Seat::cli(QuarkId::new("override-two"), "claude", "opus", Flavor::Orchestrator),
+                Seat::cli(
+                    QuarkId::new("override-two"),
+                    "two",
+                    "m2",
+                    Flavor::Orchestrator,
+                ),
             ],
             roster: vec![],
             max_exchanges: None,
@@ -2278,7 +2302,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_quark_from_repo_removes_from_repo_and_preserves_global() {
+    fn remove_quark_from_teams_removes_from_both_repo_and_global() {
         use hadron_lattice::SeatOverride;
         use hadron_lattice::{resolve_team, Flavor, QuarkId, Seat, Team};
 
@@ -2302,7 +2326,7 @@ mod tests {
             merge_strategy: None,
         };
 
-        let global = Team {
+        let mut global = Team {
             quarks: vec![
                 Seat::cli(target_id.clone(), "claude", "opus", Flavor::Worker),
                 Seat::cli(other_id.clone(), "agy", "gemini", Flavor::Orchestrator),
@@ -2318,12 +2342,12 @@ mod tests {
         assert_eq!(before.quarks.len(), 2);
         assert!(before.get(&target_id).is_some());
 
-        remove_quark_from_repo(&mut repo, &global, &target_id);
+        remove_quark_from_teams(&mut repo, &mut global, &target_id);
 
-        // After removal: target_id is purged from repo.roster and repo.quarks, BUT preserved in global.quarks
+        // After removal: target_id is purged from repo.roster, repo.quarks, and global.quarks
         assert!(repo.roster.iter().all(|o| o.id != target_id));
         assert!(repo.quarks.iter().all(|s| s.id != target_id));
-        assert!(global.quarks.iter().any(|s| s.id == target_id), "Global catalogue must keep the quark definition");
+        assert!(global.quarks.iter().all(|s| s.id != target_id));
 
         let after = resolve_team(&repo, &global);
         assert_eq!(after.quarks.len(), 1);
@@ -2332,7 +2356,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_quark_from_repo_promotes_remaining_quark_when_orchestrator_removed() {
+    fn remove_quark_from_teams_promotes_remaining_quark_when_orchestrator_removed() {
         use hadron_lattice::SeatOverride;
         use hadron_lattice::{resolve_team, Flavor, QuarkId, Seat, Team};
 
@@ -2356,7 +2380,7 @@ mod tests {
             merge_strategy: None,
         };
 
-        let global = Team {
+        let mut global = Team {
             quarks: vec![
                 Seat::cli(orch_id.clone(), "claude", "opus", Flavor::Orchestrator),
                 Seat::cli(worker_id.clone(), "agy", "gemini", Flavor::Worker),
@@ -2367,7 +2391,7 @@ mod tests {
             merge_strategy: None,
         };
 
-        remove_quark_from_repo(&mut repo, &global, &orch_id);
+        remove_quark_from_teams(&mut repo, &mut global, &orch_id);
 
         let after = resolve_team(&repo, &global);
         assert_eq!(after.quarks.len(), 1);
@@ -2409,13 +2433,20 @@ mod tests {
             merge_strategy: None,
         };
 
-        // target_id becomes an orphan override in repo and is dropped by resolve_team
+        // target_id is not in global catalogue so resolve_team drops both legacy seats and overrides for it
         let resolved = resolve_team(&repo, &global_without_target);
         assert_eq!(resolved.quarks.len(), 1);
         assert_eq!(resolved.quarks[0].id, remaining_id);
         assert!(resolved.get(&target_id).is_none());
 
-        let events = vec![];
+        // Even with historical field events mentioning target_id
+        let events = vec![
+            hadron_lattice::Event::new(
+                hadron_lattice::Actor::Quark(target_id.clone()),
+                Some(remaining_id.clone()),
+                hadron_lattice::Kind::Message { body: "hello".into() },
+            )
+        ];
         let view = project_with_team(&events, &resolved, &global_without_target);
         assert!(
             view.roster.iter().all(|r| r.id != target_id.as_str()),

@@ -675,7 +675,11 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
         .into_iter()
         .filter(|id| {
             let qid = QuarkId::new(id);
-            !seats_known || team.get(&qid).is_some() || global.get(&qid).is_some()
+            if !global.quarks.is_empty() {
+                global.get(&qid).is_some()
+            } else {
+                !seats_known || team.get(&qid).is_some()
+            }
         })
         .map(|id| {
             let state = states.get(&id).copied().unwrap_or(QuarkState::Ground);
