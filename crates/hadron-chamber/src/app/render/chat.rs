@@ -744,17 +744,22 @@ impl super::Chamber {
         };
 
         let ui_size = self.prefs.ui_font_size.unwrap_or(14.0);
-        div().text_size(px(ui_size)).child(
-            gpui_component::text::TextView::markdown((view, ix), content)
-                .selectable(true)
-                .style(markdown_style(self.prefs.ui_font_size))
-                .code_block_actions(|code_block, _window, _cx| {
-                    gpui_component::clipboard::Clipboard::new("code-copy")
-                        .value(code_block.code())
-                        .tooltip("Copy")
-                }),
-        )
+        div()
+            .text_size(px(ui_size))
+            .child(
+                gpui_component::text::TextView::markdown((view, ix), content)
+                    .selectable(true)
+                    .style(markdown_style(self.prefs.ui_font_size))
+                    .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions())
+                    .code_block_actions(|code_block, _window, _cx| {
+                        gpui_component::clipboard::Clipboard::new("code-copy")
+                            .value(code_block.code())
+                            .tooltip("Copy")
+                    }),
+            )
     }
+
+
 
     /// A gluon message rendered inside a severity card — the SINGLE place the
     /// accent colours live. Both the chat bubble and the Log row call this; before

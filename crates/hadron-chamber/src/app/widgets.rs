@@ -1201,10 +1201,13 @@ where
                 .when(!expanded, |d| d.truncate())
                 .child(
                     gpui_component::text::TextView::markdown(("log-body", ix), body_text)
-                        .selectable(true),
+                        .selectable(true)
+                        .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions()),
                 ),
         )
 }
+
+
 
 /// A quiet accent per event kind, so the Log's kind column reads at a glance.
 pub(super) fn log_kind_color(kind: &str) -> gpui::Rgba {

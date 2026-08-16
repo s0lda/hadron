@@ -27,6 +27,9 @@ mod pty;
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 mod fonts;
 
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+mod mermaid;
+
 #[cfg(feature = "gui")]
 mod app;
 #[cfg(feature = "gui")]

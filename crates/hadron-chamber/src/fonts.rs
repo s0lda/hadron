@@ -31,6 +31,18 @@ pub const FIRA_CODE_BOLD: &[u8] = include_bytes!("../assets/fonts/FiraCode-Bold.
 
 pub const NOTO_COLOR_EMOJI: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji.ttf");
 
+/// The bundled color emoji font family for Linux/WSL and cross-platform fallback.
+#[allow(dead_code)]
+pub const EMOJI_FAMILY: &str = "Noto Color Emoji";
+
+/// Returns standard fallback font list ensuring color emoji rendering.
+#[cfg(feature = "gui")]
+#[allow(dead_code)]
+pub fn default_fallbacks() -> gpui::FontFallbacks {
+    gpui::FontFallbacks::from_fonts(vec![EMOJI_FAMILY.to_string()])
+}
+
+
 /// Every face we ship, in registration order.
 pub fn embedded() -> Vec<Cow<'static, [u8]>> {
     vec![
@@ -93,4 +105,12 @@ mod tests {
         assert_ne!(FIRA_CODE_REGULAR, FIRA_CODE_BOLD, "Fira Code bold is the same file as regular");
         assert_eq!(embedded().len(), 13);
     }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn default_fallbacks_include_noto_color_emoji() {
+        let fb = default_fallbacks();
+        assert_eq!(fb.fallback_list(), &["Noto Color Emoji"]);
+    }
 }
+

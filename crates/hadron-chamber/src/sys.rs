@@ -245,6 +245,7 @@ pub fn format_file_preview(path: &str, content: &str) -> String {
         "lua" => "lua",
         "zig" => "zig",
         "wgsl" => "wgsl",
+        "mermaid" | "mmd" => "mermaid",
         _ => {
             if lower_name == "dockerfile" {
                 "dockerfile"
@@ -806,6 +807,16 @@ mod tests {
         assert_eq!(
             format_file_preview("style.css", "body { margin: 0; }"),
             "```css\nbody { margin: 0; }\n```"
+        );
+
+        // Mermaid extension wraps in ```mermaid
+        assert_eq!(
+            format_file_preview("diagram.mermaid", "graph TD\nA --> B"),
+            "```mermaid\ngraph TD\nA --> B\n```"
+        );
+        assert_eq!(
+            format_file_preview("flow.mmd", "graph LR\nA --> B"),
+            "```mermaid\ngraph LR\nA --> B\n```"
         );
 
         // Backtick collision expands fence length
