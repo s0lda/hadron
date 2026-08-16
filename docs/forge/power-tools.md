@@ -36,6 +36,16 @@ Hadron Forge (`crates/hadron-forge` and `crates/hadron-forge-mcp`) provides a co
 | **Nucleus Knowledge Graph** | `hadron_forge_nucleus_graph` | Graph connectivity, dead link, orphaned note, and invariant coverage analyzer for `.hadron/nucleus/`. |
 | **Binary Bloat & Symbol Inspector** | `hadron_forge_binary_bloat` | ELF/DWARF symbol size analyzer, section breakdown, and binary bloat regression detector. |
 | **Automated Release Sync** | `hadron_forge_release_sync` | Conventional commit analyzer, SemVer bump calculator, and CHANGELOG generator. |
+| **Lattice Time-Travel & Branching** | `hadron_forge_time_travel` | Lattice turn rewind, state snapshot diffing, and session branch exploration. |
+| **Mutation Testing Gate** | `hadron_forge_mutation_gate` | Adversarial AST mutation runner and test harness kill-rate validator. |
+| **Benchmark Regression Guard** | `hadron_forge_benchmark_guard` | Baseline execution timing and CPU flamegraph regression guard. |
+| **Spatial Architecture Topology** | `hadron_forge_topology_graph` | Spatial DAG and crate dependency topology visualizer and exporter. |
+| **Visual Task Scheduler** | `hadron_forge_task_scheduler` | Topological task graph optimizer and parallel Quark dispatch scheduler. |
+| **Preon Dynamic Evolution** | `hadron_forge_preon_evolution` | Recurring failure pattern analyzer and autonomous preon rule synthesizer. |
+| **Swarm Prompt Distiller** | `hadron_forge_prompt_distiller` | Per-model context compressor and token spend optimizer. |
+| **Hybrid Swarm Mesh** | `hadron_forge_swarm_mesh` | Remote ACP worker container offload, status inspector, and execution runner. |
+| **Interactive PTY Pairing** | `hadron_forge_pty_pairing` | Interactive shared PTY pairing broker with live steer and multi-quark observer sessions. |
+| **Tool Execution Breakpoints** | `hadron_forge_tool_breakpoints` | Dynamic pause/resume breakpoints on MCP tool execution and subprocess commands. |
 
 ---
 
@@ -221,5 +231,76 @@ Semantic versioning sync, changelog generation, and tag auditing:
 - **Conventional Commit Parsing**: Parses commit subjects (`feat:`, `fix:`, `perf:`, `BREAKING CHANGE`) across commit ranges (`hadron_forge_release_sync`).
 - **SemVer Recommendation**: Computes recommended Major/Minor/Patch bump based on conventional specifications.
 - **Changelog Formatting**: Formats Keep-a-Changelog Markdown snippets ready for release audits.
+
+## 28. Lattice Time-Travel & Session Branching
+
+Turn-level rewind, ledger diffing, and speculative branching:
+- **State Rewind**: Rewinds the swarm event ledger to any historical turn ID (`hadron_forge_time_travel`).
+- **Snapshot Diffing**: Computes unified state diffs between arbitrary turn checkpoints.
+- **Branching Exploration**: Creates alternate execution worktrees from historical turn points.
+
+## 29. Mutation Testing Gate
+
+Adversarial AST mutations to verify test suite fault coverage:
+- **AST Operators**: Injects arithmetic, conditional boundary, and boolean inversion mutations (`hadron_forge_mutation_gate`).
+- **Kill-Rate Scoring**: Computes mutation kill rates and flags surviving mutant candidates.
+- **Test Quality Verification**: Guarantees test suites verify behavior rather than superficial execution.
+
+## 30. Benchmark Regression Guard
+
+Performance baseline timing and CPU regression gate:
+- **Timing Benchmarking**: Runs micro-benchmarks with statistical variance detection (`hadron_forge_benchmark_guard`).
+- **Flamegraph Profiling Integration**: Compares before/after flamegraph folded stacks.
+- **Threshold Gating**: Rejects branches introducing configurable latency regressions (>5%).
+
+## 31. Spatial Architecture Topology Graph
+
+Interactive crate dependency and symbol connection visualizer:
+- **Crate & Symbol DAG**: Constructs complete dependency topologies across multi-crate workspaces (`hadron_forge_topology_graph`).
+- **Export Formats**: Renders Mermaid DAG diagrams, DOT graphs, and JSON trees.
+- **Cycle & Bottleneck Analysis**: Identifies architectural circular dependencies and hot path clusters.
+
+## 32. Visual Task Scheduler & DAG Dispatcher
+
+Topological task planning and parallel Quark scheduling:
+- **Dependency Sorting**: Resolves optimal execution ordering for complex task sets (`hadron_forge_task_scheduler`).
+- **Parallel Dispatch Waves**: Groups independent tasks into concurrent dispatch waves for available Quarks.
+- **Cycle Detection**: Validates plan graphs against accidental deadlocks.
+
+## 33. Preon Dynamic Evolution Engine
+
+Automated failure pattern analysis and preon specialization synthesizer:
+- **Failure Cluster Analysis**: Analyzes recurring friction in `.hadron/nucleus/notes/` (`hadron_forge_preon_evolution`).
+- **Rule Synthesis**: Generates targeted `.hadron/preons/` markdown specialization rules.
+- **Continuous Calibration**: Automatically updates swarm operational heuristics based on real gate outcomes.
+
+## 34. Swarm Prompt Distiller & Context Compressor
+
+Token spend optimization and per-model context distillation:
+- **Prompt Compression**: Prunes redundant preamble and dead context tokens (`hadron_forge_prompt_distiller`).
+- **Model-Specific Targeting**: Distills instructions to match small, fast models vs heavy reasoning models.
+- **Spend Reduction**: Minimizes ongoing per-turn token spend across long-running swarms.
+
+## 35. Hybrid Swarm Mesh & Remote Container Offload
+
+Orchestrated compute offload for mixed-infrastructure swarms:
+- **Container Template Generation**: Generates Docker/container definitions for isolated builds (`hadron_forge_swarm_mesh`).
+- **Remote Dispatch**: Offloads heavy cargo builds, test matrices, and sandboxed quarks.
+- **Mesh Status Telemetry**: Monitors health, CPU/memory, and task status across remote worker nodes.
+
+## 36. Interactive Multi-Quark PTY Pairing Broker
+
+Shared pseudo-terminal pairing and real-time AI steering:
+- **Multi-Seat PTY Canvas**: Multiple Quarks and the human co-observe a single live terminal (`hadron_forge_pty_pairing`).
+- **Live Steering**: Injects keystrokes, signals, and interactive commands with collision control.
+- **Terminal Session Capture**: Streams terminal frames and logs to the swarm ledger.
+
+## 37. Dynamic MCP Tool Execution Breakpoints
+
+Human-in-the-loop and automated breakpoint control on tool execution:
+- **Breakpoint Configuration**: Sets execution breakpoints on specific MCP tools or patterns (`hadron_forge_tool_breakpoints`).
+- **Turn Pause & Resume**: Pauses Quark execution prior to tool dispatch for inspection or parameter adjustment.
+- **Safety Interception**: Prevents accidental destructive modifications mid-turn.
+
 
 

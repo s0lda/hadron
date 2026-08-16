@@ -5,6 +5,22 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-08-16
+
+### Added
+- **Next-Gen Swarm Capabilities Suite (`hadron-lattice`, `hadron-gatekeeper`, `hadron-gluon`, `hadron-forge`, `hadron-forge-mcp`)**:
+  - `hadron_forge_time_travel`: Lattice turn rewind, state snapshot diffing, and session branch exploration (`hadron-lattice::time_travel`).
+  - `hadron_forge_mutation_gate`: Adversarial AST mutation runner and test harness kill-rate validator (`hadron-gatekeeper::mutation`).
+  - `hadron_forge_benchmark_guard`: Baseline execution timing and CPU flamegraph regression guard (`hadron-gatekeeper::benchmark_guard`).
+  - `hadron_forge_topology_graph`: Spatial DAG and crate dependency topology visualizer/exporter (`hadron-forge::topology`).
+  - `hadron_forge_task_scheduler`: Topological task graph optimizer and parallel Quark dispatch scheduler (`hadron-lattice::task_graph`, `hadron-forge::task_scheduler`).
+  - `hadron_forge_preon_evolution`: Recurring failure pattern analyzer and autonomous preon rule synthesizer (`hadron-gluon::preon_evolution`).
+  - `hadron_forge_prompt_distiller`: Per-model context compressor and token spend optimizer (`hadron-gluon::prompt_distiller`).
+  - `hadron_forge_swarm_mesh`: Remote ACP worker container offload, status inspector, and runner (`hadron-gluon::mesh`).
+  - `hadron_forge_pty_pairing`: Interactive shared PTY pairing broker with live steer and multi-quark observer sessions (`hadron-forge::pty_pairing`).
+  - `hadron_forge_tool_breakpoints`: Dynamic pause/resume breakpoints on MCP tool execution and subprocess commands (`hadron-gluon::breakpoints`).
+  - **Distributed P2P Sync (`hadron-lattice`)**: In-memory and network delta replication protocol for distributed event streams (`hadron-lattice::sync`).
+
 ## [0.10.0] - 2026-08-16
 
 ### Added

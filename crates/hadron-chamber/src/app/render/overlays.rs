@@ -20,6 +20,25 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.11.0",
+        date: Some("2026-08-16"),
+        added: &[
+            "Lattice turn rewind, state snapshot diffing, and session branch exploration (hadron_forge_time_travel)",
+            "Adversarial AST mutation runner and test harness kill-rate validator (hadron_forge_mutation_gate)",
+            "Baseline execution timing and CPU flamegraph regression guard (hadron_forge_benchmark_guard)",
+            "Spatial DAG and crate dependency topology visualizer/exporter (hadron_forge_topology_graph)",
+            "Topological task graph optimizer and parallel Quark dispatch scheduler (hadron_forge_task_scheduler)",
+            "Recurring failure pattern analyzer and autonomous preon rule synthesizer (hadron_forge_preon_evolution)",
+            "Per-model context compressor and token spend optimizer (hadron_forge_prompt_distiller)",
+            "Remote ACP worker container offload, status inspector, and runner (hadron_forge_swarm_mesh)",
+            "Distributed P2P event ledger replication and delta synchronization (hadron-lattice sync)",
+            "Interactive shared PTY pairing broker with live steer and observation (hadron_forge_pty_pairing)",
+            "Dynamic pause/resume breakpoints on MCP tool execution and subprocesses (hadron_forge_tool_breakpoints)",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.10.0",
         date: Some("2026-08-16"),
         added: &[
