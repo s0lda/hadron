@@ -56,41 +56,52 @@ pub fn probe_cli_models(spec: &CliSpec) -> anyhow::Result<ModelSelector> {
 /// it cannot be raised with `ulimit`. `execve` rejects an over-long element with
 /// E2BIG *before the program starts*.
 ///
+/// On Windows, `CreateProcessW` caps the entire command-line string at 32,767 characters
+/// (`UNICODE_STRING` buffer limit in the Windows kernel). Exceeding it returns
+/// `ERROR_FILENAME_EXCED_RANGE` (os error 206, "The filename or extension is too long.").
+///
 /// This matters here and nowhere else: `agy` has no stdin in print mode and no
 /// `--prompt-file`, so the whole prompt must ride as one argv element. (`claude`
 /// takes its prompt on stdin, which has no such limit — which is exactly why agy
 /// was the only quark that broke.)
-const MAX_ARG_STRLEN: usize = 128 * 1024;
+#[cfg(windows)]
+pub const MAX_ARG_STRLEN: usize = 32 * 1024;
+#[cfg(not(windows))]
+pub const MAX_ARG_STRLEN: usize = 128 * 1024;
 
-/// The budget the adapter actually enforces: three quarters of the kernel's hard
-/// limit (96 KiB), leaving headroom for the other argv elements, the environment
+/// The budget the adapter actually enforces: three quarters of the OS's hard
+/// limit (96 KiB on Linux/Unix, 24 KiB on Windows), leaving headroom for the other argv elements, the environment
 /// block, and multi-byte slack. A prompt over this is truncated rather than handed
-/// to a doomed `execve`. Derived from [`MAX_ARG_STRLEN`] on purpose — the headroom
+/// to a doomed `execve` or `CreateProcessW`. Derived from [`MAX_ARG_STRLEN`] on purpose — the headroom
 /// should stay visibly tied to the limit it is hedging against.
-const SAFE_ARG_BYTES: usize = MAX_ARG_STRLEN / 4 * 3;
+pub const SAFE_ARG_BYTES: usize = MAX_ARG_STRLEN / 4 * 3;
 
 /// Inserted where the transcript was cut, so a truncated quark knows its context is
 /// incomplete instead of confabulating over the gap.
-const TRUNCATION_MARKER: &str = "[transcript truncated: older field events were dropped to fit the CLI's argument limit]";
+pub const TRUNCATION_MARKER: &str = "[transcript truncated: older field events were dropped to fit the CLI's argument limit]";
 
 /// Last-resort guard on the prompt handed to a CLI whose [`CliSpec::argv_guard`] is
-/// set (e.g. `agy --print`).
+/// set or whose [`PromptChannel`] is `Arg` (e.g. `agy --print`).
 ///
 /// The projection already caps its field window ([`crate::engine::FIELD_WINDOW_BUDGET_BYTES`]),
 /// but that is *policy* — it can be raised, and a single pathological message or a
 /// large `git_diff` can still overshoot. This is the *safety net*: it guarantees the
-/// argv element we are about to hand `execve` is one `execve` will accept.
+/// argv element we are about to hand `execve` or `CreateProcessW` is one the OS will accept.
 ///
 /// It truncates by dropping the **oldest** field-window events and re-rendering, so
 /// the identity / task / authority / handoff sections — the quark's actual
 /// instructions — survive by construction. If dropping the entire field window is
 /// still not enough (a colossal `git_diff` or task), the diff goes too; a prompt with
 /// no instructions is worse than a prompt with no transcript.
-fn fit_prompt(projection: &Projection, self_id: &QuarkId) -> String {
+pub fn fit_prompt(projection: &Projection, self_id: &QuarkId) -> String {
+    fit_prompt_to_budget(projection, self_id, SAFE_ARG_BYTES)
+}
+
+pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_bytes: usize) -> String {
     let render = |p: &Projection| crate::adapter::prompt::build(p, self_id);
 
     let prompt = render(projection);
-    if prompt.len() <= SAFE_ARG_BYTES {
+    if prompt.len() <= max_bytes {
         return prompt;
     }
 
@@ -106,7 +117,7 @@ fn fit_prompt(projection: &Projection, self_id: &QuarkId) -> String {
             Event::new(Actor::Gluon, None, Kind::Message { body: TRUNCATION_MARKER.to_string() }),
         );
         let out = render(&probe);
-        if out.len() <= SAFE_ARG_BYTES {
+        if out.len() <= max_bytes {
             return out;
         }
     }
@@ -120,13 +131,13 @@ fn fit_prompt(projection: &Projection, self_id: &QuarkId) -> String {
         Kind::Message { body: TRUNCATION_MARKER.to_string() },
     )];
     let out = render(&p);
-    if out.len() <= SAFE_ARG_BYTES {
+    if out.len() <= max_bytes {
         return out;
     }
 
     // Nothing left to drop — the *task itself* is enormous. Hard-cut on a char
-    // boundary rather than hand `execve` an argument it will reject outright.
-    let mut cut = SAFE_ARG_BYTES.saturating_sub(TRUNCATION_MARKER.len() + 1);
+    // boundary rather than hand `execve`/`CreateProcessW` an argument it will reject outright.
+    let mut cut = max_bytes.saturating_sub(TRUNCATION_MARKER.len() + 1);
     while cut > 0 && !out.is_char_boundary(cut) {
         cut -= 1;
     }
@@ -395,10 +406,10 @@ impl<R: CliRunner> Quark for CliQuark<R> {
         let resuming = self.resident && !matches!(self.spec.resume, ResumeMode::None);
         let turn = if resuming { without_field_window(turn) } else { turn };
         // The argv guard only applies when the spec says the prompt rides as one
-        // argv element with no stdin fallback (`execve` rejects an over-long one
-        // with E2BIG before the CLI ever starts). Otherwise build the prompt
-        // normally — `fit_prompt`'s truncation is a tax a stdin-fed CLI never needs.
-        let prompt = if self.spec.argv_guard {
+        // argv element with no stdin fallback (`execve` on Linux rejects an over-long one
+        // with E2BIG; `CreateProcessW` on Windows returns error 206 before the CLI ever starts).
+        // Otherwise build the prompt normally — `fit_prompt`'s truncation is a tax a stdin-fed CLI never needs.
+        let prompt = if self.spec.argv_guard || matches!(self.spec.prompt, PromptChannel::Arg { .. }) {
             fit_prompt(&turn, &self.id)
         } else {
             crate::adapter::prompt::build(&turn, &self.id)
@@ -549,6 +560,20 @@ mod tests {
         let recorded = q.runner.recorded.lock().unwrap();
         assert_eq!(&recorded[0].args[1], &want, "passed through untouched");
         assert!(!recorded[0].args[1].contains(TRUNCATION_MARKER));
+    }
+
+    #[tokio::test]
+    async fn fit_prompt_to_budget_respects_windows_command_line_limit() {
+        let p = huge_projection(200, 2000);
+        let windows_safe_bytes = 24 * 1024;
+        let fitted = fit_prompt_to_budget(&p, &QuarkId::new("agy"), windows_safe_bytes);
+        assert!(
+            fitted.len() <= windows_safe_bytes,
+            "fitted prompt {} bytes must fit Windows safe limit {windows_safe_bytes}",
+            fitted.len()
+        );
+        assert!(fitted.contains(TRUNCATION_MARKER));
+        assert!(fitted.contains("# Who you are"));
     }
 
     /// Layer 3b of the cwd chain, agy side.
