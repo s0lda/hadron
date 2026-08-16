@@ -14,6 +14,7 @@ mod terminal;
 mod git;
 mod stats;
 mod overlays;
+mod visualizer;
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

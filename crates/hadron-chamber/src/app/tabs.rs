@@ -129,7 +129,7 @@ impl GitSubtab {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum RightRailTab {
     Terminal,
     FileTree,
@@ -140,16 +140,19 @@ pub(super) enum RightRailTab {
     /// beside `Plan` rather than replacing it: `Plan` is the human-authored `.md`,
     /// this is who's working on what right now.
     Tasks,
+    /// Interactive 3D Sphere Topology visualizer showing live active and excited quarks.
+    Visualizer,
 }
 
 impl RightRailTab {
-    pub(super) const ALL: [RightRailTab; 6] = [
+    pub(super) const ALL: [RightRailTab; 7] = [
         RightRailTab::Terminal,
         RightRailTab::FileTree,
         RightRailTab::Git,
         RightRailTab::Changes,
         RightRailTab::Plan,
         RightRailTab::Tasks,
+        RightRailTab::Visualizer,
     ];
 
     pub(super) fn index(self) -> usize {
@@ -160,6 +163,7 @@ impl RightRailTab {
             RightRailTab::Changes => 3,
             RightRailTab::Plan => 4,
             RightRailTab::Tasks => 5,
+            RightRailTab::Visualizer => 6,
         }
     }
 
@@ -175,6 +179,7 @@ impl RightRailTab {
             RightRailTab::Changes => "Changes",
             RightRailTab::Plan => "Plan",
             RightRailTab::Tasks => "Tasks",
+            RightRailTab::Visualizer => "Visualizer",
         }
     }
 }

@@ -240,6 +240,12 @@ struct Chamber {
     /// Which view the right rail's segmented tabs are showing. The right rail is
     /// independent of the chat column: changing the chat tab must not move it.
     right_rail_tab: RightRailTab,
+    /// 3D Swarm Topology visualizer camera rotation, zoom, auto-spin, and focus state.
+    visualizer_yaw: f32,
+    visualizer_pitch: f32,
+    visualizer_zoom: f32,
+    visualizer_auto_spin: bool,
+    visualizer_selected_quark: Option<String>,
     /// Keyboard cursor over the roster (index into `view.roster`), moved by the
     /// quark-nav keys and drawn as a highlighted row. `None` = nothing selected.
     selected_quark_ix: Option<usize>,
@@ -1035,6 +1041,11 @@ impl Chamber {
             archived_messages,
             sessions,
             right_rail_tab: RightRailTab::Terminal,
+            visualizer_yaw: 0.0,
+            visualizer_pitch: 0.25,
+            visualizer_zoom: 1.0,
+            visualizer_auto_spin: true,
+            visualizer_selected_quark: None,
             selected_quark_ix: None,
             app_menu_open: false,
             working_diff: None,
