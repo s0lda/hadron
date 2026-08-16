@@ -5,6 +5,12 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] - 2026-08-16
+
+### Fixed
+- **Mermaid Source Code Toggle Crash (`hadron-chamber`)**:
+  - Captured the `use_keyed_state` entity handle during `MermaidCard::render` in `crates/hadron-chamber/src/mermaid/render.rs` so the interactive `on_click` handler updates the pre-bound `Entity<bool>` directly, preventing panics caused by calling `self.current_view()` outside the GPUI render prepaint pass.
+
 ## [0.12.0] - 2026-08-16
 
 ### Added

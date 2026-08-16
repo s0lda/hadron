@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.12.1",
+        date: Some("2026-08-16"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Mermaid Source Code toggle crash by capturing GPUI state handle during render pass",
+        ],
+    },
+    Release {
         version: "0.12.0",
         date: Some("2026-08-16"),
         added: &[
