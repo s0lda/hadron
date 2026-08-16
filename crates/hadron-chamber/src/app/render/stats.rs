@@ -735,14 +735,94 @@ impl super::Chamber {
                     format_num(stats.total_cached),
                     theme::accent_secondary(),
                 ))
-                .child(stat_tile(
+                .child(stat_tile_with_note(
                     "Cost",
                     stats
                         .total_cost_usd
                         .map(|c| format!("${:.2}", c))
                         .unwrap_or_else(|| "—".to_string()),
                     rgb(0x22c55e),
+                    Some("!"),
+                    Some("Partial provider reporting: Cost is only computed for providers with known token rates (e.g. Claude, Gemini Pro)."),
                 )),
+        );
+
+        // Protocol Breakdown & Activity Telemetry Card
+        let mut proto_pills = h_flex().gap_2().items_center().flex_wrap();
+        for (proto, turns) in &stats.protocol_turns {
+            let label = match proto.as_str() {
+                "acp" => "ACP Resident",
+                "cli" => "CLI Subprocess",
+                "http" => "Local/Cloud HTTP",
+                "sdk" => "SDK Bridge",
+                _ => proto.as_str(),
+            };
+            proto_pills = proto_pills.child(
+                h_flex()
+                    .gap_1p5()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(theme::term_bg())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::accent())
+                            .child(label.to_string()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child(format!("({turns})")),
+                    ),
+            );
+        }
+
+        let cache_ratio_pct = if stats.total_fresh + stats.total_cache_read > 0 {
+            (stats.total_cache_read as f64 / (stats.total_fresh + stats.total_cache_read) as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        col = col.child(
+            session_card()
+                .gap_3()
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(theme::text())
+                                .child("Telemetry & Protocol Distribution"),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child(format!("Cache Hit: {:.1}%", cache_ratio_pct)),
+                        ),
+                )
+                .child(proto_pills)
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_4()
+                        .text_xs()
+                        .text_color(theme::text_secondary())
+                        .child(format!("Input: {}", format_num(stats.total_input)))
+                        .child(format!("Output: {}", format_num(stats.total_output)))
+                        .child(format!("Cache Read: {}", format_num(stats.total_cache_read)))
+                        .child(format!("Edits: {}", stats.total_edits))
+                        .child(format!("Commands: {}", stats.total_commands))
+                        .child(format!("Snapshots: {}", stats.total_snapshots)),
+                ),
         );
 
         // Combined spend chart: cumulative fresh spend over turns, one translucent area

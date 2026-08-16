@@ -128,6 +128,7 @@ impl super::ChamberView {
                 continue; // human, gluon, or an actor with no seat
             };
             let s = stats.entry(row.id.as_str()).or_default();
+            s.transport = Some(row.transport);
 
             if s.first_seen.is_none() {
                 s.first_seen = Some(m.ts);
@@ -137,6 +138,24 @@ impl super::ChamberView {
             if m.is_chat() {
                 s.turns = s.turns.saturating_add(1);
                 out.total_turns = out.total_turns.saturating_add(1);
+                let proto_key = row.transport.code().to_string();
+                *out.protocol_turns.entry(proto_key).or_insert(0) += 1;
+            }
+
+            match m.kind_label {
+                "edit" => {
+                    s.total_edits = s.total_edits.saturating_add(1);
+                    out.total_edits = out.total_edits.saturating_add(1);
+                }
+                "command" => {
+                    s.total_commands = s.total_commands.saturating_add(1);
+                    out.total_commands = out.total_commands.saturating_add(1);
+                }
+                "snapshot" => {
+                    s.total_snapshots = s.total_snapshots.saturating_add(1);
+                    out.total_snapshots = out.total_snapshots.saturating_add(1);
+                }
+                _ => {}
             }
 
             let fresh = message_fresh(m, row.transport);
@@ -165,6 +184,23 @@ impl super::ChamberView {
 
             let Some(u) = &m.usage else { continue };
 
+            if let Some(i) = u.spend.input {
+                s.input_tokens = s.input_tokens.saturating_add(i as u64);
+                out.total_input = out.total_input.saturating_add(i as u64);
+            }
+            if let Some(o) = u.spend.output {
+                s.output_tokens = s.output_tokens.saturating_add(o as u64);
+                out.total_output = out.total_output.saturating_add(o as u64);
+            }
+            if let Some(cr) = u.spend.cache_read {
+                s.cache_read = s.cache_read.saturating_add(cr as u64);
+                out.total_cache_read = out.total_cache_read.saturating_add(cr as u64);
+            }
+            if let Some(cw) = u.spend.cache_write {
+                s.cache_write = s.cache_write.saturating_add(cw as u64);
+                out.total_cache_write = out.total_cache_write.saturating_add(cw as u64);
+            }
+
             if let Some(c) = u.spend.cached() {
                 s.cached = s.cached.saturating_add(c as u64);
                 out.total_cached = out.total_cached.saturating_add(c as u64);
@@ -176,6 +212,9 @@ impl super::ChamberView {
                 s.quota = u.quota.clone();
             }
         }
+
+        let has_unpriced = stats.values().any(|qs| qs.turns > 0 && qs.cost_usd.is_none());
+        out.has_unpriced_quarks = has_unpriced;
 
         out.per_quark = self
             .roster

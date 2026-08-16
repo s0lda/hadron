@@ -347,12 +347,20 @@ pub struct QuarkStats {
     pub turns: u64,
     pub fresh: u64,
     pub cached: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub total_edits: u64,
+    pub total_commands: u64,
+    pub total_snapshots: u64,
     pub cost_usd: Option<f64>,
     pub context: Option<hadron_lattice::ContextUsage>,
     pub quota: Vec<hadron_lattice::QuotaBucket>,
     pub first_seen: Option<chrono::DateTime<chrono::Utc>>,
     pub last_active: Option<chrono::DateTime<chrono::Utc>>,
     pub spend_history: Vec<TurnSpend>,
+    pub transport: Option<hadron_lattice::Transport>,
 }
 
 /// A time window over the swarm's telemetry. `Session` is bounded by *source* — the
@@ -417,7 +425,16 @@ pub struct SessionStats {
     pub total_turns: u64,
     pub total_fresh: u64,
     pub total_cached: u64,
+    pub total_input: u64,
+    pub total_output: u64,
+    pub total_cache_read: u64,
+    pub total_cache_write: u64,
+    pub total_edits: u64,
+    pub total_commands: u64,
+    pub total_snapshots: u64,
+    pub protocol_turns: HashMap<String, u64>,
     pub total_cost_usd: Option<f64>,
+    pub has_unpriced_quarks: bool,
     pub spend_history: Vec<TurnSpend>,
 }
 

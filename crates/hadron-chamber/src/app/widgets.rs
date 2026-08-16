@@ -1248,6 +1248,21 @@ pub(super) fn progress_meter(frac: f32, fill: impl Into<gpui::Fill>) -> impl Int
 
 /// A KPI tile: a big value over a small label, for the session totals row.
 pub(super) fn stat_tile(label: &str, value: String, accent: gpui::Rgba) -> impl IntoElement {
+    stat_tile_with_note(label, value, accent, None, None)
+}
+
+/// A KPI tile with an optional status note/badge and tooltip info.
+pub(super) fn stat_tile_with_note(
+    label: &str,
+    value: String,
+    accent: gpui::Rgba,
+    badge: Option<&str>,
+    tooltip_text: Option<&str>,
+) -> impl IntoElement {
+    let has_badge = badge.is_some();
+    let badge_str = badge.unwrap_or("").to_string();
+    let tt_str = tooltip_text.unwrap_or("").to_string();
+
     v_flex()
         .flex_1()
         .gap_1()
@@ -1257,11 +1272,36 @@ pub(super) fn stat_tile(label: &str, value: String, accent: gpui::Rgba) -> impl 
         .border_1()
         .border_color(theme::glass_highlight())
         .child(
-            div()
-                .text_lg()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(accent)
-                .child(value),
+            h_flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(accent)
+                        .child(value),
+                )
+                .when(has_badge, |this| {
+                    let badge_id = SharedString::from(format!("stat-badge-{}", label));
+                    this.child(
+                        div()
+                            .id(badge_id)
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded_full()
+                            .bg(gpui::rgb(0xca8a04).opacity(0.2))
+                            .border_1()
+                            .border_color(gpui::rgb(0xca8a04).opacity(0.4))
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(gpui::rgb(0xfacc15))
+                            .child(badge_str)
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(SharedString::from(tt_str.clone())).build(window, cx)
+                            }),
+                    )
+                }),
         )
         .child(
             div()

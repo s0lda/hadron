@@ -1033,3 +1033,40 @@ fn attention_required_renders_in_chat_with_error_severity() {
     assert!(row.body.contains("Restart postgres"));
     assert_eq!(row.severity, Some(hadron_lattice::Severity::Error));
 }
+
+#[test]
+fn stats_aggregates_multi_protocol_and_activity_metrics() {
+    let now = Utc.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
+    let ev1 = ev(Actor::Human, Some("opus"), Kind::Message { body: "task 1".into() });
+    let mut ev2 = spend_reply("opus", 150, now);
+    if let Some(ref mut u) = ev2.usage {
+        u.spend.input = Some(100);
+        u.spend.output = Some(50);
+        u.spend.cache_read = Some(400);
+        u.spend.cache_write = Some(50);
+    }
+    let ev3 = ev(Actor::Quark(QuarkId::new("opus")), None, Kind::Edit {
+        paths: vec!["src/main.rs".into()],
+        git: "abc1234".into(),
+        summary: "updated entrypoint".into(),
+    });
+    let ev4 = ev(Actor::Quark(QuarkId::new("opus")), None, Kind::Command {
+        cmd: "cargo check".into(),
+        exit: 0,
+        out_summary: String::new(),
+    });
+
+    let view = project(&[ev1, ev2, ev3, ev4]);
+    let stats = view.stats_for(&[], StatsWindow::Session, now);
+
+    assert_eq!(stats.total_turns, 1);
+    assert_eq!(stats.total_fresh, 150);
+    assert_eq!(stats.total_input, 100);
+    assert_eq!(stats.total_output, 50);
+    assert_eq!(stats.total_cache_read, 400);
+    assert_eq!(stats.total_cache_write, 50);
+    assert_eq!(stats.total_cached, 450);
+    assert_eq!(stats.total_edits, 1);
+    assert_eq!(stats.total_commands, 1);
+    assert!(stats.protocol_turns.contains_key("cli") || stats.protocol_turns.contains_key("acp"));
+}
