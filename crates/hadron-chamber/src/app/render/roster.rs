@@ -374,6 +374,19 @@ impl super::Chamber {
                             },
                         ));
                     }
+                    let qid5 = qid_str.clone();
+                    let view5 = view.clone();
+                    menu = menu.item(PopupMenuItem::new("Remove").on_click(
+                        move |_, window, cx| {
+                            view5.update(cx, |this, cx| {
+                                this.handle_context_menu_action(
+                                    ContextMenuAction::RemoveQuark(qid5.clone()),
+                                    cx,
+                                );
+                            });
+                            window.refresh();
+                        },
+                    ));
                     menu
                 }
             })

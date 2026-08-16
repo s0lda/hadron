@@ -1657,6 +1657,9 @@ impl Chamber {
             ContextMenuAction::AdoptQuark(id) => {
                 self.adopt_quark(&id, cx);
             }
+            ContextMenuAction::RemoveQuark(id) => {
+                self.remove_quark(&id, cx);
+            }
             ContextMenuAction::RestartQuark(id) => {
                 self.reboot_quark(&id, cx);
             }
@@ -1960,16 +1963,52 @@ impl Chamber {
         cx.notify();
     }
 
-    /// **Un-adopt** a quark from this repo: drop its legacy seat and/or override plus
-    /// its providers-list row. The definition stays in the global catalogue, so the
-    /// quark reappears as an available (grey) row rather than vanishing — removal from
-    /// a repo is not deletion from the catalogue. The running daemon reconciles the
-    /// removal on its next re-seat tick (its `ReseatPlan.removed` → `unseat`).
+    /// **Remove** a quark completely: purge its definition and overrides from both
+    /// the global catalogue (`~/.hadron/team.json`) and the repo team (`.hadron/team.json`),
+    /// delete its configured provider row, clear any UI focus/selection on it, and
+    /// persist both team files. The running daemon reconciles the removal on its next
+    /// re-seat tick (its `ReseatPlan.removed` → `unseat`).
     pub(super) fn remove_quark(&mut self, id: &str, cx: &mut Context<Self>) {
         let qid = QuarkId::new(id);
-        self.team.quarks.retain(|s| s.id != qid);
-        self.team.roster.retain(|o| o.id != qid);
+
+        let secret_vars: Vec<String> = self
+            .global
+            .get(&qid)
+            .or_else(|| self.team.get(&qid))
+            .map(|s| s.secret_env.clone())
+            .unwrap_or_default();
+        for var in secret_vars {
+            let _ = self.secret_store.delete(&qid, &var);
+        }
+
+        remove_quark_from_teams(&mut self.team, &mut self.global, &qid);
         self.providers.retain(|p| p.id.as_str() != id);
+        if let Some(panel_id) = &self.info_panel {
+            if panel_id == id {
+                self.info_panel = None;
+            }
+        }
+        if let SettingsTarget::Quark(t_id) = &self.settings_target {
+            if t_id == id {
+                self.settings_target = SettingsTarget::Providers;
+            }
+        }
+        if let Some(ix) = self.selected_quark_ix {
+            if self.view.roster.get(ix).map(|r| r.id == id).unwrap_or(false) {
+                self.selected_quark_ix = None;
+            }
+        }
+
+        let global_path = hadron_lattice::team_config_path();
+        let repo_path = self.repo_team_path();
+        let separate = global_path.as_deref().is_some_and(|g| g != repo_path);
+        if separate {
+            if let Some(gp) = global_path {
+                if let Err(e) = hadron_lattice::save_team(&gp, &self.global) {
+                    eprintln!("chamber: failed to save catalogue: {e}");
+                }
+            }
+        }
         self.save_repo_team(cx);
     }
 
@@ -2119,6 +2158,46 @@ pub(super) fn apply_orchestrator_exclusivity(
     }
 }
 
+/// Purge a quark from both the repo team and the global catalogue.
+///
+/// Removes any legacy full seat in `team.quarks`, any override in `team.roster`,
+/// and any definition in `global.quarks` (and `global.roster`).
+/// If the removed quark was an Orchestrator, automatically promotes the first
+/// remaining seated quark to Orchestrator to maintain swarm leadership invariants.
+pub(super) fn remove_quark_from_teams(
+    team: &mut hadron_lattice::Team,
+    global: &mut hadron_lattice::Team,
+    qid: &QuarkId,
+) {
+    team.quarks.retain(|s| &s.id != qid);
+    team.roster.retain(|o| &o.id != qid);
+    global.quarks.retain(|s| &s.id != qid);
+    global.roster.retain(|o| &o.id != qid);
+
+    // If no orchestrators remain in the resolved team, designate the first remaining seated quark.
+    let resolved = resolve_team(team, global);
+    if !resolved.quarks.is_empty()
+        && !resolved
+            .quarks
+            .iter()
+            .any(|s| s.flavor == hadron_lattice::Flavor::Orchestrator)
+    {
+        let first_id = resolved.quarks[0].id.clone();
+        if let Some(s) = team.quarks.iter_mut().find(|s| s.id == first_id) {
+            s.flavor = hadron_lattice::Flavor::Orchestrator;
+        } else if let Some(ov) = team.roster.iter_mut().find(|o| o.id == first_id) {
+            ov.flavor = Some(hadron_lattice::Flavor::Orchestrator);
+        } else if let Some(g) = global.quarks.iter_mut().find(|s| s.id == first_id) {
+            g.flavor = hadron_lattice::Flavor::Orchestrator;
+        } else {
+            team.roster.push(hadron_lattice::SeatOverride {
+                flavor: Some(hadron_lattice::Flavor::Orchestrator),
+                ..hadron_lattice::SeatOverride::role(first_id)
+            });
+        }
+    }
+}
+
 /// Where `ToggleFocus` sends focus when moving *toward* the terminal — always
 /// [`FocusTarget::Terminal`], since this is a pure function of the right rail's
 /// active tab alone. `FocusTarget::Chat` exists so [`Chamber::toggle_focus`]'s
@@ -2222,6 +2301,161 @@ mod tests {
         assert_eq!(team.quarks[1].flavor, Flavor::Worker);
         // override-two resolved to Orchestrator by default, should be overridden to Worker
         assert_eq!(team.roster[1].flavor, Some(Flavor::Worker));
+    }
+
+    #[test]
+    fn remove_quark_from_teams_removes_from_both_repo_and_global() {
+        use hadron_lattice::SeatOverride;
+        use hadron_lattice::{resolve_team, Flavor, QuarkId, Seat, Team};
+
+        let target_id = QuarkId::new("acp-claude-3");
+        let other_id = QuarkId::new("cli-agy");
+
+        let mut repo = Team {
+            quarks: vec![],
+            roster: vec![
+                SeatOverride {
+                    flavor: Some(Flavor::Worker),
+                    ..SeatOverride::role(target_id.clone())
+                },
+                SeatOverride {
+                    flavor: Some(Flavor::Orchestrator),
+                    ..SeatOverride::role(other_id.clone())
+                },
+            ],
+            max_exchanges: None,
+            nucleus_index_budget_kb: None,
+            merge_strategy: None,
+        };
+
+        let mut global = Team {
+            quarks: vec![
+                Seat::cli(target_id.clone(), "claude", "opus", Flavor::Worker),
+                Seat::cli(other_id.clone(), "agy", "gemini", Flavor::Orchestrator),
+            ],
+            roster: vec![],
+            max_exchanges: None,
+            nucleus_index_budget_kb: None,
+            merge_strategy: None,
+        };
+
+        // Before removal: target_id is present and resolved
+        let before = resolve_team(&repo, &global);
+        assert_eq!(before.quarks.len(), 2);
+        assert!(before.get(&target_id).is_some());
+
+        remove_quark_from_teams(&mut repo, &mut global, &target_id);
+
+        // After removal: target_id is purged from repo.roster, repo.quarks, and global.quarks
+        assert!(repo.roster.iter().all(|o| o.id != target_id));
+        assert!(repo.quarks.iter().all(|s| s.id != target_id));
+        assert!(global.quarks.iter().all(|s| s.id != target_id));
+
+        let after = resolve_team(&repo, &global);
+        assert_eq!(after.quarks.len(), 1);
+        assert!(after.get(&target_id).is_none());
+        assert_eq!(after.quarks[0].id, other_id);
+    }
+
+    #[test]
+    fn remove_quark_from_teams_promotes_remaining_quark_when_orchestrator_removed() {
+        use hadron_lattice::SeatOverride;
+        use hadron_lattice::{resolve_team, Flavor, QuarkId, Seat, Team};
+
+        let orch_id = QuarkId::new("acp-claude-3");
+        let worker_id = QuarkId::new("cli-agy");
+
+        let mut repo = Team {
+            quarks: vec![],
+            roster: vec![
+                SeatOverride {
+                    flavor: Some(Flavor::Orchestrator),
+                    ..SeatOverride::role(orch_id.clone())
+                },
+                SeatOverride {
+                    flavor: Some(Flavor::Worker),
+                    ..SeatOverride::role(worker_id.clone())
+                },
+            ],
+            max_exchanges: None,
+            nucleus_index_budget_kb: None,
+            merge_strategy: None,
+        };
+
+        let mut global = Team {
+            quarks: vec![
+                Seat::cli(orch_id.clone(), "claude", "opus", Flavor::Orchestrator),
+                Seat::cli(worker_id.clone(), "agy", "gemini", Flavor::Worker),
+            ],
+            roster: vec![],
+            max_exchanges: None,
+            nucleus_index_budget_kb: None,
+            merge_strategy: None,
+        };
+
+        remove_quark_from_teams(&mut repo, &mut global, &orch_id);
+
+        let after = resolve_team(&repo, &global);
+        assert_eq!(after.quarks.len(), 1);
+        assert_eq!(after.quarks[0].id, worker_id);
+        assert_eq!(
+            after.quarks[0].flavor,
+            Flavor::Orchestrator,
+            "Remaining worker must be promoted to Orchestrator when sole orchestrator is removed"
+        );
+    }
+
+    #[test]
+    fn remove_quark_purges_roster_projection_completely() {
+        use hadron_lattice::{resolve_team, Flavor, QuarkId, Seat, Team};
+        use crate::model::project_with_team;
+
+        let target_id = QuarkId::new("acp-claude-3");
+        let remaining_id = QuarkId::new("cli-agy");
+
+        let mut repo = Team {
+            quarks: vec![],
+            roster: vec![
+                hadron_lattice::SeatOverride::role(target_id.clone()),
+                hadron_lattice::SeatOverride::role(remaining_id.clone()),
+            ],
+            max_exchanges: None,
+            nucleus_index_budget_kb: None,
+            merge_strategy: None,
+        };
+
+        let mut global = Team {
+            quarks: vec![
+                Seat::cli(target_id.clone(), "claude", "opus", Flavor::Worker),
+                Seat::cli(remaining_id.clone(), "agy", "gemini", Flavor::Orchestrator),
+            ],
+            roster: vec![],
+            max_exchanges: None,
+            nucleus_index_budget_kb: None,
+            merge_strategy: None,
+        };
+
+        // Even with events mentioning target_id
+        let events = vec![
+            hadron_lattice::Event::new(
+                hadron_lattice::Actor::Quark(target_id.clone()),
+                Some(remaining_id.clone()),
+                hadron_lattice::Kind::Message { body: "hello".into() },
+            )
+        ];
+
+        let view_before = project_with_team(&events, &resolve_team(&repo, &global), &global);
+        assert!(view_before.roster.iter().any(|r| r.id == target_id.as_str()));
+
+        remove_quark_from_teams(&mut repo, &mut global, &target_id);
+
+        let view_after = project_with_team(&events, &resolve_team(&repo, &global), &global);
+        assert!(
+            view_after.roster.iter().all(|r| r.id != target_id.as_str()),
+            "Removed quark must NOT appear on the roster even if historical events mention it"
+        );
+        assert_eq!(view_after.roster.len(), 1);
+        assert_eq!(view_after.roster[0].id, remaining_id.as_str());
     }
 
     fn row_at(ts_secs: i64, from: &str) -> MessageRow {

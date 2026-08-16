@@ -559,10 +559,24 @@ impl super::Chamber {
         ) {
             div().into_any_element()
         } else {
+            let quark_id_opt = match &target {
+                SettingsTarget::Quark(qid) => Some(qid.clone()),
+                _ => None,
+            };
             h_flex()
                 .flex_none()
                 .justify_end()
+                .gap_3()
                 .pt_1()
+                .when_some(quark_id_opt, |this, qid| {
+                    this.child(
+                        text_button(format!("settings-remove-{}", qid), "Remove Quark").on_click(
+                            cx.listener(move |this, _, _window, cx| {
+                                this.remove_quark(&qid, cx);
+                            }),
+                        ),
+                    )
+                })
                 .child(text_button("settings-reset", "Reset to default").on_click(
                     cx.listener(|this, _, window, cx| this.reset_settings_target(window, cx)),
                 ))

@@ -551,6 +551,8 @@ pub enum ContextMenuAction {
     SetFlavor(String, hadron_lattice::Flavor),
     /// Adopt a catalogue quark into this repo (available → participating).
     AdoptQuark(String),
+    /// Remove / delete a quark completely from both repo and global catalogue.
+    RemoveQuark(String),
     /// Force-restart a resident quark's session (reap the subprocess, keep it seated).
     /// Offered only for `Transport::Acp` quarks — a one-shot CLI quark holds nothing
     /// resident to kill.
