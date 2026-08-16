@@ -30,6 +30,16 @@ pub mod preview;
 pub mod scaffold;
 pub mod security_audit;
 pub mod watchdog;
+pub mod blast_radius;
+pub mod git_bisect;
+pub mod wiretap;
+pub mod ast_rewrite;
+pub mod secret_vault;
+pub mod flamegraph;
+pub mod fuzz_harness;
+pub mod nucleus_graph;
+pub mod binary_bloat;
+pub mod release_sync;
 
 pub use ast_merge::*;
 pub use conflict_resolve::*;
@@ -47,6 +57,13 @@ pub use preview::*;
 pub use scaffold::*;
 pub use security_audit::*;
 pub use watchdog::*;
-
-
-
+pub use blast_radius::*;
+pub use git_bisect::*;
+pub use wiretap::*;
+pub use ast_rewrite::*;
+pub use secret_vault::*;
+pub use flamegraph::*;
+pub use fuzz_harness::*;
+pub use nucleus_graph::*;
+pub use binary_bloat::*;
+pub use release_sync::*;

@@ -29,6 +29,16 @@ pub mod preview;
 pub mod scaffold;
 pub mod security_audit;
 pub mod watchdog;
+pub mod blast_radius;
+pub mod git_bisect;
+pub mod wiretap;
+pub mod ast_rewrite;
+pub mod secret_vault;
+pub mod flamegraph;
+pub mod fuzz_harness;
+pub mod nucleus_graph;
+pub mod binary_bloat;
+pub mod release_sync;
 
 use hadron_forge::file::Root;
 use hadron_forge::mock::MockServerManager;
@@ -95,7 +105,17 @@ impl ForgeMcpServer {
                 + Self::preview_router()
                 + Self::scaffold_router()
                 + Self::security_audit_router()
-                + Self::watchdog_router(),
+                + Self::watchdog_router()
+                + Self::blast_radius_router()
+                + Self::git_bisect_router()
+                + Self::wiretap_router()
+                + Self::ast_rewrite_router()
+                + Self::secret_vault_router()
+                + Self::flamegraph_router()
+                + Self::fuzz_harness_router()
+                + Self::nucleus_graph_router()
+                + Self::binary_bloat_router()
+                + Self::release_sync_router(),
             root,
             nucleus_root,
             process_manager,
