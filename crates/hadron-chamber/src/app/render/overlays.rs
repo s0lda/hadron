@@ -20,6 +20,19 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.12.0",
+        date: Some("2026-08-16"),
+        added: &[
+            "Native GPUI Mermaid diagram rendering in Markdown for Flowcharts, Sequence, Pie, State, and Class diagrams",
+            "Interactive MermaidCard component with Diagram/Source toggle, copy action, and Lavapipe canvas rendering",
+            "Preview support for .mermaid and .mmd files in file previewers",
+        ],
+        changed: &[],
+        fixed: &[
+            "Noto Color Emoji font fallback chain eliminating tofu replacement boxes on Linux/WSL",
+        ],
+    },
+    Release {
         version: "0.11.0",
         date: Some("2026-08-16"),
         added: &[

@@ -5,6 +5,23 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-08-16
+
+### Added
+- **Native GPUI Mermaid Diagram Rendering in Markdown (`hadron-chamber`)**:
+  - Integrated Mermaid parser, topological layer ranker & layout engine, and interactive GPU/Lavapipe-rendered `MermaidCard` components directly into Markdown (`.md`) chat messages, message inspection cards, and log rows.
+  - Comprehensive diagram format support:
+    - Flowcharts (`flowchart` / `graph` TD, TB, BT, LR, RL) with standard and specialized node shapes (`[rect]`, `(rounded)`, `([stadium])`, `[[subroutine]]`, `[(cylinder)]`, `((circle))`, `[//parallelogram//]`, `[\\parallelogram\\]`, `[/trapezoid\\]`, `[\\trapezoid/]`, `{rhombus}`) and connector styles (`-->`, `---`, `-.->`, `==>`, labels `|label|`, multi-targets, subgraphs).
+    - Sequence Diagrams (`sequenceDiagram`, `autonumber`, `actor`/`participant`, `->>`, `-->>`, notes).
+    - Pie Charts (`pie title`, `showData`, numeric slices and percentages).
+    - State Diagrams (`stateDiagram-v2`) and Class Diagrams (`classDiagram`).
+  - Interactive features: Card header with diagram badge, metrics (nodes, edges), interactive `Diagram View` / `Source Code` toggle, and Copy action button.
+  - Preview support for `.mermaid` and `.mmd` files in file previewers.
+
+### Fixed
+- **Color Emoji Fallback Chain (`hadron-chamber`)**:
+  - Registered `EMOJI_FAMILY` (`"Noto Color Emoji"`) in GPUI and cosmic-text font fallback chains (`default_fallbacks()`), resolving emoji rendering (e.g. `🤣`, `🔥`, `✨`, `🎉`) and eliminating tofu replacement boxes across Linux and WSL environments.
+
 ## [0.11.0] - 2026-08-16
 
 ### Added
