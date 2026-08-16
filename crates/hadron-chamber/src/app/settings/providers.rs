@@ -31,7 +31,9 @@ impl super::Chamber {
         self.wizard_state = WizardState::LocalProvider(vendor, ProviderState::Connecting);
         cx.notify();
 
-        let target = hadron_gluon::adapter::local::HttpTarget { vendor, base_url, api_key };
+        let target = hadron_gluon::adapter::local::HttpTarget { vendor, base_url: base_url.clone(), api_key: api_key.clone() };
+        let base_url_for_task = base_url.clone();
+        let api_key_for_task = api_key.clone();
         cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let mut cx = cx.clone();
             async move {
@@ -46,25 +48,42 @@ impl super::Chamber {
                     if !matches!(&this.wizard_state, WizardState::LocalProvider(v, _) if *v == vendor) {
                         return;
                     }
-                    this.wizard_state = WizardState::LocalProvider(
-                        vendor,
-                        match result {
-                            Ok(models) if !models.is_empty() => {
-                                let ids: Vec<String> = models.into_iter().map(|m| m.id).collect();
-                                let first = ids[0].clone();
-                                this.local_models = ids;
-                                this.local_selected_model = Some(first.clone());
+                    match result {
+                        Ok(models) if !models.is_empty() => {
+                            let ids: Vec<String> = models.into_iter().map(|m| m.id).collect();
+                            let first = ids[0].clone();
+                            this.local_models = ids;
+                            this.local_selected_model = Some(first.clone());
+
+                            if !vendor.requires_api_key() {
+                                // 1-Click zero-friction add for local servers (Ollama, LM Studio)
+                                this.save_and_add_http_quark(vendor, &base_url_for_task, &first, api_key_for_task, cx);
+                            } else {
+                                this.wizard_state = WizardState::LocalProvider(
+                                    vendor,
+                                    ProviderState::Ready { model: first },
+                                );
                                 cx.notify();
-                                ProviderState::Ready { model: first }
                             }
-                            Ok(_) => ProviderState::Failed(format!(
-                                "connected, but {} has no models loaded",
-                                vendor.display_name()
-                            )),
-                            Err(e) => ProviderState::Failed(e),
-                        },
-                    );
-                    cx.notify();
+                        }
+                        Ok(_) => {
+                            this.wizard_state = WizardState::LocalProvider(
+                                vendor,
+                                ProviderState::Failed(format!(
+                                    "connected, but {} has no models loaded",
+                                    vendor.display_name()
+                                )),
+                            );
+                            cx.notify();
+                        }
+                        Err(e) => {
+                            this.wizard_state = WizardState::LocalProvider(
+                                vendor,
+                                ProviderState::Failed(e),
+                            );
+                            cx.notify();
+                        }
+                    }
                 })
                 .ok();
             }
@@ -178,6 +197,75 @@ impl super::Chamber {
                 seat.transport.code()
             );
         }
+        self.add_configured_quark(seat, cx);
+        self.wizard_state = WizardState::None;
+        cx.notify();
+    }
+
+    /// Save a configured HTTP seat directly into the global catalogue and current repo team.
+    pub(super) fn save_and_add_http_quark(
+        &mut self,
+        vendor: hadron_gluon::adapter::local::HttpVendor,
+        base_url: &str,
+        model: &str,
+        api_key: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let base_id = hadron_lattice::Transport::Http.conventional_id(vendor.code());
+        let seat_id = {
+            let taken = |id: &str| {
+                self.providers.iter().any(|p| p.id == id)
+                    || self.global.quarks.iter().any(|s| s.id.as_str() == id)
+                    || self.team.quarks.iter().any(|s| s.id.as_str() == id)
+                    || self.team.roster.iter().any(|o| o.id.as_str() == id)
+            };
+            unique_seat_id(&base_id, &taken)
+        };
+        let qid = hadron_lattice::QuarkId::new(&seat_id);
+
+        let mut secret_env = Vec::new();
+        if vendor.requires_api_key() {
+            if let Some(ref key) = api_key {
+                if !key.is_empty() {
+                    match self.secret_store.set(&qid, CLOUD_API_KEY_VAR, key) {
+                        Ok(()) => secret_env.push(CLOUD_API_KEY_VAR.to_string()),
+                        Err(e) => eprintln!(
+                            "chamber: failed to write API key to the OS credential store: {e}"
+                        ),
+                    }
+                }
+            }
+        }
+
+        self.providers.push(ConfiguredQuark {
+            id: seat_id.clone(),
+            transport: "http".to_string(),
+            model: model.to_string(),
+        });
+
+        let mut seat = hadron_lattice::Seat {
+            id: qid,
+            display_name: None,
+            vendor: vendor.code().to_string(),
+            model: model.to_string(),
+            flavor: hadron_lattice::Flavor::Worker,
+            transport: hadron_lattice::Transport::Http,
+            command: None,
+            cli: None,
+            enabled: true,
+            effort: None,
+            mode_config: None,
+            roles: vec![],
+            exclusive: false,
+            commands: hadron_lattice::SeatCommands::default(),
+            secret_env,
+            energy_limit: None,
+            deny_skills: vec![],
+            external_roots: vec![],
+            http_base_url: Some(base_url.to_string()),
+            model_params: hadron_lattice::ModelParams::default(),
+        };
+        seat.normalize_vendor();
         self.add_configured_quark(seat, cx);
         self.wizard_state = WizardState::None;
         cx.notify();
@@ -786,10 +874,27 @@ impl super::Chamber {
                                 v_flex()
                                     .gap_1()
                                     .child(
-                                        div()
-                                            .text_base()
-                                            .text_color(theme::text())
-                                            .child(vendor.display_name()),
+                                        h_flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .text_base()
+                                                    .text_color(theme::text())
+                                                    .child(vendor.display_name()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .px_1p5()
+                                                    .py_0p5()
+                                                    .rounded_full()
+                                                    .bg(theme::tab_bar_bg())
+                                                    .border_1()
+                                                    .border_color(theme::glass_highlight())
+                                                    .text_xs()
+                                                    .text_color(theme::accent())
+                                                    .child("Local HTTP"),
+                                            ),
                                     )
                                     .child(
                                         div()
@@ -801,8 +906,8 @@ impl super::Chamber {
                             .child(
                                 div()
                                     .text_sm()
-                                    .text_color(theme::text_muted())
-                                    .child("Connect \u{2192}"),
+                                    .text_color(theme::accent())
+                                    .child("1-Click Add \u{2192}"),
                             )
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.local_base_url.update(cx, |s, cx| {
@@ -814,9 +919,13 @@ impl super::Chamber {
                                 this.local_api_key.update(cx, |s, cx| s.set_value("", window, cx));
                                 this.local_models = Vec::new();
                                 this.local_selected_model = None;
-                                this.wizard_state =
-                                    WizardState::LocalProvider(vendor, ProviderState::NotConnected);
-                                cx.notify();
+                                if !vendor.requires_api_key() {
+                                    this.start_local_provider_probe(vendor, vendor.default_base_url().to_string(), None, cx);
+                                } else {
+                                    this.wizard_state =
+                                        WizardState::LocalProvider(vendor, ProviderState::NotConnected);
+                                    cx.notify();
+                                }
                             })),
                     );
                 }
@@ -850,10 +959,27 @@ impl super::Chamber {
                             v_flex()
                                 .gap_1()
                                 .child(
-                                    div()
-                                        .text_base()
-                                        .text_color(theme::text())
-                                        .child(entry.name.clone()),
+                                    h_flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_base()
+                                                .text_color(theme::text())
+                                                .child(entry.name.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .px_1p5()
+                                                .py_0p5()
+                                                .rounded_full()
+                                                .bg(theme::tab_bar_bg())
+                                                .border_1()
+                                                .border_color(theme::glass_highlight())
+                                                .text_xs()
+                                                .text_color(theme::accent_secondary())
+                                                .child("Resident ACP"),
+                                        ),
                                 )
                                 .child(div().text_xs().text_color(theme::text_muted()).child(subtitle)),
                         );
@@ -1399,70 +1525,11 @@ impl super::Chamber {
                                     if model.is_empty() {
                                         return;
                                     }
-                                    let base_id = hadron_lattice::Transport::Http.conventional_id(vendor.code());
-                                    let seat_id = {
-                                        let taken = |id: &str| {
-                                            this.providers.iter().any(|p| p.id == id)
-                                                || this.global.quarks.iter().any(|s| s.id.as_str() == id)
-                                                || this.team.quarks.iter().any(|s| s.id.as_str() == id)
-                                                || this.team.roster.iter().any(|o| o.id.as_str() == id)
-                                        };
-                                        unique_seat_id(&base_id, &taken)
-                                    };
-                                    let qid = hadron_lattice::QuarkId::new(&seat_id);
-
-                                    // The key itself never reaches `team.json` — write it to the
-                                    // keyring first (same store/order `set_settings_secret` uses)
-                                    // and only declare the VAR NAME on the seat if that succeeds.
-                                    let mut secret_env = Vec::new();
-                                    if vendor.requires_api_key() {
-                                        let api_key = this.local_api_key.read(cx).value().trim().to_string();
-                                        if !api_key.is_empty() {
-                                            match this.secret_store.set(&qid, CLOUD_API_KEY_VAR, &api_key) {
-                                                Ok(()) => secret_env.push(CLOUD_API_KEY_VAR.to_string()),
-                                                Err(e) => eprintln!(
-                                                    "chamber: failed to write API key to the OS credential \
-                                                     store: {e}"
-                                                ),
-                                            }
-                                        }
-                                    }
-
-                                    this.providers.push(ConfiguredQuark {
-                                        id: seat_id.clone(),
-                                        transport: "http".to_string(),
-                                        model: model.clone(),
-                                    });
-
-                                    let seat = hadron_lattice::Seat {
-                                        id: qid,
-                                        display_name: None,
-                                        vendor: vendor.code().to_string(),
-                                        model,
-                                        flavor: hadron_lattice::Flavor::Worker,
-                                        transport: hadron_lattice::Transport::Http,
-                                        command: None,
-                                        cli: None,
-                                        enabled: true,
-                                        effort: None,
-                                        mode_config: None,
-                                        roles: vec![],
-                                        exclusive: false,
-                                        commands: hadron_lattice::SeatCommands::default(),
-                                        secret_env,
-                                        energy_limit: None,
-                                        deny_skills: vec![],
-                                        external_roots: vec![],
-                                        http_base_url: Some(base_url.clone()),
-                                        model_params: hadron_lattice::ModelParams::default(),
-                                    };
-                                    this.add_configured_quark(seat, cx);
-
-                                    // Write-only: never re-shown, same as the per-quark secret field.
+                                    let api_key = this.local_api_key.read(cx).value().trim().to_string();
+                                    let api_key = (!api_key.is_empty()).then_some(api_key);
                                     this.local_api_key
                                         .update(cx, |s, cx| s.set_value(String::new(), window, cx));
-                                    this.wizard_state = WizardState::None;
-                                    cx.notify();
+                                    this.save_and_add_http_quark(vendor, &base_url, &model, api_key, cx);
                                 }),
                             ))
                             .into_any_element()
