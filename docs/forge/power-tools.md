@@ -26,6 +26,16 @@ Hadron Forge (`crates/hadron-forge` and `crates/hadron-forge-mcp`) provides a co
 | **In-Process Mock Server** | `hadron_forge_mock_start`, `hadron_forge_mock_route_add`, `hadron_forge_mock_requests_list`, `hadron_forge_mock_assert`, `hadron_forge_mock_stop`, `hadron_forge_mock_list` | Loopback HTTP/WS mock endpoints (`127.0.0.1`), request journaling, assertion testing. |
 | **Local SQLite Engine** | `hadron_forge_sqlite_query`, `hadron_forge_sqlite_schema`, `hadron_forge_sqlite_migrate`, `hadron_forge_sqlite_export` | Bundled `rusqlite`, schema introspection, transactional migrations, Markdown/CSV/JSON export. |
 | **Polyglot Diagnostics** | `hadron_forge_run_command`, `hadron_forge_parse_diagnostics` | Jailed execution allowlist (`node`, `npm`, `pnpm`, `bun`, `deno`, `python3`, `pytest`, `go`, `cargo`) + compiler error parsers. |
+| **Blast Radius Analyzer** | `hadron_forge_blast_radius` | Static crate dependency graph, reverse caller traversal, and affected test suite impact calculator. |
+| **Automated Git Bisect** | `hadron_forge_git_bisect` | Autonomous binary regression finder executing test predicates across commit ranges. |
+| **Wiretap Protocol Monitor** | `hadron_forge_wiretap` | Real-time NDJSON and HTTP IPC packet monitor, query filter, and frame assertion validator. |
+| **AST Structural Rewrite** | `hadron_forge_ast_rewrite` | Tree-sitter structural pattern search and cross-file code transformation without regex fragility. |
+| **Secret Vault & Masking** | `hadron_forge_secret_vault` | Ephemeral sandboxed credential vault with automated stdout/stderr secret masking. |
+| **Universal Flamegraph Profiler** | `hadron_forge_flamegraph_profiler` | Non-intrusive CPU & allocation profiler generating interactive SVGs and folded stack hotspot reports. |
+| **Property-Based Fuzz Harness** | `hadron_forge_fuzz_harness` | Randomized fuzz test runner for IPC codecs, serializers, and boundary condition verification. |
+| **Nucleus Knowledge Graph** | `hadron_forge_nucleus_graph` | Graph connectivity, dead link, orphaned note, and invariant coverage analyzer for `.hadron/nucleus/`. |
+| **Binary Bloat & Symbol Inspector** | `hadron_forge_binary_bloat` | ELF/DWARF symbol size analyzer, section breakdown, and binary bloat regression detector. |
+| **Automated Release Sync** | `hadron_forge_release_sync` | Conventional commit analyzer, SemVer bump calculator, and CHANGELOG generator. |
 
 ---
 
@@ -141,4 +151,75 @@ Protects codebases against accidental vulnerability or secret introduction:
 Monitors background services for unhandled failures:
 - **Log Ring-Buffer Analysis**: Detects panics, stack traces, unhandled promise rejections, and port binding conflicts.
 - **Self-Healing Diagnostics**: Extracts root causes and provides structured remediation instructions (`hadron_forge_service_watchdog`).
+
+## 18. Blast Radius Impact Analyzer
+
+Calculates the ripple effect of modified code across crate dependencies and callers:
+- **Workspace Dependency Graph**: Computes topological crate dependencies and identifies affected downstream packages (`hadron_forge_blast_radius`).
+- **Reverse Caller Traversal**: Traces changed symbols and traits to list callers that require verification.
+- **Targeted Test Selection**: Emits the minimum set of targeted `cargo test -p <crate>` commands to run before full gate submission.
+
+## 19. Automated Git Bisect Regression Finder
+
+Automates binary search bisection to pinpoint the commit that introduced a defect:
+- **Autonomous Predicate Execution**: Tests custom shell commands across git commit histories (`hadron_forge_git_bisect`).
+- **Fault Commit Isolation**: Returns exact offending commit hash, author, and commit message.
+- **Clean State Teardown**: Guarantees clean working tree restoration to the original branch head upon completion.
+
+## 20. Wiretap IPC & Protocol Monitor
+
+Real-time packet inspection and verification for Quark and daemon communications:
+- **NDJSON Stream Recording**: Captures framing events, payloads, and timestamps across ACP and daemon channels (`hadron_forge_wiretap`).
+- **Protocol Filtering**: Search traffic by event kind, sender, or content matching.
+- **Assertion Validation**: Asserts expected payload structure and message sequencing.
+
+## 21. AST Structural Pattern Rewrite Engine
+
+Tree-sitter powered semantic pattern matching and structural code transformation:
+- **Syntax-Aware Rewriting**: Matches AST patterns rather than fragile raw regular expressions (`hadron_forge_ast_rewrite`).
+- **Polyglot Grammar Support**: Structural search and transformation across Rust, TypeScript, JavaScript, Python, and Go.
+- **Safe Multi-File Refactoring**: Preview diffs and execute unified replacements across crate trees.
+
+## 22. Secret Vault & Ephemeral Masking Proxy
+
+Sandboxed credential management preventing token leakage:
+- **Ephemeral Key Isolation**: Injects secrets into isolated subprocess environments without persisting plaintext to disk (`hadron_forge_secret_vault`).
+- **Automated Output Masking**: Intercepts stdout and stderr streams to redact sensitive patterns before field persistence.
+- **Zero-Disk Leaks**: Ephemeral memory-only keys destroyed on process exit.
+
+## 23. Universal Flamegraph Profiler
+
+Non-intrusive CPU and memory allocation profiling:
+- **Universal Sampling**: Gathers execution profiles across native binaries and interpreted scripts (`hadron_forge_flamegraph_profiler`).
+- **Interactive SVG Generation**: Renders responsive SVG flamegraphs with zoomable call stacks.
+- **Folded Stack Aggregations**: Generates top-10 hotspot lists and folded stack summaries for autonomous agent reasoning.
+
+## 24. Property-Based Fuzz Harness
+
+Automated edge-case generator for codecs, serializers, and protocols:
+- **Randomized Mutation**: Generates adversarial payloads, UTF-8 boundary slices, and malformed headers (`hadron_forge_fuzz_harness`).
+- **Crash & Hang Detection**: Traps unexpected panics, infinite loops, and memory blowups with timeout enforcement.
+- **Minimal Failure Reproduction**: Isolates minimal reproducible inputs for rapid debugging.
+
+## 25. Nucleus Knowledge Graph
+
+Visual and structural graph analysis of the shared swarm memory:
+- **Bidirectional Note Graph**: Traces `[[slug]]` links, orphaned notes, and citation clusters (`hadron_forge_nucleus_graph`).
+- **Invariant Coverage Audit**: Maps invariants to implementation files and active notes.
+- **Cycle & Dead Link Detection**: Detects broken pointer references before budget exhaustion.
+
+## 26. Binary Bloat & ELF Symbol Inspector
+
+Deep analysis of executable footprint and dependency contribution:
+- **Section & Symbol Breakdown**: Analyzes `.text`, `.rodata`, and symbol table sizes (`hadron_forge_binary_bloat`).
+- **Crate Size Contribution**: Breaks down static binary size by workspace crate and third-party dependency.
+- **Bloat Regression Detection**: Compares builds to detect accidental footprint expansion.
+
+## 27. Automated Release Sync & SemVer Engine
+
+Semantic versioning sync, changelog generation, and tag auditing:
+- **Conventional Commit Parsing**: Parses commit subjects (`feat:`, `fix:`, `perf:`, `BREAKING CHANGE`) across commit ranges (`hadron_forge_release_sync`).
+- **SemVer Recommendation**: Computes recommended Major/Minor/Patch bump based on conventional specifications.
+- **Changelog Formatting**: Formats Keep-a-Changelog Markdown snippets ready for release audits.
+
 

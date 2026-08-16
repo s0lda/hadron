@@ -5,6 +5,21 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-08-16
+
+### Added
+- **Hadron Forge Net-New MCP Tools Suite (`hadron-forge` & `hadron-forge-mcp`)**:
+  - `hadron_forge_blast_radius`: Static workspace crate dependency graph, reverse caller traversal, and affected test suite impact calculator.
+  - `hadron_forge_git_bisect`: Automated binary regression locator executing custom test predicates across commit spans.
+  - `hadron_forge_wiretap`: Real-time NDJSON and HTTP IPC packet monitor, filter, and frame asserter for Quark-daemon communications.
+  - `hadron_forge_ast_rewrite`: Tree-sitter powered structural pattern search and cross-file code transformations.
+  - `hadron_forge_secret_vault`: Ephemeral sandboxed credential vault with automated stdout/stderr secret masking.
+  - `hadron_forge_flamegraph_profiler`: Universal CPU and memory allocation profiler generating interactive SVGs and folded stack hotspot reports.
+  - `hadron_forge_fuzz_harness`: Property-based randomized fuzz test runner for IPC codecs, serializers, and boundary conditions.
+  - `hadron_forge_nucleus_graph`: Bidirectional knowledge graph analyzer for `.hadron/nucleus/` note connections, orphans, and invariant coverage.
+  - `hadron_forge_binary_bloat`: ELF/DWARF symbol size analyzer, section breakdown, and binary bloat regression detector.
+  - `hadron_forge_release_sync`: Conventional commit analyzer, SemVer bump calculator, and Keep-a-Changelog generator.
+
 ## [0.9.1] - 2026-08-16
 
 ### Added

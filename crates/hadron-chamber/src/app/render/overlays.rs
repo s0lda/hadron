@@ -20,6 +20,24 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.10.0",
+        date: Some("2026-08-16"),
+        added: &[
+            "Blast radius crate dependency & symbol impact analyzer (hadron_forge_blast_radius)",
+            "Automated git bisection regression finder with custom test predicates (hadron_forge_git_bisect)",
+            "Real-time NDJSON/HTTP IPC wiretap monitor and protocol asserter (hadron_forge_wiretap)",
+            "Tree-sitter structural pattern search & multi-file AST rewriting (hadron_forge_ast_rewrite)",
+            "Sandboxed ephemeral secret vault proxy with automated stream masking (hadron_forge_secret_vault)",
+            "Universal CPU & allocation flamegraph profiler with SVG generation (hadron_forge_flamegraph_profiler)",
+            "Property-based fuzz harness for IPC codecs and protocol serializers (hadron_forge_fuzz_harness)",
+            "Bidirectional Nucleus knowledge graph, link, and invariant analyzer (hadron_forge_nucleus_graph)",
+            "ELF/DWARF binary bloat, symbol size, and section inspector (hadron_forge_binary_bloat)",
+            "Conventional commit analyzer, SemVer bump calculator, and changelog sync (hadron_forge_release_sync)",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.9.1",
         date: Some("2026-08-16"),
         added: &[
