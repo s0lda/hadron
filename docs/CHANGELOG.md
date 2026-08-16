@@ -5,6 +5,34 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-08-16
+
+### Added
+- **Interactive 3D Cosmic Swarm Visualizer (`hadron-chamber`)**:
+  - Added `RightRailTab::Visualizer` rendering mathematical 3D perspective projection $(\theta, \phi) \to (x, y, z)$ with yaw/pitch rotation matrices and depth scaling.
+  - Implemented 64-vertex Fibonacci neural surface constellation wireframe, depth-attenuated cyan/indigo lattice lines, and glowing vertex data points.
+  - Added multi-layered glowing singularity core (nebula haze, cosmic corona, inner radiant quantum core, pinpoint center) and deep-space cosmic star dust particle field.
+  - Built inclined celestial equator belt with 16 traveling quantum photon pulses orbiting along the ring.
+  - Added full interactive viewport controls: mouse drag orbit rotation, scroll-wheel zooming (50%–300%), camera reset, and click-to-focus Quark telemetry HUD card.
+  - Accurate active/excited state calculation evaluating live files and in-flight tasks (`TaskState::Working`), displaying `"All Quarks Idle"` when no turns are executing.
+- **Multi-Protocol Telemetry & Cost Reporting (`hadron-chamber` & `hadron-lattice`)**:
+  - Added multi-protocol breakdown in `SessionStats` and `QuarkStats` tracking protocol-level turns across ACP, CLI, HTTP, and SDK transports.
+  - Granular token metrics for input, output, cache-read, cache-write, and total cache hit rate %.
+  - Aggregated event kind counters for file edits, terminal commands, and snapshots in `fold_stats`.
+  - Added interactive warning badge and tooltip to Cost stat tile indicating partial provider spend reporting.
+- **Streamlined Quark Onboarding & Seating Flow (`hadron-chamber`)**:
+  - Added 1-click auto-connect, active model probe, seat creation, and instant persistence for keyless local providers (Ollama, LM Studio).
+  - Added visual category badges (`Local HTTP`, `Resident ACP`, `CLI Subprocess`) to the preset catalog for rapid identification.
+  - Implemented unified `save_and_add_http_quark` helper for direct seating across all HTTP endpoints.
+- **Categorized Tool Invariants & Prompt Exposure (`hadron-gluon` & `hadron-forge`)**:
+  - Expanded prompt tool documentation across all 62 Forge tools categorized by capability family.
+  - Distilled invariants registry and memory notes.
+
+### Fixed
+- **Markdown & Code Block Styling Polish (`hadron-chamber`)**:
+  - Added subtle border framing, padding, and rounded corner radii for markdown tables.
+  - Refined code block border styling and background integration for improved readability in the chat field.
+
 ## [0.8.0] - 2026-08-15
 
 ### Added

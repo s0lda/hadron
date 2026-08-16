@@ -20,6 +20,23 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.9.0",
+        date: Some("2026-08-16"),
+        added: &[
+            "Interactive 3D Cosmic Swarm Visualizer tab in Inspector with 3D perspective projection and orbital camera controls",
+            "Fibonacci neural surface constellation wireframe, glowing singularity core, and quantum photon stream",
+            "Accurate active/excited Quark state calculation against live files and in-flight working tasks",
+            "Multi-Protocol Telemetry breakdown tracking ACP, CLI, HTTP, and SDK turns plus granular token metrics",
+            "Cost stat tile warning badge and tooltip notifying partial provider spend telemetry",
+            "Streamlined 1-click Quark onboarding and seating flow for local keyless servers (Ollama, LM Studio)",
+            "Categorized prompt tool documentation across all 62 Forge tools and distilled invariant registry",
+        ],
+        changed: &[],
+        fixed: &[
+            "Refined markdown table styling with rounded borders and polished code block framing",
+        ],
+    },
+    Release {
         version: "0.8.0",
         date: Some("2026-08-15"),
         added: &[

@@ -32,7 +32,7 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 
 - 💬 **Collaborative Multi-LLM Chat**: Mix models in a single thread — `@claude`, `@ollama`, `@agy`, and `@openai` see each other's output, share context, and execute parallel sub-tasks via Hub-and-Spoke orchestration.
 - 🛡️ **Git Worktrees & Automated Merge Gate**: Agents work in isolated git worktree branches. The Merge Gate automatically rebases onto `main` and runs your test suite before clean code lands.
-- ⚡ **Native GPUI Desktop App**: Lightning-fast GPU-accelerated UI with multi-tab PTY terminals, interactive git commit graph, live plan tracking, and real-time per-agent token telemetry.
+- ⚡ **Native GPUI Desktop App**: Lightning-fast GPU-accelerated UI with multi-tab PTY terminals, interactive git commit graph, live plan tracking, interactive 3D cosmic swarm visualizer, and real-time multi-protocol token telemetry.
 - 🛠️ **Hadron Forge & Developer Power Tools**: AST-level precision code edits across 14+ languages using `blake3` hashes, background process supervisor, 3-tier polyglot code intelligence/LSP, headless browser testing, jailed screenshot capture, interactive PTY sessions, loopback mock servers, and local SQLite engine.
 - 🧠 **Persistent Nucleus Memory & Universal Absorption**: Cross-session shared memory within a configurable budget (16/32/64/128 KiB), plus `/absorb` to seamlessly import memories, invariants, skills, and plans from `.agents/`, `.claude/`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`.
 - 🎯 **Autonomous Swarm Control**: Built-in slash commands (`/goal`, `/loop`, `/absorb`, `/release`, `/git-init`, `/resume`, `/clear`) and 25 bundled workflow & engineering skills (TDD, security review, architecture audit, systematic debugging, design specs).
@@ -97,7 +97,7 @@ Hadron connects an expanding ecosystem of AI agents, local models, cloud APIs, a
 | `Ctrl+Shift+T` / `Ctrl+Shift+W` | New / Close Terminal Tab |
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Next / Previous Terminal Tab (also `Ctrl+Shift+]` / `Ctrl+Shift+[`) |
 | `Alt+Left` / `Alt+Right` | Switch Chat column tabs (`Chat` / `Log` / `Stats`) |
-| `Alt+PageUp` / `Alt+PageDown` | Switch Right-Rail Inspector tabs (`Terminal` / `Files` / `Changes` / `Plan`) |
+| `Alt+PageUp` / `Alt+PageDown` | Switch Right-Rail Inspector tabs (`Terminal` / `Files` / `Changes` / `Plan` / `Visualizer`) |
 | `Alt+Up` / `Alt+Down` | Cycle Telemetry & Stats time windows (`Session` / `Week` / `Month` / `All`) |
 | `Ctrl+J` / `Ctrl+K` | Move selection in Quark Roster |
 | `Ctrl+Alt+Enter` | Toggle selected Quark enabled / disabled |
