@@ -20,6 +20,20 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.9.1",
+        date: Some("2026-08-16"),
+        added: &[
+            "Windows CLI prompt channel bounds guarding against CreateProcessW command line size limit (os error 206)",
+        ],
+        changed: &[
+            "Quark removal purges global catalogue, repo overrides, and credential store; Roster renders only catalogue quarks",
+            "Precomputed 3D visualizer Fibonacci lattice topology and compound vector path batching (>96% paint call reduction)",
+        ],
+        fixed: &[
+            "Gated test-only Point3D rotation helper methods with #[cfg(test)] for zero release build warnings",
+        ],
+    },
+    Release {
         version: "0.9.0",
         date: Some("2026-08-16"),
         added: &[

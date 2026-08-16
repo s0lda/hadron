@@ -5,6 +5,25 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-08-16
+
+### Added
+- **Windows CLI Argv Channel Safety (`hadron-gluon`)**:
+  - Gated `MAX_ARG_STRLEN` (32 KiB) and `SAFE_ARG_BYTES` (24 KiB) for Windows in `hadron-gluon::adapter::cli`, preventing `CreateProcessW` command-line length overflow (`os error 206`) when dispatching long prompt channels.
+
+### Changed
+- **Quark Lifecycle & Global Catalogue Filtering (`hadron-chamber`)**:
+  - Configured Quark removal to purge definitions cleanly from the global catalogue (`~/.hadron/team.json`), repository seating overrides, and OS credential store.
+  - Enforced Roster view projection (`project_with_team`) to render only catalogue-defined Quarks, dropping historical or orphan repo overrides.
+- **3D Swarm Visualizer Topology & Draw Batching (`hadron-chamber`)**:
+  - Precomputed static 64-vertex Fibonacci lattice nodes and static edge connectivity tables (`LATTICE_STATIC_EDGES`), eliminating >2,000 runtime Euclidean distance calculations per frame.
+  - Replaced per-point Euler angle trigonometry with unified 3x3 `Rotation3D` composite rotation matrix.
+  - Batched lattice line segments, parallels, and meridians into compound `PathBuilder` vector strokes, reducing GPUI path allocations and paint calls by >96%.
+
+### Fixed
+- **Release Build Warning Hygiene (`hadron-chamber`)**:
+  - Gated test-only `Point3D` rotation helper methods behind `#[cfg(test)]`, eliminating dead code warnings during release compilation.
+
 ## [0.9.0] - 2026-08-16
 
 ### Added
