@@ -305,7 +305,6 @@ impl super::Chamber {
                     .py_2()
                     .child(tabs),
             )
-            .child(self.breadcrumb_bar(cx))
             .child(self.attention_hud(cx));
 
         // The scrolling viewport: the selected view stacks to its natural height

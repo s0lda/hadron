@@ -104,6 +104,20 @@ pub fn commit_message(repo_root: &Path, commit: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
 }
 
+/// Read a file's content at a specific git ref (`git show <ref>:<path>`).
+pub fn show_file_at_ref(repo_root: &Path, git_ref: &str, file_path: &str) -> Option<String> {
+    let spec = format!("{git_ref}:{file_path}");
+    let out = Command::new("git")
+        .current_dir(repo_root)
+        .args(["show", &spec])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 pub fn parse_diff(raw: &str) -> Vec<FileDiff> {
     let mut files = Vec::new();
     let mut current_file: Option<FileDiff> = None;

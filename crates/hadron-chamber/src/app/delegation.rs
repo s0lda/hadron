@@ -102,6 +102,25 @@ fn extract_delegation_targets(e: &Event, aliases: &HashMap<String, QuarkId>) -> 
 }
 
 /// Parse line-start mentions `@quarkid` in `body`, excluding `sender`.
+fn strip_list_prefix(line: &str) -> &str {
+    let trimmed = line.trim_start();
+    if let Some(rest) = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+        .or_else(|| trimmed.strip_prefix("+ "))
+        .or_else(|| trimmed.strip_prefix("> "))
+    {
+        return rest.trim_start();
+    }
+    // Check numbered list like "1. ", "2. "
+    if let Some(pos) = trimmed.find(". ") {
+        if trimmed[..pos].chars().all(|c| c.is_ascii_digit()) && !trimmed[..pos].is_empty() {
+            return trimmed[pos + 2..].trim_start();
+        }
+    }
+    trimmed
+}
+
 /// Ignores lines inside ``` code fences.
 /// Does NOT match bold `**@quark**` (starts with `*`, not `@`).
 fn parse_line_start_mentions(body: &str, sender: &Actor, aliases: &HashMap<String, QuarkId>) -> Vec<QuarkId> {
@@ -119,14 +138,17 @@ fn parse_line_start_mentions(body: &str, sender: &Actor, aliases: &HashMap<Strin
             continue;
         }
 
+        // Strip leading list/bullet/quote markers like `- `, `* `, `1. `, `> `
+        let content = strip_list_prefix(trimmed);
+
         // Must start with `@` (not `**@`)
-        if let Some(rest) = trimmed.strip_prefix('@') {
+        if let Some(rest) = content.strip_prefix('@') {
             let end = rest
                 .find(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
                 .unwrap_or(rest.len());
             let handle = &rest[..end];
 
-            if !handle.is_empty() && handle != "team" && handle != "orchestrator" {
+            if !handle.is_empty() && handle != "team" {
                 let qid = aliases
                     .iter()
                     .find(|(k, _)| k.eq_ignore_ascii_case(handle))
@@ -285,5 +307,20 @@ mod tests {
         assert_eq!(dels.len(), 1);
         assert_eq!(dels[0].to, QuarkId::new("cli-agy"));
         assert_eq!(dels[0].state, DelegationState::Completed);
+    }
+
+    #[test]
+    fn test_bullet_and_orchestrator_mentions() {
+        let mut aliases = HashMap::new();
+        aliases.insert("orchestrator".into(), QuarkId::new("cli-agy"));
+        aliases.insert("Agy".into(), QuarkId::new("cli-agy"));
+
+        let body = "- @Agy please run tests\n* @acp-claude fix bugs\n> @lattice-bot orchestrate swarm";
+        let e = Event::new(Actor::Human, None, Kind::Message { body: body.into() });
+        let dels = parse_delegations(&[e], &aliases);
+        assert_eq!(dels.len(), 3);
+        assert_eq!(dels[0].to, QuarkId::new("cli-agy"));
+        assert_eq!(dels[1].to, QuarkId::new("acp-claude"));
+        assert_eq!(dels[2].to, QuarkId::new("lattice-bot"));
     }
 }

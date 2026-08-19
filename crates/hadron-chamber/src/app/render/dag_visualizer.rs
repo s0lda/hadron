@@ -80,25 +80,41 @@ impl Chamber {
             return header_bar.into_any_element();
         }
 
-        let mut waves_row = h_flex().gap_2p5().items_start().overflow_x_scrollbar().pb_2().w_full().min_w_0();
+        let mut waves_row = h_flex()
+            .id("dag-waves-row")
+            .gap_2()
+            .items_start()
+            .overflow_x_scroll()
+            .pb_1()
+            .w_full()
+            .min_w_0();
 
         for (wave_idx, wave) in waves.iter().enumerate() {
             let mut col = v_flex()
-                .gap_2()
-                .p_2p5()
+                .gap_1p5()
+                .p_2()
                 .rounded_lg()
                 .bg(theme::bg_surface())
                 .border_1()
                 .border_color(theme::glass_highlight())
-                .flex_1()
-                .min_w(px(160.0));
+                .w(px(210.0))
+                .flex_none()
+                .min_w(px(180.0))
+                .max_w(px(240.0));
 
             col = col.child(
                 h_flex()
                     .justify_between()
                     .items_center()
+                    .pb_1()
+                    .border_b_1()
+                    .border_color(theme::glass_highlight())
                     .child(
                         div()
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded_sm()
+                            .bg(theme::bg_base())
                             .text_xs()
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::accent())
@@ -142,22 +158,26 @@ impl Chamber {
                 };
 
                 let mut card = v_flex()
-                    .p_2()
+                    .p_1p5()
                     .rounded_md()
                     .bg(bg_col)
                     .border_1()
                     .border_color(border_col)
-                    .gap_1();
+                    .gap_0p5()
+                    .w_full()
+                    .min_w_0();
 
                 card = card.child(
                     h_flex()
                         .justify_between()
                         .items_center()
+                        .w_full()
                         .child(
                             div()
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_color(text_col)
+                                .truncate()
                                 .child(format!("{status_icon} {}", task.id)),
                         )
                         .child(
@@ -173,6 +193,7 @@ impl Chamber {
                     div()
                         .text_xs()
                         .text_color(theme::text())
+                        .truncate()
                         .child(task.title.clone()),
                 );
 
@@ -182,6 +203,7 @@ impl Chamber {
                             .text_xs()
                             .font_family(cx.theme().mono_font_family.clone())
                             .text_color(theme::text_muted())
+                            .truncate()
                             .child(format!("after: {}", task.depends_on.join(", "))),
                     );
                 }

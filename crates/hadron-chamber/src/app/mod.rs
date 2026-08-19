@@ -1048,6 +1048,24 @@ impl Chamber {
             })
             .collect();
 
+        let events = io::read_events(&path).unwrap_or_default();
+        let alias_map: std::collections::HashMap<String, hadron_lattice::QuarkId> = view
+            .roster
+            .iter()
+            .flat_map(|r| {
+                let qid = hadron_lattice::QuarkId::new(&r.id);
+                let mut pairs = vec![(r.id.clone(), qid.clone())];
+                if let Some(ref dn) = r.display_name {
+                    pairs.push((dn.clone(), qid.clone()));
+                }
+                if r.id.contains("agy") || r.id.contains("orchestrator") {
+                    pairs.push(("orchestrator".to_string(), qid));
+                }
+                pairs
+            })
+            .collect();
+        let delegations = delegation::parse_delegations(&events, &alias_map);
+
         let mut chamber = Chamber {
             view,
             prefs,
@@ -1099,7 +1117,7 @@ impl Chamber {
             git_show_snapshots: false,
             git_graph_rows: Vec::new(),
             git_graph_max_lanes: 1,
-            delegations: Vec::new(),
+            delegations,
             git_graph_list,
             plan_scroll: ScrollHandle::new(),
             tasks_scroll: ScrollHandle::new(),

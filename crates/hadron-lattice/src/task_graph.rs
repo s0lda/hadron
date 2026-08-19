@@ -55,7 +55,7 @@ impl TaskGraph {
     }
 
     fn parse_task_line(text: &str, auto_idx: usize) -> (String, String, Vec<String>, Option<String>) {
-        let mut title = text.to_string();
+        let mut title = text.trim().to_string();
         let mut depends_on = Vec::new();
         let mut commit_hash = None;
 
@@ -64,7 +64,7 @@ impl TaskGraph {
             if let Some(end_pos) = title[pos..].find(')') {
                 let hash_str = &title[pos + 8..pos + end_pos];
                 commit_hash = Some(hash_str.trim().to_string());
-                title = format!("{}{}", &title[..pos].trim(), &title[pos + end_pos + 1..]);
+                title = format!("{}{}", title[..pos].trim(), &title[pos + end_pos + 1..]);
             }
         }
 
@@ -74,35 +74,52 @@ impl TaskGraph {
                 let inner = &title[pos + 12..pos + end_pos];
                 let cleaned = inner.trim_matches(|c| c == '[' || c == ']' || c == ' ');
                 for dep in cleaned.split(',') {
-                    let d = dep.trim();
+                    let d = dep.trim().trim_matches(|c| c == '*' || c == '`');
                     if !d.is_empty() {
                         depends_on.push(d.to_string());
                     }
                 }
-                title = format!("{}{}", &title[..pos].trim(), &title[pos + end_pos + 1..]);
+                title = format!("{}{}", title[..pos].trim(), &title[pos + end_pos + 1..]);
             }
         } else if let Some(pos) = title.find("(after:") {
             if let Some(end_pos) = title[pos..].find(')') {
                 let inner = &title[pos + 7..pos + end_pos];
                 for dep in inner.split(',') {
-                    let d = dep.trim();
+                    let d = dep.trim().trim_matches(|c| c == '*' || c == '`');
                     if !d.is_empty() {
                         depends_on.push(d.to_string());
                     }
                 }
-                title = format!("{}{}", &title[..pos].trim(), &title[pos + end_pos + 1..]);
+                title = format!("{}{}", title[..pos].trim(), &title[pos + end_pos + 1..]);
             }
         }
 
+        // Strip leading/trailing formatting like **
+        let clean_title = title.trim().trim_matches(|c| c == '*' || c == '_' || c == '`').trim();
+
         // Extract identifier from title prefix if available (e.g. "Task 1.1: ...")
-        let id = if let Some(colon_pos) = title.find(':') {
-            let candidate = title[..colon_pos].trim().to_lowercase().replace(' ', "-");
-            candidate
+        let id = if let Some(colon_pos) = clean_title.find(':') {
+            let candidate = clean_title[..colon_pos]
+                .trim()
+                .trim_matches(|c| c == '*' || c == '_')
+                .to_lowercase()
+                .replace(' ', "-");
+            if candidate.is_empty() {
+                format!("task-{}", auto_idx)
+            } else {
+                candidate
+            }
         } else {
             format!("task-{}", auto_idx)
         };
 
-        (id, title.trim().to_string(), depends_on, commit_hash)
+        let final_title = if let Some(colon_pos) = clean_title.find(':') {
+            clean_title[colon_pos + 1..].trim().to_string()
+        } else {
+            clean_title.to_string()
+        };
+
+        (id, if final_title.is_empty() { clean_title.to_string() } else { final_title }, depends_on, commit_hash)
     }
 
     /// Compute concurrent execution waves via Kahn's topological sort.
@@ -230,5 +247,25 @@ mod tests {
         let ready = graph.ready_tasks();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].id, "task-1");
+    }
+
+    #[test]
+    fn test_task_graph_parsing_bold_formatting() {
+        let md = r#"
+- [ ] **Task 1: Setup database**
+- [ ] **Task 2: Build API** (after: task-1)
+- [x] **Task 3: Build Frontend** (commit 1234567)
+"#;
+        let graph = TaskGraph::parse_from_markdown(md);
+        assert_eq!(graph.tasks.len(), 3);
+        assert_eq!(graph.tasks[0].id, "task-1");
+        assert_eq!(graph.tasks[0].title, "Setup database");
+        assert_eq!(graph.tasks[1].id, "task-2");
+        assert_eq!(graph.tasks[1].title, "Build API");
+        assert_eq!(graph.tasks[1].depends_on, vec!["task-1".to_string()]);
+        assert_eq!(graph.tasks[2].id, "task-3");
+        assert_eq!(graph.tasks[2].title, "Build Frontend");
+        assert!(graph.tasks[2].completed);
+        assert_eq!(graph.tasks[2].commit_hash.as_deref(), Some("1234567"));
     }
 }

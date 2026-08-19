@@ -744,6 +744,7 @@ impl super::Chamber {
                         let pct = (frac * 100.0).round() as usize;
 
                         let mut list = v_flex().gap_3().p_3().w_full().min_w_0();
+                        list = list.child(self.breadcrumb_bar(cx));
 
                         // Sibling plans in the active plan folder / .hadron/docs/plans/
                         let sibling_plans = crate::app::reload::scan_sibling_plans(&repo, &rel_path);
@@ -762,33 +763,12 @@ impl super::Chamber {
                             .justify_between()
                             .items_center()
                             .w_full()
-                            .gap_2()
                             .child(
-                                h_flex()
-                                    .gap_2()
-                                    .items_center()
-                                    .min_w_0()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .text_color(theme::text())
-                                            .child("Implementation Plan"),
-                                    )
-                                    .child(
-                                        div()
-                                            .px_2()
-                                            .py_0p5()
-                                            .rounded_md()
-                                            .bg(theme::bg_base())
-                                            .border_1()
-                                            .border_color(theme::glass_highlight())
-                                            .text_xs()
-                                            .font_family(cx.theme().mono_font_family.clone())
-                                            .text_color(theme::text_muted())
-                                            .truncate()
-                                            .child(rel_path.clone()),
-                                    ),
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::text())
+                                    .child("Implementation Plan"),
                             )
                             .child(
                                 div()
@@ -812,10 +792,34 @@ impl super::Chamber {
                                     .child(format!("{completed}/{total} Complete ({pct}%)")),
                             );
 
-                        header_card = header_card.child(title_row);
+                        let path_row = div()
+                            .w_full()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .bg(theme::bg_base())
+                                    .border_1()
+                                    .border_color(theme::glass_highlight())
+                                    .text_xs()
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .text_color(theme::text_muted())
+                                    .truncate()
+                                    .child(rel_path.clone()),
+                            );
+
+                        header_card = header_card.child(title_row).child(path_row);
 
                         if sibling_plans.len() > 1 {
-                            let mut switcher = h_flex().gap_1p5().items_center().overflow_x_scrollbar().w_full().pb_0p5();
+                            let mut switcher = h_flex()
+                                .id("plan-sibling-switcher")
+                                .gap_1p5()
+                                .items_center()
+                                .overflow_x_scroll()
+                                .w_full()
+                                .py_1();
                             for (label, plan_rel) in sibling_plans {
                                 let is_selected = plan_rel == rel_path;
                                 let target_path = plan_rel.clone();
@@ -829,6 +833,7 @@ impl super::Chamber {
 
                                 let pill = div()
                                     .id(gpui::SharedString::from(pill_id))
+                                    .flex_shrink_0()
                                     .px_2p5()
                                     .py_1()
                                     .rounded_md()

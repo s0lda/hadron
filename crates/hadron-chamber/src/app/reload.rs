@@ -54,7 +54,10 @@ impl super::Chamber {
                 let qid = hadron_lattice::QuarkId::new(&r.id);
                 let mut pairs = vec![(r.id.clone(), qid.clone())];
                 if let Some(ref dn) = r.display_name {
-                    pairs.push((dn.clone(), qid));
+                    pairs.push((dn.clone(), qid.clone()));
+                }
+                if r.id.contains("agy") || r.id.contains("orchestrator") {
+                    pairs.push(("orchestrator".to_string(), qid));
                 }
                 pairs
             })
@@ -65,7 +68,11 @@ impl super::Chamber {
 
     pub(super) fn update_active_plan(&mut self) {
         let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let active_plan_path = resolve_active_plan(&repo, &self.view.messages);
+        let active_plan_path = self
+            .last_plan_path
+            .clone()
+            .filter(|p| repo.join(p).is_file())
+            .or_else(|| resolve_active_plan(&repo, &self.view.messages));
 
         if let Some(rel_path) = active_plan_path {
             let path_str = rel_path.clone();

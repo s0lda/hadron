@@ -497,6 +497,7 @@ impl Chamber {
 
         v_flex()
             .size_full()
+            .child(self.breadcrumb_bar(cx))
             .child(header_card)
             .child(
                 div()
