@@ -30,7 +30,7 @@ pub(super) fn seat_by_mention<'a>(
 
 /// Parse a plan's markdown checklist into `(total, completed, items)`. Any line whose
 /// trimmed form starts with `- [ ]` / `- [x]` (case-insensitive) is a checkbox; the
-/// nearest preceding `## Task` / `### Task` heading is prefixed so the tracker shows
+/// nearest preceding `## ` / `### ` heading is prefixed so the tracker shows
 /// which task a step belongs to. Bold/backtick emphasis is stripped for a compact label.
 pub(super) fn parse_plan_progress(content: &str) -> (usize, usize, Vec<(String, bool)>) {
     let mut total = 0usize;
@@ -39,7 +39,7 @@ pub(super) fn parse_plan_progress(content: &str) -> (usize, usize, Vec<(String, 
     let mut current_task = String::new();
 
     for line in content.lines() {
-        if line.starts_with("## Task") || line.starts_with("### Task") {
+        if line.starts_with("## ") || line.starts_with("### ") {
             current_task = line.trim_start_matches('#').trim().to_string();
             continue;
         }
@@ -77,11 +77,19 @@ pub(super) fn parse_plan_tasks(content: &str) -> Vec<(String, Vec<(String, bool)
     let mut current_steps = Vec::new();
 
     for line in content.lines() {
-        if line.starts_with("## Task") || line.starts_with("### Task") {
-            if !current_steps.is_empty() || !current_task.is_empty() {
-                tasks.push((current_task.clone(), std::mem::take(&mut current_steps)));
+        if line.starts_with("## ") || line.starts_with("### ") {
+            let heading = line.trim_start_matches('#').trim().to_string();
+            if !current_steps.is_empty() {
+                tasks.push((
+                    if current_task.is_empty() {
+                        "General Tasks".to_string()
+                    } else {
+                        current_task.clone()
+                    },
+                    std::mem::take(&mut current_steps),
+                ));
             }
-            current_task = line.trim_start_matches('#').trim().to_string();
+            current_task = heading;
             continue;
         }
         let trimmed = line.trim_start();
@@ -98,11 +106,69 @@ pub(super) fn parse_plan_tasks(content: &str) -> Vec<(String, Vec<(String, bool)
         current_steps.push((body.to_string(), done));
     }
 
-    if !current_steps.is_empty() || !current_task.is_empty() {
-        tasks.push((current_task, current_steps));
+    if !current_steps.is_empty() {
+        tasks.push((
+            if current_task.is_empty() {
+                "General Tasks".to_string()
+            } else {
+                current_task
+            },
+            current_steps,
+        ));
     }
 
     tasks
+}
+
+/// Extract introductory overview or architecture summary text from a plan markdown document.
+/// Collects prose paragraphs under `## Overview`, `## Architecture`, or before the first checklist.
+pub(super) fn parse_plan_overview(content: &str) -> Option<String> {
+    let mut overview_lines = Vec::new();
+    let mut collecting = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("- [ ]") || trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
+            break;
+        }
+        if trimmed.starts_with("## Overview")
+            || trimmed.starts_with("## Architecture")
+            || trimmed.starts_with("## Summary")
+            || trimmed.starts_with("### Overview")
+            || trimmed.starts_with("### Summary")
+        {
+            collecting = true;
+            continue;
+        }
+        if collecting {
+            if trimmed.starts_with("## ") || trimmed.starts_with("### ") || trimmed.starts_with("---") {
+                if !overview_lines.is_empty() {
+                    break;
+                }
+            } else if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                overview_lines.push(trimmed);
+            }
+        }
+    }
+
+    if overview_lines.is_empty() {
+        let mut intro = Vec::new();
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("## ") || trimmed.starts_with("### ") || trimmed.starts_with("- [ ]") || trimmed.starts_with("- [x]") {
+                break;
+            }
+            if !trimmed.starts_with('#') && !trimmed.starts_with("---") && !trimmed.starts_with("- **") && !trimmed.is_empty() {
+                intro.push(trimmed);
+            }
+        }
+        if !intro.is_empty() {
+            return Some(intro.join("\n\n"));
+        }
+        None
+    } else {
+        Some(overview_lines.join("\n\n"))
+    }
 }
 
 /// Preprocess Markdown alert callouts (e.g. `> [!NOTE]`, `> [!TIP]`, `> [!WARNING]`,
@@ -473,6 +539,44 @@ mod tests {
             .find(|(_, steps)| steps.iter().any(|(_, done)| !*done))
             .map(|(name, _)| name.as_str());
         assert_eq!(first_incomplete, Some("Task 2: Second"));
+    }
+
+    #[test]
+    fn test_parse_plan_overview_and_sections() {
+        let content = "\
+# Hadron Master Plan
+
+- **Date**: 2026-08-19
+- **Status**: In Planning
+
+## Overview & Architecture
+
+This is the overview description for the master plan.
+It outlines 20 new capabilities across the swarm.
+
+## Roadmap & Index
+
+Some table notes.
+
+## Phase 1: Nucleus & Quick DX
+- [x] Task 1.1: Context Breadcrumbs
+- [ ] Task 1.2: REPL Overlay
+
+## Phase 2: Observability
+- [ ] Task 2.1: Plan DAG
+";
+        let overview = parse_plan_overview(content);
+        assert!(overview.is_some());
+        let ov = overview.unwrap();
+        assert!(ov.contains("This is the overview description"));
+        assert!(ov.contains("It outlines 20 new capabilities"));
+
+        let tasks = parse_plan_tasks(content);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].0, "Phase 1: Nucleus & Quick DX");
+        assert_eq!(tasks[0].1.len(), 2);
+        assert_eq!(tasks[1].0, "Phase 2: Observability");
+        assert_eq!(tasks[1].1.len(), 1);
     }
 
     fn opus_roster() -> Vec<RosterRow> {

@@ -745,61 +745,163 @@ impl super::Chamber {
 
                         let mut list = v_flex().gap_3().p_3().w_full().min_w_0();
 
-                        // Header card with plan path and progress
-                        let header_card = v_flex()
+                        // Sibling plans in the active plan folder / .hadron/docs/plans/
+                        let sibling_plans = crate::app::reload::scan_sibling_plans(&repo, &rel_path);
+
+                        // Header card with plan path, sibling switcher, and progress
+                        let mut header_card = v_flex()
                             .w_full()
                             .p_3()
                             .rounded_lg()
                             .bg(theme::bg_surface())
                             .border_1()
                             .border_color(theme::glass_highlight())
+                            .gap_2p5();
+
+                        let title_row = h_flex()
+                            .justify_between()
+                            .items_center()
+                            .w_full()
                             .gap_2()
                             .child(
                                 h_flex()
-                                    .justify_between()
+                                    .gap_2()
                                     .items_center()
+                                    .min_w_0()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(theme::text())
+                                            .child("Implementation Plan"),
+                                    )
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_md()
+                                            .bg(theme::bg_base())
+                                            .border_1()
+                                            .border_color(theme::glass_highlight())
+                                            .text_xs()
+                                            .font_family(cx.theme().mono_font_family.clone())
+                                            .text_color(theme::text_muted())
+                                            .truncate()
+                                            .child(rel_path.clone()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .bg(theme::bg_base())
+                                    .border_1()
+                                    .border_color(if completed == total && total > 0 {
+                                        gpui::rgb(0x34d399).into()
+                                    } else {
+                                        theme::glass_highlight()
+                                    })
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(if completed == total && total > 0 {
+                                        gpui::rgb(0x34d399)
+                                    } else {
+                                        theme::accent()
+                                    })
+                                    .child(format!("{completed}/{total} Complete ({pct}%)")),
+                            );
+
+                        header_card = header_card.child(title_row);
+
+                        if sibling_plans.len() > 1 {
+                            let mut switcher = h_flex().gap_1p5().items_center().overflow_x_scrollbar().w_full().pb_0p5();
+                            for (label, plan_rel) in sibling_plans {
+                                let is_selected = plan_rel == rel_path;
+                                let target_path = plan_rel.clone();
+                                let pill_id = format!("plan-pill-{}", plan_rel.replace(['/', '.', '-'], "_"));
+
+                                let (bg_color, border_color, text_color): (gpui::Hsla, gpui::Hsla, gpui::Hsla) = if is_selected {
+                                    (theme::accent().opacity(0.15).into(), theme::accent().into(), theme::accent().into())
+                                } else {
+                                    (theme::bg_base().into(), theme::glass_highlight(), theme::text_muted().into())
+                                };
+
+                                let pill = div()
+                                    .id(gpui::SharedString::from(pill_id))
+                                    .px_2p5()
+                                    .py_1()
+                                    .rounded_md()
+                                    .bg(bg_color)
+                                    .border_1()
+                                    .border_color(border_color)
+                                    .text_xs()
+                                    .font_weight(if is_selected {
+                                        gpui::FontWeight::BOLD
+                                    } else {
+                                        gpui::FontWeight::NORMAL
+                                    })
+                                    .text_color(text_color)
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::bg_elevated()))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.last_plan_path = Some(target_path.clone());
+                                        this.update_active_plan();
+                                        cx.notify();
+                                    }))
+                                    .child(label);
+
+                                switcher = switcher.child(pill);
+                            }
+                            header_card = header_card.child(switcher);
+                        }
+
+                        header_card = header_card.child(progress_meter(frac, gpui::rgb(0x34d399)));
+                        list = list.child(header_card);
+
+                        // Execution Topology & Wave DAG visualizer
+                        list = list.child(self.plan_dag_visualizer(&content, cx));
+
+                        // Optional Plan Overview prose card
+                        if let Some(overview_text) = parse_plan_overview(&content) {
+                            if !overview_text.is_empty() {
+                                let overview_card = v_flex()
+                                    .w_full()
+                                    .p_3()
+                                    .rounded_lg()
+                                    .bg(theme::bg_surface())
+                                    .border_1()
+                                    .border_color(theme::glass_highlight())
+                                    .gap_1p5()
                                     .child(
                                         h_flex()
-                                            .gap_2()
                                             .items_center()
+                                            .gap_2()
                                             .child(
-                                                div()
-                                                    .text_sm()
-                                                    .font_weight(gpui::FontWeight::BOLD)
-                                                    .text_color(theme::text())
-                                                    .child("Active Implementation Plan"),
+                                                Icon::new(IconName::Info)
+                                                    .small()
+                                                    .text_color(theme::accent()),
                                             )
                                             .child(
                                                 div()
-                                                    .px_2()
-                                                    .py_0p5()
-                                                    .rounded_md()
-                                                    .bg(theme::bg_base())
-                                                    .border_1()
-                                                    .border_color(theme::glass_highlight())
                                                     .text_xs()
-                                                    .font_family(cx.theme().mono_font_family.clone())
-                                                    .text_color(theme::text_muted())
-                                                    .child(rel_path),
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_color(theme::text())
+                                                    .child("Plan Overview & Objectives"),
                                             ),
                                     )
                                     .child(
                                         div()
                                             .text_xs()
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .text_color(if completed == total && total > 0 {
-                                                gpui::rgb(0x34d399)
-                                            } else {
-                                                theme::accent()
-                                            })
-                                            .child(format!("{completed}/{total} tasks complete ({pct}%)")),
-                                    ),
-                            )
-                            .child(progress_meter(frac, gpui::rgb(0x34d399)));
+                                            .text_color(theme::text_muted())
+                                            .line_height(gpui::relative(1.4))
+                                            .child(overview_text),
+                                    );
+                                list = list.child(overview_card);
+                            }
+                        }
 
-                        list = list.child(header_card);
-                        list = list.child(self.plan_dag_visualizer(&content, cx));
-
+                        // Task groups checklist
                         let task_groups = parse_plan_tasks(&content);
                         for (task_name, steps) in task_groups {
                             if steps.is_empty() {
@@ -809,7 +911,7 @@ impl super::Chamber {
                             let name_clone = task_name.clone();
 
                             let header_title = if task_name.is_empty() {
-                                "Overview & Objectives".to_string()
+                                "Task Checklist".to_string()
                             } else {
                                 task_name.clone()
                             };
@@ -817,7 +919,7 @@ impl super::Chamber {
                             let id_str = if task_name.is_empty() {
                                 "task-header-general".to_string()
                             } else {
-                                format!("task-header-{}", task_name)
+                                format!("task-header-{}", task_name.replace(['/', '.', '-', ' ', ':', '&'], "_"))
                             };
 
                             let done_count = steps.iter().filter(|(_, done)| *done).count();

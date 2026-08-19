@@ -97,7 +97,6 @@ impl Chamber {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_multi_terminal_grid_chunking() {

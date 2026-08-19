@@ -465,6 +465,79 @@ pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
     candidates.into_iter().next().map(|(_, _, rel)| rel)
 }
 
+/// Discover sibling `.md` plans in the active plan's directory (e.g. `master.md`, `01-phase-1-*.md`),
+/// allowing seamless one-click switching in the Chamber Plan tab.
+pub(crate) fn scan_sibling_plans(repo: &Path, active_plan_rel: &str) -> Vec<(String, String)> {
+    let mut plans = Vec::new();
+    let active_path = repo.join(active_plan_rel);
+    let parent_dir = match active_path.parent() {
+        Some(p) if p.is_dir() => p.to_path_buf(),
+        _ => repo.join(".hadron").join("docs").join("plans"),
+    };
+
+    if let Ok(entries) = std::fs::read_dir(&parent_dir) {
+        let mut files: Vec<std::path::PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("md"))
+            .collect();
+        files.sort();
+
+        for path in files {
+            let file_name = path
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or("")
+                .to_string();
+            if file_name.starts_with('.') {
+                continue;
+            }
+            let rel = if let (Ok(canon_repo), Ok(canon_path)) = (repo.canonicalize(), path.canonicalize()) {
+                if let Ok(r) = canon_path.strip_prefix(&canon_repo) {
+                    r.to_string_lossy().to_string()
+                } else {
+                    continue;
+                }
+            } else if let Ok(r) = path.strip_prefix(repo) {
+                r.to_string_lossy().to_string()
+            } else {
+                continue;
+            };
+
+            let label = if file_name == "master.md" || file_name == "index.md" {
+                "Master Plan".to_string()
+            } else if let Some(stripped) = file_name.strip_suffix(".md") {
+                if let Some(pos) = stripped.find("-phase-") {
+                    let phase_part = &stripped[pos + 1..];
+                    let words: Vec<&str> = phase_part.split('-').collect();
+                    if words.len() >= 2 && words[0] == "phase" {
+                        if let Ok(n) = words[1].parse::<u32>() {
+                            let rest = words[2..].join(" ");
+                            if rest.is_empty() {
+                                format!("Phase {n}")
+                            } else {
+                                format!("Phase {n}: {rest}")
+                            }
+                        } else {
+                            stripped.replace('-', " ")
+                        }
+                    } else {
+                        stripped.replace('-', " ")
+                    }
+                } else {
+                    stripped.replace('-', " ")
+                }
+            } else {
+                file_name.clone()
+            };
+
+            plans.push((label, rel));
+        }
+    }
+
+    plans
+}
+
 fn gluon_running_edge(last: bool, now: bool) -> Option<bool> {
     (last != now).then_some(now)
 }
@@ -569,5 +642,29 @@ mod tests {
         let resolved = resolve_active_plan(root, &messages);
         assert!(resolved.is_some());
         assert!(resolved.unwrap().contains("2026-08-01-old-plan.md"));
+    }
+
+    #[test]
+    fn test_scan_sibling_plans() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let subfolder = root.join(".hadron").join("docs").join("plans").join("2026-08-19-test-plan");
+        std::fs::create_dir_all(&subfolder).unwrap();
+
+        let master = subfolder.join("master.md");
+        std::fs::write(&master, "# Master\n- [ ] Step 1\n").unwrap();
+
+        let p1 = subfolder.join("01-phase-1-setup.md");
+        std::fs::write(&p1, "# Phase 1\n- [ ] Step 1\n").unwrap();
+
+        let p2 = subfolder.join("02-phase-2-build.md");
+        std::fs::write(&p2, "# Phase 2\n- [ ] Step 1\n").unwrap();
+
+        let active_rel = ".hadron/docs/plans/2026-08-19-test-plan/master.md";
+        let siblings = scan_sibling_plans(root, active_rel);
+        assert_eq!(siblings.len(), 3);
+        assert_eq!(siblings[0].0, "Phase 1: setup");
+        assert_eq!(siblings[1].0, "Phase 2: build");
+        assert_eq!(siblings[2].0, "Master Plan");
     }
 }

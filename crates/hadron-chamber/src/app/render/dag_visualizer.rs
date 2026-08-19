@@ -1,20 +1,84 @@
 use super::*;
+use gpui_component::ActiveTheme;
 use hadron_lattice::task_graph::TaskGraph;
 
 impl Chamber {
     /// Renders the Interactive Plan DAG & Wave Visualizer (Capability #11).
-    pub(super) fn plan_dag_visualizer(&self, content: &str, _cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn plan_dag_visualizer(&self, content: &str, cx: &mut Context<Self>) -> impl IntoElement {
         let graph = TaskGraph::parse_from_markdown(content);
         let waves = match graph.compute_waves() {
             Ok(w) => w,
             Err(_) => return div().child("Circular dependency in task graph").into_any_element(),
         };
 
-        if waves.is_empty() {
+        if waves.is_empty() || graph.tasks.is_empty() {
             return div().into_any_element();
         }
 
+        let is_expanded = self.plan_dag_expanded;
         let ready_ids: std::collections::HashSet<String> = graph.ready_tasks().into_iter().map(|t| t.id).collect();
+
+        let header_bar = h_flex()
+            .id("dag-toggle-header")
+            .items_center()
+            .justify_between()
+            .w_full()
+            .p_2p5()
+            .rounded_lg()
+            .bg(theme::bg_surface())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .cursor_pointer()
+            .hover(|s| s.bg(theme::bg_elevated()))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.plan_dag_expanded = !this.plan_dag_expanded;
+                cx.notify();
+            }))
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Icon::new(if is_expanded {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .small()
+                        .text_color(theme::text_muted()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::text())
+                            .child("Execution Topology & Wave DAG"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_color(theme::text_muted())
+                            .child(format!("({} waves · {} nodes)", waves.len(), graph.tasks.len())),
+                    ),
+            )
+            .child(
+                div()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .bg(theme::bg_base())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(theme::accent())
+                    .child(if is_expanded { "Hide Wave Graph" } else { "Show Wave Graph" }),
+            );
+
+        if !is_expanded {
+            return header_bar.into_any_element();
+        }
 
         let mut waves_row = h_flex().gap_2p5().items_start().overflow_x_scrollbar().pb_2().w_full().min_w_0();
 
@@ -27,7 +91,7 @@ impl Chamber {
                 .border_1()
                 .border_color(theme::glass_highlight())
                 .flex_1()
-                .min_w(px(140.0));
+                .min_w(px(160.0));
 
             col = col.child(
                 h_flex()
@@ -43,6 +107,7 @@ impl Chamber {
                     .child(
                         div()
                             .text_xs()
+                            .font_family(cx.theme().mono_font_family.clone())
                             .text_color(theme::text_muted())
                             .child(format!("{} tasks", wave.len())),
                     ),
@@ -98,6 +163,7 @@ impl Chamber {
                         .child(
                             div()
                                 .text_xs()
+                                .font_family(cx.theme().mono_font_family.clone())
                                 .text_color(theme::text_muted())
                                 .child(status_label.to_string()),
                         ),
@@ -114,6 +180,7 @@ impl Chamber {
                     card = card.child(
                         div()
                             .text_xs()
+                            .font_family(cx.theme().mono_font_family.clone())
                             .text_color(theme::text_muted())
                             .child(format!("after: {}", task.depends_on.join(", "))),
                     );
@@ -127,31 +194,18 @@ impl Chamber {
 
         v_flex()
             .gap_2()
-            .p_2()
-            .rounded_lg()
-            .bg(theme::term_bg())
-            .border_1()
-            .border_color(theme::glass_highlight())
             .w_full()
+            .child(header_bar)
             .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(theme::text())
-                            .child("Execution Topology & Wave DAG"),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme::text_muted())
-                            .child(format!("({} waves)", waves.len())),
-                    ),
+                v_flex()
+                    .p_2()
+                    .rounded_lg()
+                    .bg(theme::term_bg())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .w_full()
+                    .child(waves_row),
             )
-            .child(waves_row)
             .into_any_element()
     }
 }

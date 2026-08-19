@@ -61,7 +61,7 @@ pub(crate) mod toasts;
 use toasts::{ToastKind, ToastManager};
 
 mod mentions;
-use mentions::{parse_plan_progress, parse_plan_tasks, resolve_mention_names};
+use mentions::{parse_plan_overview, parse_plan_progress, parse_plan_tasks, resolve_mention_names};
 
 mod identity;
 use identity::{
@@ -302,6 +302,7 @@ struct Chamber {
     /// Timeline scrub instant for the Tasks tab. `None` means live.
     pub(super) task_scrub: Option<chrono::DateTime<chrono::Utc>>,
     pub(super) plan_collapsed_tasks: std::collections::HashSet<String>,
+    pub(super) plan_dag_expanded: bool,
     pub(super) last_plan_path: Option<String>,
     pub(super) last_incomplete_task: Option<String>,
     /// Virtual list state for the Chat tab.
@@ -1105,6 +1106,7 @@ impl Chamber {
             time_travel_scroll: ScrollHandle::new(),
             task_scrub: None,
             plan_collapsed_tasks: std::collections::HashSet::new(),
+            plan_dag_expanded: false,
             last_plan_path: None,
             last_incomplete_task: None,
             chat_list_state,
