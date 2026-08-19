@@ -50,8 +50,10 @@ pub mod prompt_distiller;
 pub mod mesh;
 pub mod pty_pairing;
 pub mod breakpoints;
+pub mod ast_slice;
 
 pub use ast_merge::*;
+pub use ast_slice::*;
 pub use conflict_resolve::*;
 pub use tia::*;
 pub use screenshot::*;
