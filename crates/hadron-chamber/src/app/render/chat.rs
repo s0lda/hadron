@@ -617,6 +617,7 @@ impl super::Chamber {
                                         &this.view.roster,
                                         local_offset,
                                         &cx.theme().mono_font_family,
+                                        view.clone(),
                                     ))
                                     .into_any_element();
                             }
@@ -806,6 +807,7 @@ impl super::Chamber {
         roster: &[crate::model::RosterRow],
         tz: Tz,
         mono_font: &gpui::SharedString,
+        chamber_entity: Entity<Self>,
     ) -> impl IntoElement
     where
         Tz::Offset: std::fmt::Display,
@@ -858,6 +860,8 @@ impl super::Chamber {
             }
         });
 
+        let msg_text = m.body.clone();
+        let entity = chamber_entity.clone();
         h_flex()
             .items_start()
             .gap_2p5()
@@ -866,6 +870,48 @@ impl super::Chamber {
                 v_flex()
                     .min_w_0()
                     .gap_1()
+                    .context_menu(move |menu, _, _| {
+                        let text = msg_text.clone();
+                        let ent = entity.clone();
+                        menu.item(PopupMenuItem::new("Promote to Nucleus Lesson").on_click(
+                            move |_, window, cx| {
+                                let first_line = text.lines().next().unwrap_or("lesson").trim();
+                                let slug = first_line
+                                    .chars()
+                                    .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '-')
+                                    .collect::<String>()
+                                    .split_whitespace()
+                                    .take(4)
+                                    .collect::<Vec<_>>()
+                                    .join("-")
+                                    .to_ascii_lowercase();
+                                let desc = if first_line.len() > 80 {
+                                    format!("{}…", &first_line[..80])
+                                } else {
+                                    first_line.to_string()
+                                };
+                                ent.update(cx, |this, cx| {
+                                    this.handle_context_menu_action(
+                                        ContextMenuAction::PromoteToNucleus {
+                                            slug: if slug.is_empty() {
+                                                format!("lesson-{}", chrono::Utc::now().timestamp())
+                                            } else {
+                                                slug
+                                            },
+                                            fact: text.clone(),
+                                            description: if desc.is_empty() {
+                                                "Lesson learned".to_string()
+                                            } else {
+                                                desc
+                                            },
+                                        },
+                                        cx,
+                                    );
+                                });
+                                window.refresh();
+                            },
+                        ))
+                    })
                     .child(
                         h_flex()
                             .items_center()

@@ -562,6 +562,12 @@ pub enum ContextMenuAction {
     /// Offered only for `Transport::Acp` quarks — a one-shot CLI quark holds nothing
     /// resident to kill.
     RestartQuark(String),
+    /// Promote message or turn to a nucleus lesson note (Capability #20).
+    PromoteToNucleus {
+        slug: String,
+        fact: String,
+        description: String,
+    },
 }
 
 impl Chamber {

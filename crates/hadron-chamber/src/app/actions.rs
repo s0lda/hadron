@@ -1709,6 +1709,32 @@ impl Chamber {
             ContextMenuAction::CopyPath(path) => {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(path));
             }
+            ContextMenuAction::PromoteToNucleus { slug, fact, description } => {
+                let repo = crate::vcs::repo_root_of(&self.path);
+                let req = hadron_lattice::promoter::PromotionRequest {
+                    slug,
+                    description,
+                    fact,
+                    note_type: Some("project".to_string()),
+                };
+                match hadron_lattice::promoter::promote_to_note(repo, &req) {
+                    Ok(path) => {
+                        self.toast_manager.push(
+                            ToastKind::Success,
+                            format!("Promoted lesson note to {}", path.display()),
+                            Some(4),
+                        );
+                    }
+                    Err(e) => {
+                        self.toast_manager.push(
+                            ToastKind::Error,
+                            format!("Failed to promote note: {e}"),
+                            Some(6),
+                        );
+                    }
+                }
+                cx.notify();
+            }
             ContextMenuAction::OpenInEditor(path) => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
                 self.open_in_editor(&repo_root.join(path), None);
