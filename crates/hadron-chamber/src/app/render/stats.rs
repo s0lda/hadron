@@ -747,6 +747,9 @@ impl super::Chamber {
                 )),
         );
 
+        // Token Spend & Latency Flamechart (Capability #18)
+        col = col.child(self.token_flamechart(stats, cx));
+
         // Protocol Breakdown & Activity Telemetry Card
         let mut proto_pills = h_flex().gap_2().items_center().flex_wrap();
         for (proto, turns) in &stats.protocol_turns {
