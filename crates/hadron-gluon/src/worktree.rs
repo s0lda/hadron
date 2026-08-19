@@ -29,6 +29,8 @@ use crate::snapshot::{git, git_ok};
 
 pub mod pool;
 pub use pool::*;
+pub mod cow;
+pub use cow::*;
 
 /// Where a quark works. Stable per quark; the branch inside it changes per assignment.
 #[derive(Debug, Clone, PartialEq, Eq)]
