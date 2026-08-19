@@ -102,6 +102,7 @@ mod reload;
 pub mod update;
 pub use update::UpdateState;
 pub mod replay;
+pub mod audio;
 
 actions!(
     chamber,
@@ -544,6 +545,7 @@ struct Chamber {
     /// Whether `.hadron/nucleus/index.md` exceeds the 32 KiB prompt limit
     pub(super) nucleus_over_budget: bool,
     pub(super) gluon_stopped_notice: bool,
+    pub(super) audio_manager: audio::AudioTelemetryManager,
 }
 
 #[derive(Clone, Debug)]
@@ -1221,6 +1223,7 @@ impl Chamber {
             ),
             gluon_stopped_notice: false,
             update_state: UpdateState::default(),
+            audio_manager: audio::AudioTelemetryManager::default(),
         };
         chamber.update_active_plan();
         chamber.check_for_updates(cx);
