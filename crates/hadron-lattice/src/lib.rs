@@ -33,6 +33,7 @@ pub mod time_travel;
 pub mod sync;
 pub mod task_graph;
 pub mod promoter;
+pub mod gossip;
 
 pub use nucleus::*;
 pub use nucleus_lint::*;
@@ -42,3 +43,4 @@ pub use time_travel::*;
 pub use sync::*;
 pub use task_graph::*;
 pub use promoter::*;
+pub use gossip::*;
