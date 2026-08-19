@@ -16,9 +16,7 @@ pub mod attention;
 #[cfg(test)]
 mod tests;
 
-pub use breadcrumb::{BreadcrumbItem, BreadcrumbKind, BreadcrumbSummary};
 pub use repl::{evaluate_repl_input, ReplResult};
-pub use attention::{compute_file_attention, AttentionLevel, FileAttention};
 pub use stats::{downsample_context_points, downsample_spend_points, downsample_turn_spend};
 pub use tasks::{SwarmTask, TaskState};
 

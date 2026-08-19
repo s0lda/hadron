@@ -57,10 +57,12 @@ impl BreadcrumbSummary {
         self.items.is_empty()
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.items.len()
     }
 
+    #[allow(dead_code)]
     pub fn format_hud(&self) -> String {
         if self.items.is_empty() {
             return String::new();
@@ -78,10 +80,11 @@ impl BreadcrumbSummary {
             .join(" › ")
     }
 
-    /// Extract breadcrumb items from nucleus features, invariants, and active plan
+    /// Extract breadcrumb items from nucleus features, invariants, lessons, and active plan
     pub fn from_nucleus(
         features_table: Option<&str>,
         invariants_text: Option<&str>,
+        lessons_index: Option<&str>,
         active_plan: Option<&str>,
     ) -> Self {
         let mut summary = Self::new();
@@ -122,6 +125,20 @@ impl BreadcrumbSummary {
             }
         }
 
+        if let Some(index_md) = lessons_index {
+            for line in index_md.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("- [") {
+                    if let Some(slug) = trimmed.split(']').next().and_then(|s| s.strip_prefix("- [")) {
+                        summary.add_item(BreadcrumbKind::Lesson, slug, None);
+                        if summary.items.iter().filter(|i| i.kind == BreadcrumbKind::Lesson).count() >= 1 {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         summary
     }
 }
@@ -136,11 +153,12 @@ mod tests {
         summary.add_item(BreadcrumbKind::Plan, "01-phase-1-nucleus-quick-dx.md", None);
         summary.add_item(BreadcrumbKind::Feature, "Chamber GUI", Some("Active".to_string()));
         summary.add_item(BreadcrumbKind::Invariant, "Vulkan / Lavapipe Software Fallback", None);
+        summary.add_item(BreadcrumbKind::Lesson, "compiled-is-not-running", None);
 
-        assert_eq!(summary.len(), 3);
+        assert_eq!(summary.len(), 4);
         assert_eq!(
             summary.format_hud(),
-            "Plan: 01-phase-1-nucleus-quick-dx.md › Feature: Chamber GUI (Active) › Invariant: Vulkan / Lavapipe Software Fallback"
+            "Plan: 01-phase-1-nucleus-quick-dx.md › Feature: Chamber GUI (Active) › Invariant: Vulkan / Lavapipe Software Fallback › Lesson: compiled-is-not-running"
         );
     }
 
@@ -164,9 +182,15 @@ mod tests {
 - Some protocol rule
 "#;
 
+        let index = r#"
+# Memory index
+- [compiled-is-not-running](notes/compiled-is-not-running.md) — A patch that compiles is not a feature that runs
+"#;
+
         let summary = BreadcrumbSummary::from_nucleus(
             Some(features),
             Some(invariants),
+            Some(index),
             Some(".hadron/docs/plans/2026-08-19-twenty-capabilities/master.md"),
         );
 
@@ -182,5 +206,9 @@ mod tests {
         assert_eq!(invariant_items.len(), 2);
         assert_eq!(invariant_items[0].label, "GUI & Rendering Constraints");
         assert_eq!(invariant_items[1].label, "IPC & Swarm Protocol");
+
+        let lesson_items: Vec<_> = summary.items.iter().filter(|i| i.kind == BreadcrumbKind::Lesson).collect();
+        assert_eq!(lesson_items.len(), 1);
+        assert_eq!(lesson_items[0].label, "compiled-is-not-running");
     }
 }

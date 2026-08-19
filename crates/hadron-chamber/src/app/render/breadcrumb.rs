@@ -14,9 +14,13 @@ impl Chamber {
         let inv_file = nucleus_dir.join("invariants").join("always.md");
         let inv_content = std::fs::read_to_string(&inv_file).ok();
 
+        let index_file = nucleus_dir.join("index.md");
+        let index_content = std::fs::read_to_string(&index_file).ok();
+
         let summary = BreadcrumbSummary::from_nucleus(
             feat_content.as_deref(),
             inv_content.as_deref(),
+            index_content.as_deref(),
             self.last_plan_path.as_deref(),
         );
 
@@ -37,12 +41,13 @@ impl Chamber {
             .text_xs()
             .overflow_x_scroll()
             .children(summary.items.into_iter().map(|item| {
-                let (kind_color, icon): (gpui::Hsla, &'static str) = match item.kind {
-                    BreadcrumbKind::Plan => (theme::accent().into(), "📋"),
-                    BreadcrumbKind::Feature => (theme::halo_active(), "⚡"),
-                    BreadcrumbKind::Invariant => (theme::halo_reasoning(), "🛡️"),
-                    BreadcrumbKind::Lesson => (theme::text_secondary().into(), "💡"),
+                let kind_color: gpui::Hsla = match item.kind {
+                    BreadcrumbKind::Plan => theme::accent().into(),
+                    BreadcrumbKind::Feature => theme::halo_active(),
+                    BreadcrumbKind::Invariant => theme::halo_reasoning(),
+                    BreadcrumbKind::Lesson => theme::text_secondary().into(),
                 };
+                let icon = item.kind.icon_char();
 
                 h_flex()
                     .gap_1p5()

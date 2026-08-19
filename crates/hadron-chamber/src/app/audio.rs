@@ -8,6 +8,7 @@
 
 /// Distinct audio cues corresponding to swarm milestones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum AudioCue {
     GateApproval,
     MergeCollision,
@@ -16,6 +17,7 @@ pub enum AudioCue {
 }
 
 impl AudioCue {
+    #[allow(dead_code)]
     pub fn frequency_hz(self) -> u32 {
         match self {
             AudioCue::GateApproval => 880,   // A5 high chime
@@ -25,6 +27,7 @@ impl AudioCue {
         }
     }
 
+    #[allow(dead_code)]
     pub fn duration_ms(self) -> u32 {
         match self {
             AudioCue::GateApproval => 120,
@@ -37,6 +40,7 @@ impl AudioCue {
 
 /// Haptic feedback vibration patterns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum HapticPattern {
     LightTap,
     DoublePulse,
@@ -63,11 +67,13 @@ impl Default for AudioConfig {
 
 /// Dispatcher for audio and haptic telemetry cues.
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct AudioTelemetryManager {
     pub config: AudioConfig,
     pub played_cues: Vec<AudioCue>,
 }
 
+#[allow(dead_code)]
 impl AudioTelemetryManager {
     pub fn new(config: AudioConfig) -> Self {
         Self {

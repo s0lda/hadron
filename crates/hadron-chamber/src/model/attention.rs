@@ -15,6 +15,7 @@ pub enum AttentionLevel {
 }
 
 impl AttentionLevel {
+    #[allow(dead_code)]
     pub fn badge_label(&self) -> &'static str {
         match self {
             Self::Cold => "idle",
