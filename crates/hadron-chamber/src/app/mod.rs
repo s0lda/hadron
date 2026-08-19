@@ -500,6 +500,7 @@ struct Chamber {
     file_tree_expanded: std::collections::HashSet<String>,
     pub(super) terminals: Vec<TerminalTab>,
     pub(super) active_terminal_index: usize,
+    pub(super) terminal_grid_mode: bool,
     /// Keyboard focus for the terminal grid — keystrokes flow to the PTY only
     /// while this holds focus.
     terminal_focus: FocusHandle,
@@ -1198,6 +1199,7 @@ impl Chamber {
             file_tree_expanded: std::collections::HashSet::new(),
             terminals: Vec::new(),
             active_terminal_index: 0,
+            terminal_grid_mode: false,
             terminal_focus: cx.focus_handle(),
             terminal_px: std::rc::Rc::new(std::cell::Cell::new(None)),
             terminal_warmup: 0,

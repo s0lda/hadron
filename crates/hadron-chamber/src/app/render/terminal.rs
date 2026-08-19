@@ -157,135 +157,164 @@ impl super::Chamber {
                                 this.add_terminal(cx);
                             }))
                             .child("+"),
+                    )
+                    .child(
+                        div()
+                            .id("toggle-terminal-grid")
+                            .flex_shrink_0()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .text_xs()
+                            .bg(if self.terminal_grid_mode { theme::accent().opacity(0.2) } else { theme::bg_surface() })
+                            .text_color(if self.terminal_grid_mode { theme::accent() } else { theme::text_muted() })
+                            .hover(|s| s.text_color(theme::text()))
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                this.terminal_grid_mode = !this.terminal_grid_mode;
+                                cx.notify();
+                            }))
+                            .child(if self.terminal_grid_mode { "⊞ Grid" } else { "⊡ Single" }),
                     );
 
-                let active_term = self.active_terminal();
-                let active_err = self.active_terminal_error();
-
-                let grid: gpui::AnyElement = if let Some(term) = active_term {
-                    let snap = term.snapshot();
-                    let mut lines = v_flex()
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .text_size(px(TERM_FONT))
-                        .line_height(px(TERM_CELL_H))
-                        .size_full()
-                        .p_3();
-                    for line in &snap.lines {
-                        let mut row = h_flex()
-                            .h(px(TERM_CELL_H))
-                            .whitespace_nowrap()
-                            .min_w_0();
-                        let mut line_empty = true;
-                        for run in &line.runs {
-                            if !run.text.is_empty() {
-                                line_empty = false;
-                                let mut run_div = div()
-                                    .text_color(gpui::rgb(pack_rgb(run.fg)))
-                                    .bg(gpui::rgb(pack_rgb(run.bg)));
-                                if run.has_cursor {
-                                    run_div = run_div
-                                        .border_l(px(2.0))
-                                        .border_color(gpui::rgb(pack_rgb(run.fg)));
-                                }
-                                row = row.child(run_div.child(run.text.clone()));
-                            }
-                        }
-                        if line_empty {
-                            row = row.child(div().child(" "));
-                        }
-                        lines = lines.child(row);
-                    }
-                    lines.into_any_element()
-                } else {
-                    let msg = active_err.unwrap_or("starting shell…");
-                    div()
+                if self.terminal_grid_mode {
+                    v_flex()
                         .flex_1()
+                        .min_h_0()
                         .p_3()
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .text_size(px(TERM_FONT))
-                        .text_color(theme::text_muted())
-                        .child(msg.to_string())
+                        .gap_2()
+                        .child(sub_tab_bar)
+                        .child(self.multi_pty_grid(cx))
                         .into_any_element()
-                };
+                } else {
+                    let active_term = self.active_terminal();
+                    let active_err = self.active_terminal_error();
 
-                let px_cell = self.terminal_px.clone();
-                let size_probe = gpui::canvas(
-                    move |bounds, _, _| {
-                        px_cell.set(Some((
-                            f32::from(bounds.origin.x),
-                            f32::from(bounds.origin.y),
-                            f32::from(bounds.size.width),
-                            f32::from(bounds.size.height),
-                        )));
-                    },
-                    |_, _: (), _, _| {},
-                )
-                .absolute()
-                .size_full();
-
-                let screen = div()
-                    .id("terminal-screen")
-                    .track_focus(&self.terminal_focus)
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .relative()
-                    .rounded_lg()
-                    .overflow_hidden()
-                    .border_1()
-                    .border_color(theme::glass_highlight())
-                    .bg(theme::term_bg())
-                    .on_action(cx.listener(|this, _: &Dismiss, _window, cx| {
-                        this.on_terminal_escape(cx);
-                    }))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, ev: &gpui::MouseDownEvent, window, cx| {
-                            window.focus(&this.terminal_focus, cx);
-                            if let (Some(term), Some((row, col, right))) =
-                                (this.active_terminal(), this.terminal_cell_at(ev.position))
-                            {
-                                term.selection_start(row, col, right, ev.click_count);
-                                cx.notify();
-                            }
-                        }),
-                    )
-                    .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _window, cx| {
-                        if ev.pressed_button == Some(MouseButton::Left) {
-                            if let (Some(term), Some((row, col, right))) =
-                                (this.active_terminal(), this.terminal_cell_at(ev.position))
-                            {
-                                term.selection_update(row, col, right);
-                                cx.notify();
-                            }
-                        }
-                    }))
-                    .on_scroll_wheel(cx.listener(|this, ev: &gpui::ScrollWheelEvent, _window, cx| {
-                        if let Some(term) = this.active_terminal() {
-                            let lines = match ev.delta {
-                                gpui::ScrollDelta::Lines(delta) => (delta.y * 3.0) as i32,
-                                gpui::ScrollDelta::Pixels(delta) => {
-                                    (f32::from(delta.y) / TERM_CELL_H * 3.0) as i32
+                    let grid: gpui::AnyElement = if let Some(term) = active_term {
+                        let snap = term.snapshot();
+                        let mut lines = v_flex()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_size(px(TERM_FONT))
+                            .line_height(px(TERM_CELL_H))
+                            .size_full()
+                            .p_3();
+                        for line in &snap.lines {
+                            let mut row = h_flex()
+                                .h(px(TERM_CELL_H))
+                                .whitespace_nowrap()
+                                .min_w_0();
+                            let mut line_empty = true;
+                            for run in &line.runs {
+                                if !run.text.is_empty() {
+                                    line_empty = false;
+                                    let mut run_div = div()
+                                        .text_color(gpui::rgb(pack_rgb(run.fg)))
+                                        .bg(gpui::rgb(pack_rgb(run.bg)));
+                                    if run.has_cursor {
+                                        run_div = run_div
+                                            .border_l(px(2.0))
+                                            .border_color(gpui::rgb(pack_rgb(run.fg)));
+                                    }
+                                    row = row.child(run_div.child(run.text.clone()));
                                 }
-                            };
-                            if lines != 0 {
-                                term.scroll(lines);
-                                cx.notify();
                             }
+                            if line_empty {
+                                row = row.child(div().child(" "));
+                            }
+                            lines = lines.child(row);
                         }
-                    }))
-                    .on_key_down(cx.listener(Self::on_terminal_key))
-                    .child(size_probe)
-                    .child(grid);
+                        lines.into_any_element()
+                    } else {
+                        let msg = active_err.unwrap_or("starting shell…");
+                        div()
+                            .flex_1()
+                            .p_3()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_size(px(TERM_FONT))
+                            .text_color(theme::text_muted())
+                            .child(msg.to_string())
+                            .into_any_element()
+                    };
 
-                v_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .p_3()
-                    .gap_2()
-                    .child(sub_tab_bar)
-                    .child(screen)
-                    .into_any_element()
+                    let px_cell = self.terminal_px.clone();
+                    let size_probe = gpui::canvas(
+                        move |bounds, _, _| {
+                            px_cell.set(Some((
+                                f32::from(bounds.origin.x),
+                                f32::from(bounds.origin.y),
+                                f32::from(bounds.size.width),
+                                f32::from(bounds.size.height),
+                            )));
+                        },
+                        |_, _: (), _, _| {},
+                    )
+                    .absolute()
+                    .size_full();
+
+                    let screen = div()
+                        .id("terminal-screen")
+                        .track_focus(&self.terminal_focus)
+                        .flex_1()
+                        .min_h_0()
+                        .min_w_0()
+                        .relative()
+                        .rounded_lg()
+                        .overflow_hidden()
+                        .border_1()
+                        .border_color(theme::glass_highlight())
+                        .bg(theme::term_bg())
+                        .on_action(cx.listener(|this, _: &Dismiss, _window, cx| {
+                            this.on_terminal_escape(cx);
+                        }))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, ev: &gpui::MouseDownEvent, window, cx| {
+                                window.focus(&this.terminal_focus, cx);
+                                if let (Some(term), Some((row, col, right))) =
+                                    (this.active_terminal(), this.terminal_cell_at(ev.position))
+                                {
+                                    term.selection_start(row, col, right, ev.click_count);
+                                    cx.notify();
+                                }
+                            }),
+                        )
+                        .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _window, cx| {
+                            if ev.pressed_button == Some(MouseButton::Left) {
+                                if let (Some(term), Some((row, col, right))) =
+                                    (this.active_terminal(), this.terminal_cell_at(ev.position))
+                                {
+                                    term.selection_update(row, col, right);
+                                    cx.notify();
+                                }
+                            }
+                        }))
+                        .on_scroll_wheel(cx.listener(|this, ev: &gpui::ScrollWheelEvent, _window, cx| {
+                            if let Some(term) = this.active_terminal() {
+                                let lines = match ev.delta {
+                                    gpui::ScrollDelta::Lines(delta) => (delta.y * 3.0) as i32,
+                                    gpui::ScrollDelta::Pixels(delta) => {
+                                        (f32::from(delta.y) / TERM_CELL_H * 3.0) as i32
+                                    }
+                                };
+                                if lines != 0 {
+                                    term.scroll(lines);
+                                    cx.notify();
+                                }
+                            }
+                        }))
+                        .on_key_down(cx.listener(Self::on_terminal_key))
+                        .child(size_probe)
+                        .child(grid);
+
+                    v_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .p_3()
+                        .gap_2()
+                        .child(sub_tab_bar)
+                        .child(screen)
+                        .into_any_element()
+                }
             }
             RightRailTab::FileTree => {
                 let mut list = v_flex().size_full();

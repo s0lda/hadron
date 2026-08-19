@@ -19,6 +19,7 @@ mod breadcrumb;
 mod repl_overlay;
 mod dag_visualizer;
 mod attention_hud;
+mod pty_grid;
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
