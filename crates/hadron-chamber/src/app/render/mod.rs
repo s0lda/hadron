@@ -15,6 +15,7 @@ mod git;
 mod stats;
 mod overlays;
 mod visualizer;
+mod breadcrumb;
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

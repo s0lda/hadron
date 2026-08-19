@@ -295,12 +295,17 @@ impl super::Chamber {
                     }))
             }));
 
-        let header = h_flex()
+        let header = v_flex()
             .flex_none()
-            .items_center()
-            .px_3()
-            .py_2()
-            .child(tabs);
+            .child(
+                h_flex()
+                    .flex_none()
+                    .items_center()
+                    .px_3()
+                    .py_2()
+                    .child(tabs),
+            )
+            .child(self.breadcrumb_bar(cx));
 
         // The scrolling viewport: the selected view stacks to its natural height
         // and scrolls *within* the card, instead of growing the card and pushing
