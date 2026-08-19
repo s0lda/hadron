@@ -17,6 +17,7 @@ mod overlays;
 mod visualizer;
 mod breadcrumb;
 mod repl_overlay;
+mod dag_visualizer;
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

@@ -727,6 +727,7 @@ impl super::Chamber {
                                 .child(format!("{completed}/{total} steps complete ({pct}%)")),
                         );
                         list = list.child(progress_meter(frac, gpui::rgb(0x34d399)));
+                        list = list.child(self.plan_dag_visualizer(&content, cx));
 
                         let task_groups = parse_plan_tasks(&content);
                         for (task_name, steps) in task_groups {
