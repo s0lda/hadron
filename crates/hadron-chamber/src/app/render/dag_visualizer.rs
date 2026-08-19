@@ -16,18 +16,18 @@ impl Chamber {
 
         let ready_ids: std::collections::HashSet<String> = graph.ready_tasks().into_iter().map(|t| t.id).collect();
 
-        let mut waves_row = h_flex().gap_3().items_start().overflow_x_scrollbar().pb_2().w_full();
+        let mut waves_row = h_flex().gap_2p5().items_start().overflow_x_scrollbar().pb_2().w_full().min_w_0();
 
         for (wave_idx, wave) in waves.iter().enumerate() {
             let mut col = v_flex()
                 .gap_2()
-                .p_2()
+                .p_2p5()
                 .rounded_lg()
                 .bg(theme::bg_surface())
                 .border_1()
                 .border_color(theme::glass_highlight())
-                .min_w(px(190.0))
-                .max_w(px(240.0));
+                .flex_1()
+                .min_w(px(140.0));
 
             col = col.child(
                 h_flex()

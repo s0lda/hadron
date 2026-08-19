@@ -1073,14 +1073,17 @@ pub(super) fn task_row(
         format!("@{}", to.name)
     };
 
+    let (_state_color, _state_label) = task_state_info(t.state);
+
     v_flex()
         .w_full()
-        .p_2()
-        .rounded_md()
+        .p_2p5()
+        .rounded_lg()
         .bg(theme::glass_card())
         .border_1()
         .border_color(theme::glass_highlight())
-        .gap_1()
+        .gap_1p5()
+        .hover(|s| s.bg(theme::bg_elevated()))
         .child(
             h_flex()
                 .w_full()
@@ -1088,11 +1091,15 @@ pub(super) fn task_row(
                 .items_center()
                 .child(
                     h_flex()
-                        .gap_1()
+                        .gap_1p5()
                         .items_center()
                         .text_xs()
                         .child(
                             div()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(theme::bg_base())
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_color(from.color)
                                 .child(from_str),
@@ -1100,6 +1107,10 @@ pub(super) fn task_row(
                         .child(div().text_color(theme::text_muted()).child("➜"))
                         .child(
                             div()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(theme::bg_base())
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_color(to.color)
                                 .child(to_str),
@@ -1111,6 +1122,10 @@ pub(super) fn task_row(
                         .items_center()
                         .child(
                             div()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(theme::bg_base())
                                 .text_xs()
                                 .font_family(mono_font.clone())
                                 .text_color(theme::text_muted())
@@ -1118,9 +1133,13 @@ pub(super) fn task_row(
                         )
                         .child(
                             div()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(theme::bg_base())
                                 .text_xs()
                                 .font_family(mono_font.clone())
-                                .text_color(theme::text_muted())
+                                .text_color(theme::text_secondary())
                                 .child(elapsed),
                         )
                         .child(task_state_tag(t.state)),
@@ -1129,7 +1148,8 @@ pub(super) fn task_row(
         .child(
             div()
                 .text_xs()
-                .text_color(theme::text_secondary())
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(theme::text())
                 .truncate()
                 .child(t.title.clone()),
         )

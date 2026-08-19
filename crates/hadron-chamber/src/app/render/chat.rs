@@ -306,8 +306,7 @@ impl super::Chamber {
                     .child(tabs),
             )
             .child(self.breadcrumb_bar(cx))
-            .child(self.attention_hud(cx))
-            .child(self.time_travel_scrubber(cx));
+            .child(self.attention_hud(cx));
 
         // The scrolling viewport: the selected view stacks to its natural height
         // and scrolls *within* the card, instead of growing the card and pushing

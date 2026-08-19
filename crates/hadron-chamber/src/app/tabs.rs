@@ -144,18 +144,21 @@ pub(super) enum RightRailTab {
     /// beside `Plan` rather than replacing it: `Plan` is the human-authored `.md`,
     /// this is who's working on what right now.
     Tasks,
+    /// Vertical session time-travel scrubber and event inspector.
+    TimeTravel,
     /// Interactive 3D Sphere Topology visualizer showing live active and excited quarks.
     Visualizer,
 }
 
 impl RightRailTab {
-    pub(super) const ALL: [RightRailTab; 7] = [
+    pub(super) const ALL: [RightRailTab; 8] = [
         RightRailTab::Terminal,
         RightRailTab::FileTree,
         RightRailTab::Git,
         RightRailTab::Changes,
         RightRailTab::Plan,
         RightRailTab::Tasks,
+        RightRailTab::TimeTravel,
         RightRailTab::Visualizer,
     ];
 
@@ -167,7 +170,8 @@ impl RightRailTab {
             RightRailTab::Changes => 3,
             RightRailTab::Plan => 4,
             RightRailTab::Tasks => 5,
-            RightRailTab::Visualizer => 6,
+            RightRailTab::TimeTravel => 6,
+            RightRailTab::Visualizer => 7,
         }
     }
 
@@ -183,6 +187,7 @@ impl RightRailTab {
             RightRailTab::Changes => "Changes",
             RightRailTab::Plan => "Plan",
             RightRailTab::Tasks => "Tasks",
+            RightRailTab::TimeTravel => "Time Travel",
             RightRailTab::Visualizer => "Visualizer",
         }
     }

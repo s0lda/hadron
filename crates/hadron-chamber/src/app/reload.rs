@@ -378,6 +378,35 @@ pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
                     } else if let Ok(rel) = path.strip_prefix(repo) {
                         candidates.push((mtime, file_name, rel.to_string_lossy().to_string()));
                     }
+                } else if path.is_dir() {
+                    if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                        for sub_entry in sub_entries.flatten() {
+                            let sub_path = sub_entry.path();
+                            if sub_path.is_file() && sub_path.extension().and_then(|e| e.to_str()) == Some("md") {
+                                let sub_file_name = sub_path
+                                    .file_name()
+                                    .and_then(|f| f.to_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                if sub_file_name.starts_with('.') {
+                                    continue;
+                                }
+                                let mtime = sub_entry
+                                    .metadata()
+                                    .and_then(|m| m.modified())
+                                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                                if let (Ok(canon_repo), Ok(canon_file)) =
+                                    (repo.canonicalize(), sub_path.canonicalize())
+                                {
+                                    if let Ok(rel) = canon_file.strip_prefix(&canon_repo) {
+                                        candidates.push((mtime, sub_file_name, rel.to_string_lossy().to_string()));
+                                    }
+                                } else if let Ok(rel) = sub_path.strip_prefix(repo) {
+                                    candidates.push((mtime, sub_file_name, rel.to_string_lossy().to_string()));
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -426,7 +455,13 @@ pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
         }
     }
 
-    candidates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    candidates.sort_by(|a, b| {
+        let is_master_a = a.1 == "master.md" || a.1 == "index.md";
+        let is_master_b = b.1 == "master.md" || b.1 == "index.md";
+        b.0.cmp(&a.0)
+            .then_with(|| is_master_b.cmp(&is_master_a))
+            .then_with(|| b.1.cmp(&a.1))
+    });
     candidates.into_iter().next().map(|(_, _, rel)| rel)
 }
 

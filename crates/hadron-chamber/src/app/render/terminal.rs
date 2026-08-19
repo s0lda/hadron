@@ -1,5 +1,6 @@
 use super::*;
 use gpui_component::ActiveTheme;
+use crate::app::widgets::task_state_info;
 
 impl super::Chamber {
     /// The right rail: the swappable Terminal / File Tree / Changes pane.
@@ -742,20 +743,61 @@ impl super::Chamber {
                         };
                         let pct = (frac * 100.0).round() as usize;
 
-                        let mut list = v_flex().gap_2().p_3().w_full();
-                        list = list.child(
-                            div()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_sm()
-                                .child(format!("Active Plan: {rel_path}")),
-                        );
-                        list = list.child(
-                            div()
-                                .text_xs()
-                                .text_color(theme::text_muted())
-                                .child(format!("{completed}/{total} steps complete ({pct}%)")),
-                        );
-                        list = list.child(progress_meter(frac, gpui::rgb(0x34d399)));
+                        let mut list = v_flex().gap_3().p_3().w_full().min_w_0();
+
+                        // Header card with plan path and progress
+                        let header_card = v_flex()
+                            .w_full()
+                            .p_3()
+                            .rounded_lg()
+                            .bg(theme::bg_surface())
+                            .border_1()
+                            .border_color(theme::glass_highlight())
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_color(theme::text())
+                                                    .child("Active Implementation Plan"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .px_2()
+                                                    .py_0p5()
+                                                    .rounded_md()
+                                                    .bg(theme::bg_base())
+                                                    .border_1()
+                                                    .border_color(theme::glass_highlight())
+                                                    .text_xs()
+                                                    .font_family(cx.theme().mono_font_family.clone())
+                                                    .text_color(theme::text_muted())
+                                                    .child(rel_path),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(if completed == total && total > 0 {
+                                                gpui::rgb(0x34d399)
+                                            } else {
+                                                theme::accent()
+                                            })
+                                            .child(format!("{completed}/{total} tasks complete ({pct}%)")),
+                                    ),
+                            )
+                            .child(progress_meter(frac, gpui::rgb(0x34d399)));
+
+                        list = list.child(header_card);
                         list = list.child(self.plan_dag_visualizer(&content, cx));
 
                         let task_groups = parse_plan_tasks(&content);
@@ -767,7 +809,7 @@ impl super::Chamber {
                             let name_clone = task_name.clone();
 
                             let header_title = if task_name.is_empty() {
-                                "Overview".to_string()
+                                "Overview & Objectives".to_string()
                             } else {
                                 task_name.clone()
                             };
@@ -778,19 +820,35 @@ impl super::Chamber {
                                 format!("task-header-{}", task_name)
                             };
 
-                            let all_done = steps.iter().all(|(_, done)| *done);
-                            let status_marker = if all_done {
-                                Icon::new(IconName::CircleCheck)
-                                    .small()
+                            let done_count = steps.iter().filter(|(_, done)| *done).count();
+                            let total_count = steps.len();
+                            let all_done = done_count == total_count;
+
+                            let status_badge = if all_done {
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .bg(theme::bg_base())
+                                    .border_1()
+                                    .border_color(gpui::rgb(0x34d399))
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(gpui::rgb(0x34d399))
+                                    .child(format!("{done_count}/{total_count} Complete"))
                                     .into_any_element()
                             } else {
                                 div()
-                                    .size(px(14.0))
-                                    .flex_shrink_0()
+                                    .px_2()
+                                    .py_0p5()
                                     .rounded_full()
+                                    .bg(theme::bg_base())
                                     .border_1()
-                                    .border_color(theme::text_muted())
+                                    .border_color(theme::glass_highlight())
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::accent())
+                                    .child(format!("{done_count}/{total_count} Tasks"))
                                     .into_any_element()
                             };
 
@@ -798,9 +856,14 @@ impl super::Chamber {
                                 .id(gpui::SharedString::from(id_str))
                                 .w_full()
                                 .items_center()
-                                .gap_2()
-                                .py_1()
+                                .justify_between()
+                                .p_2p5()
+                                .rounded_lg()
+                                .bg(if all_done { theme::bg_surface() } else { theme::bg_elevated() })
+                                .border_1()
+                                .border_color(theme::glass_highlight())
                                 .cursor_pointer()
+                                .hover(|s| s.bg(theme::bg_elevated()))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     if this.plan_collapsed_tasks.contains(&name_clone) {
                                         this.plan_collapsed_tasks.remove(&name_clone);
@@ -810,27 +873,43 @@ impl super::Chamber {
                                     cx.notify();
                                 }))
                                 .child(
-                                    Icon::new(if is_collapsed {
-                                        IconName::ChevronRight
-                                    } else {
-                                        IconName::ChevronDown
-                                    })
-                                    .small()
-                                    .text_color(theme::text_muted())
+                                    h_flex()
+                                        .gap_2()
+                                        .items_center()
+                                        .min_w_0()
+                                        .child(
+                                            Icon::new(if is_collapsed {
+                                                IconName::ChevronRight
+                                            } else {
+                                                IconName::ChevronDown
+                                            })
+                                            .small()
+                                            .text_color(theme::text_muted()),
+                                        )
+                                        .child(
+                                            div()
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_sm()
+                                                .text_color(theme::text())
+                                                .truncate()
+                                                .child(header_title),
+                                        ),
                                 )
-                                .child(status_marker)
-                                .child(
-                                    div()
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_sm()
-                                        .text_color(theme::text())
-                                        .child(header_title)
-                                );
+                                .child(status_badge);
 
-                            let mut task_container = v_flex().w_full().gap_2().child(header);
+                            let mut task_container = v_flex().w_full().min_w_0().gap_2().child(header);
 
                             if !is_collapsed {
-                                let mut steps_list = v_flex().w_full().gap_2().pl_4();
+                                let mut steps_list = v_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .gap_1p5()
+                                    .p_2p5()
+                                    .rounded_lg()
+                                    .bg(theme::glass_card())
+                                    .border_1()
+                                    .border_color(theme::glass_highlight());
+
                                 for (step_desc, done) in steps {
                                     let marker = if done {
                                         Icon::new(IconName::CircleCheck)
@@ -838,8 +917,6 @@ impl super::Chamber {
                                             .text_color(gpui::rgb(0x34d399))
                                             .into_any_element()
                                     } else {
-                                        // No hollow-circle glyph ships in the icon set, so draw one:
-                                        // a small ringed dot reads as an empty checkbox.
                                         div()
                                             .size(px(14.0))
                                             .flex_shrink_0()
@@ -851,18 +928,24 @@ impl super::Chamber {
                                     };
 
                                     steps_list = steps_list.child(
-                                        h_flex().w_full().gap_2().items_start().child(marker).child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .text_sm()
-                                                .text_color(if done {
-                                                    theme::text_muted()
-                                                } else {
-                                                    theme::text()
-                                                })
-                                                .child(step_desc),
-                                        ),
+                                        h_flex()
+                                            .w_full()
+                                            .min_w_0()
+                                            .gap_2()
+                                            .items_start()
+                                            .child(marker)
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .text_sm()
+                                                    .text_color(if done {
+                                                        theme::text_muted()
+                                                    } else {
+                                                        theme::text()
+                                                    })
+                                                    .child(step_desc),
+                                            ),
                                     );
                                 }
                                 task_container = task_container.child(steps_list);
@@ -880,13 +963,16 @@ impl super::Chamber {
                 };
 
                 div()
-                    .flex_1()
-                    .min_h_0()
+                    .size_full()
+                    .w_full()
+                    .min_w_0()
                     .relative()
                     .child(
                         div()
                             .id("plan-scroll")
                             .size_full()
+                            .w_full()
+                            .min_w_0()
                             .overflow_y_scroll()
                             .track_scroll(&self.plan_scroll)
                             .text_sm()
@@ -975,6 +1061,7 @@ impl super::Chamber {
                     )
                     .into_any_element()
             }
+            RightRailTab::TimeTravel => self.time_travel_inspector(cx).into_any_element(),
             RightRailTab::Visualizer => self.visualizer_view(cx).into_any_element(),
         };
 
@@ -1019,59 +1106,106 @@ impl super::Chamber {
         };
 
         let span_ms = (end_time - start_time).num_milliseconds().max(1) as f64;
+        let span_mins = (end_time - start_time).num_minutes().max(0);
         let current_at = self.task_scrub.unwrap_or(now);
         let is_scrubbing = self.task_scrub.is_some();
 
         let live_pill = if is_scrubbing {
-            div()
+            h_flex()
                 .id("task-scrub-live-pill")
-                .px_2()
-                .py_0p5()
+                .gap_1p5()
+                .items_center()
+                .px_2p5()
+                .py_1()
                 .rounded_full()
                 .cursor_pointer()
-                .bg(theme::accent())
-                .text_color(theme::field_base())
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_xs()
-                .child("Live")
+                .bg(theme::bg_elevated())
+                .border_1()
+                .border_color(theme::halo_reasoning())
+                .hover(|s| s.bg(theme::accent()))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.task_scrub = None;
                     cx.notify();
                 }))
+                .child(
+                    div()
+                        .size(px(6.0))
+                        .rounded_full()
+                        .bg(theme::halo_reasoning()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(theme::halo_reasoning())
+                        .child("⏮ Rewound · Jump to Live ▶▶"),
+                )
                 .into_any_element()
         } else {
-            div()
-                .px_2()
-                .py_0p5()
-                .text_xs()
-                .text_color(gpui::rgb(0x34d399))
-                .font_weight(gpui::FontWeight::BOLD)
-                .child("● Live")
+            h_flex()
+                .gap_1p5()
+                .items_center()
+                .px_2p5()
+                .py_1()
+                .rounded_full()
+                .bg(theme::bg_elevated())
+                .border_1()
+                .border_color(gpui::rgb(0x34d399))
+                .child(
+                    div()
+                        .size(px(6.0))
+                        .rounded_full()
+                        .bg(gpui::rgb(0x34d399)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(gpui::rgb(0x34d399))
+                        .child("● LIVE TASK FEED"),
+                )
                 .into_any_element()
         };
 
-        let time_label = div()
-            .text_xs()
-            .text_color(theme::text_muted())
-            .font_family(cx.theme().mono_font_family.clone())
-            .child(current_at.format("%H:%M:%S").to_string());
+        let time_label = h_flex()
+            .gap_2()
+            .items_center()
+            .child(
+                div()
+                    .text_xs()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_color(theme::text())
+                    .child(current_at.format("%H:%M:%S UTC").to_string()),
+            )
+            .child(
+                div()
+                    .px_1p5()
+                    .py_0p5()
+                    .rounded_md()
+                    .bg(theme::bg_base())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(format!("Span: {span_mins}m · {} tasks", self.view.tasks.len())),
+            );
 
         let header = h_flex()
             .w_full()
             .justify_between()
             .items_center()
             .px_3()
-            .py_1()
+            .py_1p5()
             .child(live_pill)
             .child(time_label);
 
-        let task_ticks: Vec<f32> = self
+        let task_ticks: Vec<(f32, TaskState)> = self
             .view
             .tasks
             .iter()
             .map(|t| {
                 let ms = (t.asked_at - start_time).num_milliseconds() as f64;
-                ((ms / span_ms).clamp(0.0, 1.0)) as f32
+                (((ms / span_ms).clamp(0.0, 1.0)) as f32, t.state)
             })
             .collect();
 
@@ -1094,25 +1228,25 @@ impl super::Chamber {
                     origin: bounds.origin,
                     size: bounds.size,
                 };
-                window.paint_quad(gpui::fill(bg_quad, theme::bg_base()).corner_radii(px(4.0)));
+                window.paint_quad(gpui::fill(bg_quad, theme::bg_base()).corner_radii(px(6.0)));
 
-                let tick_color = theme::text_muted();
-                for &tick_pct in &task_ticks {
+                for &(tick_pct, state) in &task_ticks {
+                    let (state_col, _) = task_state_info(state);
                     let tx = bounds.origin.x + w * tick_pct;
                     let tick_bounds = gpui::Bounds {
-                        origin: gpui::point(tx, bounds.origin.y),
-                        size: gpui::size(px(1.5), h),
+                        origin: gpui::point(tx, bounds.origin.y + px(2.0)),
+                        size: gpui::size(px(2.0), h - px(4.0)),
                     };
-                    window.paint_quad(gpui::fill(tick_bounds, tick_color));
+                    window.paint_quad(gpui::fill(tick_bounds, state_col).corner_radii(px(1.0)));
                 }
 
                 let handle_x = bounds.origin.x + w * current_pct;
-                let handle_w = px(3.0);
+                let handle_w = px(4.0);
                 let handle_bounds = gpui::Bounds {
                     origin: gpui::point(handle_x - handle_w / 2.0, bounds.origin.y),
                     size: gpui::size(handle_w, h),
                 };
-                window.paint_quad(gpui::fill(handle_bounds, theme::accent()).corner_radii(px(1.5)));
+                window.paint_quad(gpui::fill(handle_bounds, theme::accent()).corner_radii(px(2.0)));
             },
         )
         .size_full();
@@ -1120,8 +1254,11 @@ impl super::Chamber {
         let track_interactive = div()
             .id("task-scrub-track")
             .w_full()
-            .h(px(12.0))
+            .h(px(16.0))
             .cursor_pointer()
+            .rounded_md()
+            .border_1()
+            .border_color(theme::glass_highlight())
             .child(track_canvas)
             .on_mouse_down(
                 gpui::MouseButton::Left,
@@ -1152,9 +1289,10 @@ impl super::Chamber {
         v_flex()
             .w_full()
             .px_3()
-            .pb_2()
+            .pb_2p5()
             .border_b_1()
-            .border_color(theme::border())
+            .border_color(theme::glass_highlight())
+            .bg(theme::bg_surface())
             .child(header)
             .child(track_interactive)
             .into_any_element()
