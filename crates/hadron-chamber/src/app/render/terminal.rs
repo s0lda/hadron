@@ -744,7 +744,7 @@ impl super::Chamber {
                         let pct = (frac * 100.0).round() as usize;
 
                         let mut list = v_flex().gap_3().p_3().w_full().min_w_0();
-                        list = list.child(self.breadcrumb_bar(cx));
+                        list = list.child(self.breadcrumb_bar_for_plan(&rel_path, &content, cx));
 
                         // Sibling plans in the active plan folder / .hadron/docs/plans/
                         let sibling_plans = crate::app::reload::scan_sibling_plans(&repo, &rel_path);

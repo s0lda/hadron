@@ -1689,9 +1689,27 @@ impl Chamber {
             }
             ContextMenuAction::OpenFile(path) => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                if let Some(content) = crate::sys::read_workspace_file(&repo_root, &path) {
+                let clean_path = path.trim_matches('`').trim();
+                let clean_path = clean_path
+                    .split('#')
+                    .next()
+                    .unwrap_or(clean_path)
+                    .split(':')
+                    .next()
+                    .unwrap_or(clean_path)
+                    .trim();
+                if let Some(content) = crate::sys::read_workspace_file(&repo_root, clean_path) {
                     self.parsed_markdown.borrow_mut().remove(&usize::MAX);
-                    self.file_tree_open = Some((path, content));
+                    self.file_tree_open = Some((clean_path.to_string(), content));
+                    self.right_rail_tab = RightRailTab::FileTree;
+                    self.prefs.inspector_collapsed = false;
+                    let _ = config::save(&self.prefs);
+                    cx.notify();
+                } else {
+                    eprintln!(
+                        "chamber: could not read workspace file at {clean_path:?} (repo_root: {})",
+                        repo_root.display()
+                    );
                 }
             }
             ContextMenuAction::CopyPath(path) => {
