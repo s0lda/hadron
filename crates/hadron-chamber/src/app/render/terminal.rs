@@ -330,9 +330,7 @@ impl super::Chamber {
                                 .child(div().text_color(theme::text()).child(path.clone()))
                                 .child(text_button("close-file", "Close").on_click(cx.listener(
                                     |this, _, _window, cx| {
-                                        this.parsed_markdown.borrow_mut().remove(&usize::MAX);
-                                        this.file_tree_open = None;
-                                        cx.notify();
+                                        this.close_open_file(cx);
                                     },
                                 ))),
                         )
@@ -888,18 +886,38 @@ impl super::Chamber {
                         // Optional Plan Overview prose card
                         if let Some(overview_text) = parse_plan_overview(&content) {
                             if !overview_text.is_empty() {
-                                let overview_card = v_flex()
+                                let is_collapsed = self.plan_overview_collapsed;
+                                let header_row = h_flex()
+                                    .id("plan-overview-toggle")
                                     .w_full()
-                                    .p_3()
+                                    .min_w_0()
+                                    .items_center()
+                                    .justify_between()
+                                    .p_2p5()
                                     .rounded_lg()
                                     .bg(theme::bg_surface())
                                     .border_1()
                                     .border_color(theme::glass_highlight())
-                                    .gap_1p5()
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::bg_elevated()))
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.plan_overview_collapsed = !this.plan_overview_collapsed;
+                                        cx.notify();
+                                    }))
                                     .child(
                                         h_flex()
-                                            .items_center()
                                             .gap_2()
+                                            .items_center()
+                                            .min_w_0()
+                                            .child(
+                                                Icon::new(if is_collapsed {
+                                                    IconName::ChevronRight
+                                                } else {
+                                                    IconName::ChevronDown
+                                                })
+                                                .small()
+                                                .text_color(theme::text_muted()),
+                                            )
                                             .child(
                                                 Icon::new(IconName::Info)
                                                     .small()
@@ -907,20 +925,45 @@ impl super::Chamber {
                                             )
                                             .child(
                                                 div()
-                                                    .text_xs()
                                                     .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_sm()
                                                     .text_color(theme::text())
+                                                    .truncate()
                                                     .child("Plan Overview & Objectives"),
                                             ),
                                     )
                                     .child(
                                         div()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_full()
+                                            .bg(theme::bg_base())
+                                            .border_1()
+                                            .border_color(theme::glass_highlight())
                                             .text_xs()
+                                            .font_weight(gpui::FontWeight::MEDIUM)
                                             .text_color(theme::text_muted())
-                                            .line_height(gpui::relative(1.4))
-                                            .child(overview_text),
+                                            .child("Overview"),
                                     );
-                                list = list.child(overview_card);
+
+                                let mut overview_container = v_flex().w_full().min_w_0().gap_2().child(header_row);
+
+                                if !is_collapsed {
+                                    let body = div()
+                                        .w_full()
+                                        .min_w_0()
+                                        .p_3()
+                                        .rounded_lg()
+                                        .bg(theme::glass_card())
+                                        .border_1()
+                                        .border_color(theme::glass_highlight())
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .line_height(gpui::relative(1.4))
+                                        .child(overview_text);
+                                    overview_container = overview_container.child(body);
+                                }
+                                list = list.child(overview_container);
                             }
                         }
 

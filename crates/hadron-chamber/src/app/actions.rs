@@ -1580,15 +1580,25 @@ impl Chamber {
             cx.notify();
             return;
         }
-        if self.file_tree_open.take().is_some() {
-            self.parsed_markdown.borrow_mut().remove(&usize::MAX);
-            cx.notify();
+        if self.file_tree_open.is_some() {
+            self.close_open_file(cx);
             return;
         }
         if self.terminal_focus.is_focused(window) {
             return;
         }
         window.focus(&self.input.focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    /// Close the currently open file preview in the File Tree inspector tab,
+    /// returning to the previously active tab (e.g. Plans, Changes) if recorded.
+    pub(super) fn close_open_file(&mut self, cx: &mut Context<Self>) {
+        self.parsed_markdown.borrow_mut().remove(&usize::MAX);
+        self.file_tree_open = None;
+        if let Some(prev) = self.file_tree_previous_tab.take() {
+            self.right_rail_tab = prev;
+        }
         cx.notify();
     }
 
@@ -1700,6 +1710,9 @@ impl Chamber {
                     .trim();
                 if let Some(content) = crate::sys::read_workspace_file(&repo_root, clean_path) {
                     self.parsed_markdown.borrow_mut().remove(&usize::MAX);
+                    if self.right_rail_tab != RightRailTab::FileTree {
+                        self.file_tree_previous_tab = Some(self.right_rail_tab);
+                    }
                     self.file_tree_open = Some((clean_path.to_string(), content));
                     self.right_rail_tab = RightRailTab::FileTree;
                     self.prefs.inspector_collapsed = false;

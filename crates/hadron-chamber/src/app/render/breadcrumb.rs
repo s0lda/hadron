@@ -68,60 +68,85 @@ impl Chamber {
         }
 
         let item_count = summary.items.len();
+        let is_collapsed = self.plan_context_collapsed;
 
-        v_flex()
-            .id("nucleus-breadcrumb-hud")
+        let header_row = h_flex()
+            .id("nucleus-breadcrumb-toggle")
             .w_full()
             .min_w_0()
-            .p_3()
+            .items_center()
+            .justify_between()
+            .p_2p5()
             .rounded_lg()
             .bg(theme::bg_surface())
             .border_1()
             .border_color(theme::glass_highlight())
-            .gap_2()
+            .cursor_pointer()
+            .hover(|s| s.bg(theme::bg_elevated()))
+            .on_click(cx.listener(|this, _, _window, cx| {
+                this.plan_context_collapsed = !this.plan_context_collapsed;
+                cx.notify();
+            }))
             .child(
                 h_flex()
-                    .justify_between()
                     .items_center()
-                    .w_full()
+                    .gap_2()
                     .min_w_0()
                     .child(
-                        h_flex()
-                            .items_center()
-                            .gap_1p5()
-                            .child(
-                                Icon::new(IconName::Info)
-                                    .small()
-                                    .text_color(theme::accent()),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(theme::text())
-                                    .child(header_title),
-                            ),
+                        Icon::new(if is_collapsed {
+                            IconName::ChevronRight
+                        } else {
+                            IconName::ChevronDown
+                        })
+                        .small()
+                        .text_color(theme::text_muted()),
+                    )
+                    .child(
+                        Icon::new(IconName::Info)
+                            .small()
+                            .text_color(theme::accent()),
                     )
                     .child(
                         div()
-                            .px_2()
-                            .py_0p5()
-                            .rounded_full()
-                            .bg(theme::bg_base())
-                            .border_1()
-                            .border_color(theme::glass_highlight())
-                            .text_xs()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(theme::text_muted())
-                            .child(format!("{item_count} active")),
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_sm()
+                            .text_color(theme::text())
+                            .truncate()
+                            .child(header_title),
                     ),
             )
             .child(
-                v_flex()
-                    .w_full()
-                    .min_w_0()
-                    .gap_1p5()
-                    .children(summary.items.into_iter().enumerate().map(|(ix, item)| {
+                div()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_full()
+                    .bg(theme::bg_base())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(theme::text_muted())
+                    .child(format!("{item_count} active")),
+            );
+
+        let mut card = v_flex()
+            .id("nucleus-breadcrumb-hud")
+            .w_full()
+            .min_w_0()
+            .gap_2()
+            .child(header_row);
+
+        if !is_collapsed {
+            let body = v_flex()
+                .w_full()
+                .min_w_0()
+                .gap_1p5()
+                .p_2p5()
+                .rounded_lg()
+                .bg(theme::glass_card())
+                .border_1()
+                .border_color(theme::glass_highlight())
+                .children(summary.items.into_iter().enumerate().map(|(ix, item)| {
                         let kind_color: gpui::Hsla = match item.kind {
                             BreadcrumbKind::Plan => theme::accent().into(),
                             BreadcrumbKind::File => gpui::rgb(0x38bdf8).into(),
@@ -214,8 +239,10 @@ impl Chamber {
                                         .child("↗"),
                                 ),
                         )
-                    })),
-            )
-            .into_any_element()
+                    }));
+            card = card.child(body);
+        }
+
+        card.into_any_element()
     }
 }
