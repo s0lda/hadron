@@ -460,6 +460,9 @@ pub fn task_names_card_specifically(task: &str, card: &QuarkCard, preons: &[Preo
     false
 }
 
+pub mod balancer;
+pub use balancer::*;
+
 #[cfg(test)]
 mod tests;
 
