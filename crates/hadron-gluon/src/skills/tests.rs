@@ -293,6 +293,32 @@ fn plan_ref_finds_a_path_through_human_punctuation() {
 }
 
 #[test]
+fn test_subfolder_plan_ref() {
+    // Nested subfolder markdown plan files
+    assert_eq!(
+        plan_ref("execute .hadron/docs/plans/2026-08-19-twenty-capabilities/master.md"),
+        Some(".hadron/docs/plans/2026-08-19-twenty-capabilities/master.md".to_string())
+    );
+    assert_eq!(
+        plan_ref("take docs/plans/2026-08-19-twenty-capabilities/01-phase-1-nucleus-quick-dx.md"),
+        Some("docs/plans/2026-08-19-twenty-capabilities/01-phase-1-nucleus-quick-dx.md".to_string())
+    );
+    assert_eq!(
+        plan_ref("run `plans/twenty-caps/index.md`"),
+        Some("plans/twenty-caps/index.md".to_string())
+    );
+    // Subfolder directory references defaulting to master.md
+    assert_eq!(
+        plan_ref("execute `.hadron/docs/plans/2026-08-19-twenty-capabilities/`"),
+        Some(".hadron/docs/plans/2026-08-19-twenty-capabilities/master.md".to_string())
+    );
+    assert_eq!(
+        plan_ref("follow `docs/plans/subfolder-feature`"),
+        Some("docs/plans/subfolder-feature/master.md".to_string())
+    );
+}
+
+#[test]
 fn plan_author_reads_the_front_matter() {
     let md = "---\nauthor: opus\nstatus: draft\n---\n\n# A plan\n";
     assert_eq!(plan_author(md), Some(QuarkId::new("opus")));

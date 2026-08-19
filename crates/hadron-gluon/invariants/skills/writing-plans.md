@@ -8,7 +8,7 @@ description: Use when you have a spec or requirements for a multi-step task, bef
 ## Core Principle
 Write comprehensive, bite-sized implementation plans with explicit file paths, exact code blocks, and verification steps.
 
-**Save path:** `.hadron/docs/plans/YYYY-MM-DD-<feature-name>.md`
+**Save path:** `.hadron/docs/plans/YYYY-MM-DD-<feature-name>.md` or for multi-file plans `.hadron/docs/plans/YYYY-MM-DD-<feature-name>/master.md` (with accompanying phase sub-plans).
 
 ## Pre-Plan Checks & Architecture
 1. **Scope Check:** If spec spans multiple independent subsystems, split into separate sub-project plans.

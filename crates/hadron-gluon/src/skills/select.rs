@@ -84,14 +84,30 @@ pub struct Handoff {
 /// The path of a plan file named in the task, if any — the hook that lets the engine
 /// check a *fact* (who wrote it) instead of trusting the turn to admit it.
 ///
-/// Deliberately narrow: a token that mentions a `plans/` directory and ends in `.md`.
-/// Punctuation and markdown backticks are trimmed, because a task written by a human
-/// says "execute `docs/plans/2026-07-14-foo.md`." with the quotes and the full stop.
 pub fn plan_ref(task: &str) -> Option<String> {
     task.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '[' || c == ']' || c == '<' || c == '>' || c == '"' || c == '\'' || c == '`')
         .map(|tok| tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_'))
-        .find(|tok| tok.contains("plans/") && tok.ends_with(".md"))
-        .map(str::to_string)
+        .find_map(|tok| {
+            if let Some(idx) = tok.find("plans/") {
+                let after = &tok[idx + "plans/".len()..];
+                if after.is_empty() {
+                    return None;
+                }
+                if after.ends_with(".md") {
+                    return Some(tok.to_string());
+                }
+                if after.contains('.') {
+                    return None;
+                }
+                if tok.ends_with('/') {
+                    Some(format!("{}master.md", tok))
+                } else {
+                    Some(format!("{}/master.md", tok))
+                }
+            } else {
+                None
+            }
+        })
 }
 
 /// The `author:` line from a plan's YAML front-matter.
