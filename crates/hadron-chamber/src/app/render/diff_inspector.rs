@@ -22,6 +22,7 @@ pub struct ThreeWayHunk {
 
 /// A file diff containing 3-way comparison hunks.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub struct ThreeWayFileDiff {
     pub path: String,
     pub hunks: Vec<ThreeWayHunk>,

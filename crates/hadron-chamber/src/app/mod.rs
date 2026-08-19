@@ -545,6 +545,7 @@ struct Chamber {
     /// Whether `.hadron/nucleus/index.md` exceeds the 32 KiB prompt limit
     pub(super) nucleus_over_budget: bool,
     pub(super) gluon_stopped_notice: bool,
+    #[allow(dead_code)]
     pub(super) audio_manager: audio::AudioTelemetryManager,
 }
 
