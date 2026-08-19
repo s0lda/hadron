@@ -21,6 +21,7 @@ mod dag_visualizer;
 mod attention_hud;
 mod pty_grid;
 mod flamechart;
+mod diff_inspector;
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

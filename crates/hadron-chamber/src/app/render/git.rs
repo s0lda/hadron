@@ -181,6 +181,15 @@ impl super::Chamber {
                 .pb_3()
                 .child(self.git_delegation_section(cx))
                 .into_any_element(),
+            GitSubtab::Diff3Way => div()
+                .id("git-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.git_scroll)
+                .px_3()
+                .pb_3()
+                .child(self.git_diff_inspector_section(cx))
+                .into_any_element(),
         };
         let git_pane = div()
             .flex_1()
