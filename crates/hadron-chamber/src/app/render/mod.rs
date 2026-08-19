@@ -16,6 +16,7 @@ mod stats;
 mod overlays;
 mod visualizer;
 mod breadcrumb;
+mod repl_overlay;
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -82,10 +83,12 @@ impl Render for Chamber {
             .process_manager_open
             .then(|| self.process_overlay(cx));
         let toasts = self.render_toasts(cx);
+        let repl = self.repl_overlay_open.then(|| self.repl_overlay(window, cx));
 
         let content = v_flex()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|this, _: &ToggleReplOverlay, window, cx| this.toggle_repl_overlay(window, cx)))
             .on_action(cx.listener(|this, _: &CycleMode, _, cx| this.cycle_global_mode(cx)))
             .on_action(cx.listener(|this, _: &NextChatTab, _, cx| this.cycle_chat_tab(1, cx)))
             .on_action(cx.listener(|this, _: &PrevChatTab, _, cx| this.cycle_chat_tab(-1, cx)))
@@ -148,6 +151,7 @@ impl Render for Chamber {
             .children(changelog)
             .children(app_menu)
             .children(processes)
+            .children(repl)
             .children(toasts);
 
         let wrapped_content = crate::window_frame::window_frame(window, cx, content);

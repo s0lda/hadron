@@ -134,6 +134,7 @@ actions!(
         NextGitItem,
         PrevGitItem,
         OpenGitItem,
+        ToggleReplOverlay,
     ]
 );
 
@@ -519,6 +520,10 @@ struct Chamber {
     about_open: bool,
     /// The Changelog dialog overlay.
     pub(super) changelog_open: bool,
+    /// Quick REPL and tool scratchpad overlay state (Capability #16).
+    pub(super) repl_overlay_open: bool,
+    pub(super) repl_input: Entity<InputState>,
+    pub(super) repl_output: Option<String>,
     file_tree_scroll: ScrollHandle,
     file_tree_open_scroll: ScrollHandle,
     completion_scroll: ScrollHandle,
@@ -593,6 +598,11 @@ impl Chamber {
                 .placeholder("Type @quark a message…  (Enter to send · Shift+Enter for newline)")
         });
         let _input_sub = cx.subscribe_in(&input, window, Self::on_input_submit);
+
+        let repl_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Type /command, ?note query, or tool:name (Enter to run)…")
+        });
 
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
@@ -1188,6 +1198,9 @@ impl Chamber {
             info_panel: None,
             about_open: false,
             changelog_open: false,
+            repl_overlay_open: false,
+            repl_input,
+            repl_output: None,
             file_tree_scroll: ScrollHandle::new(),
             file_tree_open_scroll: ScrollHandle::new(),
             completion_scroll: ScrollHandle::new(),
@@ -1305,6 +1318,9 @@ fn default_key_bindings() -> Vec<KeyBinding> {
         // Global chat prompt focus hotkey (Cmd+L / Ctrl+L) to focus chat from anywhere.
         KeyBinding::new("cmd-l", FocusChat, None),
         KeyBinding::new("ctrl-l", FocusChat, None),
+        // Quick REPL & Tool Scratchpad overlay (Capability #16)
+        KeyBinding::new("cmd-k", ToggleReplOverlay, None),
+        KeyBinding::new("ctrl-shift-k", ToggleReplOverlay, None),
         // Global keyboard dismiss (Escape) to drop completions, modals, overlays, or return focus.
         KeyBinding::new("escape", Dismiss, None),
         // Git Rail scoped shortcuts (when Git panel has focus)

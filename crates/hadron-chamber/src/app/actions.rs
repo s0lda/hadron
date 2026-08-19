@@ -1580,6 +1580,7 @@ impl Chamber {
             || self.changelog_open
             || self.app_menu_open
             || self.process_manager_open
+            || self.repl_overlay_open
         {
             self.settings_open = false;
             self.info_panel = None;
@@ -1587,6 +1588,7 @@ impl Chamber {
             self.changelog_open = false;
             self.app_menu_open = false;
             self.process_manager_open = false;
+            self.repl_overlay_open = false;
             cx.notify();
             return;
         }
@@ -2096,6 +2098,38 @@ impl Chamber {
     /// Toggle the Process Manager overlay (pinned Roster rail button, above Settings).
     pub(super) fn toggle_process_manager(&mut self, cx: &mut Context<Self>) {
         self.process_manager_open = toggle_process_manager_open(self.process_manager_open);
+        cx.notify();
+    }
+
+    /// Toggle the Quick REPL & Tool Scratchpad Overlay (Capability #16).
+    pub(super) fn toggle_repl_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.repl_overlay_open = !self.repl_overlay_open;
+        if self.repl_overlay_open {
+            self.repl_input.update(cx, |input, cx| {
+                input.focus(window, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    /// Evaluate input in the Quick REPL scratchpad without writing to the persistent field.
+    pub(super) fn execute_repl_query(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let query = self.repl_input.read(cx).value().to_string();
+        let repo = crate::vcs::repo_root_of(&self.path);
+        let res = crate::model::evaluate_repl_input(&query, repo);
+        self.repl_output = match res {
+            crate::model::ReplResult::SlashCommand(s) => Some(s),
+            crate::model::ReplResult::NucleusQuery(notes) => {
+                if notes.is_empty() {
+                    Some("No matching nucleus notes found.".to_string())
+                } else {
+                    Some(format!("Matching notes ({}):\n{}", notes.len(), notes.join("\n")))
+                }
+            }
+            crate::model::ReplResult::ToolCall { tool, output } => Some(format!("[{tool}]: {output}")),
+            crate::model::ReplResult::Unknown(msg) => Some(msg),
+            crate::model::ReplResult::Empty => None,
+        };
         cx.notify();
     }
 }

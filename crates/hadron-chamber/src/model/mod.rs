@@ -11,10 +11,12 @@ use hadron_lattice::{Actor, Event, Kind, QuarkId, QuarkState, Team};
 mod stats;
 pub mod tasks;
 pub mod breadcrumb;
+pub mod repl;
 #[cfg(test)]
 mod tests;
 
 pub use breadcrumb::{BreadcrumbItem, BreadcrumbKind, BreadcrumbSummary};
+pub use repl::{evaluate_repl_input, ReplResult};
 pub use stats::{downsample_context_points, downsample_spend_points, downsample_turn_spend};
 pub use tasks::{SwarmTask, TaskState};
 
