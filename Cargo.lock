@@ -2974,6 +2974,7 @@ version = "0.12.1"
 dependencies = [
  "anyhow",
  "hadron-forge",
+ "hadron-gatekeeper",
  "hadron-lattice",
  "rmcp",
  "schemars 1.2.1",
