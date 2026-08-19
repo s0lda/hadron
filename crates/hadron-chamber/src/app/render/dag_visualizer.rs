@@ -4,6 +4,7 @@ use hadron_lattice::task_graph::TaskGraph;
 
 impl Chamber {
     /// Renders the Interactive Plan DAG & Wave Visualizer (Capability #11).
+    #[allow(dead_code)]
     pub(super) fn plan_dag_visualizer(&self, content: &str, cx: &mut Context<Self>) -> impl IntoElement {
         let graph = TaskGraph::parse_from_markdown(content);
         let waves = match graph.compute_waves() {

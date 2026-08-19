@@ -133,7 +133,7 @@ impl Render for Chamber {
             .on_action(cx.listener(|this, _: &SelectGitBranches, _, cx| this.select_git_subtab(GitSubtab::Branches, cx)))
             .on_action(cx.listener(|this, _: &SelectGitWorktrees, _, cx| this.select_git_subtab(GitSubtab::Worktrees, cx)))
             .on_action(cx.listener(|this, _: &SelectGitGraph, _, cx| this.select_git_subtab(GitSubtab::Graph, cx)))
-            .on_action(cx.listener(|this, _: &SelectGitDelegation, _, cx| this.select_git_subtab(GitSubtab::Delegation, cx)))
+            .on_action(cx.listener(|this, _: &SelectGitDiff3Way, _, cx| this.select_git_subtab(GitSubtab::Diff3Way, cx)))
             .on_action(cx.listener(|this, _: &NextGitItem, _, cx| this.move_git_selection(1, cx)))
             .on_action(cx.listener(|this, _: &PrevGitItem, _, cx| this.move_git_selection(-1, cx)))
             .on_action(cx.listener(|this, _: &OpenGitItem, _, cx| this.open_git_selection(cx)))

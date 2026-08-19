@@ -1388,19 +1388,6 @@ impl Chamber {
                 self.git_cursor_graph = Some(next);
                 self.git_graph_list.scroll_to_reveal_item(next);
             }
-            GitSubtab::Delegation => {
-                let len = self.delegations.len();
-                if len == 0 {
-                    self.git_cursor_delegation = None;
-                    return;
-                }
-                let next = match self.git_cursor_delegation {
-                    None if delta >= 0 => 0,
-                    None => len - 1,
-                    Some(cur) => (cur as isize + delta).rem_euclid(len as isize) as usize,
-                };
-                self.git_cursor_delegation = Some(next);
-            }
             GitSubtab::Diff3Way => {}
         }
         cx.notify();
@@ -1442,7 +1429,7 @@ impl Chamber {
                     }
                 }
             }
-            GitSubtab::Delegation | GitSubtab::Diff3Way => {}
+            GitSubtab::Diff3Way => {}
         }
     }
 
@@ -2581,8 +2568,7 @@ mod tests {
         assert_eq!(GitSubtab::from_index(0), GitSubtab::Branches);
         assert_eq!(GitSubtab::from_index(1), GitSubtab::Worktrees);
         assert_eq!(GitSubtab::from_index(2), GitSubtab::Graph);
-        assert_eq!(GitSubtab::from_index(3), GitSubtab::Delegation);
-        assert_eq!(GitSubtab::from_index(4), GitSubtab::Diff3Way);
+        assert_eq!(GitSubtab::from_index(3), GitSubtab::Diff3Way);
         assert_eq!(GitSubtab::from_index(99), GitSubtab::Branches);
 
         let n = GitSubtab::ALL.len() as isize;

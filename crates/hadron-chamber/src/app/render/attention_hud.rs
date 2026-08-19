@@ -3,6 +3,7 @@ use crate::model::attention::{compute_file_attention, AttentionLevel};
 
 impl Chamber {
     /// Renders the Swarm Attention & File Heatmap HUD (Capability #13).
+    #[allow(dead_code)]
     pub(super) fn attention_hud(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut edits = Vec::new();
         for m in self.view.messages.iter().rev().take(25) {

@@ -95,16 +95,14 @@ pub(super) enum GitSubtab {
     Branches,
     Worktrees,
     Graph,
-    Delegation,
     Diff3Way,
 }
 
 impl GitSubtab {
-    pub(super) const ALL: [GitSubtab; 5] = [
+    pub(super) const ALL: [GitSubtab; 4] = [
         GitSubtab::Branches,
         GitSubtab::Worktrees,
         GitSubtab::Graph,
-        GitSubtab::Delegation,
         GitSubtab::Diff3Way,
     ];
 
@@ -113,8 +111,7 @@ impl GitSubtab {
             GitSubtab::Branches => 0,
             GitSubtab::Worktrees => 1,
             GitSubtab::Graph => 2,
-            GitSubtab::Delegation => 3,
-            GitSubtab::Diff3Way => 4,
+            GitSubtab::Diff3Way => 3,
         }
     }
 
@@ -127,7 +124,6 @@ impl GitSubtab {
             GitSubtab::Branches => "Branches",
             GitSubtab::Worktrees => "Worktrees",
             GitSubtab::Graph => "Graph",
-            GitSubtab::Delegation => "Delegation",
             GitSubtab::Diff3Way => "3-Way Diff",
         }
     }
@@ -144,21 +140,18 @@ pub(super) enum RightRailTab {
     /// beside `Plan` rather than replacing it: `Plan` is the human-authored `.md`,
     /// this is who's working on what right now.
     Tasks,
-    /// Vertical session time-travel scrubber and event inspector.
-    TimeTravel,
     /// Interactive 3D Sphere Topology visualizer showing live active and excited quarks.
     Visualizer,
 }
 
 impl RightRailTab {
-    pub(super) const ALL: [RightRailTab; 8] = [
+    pub(super) const ALL: [RightRailTab; 7] = [
         RightRailTab::Terminal,
         RightRailTab::FileTree,
         RightRailTab::Git,
         RightRailTab::Changes,
         RightRailTab::Plan,
         RightRailTab::Tasks,
-        RightRailTab::TimeTravel,
         RightRailTab::Visualizer,
     ];
 
@@ -170,8 +163,7 @@ impl RightRailTab {
             RightRailTab::Changes => 3,
             RightRailTab::Plan => 4,
             RightRailTab::Tasks => 5,
-            RightRailTab::TimeTravel => 6,
-            RightRailTab::Visualizer => 7,
+            RightRailTab::Visualizer => 6,
         }
     }
 
@@ -187,7 +179,6 @@ impl RightRailTab {
             RightRailTab::Changes => "Changes",
             RightRailTab::Plan => "Plan",
             RightRailTab::Tasks => "Tasks",
-            RightRailTab::TimeTravel => "Time Travel",
             RightRailTab::Visualizer => "Visualizer",
         }
     }

@@ -1176,55 +1176,152 @@ where
         crate::text::flatten_to_single_line(&m.body)
     };
 
-    h_flex()
-        .w_full()
-        .items_start()
-        .gap_3()
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .hover(|s| s.bg(theme::glass_highlight()))
-        .child(
-            div()
-                .flex_none()
-                .w(px(58.0))
-                .text_xs()
-                .font_family(mono_font.clone())
-                .text_color(theme::text_muted())
-                .child(time),
-        )
-        .child(
-            div()
-                .flex_none()
-                .w(px(92.0))
-                .text_xs()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(author_color)
-                .truncate()
-                .child(m.from.clone()),
-        )
-        .child(
-            div()
-                .flex_none()
-                .w(px(80.0))
-                .text_xs()
-                .text_color(log_kind_color(m.kind_label))
-                .child(m.kind_label),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_xs()
-                .text_color(theme::text_secondary())
-                // Truncated to one line by default; an expanded row (click) wraps in full.
-                .when(!expanded, |d| d.truncate())
-                .child(
-                    gpui_component::text::TextView::markdown(("log-body", ix), body_text)
-                        .selectable(true)
-                        .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions()),
-                ),
-        )
+    if expanded {
+        let to_tag = m.to.as_ref().map(|t| format!("➜ @{t}"));
+        let token_tag = m.usage.as_ref().and_then(|u| {
+            let in_tok = u.spend.input.unwrap_or(0);
+            let out_tok = u.spend.output.unwrap_or(0);
+            if in_tok > 0 || out_tok > 0 {
+                Some(format!("{in_tok} in · {out_tok} out"))
+            } else {
+                None
+            }
+        });
+
+        v_flex()
+            .w_full()
+            .gap_1p5()
+            .p_2p5()
+            .rounded_md()
+            .bg(theme::glass_card())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_family(mono_font.clone())
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::accent())
+                                    .child(format!("#{}", ix + 1)),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_family(mono_font.clone())
+                                    .text_color(theme::text_muted())
+                                    .child(time),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(author_color)
+                                    .child(format!("@{}", m.from)),
+                            )
+                            .when_some(to_tag, |d, to| {
+                                d.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(to),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .bg(theme::bg_surface())
+                                    .border_1()
+                                    .border_color(theme::hairline_border())
+                                    .text_xs()
+                                    .text_color(log_kind_color(m.kind_label))
+                                    .child(m.kind_label),
+                            ),
+                    )
+                    .when_some(token_tag, |d, tokens| {
+                        d.child(
+                            div()
+                                .text_xs()
+                                .font_family(mono_font.clone())
+                                .text_color(theme::text_muted())
+                                .child(tokens),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .p_1()
+                    .text_xs()
+                    .text_color(theme::text_secondary())
+                    .child(
+                        gpui_component::text::TextView::markdown(("log-body", ix), body_text)
+                            .selectable(true)
+                            .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions()),
+                    ),
+            )
+            .into_any_element()
+    } else {
+        h_flex()
+            .w_full()
+            .items_start()
+            .gap_3()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .hover(|s| s.bg(theme::glass_highlight()))
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(58.0))
+                    .text_xs()
+                    .font_family(mono_font.clone())
+                    .text_color(theme::text_muted())
+                    .child(time),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(92.0))
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(author_color)
+                    .truncate()
+                    .child(m.from.clone()),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(80.0))
+                    .text_xs()
+                    .text_color(log_kind_color(m.kind_label))
+                    .child(m.kind_label),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_xs()
+                    .text_color(theme::text_secondary())
+                    .truncate()
+                    .child(
+                        gpui_component::text::TextView::markdown(("log-body", ix), body_text)
+                            .selectable(true)
+                            .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions()),
+                    ),
+            )
+            .into_any_element()
+    }
 }
 
 

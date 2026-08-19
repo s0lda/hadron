@@ -172,15 +172,6 @@ impl super::Chamber {
                 .pb_3()
                 .child(self.git_graph_section(cx))
                 .into_any_element(),
-            GitSubtab::Delegation => div()
-                .id("git-scroll")
-                .size_full()
-                .overflow_y_scroll()
-                .track_scroll(&self.git_scroll)
-                .px_3()
-                .pb_3()
-                .child(self.git_delegation_section(cx))
-                .into_any_element(),
             GitSubtab::Diff3Way => div()
                 .id("git-scroll")
                 .size_full()
@@ -213,7 +204,7 @@ impl super::Chamber {
             .on_action(cx.listener(|this, _: &SelectGitBranches, _, cx| this.select_git_subtab(GitSubtab::Branches, cx)))
             .on_action(cx.listener(|this, _: &SelectGitWorktrees, _, cx| this.select_git_subtab(GitSubtab::Worktrees, cx)))
             .on_action(cx.listener(|this, _: &SelectGitGraph, _, cx| this.select_git_subtab(GitSubtab::Graph, cx)))
-            .on_action(cx.listener(|this, _: &SelectGitDelegation, _, cx| this.select_git_subtab(GitSubtab::Delegation, cx)))
+            .on_action(cx.listener(|this, _: &SelectGitDiff3Way, _, cx| this.select_git_subtab(GitSubtab::Diff3Way, cx)))
             .on_action(cx.listener(|this, _: &NextGitItem, _, cx| this.move_git_selection(1, cx)))
             .on_action(cx.listener(|this, _: &PrevGitItem, _, cx| this.move_git_selection(-1, cx)))
             .on_action(cx.listener(|this, _: &OpenGitItem, _, cx| this.open_git_selection(cx)))
@@ -1311,6 +1302,7 @@ impl super::Chamber {
 
     // ── Delegation ─────────────────────────────────────────────────────────────
 
+    #[allow(dead_code)]
     fn git_delegation_section(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         use crate::app::delegation::DelegationState;
 

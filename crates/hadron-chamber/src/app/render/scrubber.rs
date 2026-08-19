@@ -28,6 +28,7 @@ pub fn compute_scrub_progress(
 
 impl Chamber {
     /// Renders the Vertical Session Time-Travel Scrubber & Event Inspector in the Right Rail (Capability #19).
+    #[allow(dead_code)]
     pub(super) fn time_travel_inspector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (cursor, total, ratio) = compute_scrub_progress(self.task_scrub, &self.view.messages);
         let is_live = self.task_scrub.is_none() || cursor == total;

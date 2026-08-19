@@ -126,6 +126,7 @@ pub fn swarm_tasks(events: &[Event]) -> Vec<SwarmTask> {
 
 /// Filter `tasks` to those that were in flight at `at`: `asked_at <= at` and
 /// (`done_at.is_none() || done_at > at`).
+#[allow(dead_code)]
 pub fn tasks_at(tasks: &[SwarmTask], at: DateTime<Utc>) -> Vec<&SwarmTask> {
     tasks
         .iter()
@@ -157,6 +158,7 @@ pub fn live_rows(gates_dir: &std::path::Path, now: DateTime<Utc>) -> Vec<SwarmTa
 
 /// The timeline boundaries spanning `tasks`: earliest `asked_at` to latest of (`done_at` or `now`).
 /// Returns `None` when `tasks` is empty.
+#[allow(dead_code)]
 pub fn span(tasks: &[SwarmTask], now: DateTime<Utc>) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
     if tasks.is_empty() {
         return None;
@@ -175,6 +177,7 @@ pub fn span(tasks: &[SwarmTask], now: DateTime<Utc>) -> Option<(DateTime<Utc>, D
 /// The scrubber's only geometry rule, kept here so the click path and the drag path
 /// cannot disagree about where a pixel lands. `fraction` is clamped, so a drag that
 /// leaves the track sideways pins to an end rather than naming a time off the timeline.
+#[allow(dead_code)]
 pub fn instant_at_fraction(
     start: DateTime<Utc>,
     end: DateTime<Utc>,

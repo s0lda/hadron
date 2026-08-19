@@ -304,8 +304,7 @@ impl super::Chamber {
                     .px_3()
                     .py_2()
                     .child(tabs),
-            )
-            .child(self.attention_hud(cx));
+            );
 
         // The scrolling viewport: the selected view stacks to its natural height
         // and scrolls *within* the card, instead of growing the card and pushing

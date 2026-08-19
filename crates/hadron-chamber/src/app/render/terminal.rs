@@ -813,59 +813,77 @@ impl super::Chamber {
                         header_card = header_card.child(title_row).child(path_row);
 
                         if sibling_plans.len() > 1 {
-                            let mut switcher = h_flex()
-                                .id("plan-sibling-switcher")
-                                .gap_1p5()
-                                .items_center()
-                                .overflow_x_scroll()
+                            let view = cx.entity().clone();
+                            let current_label = sibling_plans
+                                .iter()
+                                .find(|(_, p)| p == &rel_path)
+                                .map(|(l, _)| l.as_str())
+                                .unwrap_or("Select Plan…");
+                            let sibling_list = sibling_plans.clone();
+
+                            let select_button = Button::new("plan-select-dropdown")
                                 .w_full()
-                                .py_1();
-                            for (label, plan_rel) in sibling_plans {
-                                let is_selected = plan_rel == rel_path;
-                                let target_path = plan_rel.clone();
-                                let pill_id = format!("plan-pill-{}", plan_rel.replace(['/', '.', '-'], "_"));
+                                .ghost()
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .justify_between()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    Icon::new(IconName::Folder)
+                                                        .xsmall()
+                                                        .text_color(theme::accent()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                        .text_color(theme::text())
+                                                        .child(format!("Plan: {current_label}")),
+                                                ),
+                                        )
+                                        .child(
+                                            Icon::new(IconName::ChevronDown)
+                                                .xsmall()
+                                                .text_color(theme::text_muted()),
+                                        ),
+                                )
+                                .dropdown_menu(move |mut menu, _, _cx| {
+                                    for (label, plan_rel) in &sibling_list {
+                                        let is_sel = plan_rel == &rel_path;
+                                        let target = plan_rel.clone();
+                                        let item_label = if is_sel {
+                                            format!("✓  {label}")
+                                        } else {
+                                            format!("    {label}")
+                                        };
+                                        let view_click = view.clone();
+                                        menu = menu.item(
+                                            PopupMenuItem::new(item_label).on_click(
+                                                move |_, window, cx| {
+                                                    view_click.update(cx, |this, cx| {
+                                                        this.last_plan_path = Some(target.clone());
+                                                        this.update_active_plan();
+                                                        cx.notify();
+                                                    });
+                                                    window.refresh();
+                                                },
+                                            ),
+                                        );
+                                    }
+                                    menu
+                                });
 
-                                let (bg_color, border_color, text_color): (gpui::Hsla, gpui::Hsla, gpui::Hsla) = if is_selected {
-                                    (theme::accent().opacity(0.15).into(), theme::accent().into(), theme::accent().into())
-                                } else {
-                                    (theme::bg_base().into(), theme::glass_highlight(), theme::text_muted().into())
-                                };
-
-                                let pill = div()
-                                    .id(gpui::SharedString::from(pill_id))
-                                    .flex_shrink_0()
-                                    .px_2p5()
-                                    .py_1()
-                                    .rounded_md()
-                                    .bg(bg_color)
-                                    .border_1()
-                                    .border_color(border_color)
-                                    .text_xs()
-                                    .font_weight(if is_selected {
-                                        gpui::FontWeight::BOLD
-                                    } else {
-                                        gpui::FontWeight::NORMAL
-                                    })
-                                    .text_color(text_color)
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(theme::bg_elevated()))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.last_plan_path = Some(target_path.clone());
-                                        this.update_active_plan();
-                                        cx.notify();
-                                    }))
-                                    .child(label);
-
-                                switcher = switcher.child(pill);
-                            }
-                            header_card = header_card.child(switcher);
+                            header_card = header_card.child(select_button);
                         }
 
                         header_card = header_card.child(progress_meter(frac, gpui::rgb(0x34d399)));
                         list = list.child(header_card);
-
-                        // Execution Topology & Wave DAG visualizer
-                        list = list.child(self.plan_dag_visualizer(&content, cx));
 
                         // Optional Plan Overview prose card
                         if let Some(overview_text) = parse_plan_overview(&content) {
@@ -1096,34 +1114,15 @@ impl super::Chamber {
             }
             RightRailTab::Tasks => {
                 let now = chrono::Utc::now();
-                let render_now = self.task_scrub.unwrap_or(now);
+                let render_now = now;
 
-                let scrubber = self.task_timeline_scrubber(now, cx);
+                let tasks_to_render: Vec<&crate::model::SwarmTask> = self.view.tasks.iter().collect();
 
-                let tasks_to_render: Vec<&crate::model::SwarmTask> = if let Some(at) = self.task_scrub {
-                    model::tasks::tasks_at(&self.view.tasks, at)
-                } else {
-                    self.view.tasks.iter().collect()
-                };
-
-                // A gate heartbeat has no history in the field (the plan's own rule:
-                // never write mid-gate progress to `field.jsonl`), so it only ever
-                // shows live — scrubbing to a past instant shows what the field
-                // recorded then, not what a gate happens to be doing right now.
-                let live_gate_rows: Vec<crate::model::SwarmTask> = if self.task_scrub.is_none() {
-                    let gates_dir = hadron_lattice::live::gates_dir(&self.path);
-                    model::tasks::live_rows(&gates_dir, now)
-                } else {
-                    Vec::new()
-                };
+                let gates_dir = hadron_lattice::live::gates_dir(&self.path);
+                let live_gate_rows: Vec<crate::model::SwarmTask> = model::tasks::live_rows(&gates_dir, now);
 
                 let list = if tasks_to_render.is_empty() && live_gate_rows.is_empty() {
-                    let hint = if self.task_scrub.is_some() {
-                        "No swarm tasks active at this scrubbed time."
-                    } else {
-                        "No swarm tasks yet."
-                    };
-                    div().p_4().child(empty_hint(hint)).into_any_element()
+                    div().p_4().child(empty_hint("No swarm tasks yet.")).into_any_element()
                 } else {
                     let mono_font = cx.theme().mono_font_family.clone();
                     let mut col = v_flex().gap_1().p_2().w_full();
@@ -1140,35 +1139,28 @@ impl super::Chamber {
                     col.into_any_element()
                 };
 
-                v_flex()
+                div()
                     .flex_1()
                     .min_h_0()
-                    .child(scrubber)
+                    .relative()
                     .child(
                         div()
-                            .flex_1()
-                            .min_h_0()
-                            .relative()
-                            .child(
-                                div()
-                                    .id("tasks-scroll")
-                                    .size_full()
-                                    .overflow_y_scroll()
-                                    .track_scroll(&self.tasks_scroll)
-                                    .text_sm()
-                                    .text_color(theme::text())
-                                    .child(list),
-                            )
-                            .child(
-                                div().absolute().top_0().bottom_0().right_0().child(
-                                    Scrollbar::vertical(&self.tasks_scroll)
-                                        .scrollbar_show(ScrollbarShow::Always),
-                                ),
-                            ),
+                            .id("tasks-scroll")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.tasks_scroll)
+                            .text_sm()
+                            .text_color(theme::text())
+                            .child(list),
+                    )
+                    .child(
+                        div().absolute().top_0().bottom_0().right_0().child(
+                            Scrollbar::vertical(&self.tasks_scroll)
+                                .scrollbar_show(ScrollbarShow::Always),
+                        ),
                     )
                     .into_any_element()
             }
-            RightRailTab::TimeTravel => self.time_travel_inspector(cx).into_any_element(),
             RightRailTab::Visualizer => self.visualizer_view(cx).into_any_element(),
         };
 
@@ -1202,6 +1194,7 @@ impl super::Chamber {
             .child(card)
     }
 
+    #[allow(dead_code)]
     fn task_timeline_scrubber(
         &self,
         now: chrono::DateTime<chrono::Utc>,
@@ -1409,6 +1402,7 @@ impl super::Chamber {
     /// `start`..`end`. The click path and the drag path both land here so they cannot
     /// disagree about where a pixel is in time; the mapping itself is
     /// [`model::tasks::instant_at_fraction`], which is where it is tested.
+    #[allow(dead_code)]
     fn seek_task_scrub(
         &mut self,
         x: gpui::Pixels,
@@ -1430,6 +1424,7 @@ impl super::Chamber {
 
 /// The drag payload for the Tasks-tab scrubber head. It renders nothing — the track
 /// paints its own head — and exists only because GPUI keys drag tracking on the type.
+#[allow(dead_code)]
 #[derive(Clone)]
 struct TaskScrubDrag;
 
