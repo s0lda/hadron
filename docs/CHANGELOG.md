@@ -5,6 +5,30 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-08-20
+
+### Added
+- **Chamber Workspace & Activity Streamlining (`hadron-chamber`)**:
+  - Implemented 2-tier activity model: dedicated live `Tasks` tab for swarm dispatches and expanded `Event Log` inspector for turn history and replay.
+  - Sibling plan dropdown selector in `Plan` tab enabling instant switching between master plans and sub-phase plans.
+  - Interactive collapsible `Plan & Nucleus Context` accordion in Plan view with one-click file jumping and automatic tab return upon closing file preview.
+  - Interactive collapsible `Plan Overview` accordion for high-level mission objectives.
+  - 3-Way Visual Diff Inspector in Git rail comparing Base (`main`), Ours (Worktree), and Theirs (Branch/HEAD) with real-time clean tree state detection.
+  - Swarm audio cues and telemetry feedback indicators.
+- **Next-Gen Swarm Capabilities & Engine Extensions (`hadron-gluon`, `hadron-lattice`, `hadron-gatekeeper`, `hadron-forge`, `hadron-forge-mcp`)**:
+  - Speculative dual-execution merge gate and zero-copy CoW worktree provisioning (`hadron-gluon`).
+  - Predictive token load balancer and semantic CAS cache (`hadron-gluon`).
+  - Cross-worktree gossip bus and headless turn replay and bisection (`hadron-lattice`).
+  - One-click field message to nucleus note promotion (`hadron-lattice`, `hadron-forge-mcp`).
+  - Continuous background mutation quark and ephemeral cgroup/container gate sandbox (`hadron-gatekeeper`).
+  - Autonomous codebase invariant synthesis engine (`hadron-gatekeeper`, `hadron-forge-mcp`).
+  - Adaptive AST context slicing for prompt optimization (`hadron-forge`).
+  - Multiplexed multi-quark PTY terminal grid and token spend/latency flamecharts (`hadron-chamber`).
+  - Subfolder plan references and multi-file hierarchy support (`skills`).
+- **Release Automation & Tag History Sync**:
+  - Full annotated Git release tags with complete markdown changelog descriptions.
+  - Automated GitHub Release publication synchronization via `gh release create`.
+
 ## [0.12.1] - 2026-08-16
 
 ### Fixed

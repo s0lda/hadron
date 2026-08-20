@@ -30,11 +30,11 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 
 ## 💡 Key Superpowers
 
-- 💬 **Collaborative Multi-LLM Chat**: Mix models in a single thread — `@claude`, `@ollama`, `@agy`, and `@openai` see each other's output, share context, and execute parallel sub-tasks via Hub-and-Spoke orchestration.
+- 💬 **Collaborative Multi-LLM Chat**: Mix models in a single thread — `@claude`, `@ollama`, `@agy`, `@openai`, and many more see each other's output, share context, and execute parallel sub-tasks via Hub-and-Spoke orchestration.
 - 🛡️ **Git Worktrees & Automated Merge Gate**: Agents work in isolated git worktree branches. The Merge Gate automatically rebases onto `main` and runs your test suite before clean code lands.
 - ⚡ **Native GPUI Desktop App**: Lightning-fast GPU-accelerated UI with multi-tab PTY terminals, interactive git commit graph, live plan tracking, interactive 3D cosmic swarm visualizer, native interactive Mermaid diagram rendering, robust color emoji font fallbacks, and real-time multi-protocol token telemetry.
 - 🛠️ **Hadron Forge & Next-Gen Swarm Capabilities**: AST-level precision code edits via `blake3` hashes, Lattice turn rewind and time-travel, mutation testing gate, benchmark regression guard, spatial architecture topology graph, visual task DAG scheduler, preon dynamic evolution, swarm prompt distiller, hybrid swarm container mesh, interactive multi-quark PTY pairing, dynamic tool breakpoints, blast radius analyzer, automated git bisection, wiretap protocol monitor, AST structural rewrite, secret vault proxy, flamegraph CPU/memory profiler, property fuzz harness, nucleus graph analyzer, binary bloat inspector, release sync, background process supervisor, 3-tier polyglot LSP, browser testing, jailed screenshots, and local SQLite engine.
-- 🧠 **Persistent Nucleus Memory & Universal Absorption**: Cross-session shared memory within a configurable budget (16/32/64/128 KiB), plus `/absorb` to seamlessly import memories, invariants, skills, and plans from `.agents/`, `.claude/`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`.
+- 🧠 **Persistent Nucleus Memory & Universal Absorption**: Cross-session shared memory within a configurable budget (16/32/64/128 KiB), plus `/absorb` to seamlessly import memories, invariants, skills, and plans from `.agents/`, `.claude/`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`, and many more.
 - 🎯 **Autonomous Swarm Control**: Built-in slash commands (`/goal`, `/loop`, `/absorb`, `/release`, `/git-init`, `/resume`, `/clear`) and 25 bundled workflow & engineering skills (TDD, security review, architecture audit, systematic debugging, design specs).
 
 ---

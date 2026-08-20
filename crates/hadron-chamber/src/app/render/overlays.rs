@@ -20,6 +20,23 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.13.0",
+        date: Some("2026-08-20"),
+        added: &[
+            "Streamlined activity workspace with dedicated live Tasks feed and expanded Event Log inspector",
+            "Multi-plan sibling selector dropdown in Plan view for instant phase switching",
+            "Interactive collapsible Plan Context & Nucleus accordion with one-click file jumping and tab return",
+            "Interactive collapsible Plan Overview objectives card",
+            "3-Way Visual Diff Inspector in Git rail comparing Base, Ours, and Theirs with live clean tree state",
+            "Next-gen swarm engine: dual-execution merge gate, zero-copy CoW worktree provisioning, and gossip bus",
+            "Continuous background mutation quark, ephemeral gate sandbox, and invariant synthesis engine",
+            "Adaptive AST context slicing, multiplexed PTY terminal grid, and token spend flamecharts",
+            "Full annotated Git release tags and automated GitHub Release publication sync",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.12.1",
         date: Some("2026-08-16"),
         added: &[],
