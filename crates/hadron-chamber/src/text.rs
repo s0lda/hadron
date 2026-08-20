@@ -1059,29 +1059,30 @@ pub fn uninterruptible_cli_notice(target: &str) -> String {
 
 /// Extract target handles from all line-start `@mentions` in `text`.
 ///
-/// Ignores lines inside fenced code blocks (```) and bold `**@` mentions, matching the router's rule.
+/// Ignores lines inside code blocks (fenced ```/~~~ or inline `...`) and bold `**@` mentions, matching the router's rule.
 pub fn line_start_mentions(text: &str) -> Vec<&str> {
     let mut targets = Vec::new();
-    let mut in_fence = false;
-    let fenced = text
-        .lines()
-        .filter(|l| l.trim_start().starts_with("```"))
-        .count()
-        % 2
-        == 0;
+    let clean = hadron_gluon::router::strip_markdown_code(text);
+    let bytes = text.as_bytes();
 
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        if fenced && trimmed.starts_with("```") {
-            in_fence = !in_fence;
-            continue;
+    let mut i = 0;
+    while i < bytes.len() {
+        let line_start = i;
+        while i < bytes.len() && bytes[i] != b'\n' {
+            i += 1;
         }
-        if in_fence {
-            continue;
+        let line_end = i;
+        if i < bytes.len() && bytes[i] == b'\n' {
+            i += 1;
         }
-        if let Some(rest) = trimmed.strip_prefix('@') {
-            let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-            let (target, _) = rest.split_at(end);
+
+        let clean_line = &clean[line_start..line_end];
+        let trimmed_clean = clean_line.trim_start();
+        if let Some(rest_clean) = trimmed_clean.strip_prefix('@') {
+            let offset_in_line = clean_line.len() - rest_clean.len();
+            let actual_start = line_start + offset_in_line;
+            let end_in_clean = rest_clean.find(char::is_whitespace).unwrap_or(rest_clean.len());
+            let target = &text[actual_start..actual_start + end_in_clean];
             if !target.is_empty() {
                 targets.push(target);
             }
@@ -1924,6 +1925,10 @@ mod tests {
         assert_eq!(line_start_mentions("**@agy** fix the router"), Vec::<&str>::new());
         assert_eq!(
             line_start_mentions("```\n@agy fix the router\n```"),
+            Vec::<&str>::new()
+        );
+        assert_eq!(
+            line_start_mentions("`@agy` fix the router"),
             Vec::<&str>::new()
         );
     }

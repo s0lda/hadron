@@ -245,6 +245,144 @@ fn match_longest_mention<'a>(
     best_match
 }
 
+/// Replaces all Markdown fenced code blocks (``` or ~~~) and inline code spans (`...`)
+/// with ASCII spaces (preserving newlines `\n`), returning a String of the exact same
+/// byte length as `body`.
+///
+/// This ensures that `@mentions` inside code blocks, code fences, or inline backticks
+/// are never parsed as active routing targets, preventing spurious quark excitations.
+/// Preserving byte length and newlines guarantees that line numbers and character offsets
+/// outside code blocks match the original text 1-to-1.
+pub fn strip_markdown_code(body: &str) -> String {
+    let bytes = body.as_bytes();
+    let mut out = bytes.to_vec();
+    let len = bytes.len();
+
+    let mut i = 0;
+    let mut in_fence: Option<(u8, usize)> = None;
+
+    while i < len {
+        let line_start = i;
+        while i < len && bytes[i] != b'\n' {
+            i += 1;
+        }
+        let line_end = i;
+        if i < len && bytes[i] == b'\n' {
+            i += 1;
+        }
+
+        let line_bytes = &bytes[line_start..line_end];
+        let mut indent = 0;
+        while indent < line_bytes.len() && line_bytes[indent] == b' ' {
+            indent += 1;
+        }
+        let unindented = &line_bytes[indent..];
+
+        if let Some((fence_char, fence_len)) = in_fence {
+            if indent <= 3 && unindented.len() >= fence_len {
+                let mut count = 0;
+                while count < unindented.len() && unindented[count] == fence_char {
+                    count += 1;
+                }
+                if count >= fence_len {
+                    let trailing = &unindented[count..];
+                    if trailing.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r') {
+                        for b in &mut out[line_start..line_end] {
+                            *b = b' ';
+                        }
+                        in_fence = None;
+                        continue;
+                    }
+                }
+            }
+            for b in &mut out[line_start..line_end] {
+                *b = b' ';
+            }
+        } else {
+            if indent <= 3 && unindented.len() >= 3 {
+                let first_char = unindented[0];
+                if first_char == b'`' || first_char == b'~' {
+                    let mut count = 0;
+                    while count < unindented.len() && unindented[count] == first_char {
+                        count += 1;
+                    }
+                    if count >= 3 {
+                        let info = &unindented[count..];
+                        let valid_info = if first_char == b'`' {
+                            !info.contains(&b'`')
+                        } else {
+                            true
+                        };
+                        if valid_info {
+                            in_fence = Some((first_char, count));
+                            for b in &mut out[line_start..line_end] {
+                                *b = b' ';
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // Inline backtick code spans
+            let mut j = line_start;
+            while j < line_end {
+                if out[j] == b'`' {
+                    let tick_start = j;
+                    while j < line_end && out[j] == b'`' {
+                        j += 1;
+                    }
+                    let tick_count = j - tick_start;
+
+                    if let Some((_, close_end)) = find_closing_backticks(&out, j, tick_count) {
+                        for k in tick_start..close_end {
+                            if out[k] != b'\n' && out[k] != b'\r' {
+                                out[k] = b' ';
+                            }
+                        }
+                        j = close_end;
+                    }
+                } else {
+                    j += 1;
+                }
+            }
+        }
+    }
+
+    String::from_utf8(out).unwrap_or_else(|_| body.to_string())
+}
+
+fn find_closing_backticks(bytes: &[u8], start: usize, count: usize) -> Option<(usize, usize)> {
+    let mut k = start;
+    let mut newlines = 0;
+    while k < bytes.len() {
+        if bytes[k] == b'\n' {
+            newlines += 1;
+            if newlines >= 2 {
+                return None;
+            }
+            k += 1;
+            continue;
+        } else if !bytes[k].is_ascii_whitespace() {
+            newlines = 0;
+        }
+
+        if bytes[k] == b'`' {
+            let run_start = k;
+            while k < bytes.len() && bytes[k] == b'`' {
+                k += 1;
+            }
+            let run_len = k - run_start;
+            if run_len == count {
+                return Some((run_start, k));
+            }
+        } else {
+            k += 1;
+        }
+    }
+    None
+}
+
 /// Extract the addressee from a Markdown message: the first line that **starts**
 /// with `@quarkid` (after optional leading whitespace) whose id is on the roster.
 /// `@orchestrator` also routes here — that is the escalation path a worker uses to
@@ -263,23 +401,9 @@ pub fn parse_addressee(
     sender: Option<&QuarkId>,
     preons: &[Preon],
 ) -> Option<QuarkId> {
-    let mut in_fence = false;
-    let fenced = body
-        .lines()
-        .filter(|l| l.trim_start().starts_with("```"))
-        .count()
-        % 2
-        == 0;
-
-    for line in body.lines() {
+    let clean = strip_markdown_code(body);
+    for line in clean.lines() {
         let trimmed = line.trim_start();
-        if fenced && trimmed.starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
         let rest = if let Some(r) = trimmed.strip_prefix('@') {
             r
         } else if let Some(r) = trimmed.strip_prefix("**@") {
@@ -312,23 +436,9 @@ pub fn parse_all_addressees(
     preons: &[Preon],
 ) -> Vec<QuarkId> {
     let mut out = Vec::new();
-    let mut in_fence = false;
-    let fenced = body
-        .lines()
-        .filter(|l| l.trim_start().starts_with("```"))
-        .count()
-        % 2
-        == 0;
-
-    for line in body.lines() {
+    let clean = strip_markdown_code(body);
+    for line in clean.lines() {
         let trimmed = line.trim_start();
-        if fenced && trimmed.starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
         let rest = if let Some(r) = trimmed.strip_prefix('@') {
             r
         } else if let Some(r) = trimmed.strip_prefix("**@") {
@@ -366,17 +476,19 @@ pub fn parse_all_addressees(
 /// they name — so "@opus do X and you @agy do Y" returns `[opus, agy]` and the
 /// daemon fans the turn out to each. Mentions of ids not on the roster are
 /// ignored; an `@` not starting a word (e.g. inside `email@host`) is not a mention.
+/// Mentions inside Markdown code blocks (fenced ```/~~~ or inline `...`) are ignored.
 pub fn human_mentions(body: &str, roster: &[QuarkCard], preons: &[Preon]) -> Vec<QuarkId> {
+    let clean = strip_markdown_code(body);
     let mut out: Vec<QuarkId> = Vec::new();
     let mut i = 0;
-    while let Some(at_idx) = body[i..].find('@') {
+    while let Some(at_idx) = clean[i..].find('@') {
         let actual_at = i + at_idx;
         let valid_start = actual_at == 0
-            || body.as_bytes()[actual_at - 1].is_ascii_whitespace()
-            || (actual_at >= 2 && &body[actual_at - 2..actual_at] == "**");
+            || clean.as_bytes()[actual_at - 1].is_ascii_whitespace()
+            || (actual_at >= 2 && &clean[actual_at - 2..actual_at] == "**");
 
         if valid_start {
-            let rest = &body[actual_at + 1..];
+            let rest = &clean[actual_at + 1..];
             if let Some((match_len, resolution)) = match_longest_mention(rest, roster, preons) {
                 match resolution {
                     ResolvedMention::Team => {
@@ -411,38 +523,17 @@ pub fn human_mentions(body: &str, roster: &[QuarkCard], preons: &[Preon]) -> Vec
 /// here for "not being addressed by role or @id"; a display name names exactly one
 /// card, so admitting it introduces no broadcast-style leak the way `@team` would.
 ///
-/// This is the eligibility test an `exclusive` card must pass (WS4 §4 Phase 2), and
-/// it is deliberately narrower than `human_mentions`: a `@team` broadcast expands to
-/// EVERY card there, which would make "addressed to everyone" indistinguishable from
-/// "addressed to this card specifically" — exactly the gap that let an exclusive
-/// `security` card slip into a plain `@team status` turn. Here `@team` and
-/// `@orchestrator` are never treated as naming `card` (no expansion, no alias
-/// resolution) — only a literal `@<id>` or `@<role>` counts. `"@team we have a
-/// @security incident"` still admits the `security` card, because the `@security`
-/// token — not the `@team` one — matches its role.
-///
-/// Also deliberately skips `match_longest_mention`'s full-roster tie-break: the
-/// question here is "does the task match THIS card's own id/role," not "did the
-/// router's `@role` resolution land on this exact card." Two cards can share a role,
-/// and a task naming that role is a role-matching task for BOTH of them even though
-/// `@role` mention-routing only ever picks one (roster-order tie-break).
-///
-/// `preons` extends the same reasoning one hop further: a preon names one
-/// role, and a task naming that preon is treated as naming EVERY card that
-/// carries the preon's `preferred_role` — not just the one seat `@preon-name`
-/// mention-routing would land on. A preon addresses a role, not a specific
-/// seat, so admitting it is consistent with (not a new exception to) the
-/// shared-role rule above; a preon with no `preferred_role` never matches
-/// any card here.
+/// Mentions inside Markdown code blocks (fenced ```/~~~ or inline `...`) are ignored.
 pub fn task_names_card_specifically(task: &str, card: &QuarkCard, preons: &[Preon]) -> bool {
+    let clean = strip_markdown_code(task);
     let mut i = 0;
-    while let Some(at_idx) = task[i..].find('@') {
+    while let Some(at_idx) = clean[i..].find('@') {
         let actual_at = i + at_idx;
         let valid_start = actual_at == 0
-            || task.as_bytes()[actual_at - 1].is_ascii_whitespace()
-            || (actual_at >= 2 && &task[actual_at - 2..actual_at] == "**");
+            || clean.as_bytes()[actual_at - 1].is_ascii_whitespace()
+            || (actual_at >= 2 && &clean[actual_at - 2..actual_at] == "**");
         if valid_start {
-            let rest = &task[actual_at + 1..];
+            let rest = &clean[actual_at + 1..];
             if boundary_match(rest, card.id.as_str())
                 || card.display_name.as_deref().is_some_and(|dn| boundary_match(rest, dn))
                 || card.roles.iter().any(|role| !role.is_empty() && boundary_match(rest, role))

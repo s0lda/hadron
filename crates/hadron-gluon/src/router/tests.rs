@@ -666,4 +666,51 @@ fn a_cards_role_beats_a_same_named_preon() {
     );
 }
 
+#[test]
+fn code_blocks_and_inline_spans_do_not_excite_quarks() {
+    let r = vec![
+        card("orch", &[]),
+        card("worker", &[]),
+        card("ollama", &[]),
+        card("claude", &[]),
+        card("agy", &[]),
+    ];
+
+    // 1. Fenced code block (```) containing mentions must be ignored
+    let msg_fenced = "In @README.md please update:\n```md\nCollaborative Multi-LLM Chat: @claude, @ollama, @agy\n```\n@orch please review";
+    assert_eq!(human_mentions(msg_fenced, &r, &[]), vec![QuarkId::new("orch")]);
+
+    // 2. Tilde fence (~~~) containing mentions must be ignored
+    let msg_tilde = "~~~rust\nlet x = \"@worker\";\n~~~\n@orch go";
+    assert_eq!(human_mentions(msg_tilde, &r, &[]), vec![QuarkId::new("orch")]);
+
+    // 3. Inline code backticks (`...`) must be ignored
+    let msg_inline = "Mix models like `@claude` and `@ollama` together, @orch please check";
+    assert_eq!(human_mentions(msg_inline, &r, &[]), vec![QuarkId::new("orch")]);
+
+    // 4. Double backtick inline span (``...``)
+    let msg_double_ticks = "Check ``@worker and @claude`` here and ask @orch";
+    assert_eq!(human_mentions(msg_double_ticks, &r, &[]), vec![QuarkId::new("orch")]);
+
+    // 5. Code block only with no outside mentions returns empty
+    let msg_only_code = "```\n@worker\n@ollama\n```";
+    assert_eq!(human_mentions(msg_only_code, &r, &[]), Vec::<QuarkId>::new());
+
+    // 6. Inline code only returns empty
+    let msg_only_inline = "`@worker` and `@ollama`";
+    assert_eq!(human_mentions(msg_only_inline, &r, &[]), Vec::<QuarkId>::new());
+
+    // 7. parse_addressee and parse_all_addressees also ignore code blocks & spans
+    assert_eq!(parse_addressee(msg_fenced, &r, None, &[]), Some(QuarkId::new("orch")));
+    assert_eq!(parse_addressee("`@worker` do this", &r, None, &[]), None);
+    assert_eq!(parse_all_addressees(msg_fenced, &r, None, &[]), vec![QuarkId::new("orch")]);
+
+    // 8. task_names_card_specifically ignores code blocks & spans
+    let worker_card = &r[1];
+    assert!(!task_names_card_specifically("Fix README: ``` @worker ```", worker_card, &[]));
+    assert!(!task_names_card_specifically("Fix README: `@worker`", worker_card, &[]));
+    assert!(task_names_card_specifically("Assigning to @worker for fix", worker_card, &[]));
+}
+
+
 

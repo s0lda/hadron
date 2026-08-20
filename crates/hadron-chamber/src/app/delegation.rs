@@ -121,22 +121,14 @@ fn strip_list_prefix(line: &str) -> &str {
     trimmed
 }
 
-/// Ignores lines inside ``` code fences.
+/// Ignores lines inside code fences and inline backticks.
 /// Does NOT match bold `**@quark**` (starts with `*`, not `@`).
 fn parse_line_start_mentions(body: &str, sender: &Actor, aliases: &HashMap<String, QuarkId>) -> Vec<QuarkId> {
     let mut targets: Vec<QuarkId> = Vec::new();
-    let mut in_fence = false;
-    let fenced = body.lines().filter(|l| l.trim_start().starts_with("```")).count() % 2 == 0;
+    let clean = hadron_gluon::router::strip_markdown_code(body);
 
-    for line in body.lines() {
+    for line in clean.lines() {
         let trimmed = line.trim_start();
-        if fenced && trimmed.starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
 
         // Strip leading list/bullet/quote markers like `- `, `* `, `1. `, `> `
         let content = strip_list_prefix(trimmed);
