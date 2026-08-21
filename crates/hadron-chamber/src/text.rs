@@ -194,6 +194,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "team-review", detail: "Multi-quark peer review board across security, architecture, and simplicity", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "bakeoff", detail: "Spawn speculative tournament bake-off across competing solutions", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "grill-me", detail: "Interactive requirement alignment interview before plan synthesis", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "research", detail: "Research a topic or architecture and save findings to .hadron/docs/research/", arity: Arity::Line, arg: ArgSource::None, listed: true },
 ];
 
 /// A short kebab-case id for a lesson line: the first few words, lowercased,

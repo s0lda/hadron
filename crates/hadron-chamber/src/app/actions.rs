@@ -348,6 +348,24 @@ impl Chamber {
                 }
                 true
             }
+            "research" => {
+                let trimmed = args.trim();
+                if trimmed.is_empty() {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/research <topic>`\nInitiate an exploratory research investigation and persist structured findings to `.hadron/docs/research/`.".to_string(),
+                        cx,
+                    );
+                } else {
+                    let (named, topic) = crate::text::split_target(trimmed);
+                    let target = named.unwrap_or(hadron_gluon::router::ORCHESTRATOR_ALIAS);
+                    let msg = format!(
+                        "@{target} /research Topic: {topic}\n\nConduct thorough architectural and technical research on `{topic}`: analyze current codebase mechanisms, evaluate trade-offs and constraints, persist structured findings to `.hadron/docs/research/`, and recommend actionable next steps."
+                    );
+                    self.post_chat_message(Actor::Human, msg, cx);
+                }
+                true
+            }
             cmd if cmd == "team-brainstorm"
                 || cmd == "brainstorm"
                 || cmd == "security"
