@@ -101,6 +101,9 @@ pub struct ChamberPrefs {
     /// Optional primary accent color choice (defaults to Amethyst).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accent_choice: Option<AccentChoice>,
+    /// Optional custom theme definition override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_theme: Option<ThemeDefinition>,
 }
 
 /// Curated color theme presets.
@@ -221,6 +224,301 @@ impl AccentChoice {
     }
 }
 
+/// Comprehensive, serializable theme definition for custom colors and surfaces.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThemeDefinition {
+    pub id: String,
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub is_dark: bool,
+    pub surfaces: SurfacePalette,
+    pub accents: AccentPalette,
+    pub text: TextPalette,
+    pub syntax: SyntaxPalette,
+    pub terminal: TerminalPalette,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SurfacePalette {
+    pub canvas_base: String,
+    pub bg_base: String,
+    pub bg_surface: String,
+    pub bg_surface_raised: String,
+    pub bg_elevated: String,
+    pub input_bg: String,
+    pub border: String,
+    pub popover: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AccentPalette {
+    pub primary: String,
+    #[serde(default = "default_glow_blue_hex")]
+    pub glow_blue: String,
+    #[serde(default = "default_glow_pink_hex")]
+    pub glow_pink: String,
+    #[serde(default = "default_glow_green_hex")]
+    pub glow_green: String,
+    #[serde(default = "default_glow_amber_hex")]
+    pub glow_amber: String,
+}
+
+fn default_glow_blue_hex() -> String { "#4f83f0".to_string() }
+fn default_glow_pink_hex() -> String { "#c084fc".to_string() }
+fn default_glow_green_hex() -> String { "#2fcf8a".to_string() }
+fn default_glow_amber_hex() -> String { "#fbbf24".to_string() }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextPalette {
+    pub primary: String,
+    pub secondary: String,
+    pub muted: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SyntaxPalette {
+    pub keyword: String,
+    pub function: String,
+    pub r#type: String,
+    pub string: String,
+    pub number: String,
+    pub comment: String,
+    pub operator: String,
+    pub variable: String,
+    pub constant: String,
+    pub attribute: String,
+    pub tag: String,
+    pub boolean: String,
+    pub delimiter: String,
+    pub punctuation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TerminalPalette {
+    pub bg: String,
+    pub fg: String,
+    pub prompt: String,
+}
+
+impl Default for ThemeDefinition {
+    fn default() -> Self {
+        Self::preset_obsidian()
+    }
+}
+
+impl ThemeDefinition {
+    pub fn preset_obsidian() -> Self {
+        Self {
+            id: "obsidian".into(),
+            name: "Obsidian Neutral".into(),
+            is_dark: true,
+            surfaces: SurfacePalette {
+                canvas_base: "#050505".into(),
+                bg_base: "#0b0b0b".into(),
+                bg_surface: "#101010".into(),
+                bg_surface_raised: "#1c1c1c".into(),
+                bg_elevated: "#242424".into(),
+                input_bg: "#181818".into(),
+                border: "#444444".into(),
+                popover: "#101010".into(),
+            },
+            accents: AccentPalette {
+                primary: "#c084fc".into(),
+                glow_blue: "#4f83f0".into(),
+                glow_pink: "#c084fc".into(),
+                glow_green: "#2fcf8a".into(),
+                glow_amber: "#fbbf24".into(),
+            },
+            text: TextPalette {
+                primary: "#e8e8e8".into(),
+                secondary: "#a8a8a8".into(),
+                muted: "#707070".into(),
+            },
+            syntax: SyntaxPalette::default_dark(),
+            terminal: TerminalPalette {
+                bg: "#080808".into(),
+                fg: "#e8e8e8".into(),
+                prompt: "#4ade80".into(),
+            },
+        }
+    }
+
+    pub fn preset_oled() -> Self {
+        Self {
+            id: "oled".into(),
+            name: "OLED True Black".into(),
+            is_dark: true,
+            surfaces: SurfacePalette {
+                canvas_base: "#000000".into(),
+                bg_base: "#050505".into(),
+                bg_surface: "#0a0a0a".into(),
+                bg_surface_raised: "#141414".into(),
+                bg_elevated: "#1a1a1a".into(),
+                input_bg: "#101010".into(),
+                border: "#383838".into(),
+                popover: "#0a0a0a".into(),
+            },
+            accents: AccentPalette {
+                primary: "#c084fc".into(),
+                glow_blue: "#4f83f0".into(),
+                glow_pink: "#c084fc".into(),
+                glow_green: "#2fcf8a".into(),
+                glow_amber: "#fbbf24".into(),
+            },
+            text: TextPalette {
+                primary: "#e8e8e8".into(),
+                secondary: "#a8a8a8".into(),
+                muted: "#707070".into(),
+            },
+            syntax: SyntaxPalette::default_dark(),
+            terminal: TerminalPalette {
+                bg: "#000000".into(),
+                fg: "#e8e8e8".into(),
+                prompt: "#4ade80".into(),
+            },
+        }
+    }
+
+    pub fn preset_midnight() -> Self {
+        Self {
+            id: "midnight".into(),
+            name: "Midnight Slate".into(),
+            is_dark: true,
+            surfaces: SurfacePalette {
+                canvas_base: "#090d16".into(),
+                bg_base: "#0f172a".into(),
+                bg_surface: "#1e293b".into(),
+                bg_surface_raised: "#283548".into(),
+                bg_elevated: "#334155".into(),
+                input_bg: "#172033".into(),
+                border: "#475569".into(),
+                popover: "#1e293b".into(),
+            },
+            accents: AccentPalette {
+                primary: "#60a5fa".into(),
+                glow_blue: "#60a5fa".into(),
+                glow_pink: "#a78bfa".into(),
+                glow_green: "#34d399".into(),
+                glow_amber: "#fbbf24".into(),
+            },
+            text: TextPalette {
+                primary: "#f1f5f9".into(),
+                secondary: "#94a3b8".into(),
+                muted: "#64748b".into(),
+            },
+            syntax: SyntaxPalette::default_dark(),
+            terminal: TerminalPalette {
+                bg: "#0b1120".into(),
+                fg: "#f1f5f9".into(),
+                prompt: "#38bdf8".into(),
+            },
+        }
+    }
+
+    pub fn preset_tokyo() -> Self {
+        Self {
+            id: "tokyo".into(),
+            name: "Tokyo Dark".into(),
+            is_dark: true,
+            surfaces: SurfacePalette {
+                canvas_base: "#0d0f18".into(),
+                bg_base: "#131622".into(),
+                bg_surface: "#1a1e2e".into(),
+                bg_surface_raised: "#24293e".into(),
+                bg_elevated: "#2f354f".into(),
+                input_bg: "#181c2b".into(),
+                border: "#414868".into(),
+                popover: "#1a1e2e".into(),
+            },
+            accents: AccentPalette {
+                primary: "#7aa2f7".into(),
+                glow_blue: "#7aa2f7".into(),
+                glow_pink: "#bb9af7".into(),
+                glow_green: "#73daca".into(),
+                glow_amber: "#e0af68".into(),
+            },
+            text: TextPalette {
+                primary: "#c0caf5".into(),
+                secondary: "#9aa5ce".into(),
+                muted: "#565f89".into(),
+            },
+            syntax: SyntaxPalette::default_dark(),
+            terminal: TerminalPalette {
+                bg: "#0f121d".into(),
+                fg: "#c0caf5".into(),
+                prompt: "#73daca".into(),
+            },
+        }
+    }
+
+    pub fn from_preset(preset: ThemePreset) -> Self {
+        match preset {
+            ThemePreset::Obsidian => Self::preset_obsidian(),
+            ThemePreset::Oled => Self::preset_oled(),
+            ThemePreset::Midnight => Self::preset_midnight(),
+            ThemePreset::Tokyo => Self::preset_tokyo(),
+        }
+    }
+}
+
+impl SyntaxPalette {
+    pub fn default_dark() -> Self {
+        Self {
+            keyword: "#f97583".into(),
+            function: "#b392f0".into(),
+            r#type: "#79b8ff".into(),
+            string: "#9ecbff".into(),
+            number: "#79b8ff".into(),
+            comment: "#7e888c".into(),
+            operator: "#f97583".into(),
+            variable: "#e1e4e8".into(),
+            constant: "#79b8ff".into(),
+            attribute: "#b392f0".into(),
+            tag: "#85e89d".into(),
+            boolean: "#79b8ff".into(),
+            delimiter: "#f97583".into(),
+            punctuation: "#bbbebf".into(),
+        }
+    }
+}
+
+/// Parses a hex color string (`#rrggbb` or `#rrggbbaa` or without `#`) into GPUI `Rgba`.
+pub fn parse_hex_color(s: &str) -> Option<gpui::Rgba> {
+    let trimmed = s.trim().trim_start_matches('#');
+    if trimmed.len() == 6 {
+        let r = u8::from_str_radix(&trimmed[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&trimmed[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&trimmed[4..6], 16).ok()?;
+        Some(gpui::Rgba {
+            r: r as f32 / 255.0,
+            g: g as f32 / 255.0,
+            b: b as f32 / 255.0,
+            a: 1.0,
+        })
+    } else if trimmed.len() == 8 {
+        let r = u8::from_str_radix(&trimmed[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&trimmed[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&trimmed[4..6], 16).ok()?;
+        let a = u8::from_str_radix(&trimmed[6..8], 16).ok()?;
+        Some(gpui::Rgba {
+            r: r as f32 / 255.0,
+            g: g as f32 / 255.0,
+            b: b as f32 / 255.0,
+            a: a as f32 / 255.0,
+        })
+    } else {
+        None
+    }
+}
+
+/// Helper to format GPUI `Rgba` back to `#rrggbb` string.
+pub fn format_rgba_hex(color: gpui::Rgba) -> String {
+    let r = (color.r * 255.0).round() as u8;
+    let g = (color.g * 255.0).round() as u8;
+    let b = (color.b * 255.0).round() as u8;
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
 /// An `editor` value we do not understand resolves to the default instead of
 /// poisoning the rest of the file. See [`ChamberPrefs::editor`].
 fn lenient_editor<'de, D>(d: D) -> Result<crate::sys::EditorChoice, D::Error>
@@ -279,6 +577,7 @@ impl Default for ChamberPrefs {
             mono_font_size: None,
             theme_preset: None,
             accent_choice: None,
+            custom_theme: None,
         }
     }
 }
@@ -369,6 +668,7 @@ mod tests {
             mono_font_size: Some(13.0),
             theme_preset: None,
             accent_choice: None,
+            custom_theme: None,
         };
         let json = serde_json::to_string(&prefs).unwrap();
         let back: ChamberPrefs = serde_json::from_str(&json).unwrap();
@@ -594,6 +894,28 @@ mod tests {
         assert_eq!(AccentChoice::from_str("Sapphire"), Some(AccentChoice::Sapphire));
         assert_eq!(AccentChoice::from_str("emerald"), Some(AccentChoice::Emerald));
         assert_eq!(AccentChoice::from_str("Amethyst"), Some(AccentChoice::Amethyst));
+    }
+
+    #[test]
+    fn test_custom_theme_definition_serde_and_hex_parsing() {
+        let theme = ThemeDefinition::preset_tokyo();
+        let json = serde_json::to_string(&theme).unwrap();
+        let loaded: ThemeDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.name, "Tokyo Dark");
+        assert_eq!(loaded.surfaces.canvas_base, "#0d0f18");
+
+        let c1 = parse_hex_color("#c084fc").unwrap();
+        assert_eq!((c1.r * 255.0).round() as u8, 0xc0);
+        assert_eq!((c1.g * 255.0).round() as u8, 0x84);
+        assert_eq!((c1.b * 255.0).round() as u8, 0xfc);
+
+        let c2 = parse_hex_color("050505").unwrap();
+        assert_eq!((c2.r * 255.0).round() as u8, 0x05);
+
+        let formatted = format_rgba_hex(c1);
+        assert_eq!(formatted, "#c084fc");
+
+        assert_eq!(parse_hex_color("invalid"), None);
     }
 }
 
