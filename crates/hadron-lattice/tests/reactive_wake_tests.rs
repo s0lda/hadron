@@ -3,9 +3,10 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 #[tokio::test]
-async fn test_reactive_wakeup_signal_delivery() {
+async fn test_reactive_wakeups_and_variants() {
     let mut rx = subscribe_wakeups();
 
+    // 1. Single signal delivery
     let signal = LatticeWakeup::TaskReady("task-1.2".to_string());
     emit_wakeup(signal.clone()).expect("Failed to emit wakeup");
 
@@ -15,12 +16,8 @@ async fn test_reactive_wakeup_signal_delivery() {
         .expect("Failed to receive wakeup");
 
     assert_eq!(received, signal);
-}
 
-#[tokio::test]
-async fn test_all_wakeup_variants() {
-    let mut rx = subscribe_wakeups();
-
+    // 2. All wakeup variants
     let events = vec![
         LatticeWakeup::TaskReady("task-1".into()),
         LatticeWakeup::GateFinished { branch: "feat/foo".into(), passed: true },
