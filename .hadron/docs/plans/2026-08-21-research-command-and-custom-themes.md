@@ -71,22 +71,25 @@
 
 ## Phase 3: Settings Appearance UI & Live Theme Editor
 
-### Task 6: Custom Theme Editor in Settings Overlay
+### Task 6: Custom Theme Editor in Settings Overlay (commit `31d4d158`)
 **Files:**
-- Modify: `crates/hadron-chamber/src/app/settings/providers.rs`
+- Modify: `crates/hadron-chamber/src/app/settings/mod.rs`
 - Modify: `crates/hadron-chamber/src/app/settings/overlay.rs`
-
-- [ ] Step 6.1: Add Theme Mode selector (Curated Presets vs Custom Themes) in Appearance settings.
-- [ ] Step 6.2: Add color input cards for UI Surfaces, Accents, and Text colors.
-- [ ] Step 6.3: Add syntax highlighting color matrix editor with categories (Keywords, Types, Strings, Comments, Variables, Operators).
-
-### Task 7: Live Syntax Highlighting & UI Preview Panel
-**Files:**
 - Modify: `crates/hadron-chamber/src/app/settings/providers.rs`
+- Test: `crates/hadron-chamber/src/app/settings/tests.rs`
 
-- [ ] Step 7.1: Implement live preview widget showing code snippet with active syntax colors.
-- [ ] Step 7.2: Implement theme actions: Create, Duplicate, Reset, Import JSON, Export JSON.
-- [ ] Step 7.3: Verify saving updates `~/.hadron/chamber.json` and repaints UI immediately.
+- [x] Step 6.1: Add "Custom Themes" section to Appearance settings with "New Custom Theme", "Import Theme", and "Export Theme" actions.
+- [x] Step 6.2: Build palette color picker controls and hex inputs for surfaces, accents, and syntax tokens.
+- [x] Step 6.3: Implement theme persistence to `~/.hadron/themes/<id>.json` and active theme activation.
+
+### Task 7: Live Syntax Highlighting & UI Preview Panel (commit `31d4d158`)
+**Files:**
+- Modify: `crates/hadron-chamber/src/app/settings/overlay.rs`
+- Test: Manual UI inspection / unit tests
+
+- [x] Step 7.1: Add a live code snippet preview block inside the Appearance settings panel showcasing syntax tokens.
+- [x] Step 7.2: Add UI component preview strip (buttons, badge, status halo dots, prompt text) dynamically reacting to theme edits.
+- [x] Step 7.3: Verify saving updates `~/.hadron/chamber.json` and repaints UI immediately.
 
 ---
 
