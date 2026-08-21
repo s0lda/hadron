@@ -31,9 +31,13 @@ use std::path::Path;
 
 mod parse;
 mod select;
+pub mod review_board;
+pub mod grill_me;
 #[cfg(test)]
 mod tests;
 
+pub use review_board::*;
+pub use grill_me::*;
 pub use select::{description, index, plan_author, plan_ref, render, select, preferred_role, Handoff, Match};
 // `pub`, not `pub(crate)`: `/add-skill` (hadron-chamber) needs to inspect a
 // candidate skill's front-matter (the `tools:` warning, spec §10) before writing
