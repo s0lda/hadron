@@ -404,14 +404,14 @@ impl MarkdownPlugin for BadgePlugin {
                         window.end_text_selection(cx);
                         cx.stop_propagation();
                         if url.starts_with("http://") || url.starts_with("https://") {
-                            cx.open_url(&url);
+                            crate::sys::open_path_or_url(&url);
                         } else {
                             let repo_root = std::env::current_dir().unwrap_or_default();
                             let candidate = repo_root.join(url.trim_start_matches("./"));
                             if candidate.exists() {
-                                cx.open_url(&format!("file://{}", candidate.display()));
+                                crate::sys::open_path_or_url(&candidate.display().to_string());
                             } else {
-                                cx.open_url(&url);
+                                crate::sys::open_path_or_url(&url);
                             }
                         }
                     })

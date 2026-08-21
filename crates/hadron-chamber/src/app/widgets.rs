@@ -1261,6 +1261,7 @@ where
             .child(
                 div()
                     .w_full()
+                    .min_w_0()
                     .p_1()
                     .text_xs()
                     .text_color(theme::text_secondary())

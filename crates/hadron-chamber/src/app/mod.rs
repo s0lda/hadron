@@ -1624,14 +1624,17 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
         // keeps ONE home for the setting instead of a second cached copy that could
         // drift. A click is rare and the file is tiny.
         gpui_component::text::set_link_handler(|url| {
-            let Some((path, line)) = crate::sys::file_url_target(url) else {
-                return false;
-            };
-            match crate::sys::editor_argv(&config::load().editor, &path, line) {
-                Some((program, args)) => std::process::Command::new(&program).args(&args).spawn().is_ok(),
-                // `System` (or a blank custom command) has no opinion — let the
-                // platform opener have it, which is the pre-existing behaviour.
-                None => false,
+            if let Some((path, line)) = crate::sys::file_url_target(url) {
+                match crate::sys::editor_argv(&config::load().editor, &path, line) {
+                    Some((program, args)) => std::process::Command::new(&program).args(&args).spawn().is_ok(),
+                    None => {
+                        crate::sys::open_path_or_url(&path.display().to_string());
+                        true
+                    }
+                }
+            } else {
+                crate::sys::open_path_or_url(url);
+                true
             }
         });
         Theme::change(ThemeMode::Dark, None, cx);

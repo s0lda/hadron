@@ -427,6 +427,135 @@ pub fn editor_argv(choice: &EditorChoice, path: &Path, line: Option<u32>) -> Opt
     Some((program.to_string(), args))
 }
 
+/// Returns true if running inside Windows Subsystem for Linux (WSL).
+pub fn is_wsl() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var("WSL_DISTRO_NAME").is_ok()
+            || std::fs::read_to_string("/proc/version")
+                .map(|v| v.to_lowercase().contains("microsoft") || v.contains("WSL"))
+                .unwrap_or(false)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+/// Opens a file path or URL using the platform's default viewer or browser.
+///
+/// Under WSL:
+/// - Translates Linux file paths to Windows UNC paths via `wslpath -w` and dispatches
+///   cleanly to `powershell.exe -NoProfile -Command "Start-Process '<winpath>'"` with null
+///   standard I/O to avoid missing WSLENV environment errors or snapd stderr pollution.
+/// - Web URLs (`http://`, `https://`) are dispatched to Windows PowerShell or `wslview`.
+///
+/// Under Native Linux:
+/// - Spawns `xdg-open` with null standard I/O.
+///
+/// Under macOS:
+/// - Spawns `open` with null standard I/O.
+///
+/// Under Windows:
+/// - Spawns `explorer` or `powershell.exe Start-Process`.
+pub fn open_path_or_url(target: &str) {
+    let trimmed = target.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if is_wsl() {
+            let file_target = if let Some(stripped) = trimmed.strip_prefix("file://") {
+                stripped
+            } else {
+                trimmed
+            };
+
+            // If it's a web URL (http:// or https://), launch via Windows PowerShell or wslview
+            if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+                let escaped = trimmed.replace('\'', "''");
+                if let Ok(mut child) = Command::new("powershell.exe")
+                    .args(["-NoProfile", "-Command", &format!("Start-Process '{escaped}'")])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    let _ = child.wait();
+                    return;
+                }
+            } else {
+                // For local files or folders, translate Linux path to Windows UNC path
+                let win_path = Command::new("wslpath")
+                    .arg("-w")
+                    .arg(file_target)
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .filter(|s| !s.is_empty());
+
+                if let Some(wp) = win_path {
+                    let escaped_wp = wp.replace('\'', "''");
+                    if let Ok(mut child) = Command::new("powershell.exe")
+                        .args(["-NoProfile", "-Command", &format!("Start-Process '{escaped_wp}'")])
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                    {
+                        let _ = child.wait();
+                        return;
+                    }
+                }
+            }
+
+            // Fallback to wslview if available
+            if let Ok(mut child) = Command::new("wslview")
+                .arg(file_target)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                let _ = child.wait();
+                return;
+            }
+        }
+
+        // Native Linux fallback (or when WSL PowerShell is unavailable)
+        let _ = Command::new("xdg-open")
+            .arg(trimmed)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        return;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open")
+            .arg(trimmed)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("explorer")
+            .arg(trimmed)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+}
+
 #[cfg(windows)]
 pub fn init_windows_app_icon() {
     use std::ffi::OsStr;
@@ -881,6 +1010,14 @@ mod tests {
             format_file_preview("lib.rs", code_with_backticks),
             "````rust\n/// ```\n/// example\n/// ```\n````"
         );
+    }
+
+    #[test]
+    fn test_is_wsl_and_open_path_or_url_no_panic() {
+        let _ = is_wsl();
+        // Empty target should early-return without doing anything
+        open_path_or_url("");
+        open_path_or_url("   ");
     }
 }
 

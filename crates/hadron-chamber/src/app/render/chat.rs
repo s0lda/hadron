@@ -765,6 +765,8 @@ impl super::Chamber {
 
         let ui_size = self.prefs.ui_font_size.unwrap_or(14.0);
         div()
+            .w_full()
+            .min_w_0()
             .text_size(px(ui_size))
             .child(
                 gpui_component::text::TextView::markdown((view, ix), content)

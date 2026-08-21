@@ -670,6 +670,7 @@ impl RenderOnce for ImageCard {
         let mut card = v_flex()
             .w_full()
             .max_w_full()
+            .min_w_0()
             .my_3()
             .rounded_lg()
             .bg(crate::theme::input_bg())
@@ -688,6 +689,7 @@ impl RenderOnce for ImageCard {
 
         let header = h_flex()
             .w_full()
+            .min_w_0()
             .px_3()
             .py_1p5()
             .items_center()
@@ -695,12 +697,16 @@ impl RenderOnce for ImageCard {
             .bg(crate::theme::bg_surface())
             .border_b_1()
             .border_color(crate::theme::border())
+            .overflow_hidden()
             .child(
                 h_flex()
+                    .min_w_0()
                     .gap_2()
                     .items_center()
+                    .overflow_hidden()
                     .child(
                         div()
+                            .flex_none()
                             .px_2()
                             .py_0p5()
                             .rounded_md()
@@ -708,10 +714,12 @@ impl RenderOnce for ImageCard {
                             .text_color(gpui::rgb(0x60a5fa))
                             .text_xs()
                             .font_weight(FontWeight::SEMIBOLD)
+                            .truncate()
                             .child(format!("🖼️ {}", file_name)),
                     )
                     .child(
                         div()
+                            .flex_none()
                             .text_xs()
                             .text_color(crate::theme::text_muted())
                             .font_family(crate::fonts::MONO_FAMILY)
@@ -720,6 +728,7 @@ impl RenderOnce for ImageCard {
             )
             .child(
                 h_flex()
+                    .flex_none()
                     .gap_1()
                     .items_center()
                     // Scale presets: Fit, 50%, 100%, 150%
@@ -781,8 +790,8 @@ impl RenderOnce for ImageCard {
                             })
                             .hover(|s| s.bg(crate::theme::bg_surface_raised()).text_color(crate::theme::text()))
                             .child("Open")
-                            .on_click(move |_, _window, cx| {
-                                cx.open_url(&format!("file://{}", open_path.display()));
+                            .on_click(move |_, _window, _cx| {
+                                crate::sys::open_path_or_url(&open_path.display().to_string());
                             }),
                     )
                     .child(
@@ -813,23 +822,30 @@ impl RenderOnce for ImageCard {
                 let zoom_ent = scale_entity.clone();
                 let mut img_elem = gpui::img(abs_path)
                     .id("img-asset")
-                    .max_w_full()
-                    .max_h(px(540.0))
+                    .w_full()
+                    .max_w(px(orig_w as f32))
+                    .min_w_0()
+                    .max_h(px(520.0))
                     .rounded_md()
                     .object_fit(gpui::ObjectFit::Contain);
 
                 if let Some(w) = self.data.width {
                     img_elem = img_elem.max_w(px(w));
                 }
+                if let Some(h) = self.data.height {
+                    img_elem = img_elem.max_h(px(h));
+                }
 
                 let body = v_flex()
                     .id(SharedString::from(format!("img-fit-body-{hash}")))
                     .w_full()
                     .max_w_full()
+                    .min_w_0()
                     .p_3()
                     .items_center()
                     .justify_center()
                     .bg(crate::theme::field_base())
+                    .overflow_hidden()
                     .cursor_pointer()
                     .tooltip(|window, cx| {
                         gpui_component::tooltip::Tooltip::new("Click to zoom to 100%").build(window, cx)
@@ -858,20 +874,27 @@ impl RenderOnce for ImageCard {
                     .id("img-asset")
                     .w(px(target_w))
                     .h(px(target_h))
+                    .min_w(px(target_w))
+                    .min_h(px(target_h))
                     .rounded_md()
                     .object_fit(gpui::ObjectFit::Contain);
 
                 let body = div()
                     .id(SharedString::from(format!("img-scroll-{hash}")))
                     .w_full()
+                    .max_w_full()
+                    .min_w_0()
                     .max_h(px(580.0))
-                    .overflow_scrollbar()
+                    .overflow_x_scroll()
+                    .overflow_y_scroll()
                     .p_3()
                     .bg(crate::theme::field_base())
                     .child(
                         div()
                             .w(px(target_w))
                             .h(px(target_h))
+                            .min_w(px(target_w))
+                            .min_h(px(target_h))
                             .child(img_elem),
                     );
 

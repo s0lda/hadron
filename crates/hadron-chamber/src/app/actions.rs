@@ -1846,14 +1846,7 @@ impl Chamber {
                     full_path
                 };
 
-                #[cfg(target_os = "macos")]
-                let cmd = "open";
-                #[cfg(target_os = "windows")]
-                let cmd = "explorer";
-                #[cfg(target_os = "linux")]
-                let cmd = "xdg-open";
-
-                let _ = std::process::Command::new(cmd).arg(&target).spawn();
+                crate::sys::open_path_or_url(&target.display().to_string());
             }
         }
         cx.notify();
@@ -1868,21 +1861,16 @@ impl Chamber {
     /// [`crate::sys::editor_argv`] and falls through to the platform opener, which is
     /// exactly the behaviour that existed before the setting did.
     pub(super) fn open_in_editor(&self, path: &std::path::Path, line: Option<u32>) {
-        #[cfg(target_os = "macos")]
-        let platform_opener = "open";
-        #[cfg(target_os = "windows")]
-        let platform_opener = "explorer";
-        #[cfg(target_os = "linux")]
-        let platform_opener = "xdg-open";
-
         let spawned = match crate::sys::editor_argv(&self.prefs.editor, path, line) {
-            Some((program, args)) => std::process::Command::new(&program).args(&args).spawn().map_err(|e| {
-                format!("{program}: {e}")
-            }),
-            None => std::process::Command::new(platform_opener)
-                .arg(path)
+            Some((program, args)) => std::process::Command::new(&program)
+                .args(&args)
                 .spawn()
-                .map_err(|e| format!("{platform_opener}: {e}")),
+                .map(|_| ())
+                .map_err(|e| format!("{program}: {e}")),
+            None => {
+                crate::sys::open_path_or_url(&path.display().to_string());
+                Ok(())
+            }
         };
         // Rule 8: an editor that is configured but not installed is the likeliest
         // failure here, and silently doing nothing reads to the human as a dead click.
