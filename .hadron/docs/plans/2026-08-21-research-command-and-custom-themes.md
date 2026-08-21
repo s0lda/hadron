@@ -14,15 +14,15 @@
 
 ## Phase 1: `/research` Command Grammar & Document Lifecycle
 
-### Task 1: Command Table & Chat Parsing for `/research`
+### Task 1: Command Table & Chat Parsing for `/research` (commit `848b1c5a`)
 **Files:**
 - Modify: `crates/hadron-chamber/src/text.rs`
 - Modify: `crates/hadron-chamber/src/app/actions.rs`
 - Test: `crates/hadron-chamber/src/app/input.rs` (`every_listed_command_is_handled`)
 
-- [ ] Step 1.1: Add `research` to `hadron_chamber::text::COMMANDS` with `Arity::Line`, `ArgSource::None`, and `listed: true`.
-- [ ] Step 1.2: Add dispatch handling for `/research` in `crates/hadron-chamber/src/app/actions.rs`.
-- [ ] Step 1.3: Run `cargo test -p hadron-chamber text` to verify command table consistency.
+- [x] Step 1.1: Add `research` to `hadron_chamber::text::COMMANDS` with `Arity::Line`, `ArgSource::None`, and `listed: true`.
+- [x] Step 1.2: Add dispatch handling for `/research` in `crates/hadron-chamber/src/app/actions.rs`.
+- [x] Step 1.3: Run `cargo test -p hadron text` to verify command table consistency.
 
 ### Task 2: Research Document Template & Task Tracker Retitling
 **Files:**
