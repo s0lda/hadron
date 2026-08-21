@@ -123,6 +123,21 @@ impl super::Chamber {
             self.last_plan_path = None;
             self.last_incomplete_task = None;
         }
+
+        for i in 0..self.view.tasks.len() {
+            let body = self.view.tasks[i].body.clone();
+            if let Some(named) = hadron_gluon::skills::research_ref(&body) {
+                if let Some(content) = crate::sys::read_workspace_file(&repo, &named) {
+                    if let Some(title) = hadron_lattice::nucleus::parse_research_title(&content) {
+                        crate::model::tasks::retitle_from_research(
+                            &mut self.view.tasks,
+                            &named,
+                            &title,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn calculate_collapsed_tasks(
