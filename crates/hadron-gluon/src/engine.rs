@@ -21,6 +21,7 @@ pub(crate) mod nucleus;
 pub mod review;
 pub mod cross_exam;
 pub mod dag;
+pub mod dag_auto;
 pub mod speculative_gate;
 pub use speculative_gate::*;
 mod routing;

@@ -1,5 +1,36 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use crate::QuarkId;
+
+/// A structured task node in a plan's directed acyclic graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DagTaskNode {
+    pub id: String,
+    pub title: String,
+    pub dependencies: Vec<String>,
+    pub files_create: Vec<String>,
+    pub files_modify: Vec<String>,
+    pub files_test: Vec<String>,
+    pub assigned_quark: Option<QuarkId>,
+    pub completed: bool,
+    pub commit_hash: Option<String>,
+}
+
+impl DagTaskNode {
+    pub fn new(id: impl Into<String>, title: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            dependencies: Vec::new(),
+            files_create: Vec::new(),
+            files_modify: Vec::new(),
+            files_test: Vec::new(),
+            assigned_quark: None,
+            completed: false,
+            commit_hash: None,
+        }
+    }
+}
 
 /// A single node in a multi-quark task dependency graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
