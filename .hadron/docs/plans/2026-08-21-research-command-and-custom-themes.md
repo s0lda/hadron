@@ -24,14 +24,14 @@
 - [x] Step 1.2: Add dispatch handling for `/research` in `crates/hadron-chamber/src/app/actions.rs`.
 - [x] Step 1.3: Run `cargo test -p hadron text` to verify command table consistency.
 
-### Task 2: Research Document Template & Task Tracker Retitling
+### Task 2: Research Document Template & Task Tracker Retitling (commit `9acd9834`)
 **Files:**
 - Modify: `crates/hadron-chamber/src/model/tasks.rs`
 - Modify: `crates/hadron-lattice/src/nucleus.rs`
 - Test: `crates/hadron-chamber/src/model/tasks.rs`
 
-- [ ] Step 2.1: Add `retitle_from_research` in `hadron-chamber::model::tasks` to scan `.hadron/docs/research/` and upgrade task titles.
-- [ ] Step 2.2: Add unit tests in `tasks.rs` verifying research document title extraction.
+- [x] Step 2.1: Add `retitle_from_research` in `hadron-chamber::model::tasks` to scan `.hadron/docs/research/` and upgrade task titles.
+- [x] Step 2.2: Add unit tests in `tasks.rs` verifying research document title extraction.
 
 ### Task 3: Forge & MCP Research Tooling
 **Files:**
