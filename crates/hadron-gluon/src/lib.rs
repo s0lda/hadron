@@ -27,10 +27,12 @@ pub mod breakpoints;
 pub mod preon_evolution;
 pub mod prompt_distiller;
 pub mod cas;
+pub mod scout;
 
 pub use mesh::*;
 pub use breakpoints::*;
 pub use preon_evolution::*;
 pub use prompt_distiller::*;
 pub use cas::*;
+pub use scout::*;
 
