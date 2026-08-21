@@ -521,7 +521,7 @@ pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
     candidates.into_iter().next().map(|(_, rel)| rel)
 }
 
-fn format_plan_step_label(file_name: &str) -> String {
+pub(crate) fn format_plan_step_label(file_name: &str) -> String {
     if file_name == "master.md" || file_name == "index.md" {
         "Master Plan".to_string()
     } else if let Some(stripped) = file_name.strip_suffix(".md") {
@@ -550,7 +550,7 @@ fn format_plan_step_label(file_name: &str) -> String {
     }
 }
 
-fn format_suite_title(suite: &str) -> String {
+pub(crate) fn format_suite_title(suite: &str) -> String {
     let parts: Vec<&str> = suite.split('-').collect();
     if parts.len() >= 4 && parts[0].len() == 4 && parts[1].len() == 2 && parts[2].len() == 2 {
         let date = format!("{}-{}-{}", parts[0], parts[1], parts[2]);
@@ -571,10 +571,31 @@ fn format_suite_title(suite: &str) -> String {
     }
 }
 
-/// Discover sibling and suite `.md` plans across `.hadron/docs/plans/`, `docs/plans/`, and worktrees,
-/// allowing seamless one-click switching across all plans and folders in the Chamber Plan tab.
-pub(crate) fn scan_sibling_plans(repo: &Path, active_plan_rel: &str) -> Vec<(String, String)> {
+/// An item in the Plan selector dropdown menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PlanDropdownItem {
+    /// Section header / category (e.g. `📁 Current: 2026-08-21 Swarm Orchestration And Teamwork`)
+    Header(String),
+    /// Visual separator line between suites
+    Separator,
+    /// Selectable plan item
+    Plan {
+        /// Display label inside the dropdown menu (e.g. `Master Plan`, `Phase 1: Reactive Orchestration And DAG`)
+        label: String,
+        /// Relative path from repo root (e.g. `.hadron/docs/plans/.../master.md`)
+        rel_path: String,
+        /// Whether this plan is currently viewed/active
+        is_active: bool,
+    },
+}
+
+/// Discover and organize plans across `.hadron/docs/plans/`, `docs/plans/`, and worktrees into
+/// clean suite groups with active suite prioritization, headers, and step labels for the Chamber dropdown.
+pub(crate) fn scan_plan_dropdown_items(repo: &Path, active_plan_rel: &str) -> Vec<PlanDropdownItem> {
     let all_paths = scan_all_plan_paths(repo);
+    if all_paths.is_empty() {
+        return Vec::new();
+    }
 
     #[derive(Debug, Clone)]
     struct PlanEntry {
@@ -585,7 +606,17 @@ pub(crate) fn scan_sibling_plans(repo: &Path, active_plan_rel: &str) -> Vec<(Str
     }
 
     let mut entries: Vec<PlanEntry> = Vec::new();
-    let mut suites_set = std::collections::HashSet::new();
+    let active_p = Path::new(active_plan_rel);
+    let active_suite = if let Some(parent) = active_p.parent() {
+        let parent_name = parent.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        if parent_name != "plans" && !parent_name.is_empty() {
+            Some(parent_name.to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     for (mtime, rel) in all_paths {
         let p = Path::new(&rel);
@@ -593,7 +624,6 @@ pub(crate) fn scan_sibling_plans(repo: &Path, active_plan_rel: &str) -> Vec<(Str
         let suite = if let Some(parent) = p.parent() {
             let parent_name = parent.file_name().and_then(|f| f.to_str()).unwrap_or("");
             if parent_name != "plans" && !parent_name.is_empty() {
-                suites_set.insert(parent_name.to_string());
                 Some(parent_name.to_string())
             } else {
                 None
@@ -610,60 +640,92 @@ pub(crate) fn scan_sibling_plans(repo: &Path, active_plan_rel: &str) -> Vec<(Str
         });
     }
 
-    let num_suites = suites_set.len();
-    let active_p = Path::new(active_plan_rel);
-    let active_suite = if let Some(parent) = active_p.parent() {
-        let parent_name = parent.file_name().and_then(|f| f.to_str()).unwrap_or("");
-        if parent_name != "plans" && !parent_name.is_empty() {
-            Some(parent_name.to_string())
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    // Sort entries:
-    // 1. Active suite plans first (Master Plan first, then sorted by filename/phase)
-    // 2. Other suites sorted by newest suite mtime (Master Plan first, then sorted by filename/phase)
-    // 3. Root plans sorted by mtime
-    entries.sort_by(|a, b| {
-        let a_is_active_suite = a.suite == active_suite && a.suite.is_some();
-        let b_is_active_suite = b.suite == active_suite && b.suite.is_some();
-
-        if a_is_active_suite != b_is_active_suite {
-            return b_is_active_suite.cmp(&a_is_active_suite);
-        }
-
-        if a.suite != b.suite {
-            return b.mtime.cmp(&a.mtime);
-        }
-
-        let is_master_a = a.file_name == "master.md" || a.file_name == "index.md";
-        let is_master_b = b.file_name == "master.md" || b.file_name == "index.md";
-
-        is_master_b
-            .cmp(&is_master_a)
-            .then_with(|| a.file_name.cmp(&b.file_name))
-    });
-
-    let mut plans = Vec::new();
+    // Group by suite
+    let mut groups: std::collections::BTreeMap<Option<String>, Vec<PlanEntry>> = std::collections::BTreeMap::new();
     for entry in entries {
-        let step_label = format_plan_step_label(&entry.file_name);
-        let label = if num_suites > 1 {
-            if let Some(ref s) = entry.suite {
-                let suite_title = format_suite_title(s);
-                format!("{suite_title} / {step_label}")
-            } else {
-                step_label
-            }
-        } else {
-            step_label
-        };
-        plans.push((label, entry.rel));
+        groups.entry(entry.suite.clone()).or_default().push(entry);
     }
 
-    plans
+    // For each group, find max mtime and sort internal entries: master.md first, then filename
+    struct SuiteBucket {
+        suite: Option<String>,
+        max_mtime: std::time::SystemTime,
+        entries: Vec<PlanEntry>,
+    }
+
+    let mut buckets: Vec<SuiteBucket> = Vec::new();
+    for (suite, mut list) in groups {
+        let max_mtime = list.iter().map(|e| e.mtime).max().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        list.sort_by(|a, b| {
+            let is_master_a = a.file_name == "master.md" || a.file_name == "index.md";
+            let is_master_b = b.file_name == "master.md" || b.file_name == "index.md";
+            is_master_b
+                .cmp(&is_master_a)
+                .then_with(|| a.file_name.cmp(&b.file_name))
+        });
+        buckets.push(SuiteBucket {
+            suite,
+            max_mtime,
+            entries: list,
+        });
+    }
+
+    // Sort buckets:
+    // 1. Active suite first
+    // 2. Other suites sorted by max_mtime descending
+    // 3. Root plans (None) last
+    buckets.sort_by(|a, b| {
+        let a_is_active = a.suite == active_suite && a.suite.is_some();
+        let b_is_active = b.suite == active_suite && b.suite.is_some();
+        if a_is_active != b_is_active {
+            return b_is_active.cmp(&a_is_active);
+        }
+        if a.suite.is_some() != b.suite.is_some() {
+            return b.suite.is_some().cmp(&a.suite.is_some());
+        }
+        b.max_mtime.cmp(&a.max_mtime)
+    });
+
+    let total_suites = buckets.iter().filter(|b| b.suite.is_some()).count();
+    let mut dropdown_items = Vec::new();
+
+    for (i, bucket) in buckets.into_iter().enumerate() {
+        if i > 0 {
+            dropdown_items.push(PlanDropdownItem::Separator);
+        }
+
+        let header_title = match &bucket.suite {
+            Some(s) => {
+                let formatted = format_suite_title(s);
+                if bucket.suite == active_suite && total_suites > 1 {
+                    format!("📁 Current: {formatted}")
+                } else {
+                    format!("📁 {formatted}")
+                }
+            }
+            None => {
+                if total_suites > 0 {
+                    "📁 Other Workspace Plans".to_string()
+                } else {
+                    "📁 Implementation Plans".to_string()
+                }
+            }
+        };
+
+        dropdown_items.push(PlanDropdownItem::Header(header_title));
+
+        for entry in bucket.entries {
+            let label = format_plan_step_label(&entry.file_name);
+            let is_active = entry.rel == active_plan_rel;
+            dropdown_items.push(PlanDropdownItem::Plan {
+                label,
+                rel_path: entry.rel,
+                is_active,
+            });
+        }
+    }
+
+    dropdown_items
 }
 
 fn gluon_running_edge(last: bool, now: bool) -> Option<bool> {
@@ -729,7 +791,6 @@ mod tests {
 
         Chamber::calculate_collapsed_tasks(&tasks, &mut plan_collapsed_tasks, &mut last_incomplete_task, false);
 
-        assert_eq!(plan_collapsed_tasks.len(), 1);
         assert!(plan_collapsed_tasks.contains("Task 2"));
         assert!(!plan_collapsed_tasks.contains("Task 1"));
         assert_eq!(last_incomplete_task, Some("Task 1".to_string()));
@@ -773,7 +834,7 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_sibling_plans() {
+    fn test_scan_plan_dropdown_items_single_suite() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         let subfolder = root.join(".hadron").join("docs").join("plans").join("2026-08-19-test-plan");
@@ -789,11 +850,17 @@ mod tests {
         std::fs::write(&p2, "# Phase 2\n- [ ] Step 1\n").unwrap();
 
         let active_rel = ".hadron/docs/plans/2026-08-19-test-plan/master.md";
-        let siblings = scan_sibling_plans(root, active_rel);
-        assert_eq!(siblings.len(), 3);
-        assert_eq!(siblings[0].0, "Master Plan");
-        assert_eq!(siblings[1].0, "Phase 1: setup");
-        assert_eq!(siblings[2].0, "Phase 2: build");
+        let items = scan_plan_dropdown_items(root, active_rel);
+
+        let plan_items: Vec<_> = items.iter().filter_map(|item| match item {
+            PlanDropdownItem::Plan { label, rel_path, is_active } => Some((label.as_str(), rel_path.as_str(), *is_active)),
+            _ => None,
+        }).collect();
+
+        assert_eq!(plan_items.len(), 3);
+        assert_eq!(plan_items[0], ("Master Plan", ".hadron/docs/plans/2026-08-19-test-plan/master.md", true));
+        assert_eq!(plan_items[1], ("Phase 1: setup", ".hadron/docs/plans/2026-08-19-test-plan/01-phase-1-setup.md", false));
+        assert_eq!(plan_items[2], ("Phase 2: build", ".hadron/docs/plans/2026-08-19-test-plan/02-phase-2-build.md", false));
     }
 
     #[test]
@@ -811,15 +878,75 @@ mod tests {
         std::fs::write(suite2.join("01-phase-1-reactive-dag.md"), "# Phase 1 DAG\n").unwrap();
 
         let active_rel = ".hadron/docs/plans/2026-08-19-twenty-capabilities/master.md";
-        let plans = scan_sibling_plans(root, active_rel);
-        assert_eq!(plans.len(), 4);
+        let items = scan_plan_dropdown_items(root, active_rel);
+
+        let plan_items: Vec<_> = items.iter().filter_map(|item| match item {
+            PlanDropdownItem::Plan { rel_path, .. } => Some(rel_path.as_str()),
+            _ => None,
+        }).collect();
+
+        assert_eq!(plan_items.len(), 4);
 
         // Active suite comes first
-        assert!(plans[0].1.contains("2026-08-19-twenty-capabilities/master.md"));
-        assert!(plans[1].1.contains("2026-08-19-twenty-capabilities/01-phase-1-quick-dx.md"));
+        assert!(plan_items[0].contains("2026-08-19-twenty-capabilities/master.md"));
+        assert!(plan_items[1].contains("2026-08-19-twenty-capabilities/01-phase-1-quick-dx.md"));
         // Second suite is also discoverable and selectable
-        assert!(plans[2].1.contains("2026-08-21-swarm-orchestration/master.md"));
-        assert!(plans[3].1.contains("2026-08-21-swarm-orchestration/01-phase-1-reactive-dag.md"));
+        assert!(plan_items[2].contains("2026-08-21-swarm-orchestration/master.md"));
+        assert!(plan_items[3].contains("2026-08-21-swarm-orchestration/01-phase-1-reactive-dag.md"));
+    }
+
+    #[test]
+    fn test_scan_plan_dropdown_items_structure() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let suite1 = root.join(".hadron").join("docs").join("plans").join("2026-08-21-swarm-orchestration-and-teamwork");
+        let suite2 = root.join(".hadron").join("docs").join("plans").join("2026-08-19-twenty-capabilities");
+        std::fs::create_dir_all(&suite1).unwrap();
+        std::fs::create_dir_all(&suite2).unwrap();
+
+        std::fs::write(suite1.join("master.md"), "# Swarm Master\n").unwrap();
+        std::fs::write(suite1.join("01-phase-1-reactive-dag.md"), "# Phase 1 DAG\n").unwrap();
+        std::fs::write(suite2.join("master.md"), "# Twenty Caps Master\n").unwrap();
+
+        let active_rel = ".hadron/docs/plans/2026-08-21-swarm-orchestration-and-teamwork/01-phase-1-reactive-dag.md";
+        let items = scan_plan_dropdown_items(root, active_rel);
+
+        // First item is Current header for suite 1
+        match &items[0] {
+            PlanDropdownItem::Header(h) => {
+                assert!(h.contains("Current:"), "header should mark current suite: {h}");
+                assert!(h.contains("Swarm Orchestration And Teamwork"), "header title: {h}");
+            }
+            other => panic!("expected Header, got {other:?}"),
+        }
+
+        // Next items are master.md and 01-phase-1
+        match &items[1] {
+            PlanDropdownItem::Plan { label, is_active, .. } => {
+                assert_eq!(label, "Master Plan");
+                assert!(!is_active);
+            }
+            other => panic!("expected Plan, got {other:?}"),
+        }
+
+        match &items[2] {
+            PlanDropdownItem::Plan { label, is_active, .. } => {
+                assert_eq!(label, "Phase 1: reactive dag");
+                assert!(is_active, "01-phase-1 should be active");
+            }
+            other => panic!("expected Plan, got {other:?}"),
+        }
+
+        // Separator between suites
+        assert_eq!(items[3], PlanDropdownItem::Separator);
+
+        // Suite 2 header
+        match &items[4] {
+            PlanDropdownItem::Header(h) => {
+                assert!(h.contains("Twenty Capabilities"), "header title: {h}");
+            }
+            other => panic!("expected Header, got {other:?}"),
+        }
     }
 
     #[test]

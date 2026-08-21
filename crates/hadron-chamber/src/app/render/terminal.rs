@@ -796,8 +796,8 @@ impl super::Chamber {
                         let mut list = v_flex().gap_3().p_3().w_full().min_w_0();
                         list = list.child(self.breadcrumb_bar_for_plan(&rel_path, &content, cx));
 
-                        // Sibling plans in the active plan folder / .hadron/docs/plans/
-                        let sibling_plans = crate::app::reload::scan_sibling_plans(&repo, &rel_path);
+                        // Sibling and suite plans across .hadron/docs/plans/
+                        let dropdown_items = crate::app::reload::scan_plan_dropdown_items(&repo, &rel_path);
 
                         // Header card with plan path, sibling switcher, and progress
                         let mut header_card = v_flex()
@@ -862,14 +862,29 @@ impl super::Chamber {
 
                         header_card = header_card.child(title_row).child(path_row);
 
-                        if sibling_plans.len() > 1 {
+                        let current_label = dropdown_items
+                            .iter()
+                            .find_map(|item| match item {
+                                crate::app::reload::PlanDropdownItem::Plan { label, is_active: true, .. } => {
+                                    Some(label.clone())
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| {
+                                let p = std::path::Path::new(&rel_path);
+                                let fname = p.file_name().and_then(|f| f.to_str()).unwrap_or("master.md");
+                                crate::app::reload::format_plan_step_label(fname)
+                            });
+
+                        let total_selectable_plans = dropdown_items
+                            .iter()
+                            .filter(|item| matches!(item, crate::app::reload::PlanDropdownItem::Plan { .. }))
+                            .count();
+
+                        if total_selectable_plans > 1 {
                             let view = cx.entity().clone();
-                            let current_label = sibling_plans
-                                .iter()
-                                .find(|(_, p)| p == &rel_path)
-                                .map(|(l, _)| l.as_str())
-                                .unwrap_or("Select Plan…");
-                            let sibling_list = sibling_plans.clone();
+                            let current_btn_label = current_label.clone();
+                            let items = dropdown_items.clone();
 
                             let select_button = Button::new("plan-select-dropdown")
                                 .w_full()
@@ -877,55 +892,78 @@ impl super::Chamber {
                                 .child(
                                     h_flex()
                                         .w_full()
+                                        .min_w_0()
                                         .justify_between()
                                         .items_center()
                                         .gap_2()
                                         .child(
                                             h_flex()
+                                                .min_w_0()
+                                                .flex_1()
                                                 .items_center()
                                                 .gap_2()
                                                 .child(
                                                     Icon::new(IconName::Folder)
                                                         .xsmall()
+                                                        .flex_shrink_0()
                                                         .text_color(theme::accent()),
                                                 )
                                                 .child(
                                                     div()
+                                                        .min_w_0()
+                                                        .truncate()
                                                         .text_xs()
                                                         .font_weight(gpui::FontWeight::SEMIBOLD)
                                                         .text_color(theme::text())
-                                                        .child(format!("Plan: {current_label}")),
+                                                        .child(format!("Plan: {current_btn_label}")),
                                                 ),
                                         )
                                         .child(
                                             Icon::new(IconName::ChevronDown)
                                                 .xsmall()
+                                                .flex_shrink_0()
                                                 .text_color(theme::text_muted()),
                                         ),
                                 )
                                 .dropdown_menu(move |mut menu, _, _cx| {
-                                    for (label, plan_rel) in &sibling_list {
-                                        let is_sel = plan_rel == &rel_path;
-                                        let target = plan_rel.clone();
-                                        let item_label = if is_sel {
-                                            format!("✓  {label}")
-                                        } else {
-                                            format!("    {label}")
-                                        };
-                                        let view_click = view.clone();
-                                        menu = menu.item(
-                                            PopupMenuItem::new(item_label).on_click(
-                                                move |_, window, cx| {
-                                                    view_click.update(cx, |this, cx| {
-                                                        this.last_plan_path = Some(target.clone());
-                                                        this.manual_plan_override_at_message_len = Some(this.view.messages.len());
-                                                        this.update_active_plan();
-                                                        cx.notify();
-                                                    });
-                                                    window.refresh();
-                                                },
-                                            ),
-                                        );
+                                    menu = menu
+                                        .scrollable(true)
+                                        .max_h(px(420.0))
+                                        .min_w(px(340.0))
+                                        .max_w(px(600.0));
+
+                                    for item in &items {
+                                        match item {
+                                            crate::app::reload::PlanDropdownItem::Header(title) => {
+                                                menu = menu.item(PopupMenuItem::label(title.clone()));
+                                            }
+                                            crate::app::reload::PlanDropdownItem::Separator => {
+                                                menu = menu.separator();
+                                            }
+                                            crate::app::reload::PlanDropdownItem::Plan { label, rel_path, is_active } => {
+                                                let is_sel = *is_active;
+                                                let target = rel_path.clone();
+                                                let item_label = if is_sel {
+                                                    format!("✓  {label}")
+                                                } else {
+                                                    format!("    {label}")
+                                                };
+                                                let view_click = view.clone();
+                                                menu = menu.item(
+                                                    PopupMenuItem::new(item_label).on_click(
+                                                        move |_, window, cx| {
+                                                            view_click.update(cx, |this, cx| {
+                                                                this.last_plan_path = Some(target.clone());
+                                                                this.manual_plan_override_at_message_len = Some(this.view.messages.len());
+                                                                this.update_active_plan();
+                                                                cx.notify();
+                                                            });
+                                                            window.refresh();
+                                                        },
+                                                    ),
+                                                );
+                                            }
+                                        }
                                     }
                                     menu
                                 });
@@ -1176,11 +1214,137 @@ impl super::Chamber {
                         }
                         list.into_any_element()
                     }
-                    None => div()
-                        .p_4()
-                        .text_color(theme::text_muted())
-                        .child("No active implementation plan referenced in the field yet.")
-                        .into_any_element(),
+                    None => {
+                        let dropdown_items = crate::app::reload::scan_plan_dropdown_items(&repo, "");
+                        let total_selectable_plans = dropdown_items
+                            .iter()
+                            .filter(|item| matches!(item, crate::app::reload::PlanDropdownItem::Plan { .. }))
+                            .count();
+
+                        if total_selectable_plans > 0 {
+                            let view = cx.entity().clone();
+                            let items = dropdown_items.clone();
+
+                            let select_button = Button::new("plan-select-dropdown-empty")
+                                .w_full()
+                                .ghost()
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .min_w_0()
+                                        .justify_between()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            h_flex()
+                                                .min_w_0()
+                                                .flex_1()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    Icon::new(IconName::Folder)
+                                                        .xsmall()
+                                                        .flex_shrink_0()
+                                                        .text_color(theme::accent()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .text_xs()
+                                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                        .text_color(theme::text())
+                                                        .child("Select an Implementation Plan…"),
+                                                ),
+                                        )
+                                        .child(
+                                            Icon::new(IconName::ChevronDown)
+                                                .xsmall()
+                                                .flex_shrink_0()
+                                                .text_color(theme::text_muted()),
+                                        ),
+                                )
+                                .dropdown_menu(move |mut menu, _, _cx| {
+                                    menu = menu
+                                        .scrollable(true)
+                                        .max_h(px(420.0))
+                                        .min_w(px(340.0))
+                                        .max_w(px(600.0));
+
+                                    for item in &items {
+                                        match item {
+                                            crate::app::reload::PlanDropdownItem::Header(title) => {
+                                                menu = menu.item(PopupMenuItem::label(title.clone()));
+                                            }
+                                            crate::app::reload::PlanDropdownItem::Separator => {
+                                                menu = menu.separator();
+                                            }
+                                            crate::app::reload::PlanDropdownItem::Plan { label, rel_path, is_active } => {
+                                                let is_sel = *is_active;
+                                                let target = rel_path.clone();
+                                                let item_label = if is_sel {
+                                                    format!("✓  {label}")
+                                                } else {
+                                                    format!("    {label}")
+                                                };
+                                                let view_click = view.clone();
+                                                menu = menu.item(
+                                                    PopupMenuItem::new(item_label).on_click(
+                                                        move |_, window, cx| {
+                                                            view_click.update(cx, |this, cx| {
+                                                                this.last_plan_path = Some(target.clone());
+                                                                this.manual_plan_override_at_message_len = Some(this.view.messages.len());
+                                                                this.update_active_plan();
+                                                                cx.notify();
+                                                            });
+                                                            window.refresh();
+                                                        },
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                    }
+                                    menu
+                                });
+
+                            v_flex()
+                                .gap_3()
+                                .p_3()
+                                .w_full()
+                                .min_w_0()
+                                .child(
+                                    v_flex()
+                                        .w_full()
+                                        .p_3()
+                                        .rounded_lg()
+                                        .bg(theme::bg_surface())
+                                        .border_1()
+                                        .border_color(theme::glass_highlight())
+                                        .gap_2p5()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(theme::text())
+                                                .child("Select Implementation Plan"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme::text_muted())
+                                                .child("Choose an existing plan from the workspace below:"),
+                                        )
+                                        .child(select_button),
+                                )
+                                .into_any_element()
+                        } else {
+                            div()
+                                .p_4()
+                                .text_color(theme::text_muted())
+                                .child("No active implementation plan referenced in the field yet.")
+                                .into_any_element()
+                        }
+                    }
                 };
 
                 div()
