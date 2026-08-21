@@ -110,8 +110,7 @@
 
 ### Task 9: Workspace Gate & Nucleus Feature Map Update
 **Files:**
-- Modify: `.hadron/nucleus/features.md`
+- Modify: `docs/commands.md`
 
-- [ ] Step 9.1: Run `cargo test --workspace` to ensure zero regressions across all crates.
-- [ ] Step 9.2: Update `.hadron/nucleus/features.md` with `/research` command and Custom Theme Engine documentation.
-
+- [x] Step 9.1: Run `cargo test --workspace` to ensure zero regressions across all crates.
+- [x] Step 9.2: Update `docs/commands.md` with `/research` command and Custom Theme Engine documentation.

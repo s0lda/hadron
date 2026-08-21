@@ -9,6 +9,7 @@ Hadron provides an interactive suite of `/slash` commands directly inside the Ch
 | Command | Syntax | Description | Example |
 | :--- | :--- | :--- | :--- |
 | `/goal` | `/goal <objective>` | Synthesize an end-to-end swarm mission, author a structured plan in `.hadron/docs/plans/`, and fan out tasks across worker Quarks. | `/goal Build user auth with JWT` |
+| `/research` | `/research <topic>` | Conduct in-depth research across the codebase or web, synthesising findings into a structured document in `.hadron/docs/research/`. | `/research memory lifecycle and compaction` |
 | `/loop` | `/loop [count] <objective>` | Execute an iterative evaluation loop until completion criteria are met or count expires. | `/loop 5 fix compiler errors` |
 | `/absorb` | `/absorb [options]` | Scan foreign assistant folders (`.agents/`, `.claude/`, `CLAUDE.md`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`) and distill memories, skills, invariants, and plans into `.hadron/`. | `/absorb` |
 
