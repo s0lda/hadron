@@ -49,6 +49,7 @@ pub mod prompt_distiller;
 pub mod mesh;
 pub mod pty_pairing;
 pub mod breakpoints;
+pub mod research;
 
 use hadron_forge::file::Root;
 use hadron_forge::mock::MockServerManager;
@@ -135,7 +136,8 @@ impl ForgeMcpServer {
                 + Self::prompt_distiller_router()
                 + Self::mesh_router()
                 + Self::pty_pairing_router()
-                + Self::breakpoints_router(),
+                + Self::breakpoints_router()
+                + Self::research_router(),
             root,
             nucleus_root,
             process_manager,
