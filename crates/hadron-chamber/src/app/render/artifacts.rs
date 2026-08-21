@@ -6,7 +6,8 @@ impl Chamber {
     /// Renders the Artifact Bus drawer in the Chamber UI.
     #[allow(dead_code)]
     pub(super) fn render_artifacts_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let artifacts = list_artifacts(&self.repo_root).unwrap_or_default();
+        let repo_root = crate::vcs::repo_root_of(&self.path);
+        let artifacts = list_artifacts(repo_root).unwrap_or_default();
 
         v_flex()
             .size_full()
@@ -23,7 +24,7 @@ impl Chamber {
                             .child("📦")
                             .child(
                                 div()
-                                    .font_bold()
+                                    .font_semibold()
                                     .text_sm()
                                     .text_color(cx.theme().foreground)
                                     .child("Shared Artifact Bus"),
@@ -77,14 +78,14 @@ impl Chamber {
                         v_flex()
                             .child(
                                 div()
-                                    .font_medium()
+                                    .font_semibold()
                                     .text_xs()
                                     .text_color(cx.theme().foreground)
                                     .child(artifact.id.clone()),
                             )
                             .child(
                                 div()
-                                    .text_2xs()
+                                    .text_xs()
                                     .text_color(cx.theme().muted_foreground)
                                     .child(format!("by {} · {}", artifact.author, artifact.kind)),
                             ),
@@ -92,7 +93,7 @@ impl Chamber {
             )
             .child(
                 div()
-                    .text_2xs()
+                    .text_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child(artifact.created_at.chars().take(10).collect::<String>()),
             )
