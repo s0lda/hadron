@@ -20,6 +20,23 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.15.0",
+        date: Some("2026-08-21"),
+        added: &[
+            "Next-Gen Swarm Orchestration: Hybrid DAG auto-dispatch engine and reactive lockless wakeup event stream",
+            "Real-time heartbeat monitoring, proactive stall recovery, and in-flight worktree rebase streaming",
+            "File-level intent locks, shared-target build cache guard, and zero-friction branch auto-pruning",
+            "Atomic multi-file batch edit transactions, ephemeral scout quarks, and automated visual smoke testing",
+            "Unified 3-way diff inspector, swarm-wide vectorized nucleus search, and time-travel debugging",
+            "Interactive Plan DAG visualizer, scrollable multi-suite plan dropdown, and gitignored file completions",
+            "Roster Active/All filter tabs with keyboard shortcuts and alphabetical quark sorting by display name",
+            "Inlined rail headers with panel toggle buttons and 5-line height bounds on streaming speaking cards",
+            "100% autonomous memory distillation directly into Nucleus notes without proposal bottlenecks",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.14.0",
         date: Some("2026-08-21"),
         added: &[

@@ -97,6 +97,7 @@ Hadron connects an expanding ecosystem of AI agents, local models, cloud APIs, a
 | `Ctrl+Shift+T` / `Ctrl+Shift+W` | New / Close Terminal Tab |
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Next / Previous Terminal Tab (also `Ctrl+Shift+]` / `Ctrl+Shift+[`) |
 | `Alt+Left` / `Alt+Right` | Switch Chat column tabs (`Chat` / `Log` / `Stats`) |
+| `Alt+Shift+Left` / `Alt+Shift+Right` | Switch Quark Roster tabs (`Active` / `All`) |
 | `Alt+PageUp` / `Alt+PageDown` | Switch Right-Rail Inspector tabs (`Terminal` / `Files` / `Changes` / `Plan` / `Visualizer`) |
 | `Alt+Up` / `Alt+Down` | Cycle Telemetry & Stats time windows (`Session` / `Week` / `Month` / `All`) |
 | `Ctrl+J` / `Ctrl+K` | Move selection in Quark Roster |

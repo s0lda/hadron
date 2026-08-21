@@ -5,6 +5,37 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-08-21
+
+### Added
+- **Next-Gen Swarm Orchestration Suite (`hadron-gluon`, `hadron-lattice`, `hadron-gatekeeper`, `hadron-forge`, `hadron-chamber`)**:
+  - **Hybrid DAG Auto-Dispatch Engine (`hadron-gluon`)**: Automated multi-quark topological task graph scheduler with wave rank resolution and cycle-safe parallel dispatching.
+  - **Reactive Wakeup Event Stream (`hadron-lattice`)**: Push-based lockless cross-worktree reactive wakeup signal broadcast system for zero-polling instant quark activation.
+  - **Real-Time Heartbeat & Stall Recovery (`hadron-gluon`)**: Live activity heartbeat monitor and proactive recovery mechanisms for unresponsive or stalled worker turns.
+  - **In-Flight Worktree Rebase Streamer (`hadron-gluon`)**: Live git rebase synchronization applying upstream `main` changes to running worktrees without interrupting turn execution.
+  - **File-Level Intent Locks & Collision Detection (`hadron-lattice`)**: Multi-quark file intent locking mechanism preventing concurrent edit collisions across worktrees.
+  - **Shared-Target Build Cache Guard & Metadata Salting (`hadron-gatekeeper`)**: Workspace build cache validator preventing stale foreign rlib reuse across concurrent worktrees.
+  - **Zero-Friction Branch Sweeping & Auto-Pruning (`hadron-gluon`)**: Safe branch garbage collection with automated fast-forward checking, patch-id verification, and archive tagging.
+  - **Atomic Multi-File Batch Edit Transactions (`hadron-forge`)**: All-or-nothing multi-file AST edit transactions with automatic single-commit rollback on verification failure.
+  - **Ephemeral Zero-Footprint Scout Quarks (`hadron-gluon`)**: Lightweight scout agents for rapid repository reconnaissance and symbol discovery without creating disk worktree footprints.
+  - **Automated Visual Smoke Testing & Layout Assertions (`hadron-forge`)**: Headless visual layout tester asserting GPUI element bounds, text clipping, and overflow constraints.
+  - **Unified 3-Way Diff & Semantic Merge Resolver (`hadron-chamber`)**: Interactive 3-way visual diff inspector comparing Base (`main`), Ours (Worktree), and Theirs (Branch) with clean tree status.
+  - **Swarm-Wide Vectorized Nucleus Semantic Search (`hadron-lattice`)**: Vector embeddings and cosine similarity retrieval engine across long-term memory notes.
+  - **Time-Travel Debugging & State Rewind (`hadron-lattice`)**: Turn-by-turn state recording, snapshot diffing, and session branch fork exploration.
+  - **Swarm Artifact Bus (`hadron-lattice`)**: Zero-copy bus for sharing binary artifacts, test logs, and structured payloads between quarks.
+  - **Elastic Quota Redistribution & Budget Guardrails (`hadron-lattice`)**: Dynamic token quota balancer automatically reallocating unused budget across active model providers.
+- **Chamber Roster & Plan Workspace Ergonomics (`hadron-chamber`)**:
+  - **Interactive Plan DAG Visualizer**: Visualized multi-step plans as dependency DAGs with wave rank grouping, step status coloring, and task navigation.
+  - **Scrollable Multi-Suite Plan Dropdown**: Added structured suite section grouping, active suite indicators, visual separators, and adaptive label width truncation.
+  - **Roster Active / All Capsule Tabs**: Segmented filter tabs in Roster rail distinguishing repo-adopted active quarks from full catalogue entries, with keyboard shortcuts (`Alt+Shift+Left` / `Alt+Shift+Right`).
+  - **Alphabetical Quark Sorting**: Automatically sorted quarks alphabetically by resolved display name across expanded roster cards and collapsed rail avatar bars.
+  - **Inlined Rail Headers**: Unified Roster capsule tabs and Inspector sub-tabs inline with panel toggle buttons (`PanelLeftClose`/`PanelRightClose`) in horizontal header bars.
+  - **Streaming Draft Speaking View Bounds**: Constrained streaming speaking draft cards to 5 scrollable lines (`max_h(px(100.0))`) with `overflow_y_scroll` to prevent occluding chat history.
+  - **Gitignored Non-Heavy File Completions**: Included lightweight gitignored configuration/source files in quick-open completions while filtering heavy dependencies.
+- **Autonomous Learning & Memory Invariants (`hadron-gluon`, `hadron-chamber`, `nucleus`)**:
+  - Mandated 100% autonomous memory distillation directly into `.hadron/nucleus/` (`notes/` and `index.md`) with zero proposal documents or approval bottlenecks.
+  - Codified Standard Model Rule 9 autonomous distillation invariant across all prompt adapters and skill definitions.
+
 ## [0.14.0] - 2026-08-21
 
 ### Added
