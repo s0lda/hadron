@@ -260,5 +260,13 @@ mod tests {
             .await;
         assert!(res_synth.0.ok);
         assert!(res_synth.0.blocks.as_ref().unwrap().contains("fix-error-e0277"));
+
+        let res_search = server
+            .nucleus_semantic_search(Parameters(NucleusSemanticSearchArgs {
+                query: "trait bound error".into(),
+                limit: 3,
+            }))
+            .await;
+        assert!(res_search.0.ok);
     }
 }
