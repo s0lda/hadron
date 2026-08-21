@@ -301,6 +301,53 @@ impl Chamber {
                 }
                 true
             }
+            "team-review" => {
+                let trimmed = args.trim();
+                let (named, target_branch) = crate::text::split_target(trimmed);
+                let target = named.unwrap_or(hadron_gluon::router::TEAM_ALIAS);
+                let branch_info = if target_branch.is_empty() {
+                    "active branch".to_string()
+                } else {
+                    format!("branch `{target_branch}`")
+                };
+                let msg = format!(
+                    "@{target} /team-review /reviewing-work /security-review /architecture-audit /code-simplification\n\nRun multi-quark peer review board on {branch_info}. Inspect code changes across Security (Rule 7), Architecture & SSOT (Rules 3, 8), and Code Simplicity (Rule 10), and provide line annotations with synthesized verdict."
+                );
+                self.post_chat_message(Actor::Human, msg, cx);
+                true
+            }
+            "bakeoff" => {
+                let trimmed = args.trim();
+                if trimmed.is_empty() {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/bakeoff <task_description>`\nSpawn a speculative tournament bake-off across competing solutions and fast-forward the winning branch.".to_string(),
+                        cx,
+                    );
+                } else {
+                    let msg = format!(
+                        "@orchestrator /bakeoff /dispatching-parallel-agents Task: {trimmed}\n\nExecute speculative tournament: spawn 2-3 candidate quarks with isolated worktree branches exploring alternative implementations, benchmark via Merge Gate, evaluate WinnerReport, and fast-forward winning solution."
+                    );
+                    self.post_chat_message(Actor::Human, msg, cx);
+                }
+                true
+            }
+            "grill-me" => {
+                let trimmed = args.trim();
+                if trimmed.is_empty() {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/grill-me <feature_topic>`\nInitiate an interactive requirement grilling interview before authoring specs and plans.".to_string(),
+                        cx,
+                    );
+                } else {
+                    let msg = format!(
+                        "@orchestrator /grill-me /brainstorming Topic: {trimmed}\n\nInitiate interactive requirement alignment interview for `{trimmed}`. Ask 2-4 clarifying questions covering invariants, trade-offs, and non-obvious constraints before synthesizing specification."
+                    );
+                    self.post_chat_message(Actor::Human, msg, cx);
+                }
+                true
+            }
             cmd if cmd == "team-brainstorm"
                 || cmd == "brainstorm"
                 || cmd == "security"
