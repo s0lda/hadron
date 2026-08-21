@@ -353,6 +353,68 @@ mod tests {
         assert!(unwrapped.contains("[![License]"));
         assert!(unwrapped.contains(r#"<img src="assets/demo_3.png""#));
     }
+
+    #[test]
+    fn test_format_bytes() {
+        use super::plugin::format_bytes;
+        assert_eq!(format_bytes(500), "500 B");
+        assert_eq!(format_bytes(1024), "1 KB");
+        assert_eq!(format_bytes(1024 * 500), "500 KB");
+        assert_eq!(format_bytes(1024 * 1024 * 2), "2.0 MB");
+    }
+
+    #[test]
+    fn test_probe_image_meta_and_dimensions() {
+        use super::plugin::{probe_image_meta, probe_image_dimensions_from_bytes};
+
+        let repo_root = std::path::Path::new("/home/Jake/dev/hadron");
+        let demo3 = repo_root.join("assets/demo_3.png");
+        if demo3.exists() {
+            let (dims, size) = probe_image_meta(&demo3);
+            assert_eq!(dims, Some((2184, 1199)), "demo_3.png dimensions should be 2184x1199");
+            assert!(size.is_some() && size.unwrap() > 0);
+        }
+
+        let app_icon = repo_root.join("assets/hadron_app_icon.png");
+        if app_icon.exists() {
+            let (dims, _size) = probe_image_meta(&app_icon);
+            assert_eq!(dims, Some((1024, 1024)), "hadron_app_icon.png dimensions should be 1024x1024");
+        }
+
+        // Test synthetic PNG bytes (8-byte sig + IHDR chunk)
+        let mut png_bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]; // sig
+        png_bytes.extend_from_slice(&[0, 0, 0, 13]); // length
+        png_bytes.extend_from_slice(b"IHDR"); // chunk type
+        png_bytes.extend_from_slice(&800u32.to_be_bytes()); // width = 800
+        png_bytes.extend_from_slice(&600u32.to_be_bytes()); // height = 600
+        png_bytes.extend_from_slice(&[8, 6, 0, 0, 0]); // bit depth, color type, etc.
+        assert_eq!(probe_image_dimensions_from_bytes(&png_bytes), Some((800, 600)));
+
+        // Test synthetic GIF bytes
+        let mut gif_bytes = Vec::from(b"GIF89a".as_slice());
+        gif_bytes.extend_from_slice(&320u16.to_le_bytes()); // width = 320
+        gif_bytes.extend_from_slice(&240u16.to_le_bytes()); // height = 240
+        assert_eq!(probe_image_dimensions_from_bytes(&gif_bytes), Some((320, 240)));
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn test_image_card_constructs() {
+        use super::plugin::ImageBlockData;
+        use super::render::ImageCard;
+        let card = ImageCard::new(
+            ImageBlockData {
+                url: "assets/demo_3.png".to_string(),
+                alt: Some("Test Demo".to_string()),
+                title: None,
+                width: Some(900.0),
+                height: None,
+            },
+            std::path::PathBuf::from("/home/Jake/dev/hadron/assets/demo_3.png"),
+        );
+        assert_eq!(card.data.width, Some(900.0));
+    }
 }
+
 
 

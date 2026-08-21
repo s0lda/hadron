@@ -601,3 +601,304 @@ fn render_pie_canvas(layout: PieLayout) -> impl IntoElement {
                 })),
         )
 }
+
+/// Scaling mode for the interactive markdown ImageCard.
+#[cfg(feature = "gui")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageScaleMode {
+    Fit,
+    Pct50,
+    Pct100,
+    Pct150,
+}
+
+#[cfg(feature = "gui")]
+impl ImageScaleMode {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Fit => "Fit",
+            Self::Pct50 => "50%",
+            Self::Pct100 => "100%",
+            Self::Pct150 => "150%",
+        }
+    }
+}
+
+/// Interactive Markdown Image Card with responsive scaling, dimensions metadata, pan/scroll, and external viewer integration.
+#[cfg(feature = "gui")]
+#[derive(IntoElement)]
+pub struct ImageCard {
+    pub data: super::plugin::ImageBlockData,
+    pub abs_path: std::path::PathBuf,
+}
+
+#[cfg(feature = "gui")]
+impl ImageCard {
+    pub fn new(data: super::plugin::ImageBlockData, abs_path: std::path::PathBuf) -> Self {
+        Self { data, abs_path }
+    }
+}
+
+#[cfg(feature = "gui")]
+impl RenderOnce for ImageCard {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let abs_path = self.abs_path.clone();
+        let file_name = abs_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("image")
+            .to_string();
+
+        let (dims, size) = super::plugin::probe_image_meta(&abs_path);
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.data.url.hash(&mut hasher);
+        abs_path.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        let scale_key = format!("img-scale-{hash}");
+        let scale_entity = window.use_keyed_state(SharedString::from(scale_key), cx, |_, _| ImageScaleMode::Fit);
+        let scale_mode = *scale_entity.read(cx);
+
+        let (orig_w, orig_h) = dims.unwrap_or_else(|| {
+            (
+                self.data.width.unwrap_or(900.0) as u32,
+                self.data.height.unwrap_or(600.0) as u32,
+            )
+        });
+
+        let mut card = v_flex()
+            .w_full()
+            .max_w_full()
+            .my_3()
+            .rounded_lg()
+            .bg(crate::theme::input_bg())
+            .border_1()
+            .border_color(crate::theme::border())
+            .overflow_hidden();
+
+        // 1. Header Toolbar
+        let copy_path = abs_path.display().to_string();
+        let open_path = abs_path.clone();
+
+        let mut dim_text = format!("{orig_w} × {orig_h} px");
+        if let Some(bytes) = size {
+            dim_text.push_str(&format!(" · {}", super::plugin::format_bytes(bytes)));
+        }
+
+        let header = h_flex()
+            .w_full()
+            .px_3()
+            .py_1p5()
+            .items_center()
+            .justify_between()
+            .bg(crate::theme::bg_surface())
+            .border_b_1()
+            .border_color(crate::theme::border())
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(gpui::rgba(0x3b82f620))
+                            .text_color(gpui::rgb(0x60a5fa))
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("🖼️ {}", file_name)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(crate::theme::text_muted())
+                            .font_family(crate::fonts::MONO_FAMILY)
+                            .child(dim_text),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    // Scale presets: Fit, 50%, 100%, 150%
+                    .children([ImageScaleMode::Fit, ImageScaleMode::Pct50, ImageScaleMode::Pct100, ImageScaleMode::Pct150].iter().map(|&mode| {
+                        let is_active = scale_mode == mode;
+                        let target_mode = mode;
+                        let scale_ent = scale_entity.clone();
+                        div()
+                            .id(SharedString::from(format!("img-scale-btn-{hash}-{:?}", mode)))
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(if is_active {
+                                crate::theme::bg_surface_raised()
+                            } else {
+                                gpui::rgba(0x00000000)
+                            })
+                            .border_1()
+                            .border_color(if is_active {
+                                crate::theme::border()
+                            } else {
+                                gpui::rgba(0x00000000)
+                            })
+                            .text_xs()
+                            .font_weight(if is_active { FontWeight::BOLD } else { FontWeight::NORMAL })
+                            .text_color(if is_active {
+                                crate::theme::text()
+                            } else {
+                                crate::theme::text_muted()
+                            })
+                            .cursor_pointer()
+                            .hover(|s| s.bg(crate::theme::bg_surface_raised()).text_color(crate::theme::text()))
+                            .child(mode.label())
+                            .on_click(move |_, _window, cx| {
+                                scale_ent.update(cx, |val, cx| {
+                                    *val = target_mode;
+                                    cx.notify();
+                                });
+                            })
+                    }))
+                    .child(
+                        div()
+                            .w(px(1.0))
+                            .h(px(12.0))
+                            .mx_1()
+                            .bg(crate::theme::border()),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("img-open-{hash}")))
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .text_xs()
+                            .text_color(crate::theme::text_muted())
+                            .cursor_pointer()
+                            .tooltip(|window, cx| {
+                                gpui_component::tooltip::Tooltip::new("Open with default image viewer").build(window, cx)
+                            })
+                            .hover(|s| s.bg(crate::theme::bg_surface_raised()).text_color(crate::theme::text()))
+                            .child("Open")
+                            .on_click(move |_, _window, cx| {
+                                cx.open_url(&format!("file://{}", open_path.display()));
+                            }),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("img-copy-{hash}")))
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .text_xs()
+                            .text_color(crate::theme::text_muted())
+                            .cursor_pointer()
+                            .tooltip(|window, cx| {
+                                gpui_component::tooltip::Tooltip::new("Copy absolute path").build(window, cx)
+                            })
+                            .hover(|s| s.bg(crate::theme::bg_surface_raised()).text_color(crate::theme::text()))
+                            .child("Copy")
+                            .on_click(move |_, _window, cx| {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy_path.clone()));
+                            }),
+                    ),
+            );
+
+        card = card.child(header);
+
+        // 2. Image Viewport Body
+        match scale_mode {
+            ImageScaleMode::Fit => {
+                let zoom_ent = scale_entity.clone();
+                let mut img_elem = gpui::img(abs_path)
+                    .id("img-asset")
+                    .max_w_full()
+                    .max_h(px(540.0))
+                    .rounded_md()
+                    .object_fit(gpui::ObjectFit::Contain);
+
+                if let Some(w) = self.data.width {
+                    img_elem = img_elem.max_w(px(w));
+                }
+
+                let body = v_flex()
+                    .id(SharedString::from(format!("img-fit-body-{hash}")))
+                    .w_full()
+                    .max_w_full()
+                    .p_3()
+                    .items_center()
+                    .justify_center()
+                    .bg(crate::theme::field_base())
+                    .cursor_pointer()
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new("Click to zoom to 100%").build(window, cx)
+                    })
+                    .on_click(move |_, _window, cx| {
+                        zoom_ent.update(cx, |val, cx| {
+                            *val = ImageScaleMode::Pct100;
+                            cx.notify();
+                        });
+                    })
+                    .child(img_elem);
+
+                card = card.child(body);
+            }
+            ImageScaleMode::Pct50 | ImageScaleMode::Pct100 | ImageScaleMode::Pct150 => {
+                let factor = match scale_mode {
+                    ImageScaleMode::Fit => 1.0,
+                    ImageScaleMode::Pct50 => 0.5,
+                    ImageScaleMode::Pct100 => 1.0,
+                    ImageScaleMode::Pct150 => 1.5,
+                };
+                let target_w = (orig_w as f32 * factor).max(60.0);
+                let target_h = (orig_h as f32 * factor).max(40.0);
+
+                let img_elem = gpui::img(abs_path)
+                    .id("img-asset")
+                    .w(px(target_w))
+                    .h(px(target_h))
+                    .rounded_md()
+                    .object_fit(gpui::ObjectFit::Contain);
+
+                let body = div()
+                    .id(SharedString::from(format!("img-scroll-{hash}")))
+                    .w_full()
+                    .max_h(px(580.0))
+                    .overflow_scrollbar()
+                    .p_3()
+                    .bg(crate::theme::field_base())
+                    .child(
+                        div()
+                            .w(px(target_w))
+                            .h(px(target_h))
+                            .child(img_elem),
+                    );
+
+                card = card.child(body);
+            }
+        }
+
+        // 3. Caption / Alt Text Footer
+        if let Some(caption) = self.data.alt.as_ref().or(self.data.title.as_ref()) {
+            if !caption.is_empty() {
+                card = card.child(
+                    div()
+                        .w_full()
+                        .px_3()
+                        .py_1p5()
+                        .border_t_1()
+                        .border_color(crate::theme::border())
+                        .bg(crate::theme::bg_surface())
+                        .text_xs()
+                        .text_color(crate::theme::text_secondary())
+                        .italic()
+                        .child(caption.clone()),
+                );
+            }
+        }
+
+        card
+    }
+}
+

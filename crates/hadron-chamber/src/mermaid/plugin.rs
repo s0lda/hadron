@@ -5,8 +5,7 @@ use super::render::MermaidCard;
 #[cfg(feature = "gui")]
 use gpui::{
     div, prelude::FluentBuilder as _, px, App, ElementId, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
-    StyledImage as _, Window,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
 };
 #[cfg(feature = "gui")]
 use gpui_component::WindowExt as _;
@@ -491,6 +490,103 @@ pub fn parse_html_img(html: &str) -> Option<ImageBlockData> {
     })
 }
 
+/// Formats a byte size into human readable string.
+pub fn format_bytes(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.0} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+/// Probes image format dimensions and byte size.
+pub fn probe_image_meta(path: &std::path::Path) -> (Option<(u32, u32)>, Option<u64>) {
+    let file_size = std::fs::metadata(path).map(|m| m.len()).ok();
+    let Ok(data) = std::fs::read(path) else {
+        return (None, file_size);
+    };
+
+    let dims = probe_image_dimensions_from_bytes(&data);
+    (dims, file_size)
+}
+
+/// Probes image dimensions from raw file bytes for PNG, JPEG, GIF, and WebP formats.
+pub fn probe_image_dimensions_from_bytes(data: &[u8]) -> Option<(u32, u32)> {
+    // 1. PNG: \x89PNG\r\n\x1a\n
+    if data.len() >= 24 && &data[0..8] == b"\x89PNG\r\n\x1a\n" {
+        let w = u32::from_be_bytes(data[16..20].try_into().ok()?);
+        let h = u32::from_be_bytes(data[20..24].try_into().ok()?);
+        return Some((w, h));
+    }
+
+    // 2. GIF: GIF87a or GIF89a
+    if data.len() >= 10 && (&data[0..6] == b"GIF87a" || &data[0..6] == b"GIF89a") {
+        let w = u16::from_le_bytes(data[6..8].try_into().ok()?) as u32;
+        let h = u16::from_le_bytes(data[8..10].try_into().ok()?) as u32;
+        return Some((w, h));
+    }
+
+    // 3. JPEG: 0xFF, 0xD8
+    if data.len() >= 4 && data[0] == 0xFF && data[1] == 0xD8 {
+        let mut i = 2;
+        while i + 9 <= data.len() {
+            if data[i] != 0xFF {
+                i += 1;
+                continue;
+            }
+            let marker = data[i + 1];
+            if (0xC0..=0xC3).contains(&marker)
+                || (0xC5..=0xCB).contains(&marker)
+                || (0xCD..=0xCF).contains(&marker)
+            {
+                let h = u16::from_be_bytes([data[i + 5], data[i + 6]]) as u32;
+                let w = u16::from_be_bytes([data[i + 7], data[i + 8]]) as u32;
+                if w > 0 && h > 0 {
+                    return Some((w, h));
+                }
+            }
+            if marker == 0xD9 || marker == 0xDA {
+                break;
+            }
+            if i + 3 < data.len() {
+                let len = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
+                if len >= 2 {
+                    i += 2 + len;
+                } else {
+                    i += 2;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    // 4. WebP: RIFF .... WEBP
+    if data.len() >= 30 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        if &data[12..16] == b"VP8 " && data.len() >= 30 {
+            let w = (u16::from_le_bytes([data[26], data[27]]) & 0x3FFF) as u32;
+            let h = (u16::from_le_bytes([data[28], data[29]]) & 0x3FFF) as u32;
+            return Some((w, h));
+        } else if &data[12..16] == b"VP8L" && data.len() >= 25 {
+            let b0 = data[21] as u32;
+            let b1 = data[22] as u32;
+            let b2 = data[23] as u32;
+            let b3 = data[24] as u32;
+            let w = 1 + (((b1 & 0x3F) << 8) | b0);
+            let h = 1 + (((b3 & 0xF) << 10) | (b2 << 2) | ((b1 & 0xC0) >> 6));
+            return Some((w, h));
+        } else if &data[12..16] == b"VP8X" && data.len() >= 30 {
+            let w = 1 + (data[24] as u32 | ((data[25] as u32) << 8) | ((data[26] as u32) << 16));
+            let h = 1 + (data[27] as u32 | ((data[28] as u32) << 8) | ((data[29] as u32) << 16));
+            return Some((w, h));
+        }
+    }
+
+    None
+}
+
 /// Resolves an image path to an absolute path on disk if it exists.
 pub fn resolve_image_path(url_str: &str, repo_root: &std::path::Path) -> Option<std::path::PathBuf> {
     let cleaned = if let Some(stripped) = url_str.strip_prefix("file://") {
@@ -608,42 +704,7 @@ impl MarkdownPlugin for ImagePlugin {
         let hash = hasher.finish();
 
         if let Some(abs_path) = resolved {
-            let mut container = gpui_component::v_flex()
-                .id(ElementId::NamedInteger("markdown-img-card".into(), hash))
-                .my_3()
-                .p_2()
-                .rounded_lg()
-                .bg(crate::theme::bg_surface())
-                .border_1()
-                .border_color(crate::theme::border())
-                .items_center();
-
-            let mut img_elem = gpui::img(abs_path)
-                .id("img-asset")
-                .max_w_full()
-                .rounded_md()
-                .object_fit(gpui::ObjectFit::Contain);
-
-            if let Some(w) = data.width {
-                img_elem = img_elem.max_w(px(w));
-            }
-
-            container = container.child(img_elem);
-
-            if let Some(alt) = &data.alt {
-                if !alt.is_empty() {
-                    container = container.child(
-                        div()
-                            .mt_2()
-                            .text_xs()
-                            .text_color(crate::theme::text_secondary())
-                            .italic()
-                            .child(alt.clone()),
-                    );
-                }
-            }
-
-            container.into_any_element()
+            super::render::ImageCard::new(data.clone(), abs_path).into_any_element()
         } else {
             gpui_component::v_flex()
                 .id(ElementId::NamedInteger("markdown-img-fallback".into(), hash))
