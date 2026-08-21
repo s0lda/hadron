@@ -1,5 +1,5 @@
 use super::*;
-use gpui_component::ActiveTheme;
+use gpui_component::{ActiveTheme, StyledExt};
 use hadron_lattice::artifacts::{list_artifacts, ArtifactMeta};
 
 impl Chamber {
