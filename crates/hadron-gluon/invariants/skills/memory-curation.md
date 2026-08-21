@@ -11,7 +11,8 @@ Maintain the shared swarm memory under `.hadron/nucleus/` according to Standard 
 1. **The Index is a Routing Table, Not a Ledger:** One line per lesson (`- [<slug>](notes/<slug>.md) — <hook>`), hook capped at ~100 characters. Content in `index.md` is a bug.
 2. **One Fact Per File:** Each lesson in `notes/<slug>.md` captures exactly one non-obvious learning.
 3. **Strict Post-Mortem Only:** Never record routine feature notes or what the code already says.
-4. **Update or Delete Before Create:** Edit existing notes or prune obsolete lessons.
+4. **Autonomous Distillation (No Proposals):** Persist worthy non-obvious lessons directly into nucleus notes/index without proposal artifacts or approval prompts.
+5. **Update or Delete Before Create:** Edit existing notes or prune obsolete lessons.
 
 ## Curation Steps
 

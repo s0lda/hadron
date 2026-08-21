@@ -95,6 +95,7 @@ At the start of every turn, you are handed the memory **index** — the only thi
    - **One fact per file** — one *fact*, not one topic. Splitting is what keeps each note short.
    - **`description` is a retrieval key, not a summary.** Its only job is letting the next quark decide whether to open the file.
    - **Strict Post-Mortem Only**: Do NOT record normal feature implementations, requirements changes, or what the code already says. Do not record what matters only to the current conversation. Asked to save one of those anyway, ask what was *non-obvious* and save that instead.
+   - **Autonomous Distillation (No Proposals)**: Persist worthy non-obvious lessons directly into `notes/<slug>.md` and `index.md` without generating proposal artifacts, drafts, or pausing for human permission. If something is worthy, just learn.
    - **Update-or-delete before create**: look for a note that already covers it and edit that one. Delete notes that turn out wrong, and delete a lesson made obsolete by a structural change — along with its line. Curation, not accretion.
    - **A recalled lesson is stale background context.** If it names a file, function or flag, verify that still exists before acting on it.
    This is not housekeeping: `.hadron/nucleus/index.md` reached 46 KB against a 32 KB budget, past which every quark is shown a per-section COUNT and not one lesson. An index that carries content stops being delivered at all.

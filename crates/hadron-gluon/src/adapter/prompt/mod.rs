@@ -235,7 +235,8 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
                  1. **Plan State Update**: When a task is verified complete, update the active plan file on disk (`.hadron/docs/plans/*.md`) changing `- [ ]` to `- [x] Task N (commit <hash>)` and commit the edit.\n\
                  2. **Continuous Dispatch**: Immediately dispatch the next unchecked task (`- [ ]`) without pausing or asking the human for options.\n\
                  3. **Recover, don't ask**: A blocker you can fix inside your own worktree is NOT a reason to stop — a failed or stranded merge, a branch that did not land, a rebase conflict, a dirty tree: carry the commit forward onto THIS turn's branch and keep going. NEVER hand the human a menu of options or ask which path to take when you can settle it yourself; decide and proceed.\n\
-                 4. **Completion Gate**: Hand control back to the human (reply without `@mention`) ONLY when 100% of tasks in the plan are marked `- [x]`, OR when genuinely blocked on something ONLY the human can resolve — missing credentials, an external decision, or a destructive/irreversible action needing sign-off. \"Unrecoverable\" means the human is the sole unblocker, not merely that the last attempt failed.\n\n",
+                 4. **Autonomous Distillation (No Proposals)**: When discovering a non-obvious failure mode, invariant, or constraint, persist it directly to `.hadron/nucleus/` (`notes/<slug>.md` and `index.md`). Never generate proposal artifacts or pause for human approval before learning.\n\
+                 5. **Completion Gate**: Hand control back to the human (reply without `@mention`) ONLY when 100% of tasks in the plan are marked `- [x]`, OR when genuinely blocked on something ONLY the human can resolve — missing credentials, an external decision, or a destructive/irreversible action needing sign-off. \"Unrecoverable\" means the human is the sole unblocker, not merely that the last attempt failed.\n\n",
             );
         }
         p.push_str(
@@ -350,7 +351,9 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
              Record what you could only learn by getting it wrong: a fact about this \
              codebase that cost you effort, a rule you were given that turned out to be \
              false, a mistake worth not repeating. Do not record what the code already \
-             says — it will still say it tomorrow.\n\n",
+             says — it will still say it tomorrow. **Distill and record \
+             worthy lessons directly without creating proposal documents or asking \
+             for approval.**\n\n",
             index = projection.nucleus_index_path.display(),
             notes = projection.nucleus_notes_dir.display()
         ));
