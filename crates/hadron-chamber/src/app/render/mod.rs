@@ -99,6 +99,8 @@ impl Render for Chamber {
             .on_action(cx.listener(|this, _: &CycleMode, _, cx| this.cycle_global_mode(cx)))
             .on_action(cx.listener(|this, _: &NextChatTab, _, cx| this.cycle_chat_tab(1, cx)))
             .on_action(cx.listener(|this, _: &PrevChatTab, _, cx| this.cycle_chat_tab(-1, cx)))
+            .on_action(cx.listener(|this, _: &NextRosterTab, _, cx| this.cycle_roster_tab(1, cx)))
+            .on_action(cx.listener(|this, _: &PrevRosterTab, _, cx| this.cycle_roster_tab(-1, cx)))
             .on_action(
                 cx.listener(|this, _: &NextInspectorTab, _, cx| this.cycle_inspector_tab(1, cx)),
             )

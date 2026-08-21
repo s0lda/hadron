@@ -2669,4 +2669,17 @@ mod tests {
         let prev = (0isize - 1).rem_euclid(n) as usize;
         assert_eq!(GitSubtab::from_index(prev), GitSubtab::Diff3Way);
     }
+
+    #[test]
+    fn test_roster_tab_indexing_and_cycling() {
+        assert_eq!(RosterTab::from_index(0), RosterTab::Active);
+        assert_eq!(RosterTab::from_index(1), RosterTab::All);
+        assert_eq!(RosterTab::from_index(99), RosterTab::Active);
+
+        let n = RosterTab::ALL.len() as isize;
+        let next = (0isize + 1).rem_euclid(n) as usize;
+        assert_eq!(RosterTab::from_index(next), RosterTab::All);
+        let prev = (0isize - 1).rem_euclid(n) as usize;
+        assert_eq!(RosterTab::from_index(prev), RosterTab::All);
+    }
 }

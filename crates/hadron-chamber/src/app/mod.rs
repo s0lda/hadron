@@ -110,6 +110,8 @@ actions!(
         CycleMode,
         NextChatTab,
         PrevChatTab,
+        NextRosterTab,
+        PrevRosterTab,
         NextInspectorTab,
         PrevInspectorTab,
         NextStatsSubTab,
@@ -1333,6 +1335,9 @@ fn default_key_bindings() -> Vec<KeyBinding> {
         // Chat column tabs (Chat / Log / Stats).
         KeyBinding::new("alt-right", NextChatTab, None),
         KeyBinding::new("alt-left", PrevChatTab, None),
+        // Roster filter tabs (Active / All).
+        KeyBinding::new("alt-shift-right", NextRosterTab, None),
+        KeyBinding::new("alt-shift-left", PrevRosterTab, None),
         // Right rail tabs (Terminal / Files / Changes / Plan).
         KeyBinding::new("alt-pagedown", NextInspectorTab, None),
         KeyBinding::new("alt-pageup", PrevInspectorTab, None),

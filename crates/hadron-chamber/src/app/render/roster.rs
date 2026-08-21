@@ -74,10 +74,11 @@ impl super::Chamber {
             .children(RosterTab::ALL.map(|t| {
                 let is_selected = t == selected_tab;
                 let ix = t.index();
-                let count_label = match t {
-                    RosterTab::Active => format!("Active ({active_count})"),
-                    RosterTab::All => format!("All ({total_count})"),
+                let count = match t {
+                    RosterTab::Active => active_count,
+                    RosterTab::All => total_count,
                 };
+                let count_label = format!("{} ({count})", t.label());
                 div()
                     .id(("roster-tab-pill", ix))
                     .flex_1()
@@ -100,8 +101,7 @@ impl super::Chamber {
                     .text_xs()
                     .child(count_label)
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.roster_tab = RosterTab::from_index(ix);
-                        cx.notify();
+                        this.select_roster_tab(t, cx);
                     }))
             }));
 
