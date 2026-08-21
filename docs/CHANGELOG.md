@@ -5,6 +5,30 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-08-22
+
+### Added
+- **`/research` Slash Command & Architectural Research Lifecycle (`hadron-chamber`, `hadron-forge`, `hadron-forge-mcp`, `hadron-gluon`, `hadron-lattice`)**:
+  - Added `/research <topic>` slash command in chat and autocomplete to trigger in-depth codebase/topic investigations.
+  - Implemented structured research document engine in `hadron-forge` and exposed via MCP tools (`hadron_forge_research_write`, `hadron_forge_research_list`, `hadron_forge_research_read`) targeting `.hadron/docs/research/`.
+  - Added automatic skill injection (`research_ref`) in Gluon and document title synchronization with active task models (`retitle_from_research`).
+- **Custom Theme Engine & Live Appearance Editor (`hadron-chamber`)**:
+  - Implemented `ThemeDefinition` schema supporting custom RGB/hex color overrides across surface, accent, text, syntax, and terminal palettes.
+  - Built dynamic runtime theme resolver and active custom theme lock enabling instantaneous palette swaps without restarting the chamber.
+  - Added interactive Appearance Settings editor with custom theme creation, palette picking, and a live syntax/UI control preview card.
+- **Native Markdown Badges & Responsive Image Rendering (`hadron-chamber`)**:
+  - Implemented native `BadgePlugin` rendering shields.io and badgen SVG/URL badges as interactive colored GPUI pills with click-to-open links.
+  - Implemented responsive `ImagePlugin` with local file resolution against workspace root, HTML `<img>` tag support, and presentation `<div>` unwrapping.
+  - Added zero-copy image dimensions metadata probing (PNG, JPEG, GIF, WebP) with formatted file size and pixel dimension tags.
+  - Locked preview images into responsive `Fit` layout with `min_w_0()` and `overflow_hidden()` to prevent container blowout.
+  - Implemented WSL-aware external viewer launcher (`open_path_or_url`) for one-click image opening and link navigation without PowerShell or snapd errors.
+
+### Fixed
+- **Plan Rail Viewport Clearance (`hadron-chamber`)**:
+  - Added bottom clearance padding (`pb_16`) and strict flex container bounds (`flex_1().min_h_0()`) to the Plan tab list so the final task is never clipped by the viewport boundary.
+- **Emoji Font Preservation under Font Probes (`hadron-chamber`)**:
+  - Added `is_emoji_or_symbol_font` guard preventing font pickers and bold probes from removing `Noto Color Emoji` from the cosmic-text font database.
+
 ## [0.15.0] - 2026-08-21
 
 ### Added

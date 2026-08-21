@@ -46,6 +46,7 @@ Hadron Forge (`crates/hadron-forge` and `crates/hadron-forge-mcp`) provides a co
 | **Hybrid Swarm Mesh** | `hadron_forge_swarm_mesh` | Remote ACP worker container offload, status inspector, and execution runner. |
 | **Interactive PTY Pairing** | `hadron_forge_pty_pairing` | Interactive shared PTY pairing broker with live steer and multi-quark observer sessions. |
 | **Tool Execution Breakpoints** | `hadron_forge_tool_breakpoints` | Dynamic pause/resume breakpoints on MCP tool execution and subprocess commands. |
+| **Structured Research Documents** | `hadron_forge_research_write`, `hadron_forge_research_list`, `hadron_forge_research_read` | Architectural investigation documents, topic syntheses in `.hadron/docs/research/`, and task synchronisation. |
 
 ---
 
@@ -301,6 +302,14 @@ Human-in-the-loop and automated breakpoint control on tool execution:
 - **Breakpoint Configuration**: Sets execution breakpoints on specific MCP tools or patterns (`hadron_forge_tool_breakpoints`).
 - **Turn Pause & Resume**: Pauses Quark execution prior to tool dispatch for inspection or parameter adjustment.
 - **Safety Interception**: Prevents accidental destructive modifications mid-turn.
+
+## 38. Structured Research Documents
+
+Standardized architectural investigations and deep codebase research:
+- **Research Lifecycle**: Writes, lists, and reads structured research papers in `.hadron/docs/research/` (`hadron_forge_research_write`, `hadron_forge_research_list`, `hadron_forge_research_read`).
+- **Standardized Schema**: Frontmatter metadata (`slug`, `title`, `author`, `date`, `target_area`) with structured sections for Executive Summary, Key Findings, Constraints, Trade-Offs, and Recommendations.
+- **Task Integration**: Integrates directly with the `/research` slash command and auto-synchronizes plan task titles.
+
 
 
 

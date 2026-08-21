@@ -20,6 +20,21 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.16.0",
+        date: Some("2026-08-22"),
+        added: &[
+            "/research slash command and structured architectural investigation document lifecycle (.hadron/docs/research/)",
+            "Custom Theme Engine with dynamic runtime palette swapping and live syntax preview in Appearance Settings",
+            "Native markdown badge pills with interactive link navigation (shields.io, badgen)",
+            "Responsive markdown image rendering with zero-copy dimension probing and WSL-aware external viewer",
+        ],
+        changed: &[],
+        fixed: &[
+            "Plan rail viewport bottom clearance and flex container sizing preventing bottom task clipping",
+            "Emoji font preservation preventing cosmic-text font database purges during font picker bold probes",
+        ],
+    },
+    Release {
         version: "0.15.0",
         date: Some("2026-08-21"),
         added: &[
