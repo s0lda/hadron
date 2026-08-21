@@ -2932,6 +2932,7 @@ dependencies = [
  "markdown",
  "portable-pty",
  "rusqlite",
+ "rust-embed",
  "serde",
  "serde_json",
  "tempfile",

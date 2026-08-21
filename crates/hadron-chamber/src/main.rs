@@ -36,6 +36,8 @@ mod app;
 mod theme;
 #[cfg(feature = "gui")]
 mod window_frame;
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+mod symbols;
 
 fn main() {
     // `--no-daemon` attaches to an already-running gluon without auto-spawning one;

@@ -478,27 +478,35 @@ impl super::Chamber {
                                     .gap_2()
                                     .min_w_0()
                                     .child(if node.is_file {
-                                        Icon::new(IconName::File)
-                                            .small()
-                                            .text_color(if node.is_ignored {
-                                                theme::text_muted()
-                                            } else {
-                                                icon_color
-                                            })
-                                            .into_any_element()
-                                    } else {
-                                        Icon::new(if is_expanded {
-                                            IconName::FolderOpen
-                                        } else {
-                                            IconName::Folder
-                                        })
-                                        .small()
-                                        .text_color(if node.is_ignored {
+                                        let icon_path = crate::symbols::file_icon_path(&node.full_path);
+                                        let color = if node.is_ignored {
                                             theme::text_muted()
                                         } else {
                                             icon_color
-                                        })
-                                        .into_any_element()
+                                        };
+                                        gpui::svg()
+                                            .path(icon_path)
+                                            .size_3p5()
+                                            .text_color(color)
+                                            .flex_none()
+                                            .into_any_element()
+                                    } else {
+                                        let folder_name = std::path::Path::new(&node.full_path)
+                                            .file_name()
+                                            .and_then(|f| f.to_str())
+                                            .unwrap_or(&name);
+                                        let icon_path = crate::symbols::folder_icon_path(folder_name, is_expanded);
+                                        let color = if node.is_ignored {
+                                            theme::text_muted()
+                                        } else {
+                                            icon_color
+                                        };
+                                        gpui::svg()
+                                            .path(icon_path)
+                                            .size_3p5()
+                                            .text_color(color)
+                                            .flex_none()
+                                            .into_any_element()
                                     })
                                     .child(
                                         div()

@@ -18,3 +18,5 @@ pub mod app;
 pub mod theme;
 #[cfg(feature = "gui")]
 pub mod window_frame;
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+pub mod symbols;

@@ -1576,7 +1576,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
     let events = io::read_events(&field_path).unwrap_or_default();
     let view = model::project_with_team(&events, &resolve_team(&team, &global), &global);
 
-    let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
+    let app = gpui_platform::application().with_assets(crate::symbols::ChamberAssets);
     app.run(move |cx: &mut App| {
         gpui_component::init(cx);
         crate::sys::init_windows_app_icon();

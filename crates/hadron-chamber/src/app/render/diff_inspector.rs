@@ -161,7 +161,13 @@ impl Chamber {
                         h_flex()
                             .gap_1p5()
                             .items_center()
-                            .child(Icon::new(IconName::File).xsmall().text_color(file_icon_color))
+                            .child(
+                                gpui::svg()
+                                    .path(crate::symbols::file_icon_path(file_path))
+                                    .size_3()
+                                    .text_color(file_icon_color)
+                                    .flex_none(),
+                            )
                             .child(
                                 div()
                                     .text_xs()
