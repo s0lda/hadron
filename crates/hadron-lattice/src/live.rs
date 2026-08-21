@@ -98,6 +98,17 @@ pub struct Activity {
     pub started: Option<DateTime<Utc>>,
 }
 
+/// Status metadata snapshot for a live quark, including last activity and bytes streamed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuarkLiveStatus {
+    pub quark: QuarkId,
+    pub doing: Doing,
+    pub detail: String,
+    pub last_activity: DateTime<Utc>,
+    pub bytes_streamed: u64,
+    pub current_tool: Option<String>,
+}
+
 impl Activity {
     /// Build an activity, truncating the detail to [`DETAIL_CHARS`] **characters**
     /// and collapsing its newlines — it is rendered as one line.
