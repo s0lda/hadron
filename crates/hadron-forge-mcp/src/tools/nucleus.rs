@@ -159,6 +159,21 @@ impl ForgeMcpServer {
             Json(ToolResponse::success(Some(json)))
         }
     }
+
+    #[tool(
+        name = "hadron_forge_nucleus_semantic_search",
+        description = "Vectorized semantic ranking search over .hadron/nucleus/notes/ lessons and invariants"
+    )]
+    pub async fn nucleus_semantic_search(&self, Parameters(args): Parameters<NucleusSemanticSearchArgs>) -> Json<ToolResponse> {
+        let repo_root = self.root.path();
+        match hadron_lattice::nucleus_search::query_nucleus_semantic(repo_root, &args.query, args.limit) {
+            Ok(results) => {
+                let json = serde_json::to_string_pretty(&results).unwrap_or_default();
+                Json(ToolResponse::success(Some(json)))
+            }
+            Err(e) => Json(ToolResponse::error(e.to_string())),
+        }
+    }
 }
 
 #[cfg(test)]
