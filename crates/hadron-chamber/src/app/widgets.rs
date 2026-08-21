@@ -1266,6 +1266,7 @@ where
                     .text_color(theme::text_secondary())
                     .child(
                         gpui_component::text::TextView::markdown(("log-body", ix), body_text)
+                            .style(markdown_style(None))
                             .selectable(true)
                             .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions()),
                     ),
@@ -1316,6 +1317,7 @@ where
                     .truncate()
                     .child(
                         gpui_component::text::TextView::markdown(("log-body", ix), body_text)
+                            .style(markdown_style(None))
                             .selectable(true)
                             .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions()),
                     ),
@@ -1323,8 +1325,6 @@ where
             .into_any_element()
     }
 }
-
-
 
 /// A quiet accent per event kind, so the Log's kind column reads at a glance.
 pub(super) fn log_kind_color(kind: &str) -> gpui::Rgba {
@@ -1335,6 +1335,105 @@ pub(super) fn log_kind_color(kind: &str) -> gpui::Rgba {
         "snapshot" => theme::accent(),
         _ => theme::text_muted(),
     }
+}
+
+#[allow(dead_code)]
+pub(super) fn tool_kind_icon(kind: &str) -> IconName {
+    match kind {
+        "bash" => IconName::SquareTerminal,
+        "read" => IconName::File,
+        "edit" => IconName::Folder,
+        "command" => IconName::SquareTerminal,
+        "snapshot" => IconName::CircleCheck,
+        _ => IconName::Asterisk,
+    }
+}
+
+/// Custom syntax highlight theme matching Zed / VS Code semantic tokens.
+pub(super) fn zed_syntax_theme() -> std::sync::Arc<gpui_component::highlighter::HighlightTheme> {
+    static THEME: std::sync::LazyLock<std::sync::Arc<gpui_component::highlighter::HighlightTheme>> =
+        std::sync::LazyLock::new(|| {
+            let json = r##"{
+                "name": "Zed Dark",
+                "appearance": "dark",
+                "style": {
+                    "syntax": {
+                        "attribute": { "color": "#b392f0ff" },
+                        "boolean": { "color": "#79b8ffff" },
+                        "comment": { "color": "#7e888cff" },
+                        "comment.doc": { "color": "#7e888cff" },
+                        "constant": { "color": "#79b8ffff" },
+                        "constructor": { "color": "#b392f0ff" },
+                        "embedded": { "color": "#e6edf3ff" },
+                        "emphasis": { "color": "#e1e4e8ff", "font_style": "italic" },
+                        "emphasis.strong": { "color": "#e1e4e8ff", "font_weight": 700 },
+                        "enum": { "color": "#79b8ffff" },
+                        "function": { "color": "#b392f0ff" },
+                        "hint": { "color": "#7e888cff" },
+                        "keyword": { "color": "#f97583ff" },
+                        "label": { "color": "#b392f0ff" },
+                        "link_text": { "color": "#48a0c7ff" },
+                        "link_uri": { "color": "#9ecbffff" },
+                        "number": { "color": "#79b8ffff" },
+                        "operator": { "color": "#f97583ff" },
+                        "predictive": { "color": "#555555ff" },
+                        "preproc": { "color": "#f97583ff" },
+                        "primary": { "color": "#bbbebfff" },
+                        "property": { "color": "#79b8ffff" },
+                        "punctuation": { "color": "#bbbebfff" },
+                        "punctuation.bracket": { "color": "#bbbebfff" },
+                        "punctuation.delimiter": { "color": "#f97583ff" },
+                        "punctuation.list_marker": { "color": "#85e89dff" },
+                        "punctuation.special": { "color": "#f97583ff" },
+                        "string": { "color": "#9ecbffff" },
+                        "string.escape": { "color": "#85e89dff", "font_weight": 700 },
+                        "string.regex": { "color": "#dbedffff" },
+                        "string.special": { "color": "#79b8ffff" },
+                        "string.special.symbol": { "color": "#79b8ffff" },
+                        "tag": { "color": "#85e89dff" },
+                        "text.literal": { "color": "#85e89dff" },
+                        "text.code.span": { "color": "#85e89dff" },
+                        "title": { "color": "#79b8ffff", "font_weight": 700 },
+                        "type": { "color": "#79b8ffff" },
+                        "variable": { "color": "#e1e4e8ff" },
+                        "variable.special": { "color": "#ffab70ff" },
+                        "variant": { "color": "#79b8ffff" }
+                    }
+                }
+            }"##;
+            match serde_json::from_str::<gpui_component::highlighter::HighlightTheme>(json) {
+                Ok(theme) => std::sync::Arc::new(theme),
+                Err(err) => {
+                    eprintln!("Failed to parse Zed syntax theme: {err}");
+                    gpui_component::highlighter::HighlightTheme::default_dark()
+                }
+            }
+        });
+    THEME.clone()
+}
+
+pub(super) fn markdown_style(ui_font_size: Option<f32>) -> gpui_component::text::TextViewStyle {
+    let base_size = ui_font_size.unwrap_or(14.0);
+    let mut style = gpui_component::text::TextViewStyle::default();
+    style.heading_base_font_size = px(base_size);
+    style.highlight_theme = zed_syntax_theme();
+    style.table = {
+        let mut s = gpui::StyleRefinement::default()
+            .border_1()
+            .border_color(theme::border())
+            .rounded_md();
+        s.overflow.x = Some(gpui::Overflow::Scroll);
+        s
+    };
+    // Fenced code blocks: a solid dark card (header row with language label +
+    // copy button, divider, then the code body) so they read as a distinct
+    // block over the flat #101010 field instead of blending into body text.
+    style.code_block = gpui::StyleRefinement::default()
+        .bg(theme::input_bg())
+        .border_1()
+        .border_color(theme::border())
+        .rounded_md();
+    style
 }
 
 /// A glass card for the Session panels, matching the chat/roster panels.
@@ -1444,41 +1543,29 @@ pub(super) fn kind_icon(kind_label: &str) -> IconName {
     }
 }
 
-pub(super) fn markdown_style(ui_font_size: Option<f32>) -> gpui_component::text::TextViewStyle {
-    let base_size = ui_font_size.unwrap_or(14.0);
-    let mut style = gpui_component::text::TextViewStyle::default();
-    style.heading_base_font_size = px(base_size);
-    style.highlight_theme = gpui_component::highlighter::HighlightTheme::default_dark();
-    style.table = {
-        let mut s = gpui::StyleRefinement::default()
-            .border_1()
-            .border_color(theme::border())
-            .rounded_md();
-        s.overflow.x = Some(gpui::Overflow::Scroll);
-        s
-    };
-    // Fenced code blocks: a solid dark card (header row with language label +
-    // copy button, divider, then the code body) so they read as a distinct
-    // block over the flat #101010 field instead of blending into body text.
-    style.code_block = gpui::StyleRefinement::default()
-        .bg(theme::input_bg())
-        .border_1()
-        .border_color(theme::border())
-        .rounded_md();
-    style
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn test_zed_syntax_theme_loads_correctly() {
+        let theme = zed_syntax_theme();
+        assert_eq!(theme.name, "Zed Dark");
+        assert!(theme.style.syntax.function.is_some());
+        assert!(theme.style.syntax.keyword.is_some());
+        assert!(theme.style.syntax.string.is_some());
+        assert!(theme.style.syntax.type_.is_some());
+    }
+
+    #[test]
     fn markdown_style_heading_base_font_size_matches_preference() {
         let default_style = markdown_style(None);
         assert_eq!(default_style.heading_base_font_size, px(14.0));
+        assert_eq!(default_style.highlight_theme.name, "Zed Dark");
 
         let custom_style = markdown_style(Some(18.0));
         assert_eq!(custom_style.heading_base_font_size, px(18.0));
+        assert_eq!(custom_style.highlight_theme.name, "Zed Dark");
     }
 
     #[test]

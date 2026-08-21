@@ -127,10 +127,10 @@ impl Chamber {
                 .border_color(theme::glass_highlight())
                 .text_xs()
                 .font_weight(gpui::FontWeight::BOLD)
-                .child(div().w(px(35.0)).text_color(theme::text_muted()).child("Line"))
-                .child(div().flex_1().text_color(theme::text_muted()).child(format!("Base ({base_ref})")))
-                .child(div().flex_1().text_color(gpui::rgb(0x60a5fa)).child("Ours (Worktree)"))
-                .child(div().flex_1().text_color(gpui::rgb(0x34d399)).child(format!("Theirs ({theirs_ref})"))),
+                .child(div().w(px(35.0)).text_color(theme::syntax_comment()).child("Line"))
+                .child(div().flex_1().text_color(theme::syntax_comment()).child(format!("Base ({base_ref})")))
+                .child(div().flex_1().text_color(theme::syntax_type()).child("Ours (Worktree)"))
+                .child(div().flex_1().text_color(theme::syntax_literal()).child(format!("Theirs ({theirs_ref})"))),
         );
 
         for file_path in files_to_check.iter().take(5) {
@@ -141,6 +141,8 @@ impl Chamber {
             let all_hunks = compute_three_way_diff(&base_content, &ours_content, &theirs_content);
             let changed_hunks: Vec<ThreeWayHunk> = all_hunks.iter().filter(|h| h.status != ThreeWayStatus::Same).cloned().collect();
             let changed_count = changed_hunks.len();
+
+            let file_icon_color = theme::file_icon_color_for_path(file_path);
 
             let mut file_card = v_flex()
                 .w_full()
@@ -159,7 +161,7 @@ impl Chamber {
                         h_flex()
                             .gap_1p5()
                             .items_center()
-                            .child(Icon::new(IconName::File).xsmall().text_color(theme::text_muted()))
+                            .child(Icon::new(IconName::File).xsmall().text_color(file_icon_color))
                             .child(
                                 div()
                                     .text_xs()
@@ -189,9 +191,9 @@ impl Chamber {
             for hunk in display_hunks {
                 let bg_color = match hunk.status {
                     ThreeWayStatus::Same => theme::term_bg(),
-                    ThreeWayStatus::OursModified => gpui::rgba(0x60a5fa15),
-                    ThreeWayStatus::TheirsModified => gpui::rgba(0x34d39915),
-                    ThreeWayStatus::Conflict => gpui::rgba(0xf8717125),
+                    ThreeWayStatus::OursModified => gpui::rgba(0x79b8ff18),
+                    ThreeWayStatus::TheirsModified => gpui::rgba(0x85e89d18),
+                    ThreeWayStatus::Conflict => gpui::rgba(0xf9758325),
                 };
 
                 let base_str = if hunk.base.is_empty() { " ".to_string() } else { hunk.base };
@@ -211,7 +213,7 @@ impl Chamber {
                         .child(
                             div()
                                 .w(px(35.0))
-                                .text_color(theme::text_muted())
+                                .text_color(theme::syntax_comment())
                                 .child(hunk.line_number.to_string()),
                         )
                         .child(

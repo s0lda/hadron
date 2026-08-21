@@ -19,8 +19,8 @@ const LANE_COLORS: [u32; 6] = [0x34d399, 0x60a5fa, 0xf59e0b, 0xc084fc, 0x2dd4bf,
 const MERGED_COLOR: u32 = 0x34d399;
 const UNMERGED_COLOR: u32 = 0xf87171;
 const NEUTRAL_COLOR: u32 = 0x94a3b8;
-const ADD_COLOR: u32 = 0x34d399;
-const DEL_COLOR: u32 = 0xf87171;
+const ADD_COLOR: u32 = 0x85e89d;
+const DEL_COLOR: u32 = 0xf97583;
 /// One graph rail column width in px when painting vector lanes.
 const LANE_W: f32 = 16.0;
 /// Cap for a `--decorate` ref chip so it cannot squeeze the subject out.
@@ -1145,7 +1145,7 @@ impl super::Chamber {
                                 .px_1p5()
                                 .py_0p5()
                                 .rounded_sm()
-                                .bg(gpui::rgba(0x22c55e18))
+                                .bg(gpui::rgba(0x85e89d18))
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_color(gpui::rgb(ADD_COLOR))
@@ -1156,7 +1156,7 @@ impl super::Chamber {
                                 .px_1p5()
                                 .py_0p5()
                                 .rounded_sm()
-                                .bg(gpui::rgba(0xf43f5e18))
+                                .bg(gpui::rgba(0xf9758318))
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_color(gpui::rgb(DEL_COLOR))
@@ -1253,7 +1253,7 @@ impl super::Chamber {
                             crate::vcs::DiffLine::Added(a) => h_flex()
                                 .w_full()
                                 .items_start()
-                                .bg(gpui::rgba(0x22c55e14))
+                                .bg(gpui::rgba(0x85e89d14))
                                 .child(
                                     div()
                                         .w(px(20.0))
@@ -1273,7 +1273,7 @@ impl super::Chamber {
                             crate::vcs::DiffLine::Removed(r) => h_flex()
                                 .w_full()
                                 .items_start()
-                                .bg(gpui::rgba(0xf43f5e14))
+                                .bg(gpui::rgba(0xf9758314))
                                 .child(
                                     div()
                                         .w(px(20.0))

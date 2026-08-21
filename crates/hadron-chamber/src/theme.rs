@@ -233,6 +233,70 @@ pub fn text_muted() -> Rgba {
     rgb(0x707070)
 }
 
+// --- Zed Semantic Syntax Tokens ---
+pub fn syntax_attribute() -> Rgba { rgb(0xb392f0) }
+pub fn syntax_boolean() -> Rgba { rgb(0x79b8ff) }
+pub fn syntax_comment() -> Rgba { rgb(0x7e888c) }
+pub fn syntax_constant() -> Rgba { rgb(0x79b8ff) }
+pub fn syntax_constructor() -> Rgba { rgb(0xb392f0) }
+pub fn syntax_embedded() -> Rgba { rgb(0xe6edf3) }
+pub fn syntax_emphasis() -> Rgba { rgb(0xe1e4e8) }
+pub fn syntax_enum() -> Rgba { rgb(0x79b8ff) }
+pub fn syntax_function() -> Rgba { rgb(0xb392f0) }
+pub fn syntax_hint() -> Rgba { rgb(0x7e888c) }
+pub fn syntax_keyword() -> Rgba { rgb(0xf97583) }
+pub fn syntax_label() -> Rgba { rgb(0xb392f0) }
+pub fn syntax_link_text() -> Rgba { rgb(0x48a0c7) }
+pub fn syntax_link_uri() -> Rgba { rgb(0x9ecbff) }
+pub fn syntax_number() -> Rgba { rgb(0x79b8ff) }
+pub fn syntax_operator() -> Rgba { rgb(0xf97583) }
+pub fn syntax_predictive() -> Rgba { rgb(0x555555) }
+pub fn syntax_preproc() -> Rgba { rgb(0xf97583) }
+pub fn syntax_primary() -> Rgba { rgb(0xbbbebf) }
+pub fn syntax_property() -> Rgba { rgb(0x79b8ff) }
+pub fn syntax_punctuation() -> Rgba { rgb(0xbbbebf) }
+pub fn syntax_delimiter() -> Rgba { rgb(0xf97583) }
+pub fn syntax_list_marker() -> Rgba { rgb(0x85e89d) }
+pub fn syntax_special() -> Rgba { rgb(0xf97583) }
+pub fn syntax_string() -> Rgba { rgb(0x9ecbff) }
+pub fn syntax_string_escape() -> Rgba { rgb(0x85e89d) }
+pub fn syntax_tag() -> Rgba { rgb(0x85e89d) }
+pub fn syntax_literal() -> Rgba { rgb(0x85e89d) }
+pub fn syntax_title() -> Rgba { rgb(0x79b8ff) }
+pub fn syntax_type() -> Rgba { rgb(0x79b8ff) }
+pub fn syntax_variable() -> Rgba { rgb(0xe1e4e8) }
+pub fn syntax_variable_special() -> Rgba { rgb(0xffab70) }
+pub fn syntax_variant() -> Rgba { rgb(0x79b8ff) }
+
+/// Semantic color for file category icons in the file tree and workspace viewers.
+pub fn file_icon_color_for_path(path: &str) -> Rgba {
+    let p = std::path::Path::new(path);
+    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let name = p.file_name().and_then(|f| f.to_str()).unwrap_or("").to_lowercase();
+
+    match ext.as_str() {
+        // Code / Logic
+        "rs" | "go" | "c" | "cpp" | "cc" | "h" | "hpp" | "zig" => rgb(0xb392f0),
+        "ts" | "tsx" | "js" | "jsx" | "py" | "java" | "kt" | "swift" | "rb" | "php" | "lua" => rgb(0x79b8ff),
+        "sh" | "bash" | "zsh" => rgb(0xf97583),
+        // Prose / Docs
+        "md" | "markdown" | "txt" | "org" | "adoc" | "rst" => rgb(0x85e89d),
+        // Config / Data
+        "json" | "toml" | "yaml" | "yml" | "xml" | "ini" | "env" | "lock" | "csv" | "sql" => rgb(0xffab70),
+        // Web / Styling
+        "html" | "htm" | "css" | "scss" | "sass" | "less" => rgb(0xf97583),
+        // Media / Assets / Binary
+        "png" | "jpg" | "jpeg" | "gif" | "svg" | "ico" | "webp" | "wasm" | "ttf" | "woff" | "woff2" => rgb(0x48a0c7),
+        _ => {
+            if name == "dockerfile" || name == "makefile" || name == "cargo.lock" {
+                rgb(0xffab70)
+            } else {
+                rgb(0xbbbebf)
+            }
+        }
+    }
+}
+
 /// Accent color gradient and token ramp.
 pub fn accent() -> Rgba {
     active_accent()
@@ -563,6 +627,30 @@ mod tests {
         // Restore default obsidian for subsequent tests
         set_active_preset(crate::config::ThemePreset::Obsidian);
         set_active_accent(crate::config::AccentChoice::Amethyst);
+    }
+
+    #[test]
+    fn test_zed_semantic_syntax_tokens() {
+        assert_eq!(syntax_function(), rgb(0xb392f0));
+        assert_eq!(syntax_keyword(), rgb(0xf97583));
+        assert_eq!(syntax_type(), rgb(0x79b8ff));
+        assert_eq!(syntax_string(), rgb(0x9ecbff));
+        assert_eq!(syntax_literal(), rgb(0x85e89d));
+        assert_eq!(syntax_comment(), rgb(0x7e888c));
+        assert_eq!(syntax_variable(), rgb(0xe1e4e8));
+        assert_eq!(syntax_variable_special(), rgb(0xffab70));
+    }
+
+    #[test]
+    fn test_file_icon_color_for_path() {
+        assert_eq!(file_icon_color_for_path("src/main.rs"), rgb(0xb392f0));
+        assert_eq!(file_icon_color_for_path("frontend/app.ts"), rgb(0x79b8ff));
+        assert_eq!(file_icon_color_for_path("README.md"), rgb(0x85e89d));
+        assert_eq!(file_icon_color_for_path("Cargo.toml"), rgb(0xffab70));
+        assert_eq!(file_icon_color_for_path("package.json"), rgb(0xffab70));
+        assert_eq!(file_icon_color_for_path("assets/logo.png"), rgb(0x48a0c7));
+        assert_eq!(file_icon_color_for_path("styles/main.css"), rgb(0xf97583));
+        assert_eq!(file_icon_color_for_path("random.unknown"), rgb(0xbbbebf));
     }
 }
 

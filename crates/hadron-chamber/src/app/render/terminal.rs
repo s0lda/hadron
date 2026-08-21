@@ -404,6 +404,61 @@ impl super::Chamber {
 
                         let is_expanded = expanded_set.contains(&current_path);
 
+                        let icon_color = if node.is_file {
+                            crate::theme::file_icon_color_for_path(&node.full_path)
+                        } else if is_expanded {
+                            gpui::rgb(0x79b8ff)
+                        } else {
+                            gpui::rgb(0x48a0c7)
+                        };
+
+                        let git_status = git_statuses.get(&node.full_path);
+
+                        let text_color = if node.is_ignored {
+                            theme::text_muted()
+                        } else {
+                            match git_status {
+                                Some(crate::vcs::GitStatus::Modified) => gpui::rgb(0xf59e0b),
+                                Some(crate::vcs::GitStatus::Added) => gpui::rgb(0x34d399),
+                                Some(crate::vcs::GitStatus::Deleted) => gpui::rgb(0xf87171),
+                                None => theme::text(),
+                            }
+                        };
+
+                        let git_badge = match git_status {
+                            Some(crate::vcs::GitStatus::Modified) => Some(
+                                div()
+                                    .px_1()
+                                    .py_0p5()
+                                    .rounded_xs()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(gpui::rgb(0xf59e0b))
+                                    .child("M"),
+                            ),
+                            Some(crate::vcs::GitStatus::Added) => Some(
+                                div()
+                                    .px_1()
+                                    .py_0p5()
+                                    .rounded_xs()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(gpui::rgb(0x34d399))
+                                    .child("+"),
+                            ),
+                            Some(crate::vcs::GitStatus::Deleted) => Some(
+                                div()
+                                    .px_1()
+                                    .py_0p5()
+                                    .rounded_xs()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(gpui::rgb(0xf87171))
+                                    .child("D"),
+                            ),
+                            None => None,
+                        };
+
                         // Stable per-path id — see the roster row: a context menu on
                         // an id-less element shares its state with every sibling.
                         let row = h_flex()
@@ -415,36 +470,46 @@ impl super::Chamber {
                             .rounded_sm()
                             .hover(|s| s.bg(theme::bg_surface_raised()))
                             .cursor_pointer()
-                            // Gitignored entries read as present-but-inactive: muted text.
-                            .text_color(if node.is_ignored {
-                                theme::text_muted()
-                            } else {
-                                match git_statuses.get(&node.full_path) {
-                                    Some(crate::vcs::GitStatus::Modified) => gpui::rgb(0xf59e0b),
-                                    Some(crate::vcs::GitStatus::Added) => gpui::rgb(0x34d399),
-                                    Some(crate::vcs::GitStatus::Deleted) => gpui::rgb(0xf87171),
-                                    None => theme::text(),
-                                }
-                            })
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_size(cx.theme().mono_font_size)
-                            .gap_2()
-                            .child(if node.is_file {
-                                Icon::new(IconName::File)
-                                    .small()
-                                    .text_color(theme::text_muted())
-                                    .into_any_element()
-                            } else {
-                                Icon::new(if is_expanded {
-                                    IconName::FolderOpen
-                                } else {
-                                    IconName::Folder
-                                })
-                                .small()
-                                .text_color(theme::text_muted())
-                                .into_any_element()
-                            })
-                            .child(div().child(name.to_string()));
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .min_w_0()
+                                    .child(if node.is_file {
+                                        Icon::new(IconName::File)
+                                            .small()
+                                            .text_color(if node.is_ignored {
+                                                theme::text_muted()
+                                            } else {
+                                                icon_color
+                                            })
+                                            .into_any_element()
+                                    } else {
+                                        Icon::new(if is_expanded {
+                                            IconName::FolderOpen
+                                        } else {
+                                            IconName::Folder
+                                        })
+                                        .small()
+                                        .text_color(if node.is_ignored {
+                                            theme::text_muted()
+                                        } else {
+                                            icon_color
+                                        })
+                                        .into_any_element()
+                                    })
+                                    .child(
+                                        div()
+                                            .text_color(text_color)
+                                            .font_family(cx.theme().mono_font_family.clone())
+                                            .text_size(cx.theme().mono_font_size)
+                                            .truncate()
+                                            .child(name.to_string()),
+                                    ),
+                            )
+                            .children(git_badge);
 
                         if node.is_file {
                             let file_name = node.full_path.clone();
