@@ -568,6 +568,23 @@ pub fn prune_merged_branches(repo_root: &Path, base: &str) -> anyhow::Result<Vec
     Ok(pruned)
 }
 
+/// Sweep all merged `quark/*` branches into `base` using safe `-d` deletion.
+pub fn sweep_merged_branches(repo_root: &Path, base: &str) -> anyhow::Result<Vec<String>> {
+    prune_merged_branches(repo_root, base)
+}
+
+/// Archive an abandoned or unmerged branch with a permanent tag (`archive/<slug>`) before safe deletion.
+pub fn archive_and_prune_branch(repo_root: &Path, branch: &str) -> anyhow::Result<String> {
+    let sha = git(repo_root, &["rev-parse", "--verify", branch])?.trim().to_string();
+    let slug = branch.trim_start_matches("refs/heads/").replace('/', "-");
+    let tag_name = format!("archive/{}", slug);
+
+    git(repo_root, &["tag", "-f", &tag_name, &sha])?;
+    git(repo_root, &["branch", "-D", branch])?;
+
+    Ok(tag_name)
+}
+
 /// Where a reap parks anything it had to move out of a tree before removing it.
 /// Gitignored like the rest of `.hadron/`, so it never dirties the human's status.
 pub fn reaped_dir(repo_root: &Path) -> PathBuf {
