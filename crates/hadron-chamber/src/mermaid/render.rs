@@ -602,29 +602,7 @@ fn render_pie_canvas(layout: PieLayout) -> impl IntoElement {
         )
 }
 
-/// Scaling mode for the interactive markdown ImageCard.
-#[cfg(feature = "gui")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ImageScaleMode {
-    Fit,
-    Pct50,
-    Pct100,
-    Pct150,
-}
-
-#[cfg(feature = "gui")]
-impl ImageScaleMode {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Fit => "Fit",
-            Self::Pct50 => "50%",
-            Self::Pct100 => "100%",
-            Self::Pct150 => "150%",
-        }
-    }
-}
-
-/// Interactive Markdown Image Card with responsive scaling, dimensions metadata, pan/scroll, and external viewer integration.
+/// Interactive Markdown Image Card with clean fit scaling, dimensions metadata, and external viewer integration.
 #[cfg(feature = "gui")]
 #[derive(IntoElement)]
 pub struct ImageCard {
@@ -641,7 +619,7 @@ impl ImageCard {
 
 #[cfg(feature = "gui")]
 impl RenderOnce for ImageCard {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let abs_path = self.abs_path.clone();
         let file_name = abs_path
             .file_name()
@@ -655,10 +633,6 @@ impl RenderOnce for ImageCard {
         self.data.url.hash(&mut hasher);
         abs_path.hash(&mut hasher);
         let hash = hasher.finish();
-
-        let scale_key = format!("img-scale-{hash}");
-        let scale_entity = window.use_keyed_state(SharedString::from(scale_key), cx, |_, _| ImageScaleMode::Fit);
-        let scale_mode = *scale_entity.read(cx);
 
         let (orig_w, orig_h) = dims.unwrap_or_else(|| {
             (
@@ -731,51 +705,6 @@ impl RenderOnce for ImageCard {
                     .flex_none()
                     .gap_1()
                     .items_center()
-                    // Scale presets: Fit, 50%, 100%, 150%
-                    .children([ImageScaleMode::Fit, ImageScaleMode::Pct50, ImageScaleMode::Pct100, ImageScaleMode::Pct150].iter().map(|&mode| {
-                        let is_active = scale_mode == mode;
-                        let target_mode = mode;
-                        let scale_ent = scale_entity.clone();
-                        div()
-                            .id(SharedString::from(format!("img-scale-btn-{hash}-{:?}", mode)))
-                            .px_2()
-                            .py_0p5()
-                            .rounded_md()
-                            .bg(if is_active {
-                                crate::theme::bg_surface_raised()
-                            } else {
-                                gpui::rgba(0x00000000)
-                            })
-                            .border_1()
-                            .border_color(if is_active {
-                                crate::theme::border()
-                            } else {
-                                gpui::rgba(0x00000000)
-                            })
-                            .text_xs()
-                            .font_weight(if is_active { FontWeight::BOLD } else { FontWeight::NORMAL })
-                            .text_color(if is_active {
-                                crate::theme::text()
-                            } else {
-                                crate::theme::text_muted()
-                            })
-                            .cursor_pointer()
-                            .hover(|s| s.bg(crate::theme::bg_surface_raised()).text_color(crate::theme::text()))
-                            .child(mode.label())
-                            .on_click(move |_, _window, cx| {
-                                scale_ent.update(cx, |val, cx| {
-                                    *val = target_mode;
-                                    cx.notify();
-                                });
-                            })
-                    }))
-                    .child(
-                        div()
-                            .w(px(1.0))
-                            .h(px(12.0))
-                            .mx_1()
-                            .bg(crate::theme::border()),
-                    )
                     .child(
                         div()
                             .id(SharedString::from(format!("img-open-{hash}")))
@@ -816,91 +745,40 @@ impl RenderOnce for ImageCard {
 
         card = card.child(header);
 
-        // 2. Image Viewport Body
-        match scale_mode {
-            ImageScaleMode::Fit => {
-                let zoom_ent = scale_entity.clone();
-                let mut img_elem = gpui::img(abs_path)
-                    .id("img-asset")
-                    .w_full()
-                    .max_w(px(orig_w as f32))
-                    .min_w_0()
-                    .max_h(px(520.0))
-                    .rounded_md()
-                    .object_fit(gpui::ObjectFit::Contain);
+        // 2. Image Viewport Body (Clean Fit)
+        let max_height = if let Some(h) = self.data.height {
+            h as f32
+        } else {
+            (orig_h as f32).min(520.0)
+        };
 
-                if let Some(w) = self.data.width {
-                    img_elem = img_elem.max_w(px(w));
-                }
-                if let Some(h) = self.data.height {
-                    img_elem = img_elem.max_h(px(h));
-                }
+        let mut img_elem = gpui::img(abs_path)
+            .id("img-asset")
+            .w_full()
+            .max_w(px(orig_w as f32))
+            .max_w_full()
+            .min_w_0()
+            .max_h(px(max_height))
+            .rounded_md()
+            .object_fit(gpui::ObjectFit::Contain);
 
-                let body = v_flex()
-                    .id(SharedString::from(format!("img-fit-body-{hash}")))
-                    .w_full()
-                    .max_w_full()
-                    .min_w_0()
-                    .p_3()
-                    .items_center()
-                    .justify_center()
-                    .bg(crate::theme::field_base())
-                    .overflow_hidden()
-                    .cursor_pointer()
-                    .tooltip(|window, cx| {
-                        gpui_component::tooltip::Tooltip::new("Click to zoom to 100%").build(window, cx)
-                    })
-                    .on_click(move |_, _window, cx| {
-                        zoom_ent.update(cx, |val, cx| {
-                            *val = ImageScaleMode::Pct100;
-                            cx.notify();
-                        });
-                    })
-                    .child(img_elem);
-
-                card = card.child(body);
-            }
-            ImageScaleMode::Pct50 | ImageScaleMode::Pct100 | ImageScaleMode::Pct150 => {
-                let factor = match scale_mode {
-                    ImageScaleMode::Fit => 1.0,
-                    ImageScaleMode::Pct50 => 0.5,
-                    ImageScaleMode::Pct100 => 1.0,
-                    ImageScaleMode::Pct150 => 1.5,
-                };
-                let target_w = (orig_w as f32 * factor).max(60.0);
-                let target_h = (orig_h as f32 * factor).max(40.0);
-
-                let img_elem = gpui::img(abs_path)
-                    .id("img-asset")
-                    .w(px(target_w))
-                    .h(px(target_h))
-                    .min_w(px(target_w))
-                    .min_h(px(target_h))
-                    .rounded_md()
-                    .object_fit(gpui::ObjectFit::Contain);
-
-                let body = div()
-                    .id(SharedString::from(format!("img-scroll-{hash}")))
-                    .w_full()
-                    .max_w_full()
-                    .min_w_0()
-                    .max_h(px(580.0))
-                    .overflow_x_scroll()
-                    .overflow_y_scroll()
-                    .p_3()
-                    .bg(crate::theme::field_base())
-                    .child(
-                        div()
-                            .w(px(target_w))
-                            .h(px(target_h))
-                            .min_w(px(target_w))
-                            .min_h(px(target_h))
-                            .child(img_elem),
-                    );
-
-                card = card.child(body);
-            }
+        if let Some(w) = self.data.width {
+            img_elem = img_elem.max_w(px(w as f32));
         }
+
+        let body = v_flex()
+            .id(SharedString::from(format!("img-fit-body-{hash}")))
+            .w_full()
+            .max_w_full()
+            .min_w_0()
+            .p_3()
+            .items_center()
+            .justify_center()
+            .bg(crate::theme::field_base())
+            .overflow_hidden()
+            .child(img_elem);
+
+        card = card.child(body);
 
         // 3. Caption / Alt Text Footer
         if let Some(caption) = self.data.alt.as_ref().or(self.data.title.as_ref()) {
