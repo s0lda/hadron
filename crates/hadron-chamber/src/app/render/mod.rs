@@ -23,6 +23,7 @@ mod pty_grid;
 mod flamechart;
 mod diff_inspector;
 mod scrubber;
+mod artifacts;
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
