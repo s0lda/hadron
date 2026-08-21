@@ -1,5 +1,7 @@
 use std::path::Path;
 use std::process::Command;
+#[cfg(windows)]
+use hadron_lattice::term::{self, Source};
 
 /// Lists the files in the workspace *as they are on disk*, honouring `.gitignore`.
 ///
@@ -431,7 +433,7 @@ pub fn init_windows_app_icon() {
         return;
     }
 
-    println!("[hadron-sys] Initializing Windows AppUserModelID...");
+    term::info(Source::Chamber, "windows: initializing AppUserModelID...");
 
     let app_id: Vec<u16> = OsStr::new("Hadron.Chamber")
         .encode_wide()
@@ -441,9 +443,9 @@ pub fn init_windows_app_icon() {
     unsafe {
         let res = windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr());
         if res == 0 {
-            println!("[hadron-sys] Successfully set AppUserModelID to 'Hadron.Chamber'");
+            term::info(Source::Chamber, "windows: set AppUserModelID to 'Hadron.Chamber'");
         } else {
-            eprintln!("[hadron-sys] SetCurrentProcessExplicitAppUserModelID failed with HRESULT: {res:#x}");
+            term::error(Source::Chamber, &format!("windows: SetCurrentProcessExplicitAppUserModelID failed with HRESULT: {res:#x}"));
         }
 
         let h_instance = GetModuleHandleW(std::ptr::null());

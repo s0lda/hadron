@@ -50,7 +50,12 @@ impl super::Chamber {
         if *shift {
             let last = self.chat_message_ixs.len().saturating_sub(1);
             let chat_state = self.chat_list_state.clone();
-            cx.on_next_frame(window, move |_, _, cx: &mut Context<Self>| {
+            let input = input.clone();
+            cx.on_next_frame(window, move |_, window, cx: &mut Context<Self>| {
+                input.update(cx, |state, cx| {
+                    let pos = state.cursor_position();
+                    state.set_cursor_position(pos, window, cx);
+                });
                 chat_state.scroll_to_reveal_item(last);
                 cx.notify();
             });
@@ -143,21 +148,21 @@ impl super::Chamber {
         cx.notify();
     }
 
-    /// When text is pasted into the chat input, scroll to the bottom on the next frame.
+    /// When text is pasted into the chat input, scroll to the cursor position on the next frame.
     ///
     /// A paste action (like Shift+Enter) does not fire an `InputEvent::Change`, so
     /// `InputState`'s internal scroll bounds and the chat view's scroll bounds are not
     /// updated synchronously during the paste turn. Deferring the scroll adjustment
     /// to `window.on_next_frame` ensures that line measurements and input bounds have
-    /// updated first.
+    /// updated first, scrolling the viewport directly to the active cursor.
     pub(super) fn on_input_paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let input = self.input.clone();
         let last = self.chat_message_ixs.len().saturating_sub(1);
         let chat_state = self.chat_list_state.clone();
-        cx.on_next_frame(window, move |_, _, cx: &mut Context<Self>| {
+        cx.on_next_frame(window, move |_, window, cx: &mut Context<Self>| {
             input.update(cx, |state, cx| {
-                let end = state.value().len();
-                state.set_selected_range(end..end, cx);
+                let pos = state.cursor_position();
+                state.set_cursor_position(pos, window, cx);
             });
             chat_state.scroll_to_reveal_item(last);
             cx.notify();

@@ -1605,7 +1605,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
         // the text system what it can already resolve, so a face added after it
         // runs is a face the probe never sees.
         if let Err(e) = cx.text_system().add_fonts(crate::fonts::embedded()) {
-            eprintln!("hadron: could not register bundled fonts ({e:#}); falling back to system fonts");
+            hadron_lattice::term::warn(hadron_lattice::term::Source::Chamber, &format!("fonts: could not register bundled fonts ({e:#}); falling back to system fonts"));
         }
         // Apply initial theme palette, accent, and verified typography.
         Chamber::apply_theme_and_typography(cx, &prefs);

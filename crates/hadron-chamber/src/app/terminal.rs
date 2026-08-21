@@ -1,4 +1,5 @@
 use super::*;
+use hadron_lattice::term::{self, Source};
 
 impl super::Chamber {
     /// Drive the live terminal each tick: spawn the PTY lazily when the Terminal
@@ -26,10 +27,18 @@ impl super::Chamber {
                         .and_then(|s| s.to_str())
                         .unwrap_or("term");
                     let title = format!("{stem} #1");
-                    println!("[hadron-terminal] Lazily initializing first terminal tab '{title}' in '{}' (dims: {}x{})...", root.display(), cols, rows);
+                    term::info(
+                        Source::Chamber,
+                        &format!(
+                            "terminal: initializing tab '{title}' in '{}' ({}x{})",
+                            root.display(),
+                            cols,
+                            rows
+                        ),
+                    );
                     match crate::pty::PtyTerminal::new(&root, cols, rows) {
                         Ok(mut term) => {
-                            println!("[hadron-terminal] Successfully created terminal tab '{title}'");
+                            term::info(Source::Chamber, &format!("terminal: created tab '{title}'"));
                             term.title = title.clone();
                             self.terminals.push(TerminalTab {
                                 title,
@@ -43,7 +52,7 @@ impl super::Chamber {
                             self.terminal_warmup = 20;
                         }
                         Err(err) => {
-                            eprintln!("[hadron-terminal] ERROR creating terminal tab '{title}': {err}");
+                            term::error(Source::Chamber, &format!("terminal: error creating tab '{title}': {err}"));
                             self.terminals.push(TerminalTab {
                                 title,
                                 term: None,

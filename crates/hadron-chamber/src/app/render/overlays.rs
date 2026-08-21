@@ -532,7 +532,6 @@ impl super::Chamber {
                 let detail = cand.detail.clone();
 
                 let left_content = if let Some(stripped) = label.strip_prefix("📄 ") {
-                    let file_color = crate::theme::file_icon_color_for_path(stripped);
                     h_flex()
                         .items_center()
                         .gap_1p5()
@@ -540,7 +539,6 @@ impl super::Chamber {
                             gpui::svg()
                                 .path(crate::symbols::file_icon_path(stripped))
                                 .size_3p5()
-                                .text_color(file_color)
                                 .flex_none(),
                         )
                         .child(div().text_sm().text_color(theme::text()).child(stripped.to_string()))
@@ -552,7 +550,6 @@ impl super::Chamber {
                             gpui::svg()
                                 .path(crate::symbols::folder_icon_path(stripped, false))
                                 .size_3p5()
-                                .text_color(gpui::rgb(0x48a0c7))
                                 .flex_none(),
                         )
                         .child(div().text_sm().text_color(theme::text()).child(stripped.to_string()))

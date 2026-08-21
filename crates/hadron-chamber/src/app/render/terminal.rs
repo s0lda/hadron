@@ -404,14 +404,6 @@ impl super::Chamber {
 
                         let is_expanded = expanded_set.contains(&current_path);
 
-                        let icon_color = if node.is_file {
-                            crate::theme::file_icon_color_for_path(&node.full_path)
-                        } else if is_expanded {
-                            gpui::rgb(0x79b8ff)
-                        } else {
-                            gpui::rgb(0x48a0c7)
-                        };
-
                         let git_status = git_statuses.get(&node.full_path);
 
                         let text_color = if node.is_ignored {
@@ -425,38 +417,33 @@ impl super::Chamber {
                             }
                         };
 
-                        let git_badge = match git_status {
-                            Some(crate::vcs::GitStatus::Modified) => Some(
-                                div()
-                                    .px_1()
-                                    .py_0p5()
-                                    .rounded_xs()
-                                    .text_xs()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(gpui::rgb(0xf59e0b))
-                                    .child("M"),
-                            ),
-                            Some(crate::vcs::GitStatus::Added) => Some(
-                                div()
-                                    .px_1()
-                                    .py_0p5()
-                                    .rounded_xs()
-                                    .text_xs()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(gpui::rgb(0x34d399))
-                                    .child("+"),
-                            ),
-                            Some(crate::vcs::GitStatus::Deleted) => Some(
-                                div()
-                                    .px_1()
-                                    .py_0p5()
-                                    .rounded_xs()
-                                    .text_xs()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(gpui::rgb(0xf87171))
-                                    .child("D"),
-                            ),
-                            None => None,
+                        let git_badge = if !node.is_ignored {
+                            match git_status {
+                                Some(crate::vcs::GitStatus::Modified) => Some(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(gpui::rgb(0xf59e0b))
+                                        .child("M"),
+                                ),
+                                Some(crate::vcs::GitStatus::Added) => Some(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(gpui::rgb(0x34d399))
+                                        .child("+"),
+                                ),
+                                Some(crate::vcs::GitStatus::Deleted) => Some(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(gpui::rgb(0xf87171))
+                                        .child("D"),
+                                ),
+                                None => None,
+                            }
+                        } else {
+                            None
                         };
 
                         // Stable per-path id — see the roster row: a context menu on
@@ -479,34 +466,28 @@ impl super::Chamber {
                                     .min_w_0()
                                     .child(if node.is_file {
                                         let icon_path = crate::symbols::file_icon_path(&node.full_path);
-                                        let color = if node.is_ignored {
-                                            theme::text_muted()
-                                        } else {
-                                            icon_color
-                                        };
-                                        gpui::svg()
+                                        let mut el = gpui::svg()
                                             .path(icon_path)
                                             .size_3p5()
-                                            .text_color(color)
-                                            .flex_none()
-                                            .into_any_element()
+                                            .flex_none();
+                                        if node.is_ignored {
+                                            el = el.text_color(theme::text_muted());
+                                        }
+                                        el.into_any_element()
                                     } else {
                                         let folder_name = std::path::Path::new(&node.full_path)
                                             .file_name()
                                             .and_then(|f| f.to_str())
                                             .unwrap_or(&name);
                                         let icon_path = crate::symbols::folder_icon_path(folder_name, is_expanded);
-                                        let color = if node.is_ignored {
-                                            theme::text_muted()
-                                        } else {
-                                            icon_color
-                                        };
-                                        gpui::svg()
+                                        let mut el = gpui::svg()
                                             .path(icon_path)
                                             .size_3p5()
-                                            .text_color(color)
-                                            .flex_none()
-                                            .into_any_element()
+                                            .flex_none();
+                                        if node.is_ignored {
+                                            el = el.text_color(theme::text_muted());
+                                        }
+                                        el.into_any_element()
                                     })
                                     .child(
                                         div()

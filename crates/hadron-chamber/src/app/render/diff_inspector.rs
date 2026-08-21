@@ -142,8 +142,6 @@ impl Chamber {
             let changed_hunks: Vec<ThreeWayHunk> = all_hunks.iter().filter(|h| h.status != ThreeWayStatus::Same).cloned().collect();
             let changed_count = changed_hunks.len();
 
-            let file_icon_color = theme::file_icon_color_for_path(file_path);
-
             let mut file_card = v_flex()
                 .w_full()
                 .p_2()
@@ -165,7 +163,6 @@ impl Chamber {
                                 gpui::svg()
                                     .path(crate::symbols::file_icon_path(file_path))
                                     .size_3()
-                                    .text_color(file_icon_color)
                                     .flex_none(),
                             )
                             .child(

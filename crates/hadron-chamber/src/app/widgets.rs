@@ -1404,7 +1404,7 @@ pub(super) fn github_syntax_theme() -> std::sync::Arc<gpui_component::highlighte
             match serde_json::from_str::<gpui_component::highlighter::HighlightTheme>(json) {
                 Ok(theme) => std::sync::Arc::new(theme),
                 Err(err) => {
-                    eprintln!("Failed to parse GitHub syntax theme: {err}");
+                    hadron_lattice::term::error(hadron_lattice::term::Source::Chamber, &format!("widgets: failed to parse GitHub syntax theme: {err}"));
                     gpui_component::highlighter::HighlightTheme::default_dark()
                 }
             }

@@ -23,6 +23,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{point_to_viewport, viewport_to_point, Config, Term};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor};
+use hadron_lattice::term::{self, Source};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize, SlavePty};
 
 pub struct PtyEventListener {
@@ -32,7 +33,7 @@ pub struct PtyEventListener {
 impl EventListener for PtyEventListener {
     fn send_event(&self, event: Event) {
         if let Event::PtyWrite(text) = event {
-            println!("[hadron-pty] Responding to PTY escape sequence request: {:?}", text);
+            term::info(Source::Chamber, &format!("pty: responding to escape sequence: {text:?}"));
             if let Ok(mut w) = self.writer.lock() {
                 let _ = w.write_all(text.as_bytes());
                 let _ = w.flush();
@@ -168,7 +169,7 @@ pub fn default_shell() -> String {
     };
 
 
-    println!("[hadron-pty] default_shell() resolved shell: '{resolved}'");
+    term::info(Source::Chamber, &format!("pty: resolved shell '{resolved}'"));
     resolved
 }
 
@@ -212,18 +213,14 @@ impl PtyTerminal {
             }
         }
 
-        println!("[hadron-pty] Creating PTY terminal. cwd: '{}', grid: {}x{}", final_cwd.display(), cols, rows);
-        println!("[hadron-pty] Candidate shells to try: {:?}", shells);
-
         let mut child_and_pair = None;
         let mut last_err = String::new();
         for sh in &shells {
-            println!("[hadron-pty] Attempting to spawn shell: '{sh}'");
             let pair = match pty_system.openpty(pty_size) {
                 Ok(p) => p,
                 Err(e) => {
                     last_err = format!("openpty failed: {e}");
-                    eprintln!("[hadron-pty] openpty() failed for shell '{sh}': {e}");
+                    term::warn(Source::Chamber, &format!("pty: openpty() failed for shell '{sh}': {e}"));
                     continue;
                 }
             };
@@ -281,13 +278,13 @@ impl PtyTerminal {
 
             match pair.slave.spawn_command(cmd) {
                 Ok(child) => {
-                    println!("[hadron-pty] Successfully spawned shell '{sh}' (process ID: {:?})", child.process_id());
+                    term::info(Source::Chamber, &format!("pty: spawned shell '{sh}' (PID: {:?})", child.process_id()));
                     child_and_pair = Some((child, pair));
                     break;
                 }
                 Err(e) => {
                     last_err = format!("spawn shell '{sh}' in '{}' failed: {e}", final_cwd.display());
-                    eprintln!("[hadron-pty] spawn_command() failed for shell '{sh}' in '{}': {e}", final_cwd.display());
+                    term::warn(Source::Chamber, &format!("pty: spawn_command() failed for shell '{sh}' in '{}': {e}", final_cwd.display()));
                 }
             }
         }
@@ -295,7 +292,7 @@ impl PtyTerminal {
         let (child, pair) = match child_and_pair {
             Some(cp) => cp,
             None => {
-                eprintln!("[hadron-pty] All candidate shells failed to spawn. Last error: '{last_err}'");
+                term::error(Source::Chamber, &format!("pty: all candidate shells failed to spawn. Last error: '{last_err}'"));
                 return Err(last_err);
             }
         };
@@ -329,13 +326,12 @@ impl PtyTerminal {
         std::thread::Builder::new()
             .name("hadron-pty-reader".into())
             .spawn(move || {
-                println!("[hadron-pty] Started PTY reader thread for shell '{sh_label}'");
                 let mut parser: Processor = Processor::new();
                 let mut buf = [0u8; 8192];
                 loop {
                     match reader.read(&mut buf) {
                         Ok(0) => {
-                            println!("[hadron-pty] PTY reader thread hit EOF (0 bytes) for shell '{sh_label}'");
+                            term::info(Source::Chamber, &format!("pty: reader thread EOF (0 bytes) for '{sh_label}'"));
                             if let Ok(mut term) = term_r.lock() {
                                 parser.advance(&mut *term, b"\r\n[process exited]\r\n");
                             }
@@ -343,7 +339,7 @@ impl PtyTerminal {
                             break;
                         }
                         Err(e) => {
-                            eprintln!("[hadron-pty] PTY reader thread read error for shell '{sh_label}': {e}");
+                            term::warn(Source::Chamber, &format!("pty: reader thread error for '{sh_label}': {e}"));
                             if let Ok(mut term) = term_r.lock() {
                                 let err_msg = format!("\r\n[pty read error: {e}]\r\n");
                                 parser.advance(&mut *term, err_msg.as_bytes());
