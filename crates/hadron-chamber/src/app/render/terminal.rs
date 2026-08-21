@@ -793,7 +793,7 @@ impl super::Chamber {
                         };
                         let pct = (frac * 100.0).round() as usize;
 
-                        let mut list = v_flex().gap_3().p_3().w_full().min_w_0();
+                        let mut list = v_flex().gap_3().p_3().pb_16().w_full().min_w_0();
                         list = list.child(self.breadcrumb_bar_for_plan(&rel_path, &content, cx));
 
                         // Sibling and suite plans across .hadron/docs/plans/
@@ -1348,6 +1348,8 @@ impl super::Chamber {
                 };
 
                 div()
+                    .flex_1()
+                    .min_h_0()
                     .size_full()
                     .w_full()
                     .min_w_0()
