@@ -33,16 +33,16 @@
 - [x] Step 2.1: Add `retitle_from_research` in `hadron-chamber::model::tasks` to scan `.hadron/docs/research/` and upgrade task titles.
 - [x] Step 2.2: Add unit tests in `tasks.rs` verifying research document title extraction.
 
-### Task 3: Forge & MCP Research Tooling
+### Task 3: Forge & MCP Research Tooling (commit `e2df77e5`)
 **Files:**
 - Create: `crates/hadron-forge/src/research.rs`
 - Modify: `crates/hadron-forge/src/lib.rs`
 - Create: `crates/hadron-forge-mcp/src/tools/research.rs`
 - Modify: `crates/hadron-forge-mcp/src/lib.rs`
 
-- [ ] Step 3.1: Implement `write_research`, `list_research`, and `read_research` in `hadron-forge`.
-- [ ] Step 3.2: Expose research tools in `hadron-forge-mcp`.
-- [ ] Step 3.3: Run `cargo test -p hadron-forge -p hadron-forge-mcp` to verify tool handlers.
+- [x] Step 3.1: Implement `write_research`, `list_research`, and `read_research` in `hadron-forge`.
+- [x] Step 3.2: Expose research tools in `hadron-forge-mcp`.
+- [x] Step 3.3: Run `cargo test -p hadron-forge -p hadron-forge-mcp` to verify tool handlers.
 
 ---
 
