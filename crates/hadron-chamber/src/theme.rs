@@ -27,6 +27,194 @@ use hadron_lattice::QuarkState;
 
 static ACTIVE_PRESET: AtomicU8 = AtomicU8::new(0); // 0: Obsidian, 1: Oled, 2: Midnight, 3: Tokyo
 static ACTIVE_ACCENT: AtomicU32 = AtomicU32::new(0xc084fc); // 0xRRGGBB (soft amethyst default)
+static ACTIVE_CUSTOM_THEME: std::sync::RwLock<Option<ResolvedTheme>> = std::sync::RwLock::new(None);
+
+/// Fully resolved, GPU-ready theme colors parsed from a `ThemeDefinition`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedTheme {
+    pub id: String,
+    pub name: String,
+    pub is_dark: bool,
+    // surfaces
+    pub canvas_base: Rgba,
+    pub bg_base: Rgba,
+    pub bg_surface: Rgba,
+    pub bg_surface_raised: Rgba,
+    pub bg_elevated: Rgba,
+    pub input_bg: Rgba,
+    pub border: Rgba,
+    pub popover: Rgba,
+    pub term_bg: Rgba,
+    pub term_fg: Rgba,
+    pub term_prompt: Rgba,
+    // accents
+    pub primary_accent: Rgba,
+    pub glow_blue: Rgba,
+    pub glow_pink: Rgba,
+    pub glow_green: Rgba,
+    pub glow_amber: Rgba,
+    // text
+    pub text_primary: Rgba,
+    pub text_secondary: Rgba,
+    pub text_muted: Rgba,
+    // syntax
+    pub syntax_keyword: Rgba,
+    pub syntax_function: Rgba,
+    pub syntax_type: Rgba,
+    pub syntax_string: Rgba,
+    pub syntax_number: Rgba,
+    pub syntax_comment: Rgba,
+    pub syntax_operator: Rgba,
+    pub syntax_variable: Rgba,
+    pub syntax_constant: Rgba,
+    pub syntax_attribute: Rgba,
+    pub syntax_tag: Rgba,
+    pub syntax_boolean: Rgba,
+    pub syntax_delimiter: Rgba,
+    pub syntax_punctuation: Rgba,
+}
+
+impl ResolvedTheme {
+    pub fn from_definition(def: &crate::config::ThemeDefinition) -> Self {
+        use crate::config::parse_hex_color;
+        let c_base = parse_hex_color(&def.surfaces.canvas_base).unwrap_or_else(|| rgb(0x050505));
+        let b_base = parse_hex_color(&def.surfaces.bg_base).unwrap_or_else(|| rgb(0x0b0b0b));
+        let b_surf = parse_hex_color(&def.surfaces.bg_surface).unwrap_or_else(|| rgb(0x101010));
+        let b_raised = parse_hex_color(&def.surfaces.bg_surface_raised).unwrap_or_else(|| rgb(0x1c1c1c));
+        let b_elevated = parse_hex_color(&def.surfaces.bg_elevated).unwrap_or_else(|| rgb(0x242424));
+        let in_bg = parse_hex_color(&def.surfaces.input_bg).unwrap_or_else(|| rgb(0x181818));
+        let brd = parse_hex_color(&def.surfaces.border).unwrap_or_else(|| rgb(0x444444));
+        let pop = parse_hex_color(&def.surfaces.popover).unwrap_or_else(|| rgb(0x101010));
+
+        let t_bg = parse_hex_color(&def.terminal.bg).unwrap_or_else(|| rgb(0x080808));
+        let t_fg = parse_hex_color(&def.terminal.fg).unwrap_or_else(|| rgb(0xe8e8e8));
+        let t_prompt = parse_hex_color(&def.terminal.prompt).unwrap_or_else(|| rgb(0x4ade80));
+
+        let p_accent = parse_hex_color(&def.accents.primary).unwrap_or_else(|| rgb(0xc084fc));
+        let g_blue = parse_hex_color(&def.accents.glow_blue).unwrap_or_else(|| rgba(0x4f83f01c));
+        let g_pink = parse_hex_color(&def.accents.glow_pink).unwrap_or_else(|| rgba(0xc084fc15));
+        let g_green = parse_hex_color(&def.accents.glow_green).unwrap_or_else(|| rgba(0x2fcf8a1a));
+        let g_amber = parse_hex_color(&def.accents.glow_amber).unwrap_or_else(|| rgba(0xfbbf241a));
+
+        let txt_pri = parse_hex_color(&def.text.primary).unwrap_or_else(|| rgb(0xe8e8e8));
+        let txt_sec = parse_hex_color(&def.text.secondary).unwrap_or_else(|| rgb(0xa8a8a8));
+        let txt_mut = parse_hex_color(&def.text.muted).unwrap_or_else(|| rgb(0x707070));
+
+        let syn_kw = parse_hex_color(&def.syntax.keyword).unwrap_or_else(|| rgb(0xf97583));
+        let syn_fn = parse_hex_color(&def.syntax.function).unwrap_or_else(|| rgb(0xb392f0));
+        let syn_ty = parse_hex_color(&def.syntax.r#type).unwrap_or_else(|| rgb(0x79b8ff));
+        let syn_str = parse_hex_color(&def.syntax.string).unwrap_or_else(|| rgb(0x9ecbff));
+        let syn_num = parse_hex_color(&def.syntax.number).unwrap_or_else(|| rgb(0x79b8ff));
+        let syn_cmt = parse_hex_color(&def.syntax.comment).unwrap_or_else(|| rgb(0x7e888c));
+        let syn_op = parse_hex_color(&def.syntax.operator).unwrap_or_else(|| rgb(0xf97583));
+        let syn_var = parse_hex_color(&def.syntax.variable).unwrap_or_else(|| rgb(0xe1e4e8));
+        let syn_cst = parse_hex_color(&def.syntax.constant).unwrap_or_else(|| rgb(0x79b8ff));
+        let syn_att = parse_hex_color(&def.syntax.attribute).unwrap_or_else(|| rgb(0xb392f0));
+        let syn_tag = parse_hex_color(&def.syntax.tag).unwrap_or_else(|| rgb(0x85e89d));
+        let syn_bool = parse_hex_color(&def.syntax.boolean).unwrap_or_else(|| rgb(0x79b8ff));
+        let syn_del = parse_hex_color(&def.syntax.delimiter).unwrap_or_else(|| rgb(0xf97583));
+        let syn_punc = parse_hex_color(&def.syntax.punctuation).unwrap_or_else(|| rgb(0xbbbebf));
+
+        Self {
+            id: def.id.clone(),
+            name: def.name.clone(),
+            is_dark: def.is_dark,
+            canvas_base: c_base,
+            bg_base: b_base,
+            bg_surface: b_surf,
+            bg_surface_raised: b_raised,
+            bg_elevated: b_elevated,
+            input_bg: in_bg,
+            border: brd,
+            popover: pop,
+            term_bg: t_bg,
+            term_fg: t_fg,
+            term_prompt: t_prompt,
+            primary_accent: p_accent,
+            glow_blue: g_blue,
+            glow_pink: g_pink,
+            glow_green: g_green,
+            glow_amber: g_amber,
+            text_primary: txt_pri,
+            text_secondary: txt_sec,
+            text_muted: txt_mut,
+            syntax_keyword: syn_kw,
+            syntax_function: syn_fn,
+            syntax_type: syn_ty,
+            syntax_string: syn_str,
+            syntax_number: syn_num,
+            syntax_comment: syn_cmt,
+            syntax_operator: syn_op,
+            syntax_variable: syn_var,
+            syntax_constant: syn_cst,
+            syntax_attribute: syn_att,
+            syntax_tag: syn_tag,
+            syntax_boolean: syn_bool,
+            syntax_delimiter: syn_del,
+            syntax_punctuation: syn_punc,
+        }
+    }
+}
+
+pub fn set_active_custom_theme(def: Option<crate::config::ThemeDefinition>) {
+    let resolved = def.map(|d| ResolvedTheme::from_definition(&d));
+    if let Ok(mut lock) = ACTIVE_CUSTOM_THEME.write() {
+        *lock = resolved;
+    }
+}
+
+pub fn active_custom_theme() -> Option<ResolvedTheme> {
+    ACTIVE_CUSTOM_THEME.read().ok().and_then(|lock| lock.clone())
+}
+
+pub fn custom_themes_dir() -> Option<std::path::PathBuf> {
+    Some(hadron_lattice::user_hadron_dir()?.join("themes"))
+}
+
+pub fn load_custom_themes() -> Vec<crate::config::ThemeDefinition> {
+    let Some(dir) = custom_themes_dir() else {
+        return Vec::new();
+    };
+    if !dir.exists() {
+        return Vec::new();
+    }
+    let mut themes = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("json") {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(theme) = serde_json::from_str::<crate::config::ThemeDefinition>(&content) {
+                        themes.push(theme);
+                    }
+                }
+            }
+        }
+    }
+    themes.sort_by(|a, b| a.name.cmp(&b.name));
+    themes
+}
+
+pub fn save_custom_theme(theme: &crate::config::ThemeDefinition) -> std::io::Result<()> {
+    let Some(dir) = custom_themes_dir() else {
+        return Err(std::io::Error::other("Could not resolve user themes directory"));
+    };
+    std::fs::create_dir_all(&dir)?;
+    let file_path = dir.join(format!("{}.json", theme.id));
+    let json = serde_json::to_string_pretty(theme).map_err(std::io::Error::other)?;
+    std::fs::write(file_path, json)
+}
+
+pub fn delete_custom_theme(id: &str) -> std::io::Result<()> {
+    let Some(dir) = custom_themes_dir() else {
+        return Ok(());
+    };
+    let file_path = dir.join(format!("{id}.json"));
+    if file_path.exists() {
+        std::fs::remove_file(file_path)?;
+    }
+    Ok(())
+}
 
 pub fn set_active_preset(preset: crate::config::ThemePreset) {
     let val = match preset {
@@ -36,6 +224,8 @@ pub fn set_active_preset(preset: crate::config::ThemePreset) {
         crate::config::ThemePreset::Tokyo => 3,
     };
     ACTIVE_PRESET.store(val, Ordering::Relaxed);
+    // Clear custom theme override when selecting a curated preset
+    set_active_custom_theme(None);
 }
 
 pub fn active_preset() -> crate::config::ThemePreset {
@@ -60,6 +250,9 @@ pub fn set_active_accent_rgb(color: Rgba) {
 }
 
 pub fn active_accent() -> Rgba {
+    if let Some(custom) = active_custom_theme() {
+        return custom.primary_accent;
+    }
     let val = ACTIVE_ACCENT.load(Ordering::Relaxed);
     let r = ((val >> 16) & 0xff) as f32 / 255.0;
     let g = ((val >> 8) & 0xff) as f32 / 255.0;
@@ -70,21 +263,29 @@ pub fn active_accent() -> Rgba {
 // --- the ambient field: a flat black housing (the frosted-glass-on-black look) ---
 /// Layer 0 (Canvas Base): Deep obsidian canvas base fill (`#050505`).
 pub fn canvas_base() -> Hsla {
-    palette_for_preset(active_preset()).canvas_base.into()
+    if let Some(custom) = active_custom_theme() {
+        custom.canvas_base.into()
+    } else {
+        palette_for_preset(active_preset()).canvas_base.into()
+    }
 }
 
 /// The near-black base — the opaque tone painted behind the rounded corners and the dark
 /// end of the field wash (`#050505`).
 pub fn field_base() -> Rgba {
-    palette_for_preset(active_preset()).canvas_base
+    if let Some(custom) = active_custom_theme() {
+        custom.canvas_base
+    } else {
+        palette_for_preset(active_preset()).canvas_base
+    }
 }
 /// The top of the field wash (`#050505`).
 pub fn field_bright() -> Rgba {
-    palette_for_preset(active_preset()).canvas_base
+    field_base()
 }
 /// The near-black the wash settles into at the bottom / behind the panels (`#050505`).
 pub fn field_deep() -> Rgba {
-    palette_for_preset(active_preset()).canvas_base
+    field_base()
 }
 
 /// The quark-state hues, kept as a faint corner whisper — the same palette the presence
@@ -92,19 +293,35 @@ pub fn field_deep() -> Rgba {
 /// low enough alpha that the backdrop reads black, not as an aurora. Each is anchored to
 /// one corner (see `app.rs`).
 pub fn glow_blue() -> Rgba {
-    rgba(0x4f83f01c) // working / excited — top-left
+    if let Some(custom) = active_custom_theme() {
+        custom.glow_blue
+    } else {
+        rgba(0x4f83f01c) // working / excited — top-left
+    }
 }
 pub fn glow_pink() -> Rgba {
-    rgba(0xc084fc15) // thinking / reasoning — top-right
+    if let Some(custom) = active_custom_theme() {
+        custom.glow_pink
+    } else {
+        rgba(0xc084fc15) // thinking / reasoning — top-right
+    }
 }
 pub fn glow_green() -> Rgba {
-    rgba(0x2fcf8a1a) // available — bottom-left
+    if let Some(custom) = active_custom_theme() {
+        custom.glow_green
+    } else {
+        rgba(0x2fcf8a1a) // available — bottom-left
+    }
 }
 
 // --- surfaces (recessed → raised) --- borderless glass surface hierarchy over cosmic obsidian base.
 /// Recessed inner surface (deepest wells), the neutral panel tone (`#0b0b0b`).
 pub fn bg_base() -> Rgba {
-    palette_for_preset(active_preset()).bg_base
+    if let Some(custom) = active_custom_theme() {
+        custom.bg_base
+    } else {
+        palette_for_preset(active_preset()).bg_base
+    }
 }
 
 /// The window/content backdrop token — the opaque housing behind the whole scene. (Kept
@@ -114,12 +331,16 @@ pub fn window_glint() -> Rgba {
 }
 /// A step-lighter neutral tone for lifted chrome and selected controls (`#242424`).
 pub fn bg_elevated() -> Rgba {
-    palette_for_preset(active_preset()).bg_elevated
+    if let Some(custom) = active_custom_theme() {
+        custom.bg_elevated
+    } else {
+        palette_for_preset(active_preset()).bg_elevated
+    }
 }
 
 /// Layer 1 (Panels & Rails): Neutral dark panel layer (`#0b0b0bf2`).
 pub fn glass_surface() -> Hsla {
-    let base = palette_for_preset(active_preset()).bg_base;
+    let base = bg_base();
     rgba(
         ((base.r * 255.0).round() as u32) << 24
             | ((base.g * 255.0).round() as u32) << 16
@@ -131,12 +352,12 @@ pub fn glass_surface() -> Hsla {
 
 /// Tab bar background token matching main obsidian field (`#050505`).
 pub fn tab_bar_bg() -> Rgba {
-    palette_for_preset(active_preset()).canvas_base
+    canvas_base().into()
 }
 
 /// Layer 2 (Floating Cards & Modals): Elevated neutral dark cards (`#0b0b0bf8`).
 pub fn glass_card() -> Hsla {
-    let base = palette_for_preset(active_preset()).bg_base;
+    let base = bg_base();
     rgba(
         ((base.r * 255.0).round() as u32) << 24
             | ((base.g * 255.0).round() as u32) << 16
@@ -190,83 +411,127 @@ pub fn halo_dot(state: QuarkState) -> Hsla {
 
 /// The fill for a **focused modal** (Settings card, Processes overlay, app menu) (`#101010`).
 pub fn modal_surface() -> Rgba {
-    palette_for_preset(active_preset()).bg_surface
+    bg_surface()
 }
 
 // --- terminal (a Zed-like screen) ---
 /// The terminal screen surface — `#080808` main bg.
 pub fn term_bg() -> Rgba {
-    palette_for_preset(active_preset()).term_bg
+    if let Some(custom) = active_custom_theme() {
+        custom.term_bg
+    } else {
+        palette_for_preset(active_preset()).term_bg
+    }
 }
 /// Default terminal output foreground — softened primary text (`#e8e8e8`).
 pub fn term_fg() -> Rgba {
-    rgb(0xe8e8e8)
+    if let Some(custom) = active_custom_theme() {
+        custom.term_fg
+    } else {
+        rgb(0xe8e8e8)
+    }
 }
 /// The shell prompt (`user@host: cwd$`) — the classic terminal green.
 pub fn term_prompt() -> Rgba {
-    rgb(0x4ade80)
+    if let Some(custom) = active_custom_theme() {
+        custom.term_prompt
+    } else {
+        rgb(0x4ade80)
+    }
 }
 pub fn bg_surface() -> Rgba {
-    palette_for_preset(active_preset()).bg_surface
+    if let Some(custom) = active_custom_theme() {
+        custom.bg_surface
+    } else {
+        palette_for_preset(active_preset()).bg_surface
+    }
 }
 pub fn bg_surface_raised() -> Rgba {
-    palette_for_preset(active_preset()).bg_surface_raised
+    if let Some(custom) = active_custom_theme() {
+        custom.bg_surface_raised
+    } else {
+        palette_for_preset(active_preset()).bg_surface_raised
+    }
 }
 pub fn input_bg() -> Rgba {
-    palette_for_preset(active_preset()).input_bg
+    if let Some(custom) = active_custom_theme() {
+        custom.input_bg
+    } else {
+        palette_for_preset(active_preset()).input_bg
+    }
 }
 pub fn popover() -> Rgba {
-    palette_for_preset(active_preset()).bg_surface
+    if let Some(custom) = active_custom_theme() {
+        custom.popover
+    } else {
+        palette_for_preset(active_preset()).bg_surface
+    }
 }
 pub fn border() -> Rgba {
-    palette_for_preset(active_preset()).border
+    if let Some(custom) = active_custom_theme() {
+        custom.border
+    } else {
+        palette_for_preset(active_preset()).border
+    }
 }
 
 // --- text tiers ---
 pub fn text() -> Rgba {
-    rgb(0xe8e8e8)
+    if let Some(custom) = active_custom_theme() {
+        custom.text_primary
+    } else {
+        rgb(0xe8e8e8)
+    }
 }
 pub fn text_secondary() -> Rgba {
-    rgb(0xa8a8a8)
+    if let Some(custom) = active_custom_theme() {
+        custom.text_secondary
+    } else {
+        rgb(0xa8a8a8)
+    }
 }
 pub fn text_muted() -> Rgba {
-    rgb(0x707070)
+    if let Some(custom) = active_custom_theme() {
+        custom.text_muted
+    } else {
+        rgb(0x707070)
+    }
 }
 
 // --- GitHub Semantic Syntax Tokens ---
-pub fn syntax_attribute() -> Rgba { rgb(0xb392f0) }
-pub fn syntax_boolean() -> Rgba { rgb(0x79b8ff) }
-pub fn syntax_comment() -> Rgba { rgb(0x7e888c) }
-pub fn syntax_constant() -> Rgba { rgb(0x79b8ff) }
-pub fn syntax_constructor() -> Rgba { rgb(0xb392f0) }
-pub fn syntax_embedded() -> Rgba { rgb(0xe6edf3) }
-pub fn syntax_emphasis() -> Rgba { rgb(0xe1e4e8) }
-pub fn syntax_enum() -> Rgba { rgb(0x79b8ff) }
-pub fn syntax_function() -> Rgba { rgb(0xb392f0) }
-pub fn syntax_hint() -> Rgba { rgb(0x7e888c) }
-pub fn syntax_keyword() -> Rgba { rgb(0xf97583) }
-pub fn syntax_label() -> Rgba { rgb(0xb392f0) }
-pub fn syntax_link_text() -> Rgba { rgb(0x48a0c7) }
-pub fn syntax_link_uri() -> Rgba { rgb(0x9ecbff) }
-pub fn syntax_number() -> Rgba { rgb(0x79b8ff) }
-pub fn syntax_operator() -> Rgba { rgb(0xf97583) }
-pub fn syntax_predictive() -> Rgba { rgb(0x555555) }
-pub fn syntax_preproc() -> Rgba { rgb(0xf97583) }
-pub fn syntax_primary() -> Rgba { rgb(0xbbbebf) }
-pub fn syntax_property() -> Rgba { rgb(0x79b8ff) }
-pub fn syntax_punctuation() -> Rgba { rgb(0xbbbebf) }
-pub fn syntax_delimiter() -> Rgba { rgb(0xf97583) }
-pub fn syntax_list_marker() -> Rgba { rgb(0x85e89d) }
-pub fn syntax_special() -> Rgba { rgb(0xf97583) }
-pub fn syntax_string() -> Rgba { rgb(0x9ecbff) }
-pub fn syntax_string_escape() -> Rgba { rgb(0x85e89d) }
-pub fn syntax_tag() -> Rgba { rgb(0x85e89d) }
-pub fn syntax_literal() -> Rgba { rgb(0x85e89d) }
-pub fn syntax_title() -> Rgba { rgb(0x79b8ff) }
-pub fn syntax_type() -> Rgba { rgb(0x79b8ff) }
-pub fn syntax_variable() -> Rgba { rgb(0xe1e4e8) }
-pub fn syntax_variable_special() -> Rgba { rgb(0xffab70) }
-pub fn syntax_variant() -> Rgba { rgb(0x79b8ff) }
+pub fn syntax_attribute() -> Rgba { active_custom_theme().map(|t| t.syntax_attribute).unwrap_or_else(|| rgb(0xb392f0)) }
+pub fn syntax_boolean() -> Rgba { active_custom_theme().map(|t| t.syntax_boolean).unwrap_or_else(|| rgb(0x79b8ff)) }
+pub fn syntax_comment() -> Rgba { active_custom_theme().map(|t| t.syntax_comment).unwrap_or_else(|| rgb(0x7e888c)) }
+pub fn syntax_constant() -> Rgba { active_custom_theme().map(|t| t.syntax_constant).unwrap_or_else(|| rgb(0x79b8ff)) }
+pub fn syntax_constructor() -> Rgba { active_custom_theme().map(|t| t.syntax_function).unwrap_or_else(|| rgb(0xb392f0)) }
+pub fn syntax_embedded() -> Rgba { active_custom_theme().map(|t| t.text_primary).unwrap_or_else(|| rgb(0xe6edf3)) }
+pub fn syntax_emphasis() -> Rgba { active_custom_theme().map(|t| t.syntax_variable).unwrap_or_else(|| rgb(0xe1e4e8)) }
+pub fn syntax_enum() -> Rgba { active_custom_theme().map(|t| t.syntax_type).unwrap_or_else(|| rgb(0x79b8ff)) }
+pub fn syntax_function() -> Rgba { active_custom_theme().map(|t| t.syntax_function).unwrap_or_else(|| rgb(0xb392f0)) }
+pub fn syntax_hint() -> Rgba { active_custom_theme().map(|t| t.syntax_comment).unwrap_or_else(|| rgb(0x7e888c)) }
+pub fn syntax_keyword() -> Rgba { active_custom_theme().map(|t| t.syntax_keyword).unwrap_or_else(|| rgb(0xf97583)) }
+pub fn syntax_label() -> Rgba { active_custom_theme().map(|t| t.syntax_function).unwrap_or_else(|| rgb(0xb392f0)) }
+pub fn syntax_link_text() -> Rgba { active_custom_theme().map(|t| t.primary_accent).unwrap_or_else(|| rgb(0x48a0c7)) }
+pub fn syntax_link_uri() -> Rgba { active_custom_theme().map(|t| t.syntax_string).unwrap_or_else(|| rgb(0x9ecbff)) }
+pub fn syntax_number() -> Rgba { active_custom_theme().map(|t| t.syntax_number).unwrap_or_else(|| rgb(0x79b8ff)) }
+pub fn syntax_operator() -> Rgba { active_custom_theme().map(|t| t.syntax_operator).unwrap_or_else(|| rgb(0xf97583)) }
+pub fn syntax_predictive() -> Rgba { active_custom_theme().map(|t| t.text_muted).unwrap_or_else(|| rgb(0x555555)) }
+pub fn syntax_preproc() -> Rgba { active_custom_theme().map(|t| t.syntax_keyword).unwrap_or_else(|| rgb(0xf97583)) }
+pub fn syntax_primary() -> Rgba { active_custom_theme().map(|t| t.syntax_punctuation).unwrap_or_else(|| rgb(0xbbbebf)) }
+pub fn syntax_property() -> Rgba { active_custom_theme().map(|t| t.syntax_type).unwrap_or_else(|| rgb(0x79b8ff)) }
+pub fn syntax_punctuation() -> Rgba { active_custom_theme().map(|t| t.syntax_punctuation).unwrap_or_else(|| rgb(0xbbbebf)) }
+pub fn syntax_delimiter() -> Rgba { active_custom_theme().map(|t| t.syntax_delimiter).unwrap_or_else(|| rgb(0xf97583)) }
+pub fn syntax_list_marker() -> Rgba { active_custom_theme().map(|t| t.syntax_tag).unwrap_or_else(|| rgb(0x85e89d)) }
+pub fn syntax_special() -> Rgba { active_custom_theme().map(|t| t.syntax_keyword).unwrap_or_else(|| rgb(0xf97583)) }
+pub fn syntax_string() -> Rgba { active_custom_theme().map(|t| t.syntax_string).unwrap_or_else(|| rgb(0x9ecbff)) }
+pub fn syntax_string_escape() -> Rgba { active_custom_theme().map(|t| t.syntax_tag).unwrap_or_else(|| rgb(0x85e89d)) }
+pub fn syntax_tag() -> Rgba { active_custom_theme().map(|t| t.syntax_tag).unwrap_or_else(|| rgb(0x85e89d)) }
+pub fn syntax_literal() -> Rgba { active_custom_theme().map(|t| t.syntax_tag).unwrap_or_else(|| rgb(0x85e89d)) }
+pub fn syntax_title() -> Rgba { active_custom_theme().map(|t| t.syntax_type).unwrap_or_else(|| rgb(0x79b8ff)) }
+pub fn syntax_type() -> Rgba { active_custom_theme().map(|t| t.syntax_type).unwrap_or_else(|| rgb(0x79b8ff)) }
+pub fn syntax_variable() -> Rgba { active_custom_theme().map(|t| t.syntax_variable).unwrap_or_else(|| rgb(0xe1e4e8)) }
+pub fn syntax_variable_special() -> Rgba { active_custom_theme().map(|t| t.primary_accent).unwrap_or_else(|| rgb(0xffab70)) }
+pub fn syntax_variant() -> Rgba { active_custom_theme().map(|t| t.syntax_type).unwrap_or_else(|| rgb(0x79b8ff)) }
 
 /// Semantic color for file category icons in the file tree and workspace viewers.
 pub fn file_icon_color_for_path(path: &str) -> Rgba {
@@ -651,6 +916,32 @@ mod tests {
         assert_eq!(file_icon_color_for_path("assets/logo.png"), rgb(0x48a0c7));
         assert_eq!(file_icon_color_for_path("styles/main.css"), rgb(0xf97583));
         assert_eq!(file_icon_color_for_path("random.unknown"), rgb(0xbbbebf));
+    }
+
+    #[test]
+    fn test_custom_theme_switching_and_token_override() {
+        let mut custom = crate::config::ThemeDefinition::preset_obsidian();
+        custom.id = "custom-neon".to_string();
+        custom.name = "Neon Cyber".to_string();
+        custom.surfaces.canvas_base = "#120024".to_string();
+        custom.surfaces.bg_surface = "#1e003a".to_string();
+        custom.accents.primary = "#00ffcc".to_string();
+        custom.syntax.keyword = "#ff007f".to_string();
+        custom.syntax.function = "#00e5ff".to_string();
+
+        set_active_custom_theme(Some(custom));
+
+        assert_eq!(canvas_base(), rgb(0x120024).into());
+        assert_eq!(bg_surface(), rgb(0x1e003a));
+        assert_eq!(accent(), rgb(0x00ffcc));
+        assert_eq!(syntax_keyword(), rgb(0xff007f));
+        assert_eq!(syntax_function(), rgb(0x00e5ff));
+
+        // Reverting to preset clears custom theme override
+        set_active_preset(crate::config::ThemePreset::Obsidian);
+        assert_eq!(active_custom_theme(), None);
+        assert_eq!(canvas_base(), rgb(0x050505).into());
+        assert_eq!(syntax_keyword(), rgb(0xf97583));
     }
 }
 
