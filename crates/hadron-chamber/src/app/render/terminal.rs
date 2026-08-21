@@ -318,7 +318,7 @@ impl super::Chamber {
                 }
             }
             RightRailTab::FileTree => {
-                let mut list = v_flex().size_full();
+                let mut list = v_flex().size_full().min_h_0().min_w_0();
                 if let Some((path, content)) = &self.file_tree_open {
                     list = list
                         .child(
@@ -340,6 +340,7 @@ impl super::Chamber {
                                 .flex_1()
                                 .min_w_0()
                                 .min_h_0()
+                                .size_full()
                                 .relative()
                                 .child(
                                     div()
@@ -349,7 +350,8 @@ impl super::Chamber {
                                         .overflow_x_hidden()
                                         .overflow_y_scroll()
                                         .track_scroll(&self.file_tree_open_scroll)
-                                        .p_2()
+                                        .p_3()
+                                        .pb_16()
                                         .bg(theme::input_bg())
                                         .text_color(theme::text())
                                         // Use a fixed index like usize::MAX for the file tree markdown cache
@@ -360,10 +362,22 @@ impl super::Chamber {
                                             &[],
                                         )),
                                 )
-                                .vertical_scrollbar(&self.file_tree_open_scroll),
+                                .child(
+                                    div().absolute().top_0().bottom_0().right_0().child(
+                                        Scrollbar::vertical(&self.file_tree_open_scroll)
+                                            .scrollbar_show(ScrollbarShow::Always),
+                                    ),
+                                ),
                         );
 
-                    v_flex().flex_1().child(list).into_any_element()
+                    v_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .size_full()
+                        .w_full()
+                        .min_w_0()
+                        .child(list)
+                        .into_any_element()
                 } else {
                     use crate::sys::{sorted_children, FileTreeNode};
 
@@ -704,6 +718,7 @@ impl super::Chamber {
                                 .overflow_y_scroll()
                                 .track_scroll(&self.file_tree_scroll)
                                 .p_2()
+                                .pb_8()
                                 .child(render_node(
                                     "",
                                     &root_node,
