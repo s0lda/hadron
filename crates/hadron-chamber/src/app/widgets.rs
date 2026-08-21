@@ -1349,12 +1349,12 @@ pub(super) fn tool_kind_icon(kind: &str) -> IconName {
     }
 }
 
-/// Custom syntax highlight theme matching Zed / VS Code semantic tokens.
-pub(super) fn zed_syntax_theme() -> std::sync::Arc<gpui_component::highlighter::HighlightTheme> {
+/// Custom syntax highlight theme matching GitHub Dark semantic tokens (customized to user preference).
+pub(super) fn github_syntax_theme() -> std::sync::Arc<gpui_component::highlighter::HighlightTheme> {
     static THEME: std::sync::LazyLock<std::sync::Arc<gpui_component::highlighter::HighlightTheme>> =
         std::sync::LazyLock::new(|| {
             let json = r##"{
-                "name": "Zed Dark",
+                "name": "GitHub Dark (Custom)",
                 "appearance": "dark",
                 "style": {
                     "syntax": {
@@ -1404,7 +1404,7 @@ pub(super) fn zed_syntax_theme() -> std::sync::Arc<gpui_component::highlighter::
             match serde_json::from_str::<gpui_component::highlighter::HighlightTheme>(json) {
                 Ok(theme) => std::sync::Arc::new(theme),
                 Err(err) => {
-                    eprintln!("Failed to parse Zed syntax theme: {err}");
+                    eprintln!("Failed to parse GitHub syntax theme: {err}");
                     gpui_component::highlighter::HighlightTheme::default_dark()
                 }
             }
@@ -1416,7 +1416,7 @@ pub(super) fn markdown_style(ui_font_size: Option<f32>) -> gpui_component::text:
     let base_size = ui_font_size.unwrap_or(14.0);
     let mut style = gpui_component::text::TextViewStyle::default();
     style.heading_base_font_size = px(base_size);
-    style.highlight_theme = zed_syntax_theme();
+    style.highlight_theme = github_syntax_theme();
     style.table = {
         let mut s = gpui::StyleRefinement::default()
             .border_1()
@@ -1548,9 +1548,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_zed_syntax_theme_loads_correctly() {
-        let theme = zed_syntax_theme();
-        assert_eq!(theme.name, "Zed Dark");
+    fn test_github_syntax_theme_loads_correctly() {
+        let theme = github_syntax_theme();
+        assert_eq!(theme.name, "GitHub Dark (Custom)");
         assert!(theme.style.syntax.function.is_some());
         assert!(theme.style.syntax.keyword.is_some());
         assert!(theme.style.syntax.string.is_some());
@@ -1558,14 +1558,51 @@ mod tests {
     }
 
     #[test]
+    fn test_rust_syntax_highlighting_with_github_theme() {
+        use gpui_component::highlighter::SyntaxHighlighter;
+        use gpui_component::input::Rope;
+        let theme = github_syntax_theme();
+        let code = "pub fn main() {\n    // just tesinting\n}";
+        let mut highlighter = SyntaxHighlighter::new("rust");
+        let rope = Rope::from_str(code);
+        highlighter.update(None, &rope, None);
+        let styles = highlighter.styles(&(0..code.len()), &theme);
+        assert!(!styles.is_empty(), "Highlighter should return parsed token styles for Rust");
+
+        let kw_style = theme.style("keyword").unwrap();
+        let fn_style = theme.style("function").unwrap();
+        let comment_style = theme.style("comment").unwrap();
+
+        assert_eq!(kw_style.color, Some(gpui::Hsla::from(rgb(0xf97583))));
+        assert_eq!(fn_style.color, Some(gpui::Hsla::from(rgb(0xb392f0))));
+        assert_eq!(comment_style.color, Some(gpui::Hsla::from(rgb(0x7e888c))));
+
+        // Verify that styles generated for the code block match the expected token spans
+        // `pub` at 0..3 -> keyword
+        let pub_span = styles.iter().find(|(range, _)| range.start == 0 && range.end == 3);
+        assert!(pub_span.is_some(), "Expected style span for 'pub'");
+        assert_eq!(pub_span.unwrap().1.color, kw_style.color);
+
+        // `main` at 7..11 -> function
+        let main_span = styles.iter().find(|(range, _)| range.start == 7 && range.end == 11);
+        assert!(main_span.is_some(), "Expected style span for 'main'");
+        assert_eq!(main_span.unwrap().1.color, fn_style.color);
+
+        // `// just tesinting` -> comment
+        let comment_span = styles.iter().find(|(range, _)| range.start >= 18 && range.end <= 37);
+        assert!(comment_span.is_some(), "Expected style span for comment");
+        assert_eq!(comment_span.unwrap().1.color, comment_style.color);
+    }
+
+    #[test]
     fn markdown_style_heading_base_font_size_matches_preference() {
         let default_style = markdown_style(None);
         assert_eq!(default_style.heading_base_font_size, px(14.0));
-        assert_eq!(default_style.highlight_theme.name, "Zed Dark");
+        assert_eq!(default_style.highlight_theme.name, "GitHub Dark (Custom)");
 
         let custom_style = markdown_style(Some(18.0));
         assert_eq!(custom_style.heading_base_font_size, px(18.0));
-        assert_eq!(custom_style.highlight_theme.name, "Zed Dark");
+        assert_eq!(custom_style.highlight_theme.name, "GitHub Dark (Custom)");
     }
 
     #[test]

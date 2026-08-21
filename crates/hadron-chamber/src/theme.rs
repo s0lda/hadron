@@ -233,7 +233,7 @@ pub fn text_muted() -> Rgba {
     rgb(0x707070)
 }
 
-// --- Zed Semantic Syntax Tokens ---
+// --- GitHub Semantic Syntax Tokens ---
 pub fn syntax_attribute() -> Rgba { rgb(0xb392f0) }
 pub fn syntax_boolean() -> Rgba { rgb(0x79b8ff) }
 pub fn syntax_comment() -> Rgba { rgb(0x7e888c) }
@@ -630,7 +630,7 @@ mod tests {
     }
 
     #[test]
-    fn test_zed_semantic_syntax_tokens() {
+    fn test_github_semantic_syntax_tokens() {
         assert_eq!(syntax_function(), rgb(0xb392f0));
         assert_eq!(syntax_keyword(), rgb(0xf97583));
         assert_eq!(syntax_type(), rgb(0x79b8ff));

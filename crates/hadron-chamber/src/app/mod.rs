@@ -1526,6 +1526,8 @@ impl Chamber {
         t.tokens.scrollbar_thumb_hover = gpui::Hsla::from(gpui::rgba(0xffffffa0)).into();
         t.window_border = rgb(0x2a2b2c).into();
         t.tokens.background = gpui::Hsla::from(palette.bg_surface).into();
+        t.mode = gpui_component::ThemeMode::Dark;
+        t.highlight_theme = widgets::github_syntax_theme();
         t.font_family = ui_font;
         t.mono_font_family = mono_font;
         t.font_size = px(ui_size);
