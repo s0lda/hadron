@@ -229,7 +229,7 @@ pub fn format_file_preview(path: &str, content: &str) -> String {
     let lower_name = file_name.to_lowercase();
 
     if lower_ext == "md" || lower_ext == "markdown" {
-        return content.to_string();
+        return crate::mermaid::plugin::format_html_wrappers(content);
     }
 
     let lang = match lower_ext.as_str() {

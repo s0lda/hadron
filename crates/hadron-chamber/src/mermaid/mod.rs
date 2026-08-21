@@ -273,6 +273,86 @@ mod tests {
         let card = super::render::MermaidCard::new("graph TD\nA --> B\nB --> C");
         assert!(card.diagram.is_ok());
     }
+
+    #[test]
+    fn test_parse_shield_badges() {
+        use super::plugin::parse_shield_badge;
+
+        let b1 = parse_shield_badge("https://img.shields.io/badge/License-Apache_2.0-blue.svg").expect("parse license badge");
+        assert_eq!(b1.label, "License");
+        assert_eq!(b1.status, "Apache 2.0");
+        assert_eq!(b1.color_name, "blue");
+
+        let b2 = parse_shield_badge("https://img.shields.io/badge/Language-Rust_2021-orange.svg").expect("parse rust badge");
+        assert_eq!(b2.label, "Language");
+        assert_eq!(b2.status, "Rust 2021");
+        assert_eq!(b2.color_name, "orange");
+
+        let b3 = parse_shield_badge("https://img.shields.io/badge/Protocol-Agent_Client_Protocol_%28ACP%29-green.svg").expect("parse acp badge");
+        assert_eq!(b3.label, "Protocol");
+        assert_eq!(b3.status, "Agent Client Protocol (ACP)");
+        assert_eq!(b3.color_name, "green");
+
+        let b4 = parse_shield_badge("https://img.shields.io/badge/Architecture-Decoupled_Zero--CPU_Bus-red.svg").expect("parse arch badge");
+        assert_eq!(b4.label, "Architecture");
+        assert_eq!(b4.status, "Decoupled Zero-CPU Bus");
+        assert_eq!(b4.color_name, "red");
+
+        let b5 = parse_shield_badge("https://img.shields.io/static/v1?label=GUI&message=GPUI&color=purple").expect("parse static badge");
+        assert_eq!(b5.label, "GUI");
+        assert_eq!(b5.status, "GPUI");
+        assert_eq!(b5.color_name, "purple");
+
+        let b6 = parse_shield_badge("https://badgen.net/badge/License/Apache_2.0/blue").expect("parse badgen");
+        assert_eq!(b6.label, "License");
+        assert_eq!(b6.status, "Apache 2.0");
+        assert_eq!(b6.color_name, "blue");
+    }
+
+    #[test]
+    fn test_parse_html_img() {
+        use super::plugin::parse_html_img;
+
+        let img_html = r#"<img src="assets/demo_3.png" alt="Hadron Orchestrated Multi-Provider Chat Workspace" width="900" />"#;
+        let data = parse_html_img(img_html).expect("should parse html img");
+        assert_eq!(data.url, "assets/demo_3.png");
+        assert_eq!(data.alt.as_deref(), Some("Hadron Orchestrated Multi-Provider Chat Workspace"));
+        assert_eq!(data.width, Some(900.0));
+    }
+
+    #[test]
+    fn test_resolve_image_path() {
+        use super::plugin::resolve_image_path;
+        let repo_root = std::path::Path::new("/home/Jake/dev/hadron");
+        let resolved = resolve_image_path("assets/demo_3.png", repo_root);
+        assert!(resolved.is_some(), "assets/demo_3.png should resolve to an existing file");
+        assert!(resolved.unwrap().exists());
+    }
+
+    #[test]
+    fn test_format_html_wrappers() {
+        let md = r#"# 🌌 Hadron
+
+<div align="center">
+
+**The Native Desktop Workspace**
+
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+<br />
+
+<img src="assets/demo_3.png" alt="Hadron Demo" width="900" />
+
+</div>
+"#;
+        let unwrapped = super::plugin::format_html_wrappers(md);
+        assert!(!unwrapped.contains("<div"));
+        assert!(!unwrapped.contains("</div>"));
+        assert!(!unwrapped.contains("<br"));
+        assert!(unwrapped.contains("**The Native Desktop Workspace**"));
+        assert!(unwrapped.contains("[![License]"));
+        assert!(unwrapped.contains(r#"<img src="assets/demo_3.png""#));
+    }
 }
 
 

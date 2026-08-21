@@ -244,7 +244,8 @@ pub(super) fn resolve_mention_names(
     roster: &[crate::model::RosterRow],
     repo_root: Option<&std::path::Path>,
 ) -> String {
-    let preprocessed = format_markdown_callouts(body);
+    let preprocessed_callouts = format_markdown_callouts(body);
+    let preprocessed = crate::mermaid::plugin::format_html_wrappers(&preprocessed_callouts);
     let body = preprocessed.as_str();
     let mut out = String::with_capacity(body.len() + 64);
     let mut chars = body.char_indices().peekable();
