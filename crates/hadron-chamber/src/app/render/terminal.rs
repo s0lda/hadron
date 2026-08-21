@@ -466,12 +466,11 @@ impl super::Chamber {
                                     .min_w_0()
                                     .child(if node.is_file {
                                         let icon_path = crate::symbols::file_icon_path(&node.full_path);
-                                        let mut el = gpui::svg()
-                                            .path(icon_path)
+                                        let mut el = gpui::img(icon_path)
                                             .size_3p5()
                                             .flex_none();
                                         if node.is_ignored {
-                                            el = el.text_color(theme::text_muted());
+                                            el = el.opacity(0.4);
                                         }
                                         el.into_any_element()
                                     } else {
@@ -480,12 +479,11 @@ impl super::Chamber {
                                             .and_then(|f| f.to_str())
                                             .unwrap_or(&name);
                                         let icon_path = crate::symbols::folder_icon_path(folder_name, is_expanded);
-                                        let mut el = gpui::svg()
-                                            .path(icon_path)
+                                        let mut el = gpui::img(icon_path)
                                             .size_3p5()
                                             .flex_none();
                                         if node.is_ignored {
-                                            el = el.text_color(theme::text_muted());
+                                            el = el.opacity(0.4);
                                         }
                                         el.into_any_element()
                                     })

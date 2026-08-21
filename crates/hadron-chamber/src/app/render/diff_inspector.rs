@@ -160,8 +160,7 @@ impl Chamber {
                             .gap_1p5()
                             .items_center()
                             .child(
-                                gpui::svg()
-                                    .path(crate::symbols::file_icon_path(file_path))
+                                gpui::img(crate::symbols::file_icon_path(file_path))
                                     .size_3()
                                     .flex_none(),
                             )

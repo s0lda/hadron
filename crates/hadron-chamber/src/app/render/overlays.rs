@@ -536,8 +536,7 @@ impl super::Chamber {
                         .items_center()
                         .gap_1p5()
                         .child(
-                            gpui::svg()
-                                .path(crate::symbols::file_icon_path(stripped))
+                            gpui::img(crate::symbols::file_icon_path(stripped))
                                 .size_3p5()
                                 .flex_none(),
                         )
@@ -547,8 +546,7 @@ impl super::Chamber {
                         .items_center()
                         .gap_1p5()
                         .child(
-                            gpui::svg()
-                                .path(crate::symbols::folder_icon_path(stripped, false))
+                            gpui::img(crate::symbols::folder_icon_path(stripped, false))
                                 .size_3p5()
                                 .flex_none(),
                         )
