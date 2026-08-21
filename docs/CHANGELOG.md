@@ -5,6 +5,25 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-08-21
+
+### Added
+- **Symbols File & Folder Icon Theme (`hadron-chamber`)**:
+  - Integrated 355 multi-colored Symbols SVG assets (250 file icons and 105 folder icons) ported from VS Code / Zed Symbols.
+  - Zero-allocation static theme resolver matching exact filenames (`Cargo.toml`, `package.json`, `Dockerfile`, `README.md`, etc.), special directories (`.git`, `.github`, `src`, `tests`, `docs`, `target`, `node_modules`), and file extensions (`.rs`, `.ts`, `.py`, `.go`, `.json`, `.toml`, `.md`, etc.).
+  - Rendered via `gpui::img` with full multi-color SVG fills, strokes, and language brand badges across File Tree, Diff Inspector, and Quick Open search overlay.
+  - Embedded asset loader and MIT attribution for Miguel Solorio and Joan S. Garcia in `THIRD_PARTY_NOTICES.md`.
+- **GitHub Dark Semantic Syntax Theme (`hadron-chamber`)**:
+  - Custom semantic syntax theme wired into global `gpui_component::Theme` (`HighlightTheme`), providing rich syntax highlighting for Markdown code blocks, chat messages, file previews, and Event Log entries.
+  - Category-based file tree icon tinting and right-aligned Git status badges (`M` amber, `+` mint, `D` coral).
+  - Syntax-preserving diff styling with semi-transparent green/red gutter overlays in Git and 3-way diff inspectors.
+- **Chat Input Ergonomics & Auto-Scroll (`hadron-chamber`)**:
+  - Configured chat input viewport to auto-scroll to the active cursor position on multi-line text paste and Shift+Enter newlines.
+- **Unified Chamber Console Logging (`hadron-chamber`)**:
+  - Converted raw terminal/PTY `println!`/`eprintln!` calls across `pty`, `terminal`, `sys`, and `widgets` modules to structured timestamped Hadron format (`HH:MM:SS chamber <message>`) via `hadron_lattice::term`.
+- **Code-Wrapped Mention Isolation (`hadron-gluon`, `hadron-chamber`)**:
+  - Markdown code fences (```/~~~) and inline backtick spans are automatically stripped from mention scanning across all routing and addressee parsers (`human_mentions`, `parse_addressee`, `task_names_card_specifically`), preventing unintentional Quark turn excitation when code snippets contain `@mentions`.
+
 ## [0.13.0] - 2026-08-20
 
 ### Added

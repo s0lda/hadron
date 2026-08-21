@@ -20,6 +20,20 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.14.0",
+        date: Some("2026-08-21"),
+        added: &[
+            "Embedded Symbols file and folder icon theme with 355 multi-color SVG assets across File Tree, Diffs, and Quick Open",
+            "Custom GitHub Dark semantic syntax theme wired into Markdown code blocks, chat bodies, and tree-sitter spans",
+            "Syntax-preserving 3-way and Git diff inspector hunks with palette-aligned gutter tinting",
+            "Chat input auto-scroll to cursor position on multi-line text paste and Shift+Enter",
+            "Unified chamber console logging to structured timestamped format (HH:MM:SS chamber <msg>)",
+            "Code-wrapped mention isolation stripping code fences and inline backticks from Quark routing",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.13.0",
         date: Some("2026-08-20"),
         added: &[
