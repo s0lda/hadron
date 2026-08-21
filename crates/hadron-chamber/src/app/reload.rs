@@ -68,11 +68,31 @@ impl super::Chamber {
 
     pub(super) fn update_active_plan(&mut self) {
         let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let active_plan_path = self
-            .last_plan_path
-            .clone()
-            .filter(|p| repo.join(p).is_file())
-            .or_else(|| resolve_active_plan(&repo, &self.view.messages));
+        let start_ix = self.manual_plan_override_at_message_len.unwrap_or(0);
+        let recent_msgs = if start_ix < self.view.messages.len() {
+            &self.view.messages[start_ix..]
+        } else {
+            &[]
+        };
+
+        let new_plan_from_msg = if !recent_msgs.is_empty() {
+            resolve_active_plan_from_messages(&repo, recent_msgs)
+        } else {
+            None
+        };
+
+        let active_plan_path = if let Some(p) = new_plan_from_msg {
+            self.manual_plan_override_at_message_len = None;
+            Some(p)
+        } else if let Some(ref manual) = self.last_plan_path {
+            if repo.join(manual).is_file() {
+                Some(manual.clone())
+            } else {
+                resolve_active_plan(&repo, &self.view.messages)
+            }
+        } else {
+            resolve_active_plan(&repo, &self.view.messages)
+        };
 
         if let Some(rel_path) = active_plan_path {
             let path_str = rel_path.clone();
@@ -315,44 +335,105 @@ impl super::Chamber {
 /// transition (so the caller re-toasts once, not every poll it stays down),
 /// `None` on steady state.
 /// Resolve the active implementation plan for a workspace:
-/// 1. Newest-first scan of messages for an explicit plan file reference (`plan_ref`) that exists on disk.
+/// 1. Newest-first scan of messages for an explicit plan file reference (`plan_ref`) or mention that exists on disk.
 /// 2. If no plan is explicitly referenced in messages, scan `.hadron/docs/plans/`, `docs/plans/`, and worktrees for the newest plan on disk.
 pub(crate) fn resolve_active_plan(repo: &Path, messages: &[crate::model::MessageRow]) -> Option<String> {
-    let from_msg = messages.iter().rev().find_map(|m| {
-        hadron_gluon::skills::plan_ref(&m.body).and_then(|raw_path| {
-            let joined = repo.join(&raw_path);
-            if let (Ok(canon_repo), Ok(canon_full)) = (repo.canonicalize(), joined.canonicalize()) {
-                if canon_full.is_file() && canon_full.starts_with(&canon_repo) {
-                    if let Ok(rel) = canon_full.strip_prefix(&canon_repo) {
-                        return Some(rel.to_string_lossy().to_string());
-                    }
-                    return Some(raw_path);
-                }
-            }
-            let abs_p = Path::new(&raw_path);
-            if abs_p.is_file() {
-                if let (Ok(canon_repo), Ok(canon_abs)) = (repo.canonicalize(), abs_p.canonicalize()) {
-                    if canon_abs.starts_with(&canon_repo) {
-                        if let Ok(rel) = canon_abs.strip_prefix(&canon_repo) {
-                            return Some(rel.to_string_lossy().to_string());
-                        }
-                    }
-                }
-            }
-            None
-        })
-    });
-
-    if from_msg.is_some() {
-        return from_msg;
-    }
-
-    scan_newest_plan(repo)
+    resolve_active_plan_from_messages(repo, messages).or_else(|| scan_newest_plan(repo))
 }
 
-/// Scan `.hadron/docs/plans/`, `docs/plans/`, and worktree trees for the most recently modified `.md` plan.
-pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
-    let mut candidates: Vec<(std::time::SystemTime, String, String)> = Vec::new();
+/// Newest-first scan of messages for an explicit or mentioned plan file path that exists on disk.
+pub(crate) fn resolve_active_plan_from_messages(repo: &Path, messages: &[crate::model::MessageRow]) -> Option<String> {
+    messages.iter().rev().find_map(|m| {
+        find_plan_mention_in_text(repo, &m.body)
+    })
+}
+
+fn resolve_plan_path(repo: &Path, raw_path: &str) -> Option<String> {
+    let clean = raw_path
+        .strip_prefix("file://")
+        .or_else(|| raw_path.strip_prefix("file:"))
+        .unwrap_or(raw_path);
+    let clean = crate::vcs::strip_unc_prefix(clean);
+
+    let joined = repo.join(&clean);
+    if joined.is_file() {
+        if let (Ok(canon_repo), Ok(canon_full)) = (repo.canonicalize(), joined.canonicalize()) {
+            if canon_full.starts_with(&canon_repo) {
+                if let Ok(rel) = canon_full.strip_prefix(&canon_repo) {
+                    return Some(rel.to_string_lossy().to_string());
+                }
+            }
+        }
+        if let Ok(rel) = joined.strip_prefix(repo) {
+            return Some(rel.to_string_lossy().to_string());
+        }
+        return Some(clean);
+    }
+    let abs_p = Path::new(&clean);
+    if abs_p.is_file() {
+        if let (Ok(canon_repo), Ok(canon_abs)) = (repo.canonicalize(), abs_p.canonicalize()) {
+            if canon_abs.starts_with(&canon_repo) {
+                if let Ok(rel) = canon_abs.strip_prefix(&canon_repo) {
+                    return Some(rel.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn find_plan_mention_in_text(repo: &Path, text: &str) -> Option<String> {
+    if let Some(p) = hadron_gluon::skills::plan_ref(text) {
+        if let Some(resolved) = resolve_plan_path(repo, &p) {
+            return Some(resolved);
+        }
+    }
+
+    let all_plans = scan_all_plan_paths(repo);
+    if all_plans.is_empty() {
+        return None;
+    }
+
+    let tokens: Vec<&str> = text
+        .split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '[' || c == ']' || c == '<' || c == '>' || c == '"' || c == '\'' || c == '`')
+        .map(|t| t.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_'))
+        .filter(|t| !t.is_empty())
+        .collect();
+
+    // 1. Direct path/filename match (e.g. "@master.md", "01-phase-1-reactive-orchestration-and-dag.md")
+    for &tok in &tokens {
+        let clean_tok = tok.strip_prefix('@').unwrap_or(tok);
+        if clean_tok.ends_with(".md") {
+            if let Some((_, rel)) = all_plans.iter().find(|(_, rel)| {
+                rel == clean_tok || rel.ends_with(&format!("/{clean_tok}")) || rel.ends_with(clean_tok)
+            }) {
+                return Some(rel.clone());
+            }
+        }
+    }
+
+    // 2. Substring / fuzzy folder or filename match (e.g. "swarm-orchestration-and-teamwork/master.md" or typo in date "2026008-21-swarm...")
+    for &tok in &tokens {
+        let clean_tok = tok.strip_prefix('@').unwrap_or(tok);
+        if clean_tok.contains("plan") || clean_tok.contains("swarm") || clean_tok.contains("capabilities") || clean_tok.ends_with(".md") {
+            let needle = clean_tok.replace(|c: char| !c.is_ascii_alphanumeric(), "");
+            if needle.len() >= 6 {
+                if let Some((_, rel)) = all_plans.iter().find(|(_, rel)| {
+                    let rel_clean = rel.replace(|c: char| !c.is_ascii_alphanumeric(), "");
+                    rel_clean.contains(&needle) || needle.contains(&rel_clean)
+                }) {
+                    return Some(rel.clone());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Scan all plan `.md` files across `.hadron/docs/plans/`, `docs/plans/`, and worktrees.
+pub(crate) fn scan_all_plan_paths(repo: &Path) -> Vec<(std::time::SystemTime, String)> {
+    let mut candidates: Vec<(std::time::SystemTime, String)> = Vec::new();
 
     let check_dirs = [
         repo.join(".hadron").join("docs").join("plans"),
@@ -364,52 +445,26 @@ pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
-                    let file_name = path
-                        .file_name()
-                        .and_then(|f| f.to_str())
-                        .unwrap_or("")
-                        .to_string();
+                    let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
                     if file_name.starts_with('.') {
                         continue;
                     }
-                    let mtime = entry
-                        .metadata()
-                        .and_then(|m| m.modified())
-                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                    if let (Ok(canon_repo), Ok(canon_file)) =
-                        (repo.canonicalize(), path.canonicalize())
-                    {
-                        if let Ok(rel) = canon_file.strip_prefix(&canon_repo) {
-                            candidates.push((mtime, file_name, rel.to_string_lossy().to_string()));
-                        }
-                    } else if let Ok(rel) = path.strip_prefix(repo) {
-                        candidates.push((mtime, file_name, rel.to_string_lossy().to_string()));
+                    let mtime = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    if let Ok(rel) = path.strip_prefix(repo) {
+                        candidates.push((mtime, rel.to_string_lossy().to_string()));
                     }
                 } else if path.is_dir() {
                     if let Ok(sub_entries) = std::fs::read_dir(&path) {
                         for sub_entry in sub_entries.flatten() {
                             let sub_path = sub_entry.path();
                             if sub_path.is_file() && sub_path.extension().and_then(|e| e.to_str()) == Some("md") {
-                                let sub_file_name = sub_path
-                                    .file_name()
-                                    .and_then(|f| f.to_str())
-                                    .unwrap_or("")
-                                    .to_string();
+                                let sub_file_name = sub_path.file_name().and_then(|f| f.to_str()).unwrap_or("");
                                 if sub_file_name.starts_with('.') {
                                     continue;
                                 }
-                                let mtime = sub_entry
-                                    .metadata()
-                                    .and_then(|m| m.modified())
-                                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                                if let (Ok(canon_repo), Ok(canon_file)) =
-                                    (repo.canonicalize(), sub_path.canonicalize())
-                                {
-                                    if let Ok(rel) = canon_file.strip_prefix(&canon_repo) {
-                                        candidates.push((mtime, sub_file_name, rel.to_string_lossy().to_string()));
-                                    }
-                                } else if let Ok(rel) = sub_path.strip_prefix(repo) {
-                                    candidates.push((mtime, sub_file_name, rel.to_string_lossy().to_string()));
+                                let mtime = sub_entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                                if let Ok(rel) = sub_path.strip_prefix(repo) {
+                                    candidates.push((mtime, rel.to_string_lossy().to_string()));
                                 }
                             }
                         }
@@ -433,26 +488,13 @@ pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
                         for entry in entries.flatten() {
                             let path = entry.path();
                             if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
-                                let file_name = path
-                                    .file_name()
-                                    .and_then(|f| f.to_str())
-                                    .unwrap_or("")
-                                    .to_string();
+                                let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
                                 if file_name.starts_with('.') {
                                     continue;
                                 }
-                                let mtime = entry
-                                    .metadata()
-                                    .and_then(|m| m.modified())
-                                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                                if let (Ok(canon_repo), Ok(canon_file)) =
-                                    (repo.canonicalize(), path.canonicalize())
-                                {
-                                    if let Ok(rel) = canon_file.strip_prefix(&canon_repo) {
-                                        candidates.push((mtime, file_name, rel.to_string_lossy().to_string()));
-                                    }
-                                } else if let Ok(rel) = path.strip_prefix(repo) {
-                                    candidates.push((mtime, file_name, rel.to_string_lossy().to_string()));
+                                let mtime = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                                if let Ok(rel) = path.strip_prefix(repo) {
+                                    candidates.push((mtime, rel.to_string_lossy().to_string()));
                                 }
                             }
                         }
@@ -462,84 +504,163 @@ pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
         }
     }
 
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates
+}
+
+/// Scan `.hadron/docs/plans/`, `docs/plans/`, and worktree trees for the most recently modified `.md` plan.
+pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
+    let mut candidates = scan_all_plan_paths(repo);
     candidates.sort_by(|a, b| {
-        let is_master_a = a.1 == "master.md" || a.1 == "index.md";
-        let is_master_b = b.1 == "master.md" || b.1 == "index.md";
+        let is_master_a = a.1.ends_with("master.md") || a.1.ends_with("index.md");
+        let is_master_b = b.1.ends_with("master.md") || b.1.ends_with("index.md");
         b.0.cmp(&a.0)
             .then_with(|| is_master_b.cmp(&is_master_a))
             .then_with(|| b.1.cmp(&a.1))
     });
-    candidates.into_iter().next().map(|(_, _, rel)| rel)
+    candidates.into_iter().next().map(|(_, rel)| rel)
 }
 
-/// Discover sibling `.md` plans in the active plan's directory (e.g. `master.md`, `01-phase-1-*.md`),
-/// allowing seamless one-click switching in the Chamber Plan tab.
-pub(crate) fn scan_sibling_plans(repo: &Path, active_plan_rel: &str) -> Vec<(String, String)> {
-    let mut plans = Vec::new();
-    let active_path = repo.join(active_plan_rel);
-    let parent_dir = match active_path.parent() {
-        Some(p) if p.is_dir() => p.to_path_buf(),
-        _ => repo.join(".hadron").join("docs").join("plans"),
-    };
-
-    if let Ok(entries) = std::fs::read_dir(&parent_dir) {
-        let mut files: Vec<std::path::PathBuf> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("md"))
-            .collect();
-        files.sort();
-
-        for path in files {
-            let file_name = path
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or("")
-                .to_string();
-            if file_name.starts_with('.') {
-                continue;
-            }
-            let rel = if let (Ok(canon_repo), Ok(canon_path)) = (repo.canonicalize(), path.canonicalize()) {
-                if let Ok(r) = canon_path.strip_prefix(&canon_repo) {
-                    r.to_string_lossy().to_string()
-                } else {
-                    continue;
-                }
-            } else if let Ok(r) = path.strip_prefix(repo) {
-                r.to_string_lossy().to_string()
-            } else {
-                continue;
-            };
-
-            let label = if file_name == "master.md" || file_name == "index.md" {
-                "Master Plan".to_string()
-            } else if let Some(stripped) = file_name.strip_suffix(".md") {
-                if let Some(pos) = stripped.find("-phase-") {
-                    let phase_part = &stripped[pos + 1..];
-                    let words: Vec<&str> = phase_part.split('-').collect();
-                    if words.len() >= 2 && words[0] == "phase" {
-                        if let Ok(n) = words[1].parse::<u32>() {
-                            let rest = words[2..].join(" ");
-                            if rest.is_empty() {
-                                format!("Phase {n}")
-                            } else {
-                                format!("Phase {n}: {rest}")
-                            }
-                        } else {
-                            stripped.replace('-', " ")
-                        }
+fn format_plan_step_label(file_name: &str) -> String {
+    if file_name == "master.md" || file_name == "index.md" {
+        "Master Plan".to_string()
+    } else if let Some(stripped) = file_name.strip_suffix(".md") {
+        if let Some(pos) = stripped.find("-phase-") {
+            let phase_part = &stripped[pos + 1..];
+            let words: Vec<&str> = phase_part.split('-').collect();
+            if words.len() >= 2 && words[0] == "phase" {
+                if let Ok(n) = words[1].parse::<u32>() {
+                    let rest = words[2..].join(" ");
+                    if rest.is_empty() {
+                        format!("Phase {n}")
                     } else {
-                        stripped.replace('-', " ")
+                        format!("Phase {n}: {rest}")
                     }
                 } else {
                     stripped.replace('-', " ")
                 }
             } else {
-                file_name.clone()
-            };
-
-            plans.push((label, rel));
+                stripped.replace('-', " ")
+            }
+        } else {
+            stripped.replace('-', " ")
         }
+    } else {
+        file_name.to_string()
+    }
+}
+
+fn format_suite_title(suite: &str) -> String {
+    let parts: Vec<&str> = suite.split('-').collect();
+    if parts.len() >= 4 && parts[0].len() == 4 && parts[1].len() == 2 && parts[2].len() == 2 {
+        let date = format!("{}-{}-{}", parts[0], parts[1], parts[2]);
+        let words: Vec<String> = parts[3..]
+            .iter()
+            .map(|w| {
+                let mut c = w.chars();
+                match c.next() {
+                    None => String::new(),
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                }
+            })
+            .collect();
+        let topic = words.join(" ");
+        format!("{date} {topic}")
+    } else {
+        suite.replace('-', " ")
+    }
+}
+
+/// Discover sibling and suite `.md` plans across `.hadron/docs/plans/`, `docs/plans/`, and worktrees,
+/// allowing seamless one-click switching across all plans and folders in the Chamber Plan tab.
+pub(crate) fn scan_sibling_plans(repo: &Path, active_plan_rel: &str) -> Vec<(String, String)> {
+    let all_paths = scan_all_plan_paths(repo);
+
+    #[derive(Debug, Clone)]
+    struct PlanEntry {
+        mtime: std::time::SystemTime,
+        rel: String,
+        suite: Option<String>,
+        file_name: String,
+    }
+
+    let mut entries: Vec<PlanEntry> = Vec::new();
+    let mut suites_set = std::collections::HashSet::new();
+
+    for (mtime, rel) in all_paths {
+        let p = Path::new(&rel);
+        let file_name = p.file_name().and_then(|f| f.to_str()).unwrap_or("").to_string();
+        let suite = if let Some(parent) = p.parent() {
+            let parent_name = parent.file_name().and_then(|f| f.to_str()).unwrap_or("");
+            if parent_name != "plans" && !parent_name.is_empty() {
+                suites_set.insert(parent_name.to_string());
+                Some(parent_name.to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        entries.push(PlanEntry {
+            mtime,
+            rel,
+            suite,
+            file_name,
+        });
+    }
+
+    let num_suites = suites_set.len();
+    let active_p = Path::new(active_plan_rel);
+    let active_suite = if let Some(parent) = active_p.parent() {
+        let parent_name = parent.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        if parent_name != "plans" && !parent_name.is_empty() {
+            Some(parent_name.to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Sort entries:
+    // 1. Active suite plans first (Master Plan first, then sorted by filename/phase)
+    // 2. Other suites sorted by newest suite mtime (Master Plan first, then sorted by filename/phase)
+    // 3. Root plans sorted by mtime
+    entries.sort_by(|a, b| {
+        let a_is_active_suite = a.suite == active_suite && a.suite.is_some();
+        let b_is_active_suite = b.suite == active_suite && b.suite.is_some();
+
+        if a_is_active_suite != b_is_active_suite {
+            return b_is_active_suite.cmp(&a_is_active_suite);
+        }
+
+        if a.suite != b.suite {
+            return b.mtime.cmp(&a.mtime);
+        }
+
+        let is_master_a = a.file_name == "master.md" || a.file_name == "index.md";
+        let is_master_b = b.file_name == "master.md" || b.file_name == "index.md";
+
+        is_master_b
+            .cmp(&is_master_a)
+            .then_with(|| a.file_name.cmp(&b.file_name))
+    });
+
+    let mut plans = Vec::new();
+    for entry in entries {
+        let step_label = format_plan_step_label(&entry.file_name);
+        let label = if num_suites > 1 {
+            if let Some(ref s) = entry.suite {
+                let suite_title = format_suite_title(s);
+                format!("{suite_title} / {step_label}")
+            } else {
+                step_label
+            }
+        } else {
+            step_label
+        };
+        plans.push((label, entry.rel));
     }
 
     plans
@@ -670,8 +791,99 @@ mod tests {
         let active_rel = ".hadron/docs/plans/2026-08-19-test-plan/master.md";
         let siblings = scan_sibling_plans(root, active_rel);
         assert_eq!(siblings.len(), 3);
-        assert_eq!(siblings[0].0, "Phase 1: setup");
-        assert_eq!(siblings[1].0, "Phase 2: build");
-        assert_eq!(siblings[2].0, "Master Plan");
+        assert_eq!(siblings[0].0, "Master Plan");
+        assert_eq!(siblings[1].0, "Phase 1: setup");
+        assert_eq!(siblings[2].0, "Phase 2: build");
+    }
+
+    #[test]
+    fn test_multi_suite_plan_scanning_and_switching() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let suite1 = root.join(".hadron").join("docs").join("plans").join("2026-08-19-twenty-capabilities");
+        let suite2 = root.join(".hadron").join("docs").join("plans").join("2026-08-21-swarm-orchestration");
+        std::fs::create_dir_all(&suite1).unwrap();
+        std::fs::create_dir_all(&suite2).unwrap();
+
+        std::fs::write(suite1.join("master.md"), "# Twenty Caps Master\n").unwrap();
+        std::fs::write(suite1.join("01-phase-1-quick-dx.md"), "# Phase 1\n").unwrap();
+        std::fs::write(suite2.join("master.md"), "# Swarm Master\n").unwrap();
+        std::fs::write(suite2.join("01-phase-1-reactive-dag.md"), "# Phase 1 DAG\n").unwrap();
+
+        let active_rel = ".hadron/docs/plans/2026-08-19-twenty-capabilities/master.md";
+        let plans = scan_sibling_plans(root, active_rel);
+        assert_eq!(plans.len(), 4);
+
+        // Active suite comes first
+        assert!(plans[0].1.contains("2026-08-19-twenty-capabilities/master.md"));
+        assert!(plans[1].1.contains("2026-08-19-twenty-capabilities/01-phase-1-quick-dx.md"));
+        // Second suite is also discoverable and selectable
+        assert!(plans[2].1.contains("2026-08-21-swarm-orchestration/master.md"));
+        assert!(plans[3].1.contains("2026-08-21-swarm-orchestration/01-phase-1-reactive-dag.md"));
+    }
+
+    #[test]
+    fn test_plan_resolution_from_mentions_and_urls() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let suite = root.join(".hadron").join("docs").join("plans").join("2026-08-21-swarm-orchestration-and-teamwork");
+        std::fs::create_dir_all(&suite).unwrap();
+        let master = suite.join("master.md");
+        std::fs::write(&master, "# Swarm Master\n").unwrap();
+
+        // 1. file:// URL resolution
+        let file_url = format!("file://{}", master.display());
+        let messages = vec![
+            crate::model::MessageRow {
+                from: "Agy".to_string(),
+                to: None,
+                body: format!("Check [{}]({}) for details", master.display(), file_url),
+                kind_label: "message",
+                usage: None,
+                ts: chrono::Utc::now(),
+                legacy_used_tokens: None,
+                turn: None,
+                severity: None,
+            }
+        ];
+        let resolved = resolve_active_plan(root, &messages);
+        assert!(resolved.is_some());
+        assert!(resolved.unwrap().contains("2026-08-21-swarm-orchestration-and-teamwork/master.md"));
+
+        // 2. @mention resolution
+        let messages_mention = vec![
+            crate::model::MessageRow {
+                from: "Human".to_string(),
+                to: None,
+                body: "@.hadron/docs/plans/2026-08-21-swarm-orchestration-and-teamwork/master.md".to_string(),
+                kind_label: "message",
+                usage: None,
+                ts: chrono::Utc::now(),
+                legacy_used_tokens: None,
+                turn: None,
+                severity: None,
+            }
+        ];
+        let resolved_mention = resolve_active_plan(root, &messages_mention);
+        assert!(resolved_mention.is_some());
+        assert!(resolved_mention.unwrap().contains("2026-08-21-swarm-orchestration-and-teamwork/master.md"));
+
+        // 3. Typo-tolerant folder mention resolution (e.g. "2026008-21-swarm...")
+        let messages_typo = vec![
+            crate::model::MessageRow {
+                from: "Human".to_string(),
+                to: None,
+                body: "@.hadron/docs/plans/2026008-21-swarm-orchestration-and-teamwork/master.md".to_string(),
+                kind_label: "message",
+                usage: None,
+                ts: chrono::Utc::now(),
+                legacy_used_tokens: None,
+                turn: None,
+                severity: None,
+            }
+        ];
+        let resolved_typo = resolve_active_plan(root, &messages_typo);
+        assert!(resolved_typo.is_some());
+        assert!(resolved_typo.unwrap().contains("2026-08-21-swarm-orchestration-and-teamwork/master.md"));
     }
 }

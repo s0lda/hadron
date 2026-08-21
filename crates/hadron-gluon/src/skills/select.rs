@@ -86,7 +86,11 @@ pub struct Handoff {
 ///
 pub fn plan_ref(task: &str) -> Option<String> {
     task.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '[' || c == ']' || c == '<' || c == '>' || c == '"' || c == '\'' || c == '`')
-        .map(|tok| tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_'))
+        .map(|tok| {
+            let trimmed = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_' && c != ':');
+            let clean = trimmed.strip_prefix("file://").or_else(|| trimmed.strip_prefix("file:")).unwrap_or(trimmed);
+            clean.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_')
+        })
         .find_map(|tok| {
             if let Some(idx) = tok.find("plans/") {
                 let after = &tok[idx + "plans/".len()..];

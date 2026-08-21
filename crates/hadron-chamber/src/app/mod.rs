@@ -306,6 +306,7 @@ struct Chamber {
     pub(super) plan_overview_collapsed: bool,
     pub(super) file_tree_previous_tab: Option<RightRailTab>,
     pub(super) last_plan_path: Option<String>,
+    pub(super) manual_plan_override_at_message_len: Option<usize>,
     pub(super) last_incomplete_task: Option<String>,
     /// Virtual list state for the Chat tab.
     chat_list_state: gpui::ListState,
@@ -1130,6 +1131,7 @@ impl Chamber {
             plan_overview_collapsed: false,
             file_tree_previous_tab: None,
             last_plan_path: None,
+            manual_plan_override_at_message_len: None,
             last_incomplete_task: None,
             chat_list_state,
             log_list_state,

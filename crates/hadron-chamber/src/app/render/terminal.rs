@@ -918,6 +918,7 @@ impl super::Chamber {
                                                 move |_, window, cx| {
                                                     view_click.update(cx, |this, cx| {
                                                         this.last_plan_path = Some(target.clone());
+                                                        this.manual_plan_override_at_message_len = Some(this.view.messages.len());
                                                         this.update_active_plan();
                                                         cx.notify();
                                                     });
