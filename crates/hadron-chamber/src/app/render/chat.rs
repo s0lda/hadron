@@ -1514,6 +1514,14 @@ mod milestone_3_tests {
         assert!(!comp_files.candidates.is_empty());
         assert_eq!(comp_files.candidates[0].label, "📄 @chat.rs");
         assert_eq!(comp_files.candidates[0].detail, "src/app/render/chat.rs");
+
+        let gitignored_files = vec![
+            ".hadron/docs/plans/2026-08-21-swarm-orchestration-and-teamwork/master.md".to_string(),
+        ];
+        let comp_plans = completion_candidates("@master", 7, &quarks, &gitignored_files, &sessions).expect("plan candidates");
+        assert_eq!(comp_plans.candidates[0].label, "📄 @master.md");
+        assert_eq!(comp_plans.candidates[0].detail, ".hadron/docs/plans/2026-08-21-swarm-orchestration-and-teamwork/master.md");
+        assert_eq!(comp_plans.candidates[0].new_text, "@.hadron/docs/plans/2026-08-21-swarm-orchestration-and-teamwork/master.md ");
     }
 
     #[test]
