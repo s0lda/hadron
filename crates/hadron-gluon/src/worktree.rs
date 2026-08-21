@@ -777,6 +777,84 @@ pub fn changed_paths(wt: &Worktree, base: &str) -> anyhow::Result<Vec<String>> {
     Ok(out.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
 }
 
+/// Result of an in-flight background worktree rebase operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RebaseOutcome {
+    CleanFastForward { tree: PathBuf, new_head: String },
+    AlreadyCurrent { tree: PathBuf },
+    ConflictDetected { tree: PathBuf, conflicted_files: Vec<PathBuf> },
+}
+
+/// Stream background rebases across all active quark worktrees after a commit lands on base.
+pub fn stream_rebase_to_active_worktrees(
+    _repo_root: &Path,
+    active_trees: &[PathBuf],
+    base_branch: &str,
+) -> Vec<RebaseOutcome> {
+    let mut outcomes = Vec::new();
+
+    for tree in active_trees {
+        if !tree.exists() {
+            continue;
+        }
+
+        // Get current branch in the worktree
+        let current_branch = git_ok(tree, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .ok()
+            .flatten()
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+
+        if current_branch.is_empty() || current_branch == base_branch {
+            continue;
+        }
+
+        let old_head = head(tree).unwrap_or_default();
+
+        // Attempt rebase onto base_branch with autostash
+        let rebase_res = git(tree, &["rebase", "--autostash", base_branch]);
+
+        match rebase_res {
+            Ok(_) => {
+                let new_head = head(tree).unwrap_or_default();
+                if new_head == old_head {
+                    outcomes.push(RebaseOutcome::AlreadyCurrent {
+                        tree: tree.clone(),
+                    });
+                } else {
+                    outcomes.push(RebaseOutcome::CleanFastForward {
+                        tree: tree.clone(),
+                        new_head,
+                    });
+                }
+            }
+            Err(_) => {
+                // Collect conflicted files
+                let diff_out = git_ok(tree, &["diff", "--name-only", "--diff-filter=U"])
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+
+                let conflicted_files: Vec<PathBuf> = diff_out
+                    .lines()
+                    .map(|l| tree.join(l.trim()))
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .collect();
+
+                // Abort rebase to leave worktree in clean pre-rebase state
+                let _ = git(tree, &["rebase", "--abort"]);
+
+                outcomes.push(RebaseOutcome::ConflictDetected {
+                    tree: tree.clone(),
+                    conflicted_files,
+                });
+            }
+        }
+    }
+
+    outcomes
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
