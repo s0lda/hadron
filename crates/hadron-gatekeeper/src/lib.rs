@@ -15,6 +15,7 @@ pub mod invariant_synthesis;
 pub mod sandbox;
 pub mod mutation_quark;
 pub mod cache_guard;
+pub mod distiller;
 
 pub use gate::{any_pending_permission, grant, grant_remembering, pending_permission, PendingPermission};
 pub use hadron_lattice::{Mode, Risk};
@@ -31,3 +32,5 @@ pub use invariant_synthesis::*;
 pub use sandbox::*;
 pub use mutation_quark::*;
 pub use cache_guard::*;
+pub use distiller::*;
+
