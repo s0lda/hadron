@@ -1436,6 +1436,7 @@ fn first_family_with_a_real_bold(cx: &App, candidates: &[&str]) -> SharedString 
     candidates
         .iter()
         .copied()
+        .filter(|&name| !crate::fonts::is_emoji_or_symbol_font(name))
         .find(|&name| {
             let regular = gpui::font(name);
             text_system.resolve_font(&regular.clone().bold()) != text_system.resolve_font(&regular)

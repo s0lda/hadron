@@ -827,7 +827,10 @@ impl super::Chamber {
             sys_names.sort();
             sys_names.dedup();
             for name in sys_names {
-                if crate::fonts::BUNDLED_UI_FAMILIES.contains(&name.as_str()) || name == ".SystemUIFont" {
+                if crate::fonts::BUNDLED_UI_FAMILIES.contains(&name.as_str())
+                    || name == ".SystemUIFont"
+                    || crate::fonts::is_emoji_or_symbol_font(&name)
+                {
                     continue;
                 }
                 let regular = gpui::font(&name);
@@ -910,7 +913,10 @@ impl super::Chamber {
             sys_names.sort();
             sys_names.dedup();
             for name in sys_names {
-                if crate::fonts::BUNDLED_MONO_FAMILIES.contains(&name.as_str()) {
+                if crate::fonts::BUNDLED_MONO_FAMILIES.contains(&name.as_str())
+                    || name == ".SystemUIFont"
+                    || crate::fonts::is_emoji_or_symbol_font(&name)
+                {
                     continue;
                 }
                 let regular = gpui::font(&name);
@@ -928,6 +934,7 @@ impl super::Chamber {
                 }
                 None => "Cascadia Code (Default)".to_string(),
             };
+
             let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
             self.mono_font_select_state.update(cx, |s, cx| {
                 s.set_items(delegate, window, cx);

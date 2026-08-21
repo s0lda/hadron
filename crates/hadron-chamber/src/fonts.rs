@@ -62,6 +62,18 @@ pub fn embedded() -> Vec<Cow<'static, [u8]>> {
     ]
 }
 
+/// Check if a font family name refers to an emoji or icon/symbol font that should
+/// never be probed as a text UI/mono font candidate (probing emoji fonts without 'm'
+/// causes GPUI's cosmic-text backend to purge them from the font database).
+pub fn is_emoji_or_symbol_font(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower == "noto color emoji"
+        || lower == "notocoloremoji"
+        || lower.contains("emoji")
+        || lower.contains("symbol")
+        || lower.contains("icon")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,10 +119,70 @@ mod tests {
     }
 
     #[test]
+    fn is_emoji_or_symbol_font_detects_emoji_and_icon_fonts() {
+        assert!(is_emoji_or_symbol_font("Noto Color Emoji"));
+        assert!(is_emoji_or_symbol_font("NotoColorEmoji"));
+        assert!(is_emoji_or_symbol_font("Segoe UI Emoji"));
+        assert!(is_emoji_or_symbol_font("Apple Color Emoji"));
+        assert!(is_emoji_or_symbol_font("FontAwesome Icons"));
+        assert!(is_emoji_or_symbol_font("Segoe UI Symbol"));
+        assert!(!is_emoji_or_symbol_font("Inter"));
+        assert!(!is_emoji_or_symbol_font("Cascadia Code"));
+        assert!(!is_emoji_or_symbol_font("JetBrains Mono"));
+        assert!(!is_emoji_or_symbol_font("Fira Code"));
+    }
+
+    #[test]
     #[cfg(feature = "gui")]
     fn default_fallbacks_include_noto_color_emoji() {
         let fb = default_fallbacks();
         assert_eq!(fb.fallback_list(), &["Noto Color Emoji"]);
     }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn emoji_layout_resolves_glyphs_from_noto_color_emoji() {
+        use gpui::PlatformTextSystem;
+
+        let cosmic = std::sync::Arc::new(gpui_wgpu::CosmicTextSystem::new("fallback"));
+        let mut cx = gpui::HeadlessAppContext::new(cosmic.clone());
+        cx.update(|cx| {
+            cx.text_system().add_fonts(embedded()).expect("register bundled fonts");
+            
+            // Safe font picker probe filtering out emoji / symbol fonts:
+            let text_system = cx.text_system();
+            for name in text_system.all_font_names() {
+                if is_emoji_or_symbol_font(&name) {
+                    continue;
+                }
+                let regular = gpui::font(&name);
+                let _ = text_system.resolve_font(&regular);
+                let _ = text_system.resolve_font(&regular.bold());
+            }
+
+            for family in BUNDLED_UI_FAMILIES.into_iter().chain(BUNDLED_MONO_FAMILIES) {
+                let font = gpui::font(family);
+                let font_id = cx.text_system().resolve_font(&font);
+                let test_str = "Status: 🚀 Complete! 🔥 Great job ✨ 🎉 🤣 👍 💡";
+                let layout = cosmic.layout_line(
+                    test_str,
+                    gpui::px(14.0),
+                    &[gpui::FontRun {
+                        len: test_str.len(),
+                        font_id,
+                    }],
+                );
+                let emoji_glyphs_count = layout.runs.iter()
+                    .flat_map(|r| r.glyphs.iter())
+                    .filter(|g| g.is_emoji && g.id.0 > 0)
+                    .count();
+                assert!(
+                    emoji_glyphs_count >= 6,
+                    "Family '{family}' failed to resolve emoji glyphs (got {emoji_glyphs_count})"
+                );
+            }
+        });
+    }
 }
+
 
