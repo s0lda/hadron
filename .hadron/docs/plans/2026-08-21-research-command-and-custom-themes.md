@@ -58,14 +58,14 @@
 - [x] Step 4.2: Implement preset-to-definition conversions for built-in themes (`Obsidian`, `Oled`, `Midnight`, `Tokyo`).
 - [x] Step 4.3: Add unit tests verifying serialization, deserialization, and color hex parsing.
 
-### Task 5: Dynamic Runtime Theme Swapping
+### Task 5: Dynamic Runtime Theme Swapping (commit `d6ce7ca8`)
 **Files:**
 - Modify: `crates/hadron-chamber/src/theme.rs`
 - Test: `crates/hadron-chamber/src/theme.rs`
 
-- [ ] Step 5.1: Replace static preset lookup with active `ThemeDefinition` resolution.
-- [ ] Step 5.2: Update all semantic token functions (`canvas_base`, `bg_surface`, `syntax_keyword`, `syntax_function`, `syntax_string`, etc.) to read from the active theme.
-- [ ] Step 5.3: Add unit tests verifying dynamic theme switching and token fidelity.
+- [x] Step 5.1: Replace static preset lookup with active `ThemeDefinition` resolution.
+- [x] Step 5.2: Update all semantic token functions (`canvas_base`, `bg_surface`, `syntax_keyword`, `syntax_function`, `syntax_string`, etc.) to read from the active theme.
+- [x] Step 5.3: Add unit tests verifying dynamic theme switching and token fidelity.
 
 ---
 
