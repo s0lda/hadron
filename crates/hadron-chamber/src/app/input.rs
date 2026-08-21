@@ -755,6 +755,9 @@ mod tests {
             "review",
             "replay",
             "fork-field",
+            "team-review",
+            "bakeoff",
+            "grill-me",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(
