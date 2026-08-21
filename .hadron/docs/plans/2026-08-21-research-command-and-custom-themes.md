@@ -90,11 +90,25 @@
 
 ---
 
-## Phase 4: Full Workspace Verification & Nucleus Documentation
+## Phase 4: Chamber Plan Rail Viewport Bugfix
 
-### Task 8: Workspace Gate & Nucleus Feature Map Update
+### Task 8: Plan Rail Scroll Viewport & Bottom Margin Clearance
+**Files:**
+- Modify: `crates/hadron-chamber/src/app/render/terminal.rs`
+- Test: `crates/hadron-chamber/src/app/render/terminal.rs`
+
+- [ ] Step 8.1: Change `RightRailTab::Plan` outer container from `.size_full()` to `.flex_1().min_h_0().w_full().relative()` to prevent flex height overflow past card header.
+- [ ] Step 8.2: Add bottom clearance padding (`pb_8()`) to the plan checklist `list` container ensuring the bottom-most item is fully visible and not cut off on scroll.
+- [ ] Step 8.3: Run `cargo test -p hadron-chamber` to verify render compilation and regression safety.
+
+---
+
+## Phase 5: Full Workspace Verification & Nucleus Documentation
+
+### Task 9: Workspace Gate & Nucleus Feature Map Update
 **Files:**
 - Modify: `.hadron/nucleus/features.md`
 
-- [ ] Step 8.1: Run `cargo test --workspace` to ensure zero regressions across all crates.
-- [ ] Step 8.2: Update `.hadron/nucleus/features.md` with `/research` command and Custom Theme Engine documentation.
+- [ ] Step 9.1: Run `cargo test --workspace` to ensure zero regressions across all crates.
+- [ ] Step 9.2: Update `.hadron/nucleus/features.md` with `/research` command and Custom Theme Engine documentation.
+

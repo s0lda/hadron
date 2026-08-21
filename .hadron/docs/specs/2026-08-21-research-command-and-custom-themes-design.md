@@ -190,6 +190,12 @@ In `Settings -> Appearance`:
   - **Live Preview Panel**: Real-time rendering of a code sample and UI badge/card strip demonstrating color combinations before saving.
   - **Actions**: "Create New Theme", "Duplicate", "Export Theme JSON", "Import Theme JSON", "Reset to Default".
 
+### 4.4 Chamber Plan Rail Viewport Layout & Bottom Clearance
+- **Root Cause**: `RightRailTab::Plan` in `crates/hadron-chamber/src/app/render/terminal.rs` uses `.size_full()` on its outer wrapper instead of `.flex_1().min_h_0()`. Inside a parent flex card with a fixed header (`px_3() py_2()`), `.size_full()` causes the scroll container to overflow by the header height (~36px), clipping the bottom-most task item out of the viewport.
+- **Remediation**:
+  - Convert outer wrapper in `RightRailTab::Plan` to `.flex_1().min_h_0().w_full().relative()`, matching the sibling `Tasks` and `Changes` tabs.
+  - Add explicit bottom clearance padding (`pb_8()`) to `list` so task items and DAG wave graphs scroll comfortably clear of the bottom border.
+
 ---
 
 ## 5. Testing & Verification Strategy
