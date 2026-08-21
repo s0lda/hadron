@@ -69,7 +69,7 @@ use identity::{
 };
 
 mod tabs;
-use tabs::{ChatTab, GitSubtab, InfoTab, Rail, RightRailTab};
+use tabs::{ChatTab, GitSubtab, InfoTab, Rail, RightRailTab, RosterTab};
 
 mod providers;
 use providers::{
@@ -252,6 +252,8 @@ struct Chamber {
     /// Keyboard cursor over the roster (index into `view.roster`), moved by the
     /// quark-nav keys and drawn as a highlighted row. `None` = nothing selected.
     selected_quark_ix: Option<usize>,
+    /// Which filter tab the roster rail is showing (Active vs All).
+    roster_tab: RosterTab,
     /// Whether the keyboard-triggered app menu overlay is open (mirrors the click
     /// dropdown behind the hamburger button, but reachable without the mouse).
     app_menu_open: bool,
@@ -1095,6 +1097,7 @@ impl Chamber {
             visualizer_selected_quark: None,
             visualizer_last_mouse: None,
             selected_quark_ix: None,
+            roster_tab: RosterTab::Active,
             app_menu_open: false,
             working_diff: None,
             changes_open_ixs: std::collections::HashSet::new(),

@@ -183,3 +183,51 @@ impl RightRailTab {
         }
     }
 }
+
+/// The filter tabs for the roster rail: active quarks in this repo vs the entire catalogue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum RosterTab {
+    #[default]
+    Active,
+    All,
+}
+
+impl RosterTab {
+    pub(super) const ALL: [RosterTab; 2] = [RosterTab::Active, RosterTab::All];
+
+    pub(super) fn index(self) -> usize {
+        match self {
+            RosterTab::Active => 0,
+            RosterTab::All => 1,
+        }
+    }
+
+    pub(super) fn from_index(ix: usize) -> Self {
+        Self::ALL.get(ix).copied().unwrap_or(RosterTab::Active)
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            RosterTab::Active => "Active",
+            RosterTab::All => "All",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_roster_tab_indexing_and_defaults() {
+        assert_eq!(RosterTab::default(), RosterTab::Active);
+        assert_eq!(RosterTab::Active.index(), 0);
+        assert_eq!(RosterTab::All.index(), 1);
+        assert_eq!(RosterTab::from_index(0), RosterTab::Active);
+        assert_eq!(RosterTab::from_index(1), RosterTab::All);
+        assert_eq!(RosterTab::from_index(99), RosterTab::Active);
+        assert_eq!(RosterTab::Active.label(), "Active");
+        assert_eq!(RosterTab::All.label(), "All");
+        assert_eq!(RosterTab::ALL.len(), 2);
+    }
+}

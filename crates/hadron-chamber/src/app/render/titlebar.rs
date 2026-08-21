@@ -93,8 +93,22 @@ impl super::Chamber {
             // avatars keep a clear gutter from the strip edges instead of touching them.
             let live_dir = hadron_lattice::live::live_dir(&self.path);
             let mut avatars = v_flex().w_full().gap_2p5().items_center().px_1();
-            for r in &self.view.roster {
-                let id = self.resolve_identity(&r.id);
+            let mut sorted_roster: Vec<_> = self
+                .view
+                .roster
+                .iter()
+                .map(|r| {
+                    let id = self.resolve_identity(&r.id);
+                    (r, id)
+                })
+                .collect();
+            sorted_roster.sort_by(|a, b| {
+                a.1.name
+                    .to_lowercase()
+                    .cmp(&b.1.name.to_lowercase())
+                    .then_with(|| a.0.id.to_lowercase().cmp(&b.0.id.to_lowercase()))
+            });
+            for (r, id) in sorted_roster {
                 let activity = hadron_lattice::live::read(
                     &live_dir,
                     &hadron_lattice::QuarkId::new(&r.id),

@@ -63,50 +63,62 @@ impl super::Chamber {
         // Pinned above the input, so it is where the human is already looking.
         let drafts = streaming_drafts(&self.view.roster, |id| live_map.get(id).cloned());
         let draft_card = (!drafts.is_empty()).then(|| {
-            v_flex().w_full().gap_2().mb_2().children(drafts.into_iter().map(|(quark_id_str, text)| {
-                let identity = self.resolve_identity(&quark_id_str);
-                v_flex()
-                    .w_full()
-                    .overflow_hidden()
-                    .gap_1()
-                    .px_3()
-                    .py_2()
-                    .rounded_lg()
-                    .bg(theme::glass_card())
-                    .border_1()
-                    .border_color(identity.color.opacity(0.5))
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(identity.color)
-                                    .child(identity.name.clone()),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme::text_muted())
-                                    .child("writing\u{2026}"),
-                            ),
-                    )
-                    // Plain text, NOT markdown: this element re-renders on every
-                    // publish while the reply streams, and `parsed_markdown` is keyed
-                    // by message identity for rows that do not change. Re-parsing a
-                    // growing document several times a second on a software renderer
-                    // is the cost `a-render-fn-runs-on-every-hover` already charged
-                    // this codebase once. The finished message renders as markdown a
-                    // moment later, in the list, where it belongs.
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme::text_secondary())
-                            .child(text),
-                    )
-            }))
+            v_flex()
+                .id("draft-cards-list")
+                .w_full()
+                .gap_2()
+                .mb_2()
+                .max_h(px(220.0))
+                .overflow_y_scroll()
+                .children(drafts.into_iter().map(|(quark_id_str, text)| {
+                    let identity = self.resolve_identity(&quark_id_str);
+                    v_flex()
+                        .w_full()
+                        .overflow_hidden()
+                        .gap_1()
+                        .px_3()
+                        .py_2()
+                        .rounded_lg()
+                        .bg(theme::glass_card())
+                        .border_1()
+                        .border_color(identity.color.opacity(0.5))
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(identity.color)
+                                        .child(identity.name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child("writing\u{2026}"),
+                                ),
+                        )
+                        // Plain text, NOT markdown: this element re-renders on every
+                        // publish while the reply streams, and `parsed_markdown` is keyed
+                        // by message identity for rows that do not change. Re-parsing a
+                        // growing document several times a second on a software renderer
+                        // is the cost `a-render-fn-runs-on-every-hover` already charged
+                        // this codebase once. The finished message renders as markdown a
+                        // moment later, in the list, where it belongs.
+                        // Capped to ~5 lines (100px) and scrollable so streaming replies
+                        // do not blow up the input area and occlude the chat history.
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("draft-text-{}", quark_id_str)))
+                                .text_xs()
+                                .text_color(theme::text_secondary())
+                                .max_h(px(100.0))
+                                .overflow_y_scroll()
+                                .child(text),
+                        )
+                }))
         });
 
         let live_card = (!active.is_empty()).then(|| {
@@ -129,12 +141,15 @@ impl super::Chamber {
             let name_col_w = (max_name_len as f32 * 8.0 + 16.0).clamp(38.0, 130.0);
 
             v_flex()
+                .id("live-cards-list")
                 .w_full()
                 .overflow_hidden()
                 .gap_1()
                 .px_2p5()
                 .py_2()
                 .mb_2()
+                .max_h(px(120.0))
+                .overflow_y_scroll()
                 .rounded_lg()
                 .bg(theme::term_bg())
                 .border_1()

@@ -3,28 +3,107 @@ use hadron_lattice::QuarkState;
 
 impl super::Chamber {
     pub(super) fn roster_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut rows = v_flex().w_full().gap_2();
         let live_dir = hadron_lattice::live::live_dir(&self.path);
+        let selected_tab = self.roster_tab;
 
-        for (ix, r) in self.view.roster.iter().enumerate() {
-            let is_selected = self.selected_quark_ix == Some(ix);
+        let active_count = self.view.roster.iter().filter(|r| r.adopted && r.enabled).count();
+        let total_count = self.view.roster.len();
+
+        // 1. Filter rows according to the selected tab:
+        //    - Active: only adopted & enabled quarks in the current repo.
+        //    - All: all roster entries (adopted + global catalogue).
+        let filtered_quarks: Vec<(usize, &RosterRow, String)> = self
+            .view
+            .roster
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| match selected_tab {
+                RosterTab::Active => r.adopted && r.enabled,
+                RosterTab::All => true,
+            })
+            .map(|(ix, r)| {
+                let id = self.resolve_identity(&r.id);
+                (ix, r, id.name)
+            })
+            .collect();
+
+        // 2. Alphabetical sorting: display name takes priority, fallback to id, case-insensitive.
+        let mut sorted_quarks = filtered_quarks;
+        sorted_quarks.sort_by(|a, b| {
+            a.2.to_lowercase()
+                .cmp(&b.2.to_lowercase())
+                .then_with(|| a.1.id.to_lowercase().cmp(&b.1.id.to_lowercase()))
+        });
+
+        let mut rows = v_flex().w_full().gap_2();
+        for (orig_ix, r, _) in &sorted_quarks {
+            let is_selected = self.selected_quark_ix == Some(*orig_ix);
             let activity = hadron_lattice::live::read(
                 &live_dir,
                 &hadron_lattice::QuarkId::new(&r.id),
                 chrono::Utc::now(),
             );
-            rows = rows.child(self.render_quark_card(r, ix, is_selected, activity, cx));
+            rows = rows.child(self.render_quark_card(r, *orig_ix, is_selected, activity, cx));
         }
 
-        if self.view.roster.is_empty() {
+        if sorted_quarks.is_empty() {
+            let empty_msg = match selected_tab {
+                RosterTab::Active => "no active quarks",
+                RosterTab::All => "no quarks yet",
+            };
             rows = rows.child(
                 div()
                     .text_sm()
                     .text_color(theme::text_muted())
                     .p_3()
-                    .child("no quarks yet"),
+                    .child(empty_msg),
             );
         }
+
+        // Roster filter capsule tabs
+        let tabs = h_flex()
+            .id("roster-capsule-tabs")
+            .items_center()
+            .gap_1()
+            .p_1()
+            .rounded_full()
+            .bg(theme::tab_bar_bg())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .w_full()
+            .children(RosterTab::ALL.map(|t| {
+                let is_selected = t == selected_tab;
+                let ix = t.index();
+                let count_label = match t {
+                    RosterTab::Active => format!("Active ({active_count})"),
+                    RosterTab::All => format!("All ({total_count})"),
+                };
+                div()
+                    .id(("roster-tab-pill", ix))
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .text_center()
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .when(is_selected, |s| {
+                        s.bg(theme::glass_highlight())
+                            .text_color(theme::accent())
+                            .font_weight(gpui::FontWeight::BOLD)
+                    })
+                    .when(!is_selected, |s| {
+                        s.text_color(theme::text_muted())
+                            .hover(|h| h.text_color(theme::text()))
+                    })
+                    .text_xs()
+                    .child(count_label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.roster_tab = RosterTab::from_index(ix);
+                        cx.notify();
+                    }))
+            }));
 
         let card = v_flex()
             .w_full()
@@ -37,6 +116,7 @@ impl super::Chamber {
             .border_1()
             .border_color(theme::glass_highlight())
             .child(self.render_worktree_selector(cx))
+            .child(tabs)
             .child(
                 div()
                     .id("roster-scroll")
@@ -583,6 +663,104 @@ mod tests {
             resolve_items(Transport::Sdk, true, true, Some(Flavor::Worker)),
             vec!["Info", "Disable", "Make Orchestrator"]
         );
+    }
+
+    #[test]
+    fn test_roster_tab_filtering_and_sorting() {
+        let r1 = RosterRow {
+            id: "z_worker".to_string(),
+            display_name: Some("Alice".to_string()),
+            state: QuarkState::Ground,
+            mode: Mode::Ask,
+            mode_is_override: false,
+            vendor: "anthropic".to_string(),
+            model: "claude-3-5".to_string(),
+            flavor: None,
+            transport: hadron_lattice::Transport::Cli,
+            effort: None,
+            enabled: true,
+            adopted: true,
+            tokens: 100,
+            unknown_turns: 0,
+        };
+
+        let r2 = RosterRow {
+            id: "a_worker".to_string(),
+            display_name: Some("Bob".to_string()),
+            state: QuarkState::Ground,
+            mode: Mode::Ask,
+            mode_is_override: false,
+            vendor: "openai".to_string(),
+            model: "gpt-4o".to_string(),
+            flavor: None,
+            transport: hadron_lattice::Transport::Cli,
+            effort: None,
+            enabled: false, // Disabled
+            adopted: true,
+            tokens: 50,
+            unknown_turns: 0,
+        };
+
+        let r3 = RosterRow {
+            id: "charlie".to_string(),
+            display_name: None, // Will default to Charlie
+            state: QuarkState::Ground,
+            mode: Mode::Ask,
+            mode_is_override: false,
+            vendor: "google".to_string(),
+            model: "gemini-2.5".to_string(),
+            flavor: None,
+            transport: hadron_lattice::Transport::Cli,
+            effort: None,
+            enabled: true,
+            adopted: false, // Not adopted (catalogue only)
+            tokens: 0,
+            unknown_turns: 0,
+        };
+
+        let roster = vec![r1.clone(), r2.clone(), r3.clone()];
+
+        // Active tab filter: only adopted && enabled
+        let active_quarks: Vec<_> = roster
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.adopted && r.enabled)
+            .collect();
+        assert_eq!(active_quarks.len(), 1);
+        assert_eq!(active_quarks[0].1.id, "z_worker");
+
+        // All tab filter: all 3
+        let all_quarks: Vec<_> = roster.iter().enumerate().collect();
+        assert_eq!(all_quarks.len(), 3);
+
+        // Sorting by display name priority: "Alice" (z_worker) -> "Bob" (a_worker) -> "Charlie" (charlie)
+        let mut sorted: Vec<(usize, &RosterRow, String)> = roster
+            .iter()
+            .enumerate()
+            .map(|(ix, r)| {
+                let name = r.display_name.clone().unwrap_or_else(|| {
+                    let mut c = r.id.chars();
+                    match c.next() {
+                        None => String::new(),
+                        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    }
+                });
+                (ix, r, name)
+            })
+            .collect();
+
+        sorted.sort_by(|a, b| {
+            a.2.to_lowercase()
+                .cmp(&b.2.to_lowercase())
+                .then_with(|| a.1.id.to_lowercase().cmp(&b.1.id.to_lowercase()))
+        });
+
+        assert_eq!(sorted[0].2, "Alice");
+        assert_eq!(sorted[0].1.id, "z_worker");
+        assert_eq!(sorted[1].2, "Bob");
+        assert_eq!(sorted[1].1.id, "a_worker");
+        assert_eq!(sorted[2].2, "Charlie");
+        assert_eq!(sorted[2].1.id, "charlie");
     }
 }
 

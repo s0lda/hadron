@@ -1361,6 +1361,20 @@ impl Chamber {
         cx.notify();
     }
 
+    /// Cycle the roster rail's filter tab (Active/All) by `delta`, wrapping.
+    pub(super) fn cycle_roster_tab(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let n = RosterTab::ALL.len() as isize;
+        let cur = self.roster_tab.index() as isize;
+        self.roster_tab = RosterTab::from_index((cur + delta).rem_euclid(n) as usize);
+        cx.notify();
+    }
+
+    /// Select a specific roster filter tab.
+    pub(super) fn select_roster_tab(&mut self, tab: RosterTab, cx: &mut Context<Self>) {
+        self.roster_tab = tab;
+        cx.notify();
+    }
+
     /// Cycle the right rail's tab (Terminal/Files/Changes/Plan/Tasks) by `delta`, wrapping.
     pub(super) fn cycle_inspector_tab(&mut self, delta: isize, cx: &mut Context<Self>) {
         let n = RightRailTab::ALL.len() as isize;
