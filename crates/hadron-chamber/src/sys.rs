@@ -12,11 +12,20 @@ use hadron_lattice::term::{self, Source};
 /// and the `exists()` filter drops anything that is only in the index.
 /// Each returned entry is `(path, is_ignored)`. Non-ignored (tracked or untracked)
 /// files are listed individually; gitignored entries are unioned in with `--directory`
-/// so a **wholly-ignored directory collapses to one entry** (e.g. `target/`) instead of
-/// every file inside it. That collapse is not cosmetic: in this workspace the raw ignored
-/// listing is ~100k files (all of `target/`, the vendored `gpui-component/`, venvs), which
-/// would swamp both the tree and the `@`-mention index. A collapsed directory keeps its
-/// trailing `/` so the tree can render it as an (empty, muted) folder rather than a file.
+fn is_heavy_ignored_dir(rel_path: &str) -> bool {
+    for c in rel_path.split('/') {
+        match c {
+            "target" | "node_modules" | ".git" | "trees" | "reaped" | "sessions"
+            | "update" | "venv" | ".venv" | "dist" | "build" | "incremental" => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Ignored entries, with wholly-ignored heavy directories collapsed to a single entry.
+/// Non-heavy gitignored directories (e.g. `.hadron/docs/plans/`, `.hadron/nucleus/`, `internal/`)
+/// are automatically expanded so internal plans and documentation are discoverable in chat completions.
 pub fn list_workspace_files(
     repo_root: &Path,
     expanded_dirs: &std::collections::HashSet<String>,
@@ -44,7 +53,7 @@ pub fn list_workspace_files(
         }
     }
 
-    // Ignored entries, with wholly-ignored directories collapsed to a single entry.
+    // Ignored entries, with wholly-ignored heavy directories collapsed to a single entry.
     let mut ignored_dirs_to_expand = Vec::new();
     if let Ok(output) = Command::new("git")
         .args([
@@ -67,7 +76,7 @@ pub fn list_workspace_files(
                     files.push((line.to_string(), true));
                     if line.ends_with('/') {
                         let path_str = bare.to_string();
-                        if expanded_dirs.contains(&path_str) {
+                        if !is_heavy_ignored_dir(&path_str) || expanded_dirs.contains(&path_str) {
                             ignored_dirs_to_expand.push(path_str);
                         }
                     }
@@ -76,7 +85,7 @@ pub fn list_workspace_files(
         }
     }
 
-    // Recursively expand gitignored directories if they are in the expanded set
+    // Recursively expand gitignored directories
     let mut i = 0;
     while i < ignored_dirs_to_expand.len() {
         let dir_rel = ignored_dirs_to_expand[i].clone();
@@ -95,8 +104,10 @@ pub fn list_workspace_files(
                     child_rel.clone()
                 };
                 files.push((entry_path, true));
-                if is_dir && expanded_dirs.contains(&child_rel) {
-                    ignored_dirs_to_expand.push(child_rel);
+                if is_dir {
+                    if !is_heavy_ignored_dir(&child_rel) || expanded_dirs.contains(&child_rel) {
+                        ignored_dirs_to_expand.push(child_rel);
+                    }
                 }
             }
         }
