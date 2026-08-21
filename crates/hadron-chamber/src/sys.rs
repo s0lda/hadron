@@ -676,6 +676,49 @@ mod tests {
     }
 
     #[test]
+    fn gitignored_non_heavy_directories_are_automatically_expanded() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        Command::new("git")
+            .arg("init")
+            .current_dir(root)
+            .output()
+            .unwrap();
+
+        fs::write(root.join(".gitignore"), ".hadron/\ntarget/\n").unwrap();
+        fs::create_dir_all(root.join(".hadron/docs/plans")).unwrap();
+        fs::write(root.join(".hadron/docs/plans/master.md"), "# Master Plan").unwrap();
+        fs::create_dir_all(root.join(".hadron/trees/peer1")).unwrap();
+        fs::write(root.join(".hadron/trees/peer1/scratch.txt"), "heavy tree file").unwrap();
+        fs::create_dir_all(root.join("target/debug")).unwrap();
+        fs::write(root.join("target/debug/app.bin"), "binary").unwrap();
+
+        let files = list_workspace_files(root, &std::collections::HashSet::new());
+        // .hadron/docs/plans/master.md is indexed automatically
+        assert!(
+            files.contains(&(".hadron/docs/plans/master.md".to_string(), true)),
+            "internal plans in gitignored non-heavy dirs must be discoverable: {files:?}"
+        );
+        // Heavy dirs (target/ and .hadron/trees/) remain collapsed
+        assert!(
+            files.contains(&("target/".to_string(), true)),
+            "target/ must remain collapsed: {files:?}"
+        );
+        assert!(
+            !files.contains(&("target/debug/app.bin".to_string(), true)),
+            "target inner files must not be traversed: {files:?}"
+        );
+        assert!(
+            files.contains(&(".hadron/trees/".to_string(), true)),
+            ".hadron/trees/ must remain collapsed: {files:?}"
+        );
+        assert!(
+            !files.contains(&(".hadron/trees/peer1/scratch.txt".to_string(), true)),
+            "heavy subtrees must not be traversed: {files:?}"
+        );
+    }
+
+    #[test]
     fn insert_builds_folder_nodes_with_children_and_full_paths() {
         // The user's case: an untracked file arrives as its full path (git lists
         // untracked files individually, not collapsed). The folder node MUST exist
