@@ -228,6 +228,22 @@ pub fn retitle_from_plan(tasks: &mut [SwarmTask], plan_path: &str, plan_headings
     }
 }
 
+/// Retitle every row whose dispatch names a research document `research_path` with that research
+/// document's title.
+pub fn retitle_from_research(tasks: &mut [SwarmTask], research_path: &str, research_title: &str) {
+    let clean_title = trim_title(research_title);
+    if clean_title.is_empty() {
+        return;
+    }
+    for task in tasks.iter_mut() {
+        if let Some(named) = hadron_gluon::skills::research_ref(&task.body) {
+            if file_name_of(&named) == file_name_of(research_path) {
+                task.title = clean_title.clone();
+            }
+        }
+    }
+}
+
 /// The heading of the plan task `body` dispatches, if it dispatches one of `plan_path`'s.
 fn plan_heading_for<'h>(
     body: &str,
@@ -698,5 +714,39 @@ mod tests {
         // that width is what a naive mapping would do; this must not panic or drift.
         let t = Utc::now();
         assert_eq!(instant_at_fraction(t, t, 0.7), t);
+    }
+
+    #[test]
+    fn retitle_from_research_updates_title() {
+        let t0 = Utc::now();
+        let mut tasks = vec![
+            SwarmTask {
+                to: "researcher".into(),
+                from: "human".into(),
+                title: "Research something".into(),
+                body: "Please check `.hadron/docs/research/2026-08-21-theme-engine-research.md`".into(),
+                state: TaskState::Working,
+                asked_at: t0,
+                done_at: None,
+            },
+            SwarmTask {
+                to: "worker".into(),
+                from: "human".into(),
+                title: "Other task".into(),
+                body: "Do something unrelated".into(),
+                state: TaskState::Working,
+                asked_at: t0,
+                done_at: None,
+            },
+        ];
+
+        retitle_from_research(
+            &mut tasks,
+            ".hadron/docs/research/2026-08-21-theme-engine-research.md",
+            "Dynamic Theme Architecture Investigation",
+        );
+
+        assert_eq!(tasks[0].title, "Dynamic Theme Architecture Investigation");
+        assert_eq!(tasks[1].title, "Other task");
     }
 }

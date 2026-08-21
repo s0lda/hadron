@@ -114,6 +114,37 @@ pub fn plan_ref(task: &str) -> Option<String> {
         })
 }
 
+/// Finds a research document reference (`.hadron/docs/research/…` or `docs/research/…`) in a task string.
+pub fn research_ref(task: &str) -> Option<String> {
+    task.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '[' || c == ']' || c == '<' || c == '>' || c == '"' || c == '\'' || c == '`')
+        .map(|tok| {
+            let trimmed = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_' && c != ':');
+            let clean = trimmed.strip_prefix("file://").or_else(|| trimmed.strip_prefix("file:")).unwrap_or(trimmed);
+            clean.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_')
+        })
+        .find_map(|tok| {
+            if let Some(idx) = tok.find("research/") {
+                let after = &tok[idx + "research/".len()..];
+                if after.is_empty() {
+                    return None;
+                }
+                if after.ends_with(".md") {
+                    return Some(tok.to_string());
+                }
+                if after.contains('.') {
+                    return None;
+                }
+                if tok.ends_with('/') {
+                    Some(format!("{}index.md", tok))
+                } else {
+                    Some(format!("{}/index.md", tok))
+                }
+            } else {
+                None
+            }
+        })
+}
+
 /// The `author:` line from a plan's YAML front-matter.
 ///
 /// Only the leading `---` block is honoured: an `author:` mentioned in the prose of a

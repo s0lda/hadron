@@ -232,11 +232,49 @@ fn score_note(note: &NucleusNote, terms: &HashSet<String>) -> i64 {
     score
 }
 
+/// Extracts the title from a research markdown document.
+/// Matches `# Research: <Topic>` or `# <Title>`.
+pub fn parse_research_title(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("# Research:") {
+            let t = rest.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("# ") {
+            let t = rest.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::tempdir;
+
+    #[test]
+    fn parse_research_title_finds_title() {
+        let doc1 = "# Research: Dynamic Theme Engine\n\n- **Date**: 2026-08-21\n";
+        assert_eq!(
+            parse_research_title(doc1),
+            Some("Dynamic Theme Engine".to_string())
+        );
+
+        let doc2 = "# Custom Color Palettes\n\n## 1. Executive Summary";
+        assert_eq!(
+            parse_research_title(doc2),
+            Some("Custom Color Palettes".to_string())
+        );
+
+        let doc3 = "No header line here\njust text";
+        assert_eq!(parse_research_title(doc3), None);
+    }
 
     #[test]
     fn parse_note_extracts_frontmatter_and_content() {

@@ -38,7 +38,7 @@ mod tests;
 
 pub use review_board::*;
 pub use grill_me::*;
-pub use select::{description, index, plan_author, plan_ref, render, select, preferred_role, Handoff, Match};
+pub use select::{description, index, plan_author, plan_ref, research_ref, render, select, preferred_role, Handoff, Match};
 // `pub`, not `pub(crate)`: `/add-skill` (hadron-chamber) needs to inspect a
 // candidate skill's front-matter (the `tools:` warning, spec §10) before writing
 // it, and re-implementing this parser there would be a second definition of the
