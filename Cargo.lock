@@ -3031,6 +3031,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "ulid",
  "windows-sys 0.59.0",
 ]

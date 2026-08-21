@@ -1,8 +1,38 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::OnceLock;
+use tokio::sync::broadcast;
 
 use crate::Event;
+
+/// Reactive event signals for instant turn waking across the swarm.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LatticeWakeup {
+    TaskReady(String),
+    GateFinished { branch: String, passed: bool },
+    ToolBlocked { quark: String, reason: String },
+    HeartbeatStall { quark: String },
+}
+
+static WAKEUP_SENDER: OnceLock<broadcast::Sender<LatticeWakeup>> = OnceLock::new();
+
+pub fn wakeup_sender() -> &'static broadcast::Sender<LatticeWakeup> {
+    WAKEUP_SENDER.get_or_init(|| {
+        let (tx, _) = broadcast::channel(1024);
+        tx
+    })
+}
+
+/// Subscribe to push-based reactive wakeups from the Lattice event stream.
+pub fn subscribe_wakeups() -> broadcast::Receiver<LatticeWakeup> {
+    wakeup_sender().subscribe()
+}
+
+/// Emit a reactive wakeup signal to all active listeners.
+pub fn emit_wakeup(wakeup: LatticeWakeup) -> Result<usize, broadcast::error::SendError<LatticeWakeup>> {
+    wakeup_sender().send(wakeup)
+}
 
 /// Vector clock tracking sequence numbers per swarm node for causality ordering.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
