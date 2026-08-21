@@ -191,6 +191,9 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "theme", detail: "Switch color theme preset (e.g. /theme oled, /theme tokyo, /theme obsidian, /theme midnight)", arity: Arity::Line, arg: ArgSource::Theme, listed: true },
     Command { name: "stats", detail: "Switch to telemetry and token spend statistics tab", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "team", detail: "Display active swarm roster, models, and seats", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "team-review", detail: "Multi-quark peer review board across security, architecture, and simplicity", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "bakeoff", detail: "Spawn speculative tournament bake-off across competing solutions", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "grill-me", detail: "Interactive requirement alignment interview before plan synthesis", arity: Arity::Line, arg: ArgSource::None, listed: true },
 ];
 
 /// A short kebab-case id for a lesson line: the first few words, lowercased,
