@@ -56,6 +56,19 @@ pub struct InvariantSynthesizeArgs {
     pub auto_persist: bool,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct NucleusSemanticSearchArgs {
+    /// Natural language or keyword query
+    pub query: String,
+    /// Maximum number of search candidates to return
+    #[serde(default = "default_search_limit")]
+    pub limit: usize,
+}
+
+fn default_search_limit() -> usize {
+    5
+}
+
 #[tool_router(router = nucleus_router, vis = "pub(super)")]
 impl ForgeMcpServer {
     #[tool(
