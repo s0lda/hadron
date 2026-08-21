@@ -1,0 +1,100 @@
+# `/research` Command & Custom Theme Engine Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Implement the `/research` slash command with structured document lifecycle in `.hadron/docs/research/`, and deliver a complete custom theme and color customization system with syntax highlighting customization and live preview in Hadron Chamber.
+
+**Architecture:** 
+- `/research` command is registered in `hadron_chamber::text::COMMANDS` (SSOT), persisting structured research documents with frontmatter and analysis sections under `.hadron/docs/research/`, integrated into `hadron_chamber::model::tasks` for retitling and breadcrumb navigation.
+- Themes are represented by `ThemeDefinition` with granular surfaces, accents, text tiers, terminal tokens, and 28+ syntax highlighting tokens. The runtime engine in `hadron_chamber::theme` provides lockless access, with preset fallback and live customization controls in Settings -> Appearance.
+
+**Tech Stack:** Rust, GPUI, Serde JSON, Hadron Chamber, Gluon, Lattice, Forge MCP.
+
+---
+
+## Phase 1: `/research` Command Grammar & Document Lifecycle
+
+### Task 1: Command Table & Chat Parsing for `/research`
+**Files:**
+- Modify: `crates/hadron-chamber/src/text.rs`
+- Modify: `crates/hadron-chamber/src/app/actions.rs`
+- Test: `crates/hadron-chamber/src/app/input.rs` (`every_listed_command_is_handled`)
+
+- [ ] Step 1.1: Add `research` to `hadron_chamber::text::COMMANDS` with `Arity::Line`, `ArgSource::None`, and `listed: true`.
+- [ ] Step 1.2: Add dispatch handling for `/research` in `crates/hadron-chamber/src/app/actions.rs`.
+- [ ] Step 1.3: Run `cargo test -p hadron-chamber text` to verify command table consistency.
+
+### Task 2: Research Document Template & Task Tracker Retitling
+**Files:**
+- Modify: `crates/hadron-chamber/src/model/tasks.rs`
+- Modify: `crates/hadron-lattice/src/nucleus.rs`
+- Test: `crates/hadron-chamber/src/model/tasks.rs`
+
+- [ ] Step 2.1: Add `retitle_from_research` in `hadron-chamber::model::tasks` to scan `.hadron/docs/research/` and upgrade task titles.
+- [ ] Step 2.2: Add unit tests in `tasks.rs` verifying research document title extraction.
+
+### Task 3: Forge & MCP Research Tooling
+**Files:**
+- Create: `crates/hadron-forge/src/research.rs`
+- Modify: `crates/hadron-forge/src/lib.rs`
+- Create: `crates/hadron-forge-mcp/src/tools/research.rs`
+- Modify: `crates/hadron-forge-mcp/src/lib.rs`
+
+- [ ] Step 3.1: Implement `write_research`, `list_research`, and `read_research` in `hadron-forge`.
+- [ ] Step 3.2: Expose research tools in `hadron-forge-mcp`.
+- [ ] Step 3.3: Run `cargo test -p hadron-forge -p hadron-forge-mcp` to verify tool handlers.
+
+---
+
+## Phase 2: Custom Theme Schema & Runtime Engine
+
+### Task 4: Unified `ThemeDefinition` Data Model
+**Files:**
+- Modify: `crates/hadron-chamber/src/config.rs`
+- Modify: `crates/hadron-chamber/src/theme.rs`
+- Test: `crates/hadron-chamber/src/config.rs`
+
+- [ ] Step 4.1: Define `ThemeDefinition`, `SurfacePalette`, `AccentPalette`, `TextPalette`, `SyntaxPalette`, `TerminalPalette` with Serde support.
+- [ ] Step 4.2: Implement preset-to-definition conversions for built-in themes (`Obsidian`, `Oled`, `Midnight`, `Tokyo`).
+- [ ] Step 4.3: Add unit tests verifying serialization, deserialization, and color hex parsing.
+
+### Task 5: Dynamic Runtime Theme Swapping
+**Files:**
+- Modify: `crates/hadron-chamber/src/theme.rs`
+- Test: `crates/hadron-chamber/src/theme.rs`
+
+- [ ] Step 5.1: Replace static preset lookup with active `ThemeDefinition` resolution.
+- [ ] Step 5.2: Update all semantic token functions (`canvas_base`, `bg_surface`, `syntax_keyword`, `syntax_function`, `syntax_string`, etc.) to read from the active theme.
+- [ ] Step 5.3: Add unit tests verifying dynamic theme switching and token fidelity.
+
+---
+
+## Phase 3: Settings Appearance UI & Live Theme Editor
+
+### Task 6: Custom Theme Editor in Settings Overlay
+**Files:**
+- Modify: `crates/hadron-chamber/src/app/settings/providers.rs`
+- Modify: `crates/hadron-chamber/src/app/settings/overlay.rs`
+
+- [ ] Step 6.1: Add Theme Mode selector (Curated Presets vs Custom Themes) in Appearance settings.
+- [ ] Step 6.2: Add color input cards for UI Surfaces, Accents, and Text colors.
+- [ ] Step 6.3: Add syntax highlighting color matrix editor with categories (Keywords, Types, Strings, Comments, Variables, Operators).
+
+### Task 7: Live Syntax Highlighting & UI Preview Panel
+**Files:**
+- Modify: `crates/hadron-chamber/src/app/settings/providers.rs`
+
+- [ ] Step 7.1: Implement live preview widget showing code snippet with active syntax colors.
+- [ ] Step 7.2: Implement theme actions: Create, Duplicate, Reset, Import JSON, Export JSON.
+- [ ] Step 7.3: Verify saving updates `~/.hadron/chamber.json` and repaints UI immediately.
+
+---
+
+## Phase 4: Full Workspace Verification & Nucleus Documentation
+
+### Task 8: Workspace Gate & Nucleus Feature Map Update
+**Files:**
+- Modify: `.hadron/nucleus/features.md`
+
+- [ ] Step 8.1: Run `cargo test --workspace` to ensure zero regressions across all crates.
+- [ ] Step 8.2: Update `.hadron/nucleus/features.md` with `/research` command and Custom Theme Engine documentation.
