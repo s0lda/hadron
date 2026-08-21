@@ -36,6 +36,10 @@ pub mod locks;
 pub mod promoter;
 pub mod gossip;
 pub mod replay;
+pub mod artifacts;
+pub mod nucleus_search;
+pub mod nucleus_distill;
+pub mod budget;
 
 pub use nucleus::*;
 pub use nucleus_lint::*;
@@ -48,3 +52,8 @@ pub use locks::*;
 pub use promoter::*;
 pub use gossip::*;
 pub use replay::*;
+pub use artifacts::*;
+pub use nucleus_search::*;
+pub use nucleus_distill::*;
+pub use budget::*;
+
