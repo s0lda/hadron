@@ -272,6 +272,13 @@ impl super::Chamber {
     }
 
     pub(super) fn appearance_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_custom_active = self.prefs.custom_theme.is_some();
+        let active_theme_label = if let Some(custom) = &self.prefs.custom_theme {
+            format!("Custom: {}", custom.name)
+        } else {
+            self.prefs.theme_preset.unwrap_or_default().label().to_string()
+        };
+
         let typography_card = settings_card_section(
             "Typography & Appearance",
             Some(IconName::Palette),
@@ -279,7 +286,7 @@ impl super::Chamber {
                 .gap_3()
                 .child(settings_field(
                     "Color theme preset",
-                    Some("Curated dark surfaces: Obsidian Neutral (Default), OLED True Black, Midnight Slate, Tokyo Dark."),
+                    Some("Curated dark surfaces (Obsidian Neutral, OLED True Black, Midnight Slate, Tokyo Dark) or custom themes."),
                     self.theme_preset_select(window, cx),
                 ))
                 .child(settings_field(
@@ -309,7 +316,247 @@ impl super::Chamber {
                 )),
         );
 
-        v_flex().w_full().gap_4().child(typography_card)
+        let custom_theme_card = settings_card_section(
+            "Custom Theme Engine & Palettes",
+            Some(IconName::Palette),
+            v_flex()
+                .gap_3()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(div().text_sm().font_weight(gpui::FontWeight::MEDIUM).text_color(theme::text()).child("Active Palette:"))
+                                .child(
+                                    div()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .bg(theme::bg_surface_raised())
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(theme::accent())
+                                        .child(active_theme_label),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .when(!is_custom_active, |this| {
+                                    this.child(
+                                        text_button("btn-create-theme", "Create Custom Theme")
+                                            .bg(theme::bg_surface_raised())
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                let base_preset = this.prefs.theme_preset.unwrap_or_default();
+                                                let mut new_theme = config::ThemeDefinition::from_preset(base_preset);
+                                                new_theme.id = format!("custom-{}", chrono::Utc::now().timestamp());
+                                                new_theme.name = format!("Custom {}", base_preset.label());
+                                                let _ = theme::save_custom_theme(&new_theme);
+                                                this.prefs.custom_theme = Some(new_theme);
+                                                this.prefs.theme_preset = None;
+                                                let _ = config::save(&this.prefs);
+                                                Self::apply_theme_and_typography(cx, &this.prefs);
+                                                this.show_toast(
+                                                    toasts::ToastKind::Success,
+                                                    "Created new custom theme",
+                                                    Some(3),
+                                                    cx,
+                                                );
+                                                cx.notify();
+                                            })),
+                                    )
+                                })
+                                .when(is_custom_active, |this| {
+                                    this.child(
+                                        text_button("btn-save-theme", "Save to ~/.hadron/themes")
+                                            .bg(theme::bg_surface_raised())
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                if let Some(custom) = &this.prefs.custom_theme {
+                                                    let _ = theme::save_custom_theme(custom);
+                                                    this.show_toast(
+                                                        toasts::ToastKind::Success,
+                                                        format!("Saved theme '{}'", custom.name),
+                                                        Some(3),
+                                                        cx,
+                                                    );
+                                                    cx.notify();
+                                                }
+                                            })),
+                                    )
+                                    .child(
+                                        text_button("btn-reset-theme", "Reset to Built-in Preset")
+                                            .bg(theme::bg_surface_raised())
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.prefs.custom_theme = None;
+                                                this.prefs.theme_preset = Some(config::ThemePreset::Obsidian);
+                                                let _ = config::save(&this.prefs);
+                                                Self::apply_theme_and_typography(cx, &this.prefs);
+                                                this.show_toast(
+                                                    toasts::ToastKind::Success,
+                                                    "Reset to Obsidian Neutral preset",
+                                                    Some(3),
+                                                    cx,
+                                                );
+                                                cx.notify();
+                                            })),
+                                    )
+                                }),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(div().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).text_color(theme::text_muted()).child("PALETTE SWATCHES & LIVE TOKEN VALUES"))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .flex_wrap()
+                                .gap_2()
+                                .child(swatch_chip("Canvas", theme::canvas_base().into()))
+                                .child(swatch_chip("Surface", theme::bg_surface()))
+                                .child(swatch_chip("Raised", theme::bg_surface_raised()))
+                                .child(swatch_chip("Border", theme::border()))
+                                .child(swatch_chip("Accent", theme::accent()))
+                                .child(swatch_chip("Keyword", theme::syntax_keyword()))
+                                .child(swatch_chip("Function", theme::syntax_function()))
+                                .child(swatch_chip("Type", theme::syntax_type()))
+                                .child(swatch_chip("String", theme::syntax_string()))
+                                .child(swatch_chip("Number", theme::syntax_number()))
+                                .child(swatch_chip("Comment", theme::syntax_comment()))
+                                .child(swatch_chip("Prompt", theme::term_prompt()))
+                        ),
+                ),
+        );
+
+        let mono_family_name = self.prefs.mono_font_family.clone().unwrap_or_else(|| "Cascadia Code".into());
+        let live_preview_card = settings_card_section(
+            "Live UI & Syntax Preview",
+            Some(IconName::Eye),
+            v_flex()
+                .w_full()
+                .gap_3()
+                .child(
+                    // Code snippet syntax preview
+                    v_flex()
+                        .w_full()
+                        .p_3()
+                        .rounded_md()
+                        .bg(theme::term_bg())
+                        .border_1()
+                        .border_color(theme::border())
+                        .font_family(mono_family_name)
+                        .text_xs()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_color(theme::syntax_comment())
+                                .child("// Dynamic syntax token & font preview"),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(div().text_color(theme::syntax_keyword()).child("pub async fn"))
+                                .child(div().text_color(theme::syntax_function()).child("launch_swarm"))
+                                .child(div().text_color(theme::syntax_punctuation()).child("("))
+                                .child(div().text_color(theme::syntax_variable()).child("id"))
+                                .child(div().text_color(theme::syntax_punctuation()).child(": &"))
+                                .child(div().text_color(theme::syntax_type()).child("str"))
+                                .child(div().text_color(theme::syntax_punctuation()).child(") -> "))
+                                .child(div().text_color(theme::syntax_type()).child("Result<Quark>"))
+                                .child(div().text_color(theme::syntax_punctuation()).child(" {")),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .pl_4()
+                                .child(div().text_color(theme::syntax_keyword()).child("let"))
+                                .child(div().text_color(theme::syntax_variable()).child("config"))
+                                .child(div().text_color(theme::syntax_operator()).child("="))
+                                .child(div().text_color(theme::syntax_string()).child("\"hadron/orch.json\""))
+                                .child(div().text_color(theme::syntax_punctuation()).child(";")),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .pl_4()
+                                .child(div().text_color(theme::syntax_type()).child("Quark"))
+                                .child(div().text_color(theme::syntax_punctuation()).child("::"))
+                                .child(div().text_color(theme::syntax_function()).child("spawn"))
+                                .child(div().text_color(theme::syntax_punctuation()).child("("))
+                                .child(div().text_color(theme::syntax_variable()).child("id"))
+                                .child(div().text_color(theme::syntax_punctuation()).child(", "))
+                                .child(div().text_color(theme::syntax_number()).child("42"))
+                                .child(div().text_color(theme::syntax_punctuation()).child(")")),
+                        )
+                        .child(div().text_color(theme::syntax_punctuation()).child("}")),
+                )
+                .child(
+                    // Chamber UI Components Preview
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .justify_between()
+                        .p_3()
+                        .rounded_md()
+                        .bg(theme::bg_base())
+                        .border_1()
+                        .border_color(theme::border())
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_3()
+                                .child(
+                                    div()
+                                        .px_2p5()
+                                        .py_1()
+                                        .rounded_md()
+                                        .bg(theme::accent())
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(rgb(0x050505))
+                                        .child("Active Accent Button"),
+                                )
+                                .child(
+                                    div()
+                                        .px_2p5()
+                                        .py_1()
+                                        .rounded_md()
+                                        .bg(theme::bg_surface_raised())
+                                        .border_1()
+                                        .border_color(theme::border())
+                                        .text_xs()
+                                        .text_color(theme::text())
+                                        .child("Secondary Control"),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(div().text_xs().text_color(theme::text_muted()).child("Status Indicators:"))
+                                .child(div().size(px(8.0)).rounded_full().bg(theme::halo_dot(QuarkState::Ground)))
+                                .child(div().size(px(8.0)).rounded_full().bg(theme::halo_dot(QuarkState::Thinking)))
+                                .child(div().size(px(8.0)).rounded_full().bg(theme::halo_dot(QuarkState::Excited)))
+                                .child(div().size(px(8.0)).rounded_full().bg(theme::halo_dot(QuarkState::Blocked))),
+                        ),
+                ),
+        );
+
+        v_flex()
+            .w_full()
+            .gap_4()
+            .child(typography_card)
+            .child(custom_theme_card)
+            .child(live_preview_card)
     }
 
     pub(super) fn execution_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -513,14 +760,24 @@ impl super::Chamber {
             .into_any_element()
     }
 
-    /// The color theme preset picker.
+    /// The color theme preset picker supporting both built-in presets and custom themes.
     pub(super) fn theme_preset_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let current_pref = self.prefs.theme_preset;
-        if self.theme_preset_select_key != Some(current_pref) {
+        let mut choices: Vec<String> = config::ThemePreset::ALL.iter().map(|p| p.label().to_string()).collect();
+        for custom in theme::load_custom_themes() {
+            let label = format!("Custom: {}", custom.name);
+            if !choices.contains(&label) {
+                choices.push(label);
+            }
+        }
+        let current_label = if let Some(custom) = &self.prefs.custom_theme {
+            format!("Custom: {}", custom.name)
+        } else {
+            current_pref.unwrap_or_default().label().to_string()
+        };
+
+        if self.theme_preset_select_key != Some(current_pref) || self.prefs.custom_theme.is_some() {
             self.theme_preset_select_key = Some(current_pref);
-            let choices: Vec<String> = config::ThemePreset::ALL.iter().map(|p| p.label().to_string()).collect();
-            let current_preset = current_pref.unwrap_or_default();
-            let current_label = current_preset.label().to_string();
             let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
             self.theme_preset_select_state.update(cx, |s, cx| {
                 s.set_items(delegate, window, cx);
@@ -1599,4 +1856,27 @@ impl super::Chamber {
             .search_placeholder("Search models...")
             .into_any_element()
     }
+}
+
+fn swatch_chip(label: &'static str, color: gpui::Rgba) -> impl IntoElement {
+    let hex = config::format_rgba_hex(color);
+    h_flex()
+        .items_center()
+        .gap_1p5()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .bg(theme::bg_surface_raised())
+        .border_1()
+        .border_color(theme::border())
+        .child(
+            div()
+                .size(px(12.0))
+                .rounded_sm()
+                .bg(color)
+                .border_1()
+                .border_color(theme::border()),
+        )
+        .child(div().text_xs().font_weight(gpui::FontWeight::MEDIUM).text_color(theme::text()).child(label))
+        .child(div().text_xs().text_color(theme::text_muted()).child(hex))
 }

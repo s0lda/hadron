@@ -820,11 +820,23 @@ impl Chamber {
             cx.subscribe_in(&theme_preset_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
                 let SelectEvent::Confirm(selected) = event;
                 let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
-                let preset = config::ThemePreset::from_str(val);
-                this.prefs.theme_preset = preset;
+                if let Some(custom_name) = val.strip_prefix("Custom: ") {
+                    let custom_themes = theme::load_custom_themes();
+                    if let Some(found) = custom_themes.into_iter().find(|t| t.name == custom_name) {
+                        this.prefs.custom_theme = Some(found);
+                        this.prefs.theme_preset = None;
+                    }
+                } else if let Some(preset) = config::ThemePreset::from_str(val) {
+                    this.prefs.theme_preset = Some(preset);
+                    this.prefs.custom_theme = None;
+                }
                 let _ = config::save(&this.prefs);
                 Self::apply_theme_and_typography(cx, &this.prefs);
-                let label = preset.unwrap_or_default().label();
+                let label = if let Some(c) = &this.prefs.custom_theme {
+                    format!("Custom Theme ({})", c.name)
+                } else {
+                    this.prefs.theme_preset.unwrap_or_default().label().to_string()
+                };
                 this.show_toast(
                     toasts::ToastKind::Success,
                     format!("Theme set to {label}"),
@@ -1497,32 +1509,43 @@ impl Chamber {
         let mono_font = mono_family_with_a_real_bold(cx, prefs.mono_font_family.as_deref());
         let ui_size = prefs.ui_font_size.unwrap_or(14.0);
         let mono_size = prefs.mono_font_size.unwrap_or(13.0);
-        let preset = prefs.theme_preset.unwrap_or_default();
-        let accent = prefs.accent_choice.unwrap_or_default();
-        theme::set_active_preset(preset);
-        theme::set_active_accent(accent);
-        let palette = theme::palette_for_preset(preset);
-        let accent_color = accent.rgb();
+
+        if let Some(custom) = &prefs.custom_theme {
+            theme::set_active_custom_theme(Some(custom.clone()));
+        } else {
+            let preset = prefs.theme_preset.unwrap_or_default();
+            let accent = prefs.accent_choice.unwrap_or_default();
+            theme::set_active_preset(preset);
+            theme::set_active_accent(accent);
+        }
+
+        let bg_surf = theme::bg_surface();
+        let bg_surf_raised = theme::bg_surface_raised();
+        let canvas = theme::canvas_base();
+        let in_bg = theme::input_bg();
+        let brd = theme::border();
+        let pop = theme::popover();
+        let acc = theme::accent();
 
         let t = gpui_component::Theme::global_mut(cx);
-        t.title_bar = palette.bg_surface.into();
-        t.tokens.title_bar = gpui::Hsla::from(palette.bg_surface).into();
-        t.title_bar_border = palette.border.into();
-        t.background = palette.canvas_base.into();
-        t.input = palette.input_bg.into();
-        t.secondary = palette.bg_surface.into();
-        t.secondary_hover = palette.bg_surface_raised.into();
-        t.popover = palette.bg_surface.into();
+        t.title_bar = bg_surf.into();
+        t.tokens.title_bar = gpui::Hsla::from(bg_surf).into();
+        t.title_bar_border = brd.into();
+        t.background = canvas;
+        t.input = in_bg.into();
+        t.secondary = bg_surf.into();
+        t.secondary_hover = bg_surf_raised.into();
+        t.popover = pop.into();
         t.popover_foreground = theme::text().into();
-        t.tokens.popover = gpui::Hsla::from(palette.bg_surface).into();
+        t.tokens.popover = gpui::Hsla::from(pop).into();
         t.tokens.popover_foreground = gpui::Hsla::from(theme::text()).into();
-        t.border = palette.border.into();
-        t.drag_border = accent_color.into();
-        t.selection = accent_color.opacity(0.3).into();
-        t.list_active = accent_color.opacity(0.2).into();
-        t.list_active_border = accent_color.into();
+        t.border = brd.into();
+        t.drag_border = acc.into();
+        t.selection = acc.opacity(0.3).into();
+        t.list_active = acc.opacity(0.2).into();
+        t.list_active_border = acc.into();
         t.accent = gpui::rgba(0xffffff20).into();
-        t.tokens.tab_bar_segmented = gpui::Hsla::from(palette.bg_surface_raised).into();
+        t.tokens.tab_bar_segmented = gpui::Hsla::from(bg_surf_raised).into();
         t.danger = rgb(0xef4444).into();
         t.danger_foreground = rgb(0xf5f5f6).into();
         t.link = theme::link().into();
@@ -1535,7 +1558,7 @@ impl Chamber {
         t.tokens.scrollbar_thumb = gpui::Hsla::from(gpui::rgba(0xffffff40)).into();
         t.tokens.scrollbar_thumb_hover = gpui::Hsla::from(gpui::rgba(0xffffffa0)).into();
         t.window_border = rgb(0x2a2b2c).into();
-        t.tokens.background = gpui::Hsla::from(palette.bg_surface).into();
+        t.tokens.background = gpui::Hsla::from(bg_surf).into();
         t.mode = gpui_component::ThemeMode::Dark;
         t.highlight_theme = widgets::github_syntax_theme();
         t.font_family = ui_font;
