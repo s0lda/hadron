@@ -48,15 +48,15 @@
 
 ## Phase 2: Custom Theme Schema & Runtime Engine
 
-### Task 4: Unified `ThemeDefinition` Data Model
+### Task 4: Unified `ThemeDefinition` Data Model (commit `00763236`)
 **Files:**
 - Modify: `crates/hadron-chamber/src/config.rs`
 - Modify: `crates/hadron-chamber/src/theme.rs`
 - Test: `crates/hadron-chamber/src/config.rs`
 
-- [ ] Step 4.1: Define `ThemeDefinition`, `SurfacePalette`, `AccentPalette`, `TextPalette`, `SyntaxPalette`, `TerminalPalette` with Serde support.
-- [ ] Step 4.2: Implement preset-to-definition conversions for built-in themes (`Obsidian`, `Oled`, `Midnight`, `Tokyo`).
-- [ ] Step 4.3: Add unit tests verifying serialization, deserialization, and color hex parsing.
+- [x] Step 4.1: Define `ThemeDefinition`, `SurfacePalette`, `AccentPalette`, `TextPalette`, `SyntaxPalette`, `TerminalPalette` with Serde support.
+- [x] Step 4.2: Implement preset-to-definition conversions for built-in themes (`Obsidian`, `Oled`, `Midnight`, `Tokyo`).
+- [x] Step 4.3: Add unit tests verifying serialization, deserialization, and color hex parsing.
 
 ### Task 5: Dynamic Runtime Theme Swapping
 **Files:**
