@@ -51,9 +51,11 @@ pub mod mesh;
 pub mod pty_pairing;
 pub mod breakpoints;
 pub mod ast_slice;
+pub mod transaction;
 
 pub use ast_merge::*;
 pub use ast_slice::*;
+pub use transaction::*;
 pub use conflict_resolve::*;
 pub use tia::*;
 pub use screenshot::*;
