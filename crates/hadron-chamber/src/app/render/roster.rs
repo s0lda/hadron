@@ -70,7 +70,6 @@ impl super::Chamber {
             .bg(theme::tab_bar_bg())
             .border_1()
             .border_color(theme::glass_highlight())
-            .w_full()
             .children(RosterTab::ALL.map(|t| {
                 let is_selected = t == selected_tab;
                 let ix = t.index();
@@ -81,11 +80,8 @@ impl super::Chamber {
                 let count_label = format!("{} ({count})", t.label());
                 div()
                     .id(("roster-tab-pill", ix))
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .text_center()
-                    .px_3()
+                    .flex_shrink_0()
+                    .px_2p5()
                     .py_1()
                     .rounded_full()
                     .cursor_pointer()
@@ -105,39 +101,20 @@ impl super::Chamber {
                     }))
             }));
 
-        let card = v_flex()
-            .w_full()
-            .h_full()
-            .min_h_0()
-            .p_2()
-            .gap_2()
-            .rounded(INNER_RADIUS)
-            .bg(theme::glass_surface())
-            .border_1()
-            .border_color(theme::glass_highlight())
-            .child(self.render_worktree_selector(cx))
-            .child(tabs)
-            .child(
-                div()
-                    .id("roster-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(rows),
-            )
-            .child(self.render_security_posture_pill(cx))
-            .child(self.processes_button(cx, false))
-            .child(self.settings_button(cx, false));
+        let close_btn = div()
+            .id("roster-toggle")
+            .cursor_pointer()
+            .text_color(theme::text_muted())
+            .active(|s| s.opacity(0.6))
+            .hover(|s| s.text_color(theme::text()))
+            .child(Icon::new(IconName::PanelLeftClose).small())
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.toggle_rail(Rail::Roster, window, cx)
+            }));
 
-        v_flex().w_full().h_full().min_h_0().p_2().child(card)
-    }
-
-    /// Renders the roster header with nucleus budget status and sidebar toggle.
-    pub(super) fn render_worktree_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut left_child = h_flex().items_center().gap_1p5();
-
+        let mut right_items = h_flex().items_center().gap_1p5();
         if self.nucleus_over_budget {
-            left_child = left_child.child(
+            right_items = right_items.child(
                 div()
                     .id("nucleus-over-budget-warning")
                     .text_xs()
@@ -151,28 +128,44 @@ impl super::Chamber {
                     }),
             );
         }
+        right_items = right_items.child(close_btn);
 
-        h_flex()
-            .id("worktree-selector-chip")
+        let header = h_flex()
+            .id("roster-header")
             .w_full()
             .justify_between()
             .items_center()
-            .px_3()
-            .py_2()
-            .text_xs()
+            .px_1()
+            .py_0p5()
+            .text_sm()
             .text_color(theme::text_muted())
-            .child(left_child)
+            .child(tabs)
+            .child(right_items);
+
+        let card = v_flex()
+            .w_full()
+            .h_full()
+            .min_h_0()
+            .p_2()
+            .gap_2()
+            .rounded(INNER_RADIUS)
+            .bg(theme::glass_surface())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .child(header)
             .child(
                 div()
-                    .id("roster-toggle")
-                    .cursor_pointer()
-                    .text_color(theme::text_muted())
-                    .active(|s| s.opacity(0.6))
-                    .child(Icon::new(IconName::PanelLeftClose).small())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.toggle_rail(Rail::Roster, window, cx)
-                    })),
+                    .id("roster-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(rows),
             )
+            .child(self.render_security_posture_pill(cx))
+            .child(self.processes_button(cx, false))
+            .child(self.settings_button(cx, false));
+
+        v_flex().w_full().h_full().min_h_0().p_2().child(card)
     }
 
     /// Renders a single borderless Quark fleet card with status halo, avatar, telemetry metrics, and context menu.
