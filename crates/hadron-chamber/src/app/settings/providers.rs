@@ -316,6 +316,252 @@ impl super::Chamber {
                 )),
         );
 
+        let name_input_row = if is_custom_active {
+            h_flex()
+                .w_full()
+                .items_center()
+                .gap_3()
+                .p_2p5()
+                .rounded_md()
+                .bg(theme::bg_base())
+                .border_1()
+                .border_color(theme::border())
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(theme::text_secondary())
+                        .child("Theme Name:"),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(Input::new(&self.theme_name_input).w_full()),
+                )
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        };
+
+        let category_filter_bar = h_flex()
+            .items_center()
+            .gap_1()
+            .p_1()
+            .rounded_full()
+            .bg(theme::tab_bar_bg())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .children(ThemeCategoryTab::ALL.map(|cat| {
+                let is_sel = self.theme_category_tab == cat;
+                div()
+                    .id(SharedString::from(format!("theme-cat-tab-{}", cat.label())))
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .when(is_sel, |s| {
+                        s.bg(theme::glass_highlight())
+                            .text_color(theme::accent())
+                            .font_weight(gpui::FontWeight::BOLD)
+                    })
+                    .when(!is_sel, |s| {
+                        s.text_color(theme::text_muted())
+                            .hover(|h| h.text_color(theme::text()))
+                    })
+                    .text_xs()
+                    .child(cat.label())
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.theme_category_tab = cat;
+                        cx.notify();
+                    }))
+            }));
+
+        let active_token_editor = if let Some(token) = self.theme_selected_token {
+            let current_hex = if let Some(custom) = &self.prefs.custom_theme {
+                token.get_hex(custom)
+            } else {
+                let preset = self.prefs.theme_preset.unwrap_or_default();
+                let def = config::ThemeDefinition::from_preset(preset);
+                token.get_hex(&def)
+            };
+            let current_color = config::parse_hex_color(&current_hex).unwrap_or_else(|| rgb(0x888888));
+
+            let quick_colors: [&'static str; 20] = [
+                "#000000", "#050505", "#0b0b0b", "#101010", "#1c1c1c", "#242424", "#444444",
+                "#707070", "#a8a8a8", "#e8e8e8", "#ffffff", "#f97583", "#fbbf24", "#34d399",
+                "#4ade80", "#60a5fa", "#79b8ff", "#b392f0", "#c084fc", "#f472b6",
+            ];
+
+            let quick_swatches = h_flex()
+                .items_center()
+                .gap_1p5()
+                .flex_wrap()
+                .children(quick_colors.iter().map(|&hex_code| {
+                    let color = config::parse_hex_color(hex_code).unwrap_or_else(|| rgb(0x888888));
+                    let is_match = current_hex.eq_ignore_ascii_case(hex_code);
+                    div()
+                        .id(SharedString::from(format!("quick-swatch-{}", hex_code)))
+                        .size(px(18.0))
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .bg(color)
+                        .border_1()
+                        .border_color(if is_match { theme::accent() } else { theme::border() })
+                        .hover(|s| s.border_color(theme::text()))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.set_custom_theme_token_color(token, hex_code.to_string(), cx);
+                            this.theme_color_hex_input.update(cx, |s, cx| s.set_value(hex_code.to_string(), window, cx));
+                        }))
+                }));
+
+            v_flex()
+                .w_full()
+                .p_3()
+                .gap_2p5()
+                .rounded_lg()
+                .bg(theme::bg_base())
+                .border_1()
+                .border_color(theme::accent().opacity(0.5))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::accent().opacity(0.15))
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme::accent())
+                                        .child(token.category()),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme::text())
+                                        .child(format!("Edit Token: {}", token.label())),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child(token.description()),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            div()
+                                .size(px(30.0))
+                                .rounded_md()
+                                .bg(current_color)
+                                .border_1()
+                                .border_color(theme::border())
+                                .flex_shrink_0(),
+                        )
+                        .child(
+                            div()
+                                .w(px(140.0))
+                                .child(Input::new(&self.theme_color_hex_input).w_full()),
+                        )
+                        .child(ColorPicker::new(&self.theme_color_picker).label("Pick Color"))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(quick_swatches),
+                        ),
+                )
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        };
+
+        let current_def = if let Some(custom) = &self.prefs.custom_theme {
+            custom.clone()
+        } else {
+            config::ThemeDefinition::from_preset(self.prefs.theme_preset.unwrap_or_default())
+        };
+
+        let active_tab = self.theme_category_tab;
+        let selected_token = self.theme_selected_token;
+        let mono_family_for_swatch = self.prefs.mono_font_family.clone().unwrap_or_else(|| "Cascadia Code".into());
+
+        let swatches_grid = h_flex()
+            .w_full()
+            .flex_wrap()
+            .gap_2()
+            .children(ThemeTokenKey::ALL.iter().filter(|t| t.matches_category(active_tab)).map(|&token| {
+                let is_selected = selected_token == Some(token);
+                let hex_str = token.get_hex(&current_def);
+                let parsed_color = config::parse_hex_color(&hex_str).unwrap_or_else(|| rgb(0x888888));
+                let mono_font = mono_family_for_swatch.clone();
+
+                h_flex()
+                    .id(SharedString::from(format!("theme-token-chip-{}", token.label())))
+                    .items_center()
+                    .gap_2()
+                    .px_2p5()
+                    .py_1p5()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .border_1()
+                    .border_color(if is_selected {
+                        theme::accent()
+                    } else {
+                        theme::border()
+                    })
+                    .bg(if is_selected {
+                        theme::bg_elevated()
+                    } else {
+                        theme::bg_surface_raised()
+                    })
+                    .hover(|s| s.border_color(if is_selected { theme::accent() } else { theme::text_secondary() }).bg(theme::bg_elevated()))
+                    .child(
+                        div()
+                            .size(px(14.0))
+                            .rounded_sm()
+                            .bg(parsed_color)
+                            .border_1()
+                            .border_color(theme::border()),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_0()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(if is_selected { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
+                                    .text_color(if is_selected { theme::accent() } else { theme::text() })
+                                    .child(token.label()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .font_family(mono_font)
+                                    .text_color(theme::text_muted())
+                                    .child(hex_str),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_theme_token(token, window, cx);
+                    }))
+            }));
+
         let custom_theme_card = settings_card_section(
             "Custom Theme Engine & Palettes",
             Some(IconName::Palette),
@@ -352,15 +598,19 @@ impl super::Chamber {
                                         text_button("btn-create-theme", "Create Custom Theme")
                                             .bg(theme::bg_surface_raised())
                                             .cursor_pointer()
-                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                            .on_click(cx.listener(|this, _, window, cx| {
                                                 let base_preset = this.prefs.theme_preset.unwrap_or_default();
                                                 let mut new_theme = config::ThemeDefinition::from_preset(base_preset);
                                                 new_theme.id = format!("custom-{}", chrono::Utc::now().timestamp());
                                                 new_theme.name = format!("Custom {}", base_preset.label());
                                                 let _ = theme::save_custom_theme(&new_theme);
-                                                this.prefs.custom_theme = Some(new_theme);
+                                                this.prefs.custom_theme = Some(new_theme.clone());
                                                 this.prefs.theme_preset = None;
                                                 let _ = config::save(&this.prefs);
+                                                this.theme_name_input.update(cx, |s, cx| s.set_value(new_theme.name.clone(), window, cx));
+                                                this.theme_selected_token = Some(ThemeTokenKey::CanvasBase);
+                                                this.theme_color_hex_input.update(cx, |s, cx| s.set_value(new_theme.surfaces.canvas_base.clone(), window, cx));
+                                                theme::set_active_custom_theme(Some(new_theme));
                                                 Self::apply_theme_and_typography(cx, &this.prefs);
                                                 this.show_toast(
                                                     toasts::ToastKind::Success,
@@ -374,15 +624,60 @@ impl super::Chamber {
                                 })
                                 .when(is_custom_active, |this| {
                                     this.child(
+                                        text_button("btn-new-theme", "New Theme")
+                                            .bg(theme::bg_surface_raised())
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                let base_theme = this.prefs.custom_theme.clone().unwrap_or_default();
+                                                let mut new_theme = base_theme;
+                                                new_theme.id = format!("custom-{}", chrono::Utc::now().timestamp());
+                                                new_theme.name = format!("{} (Copy)", new_theme.name);
+                                                let _ = theme::save_custom_theme(&new_theme);
+                                                this.prefs.custom_theme = Some(new_theme.clone());
+                                                this.prefs.theme_preset = None;
+                                                let _ = config::save(&this.prefs);
+                                                this.theme_name_input.update(cx, |s, cx| s.set_value(new_theme.name.clone(), window, cx));
+                                                this.theme_selected_token = Some(ThemeTokenKey::CanvasBase);
+                                                this.theme_color_hex_input.update(cx, |s, cx| s.set_value(new_theme.surfaces.canvas_base.clone(), window, cx));
+                                                theme::set_active_custom_theme(Some(new_theme));
+                                                Self::apply_theme_and_typography(cx, &this.prefs);
+                                                this.show_toast(
+                                                    toasts::ToastKind::Success,
+                                                    "Created new custom theme copy",
+                                                    Some(3),
+                                                    cx,
+                                                );
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(
                                         text_button("btn-save-theme", "Save to ~/.hadron/themes")
                                             .bg(theme::bg_surface_raised())
                                             .cursor_pointer()
                                             .on_click(cx.listener(|this, _, _window, cx| {
+                                                if let Some(custom) = &mut this.prefs.custom_theme {
+                                                    let name_val = this.theme_name_input.read(cx).value().trim().to_string();
+                                                    if !name_val.is_empty() {
+                                                        custom.name = name_val;
+                                                    }
+                                                    let clean_id: String = custom.name
+                                                        .to_lowercase()
+                                                        .chars()
+                                                        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                                                        .collect();
+                                                    let clean_id = clean_id.trim_matches('-').to_string();
+                                                    if !clean_id.is_empty() {
+                                                        custom.id = clean_id;
+                                                    }
+                                                }
                                                 if let Some(custom) = &this.prefs.custom_theme {
                                                     let _ = theme::save_custom_theme(custom);
+                                                    let _ = config::save(&this.prefs);
+                                                    theme::set_active_custom_theme(Some(custom.clone()));
+                                                    let toast_msg = format!("Saved theme '{}' to ~/.hadron/themes/{}.json", custom.name, custom.id);
                                                     this.show_toast(
                                                         toasts::ToastKind::Success,
-                                                        format!("Saved theme '{}'", custom.name),
+                                                        toast_msg,
                                                         Some(3),
                                                         cx,
                                                     );
@@ -397,7 +692,9 @@ impl super::Chamber {
                                             .on_click(cx.listener(|this, _, _window, cx| {
                                                 this.prefs.custom_theme = None;
                                                 this.prefs.theme_preset = Some(config::ThemePreset::Obsidian);
+                                                this.theme_selected_token = None;
                                                 let _ = config::save(&this.prefs);
+                                                theme::set_active_custom_theme(None);
                                                 Self::apply_theme_and_typography(cx, &this.prefs);
                                                 this.show_toast(
                                                     toasts::ToastKind::Success,
@@ -411,29 +708,21 @@ impl super::Chamber {
                                 }),
                         ),
                 )
+                .child(name_input_row)
+                .child(active_token_editor)
                 .child(
                     v_flex()
                         .w_full()
                         .gap_2()
-                        .child(div().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).text_color(theme::text_muted()).child("PALETTE SWATCHES & LIVE TOKEN VALUES"))
                         .child(
                             h_flex()
                                 .w_full()
-                                .flex_wrap()
-                                .gap_2()
-                                .child(swatch_chip("Canvas", theme::canvas_base().into()))
-                                .child(swatch_chip("Surface", theme::bg_surface()))
-                                .child(swatch_chip("Raised", theme::bg_surface_raised()))
-                                .child(swatch_chip("Border", theme::border()))
-                                .child(swatch_chip("Accent", theme::accent()))
-                                .child(swatch_chip("Keyword", theme::syntax_keyword()))
-                                .child(swatch_chip("Function", theme::syntax_function()))
-                                .child(swatch_chip("Type", theme::syntax_type()))
-                                .child(swatch_chip("String", theme::syntax_string()))
-                                .child(swatch_chip("Number", theme::syntax_number()))
-                                .child(swatch_chip("Comment", theme::syntax_comment()))
-                                .child(swatch_chip("Prompt", theme::term_prompt()))
-                        ),
+                                .justify_between()
+                                .items_center()
+                                .child(div().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).text_color(theme::text_muted()).child("PALETTE TOKENS & LIVE VALUES"))
+                                .child(category_filter_bar),
+                        )
+                        .child(swatches_grid),
                 ),
         );
 
@@ -1863,27 +2152,396 @@ impl super::Chamber {
             .search_placeholder("Search models...")
             .into_any_element()
     }
+    pub(crate) fn select_theme_token(&mut self, token: ThemeTokenKey, window: &mut Window, cx: &mut Context<Self>) {
+        if self.prefs.custom_theme.is_none() {
+            let base_preset = self.prefs.theme_preset.unwrap_or_default();
+            let mut new_theme = config::ThemeDefinition::from_preset(base_preset);
+            new_theme.id = format!("custom-{}", chrono::Utc::now().timestamp());
+            new_theme.name = format!("Custom {}", base_preset.label());
+            let _ = theme::save_custom_theme(&new_theme);
+            self.prefs.custom_theme = Some(new_theme.clone());
+            self.prefs.theme_preset = None;
+            let _ = config::save(&self.prefs);
+            theme::set_active_custom_theme(Some(new_theme));
+            Self::apply_theme_and_typography(cx, &self.prefs);
+        }
+
+        self.theme_selected_token = Some(token);
+        if let Some(custom) = &self.prefs.custom_theme {
+            let hex = token.get_hex(custom);
+            self.theme_color_hex_input.update(cx, |s, cx| s.set_value(hex, window, cx));
+            self.theme_name_input.update(cx, |s, cx| s.set_value(custom.name.clone(), window, cx));
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn set_custom_theme_token_color(&mut self, token: ThemeTokenKey, hex: String, cx: &mut Context<Self>) {
+        if self.prefs.custom_theme.is_none() {
+            let base_preset = self.prefs.theme_preset.unwrap_or_default();
+            let mut new_theme = config::ThemeDefinition::from_preset(base_preset);
+            new_theme.id = format!("custom-{}", chrono::Utc::now().timestamp());
+            new_theme.name = format!("Custom {}", base_preset.label());
+            self.prefs.custom_theme = Some(new_theme);
+            self.prefs.theme_preset = None;
+        }
+
+        if let Some(custom) = &mut self.prefs.custom_theme {
+            token.set_hex(custom, hex);
+        }
+        let _ = config::save(&self.prefs);
+        theme::set_active_custom_theme(self.prefs.custom_theme.clone());
+        Self::apply_theme_and_typography(cx, &self.prefs);
+        cx.refresh_windows();
+        cx.notify();
+    }
 }
 
-fn swatch_chip(label: &'static str, color: gpui::Rgba) -> impl IntoElement {
-    let hex = config::format_rgba_hex(color);
-    h_flex()
-        .items_center()
-        .gap_1p5()
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .bg(theme::bg_surface_raised())
-        .border_1()
-        .border_color(theme::border())
-        .child(
-            div()
-                .size(px(12.0))
-                .rounded_sm()
-                .bg(color)
-                .border_1()
-                .border_color(theme::border()),
-        )
-        .child(div().text_xs().font_weight(gpui::FontWeight::MEDIUM).text_color(theme::text()).child(label))
-        .child(div().text_xs().text_color(theme::text_muted()).child(hex))
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThemeCategoryTab {
+    #[default]
+    All,
+    Surfaces,
+    TextAccents,
+    Terminal,
+    Syntax,
+}
+
+impl ThemeCategoryTab {
+    pub const ALL: [ThemeCategoryTab; 5] = [
+        ThemeCategoryTab::All,
+        ThemeCategoryTab::Surfaces,
+        ThemeCategoryTab::TextAccents,
+        ThemeCategoryTab::Terminal,
+        ThemeCategoryTab::Syntax,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeCategoryTab::All => "All Tokens (33)",
+            ThemeCategoryTab::Surfaces => "Surfaces (8)",
+            ThemeCategoryTab::TextAccents => "Text & Accents (8)",
+            ThemeCategoryTab::Terminal => "Terminal (3)",
+            ThemeCategoryTab::Syntax => "Syntax Highlighting (14)",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeTokenKey {
+    // Surfaces (8)
+    CanvasBase,
+    BgBase,
+    BgSurface,
+    BgSurfaceRaised,
+    BgElevated,
+    InputBg,
+    Border,
+    Popover,
+    // Text (3)
+    TextPrimary,
+    TextSecondary,
+    TextMuted,
+    // Accents & Indicators (5)
+    AccentPrimary,
+    GlowBlue,
+    GlowPink,
+    GlowGreen,
+    GlowAmber,
+    // Terminal (3)
+    TermBg,
+    TermFg,
+    TermPrompt,
+    // Syntax (14)
+    SyntaxKeyword,
+    SyntaxFunction,
+    SyntaxType,
+    SyntaxString,
+    SyntaxNumber,
+    SyntaxComment,
+    SyntaxOperator,
+    SyntaxVariable,
+    SyntaxConstant,
+    SyntaxAttribute,
+    SyntaxTag,
+    SyntaxBoolean,
+    SyntaxDelimiter,
+    SyntaxPunctuation,
+}
+
+impl ThemeTokenKey {
+    pub const ALL: [ThemeTokenKey; 33] = [
+        // Surfaces
+        ThemeTokenKey::CanvasBase,
+        ThemeTokenKey::BgBase,
+        ThemeTokenKey::BgSurface,
+        ThemeTokenKey::BgSurfaceRaised,
+        ThemeTokenKey::BgElevated,
+        ThemeTokenKey::InputBg,
+        ThemeTokenKey::Border,
+        ThemeTokenKey::Popover,
+        // Text
+        ThemeTokenKey::TextPrimary,
+        ThemeTokenKey::TextSecondary,
+        ThemeTokenKey::TextMuted,
+        // Accents
+        ThemeTokenKey::AccentPrimary,
+        ThemeTokenKey::GlowBlue,
+        ThemeTokenKey::GlowPink,
+        ThemeTokenKey::GlowGreen,
+        ThemeTokenKey::GlowAmber,
+        // Terminal
+        ThemeTokenKey::TermBg,
+        ThemeTokenKey::TermFg,
+        ThemeTokenKey::TermPrompt,
+        // Syntax
+        ThemeTokenKey::SyntaxKeyword,
+        ThemeTokenKey::SyntaxFunction,
+        ThemeTokenKey::SyntaxType,
+        ThemeTokenKey::SyntaxString,
+        ThemeTokenKey::SyntaxNumber,
+        ThemeTokenKey::SyntaxComment,
+        ThemeTokenKey::SyntaxOperator,
+        ThemeTokenKey::SyntaxVariable,
+        ThemeTokenKey::SyntaxConstant,
+        ThemeTokenKey::SyntaxAttribute,
+        ThemeTokenKey::SyntaxTag,
+        ThemeTokenKey::SyntaxBoolean,
+        ThemeTokenKey::SyntaxDelimiter,
+        ThemeTokenKey::SyntaxPunctuation,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeTokenKey::CanvasBase => "Canvas Base",
+            ThemeTokenKey::BgBase => "Base Well / Panels",
+            ThemeTokenKey::BgSurface => "Surface",
+            ThemeTokenKey::BgSurfaceRaised => "Surface Raised",
+            ThemeTokenKey::BgElevated => "Elevated Surface",
+            ThemeTokenKey::InputBg => "Input Background",
+            ThemeTokenKey::Border => "Borders & Dividers",
+            ThemeTokenKey::Popover => "Popover & Menus",
+            ThemeTokenKey::TextPrimary => "Text Primary",
+            ThemeTokenKey::TextSecondary => "Text Secondary",
+            ThemeTokenKey::TextMuted => "Text Muted",
+            ThemeTokenKey::AccentPrimary => "Primary Accent",
+            ThemeTokenKey::GlowBlue => "Working Glow (Active)",
+            ThemeTokenKey::GlowPink => "Thinking Glow (Reasoning)",
+            ThemeTokenKey::GlowGreen => "Available Glow (Idle)",
+            ThemeTokenKey::GlowAmber => "Waiting Glow (Blocked)",
+            ThemeTokenKey::TermBg => "Terminal Background",
+            ThemeTokenKey::TermFg => "Terminal Text",
+            ThemeTokenKey::TermPrompt => "Terminal Prompt",
+            ThemeTokenKey::SyntaxKeyword => "Keyword",
+            ThemeTokenKey::SyntaxFunction => "Function",
+            ThemeTokenKey::SyntaxType => "Type",
+            ThemeTokenKey::SyntaxString => "String",
+            ThemeTokenKey::SyntaxNumber => "Number",
+            ThemeTokenKey::SyntaxComment => "Comment",
+            ThemeTokenKey::SyntaxOperator => "Operator",
+            ThemeTokenKey::SyntaxVariable => "Variable",
+            ThemeTokenKey::SyntaxConstant => "Constant",
+            ThemeTokenKey::SyntaxAttribute => "Attribute",
+            ThemeTokenKey::SyntaxTag => "Tag / HTML",
+            ThemeTokenKey::SyntaxBoolean => "Boolean",
+            ThemeTokenKey::SyntaxDelimiter => "Delimiter",
+            ThemeTokenKey::SyntaxPunctuation => "Punctuation",
+        }
+    }
+
+    pub fn category(self) -> &'static str {
+        match self {
+            ThemeTokenKey::CanvasBase
+            | ThemeTokenKey::BgBase
+            | ThemeTokenKey::BgSurface
+            | ThemeTokenKey::BgSurfaceRaised
+            | ThemeTokenKey::BgElevated
+            | ThemeTokenKey::InputBg
+            | ThemeTokenKey::Border
+            | ThemeTokenKey::Popover => "Surfaces",
+            ThemeTokenKey::TextPrimary | ThemeTokenKey::TextSecondary | ThemeTokenKey::TextMuted => "Text",
+            ThemeTokenKey::AccentPrimary
+            | ThemeTokenKey::GlowBlue
+            | ThemeTokenKey::GlowPink
+            | ThemeTokenKey::GlowGreen
+            | ThemeTokenKey::GlowAmber => "Accents",
+            ThemeTokenKey::TermBg | ThemeTokenKey::TermFg | ThemeTokenKey::TermPrompt => "Terminal",
+            ThemeTokenKey::SyntaxKeyword
+            | ThemeTokenKey::SyntaxFunction
+            | ThemeTokenKey::SyntaxType
+            | ThemeTokenKey::SyntaxString
+            | ThemeTokenKey::SyntaxNumber
+            | ThemeTokenKey::SyntaxComment
+            | ThemeTokenKey::SyntaxOperator
+            | ThemeTokenKey::SyntaxVariable
+            | ThemeTokenKey::SyntaxConstant
+            | ThemeTokenKey::SyntaxAttribute
+            | ThemeTokenKey::SyntaxTag
+            | ThemeTokenKey::SyntaxBoolean
+            | ThemeTokenKey::SyntaxDelimiter
+            | ThemeTokenKey::SyntaxPunctuation => "Syntax",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            ThemeTokenKey::CanvasBase => "Deepest background layer behind window housing",
+            ThemeTokenKey::BgBase => "Recessed surface for main panels, rails, and chat backdrop",
+            ThemeTokenKey::BgSurface => "Standard card, container, and section background",
+            ThemeTokenKey::BgSurfaceRaised => "Elevated cards, headers, capsule tabs, and pill buttons",
+            ThemeTokenKey::BgElevated => "Lifted dropdowns, tooltips, and active selected items",
+            ThemeTokenKey::InputBg => "Text field, search bar, and edit box background",
+            ThemeTokenKey::Border => "Structural borders, hairline strokes, and dividers",
+            ThemeTokenKey::Popover => "Floating context menus and autocomplete dropdown overlays",
+            ThemeTokenKey::TextPrimary => "Main body text, headings, and prominent labels",
+            ThemeTokenKey::TextSecondary => "Subtitles, secondary labels, and metadata",
+            ThemeTokenKey::TextMuted => "Muted hints, timestamps, icons, and placeholder text",
+            ThemeTokenKey::AccentPrimary => "Focus rings, active tabs, buttons, and badges",
+            ThemeTokenKey::GlowBlue => "Working/excited state halo and corner whisper",
+            ThemeTokenKey::GlowPink => "Thinking/reasoning state halo and corner whisper",
+            ThemeTokenKey::GlowGreen => "Available/idle ground state halo and corner whisper",
+            ThemeTokenKey::GlowAmber => "Waiting/blocked state halo and corner whisper",
+            ThemeTokenKey::TermBg => "PTY terminal screen background surface",
+            ThemeTokenKey::TermFg => "Default terminal output foreground text",
+            ThemeTokenKey::TermPrompt => "Shell prompt indicator ($, >, user@host)",
+            ThemeTokenKey::SyntaxKeyword => "Keywords (fn, pub, struct, let, match, async, return)",
+            ThemeTokenKey::SyntaxFunction => "Function names, methods, and closures",
+            ThemeTokenKey::SyntaxType => "Structs, enums, traits, primitives (String, i32, Option)",
+            ThemeTokenKey::SyntaxString => "Quoted string literals and markdown links",
+            ThemeTokenKey::SyntaxNumber => "Integer, float, hex, and numeric literals",
+            ThemeTokenKey::SyntaxComment => "Line and block code comments, docstrings",
+            ThemeTokenKey::SyntaxOperator => "Operators (=, +, -, *, /, ->, =>)",
+            ThemeTokenKey::SyntaxVariable => "Variable names, identifiers, and parameters",
+            ThemeTokenKey::SyntaxConstant => "CONSTANTS, static variables, and uppercase identifiers",
+            ThemeTokenKey::SyntaxAttribute => "Attributes (#[derive(...)], annotations)",
+            ThemeTokenKey::SyntaxTag => "HTML/XML tags, JSX elements, list markers",
+            ThemeTokenKey::SyntaxBoolean => "Boolean literals (true, false)",
+            ThemeTokenKey::SyntaxDelimiter => "Delimiters and brackets ({}, [], ())",
+            ThemeTokenKey::SyntaxPunctuation => "Punctuation marks (comma, colon, semicolon, dot)",
+        }
+    }
+
+    pub fn get_hex(self, theme: &config::ThemeDefinition) -> String {
+        match self {
+            ThemeTokenKey::CanvasBase => theme.surfaces.canvas_base.clone(),
+            ThemeTokenKey::BgBase => theme.surfaces.bg_base.clone(),
+            ThemeTokenKey::BgSurface => theme.surfaces.bg_surface.clone(),
+            ThemeTokenKey::BgSurfaceRaised => theme.surfaces.bg_surface_raised.clone(),
+            ThemeTokenKey::BgElevated => theme.surfaces.bg_elevated.clone(),
+            ThemeTokenKey::InputBg => theme.surfaces.input_bg.clone(),
+            ThemeTokenKey::Border => theme.surfaces.border.clone(),
+            ThemeTokenKey::Popover => theme.surfaces.popover.clone(),
+            ThemeTokenKey::TextPrimary => theme.text.primary.clone(),
+            ThemeTokenKey::TextSecondary => theme.text.secondary.clone(),
+            ThemeTokenKey::TextMuted => theme.text.muted.clone(),
+            ThemeTokenKey::AccentPrimary => theme.accents.primary.clone(),
+            ThemeTokenKey::GlowBlue => theme.accents.glow_blue.clone(),
+            ThemeTokenKey::GlowPink => theme.accents.glow_pink.clone(),
+            ThemeTokenKey::GlowGreen => theme.accents.glow_green.clone(),
+            ThemeTokenKey::GlowAmber => theme.accents.glow_amber.clone(),
+            ThemeTokenKey::TermBg => theme.terminal.bg.clone(),
+            ThemeTokenKey::TermFg => theme.terminal.fg.clone(),
+            ThemeTokenKey::TermPrompt => theme.terminal.prompt.clone(),
+            ThemeTokenKey::SyntaxKeyword => theme.syntax.keyword.clone(),
+            ThemeTokenKey::SyntaxFunction => theme.syntax.function.clone(),
+            ThemeTokenKey::SyntaxType => theme.syntax.r#type.clone(),
+            ThemeTokenKey::SyntaxString => theme.syntax.string.clone(),
+            ThemeTokenKey::SyntaxNumber => theme.syntax.number.clone(),
+            ThemeTokenKey::SyntaxComment => theme.syntax.comment.clone(),
+            ThemeTokenKey::SyntaxOperator => theme.syntax.operator.clone(),
+            ThemeTokenKey::SyntaxVariable => theme.syntax.variable.clone(),
+            ThemeTokenKey::SyntaxConstant => theme.syntax.constant.clone(),
+            ThemeTokenKey::SyntaxAttribute => theme.syntax.attribute.clone(),
+            ThemeTokenKey::SyntaxTag => theme.syntax.tag.clone(),
+            ThemeTokenKey::SyntaxBoolean => theme.syntax.boolean.clone(),
+            ThemeTokenKey::SyntaxDelimiter => theme.syntax.delimiter.clone(),
+            ThemeTokenKey::SyntaxPunctuation => theme.syntax.punctuation.clone(),
+        }
+    }
+
+    pub fn set_hex(self, theme: &mut config::ThemeDefinition, hex: String) {
+        match self {
+            ThemeTokenKey::CanvasBase => theme.surfaces.canvas_base = hex,
+            ThemeTokenKey::BgBase => theme.surfaces.bg_base = hex,
+            ThemeTokenKey::BgSurface => theme.surfaces.bg_surface = hex,
+            ThemeTokenKey::BgSurfaceRaised => theme.surfaces.bg_surface_raised = hex,
+            ThemeTokenKey::BgElevated => theme.surfaces.bg_elevated = hex,
+            ThemeTokenKey::InputBg => theme.surfaces.input_bg = hex,
+            ThemeTokenKey::Border => theme.surfaces.border = hex,
+            ThemeTokenKey::Popover => theme.surfaces.popover = hex,
+            ThemeTokenKey::TextPrimary => theme.text.primary = hex,
+            ThemeTokenKey::TextSecondary => theme.text.secondary = hex,
+            ThemeTokenKey::TextMuted => theme.text.muted = hex,
+            ThemeTokenKey::AccentPrimary => theme.accents.primary = hex,
+            ThemeTokenKey::GlowBlue => theme.accents.glow_blue = hex,
+            ThemeTokenKey::GlowPink => theme.accents.glow_pink = hex,
+            ThemeTokenKey::GlowGreen => theme.accents.glow_green = hex,
+            ThemeTokenKey::GlowAmber => theme.accents.glow_amber = hex,
+            ThemeTokenKey::TermBg => theme.terminal.bg = hex,
+            ThemeTokenKey::TermFg => theme.terminal.fg = hex,
+            ThemeTokenKey::TermPrompt => theme.terminal.prompt = hex,
+            ThemeTokenKey::SyntaxKeyword => theme.syntax.keyword = hex,
+            ThemeTokenKey::SyntaxFunction => theme.syntax.function = hex,
+            ThemeTokenKey::SyntaxType => theme.syntax.r#type = hex,
+            ThemeTokenKey::SyntaxString => theme.syntax.string = hex,
+            ThemeTokenKey::SyntaxNumber => theme.syntax.number = hex,
+            ThemeTokenKey::SyntaxComment => theme.syntax.comment = hex,
+            ThemeTokenKey::SyntaxOperator => theme.syntax.operator = hex,
+            ThemeTokenKey::SyntaxVariable => theme.syntax.variable = hex,
+            ThemeTokenKey::SyntaxConstant => theme.syntax.constant = hex,
+            ThemeTokenKey::SyntaxAttribute => theme.syntax.attribute = hex,
+            ThemeTokenKey::SyntaxTag => theme.syntax.tag = hex,
+            ThemeTokenKey::SyntaxBoolean => theme.syntax.boolean = hex,
+            ThemeTokenKey::SyntaxDelimiter => theme.syntax.delimiter = hex,
+            ThemeTokenKey::SyntaxPunctuation => theme.syntax.punctuation = hex,
+        }
+    }
+
+    pub fn matches_category(self, tab: ThemeCategoryTab) -> bool {
+        match tab {
+            ThemeCategoryTab::All => true,
+            ThemeCategoryTab::Surfaces => matches!(
+                self,
+                ThemeTokenKey::CanvasBase
+                    | ThemeTokenKey::BgBase
+                    | ThemeTokenKey::BgSurface
+                    | ThemeTokenKey::BgSurfaceRaised
+                    | ThemeTokenKey::BgElevated
+                    | ThemeTokenKey::InputBg
+                    | ThemeTokenKey::Border
+                    | ThemeTokenKey::Popover
+            ),
+            ThemeCategoryTab::TextAccents => matches!(
+                self,
+                ThemeTokenKey::TextPrimary
+                    | ThemeTokenKey::TextSecondary
+                    | ThemeTokenKey::TextMuted
+                    | ThemeTokenKey::AccentPrimary
+                    | ThemeTokenKey::GlowBlue
+                    | ThemeTokenKey::GlowPink
+                    | ThemeTokenKey::GlowGreen
+                    | ThemeTokenKey::GlowAmber
+            ),
+            ThemeCategoryTab::Terminal => matches!(
+                self,
+                ThemeTokenKey::TermBg | ThemeTokenKey::TermFg | ThemeTokenKey::TermPrompt
+            ),
+            ThemeCategoryTab::Syntax => matches!(
+                self,
+                ThemeTokenKey::SyntaxKeyword
+                    | ThemeTokenKey::SyntaxFunction
+                    | ThemeTokenKey::SyntaxType
+                    | ThemeTokenKey::SyntaxString
+                    | ThemeTokenKey::SyntaxNumber
+                    | ThemeTokenKey::SyntaxComment
+                    | ThemeTokenKey::SyntaxOperator
+                    | ThemeTokenKey::SyntaxVariable
+                    | ThemeTokenKey::SyntaxConstant
+                    | ThemeTokenKey::SyntaxAttribute
+                    | ThemeTokenKey::SyntaxTag
+                    | ThemeTokenKey::SyntaxBoolean
+                    | ThemeTokenKey::SyntaxDelimiter
+                    | ThemeTokenKey::SyntaxPunctuation
+            ),
+        }
+    }
 }

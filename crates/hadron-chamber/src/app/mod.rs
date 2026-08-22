@@ -434,7 +434,7 @@ struct Chamber {
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
-    _settings_subs: [Subscription; 23],
+    _settings_subs: [Subscription; 26],
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
     /// Offered-model probe for the ACP quark whose Settings are open — drives the model
@@ -492,6 +492,11 @@ struct Chamber {
     /// Native SelectState dropdown for General Settings Mono Font Size.
     mono_font_size_select_state: Entity<SelectState<ModelSelectDelegate>>,
     mono_font_size_select_key: Option<Option<f32>>,
+    pub(super) theme_name_input: Entity<InputState>,
+    pub(super) theme_color_hex_input: Entity<InputState>,
+    pub(super) theme_selected_token: Option<settings::ThemeTokenKey>,
+    pub(super) theme_category_tab: settings::ThemeCategoryTab,
+    pub(super) theme_color_picker: Entity<ColorPickerState>,
     /// Active in-app toast notification queue.
     pub(super) toast_manager: ToastManager,
     /// In-progress `agy` ACP bridge venv provisioning for the seat whose Settings are
@@ -705,6 +710,9 @@ impl Chamber {
         let custom_cli_model = cx.new(|cx| InputState::new(window, cx).placeholder("model name (optional)"));
         let custom_cli_flag = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. --prompt (blank = positional)"));
         let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
+        let theme_name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Theme Name"));
+        let theme_color_hex_input = cx.new(|cx| InputState::new(window, cx).placeholder("#rrggbb"));
+        let theme_color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
         // Repaint the Settings overlay on every edit so its preview is live.
         let _settings_subs = [
             cx.subscribe_in(&settings_name, window, |_, _, _: &InputEvent, _, cx| {
@@ -944,6 +952,38 @@ impl Chamber {
                         return;
                     };
                     this.set_settings_color(hsla_to_hex(*hsla), cx);
+                },
+            ),
+            cx.subscribe_in(&theme_name_input, window, |this, _, _: &InputEvent, _, cx| {
+                let name = this.theme_name_input.read(cx).value().trim().to_string();
+                if let Some(custom) = &mut this.prefs.custom_theme {
+                    custom.name = if name.is_empty() { "Custom Theme".into() } else { name };
+                }
+                let _ = config::save(&this.prefs);
+                theme::set_active_custom_theme(this.prefs.custom_theme.clone());
+                cx.notify();
+            }),
+            cx.subscribe_in(&theme_color_hex_input, window, |this, _, _: &InputEvent, _, cx| {
+                let hex_val = this.theme_color_hex_input.read(cx).value().trim().to_string();
+                if let Some(token) = this.theme_selected_token {
+                    if config::parse_hex_color(&hex_val).is_some() {
+                        this.set_custom_theme_token_color(token, hex_val, cx);
+                    }
+                }
+                cx.notify();
+            }),
+            cx.subscribe_in(
+                &theme_color_picker,
+                window,
+                |this, _, event: &ColorPickerEvent, window, cx| {
+                    let ColorPickerEvent::Change(Some(hsla)) = event else {
+                        return;
+                    };
+                    if let Some(token) = this.theme_selected_token {
+                        let hex = format!("#{:06x}", hsla_to_hex(*hsla));
+                        this.set_custom_theme_token_color(token, hex.clone(), cx);
+                        this.theme_color_hex_input.update(cx, |s, cx| s.set_value(hex, window, cx));
+                    }
                 },
             ),
         ];
@@ -1239,6 +1279,11 @@ impl Chamber {
             mono_font_select_key: None,
             mono_font_size_select_state,
             mono_font_size_select_key: None,
+            theme_name_input,
+            theme_color_hex_input,
+            theme_selected_token: None,
+            theme_category_tab: settings::ThemeCategoryTab::default(),
+            theme_color_picker,
             toast_manager: ToastManager::new(),
             agy_bridge_probe: None,
             file_tree_paths: files,

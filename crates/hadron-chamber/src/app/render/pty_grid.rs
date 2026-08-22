@@ -25,7 +25,7 @@ impl Chamber {
         for (row_ix, chunk) in self.terminals.chunks(cols).enumerate() {
             let mut row = h_flex().gap_2().w_full().min_w_0();
             if num_rows <= 2 {
-                row = row.flex_1().min_h_0();
+                row = row.flex_1().min_h_0().size_full();
             } else {
                 row = row.flex_shrink_0().min_h(px(160.0)).h(px(180.0));
             }
@@ -43,6 +43,7 @@ impl Chamber {
                     let snap = term.snapshot();
                     let mut lines_div = v_flex()
                         .flex_1()
+                        .size_full()
                         .min_h_0()
                         .min_w_0()
                         .p_2()
@@ -55,6 +56,7 @@ impl Chamber {
                     for line in &snap.lines {
                         let mut line_row = h_flex()
                             .h(px(14.0))
+                            .flex_shrink_0()
                             .whitespace_nowrap()
                             .min_w_0();
                         let mut line_empty = true;
@@ -111,6 +113,7 @@ impl Chamber {
                     .flex_1()
                     .min_h_0()
                     .min_w_0()
+                    .size_full()
                     .rounded_lg()
                     .border_1()
                     .border_color(border)
@@ -121,8 +124,25 @@ impl Chamber {
                         this.select_terminal(tab_ix, cx);
                         window.focus(&this.terminal_focus, cx);
                     }))
+                    .on_scroll_wheel(cx.listener(move |this, ev: &gpui::ScrollWheelEvent, _window, cx| {
+                        if let Some(tab) = this.terminals.get(tab_ix) {
+                            if let Some(term) = &tab.term {
+                                let lines = match ev.delta {
+                                    gpui::ScrollDelta::Lines(delta) => (delta.y * 3.0) as i32,
+                                    gpui::ScrollDelta::Pixels(delta) => {
+                                        (f32::from(delta.y) / 14.0 * 3.0) as i32
+                                    }
+                                };
+                                if lines != 0 {
+                                    term.scroll(lines);
+                                    cx.notify();
+                                }
+                            }
+                        }
+                    }))
                     .child(
                         h_flex()
+                            .flex_shrink_0()
                             .justify_between()
                             .items_center()
                             .px_2()
@@ -172,40 +192,53 @@ impl Chamber {
             // Fill empty columns in the last row to keep aligned grid columns
             if chunk.len() < cols {
                 for _ in 0..(cols - chunk.len()) {
-                    row = row.child(div().flex_1().min_w_0().min_h_0());
+                    row = row.child(div().flex_1().min_w_0().min_h_0().size_full());
                 }
             }
 
             grid_items = grid_items.child(row);
         }
 
-        let scroll_container = div()
-            .id("multi-pty-grid-scroll")
-            .size_full()
-            .flex_1()
-            .min_h_0()
-            .min_w_0()
-            .overflow_x_hidden()
-            .overflow_y_scroll()
-            .track_scroll(&self.terminal_grid_scroll)
-            .track_focus(&self.terminal_focus)
-            .on_key_down(cx.listener(Self::on_terminal_key))
-            .child(grid_items);
+        if num_rows <= 2 {
+            div()
+                .size_full()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .overflow_hidden()
+                .track_focus(&self.terminal_focus)
+                .on_key_down(cx.listener(Self::on_terminal_key))
+                .child(grid_items)
+                .into_any_element()
+        } else {
+            let scroll_container = div()
+                .id("multi-pty-grid-scroll")
+                .size_full()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .overflow_x_hidden()
+                .overflow_y_scroll()
+                .track_scroll(&self.terminal_grid_scroll)
+                .track_focus(&self.terminal_focus)
+                .on_key_down(cx.listener(Self::on_terminal_key))
+                .child(grid_items);
 
-        div()
-            .relative()
-            .flex_1()
-            .size_full()
-            .min_h_0()
-            .min_w_0()
-            .child(scroll_container)
-            .child(
-                div().absolute().top_0().bottom_0().right_0().child(
-                    Scrollbar::vertical(&self.terminal_grid_scroll)
-                        .scrollbar_show(ScrollbarShow::Always),
-                ),
-            )
-            .into_any_element()
+            div()
+                .relative()
+                .flex_1()
+                .size_full()
+                .min_h_0()
+                .min_w_0()
+                .child(scroll_container)
+                .child(
+                    div().absolute().top_0().bottom_0().right_0().child(
+                        Scrollbar::vertical(&self.terminal_grid_scroll)
+                            .scrollbar_show(ScrollbarShow::Always),
+                    ),
+                )
+                .into_any_element()
+        }
     }
 }
 
