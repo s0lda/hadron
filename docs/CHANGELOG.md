@@ -5,6 +5,33 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-08-22
+
+### Added
+- **Universal Full-Color Emoji Font Fallback (`gpui_wgpu`, `s0lda/zed`, `hadron-chamber`)**:
+  - Patched Zed's `gpui_wgpu` (`cosmic_text_system.rs`) in the `s0lda/zed` fork (`84ce4d78`) to prevent fontdb purges of `Noto Color Emoji` during charmap probes.
+  - Added automatic font fallback routing for Unicode emoji codepoints and symbols (`😘`, `❤️`, `☺`, `⚡`, `☕`, `⭐`), bypassing monochrome dingbat glyphs in primary UI and monospace fonts.
+  - Ensured emoji runs are correctly tagged with `is_emoji: true` and rendered with swash BGRA color bitmap sources across all bundled fonts (`Inter`, `Geist`, `Noto Sans`, `Cascadia Code`, `JetBrains Mono`, `Fira Code`).
+- **Theme Editor Overhaul & 33 Color Tokens (`hadron-chamber`)**:
+  - Added named custom theme creation (`theme_name_input`), direct save to `~/.hadron/themes`, new theme cloning, and preset resetting in Appearance Settings.
+  - Built interactive color swatch editor card with live Hex code input (`#rrggbb`), GPUI ColorPicker modal integration, and a curated 20-swatch quick palette.
+  - Populated all 33 design and syntax color tokens categorized across Surfaces (8), Text & Accents (8), Terminal (3), and Syntax Highlighting (14).
+- **Multi-Terminal Grid Dynamic Viewport Fitting & Scrollback (`hadron-chamber`)**:
+  - Constrained 1–4 terminal grids with `flex_1()`, `min_h_0()`, and `min_w_0()` so multi-terminal layouts divide viewport space evenly without stacking or overflowing.
+  - Added dedicated vertical scrolling for large terminal collections ($\ge 5$) or compact windows.
+  - Implemented per-card mouse wheel scroll forwarding directly to VTE scrollback buffers (`term.scroll()`).
+  - Added rich ANSI snapshot color rendering, cursor positioning, and interactive click-to-select terminal tabs.
+- **File Tree Markdown & Code Preview Viewport Clearance (`hadron-chamber`)**:
+  - Added bottom clearance padding (`pb_16`) and strict flex container bounds (`min_h_0()`, `min_w_0()`, `size_full()`) to File Tree preview and scroll containers so previewed documents remain visible above the viewport edge.
+
+### Fixed
+- **Emoji Dingbat Glyph Collision**:
+  - Prevented monochrome vector outlines from Inter and system text fonts from intercepting emoji codepoints.
+- **Multi-Terminal Grid Stacking**:
+  - Resolved flex expansion causing terminal grid cards to overflow vertically offscreen when 3 or more terminals are active.
+- **Workspace Git Hygiene**:
+  - Untracked internal `.hadron/docs/` and plans from Git index and ensured `.gitignore` coverage.
+
 ## [0.16.0] - 2026-08-22
 
 ### Added

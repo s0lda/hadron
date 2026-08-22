@@ -20,6 +20,21 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.17.0",
+        date: Some("2026-08-22"),
+        added: &[
+            "Full-color emoji font fallback via patched Zed gpui_wgpu engine (Noto Color Emoji preservation across all fonts)",
+            "Theme Editor Overhaul: Theme naming, custom save/export to ~/.hadron/themes, and 33 design/syntax color tokens",
+            "Multi-terminal grid responsive viewport fitting, per-card scrollback navigation, and ANSI color snapshot rendering",
+            "File Tree preview bottom clearance padding and strict flex container sizing",
+        ],
+        changed: &[],
+        fixed: &[
+            "Emoji glyph routing prioritizing color bitmaps over monochrome Dingbat outlines in Inter and system text fonts",
+            "Multi-terminal grid card vertical stacking and clipping when 3+ terminals are active",
+        ],
+    },
+    Release {
         version: "0.16.0",
         date: Some("2026-08-22"),
         added: &[
