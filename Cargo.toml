@@ -48,3 +48,13 @@ opt-level = 1
 gpui-component = { git = "https://github.com/s0lda/gpui-component", rev = "b7bc424dfe80a3de7b8d5a8132fef7c79b447057" }
 gpui-component-macros = { git = "https://github.com/s0lda/gpui-component", rev = "b7bc424dfe80a3de7b8d5a8132fef7c79b447057" }
 gpui-component-assets = { git = "https://github.com/s0lda/gpui-component", rev = "b7bc424dfe80a3de7b8d5a8132fef7c79b447057" }
+
+[patch."https://github.com/zed-industries/zed"]
+gpui = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.2.2" }
+gpui_platform = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.1.0" }
+gpui_wgpu = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.1.0" }
+gpui_linux = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.1.0" }
+gpui_macros = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.1.0" }
+gpui_util = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.1.0" }
+gpui_shared_string = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.1.0" }
+
