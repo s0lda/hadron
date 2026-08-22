@@ -185,32 +185,27 @@ mod tests {
                     }],
                 );
 
-                let count_no_fb = layout_no_fb.runs.iter()
+                let emoji_glyphs_count_no_fb = layout_no_fb
+                    .runs
+                    .iter()
                     .flat_map(|r| r.glyphs.iter())
                     .filter(|g| g.is_emoji && g.id.0 > 0)
                     .count();
-                let count_with_fb = layout_with_fb.runs.iter()
+                let emoji_glyphs_count_with_fb = layout_with_fb
+                    .runs
+                    .iter()
                     .flat_map(|r| r.glyphs.iter())
                     .filter(|g| g.is_emoji && g.id.0 > 0)
                     .count();
 
-                println!("=== Family '{family}' ===");
-                println!("no_fb runs: {}", layout_no_fb.runs.len());
-                for (r_i, run) in layout_no_fb.runs.iter().enumerate() {
-                    let font_name = cx.text_system().all_font_names();
-                    println!("  run {r_i}: font_id={:?}, glyphs={}", run.font_id, run.glyphs.len());
-                    for g in &run.glyphs {
-                        println!("    glyph_id={:?}, index={}, is_emoji={}", g.id, g.index, g.is_emoji);
-                    }
-                }
-                println!("with_fb runs: {}", layout_with_fb.runs.len());
-                for (r_i, run) in layout_with_fb.runs.iter().enumerate() {
-                    println!("  run {r_i}: font_id={:?}, glyphs={}", run.font_id, run.glyphs.len());
-                    for g in &run.glyphs {
-                        println!("    glyph_id={:?}, index={}, is_emoji={}", g.id, g.index, g.is_emoji);
-                    }
-                }
-                break; // Just one family to see details
+                assert!(
+                    emoji_glyphs_count_no_fb >= 12,
+                    "Family '{family}' without fallbacks failed to resolve emoji glyphs (got {emoji_glyphs_count_no_fb})"
+                );
+                assert!(
+                    emoji_glyphs_count_with_fb >= 12,
+                    "Family '{family}' with fallbacks failed to resolve emoji glyphs (got {emoji_glyphs_count_with_fb})"
+                );
             }
         });
     }
