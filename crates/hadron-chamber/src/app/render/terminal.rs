@@ -182,6 +182,7 @@ impl super::Chamber {
                     v_flex()
                         .flex_1()
                         .min_h_0()
+                        .min_w_0()
                         .p_3()
                         .gap_2()
                         .child(sub_tab_bar)

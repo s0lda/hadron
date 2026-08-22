@@ -539,6 +539,7 @@ struct Chamber {
     file_tree_scroll: ScrollHandle,
     file_tree_open_scroll: ScrollHandle,
     completion_scroll: ScrollHandle,
+    terminal_grid_scroll: ScrollHandle,
     pub(super) last_live_activities: std::collections::HashMap<String, Option<hadron_lattice::live::Activity>>,
     /// The merge gate's `live/gates/` heartbeats from the previous poll, so a gate
     /// starting or finishing triggers a repaint the same way a quark's own live
@@ -1261,6 +1262,7 @@ impl Chamber {
             file_tree_scroll: ScrollHandle::new(),
             file_tree_open_scroll: ScrollHandle::new(),
             completion_scroll: ScrollHandle::new(),
+            terminal_grid_scroll: ScrollHandle::new(),
             last_live_activities: std::collections::HashMap::new(),
             last_gate_activities: Vec::new(),
             last_gluon_running: true,
