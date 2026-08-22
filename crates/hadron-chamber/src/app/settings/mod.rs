@@ -10,6 +10,7 @@ use secrets::secret_status;
 pub(super) use secrets::SecretStatus;
 
 pub(super) use model_select::{create_model_delegate, ModelSelectDelegate};
+pub(super) use providers::{ThemeCategoryTab, ThemeTokenKey};
 
 mod secrets;
 mod identity;
@@ -17,7 +18,7 @@ mod acp_probe;
 mod http_probe;
 mod model_select;
 mod overlay;
-mod providers;
+pub(super) mod providers;
 #[cfg(test)]
 mod tests;
 
@@ -188,6 +189,16 @@ impl Chamber {
         let max_exchanges = self.team.max_exchanges.map(|n| n.to_string()).unwrap_or_default();
         self.settings_max_exchanges
             .update(cx, |s, cx| s.set_value(max_exchanges, window, cx));
+
+        if let Some(custom) = &self.prefs.custom_theme {
+            self.theme_name_input
+                .update(cx, |s, cx| s.set_value(custom.name.clone(), window, cx));
+            if let Some(token) = self.theme_selected_token {
+                let hex = token.get_hex(custom);
+                self.theme_color_hex_input
+                    .update(cx, |s, cx| s.set_value(hex, window, cx));
+            }
+        }
     }
 
     /// Write the editor inputs back into the current target identity and persist.

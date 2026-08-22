@@ -341,3 +341,74 @@ fn first_adopted_catalogue_quark_becomes_orchestrator_when_team_has_none() {
         "First adopted quark in repo without orchestrator must be promoted to Orchestrator"
     );
 }
+
+#[test]
+fn test_theme_tokens_count_and_categories() {
+    use super::providers::{ThemeCategoryTab, ThemeTokenKey};
+
+    assert_eq!(ThemeTokenKey::ALL.len(), 33, "Theme editor must provide all 33 design tokens");
+
+    let mut surfaces_count = 0;
+    let mut text_accents_count = 0;
+    let mut terminal_count = 0;
+    let mut syntax_count = 0;
+
+    for &token in &ThemeTokenKey::ALL {
+        assert!(!token.label().is_empty());
+        assert!(!token.description().is_empty());
+        assert!(token.matches_category(ThemeCategoryTab::All));
+
+        if token.matches_category(ThemeCategoryTab::Surfaces) {
+            surfaces_count += 1;
+        }
+        if token.matches_category(ThemeCategoryTab::TextAccents) {
+            text_accents_count += 1;
+        }
+        if token.matches_category(ThemeCategoryTab::Terminal) {
+            terminal_count += 1;
+        }
+        if token.matches_category(ThemeCategoryTab::Syntax) {
+            syntax_count += 1;
+        }
+    }
+
+    assert_eq!(surfaces_count, 8, "Surfaces category must contain 8 tokens");
+    assert_eq!(text_accents_count, 8, "Text & Accents category must contain 8 tokens (3 text + 5 accents)");
+    assert_eq!(terminal_count, 3, "Terminal category must contain 3 tokens");
+    assert_eq!(syntax_count, 14, "Syntax category must contain 14 tokens");
+    assert_eq!(surfaces_count + text_accents_count + terminal_count + syntax_count, 33);
+}
+
+#[test]
+fn test_theme_token_get_and_set_hex() {
+    use super::providers::ThemeTokenKey;
+    use crate::config::ThemeDefinition;
+
+    let mut theme = ThemeDefinition::default();
+
+    // Verify initial values from default preset
+    assert_eq!(ThemeTokenKey::CanvasBase.get_hex(&theme), "#050505");
+    assert_eq!(ThemeTokenKey::TextPrimary.get_hex(&theme), "#e8e8e8");
+    assert_eq!(ThemeTokenKey::TextMuted.get_hex(&theme), "#707070");
+    assert_eq!(ThemeTokenKey::SyntaxKeyword.get_hex(&theme), "#f97583");
+    assert_eq!(ThemeTokenKey::TermBg.get_hex(&theme), "#080808");
+
+    // Mutate colors using ThemeTokenKey::set_hex
+    ThemeTokenKey::CanvasBase.set_hex(&mut theme, "#010101".into());
+    ThemeTokenKey::TextPrimary.set_hex(&mut theme, "#ffffff".into());
+    ThemeTokenKey::TextMuted.set_hex(&mut theme, "#555555".into());
+    ThemeTokenKey::SyntaxKeyword.set_hex(&mut theme, "#ff007f".into());
+    ThemeTokenKey::TermBg.set_hex(&mut theme, "#000000".into());
+
+    assert_eq!(theme.surfaces.canvas_base, "#010101");
+    assert_eq!(theme.text.primary, "#ffffff");
+    assert_eq!(theme.text.muted, "#555555");
+    assert_eq!(theme.syntax.keyword, "#ff007f");
+    assert_eq!(theme.terminal.bg, "#000000");
+
+    assert_eq!(ThemeTokenKey::CanvasBase.get_hex(&theme), "#010101");
+    assert_eq!(ThemeTokenKey::TextPrimary.get_hex(&theme), "#ffffff");
+    assert_eq!(ThemeTokenKey::TextMuted.get_hex(&theme), "#555555");
+    assert_eq!(ThemeTokenKey::SyntaxKeyword.get_hex(&theme), "#ff007f");
+    assert_eq!(ThemeTokenKey::TermBg.get_hex(&theme), "#000000");
+}

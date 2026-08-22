@@ -512,6 +512,7 @@ pub fn parse_hex_color(s: &str) -> Option<gpui::Rgba> {
 }
 
 /// Helper to format GPUI `Rgba` back to `#rrggbb` string.
+#[allow(dead_code)]
 pub fn format_rgba_hex(color: gpui::Rgba) -> String {
     let r = (color.r * 255.0).round() as u8;
     let g = (color.g * 255.0).round() as u8;
