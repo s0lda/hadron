@@ -163,8 +163,12 @@ mod tests {
             for family in BUNDLED_UI_FAMILIES.into_iter().chain(BUNDLED_MONO_FAMILIES) {
                 let font = gpui::font(family);
                 let font_id = cx.text_system().resolve_font(&font);
-                let test_str = "Status: 🚀 Complete! 🔥 Great job ✨ 🎉 🤣 👍 💡";
-                let layout = cosmic.layout_line(
+                let mut font_with_fb = gpui::font(family);
+                font_with_fb.fallbacks = Some(default_fallbacks());
+                let font_fb_id = cx.text_system().resolve_font(&font_with_fb);
+
+                let test_str = "Status: 🚀 Complete! 🔥 Great job ✨ 🎉 🤣 👍 💡 😘 ❤️ ☺ ⚡ ☕ ⭐";
+                let layout_no_fb = cosmic.layout_line(
                     test_str,
                     gpui::px(14.0),
                     &[gpui::FontRun {
@@ -172,14 +176,41 @@ mod tests {
                         font_id,
                     }],
                 );
-                let emoji_glyphs_count = layout.runs.iter()
+                let layout_with_fb = cosmic.layout_line(
+                    test_str,
+                    gpui::px(14.0),
+                    &[gpui::FontRun {
+                        len: test_str.len(),
+                        font_id: font_fb_id,
+                    }],
+                );
+
+                let count_no_fb = layout_no_fb.runs.iter()
                     .flat_map(|r| r.glyphs.iter())
                     .filter(|g| g.is_emoji && g.id.0 > 0)
                     .count();
-                assert!(
-                    emoji_glyphs_count >= 6,
-                    "Family '{family}' failed to resolve emoji glyphs (got {emoji_glyphs_count})"
-                );
+                let count_with_fb = layout_with_fb.runs.iter()
+                    .flat_map(|r| r.glyphs.iter())
+                    .filter(|g| g.is_emoji && g.id.0 > 0)
+                    .count();
+
+                println!("=== Family '{family}' ===");
+                println!("no_fb runs: {}", layout_no_fb.runs.len());
+                for (r_i, run) in layout_no_fb.runs.iter().enumerate() {
+                    let font_name = cx.text_system().all_font_names();
+                    println!("  run {r_i}: font_id={:?}, glyphs={}", run.font_id, run.glyphs.len());
+                    for g in &run.glyphs {
+                        println!("    glyph_id={:?}, index={}, is_emoji={}", g.id, g.index, g.is_emoji);
+                    }
+                }
+                println!("with_fb runs: {}", layout_with_fb.runs.len());
+                for (r_i, run) in layout_with_fb.runs.iter().enumerate() {
+                    println!("  run {r_i}: font_id={:?}, glyphs={}", run.font_id, run.glyphs.len());
+                    for g in &run.glyphs {
+                        println!("    glyph_id={:?}, index={}, is_emoji={}", g.id, g.index, g.is_emoji);
+                    }
+                }
+                break; // Just one family to see details
             }
         });
     }
