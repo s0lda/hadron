@@ -20,6 +20,19 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.19.0",
+        date: Some("2026-08-24"),
+        added: &[
+            "Headless DAP Runtime Debugger: Breakpoint management, execution stepping, call stack inspection, and local variable evaluation (hadron_forge_dap_debug)",
+            "Diagnostic & Trace Slicer: Semantic compaction of backtraces, compiler cascades, and log streams (hadron_forge_trace_slicer)",
+            "Deterministic Network VCR: Loopback-bound HTTP/RPC cassette recording and offline replay (hadron_forge_vcr)",
+            "Micro-Checkpointing: Atomic worktree snapshot saving, diffing, restoration, and pruning (hadron_forge_tree_checkpoint)",
+            "Headless Profiler Runner: Automated CPU/heap execution sampling and SVG flamegraph generation (hadron_forge_profile_runner)",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.18.0",
         date: Some("2026-08-24"),
         added: &[
