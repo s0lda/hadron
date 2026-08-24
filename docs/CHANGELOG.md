@@ -5,6 +5,29 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-08-24
+
+### Added
+- **Structured Bug Post-Mortems & Automated Invariant Promotion (`hadron-lattice`, `hadron-forge`)**:
+  - Implemented `BugPostmortem` metadata schema (`name`, `type: postmortem`, `symptom`, `root_cause`, `prevention_invariant`, `regression_test`, `target_files`) in `hadron-lattice::promoter`.
+  - Added automated post-mortem promotion (`promote_postmortem_to_invariants`) scanning `.hadron/nucleus/notes/` for structural rules and promoting prevention invariants directly into `.hadron/nucleus/invariants/always.md`.
+  - Added strict hook length verification ($\le 100$ characters) in `hadron-lattice::nucleus_lint` to prevent context budget exhaustion in `.hadron/nucleus/index.md`.
+  - Updated `hadron-forge::nucleus_lint` to recognize and validate `type: postmortem` note metadata.
+- **Collapsed Roster Tab Filter Sync (`hadron-chamber`)**:
+  - Filtered collapsed Roster rail avatar strip dynamically based on active `RosterTab` (`Active` vs `All`), maintaining visual consistency with expanded roster views.
+  - Alphabetically sorted quarks by resolved display name in both expanded and collapsed roster states.
+- **Cross-Worktree Dual-State Plan Tracking (`hadron-chamber`)**:
+  - Added `is_commit_merged` ancestry checker via `git merge-base --is-ancestor` and `StepStatus` tri-state parsing (`Pending`, `BranchCompleted`, `MainLanded`).
+  - Rendered worktree in-branch completed tasks with distinct blue checkmarks/badges and main-landed tasks with green checkmarks across Plan lists and interactive DAG execution waves.
+
+### Fixed
+- **Multiline Slash Command Input Splitting (`hadron-chamber`)**:
+  - Promoted prompt-, task-, skill-, goal-, and learning-bearing chat commands (`/goal`, `/prompt`, `/task`, `/learn`, `/brainstorm`, etc.) to `Arity::Body` in `COMMANDS` and custom skill registry.
+  - Updated `split_leading_commands` to capture all subsequent lines as the command payload, preventing multiline slash commands from being accidentally split into separate chat messages.
+- **Chat Selection & Context Menu Copy (`hadron-chamber`)**:
+  - Added global `gpui_component::input::Copy` action (`Ctrl+C` / `Cmd+C`) on the Chamber root element.
+  - Added `ContextMenuAction::CopyText` and right-click context menu options for "Copy Selected Text" and "Copy Message" in chat rows.
+
 ## [0.17.0] - 2026-08-22
 
 ### Added
