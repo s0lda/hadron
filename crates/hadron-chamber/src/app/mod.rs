@@ -571,6 +571,7 @@ pub enum ContextMenuAction {
     OpenInEditor(String),
     OpenInFolder(String),
     CopyPath(String),
+    CopyText(String),
     QuarkInfo(String),
     ToggleQuark(String),
     SetFlavor(String, hadron_lattice::Flavor),
@@ -1431,6 +1432,11 @@ fn default_key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-shift-k", ToggleReplOverlay, None),
         // Global keyboard dismiss (Escape) to drop completions, modals, overlays, or return focus.
         KeyBinding::new("escape", Dismiss, None),
+        // Global text copy (Cmd+C / Ctrl+C) to copy selection from chat/TextViews
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-c", gpui_component::input::Copy, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-c", gpui_component::input::Copy, None),
         // Git Rail scoped shortcuts (when Git panel has focus)
         KeyBinding::new("1", SelectGitBranches, Some(GIT_KEY_CONTEXT)),
         KeyBinding::new("2", SelectGitWorktrees, Some(GIT_KEY_CONTEXT)),
@@ -1975,5 +1981,7 @@ mod tests {
         // Focus Toggle: Ctrl+Tab and Ctrl+` -> ToggleFocus
         assert!(bindings.iter().any(|b| b.contains("ToggleFocus") && b.contains(r#"key: "tab""#)));
         assert!(bindings.iter().any(|b| b.contains("ToggleFocus") && b.contains(r#"key: "`""#)));
+        // Global Copy: Copy -> gpui_component::input::Copy
+        assert!(bindings.iter().any(|b| b.contains("Copy") && b.contains(r#"key: "c""#)));
     }
 }

@@ -886,9 +886,41 @@ impl super::Chamber {
                 v_flex()
                     .min_w_0()
                     .gap_1()
-                    .context_menu(move |menu, _, _| {
+                    .context_menu(move |mut menu, window, cx| {
                         let text = msg_text.clone();
                         let ent = entity.clone();
+                        use gpui_component::WindowExt as _;
+                        let sel = window.selected_text(cx).trim().to_string();
+                        if !sel.is_empty() {
+                            let ent_c = ent.clone();
+                            let sel_text = sel.clone();
+                            menu = menu.item(PopupMenuItem::new("Copy Selected Text").on_click(
+                                move |_, window, cx| {
+                                    let to_copy = sel_text.clone();
+                                    ent_c.update(cx, |this, cx| {
+                                        this.handle_context_menu_action(
+                                            ContextMenuAction::CopyText(to_copy),
+                                            cx,
+                                        );
+                                    });
+                                    window.refresh();
+                                },
+                            ));
+                        }
+                        let ent_m = ent.clone();
+                        let msg_body = text.clone();
+                        menu = menu.item(PopupMenuItem::new("Copy Message").on_click(
+                            move |_, window, cx| {
+                                let to_copy = msg_body.clone();
+                                ent_m.update(cx, |this, cx| {
+                                    this.handle_context_menu_action(
+                                        ContextMenuAction::CopyText(to_copy),
+                                        cx,
+                                    );
+                                });
+                                window.refresh();
+                            },
+                        ));
                         menu.item(PopupMenuItem::new("Promote to Nucleus Lesson").on_click(
                             move |_, window, cx| {
                                 let first_line = text.lines().next().unwrap_or("lesson").trim();
