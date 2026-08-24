@@ -1807,6 +1807,14 @@ impl Chamber {
             ContextMenuAction::CopyPath(path) => {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(path));
             }
+            ContextMenuAction::CopyText(text) => {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                self.toast_manager.push(
+                    ToastKind::Success,
+                    "Copied to clipboard".to_string(),
+                    Some(2),
+                );
+            }
             ContextMenuAction::PromoteToNucleus { slug, fact, description } => {
                 let repo = crate::vcs::repo_root_of(&self.path);
                 let req = hadron_lattice::promoter::PromotionRequest {

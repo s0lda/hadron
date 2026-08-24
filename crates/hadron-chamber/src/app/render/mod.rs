@@ -95,6 +95,13 @@ impl Render for Chamber {
         let content = v_flex()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|_this, _: &gpui_component::input::Copy, window, cx| {
+                use gpui_component::WindowExt as _;
+                let selected = window.selected_text(cx).trim().to_string();
+                if !selected.is_empty() {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
+                }
+            }))
             .on_action(cx.listener(|this, _: &ToggleReplOverlay, window, cx| this.toggle_repl_overlay(window, cx)))
             .on_action(cx.listener(|this, _: &CycleMode, _, cx| this.cycle_global_mode(cx)))
             .on_action(cx.listener(|this, _: &NextChatTab, _, cx| this.cycle_chat_tab(1, cx)))
