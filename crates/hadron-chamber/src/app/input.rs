@@ -438,7 +438,11 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
                         None => first.to_string(),
                     };
                     let arg = if i + 1 < lines.len() {
-                        format!("{first_arg}\n{}", lines[i + 1..].join("\n"))
+                        if first_arg.is_empty() {
+                            lines[i + 1..].join("\n")
+                        } else {
+                            format!("{first_arg}\n{}", lines[i + 1..].join("\n"))
+                        }
                     } else {
                         first_arg
                     };
@@ -512,14 +516,50 @@ mod tests {
             cmds,
             vec![(
                 "team-brainstorm".to_string(),
-                "commands, suggest improvements".to_string()
+                "commands, suggest improvements\nand a closing line".to_string()
             )]
         );
         assert_eq!(
             body.as_deref(),
-            Some("here are my thoughts\nand a closing line"),
-            "the surrounding prose is still posted, and keeps its line structure"
+            Some("here are my thoughts"),
+            "the preamble prose is still posted"
         );
+    }
+
+    #[test]
+    fn multiline_slash_commands_capture_entire_body_without_splitting() {
+        let input = "/brainstorm @orchestrator Let's brainstorm: features and tools.\nProvide full list.\n- item 1\n- item 2";
+        let (cmds, body) = split_leading_commands(input);
+        assert_eq!(
+            cmds,
+            vec![(
+                "brainstorm".to_string(),
+                "@orchestrator Let's brainstorm: features and tools.\nProvide full list.\n- item 1\n- item 2".to_string()
+            )]
+        );
+        assert_eq!(body, None, "multiline body must not split into a second message");
+
+        let input_goal = "/goal Build user authentication\nRequirements:\n1. JWT\n2. OAuth";
+        let (cmds_goal, body_goal) = split_leading_commands(input_goal);
+        assert_eq!(
+            cmds_goal,
+            vec![(
+                "goal".to_string(),
+                "Build user authentication\nRequirements:\n1. JWT\n2. OAuth".to_string()
+            )]
+        );
+        assert_eq!(body_goal, None);
+
+        let input_learn = "/learn GPUI Coordinate Systems\nAbsolute overlays must omit left_0.\nSee invariants.";
+        let (cmds_learn, body_learn) = split_leading_commands(input_learn);
+        assert_eq!(
+            cmds_learn,
+            vec![(
+                "learn".to_string(),
+                "GPUI Coordinate Systems\nAbsolute overlays must omit left_0.\nSee invariants.".to_string()
+            )]
+        );
+        assert_eq!(body_learn, None);
     }
 
     /// A human quoting a command in a fence wrote it literally; running it would be
@@ -539,10 +579,10 @@ mod tests {
         let (cmds, body) = split_leading_commands(unclosed);
         assert_eq!(
             cmds,
-            vec![("team-brainstorm".to_string(), "ship it".to_string())],
+            vec![("team-brainstorm".to_string(), "ship it\nmore text".to_string())],
             "a stray ``` must not suppress a real command"
         );
-        assert!(body.is_some());
+        assert_eq!(body.as_deref(), Some("```\nsome code, never closed"));
 
         // A balanced pair still masks, which is the whole point of the guard.
         let closed = "```\n/clear\n```\nafter";
