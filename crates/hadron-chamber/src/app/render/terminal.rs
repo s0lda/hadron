@@ -804,7 +804,8 @@ impl super::Chamber {
 
                 let plan_element = match resolved {
                     Some((rel_path, content)) => {
-                        let (total, completed, _) = parse_plan_progress(&content);
+                        let (total, landed_count, branch_count, _) = parse_plan_progress_with_status(&repo, &content);
+                        let completed = landed_count + branch_count;
                         let frac = if total > 0 {
                             completed as f32 / total as f32
                         } else {
@@ -828,6 +829,14 @@ impl super::Chamber {
                             .border_color(theme::glass_highlight())
                             .gap_2p5();
 
+                        let progress_badge_text = if branch_count > 0 {
+                            format!("{landed_count} Landed · {branch_count} In Branch / {total} Total")
+                        } else if completed == total && total > 0 {
+                            format!("{completed}/{total} Complete (100%)")
+                        } else {
+                            format!("{completed}/{total} Complete ({pct}%)")
+                        };
+
                         let title_row = h_flex()
                             .justify_between()
                             .items_center()
@@ -846,19 +855,23 @@ impl super::Chamber {
                                     .rounded_full()
                                     .bg(theme::bg_base())
                                     .border_1()
-                                    .border_color(if completed == total && total > 0 {
+                                    .border_color(if landed_count == total && total > 0 {
                                         gpui::rgb(0x34d399).into()
+                                    } else if branch_count > 0 {
+                                        gpui::rgb(0x60a5fa).into()
                                     } else {
                                         theme::glass_highlight()
                                     })
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(if completed == total && total > 0 {
+                                    .text_color(if landed_count == total && total > 0 {
                                         gpui::rgb(0x34d399)
+                                    } else if branch_count > 0 {
+                                        gpui::rgb(0x60a5fa)
                                     } else {
                                         theme::accent()
                                     })
-                                    .child(format!("{completed}/{total} Complete ({pct}%)")),
+                                    .child(progress_badge_text),
                             );
 
                         let path_row = div()
@@ -1078,7 +1091,7 @@ impl super::Chamber {
                         }
 
                         // Task groups checklist
-                        let task_groups = parse_plan_tasks(&content);
+                        let task_groups = parse_plan_tasks_with_status(&repo, &content);
                         for (task_name, steps) in task_groups {
                             if steps.is_empty() {
                                 continue;
@@ -1098,11 +1111,13 @@ impl super::Chamber {
                                 format!("task-header-{}", task_name.replace(['/', '.', '-', ' ', ':', '&'], "_"))
                             };
 
-                            let done_count = steps.iter().filter(|(_, done)| *done).count();
+                            let done_count = steps.iter().filter(|(_, s)| s.is_completed()).count();
+                            let landed_step_count = steps.iter().filter(|(_, s)| s.is_main_landed()).count();
+                            let branch_step_count = steps.iter().filter(|(_, s)| s.is_branch_completed()).count();
                             let total_count = steps.len();
-                            let all_done = done_count == total_count;
+                            let all_landed = landed_step_count == total_count;
 
-                            let status_badge = if all_done {
+                            let status_badge = if all_landed {
                                 div()
                                     .px_2()
                                     .py_0p5()
@@ -1113,7 +1128,20 @@ impl super::Chamber {
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(gpui::rgb(0x34d399))
-                                    .child(format!("{done_count}/{total_count} Complete"))
+                                    .child(format!("{landed_step_count}/{total_count} Complete"))
+                                    .into_any_element()
+                            } else if branch_step_count > 0 {
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .bg(theme::bg_base())
+                                    .border_1()
+                                    .border_color(gpui::rgb(0x60a5fa))
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(gpui::rgb(0x60a5fa))
+                                    .child(format!("{done_count}/{total_count} In Branch"))
                                     .into_any_element()
                             } else {
                                 div()
@@ -1137,7 +1165,7 @@ impl super::Chamber {
                                 .justify_between()
                                 .p_2p5()
                                 .rounded_lg()
-                                .bg(if all_done { theme::bg_surface() } else { theme::bg_elevated() })
+                                .bg(if all_landed { theme::bg_surface() } else { theme::bg_elevated() })
                                 .border_1()
                                 .border_color(theme::glass_highlight())
                                 .cursor_pointer()
@@ -1188,21 +1216,36 @@ impl super::Chamber {
                                     .border_1()
                                     .border_color(theme::glass_highlight());
 
-                                for (step_desc, done) in steps {
-                                    let marker = if done {
-                                        Icon::new(IconName::CircleCheck)
-                                            .small()
-                                            .text_color(gpui::rgb(0x34d399))
-                                            .into_any_element()
-                                    } else {
-                                        div()
-                                            .size(px(14.0))
-                                            .flex_shrink_0()
-                                            .mt(px(2.0))
-                                            .rounded_full()
-                                            .border_1()
-                                            .border_color(theme::text_muted())
-                                            .into_any_element()
+                                for (step_desc, status) in steps {
+                                    let marker = match status {
+                                        StepStatus::MainLanded => {
+                                            Icon::new(IconName::CircleCheck)
+                                                .small()
+                                                .text_color(gpui::rgb(0x34d399))
+                                                .into_any_element()
+                                        }
+                                        StepStatus::BranchCompleted => {
+                                            Icon::new(IconName::CircleCheck)
+                                                .small()
+                                                .text_color(gpui::rgb(0x60a5fa))
+                                                .into_any_element()
+                                        }
+                                        StepStatus::Pending => {
+                                            div()
+                                                .size(px(14.0))
+                                                .flex_shrink_0()
+                                                .mt(px(2.0))
+                                                .rounded_full()
+                                                .border_1()
+                                                .border_color(theme::text_muted())
+                                                .into_any_element()
+                                        }
+                                    };
+
+                                    let text_color = match status {
+                                        StepStatus::MainLanded => theme::text_muted(),
+                                        StepStatus::BranchCompleted => theme::text(),
+                                        StepStatus::Pending => theme::text(),
                                     };
 
                                     steps_list = steps_list.child(
@@ -1217,11 +1260,7 @@ impl super::Chamber {
                                                     .flex_1()
                                                     .min_w_0()
                                                     .text_sm()
-                                                    .text_color(if done {
-                                                        theme::text_muted()
-                                                    } else {
-                                                        theme::text()
-                                                    })
+                                                    .text_color(text_color)
                                                     .child(step_desc),
                                             ),
                                     );

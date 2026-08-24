@@ -90,6 +90,7 @@ impl Chamber {
             .w_full()
             .min_w_0();
 
+        let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
         for (wave_idx, wave) in waves.iter().enumerate() {
             let mut col = v_flex()
                 .gap_1p5()
@@ -132,13 +133,27 @@ impl Chamber {
 
             for task in wave {
                 let is_ready = ready_ids.contains(&task.id);
-                let (border_col, bg_col, status_icon, status_label, text_col) = if task.completed {
+                let is_landed = if let Some(ref hash) = task.commit_hash {
+                    crate::vcs::is_commit_merged(&repo, hash, "main")
+                } else {
+                    task.completed
+                };
+
+                let (border_col, bg_col, status_icon, status_label, text_col) = if is_landed {
                     (
                         theme::halo_idle(),
                         theme::bg_elevated(),
                         "✓",
-                        task.commit_hash.as_deref().unwrap_or("done"),
+                        task.commit_hash.as_deref().unwrap_or("landed"),
                         theme::halo_idle(),
+                    )
+                } else if task.completed {
+                    (
+                        gpui::rgb(0x60a5fa).into(),
+                        theme::bg_elevated(),
+                        "✓",
+                        task.commit_hash.as_deref().unwrap_or("in-branch"),
+                        gpui::rgb(0x60a5fa).into(),
                     )
                 } else if is_ready {
                     (

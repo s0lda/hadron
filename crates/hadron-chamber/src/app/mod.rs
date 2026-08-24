@@ -61,7 +61,11 @@ pub(crate) mod toasts;
 use toasts::{ToastKind, ToastManager};
 
 mod mentions;
-use mentions::{parse_plan_overview, parse_plan_progress, parse_plan_tasks, resolve_mention_names};
+pub(crate) use mentions::StepStatus;
+use mentions::{
+    parse_plan_overview, parse_plan_progress_with_status, parse_plan_tasks,
+    parse_plan_tasks_with_status, resolve_mention_names,
+};
 
 mod identity;
 use identity::{

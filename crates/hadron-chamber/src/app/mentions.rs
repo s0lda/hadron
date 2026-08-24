@@ -28,10 +28,99 @@ pub(super) fn seat_by_mention<'a>(
     })
 }
 
+use std::path::Path;
+
+/// Status of a task step in an implementation plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StepStatus {
+    /// Checkbox `- [ ]`: Pending / not started
+    Pending,
+    /// Checked `- [x]` with commit ahead of `main` or active in worktree, or in-flight mark `- [/]` / `- [~]`
+    BranchCompleted,
+    /// Checked `- [x]` with commit merged into `main` (or no unmerged commit hash specified)
+    MainLanded,
+}
+
+impl StepStatus {
+    pub fn is_completed(self) -> bool {
+        matches!(self, Self::BranchCompleted | Self::MainLanded)
+    }
+
+    pub fn is_main_landed(self) -> bool {
+        matches!(self, Self::MainLanded)
+    }
+
+    pub fn is_branch_completed(self) -> bool {
+        matches!(self, Self::BranchCompleted)
+    }
+}
+
+/// Parse a plan's markdown checklist into `(total, landed, branch_completed, items)`.
+pub(super) fn parse_plan_progress_with_status(
+    repo: &Path,
+    content: &str,
+) -> (usize, usize, usize, Vec<(String, StepStatus)>) {
+    let mut total = 0usize;
+    let mut landed = 0usize;
+    let mut branch = 0usize;
+    let mut items = Vec::new();
+    let mut current_task = String::new();
+
+    for line in content.lines() {
+        if line.starts_with("## ") || line.starts_with("### ") {
+            current_task = line.trim_start_matches('#').trim().to_string();
+            continue;
+        }
+        let trimmed = line.trim_start();
+        let status = if trimmed.starts_with("- [ ]") {
+            StepStatus::Pending
+        } else if trimmed.starts_with("- [/]") || trimmed.starts_with("- [~]") {
+            StepStatus::BranchCompleted
+        } else if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
+            let body = &trimmed[5..];
+            if let Some(pos) = body.find("(commit ") {
+                if let Some(end) = body[pos..].find(')') {
+                    let hash = body[pos + 8..pos + end].trim();
+                    if crate::vcs::is_commit_merged(repo, hash, "main") {
+                        StepStatus::MainLanded
+                    } else {
+                        StepStatus::BranchCompleted
+                    }
+                } else {
+                    StepStatus::MainLanded
+                }
+            } else {
+                StepStatus::MainLanded
+            }
+        } else {
+            continue;
+        };
+
+        total += 1;
+        match status {
+            StepStatus::MainLanded => landed += 1,
+            StepStatus::BranchCompleted => branch += 1,
+            StepStatus::Pending => {}
+        }
+
+        // `- [ ]` and `- [x]` are both 5 bytes, so a fixed skip is safe for either case.
+        let body = trimmed[5..].trim().trim_matches(|c| c == '*' || c == '`').trim();
+        let label = if current_task.is_empty() {
+            body.to_string()
+        } else {
+            format!("{current_task} — {body}")
+        };
+        items.push((label, status));
+    }
+
+    (total, landed, branch, items)
+}
+
 /// Parse a plan's markdown checklist into `(total, completed, items)`. Any line whose
 /// trimmed form starts with `- [ ]` / `- [x]` (case-insensitive) is a checkbox; the
 /// nearest preceding `## ` / `### ` heading is prefixed so the tracker shows
 /// which task a step belongs to. Bold/backtick emphasis is stripped for a compact label.
+#[allow(dead_code)]
 pub(super) fn parse_plan_progress(content: &str) -> (usize, usize, Vec<(String, bool)>) {
     let mut total = 0usize;
     let mut completed = 0usize;
@@ -46,7 +135,7 @@ pub(super) fn parse_plan_progress(content: &str) -> (usize, usize, Vec<(String, 
         let trimmed = line.trim_start();
         let done = if trimmed.starts_with("- [ ]") {
             false
-        } else if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
+        } else if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") || trimmed.starts_with("- [/]") || trimmed.starts_with("- [~]") {
             true
         } else {
             continue;
@@ -67,6 +156,75 @@ pub(super) fn parse_plan_progress(content: &str) -> (usize, usize, Vec<(String, 
     }
 
     (total, completed, items)
+}
+
+/// Parse plan content into grouped tasks with tri-state status: a list of `(task_name, steps)` tuples.
+pub(super) fn parse_plan_tasks_with_status(
+    repo: &Path,
+    content: &str,
+) -> Vec<(String, Vec<(String, StepStatus)>)> {
+    let mut tasks = Vec::new();
+    let mut current_task = String::new();
+    let mut current_steps = Vec::new();
+
+    for line in content.lines() {
+        if line.starts_with("## ") || line.starts_with("### ") {
+            let heading = line.trim_start_matches('#').trim().to_string();
+            if !current_steps.is_empty() {
+                tasks.push((
+                    if current_task.is_empty() {
+                        "General Tasks".to_string()
+                    } else {
+                        current_task.clone()
+                    },
+                    std::mem::take(&mut current_steps),
+                ));
+            }
+            current_task = heading;
+            continue;
+        }
+        let trimmed = line.trim_start();
+        let status = if trimmed.starts_with("- [ ]") {
+            StepStatus::Pending
+        } else if trimmed.starts_with("- [/]") || trimmed.starts_with("- [~]") {
+            StepStatus::BranchCompleted
+        } else if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
+            let body = &trimmed[5..];
+            if let Some(pos) = body.find("(commit ") {
+                if let Some(end) = body[pos..].find(')') {
+                    let hash = body[pos + 8..pos + end].trim();
+                    if crate::vcs::is_commit_merged(repo, hash, "main") {
+                        StepStatus::MainLanded
+                    } else {
+                        StepStatus::BranchCompleted
+                    }
+                } else {
+                    StepStatus::MainLanded
+                }
+            } else {
+                StepStatus::MainLanded
+            }
+        } else {
+            continue;
+        };
+
+        // `- [ ]` and `- [x]` are both 5 bytes, so a fixed skip is safe for either case.
+        let body = trimmed[5..].trim().trim_matches(|c| c == '*' || c == '`').trim();
+        current_steps.push((body.to_string(), status));
+    }
+
+    if !current_steps.is_empty() {
+        tasks.push((
+            if current_task.is_empty() {
+                "General Tasks".to_string()
+            } else {
+                current_task
+            },
+            current_steps,
+        ));
+    }
+
+    tasks
 }
 
 /// Parse plan content into grouped tasks: a list of `(task_name, steps)` tuples.
@@ -95,7 +253,7 @@ pub(super) fn parse_plan_tasks(content: &str) -> Vec<(String, Vec<(String, bool)
         let trimmed = line.trim_start();
         let done = if trimmed.starts_with("- [ ]") {
             false
-        } else if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
+        } else if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") || trimmed.starts_with("- [/]") || trimmed.starts_with("- [~]") {
             true
         } else {
             continue;
@@ -494,6 +652,31 @@ mod tests {
         assert_eq!(items[1], ("Task 1: First — Step 2: Do the other thing".to_string(), false));
         assert!(items[2].1); // nested [X] counts as done
         assert!(!items[3].1);
+    }
+
+    #[test]
+    fn test_parse_plan_progress_with_status() {
+        let content = "\
+# A Plan
+
+### Task 1: First
+- [x] Step 1: Landed (commit 3f1efd9e)
+- [/] Step 2: In-branch
+- [ ] Step 3: Pending
+
+### Task 2: Second
+- [x] Step 4: No commit hash (defaults to landed)
+";
+        let repo = std::path::Path::new("/home/Jake/dev/hadron");
+        let (total, landed, branch, items) = parse_plan_progress_with_status(repo, content);
+        assert_eq!(total, 4);
+        assert_eq!(landed, 2);
+        assert_eq!(branch, 1);
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0].1, StepStatus::MainLanded);
+        assert_eq!(items[1].1, StepStatus::BranchCompleted);
+        assert_eq!(items[2].1, StepStatus::Pending);
+        assert_eq!(items[3].1, StepStatus::MainLanded);
     }
 
     #[test]
