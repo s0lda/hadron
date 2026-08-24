@@ -26,6 +26,10 @@ pub enum LintIssue {
     MissingFeatureEntrypoint { feature: String, entrypoint: String },
     /// Note file could not be read or has malformed metadata.
     MalformedNote { path: PathBuf, reason: String },
+    /// Index pointer hook line exceeds recommended length.
+    HookTooLong { slug: String, hook_length: usize, max_length: usize },
+    /// A postmortem note contains a candidate invariant suitable for promotion.
+    PostmortemPromotionCandidate { slug: String, invariant: String },
 }
 
 /// Aggregated report of nucleus health.
@@ -97,6 +101,19 @@ impl NucleusLinter {
                                             target_path: rel_target.to_string(),
                                         });
                                     }
+
+                                    // Check hook length (Standard Model Rule 9: ~100 characters max)
+                                    let after_paren = &after_bracket[paren_start + 1 + paren_end + 1..];
+                                    if let Some(dash_idx) = after_paren.find('—').or_else(|| after_paren.find("--")) {
+                                        let hook = after_paren[dash_idx..].trim_start_matches(|c| c == '—' || c == '-' || c == ' ').trim();
+                                        if hook.chars().count() > 100 {
+                                            report.issues.push(LintIssue::HookTooLong {
+                                                slug: slug.to_string(),
+                                                hook_length: hook.chars().count(),
+                                                max_length: 100,
+                                            });
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -118,6 +135,30 @@ impl NucleusLinter {
                                     slug: stem.to_string(),
                                     path: path.clone(),
                                 });
+                            }
+
+                            // Detect candidate invariant promotions in postmortems
+                            if stem.starts_with("bug-") {
+                                if let Ok(note_body) = fs::read_to_string(&path) {
+                                    if note_body.contains("type: postmortem") && note_body.contains("### Prevention Invariant") {
+                                        if let Some(inv_start) = note_body.find("### Prevention Invariant") {
+                                            let after = &note_body[inv_start + "### Prevention Invariant".len()..];
+                                            let inv_text = after.lines()
+                                                .skip_while(|l| l.trim().is_empty())
+                                                .take_while(|l| !l.starts_with('#'))
+                                                .collect::<Vec<_>>()
+                                                .join(" ")
+                                                .trim()
+                                                .to_string();
+                                            if !inv_text.is_empty() {
+                                                report.issues.push(LintIssue::PostmortemPromotionCandidate {
+                                                    slug: stem.to_string(),
+                                                    invariant: inv_text,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -164,6 +205,61 @@ impl NucleusLinter {
 
         report
     }
+}
+
+/// Promotes a postmortem's prevention invariant to `invariants/always.md` (or `invariants.md`)
+/// and prunes the pointer from `index.md`.
+pub fn promote_postmortem_to_invariants(repo_root: &Path, slug: &str) -> std::io::Result<()> {
+    let nucleus_dir = repo_root.join(".hadron").join("nucleus");
+    let note_path = nucleus_dir.join("notes").join(format!("{}.md", slug));
+    if !note_path.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Postmortem note {} not found", note_path.display()),
+        ));
+    }
+
+    let note_content = fs::read_to_string(&note_path)?;
+    let invariant_text = if let Some(pos) = note_content.find("### Prevention Invariant") {
+        let after = &note_content[pos + "### Prevention Invariant".len()..];
+        after.lines()
+            .skip_while(|l| l.trim().is_empty())
+            .take_while(|l| !l.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string()
+    } else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Note has no ### Prevention Invariant section",
+        ));
+    };
+
+    // Append to invariants file
+    let invariants_dir = nucleus_dir.join("invariants");
+    fs::create_dir_all(&invariants_dir)?;
+    let invariants_path = invariants_dir.join("always.md");
+    let title = slug.trim_start_matches("bug-").replace('-', " ");
+    let mut inv_content = fs::read_to_string(&invariants_path).unwrap_or_default();
+    if !inv_content.ends_with('\n') && !inv_content.is_empty() {
+        inv_content.push('\n');
+    }
+    inv_content.push_str(&format!("- **{}**: {}\n", title, invariant_text));
+    fs::write(&invariants_path, inv_content)?;
+
+    // Prune pointer from index.md
+    let index_path = nucleus_dir.join("index.md");
+    if index_path.is_file() {
+        let index_content = fs::read_to_string(&index_path)?;
+        let pruned: Vec<&str> = index_content
+            .lines()
+            .filter(|l| !l.contains(&format!("[{}]", slug)))
+            .collect();
+        fs::write(&index_path, pruned.join("\n") + "\n")?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -217,5 +313,41 @@ mod tests {
 
         let budget_issue = report.issues.iter().any(|i| matches!(i, LintIssue::IndexBudgetExceeded { size_bytes: 1000, budget_bytes: 500 }));
         assert!(budget_issue);
+    }
+
+    #[test]
+    fn test_promote_postmortem_to_invariants() {
+        let tmp = tempdir().unwrap();
+        let nucleus = tmp.path().join(".hadron/nucleus");
+        let notes = nucleus.join("notes");
+        fs::create_dir_all(&notes).unwrap();
+
+        let index_content = "- [bug-sample](notes/bug-sample.md) — symptom -> invariant\n";
+        fs::write(nucleus.join("index.md"), index_content).unwrap();
+
+        let note_content = "\
+---
+name: bug-sample
+metadata:
+  type: postmortem
+---
+
+### Symptom
+Something crashed
+
+### Prevention Invariant
+Never divide by zero
+";
+        fs::write(notes.join("bug-sample.md"), note_content).unwrap();
+
+        promote_postmortem_to_invariants(tmp.path(), "bug-sample").unwrap();
+
+        let invariants_file = nucleus.join("invariants").join("always.md");
+        assert!(invariants_file.is_file());
+        let inv_text = fs::read_to_string(invariants_file).unwrap();
+        assert!(inv_text.contains("Never divide by zero"));
+
+        let index_after = fs::read_to_string(nucleus.join("index.md")).unwrap();
+        assert!(!index_after.contains("bug-sample"));
     }
 }
