@@ -75,7 +75,7 @@ pub fn validate_note_frontmatter(slug: &str, content: &str) -> Vec<String> {
             }
         } else if l.starts_with("type:") {
             let val = l["type:".len()..].trim();
-            let valid_types = ["user", "feedback", "project", "reference"];
+            let valid_types = ["user", "feedback", "project", "reference", "postmortem"];
             if valid_types.contains(&val) {
                 has_metadata_type = true;
             } else {
