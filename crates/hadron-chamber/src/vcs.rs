@@ -91,6 +91,20 @@ pub fn commit_diff(repo_root: &Path, commit: &str) -> Option<Vec<FileDiff>> {
     Some(parse_diff(&String::from_utf8_lossy(&out.stdout)))
 }
 
+/// Checks if a commit hash is merged into / reachable from `target_branch` (e.g. "main").
+pub fn is_commit_merged(repo_root: &Path, commit: &str, target_branch: &str) -> bool {
+    let clean_commit = commit.trim().trim_matches(|c: char| !c.is_ascii_alphanumeric());
+    if clean_commit.is_empty() {
+        return false;
+    }
+    let out = Command::new("git")
+        .current_dir(repo_root)
+        .args(["merge-base", "--is-ancestor", clean_commit, target_branch])
+        .output()
+        .ok();
+    out.map(|o| o.status.success()).unwrap_or(false)
+}
+
 /// The full raw commit message for a single commit (`git show -s --format=%B <commit>`).
 pub fn commit_message(repo_root: &Path, commit: &str) -> Option<String> {
     let out = Command::new("git")
