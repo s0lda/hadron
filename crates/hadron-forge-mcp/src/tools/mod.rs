@@ -50,11 +50,18 @@ pub mod mesh;
 pub mod pty_pairing;
 pub mod breakpoints;
 pub mod research;
+pub mod trace_slicer;
+pub mod tree_checkpoint;
+pub mod vcr;
+pub mod profile_runner;
+pub mod dap;
 
 use hadron_forge::file::Root;
 use hadron_forge::mock::MockServerManager;
 use hadron_forge::process::ProcessManager;
 use hadron_forge::pty::PtyManager;
+use hadron_forge::vcr::VcrProxyManager;
+use hadron_forge::dap::DapSessionManager;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::schemars::JsonSchema;
 use rmcp::{tool_handler, ServerHandler};
@@ -71,6 +78,8 @@ pub struct ForgeMcpServer {
     pub process_manager: ProcessManager,
     pub pty_manager: PtyManager,
     pub mock_manager: MockServerManager,
+    pub vcr_manager: VcrProxyManager,
+    pub dap_manager: DapSessionManager,
 }
 
 impl ForgeMcpServer {
@@ -92,6 +101,8 @@ impl ForgeMcpServer {
         let process_manager = ProcessManager::new(root.clone());
         let pty_manager = PtyManager::new(root.clone());
         let mock_manager = MockServerManager::new();
+        let vcr_manager = VcrProxyManager::new();
+        let dap_manager = DapSessionManager::new();
         Self {
             tool_router: Self::edit_router()
                 + Self::exec_router()
@@ -137,12 +148,19 @@ impl ForgeMcpServer {
                 + Self::mesh_router()
                 + Self::pty_pairing_router()
                 + Self::breakpoints_router()
-                + Self::research_router(),
+                + Self::research_router()
+                + Self::trace_slicer_router()
+                + Self::tree_checkpoint_router()
+                + Self::vcr_router()
+                + Self::profile_runner_router()
+                + Self::dap_router(),
             root,
             nucleus_root,
             process_manager,
             pty_manager,
             mock_manager,
+            vcr_manager,
+            dap_manager,
         }
     }
 
@@ -161,6 +179,8 @@ impl ForgeMcpServer {
         self.process_manager = ProcessManager::new(self.root.clone());
         self.pty_manager = PtyManager::new(self.root.clone());
         self.mock_manager = MockServerManager::new();
+        self.vcr_manager = VcrProxyManager::new();
+        self.dap_manager = DapSessionManager::new();
         self
     }
 }
