@@ -47,6 +47,11 @@ Hadron Forge (`crates/hadron-forge` and `crates/hadron-forge-mcp`) provides a co
 | **Interactive PTY Pairing** | `hadron_forge_pty_pairing` | Interactive shared PTY pairing broker with live steer and multi-quark observer sessions. |
 | **Tool Execution Breakpoints** | `hadron_forge_tool_breakpoints` | Dynamic pause/resume breakpoints on MCP tool execution and subprocess commands. |
 | **Structured Research Documents** | `hadron_forge_research_write`, `hadron_forge_research_list`, `hadron_forge_research_read` | Architectural investigation documents, topic syntheses in `.hadron/docs/research/`, and task synchronisation. |
+| **Diagnostic & Trace Slicer** | `hadron_forge_trace_slicer` | Semantic compaction and deduplication of backtraces, compiler errors, and log streams. |
+| **Worktree Micro-Checkpointing** | `hadron_forge_tree_checkpoint` | Fast atomic worktree snapshots, diffing, rollback, and pruning for safe speculative editing. |
+| **Deterministic Network VCR** | `hadron_forge_vcr` | Loopback-bound HTTP/RPC cassette recording and deterministic offline playback. |
+| **Headless Profiler Runner** | `hadron_forge_profile_runner` | Automated CPU/heap execution sampling and SVG flamegraph generation. |
+| **Headless DAP Debugger** | `hadron_forge_dap_debug` | Breakpoint management, execution stepping, call stack inspection, and local variable evaluation. |
 
 ---
 
@@ -309,6 +314,42 @@ Standardized architectural investigations and deep codebase research:
 - **Research Lifecycle**: Writes, lists, and reads structured research papers in `.hadron/docs/research/` (`hadron_forge_research_write`, `hadron_forge_research_list`, `hadron_forge_research_read`).
 - **Standardized Schema**: Frontmatter metadata (`slug`, `title`, `author`, `date`, `target_area`) with structured sections for Executive Summary, Key Findings, Constraints, Trade-Offs, and Recommendations.
 - **Task Integration**: Integrates directly with the `/research` slash command and auto-synchronizes plan task titles.
+
+## 39. Diagnostic & Trace Slicer
+
+Semantic compaction and token optimization for errors, panics, and traces:
+- **Backtrace Compaction**: Collapses internal language runtime and standard library frames into concise origin call chains (`hadron_forge_trace_slicer`).
+- **Compiler Error Deduplication**: Groups identical error codes, suppresses cascading noise, and isolates actionable root failures.
+- **Log Stream Slicing**: Distills multi-thousand-line output buffers into compact semantic summaries within agent context budgets.
+
+## 40. Worktree Micro-Checkpointing
+
+Fast atomic worktree snapshots for safe speculative editing:
+- **Atomic Snapshots**: Creates instant file tree checkpoints jailed in `.hadron/checkpoints/` (`hadron_forge_tree_checkpoint`).
+- **Diff & Inspection**: Inspects modified, added, and deleted files relative to any checkpoint.
+- **Rollback & Restore**: Restores previous working tree states safely without polluting git branch histories or stashes.
+
+## 41. Deterministic Network & RPC VCR
+
+Loopback-bound recording and replay for network and IPC testing:
+- **Cassette Recording**: Records outgoing and incoming HTTP/RPC traffic into YAML cassette files (`hadron_forge_vcr`).
+- **Deterministic Replay**: Serves recorded responses offline with exact header and status fidelity.
+- **Hermetic Isolation**: Eliminates external network dependencies and flakes during integration testing.
+
+## 42. Headless Profiler Runner
+
+Automated execution profiling and SVG flamegraph generation:
+- **Sampling Execution**: Runs target commands under native sampling profilers (`hadron_forge_profile_runner`).
+- **Flamegraph Rendering**: Automatically converts folded stack samples into interactive SVG flamegraphs stored under `.hadron/profiles/`.
+- **Hotspot Analysis**: Reports top CPU and memory hotspot functions directly to the agent.
+
+## 43. Headless DAP Runtime Debugger
+
+Interactive runtime debugging via Debug Adapter Protocol (DAP):
+- **Breakpoint Management**: Adds, lists, and removes line and condition breakpoints across source files (`hadron_forge_dap_debug`).
+- **Execution Stepping**: Controls debug targets with `continue`, `next`, `stepIn`, `stepOut`, and `pause` actions.
+- **Stack & Variable Inspection**: Inspects call frame stacks and evaluates in-scope local and global variables.
+
 
 
 

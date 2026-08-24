@@ -5,6 +5,25 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-08-24
+
+### Added
+- **Headless DAP Runtime Debugger (`hadron-forge`, `hadron-forge-mcp`)**:
+  - Implemented `hadron_forge::dap` session lifecycle manager and exposed `hadron_forge_dap_debug` MCP tool.
+  - Added support for launch/attach configurations, breakpoint addition and removal, execution control (`continue`, `next`, `stepIn`, `stepOut`, `pause`), stack trace retrieval, and scoped variable evaluation.
+- **Diagnostic & Trace Slicer (`hadron-forge`, `hadron-forge-mcp`)**:
+  - Implemented `hadron_forge::trace_slicer` and exposed `hadron_forge_trace_slicer` MCP tool.
+  - Added semantic compaction for backtraces (collapsing internal runtime frames), deduplicating compiler error cascades, and distilling log streams into token-efficient diagnostic summaries.
+- **Deterministic Network & RPC VCR (`hadron-forge`, `hadron-forge-mcp`)**:
+  - Implemented `hadron_forge::vcr` and exposed `hadron_forge_vcr` MCP tool.
+  - Added loopback-bound (`127.0.0.1`) HTTP/RPC proxy recording requests and responses into YAML cassette files under `.hadron/vcr/` with playback and cassette management.
+- **Worktree Micro-Checkpointing (`hadron-forge`, `hadron-forge-mcp`)**:
+  - Implemented `hadron_forge::tree_checkpoint` and exposed `hadron_forge_tree_checkpoint` MCP tool.
+  - Added atomic worktree state snapshot creation under `.hadron/checkpoints/`, diff comparison against live working copy, restoration/rollback, and checkpoint pruning.
+- **Headless Profiler Runner (`hadron-forge`, `hadron-forge-mcp`)**:
+  - Implemented `hadron_forge::profile_runner` and exposed `hadron_forge_profile_runner` MCP tool.
+  - Added automated command execution with sampling profilers, converting raw folded stack traces into interactive SVG flamegraphs saved to `.hadron/profiles/`.
+
 ## [0.18.0] - 2026-08-24
 
 ### Added
