@@ -20,6 +20,20 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.18.0",
+        date: Some("2026-08-24"),
+        added: &[
+            "Structured Bug Post-Mortems: Standard post-mortem schema, nucleus hook length bounds (<= 100 chars), and auto-promotion to invariants",
+            "Collapsed Roster filter sync reflecting Active vs All tabs with display-name alphabetical sorting",
+            "Cross-worktree dual-state plan tracking with blue checkmarks for in-branch completed tasks and green for main-landed commits",
+        ],
+        changed: &[],
+        fixed: &[
+            "Multiline slash command argument capture (Arity::Body) preventing split chat messages",
+            "Chat selection and message copy via Ctrl+C / Cmd+C and right-click context menu",
+        ],
+    },
+    Release {
         version: "0.17.0",
         date: Some("2026-08-22"),
         added: &[
