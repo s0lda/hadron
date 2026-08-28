@@ -593,9 +593,17 @@ impl super::AcpQuark {
                             agent_client_protocol::on_receive_request!(),
                         )
                         .connect_with(agent, move |cx: ConnectionTo<Agent>| async move {
-                            cx.send_request(InitializeRequest::new(ProtocolVersion::V1))
+                            let init = cx.send_request(InitializeRequest::new(ProtocolVersion::V1))
                                 .block_task()
                                 .await?;
+                            term::info(
+                                Source::Acp,
+                                &format!(
+                                    "ACP session initialized: agent {:?} (protocol {:?})",
+                                    init.agent_info.as_ref().map(|i| &i.name),
+                                    init.protocol_version
+                                ),
+                            );
 
                             let forge_exe = std::env::current_exe()
                                 .ok()

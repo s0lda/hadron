@@ -1429,3 +1429,11 @@ fn a_cancelled_turn_with_no_partial_text_has_no_message() {
     let message = super::session::message_for_stop("", &StopReason::Cancelled);
     assert_eq!(message, None);
 }
+
+#[test]
+fn test_protocol_version_variants() {
+    let v1 = ProtocolVersion::V1;
+    let serialized = serde_json::to_string(&v1).unwrap();
+    assert!(!serialized.is_empty());
+}
+
