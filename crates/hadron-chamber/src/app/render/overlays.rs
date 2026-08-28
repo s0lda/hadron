@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.20.0",
+        date: Some("2026-08-28"),
+        added: &[
+            "Universal ACP v2 & Multi-Agent Swarm: Adaptive protocol version handshake (v1/v2), capability negotiation, and expanded preset catalogue",
+            "Concurrent Native Antigravity ACP & SDK Bridge support with custom command/environment resolution",
+            "Multi-Vendor Pricing Matrix: Comprehensive real-time USD token pricing across Claude 3.7/3.5, Gemini 2.0, GPT-4o, o1, o3, DeepSeek V3/R1, Mistral, and Qwen",
+            "Chamber Stats Overhaul: Multi-window telemetry aggregation (24h Day window), rolling cutoffs, live quota tier visualizer, resetsAt countdowns, and context saturation meters",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.19.0",
         date: Some("2026-08-24"),
         added: &[
