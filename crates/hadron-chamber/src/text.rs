@@ -812,8 +812,10 @@ pub fn parse_spend_arg(args: &str) -> (Option<&str>, crate::model::StatsWindow) 
     let mut window = crate::model::StatsWindow::Session;
     for tok in args.trim().split_whitespace() {
         match tok.to_lowercase().as_str() {
-            "today" | "session" => window = crate::model::StatsWindow::Session,
+            "today" | "day" => window = crate::model::StatsWindow::Day,
+            "session" => window = crate::model::StatsWindow::Session,
             "week" => window = crate::model::StatsWindow::Week,
+            "month" => window = crate::model::StatsWindow::Month,
             "all" | "alltime" => window = crate::model::StatsWindow::AllTime,
             _ => {
                 let s = tok.trim_start_matches('@');
@@ -2439,14 +2441,16 @@ mod tests {
     }
 
     #[test]
-    fn parse_spend_arg_today_and_session_both_resolve_to_session_window() {
-        assert_eq!(parse_spend_arg("today").1, crate::model::StatsWindow::Session);
+    fn parse_spend_arg_today_and_day_resolve_to_day_window() {
+        assert_eq!(parse_spend_arg("today").1, crate::model::StatsWindow::Day);
+        assert_eq!(parse_spend_arg("day").1, crate::model::StatsWindow::Day);
         assert_eq!(parse_spend_arg("session").1, crate::model::StatsWindow::Session);
     }
 
     #[test]
-    fn parse_spend_arg_parses_week_and_all_windows() {
+    fn parse_spend_arg_parses_week_month_and_all_windows() {
         assert_eq!(parse_spend_arg("week").1, crate::model::StatsWindow::Week);
+        assert_eq!(parse_spend_arg("month").1, crate::model::StatsWindow::Month);
         assert_eq!(parse_spend_arg("all").1, crate::model::StatsWindow::AllTime);
     }
 
