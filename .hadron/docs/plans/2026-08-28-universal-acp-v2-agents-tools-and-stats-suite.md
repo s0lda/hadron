@@ -29,11 +29,11 @@
 - Consumes: `agent_client_protocol::schema::ProtocolVersion`, `agent_client_protocol::schema::v1::InitializeRequest`, `ResolvedAcpTarget`.
 - Produces: `AcpSession::protocol_version`, adaptive `InitializeRequest` negotiation, complete ACP catalog specifications for Antigravity (`agy`), Claude, Codex, Gemini, Copilot, Cline, Cursor, Mistral, Crow, Minion, Augment, Cagent, Fast-Agent, Goose, Kilo, and custom seats.
 
-- [ ] **Step 1: Write unit tests for protocol version negotiation and preset catalogue integrity**
-- [ ] **Step 2: Implement adaptive handshake trying latest protocol version with graceful fallback to V1**
-- [ ] **Step 3: Update and expand ACP agent preset catalog with verified command definitions and aliases**
-- [ ] **Step 4: Run cargo check and cargo test for hadron-gluon ACP adapter**
-- [ ] **Step 5: Commit changes**
+- [x] **Step 1: Write unit tests for protocol version negotiation and preset catalogue integrity (commit 8a962ba3)**
+- [x] **Step 2: Implement adaptive handshake trying latest protocol version with graceful fallback to V1 (commit 8a962ba3)**
+- [x] **Step 3: Update and expand ACP agent preset catalog with verified command definitions and aliases (commit 8a962ba3)**
+- [x] **Step 4: Run cargo check and cargo test for hadron-gluon ACP adapter (commit 8a962ba3)**
+- [x] **Step 5: Commit changes (commit 8a962ba3)**
 
 ---
 
