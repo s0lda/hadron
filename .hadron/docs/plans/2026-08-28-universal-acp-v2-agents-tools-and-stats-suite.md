@@ -50,11 +50,11 @@
 - Consumes: `ForgeMcpServer`, `hadron_forge::file::Root`, `Mode` permission ladder.
 - Produces: Universal tool availability across ACP (`hadron-forge-mcp`, `context7`) and HTTP Function Calling (`local_tools.rs` mapping 50+ forge primitives).
 
-- [ ] **Step 1: Write tests for permission ladder evaluation across Ask, Write, Auto, Bypass modes**
-- [ ] **Step 2: Align `local_tools.rs` declarations with full forge capabilities (read, edit, diff, grep, exec, trace slicing, DAP)**
-- [ ] **Step 3: Ensure ACP session initialization provisions both `hadron-forge-mcp` and `context7` with worktree anchoring**
-- [ ] **Step 4: Verify tool execution in local HTTP and ACP mock sessions**
-- [ ] **Step 5: Commit changes**
+- [x] **Step 1: Write tests for permission ladder evaluation across Ask, Write, Auto, Bypass modes (commit 8a962ba3)**
+- [x] **Step 2: Align `local_tools.rs` declarations with full forge capabilities (read, edit, diff, grep, exec, trace slicing, DAP) (commit 8a962ba3)**
+- [x] **Step 3: Ensure ACP session initialization provisions both `hadron-forge-mcp` and `context7` with worktree anchoring (commit 8a962ba3)**
+- [x] **Step 4: Verify tool execution in local HTTP and ACP mock sessions (commit 8a962ba3)**
+- [x] **Step 5: Commit changes (commit 8a962ba3)**
 
 ---
 
