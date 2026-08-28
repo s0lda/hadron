@@ -940,14 +940,48 @@ impl super::Chamber {
             let (quota, quota_shared) = self.quota_for_display(q);
             let now = chrono::Utc::now();
             for bucket in quota {
-                block = block.child(div().text_xs().text_color(theme::text_muted()).child(
-                    format!(
-                        "Quota [{}]: {:.0}% left{}",
-                        quota_tag(&bucket.key, quota_shared),
-                        bucket.remaining_fraction * 100.0,
-                        quota_countdown_suffix(&bucket, now),
-                    ),
-                ));
+                let frac = (bucket.remaining_fraction as f32).clamp(0.0, 1.0);
+                let q_bar_color = if frac < 0.20 {
+                    theme::halo_error()
+                } else if frac < 0.50 {
+                    rgb(0xfbbf24).into()
+                } else {
+                    theme::halo_idle()
+                };
+                let cd = quota_countdown_suffix(&bucket, now);
+                block = block
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                h_flex()
+                                    .gap_1p5()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .text_color(theme::text())
+                                            .child(format!("Quota [{}]", quota_tag(&bucket.key, quota_shared))),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(q_bar_color)
+                                            .child(format!("{:.0}% left", bucket.remaining_fraction * 100.0)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(cd),
+                            ),
+                    )
+                    .child(progress_meter(frac, q_bar_color));
             }
             col = col.child(block);
         }
