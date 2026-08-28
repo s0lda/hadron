@@ -90,11 +90,11 @@
 - Consumes: `ChamberView::messages`, `archived_messages`, `StatsWindow`.
 - Produces: `SessionStats` with 6-window scoping (`Current`, `Session`, `Day`, `Week`, `Month`, `AllTime`), `SpendTimeline` with cumulative multi-quark spend points, and unpriced quark accounting.
 
-- [ ] **Step 1: Write unit tests for `Day (24h)` window filtering and cumulative spend timeline calculation**
-- [ ] **Step 2: Implement `StatsWindow::Day` and update window cutoff filters**
-- [ ] **Step 3: Refine spend timeline interpolation to ensure accurate team and per-quark trajectories**
-- [ ] **Step 4: Run cargo test for hadron-chamber stats model**
-- [ ] **Step 5: Commit changes**
+- [x] **Step 1: Write unit tests for `Day (24h)` window filtering and cumulative spend timeline calculation (commit 5ad1e4ac)**
+- [x] **Step 2: Implement `StatsWindow::Day` and update window cutoff filters (commit 5ad1e4ac)**
+- [x] **Step 3: Refine spend timeline interpolation to ensure accurate team and per-quark trajectories (commit 5ad1e4ac)**
+- [x] **Step 4: Run cargo test for hadron-chamber stats model (commit 5ad1e4ac)**
+- [x] **Step 5: Commit changes (commit 5ad1e4ac)**
 
 ---
 
