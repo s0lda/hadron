@@ -5,6 +5,20 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-08-28
+
+### Added
+- **Universal ACP v2 & Multi-Agent Swarm Integration (`hadron-gluon`, `hadron-lattice`)**:
+  - Implemented adaptive ACP protocol version handshake negotiation (`ProtocolVersion::V1`, `ProtocolVersion::V2`) with backward compatibility, capability discovery, and fallback in `hadron-gluon::adapter::acp`.
+  - Expanded ACP agent preset catalogue and registry alias resolution for Antigravity (`agy`), Kilo (`kilo`), Claude, Codex, Gemini, Copilot, Cline, Cursor, Mistral, Crow, Minion, Augment, Cagent, Fast-Agent, and Goose in `hadron-gluon::adapter::registry`.
+  - Added concurrent support for native Antigravity ACP (`antigravity-acp`) and the Python SDK Bridge (`agy`) with custom command and environment resolution.
+- **Multi-Vendor Pricing Matrix & Telemetry Aggregation (`hadron-lattice`, `hadron-chamber`)**:
+  - Built comprehensive real-time USD token pricing matrix across Claude 3.7/3.5, Gemini 2.0/Flash/Pro, GPT-4o, o1, o3, DeepSeek V3/R1, Mistral, and Qwen in `hadron-lattice::telemetry`.
+  - Added multi-window telemetry aggregation with 24-hour day window (`StatsWindow::Day`), rolling cutoff calculations, archive log consolidation, and slash command integration (`/stats day`, `/spend @Quark day`).
+- **Next-Gen Chamber Stats Dashboard & Real-Time Monitoring (`hadron-chamber`)**:
+  - Built interactive quota consumption visualizer with color-coded tier cards (Safe, Warning, Danger) and animated context saturation progress bars in `hadron-chamber::app::render::stats`.
+  - Added real-time quota reset countdown timers (`resetsAt`) and dynamic token spend tracking.
+
 ## [0.19.0] - 2026-08-24
 
 ### Added
