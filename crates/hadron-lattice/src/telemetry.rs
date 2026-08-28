@@ -207,10 +207,30 @@ impl Usage {
         let m = model.to_lowercase();
         let (in_price, out_price, cw_price, cr_price) = if m.contains("opus") {
             (15.0, 75.0, 18.75, 1.50)
+        } else if m.contains("haiku") {
+            (0.80, 4.0, 1.00, 0.08)
         } else if m.contains("sonnet") {
             (3.0, 15.0, 3.75, 0.30)
-        } else if m.contains("gemini") && m.contains("pro") {
-            (3.50, 10.50, 3.50, 1.75)
+        } else if m.contains("flash") {
+            (0.10, 0.40, 0.10, 0.025)
+        } else if m.contains("gemini") {
+            (1.25, 5.00, 1.25, 0.3125)
+        } else if m.contains("gpt-4o-mini") {
+            (0.15, 0.60, 0.15, 0.075)
+        } else if m.contains("gpt-4o") || m.contains("gpt-4") {
+            (2.50, 10.00, 2.50, 1.25)
+        } else if m.contains("o3-mini") || m.contains("o1-mini") {
+            (1.10, 4.40, 1.10, 0.55)
+        } else if m.contains("o1") || m.contains("o3") {
+            (15.00, 60.00, 15.00, 7.50)
+        } else if m.contains("deepseek") && (m.contains("r1") || m.contains("reasoner")) {
+            (0.55, 2.19, 0.55, 0.14)
+        } else if m.contains("deepseek") {
+            (0.14, 0.28, 0.14, 0.014)
+        } else if m.contains("mistral") && m.contains("large") {
+            (2.00, 6.00, 2.00, 0.50)
+        } else if m.contains("mistral") || m.contains("codestral") || m.contains("vibe") || m.contains("qwen") {
+            (0.20, 0.60, 0.20, 0.05)
         } else {
             return None;
         };
@@ -506,5 +526,39 @@ mod tests {
         assert!(t.usage.is_empty());
         assert_eq!(t.usage.effective_remaining("Gemini 3.1 Pro (High)"), None);
         assert!(parse_agy_statusline("not json").is_err());
+    }
+
+    #[test]
+    fn cost_usd_pricing_matrix_calculates_accurately() {
+        let spend = TokenSpend {
+            input: Some(1_000_000),
+            output: Some(1_000_000),
+            cache_read: Some(1_000_000),
+            cache_write: Some(1_000_000),
+        };
+
+        let sonnet_usage = Usage {
+            model: Some("claude-3-7-sonnet-20250219".into()),
+            spend: spend.clone(),
+            ..Default::default()
+        };
+        // Sonnet: 3.0 + 15.0 + 3.75 + 0.30 = 22.05
+        assert!((sonnet_usage.cost_usd().unwrap() - 22.05).abs() < 1e-6);
+
+        let gpt4o_usage = Usage {
+            model: Some("gpt-4o".into()),
+            spend: spend.clone(),
+            ..Default::default()
+        };
+        // GPT-4o: 2.50 + 10.00 + 2.50 + 1.25 = 16.25
+        assert!((gpt4o_usage.cost_usd().unwrap() - 16.25).abs() < 1e-6);
+
+        let deepseek_usage = Usage {
+            model: Some("deepseek-chat".into()),
+            spend: spend.clone(),
+            ..Default::default()
+        };
+        // DeepSeek: 0.14 + 0.28 + 0.14 + 0.014 = 0.574
+        assert!((deepseek_usage.cost_usd().unwrap() - 0.574).abs() < 1e-6);
     }
 }
