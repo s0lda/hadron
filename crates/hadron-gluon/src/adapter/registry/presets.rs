@@ -41,6 +41,10 @@ pub(super) const REGISTRY_ALIASES: &[(&str, &str)] = &[
     ("mistral-vibe", "mistral"),
     ("qwen-code", "qwen"),
     ("auggie", "augment"),
+    ("kilo-code", "kilo"),
+    ("kilocode", "kilo"),
+    ("antigravity-acp", "agy"),
+    ("google-antigravity", "agy"),
 ];
 
 /// Every ACP agent with a built-in boot command. A seat may still override the
@@ -241,6 +245,13 @@ pub(super) const ACP_AGENTS: &[AcpAgentSpec] = &[
         vendor: "kimi",
         name: "Kimi CLI (ACP)",
         program: "kimi-cli",
+        args: &[],
+        proven: false,
+    },
+    AcpAgentSpec {
+        vendor: "kilo",
+        name: "Kilo Code (ACP)",
+        program: "kilo",
         args: &[],
         proven: false,
     },
