@@ -110,12 +110,12 @@
 - Consumes: `SessionStats`, `SpendTimeline`, `latest_quota`, `latest_context`.
 - Produces: Modern GPUI dashboard featuring multi-window tab controls, live quota cards with reset countdowns, account-shared badges, cumulative spend timeline graph, per-quark metric cards, and budget warning indicators.
 
-- [ ] **Step 1: Build live quota card component with circular/bar progress, status coloring, and reset countdown strings**
-- [ ] **Step 2: Enhance cumulative spend timeline rendering with clear legends and step axes**
-- [ ] **Step 3: Upgrade per-quark cards and table with 4-way token chips, context saturation bars, cost metrics, and tool execution counts**
-- [ ] **Step 4: Wire summary KPI tiles in the stats header**
-- [ ] **Step 5: Run cargo check -p hadron and verify compilation**
-- [ ] **Step 6: Commit changes**
+- [x] **Step 1: Build live quota card component with circular/bar progress, status coloring, and reset countdown strings (commit 0283f86f)**
+- [x] **Step 2: Enhance cumulative spend timeline rendering with clear legends and step axes (commit 0283f86f)**
+- [x] **Step 3: Upgrade per-quark cards and table with 4-way token chips, context saturation bars, cost metrics, and tool execution counts (commit 0283f86f)**
+- [x] **Step 4: Wire summary KPI tiles in the stats header (commit 0283f86f)**
+- [x] **Step 5: Run cargo check -p hadron and verify compilation (commit 0283f86f)**
+- [x] **Step 6: Commit changes (commit 0283f86f)**
 
 ---
 
