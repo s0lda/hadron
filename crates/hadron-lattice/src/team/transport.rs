@@ -353,7 +353,7 @@ impl CliSpec {
     /// order in §4.3).
     pub fn preset(vendor: &str) -> Option<CliSpec> {
         match vendor {
-            "agy" => Some(CliSpec::agy()),
+            "agy" | "antigravity" => Some(CliSpec::agy()),
             "claude" => Some(CliSpec::claude()),
             "copilot" => Some(CliSpec::copilot()),
             _ => None,

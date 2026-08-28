@@ -723,6 +723,7 @@ mod tests {
 
     #[test]
     fn test_canvas_base_token() {
+        set_active_preset(crate::config::ThemePreset::Obsidian);
         let base = canvas_base();
         let expected: Hsla = rgb(0x050505).into();
         assert_eq!(base, expected);

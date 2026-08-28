@@ -1134,6 +1134,25 @@ fn a_vendor_resolves_through_its_registry_alias() {
     assert!(target.args.iter().any(|a| a.contains("@github/copilot")), "{:?}", target.args);
 }
 
+#[test]
+fn catalogue_carries_both_antigravity_acp_and_sdk_bridge() {
+    let entries = QuarkKind::available_agents();
+    let sdk_bridge = entries
+        .iter()
+        .find(|e| e.vendor == "agy")
+        .expect("agy (SDK Bridge) is in the catalogue");
+    assert_eq!(sdk_bridge.name, "Antigravity (SDK Bridge)");
+    assert!(sdk_bridge.description.contains("bundled Python SDK ACP bridge"));
+
+    let acp_native = entries
+        .iter()
+        .find(|e| e.vendor == "antigravity")
+        .expect("antigravity (native ACP) is in the catalogue");
+    assert!(acp_native.command.is_some());
+    assert_eq!(QuarkKind::secret_env_for("agy", hadron_lattice::Transport::Acp), &["GEMINI_API_KEY"]);
+    assert!(QuarkKind::secret_env_for("antigravity", hadron_lattice::Transport::Acp).is_empty());
+}
+
 // -- Transport::Http: the cloud OpenAI-compatible vendor's api_key wiring --
 
 /// `attach_http_api_key` is what `build()`'s `Http` arm calls to turn a resolved
