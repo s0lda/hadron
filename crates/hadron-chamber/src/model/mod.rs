@@ -376,6 +376,8 @@ pub enum StatsWindow {
     Current,
     /// The live field: this session since the last `/clear`. No archives, no time bound.
     Session,
+    /// Rolling `now − 24 hours`, across the live field and archived sessions.
+    Day,
     /// Rolling `now − 7 days`, across the live field and archived sessions.
     Week,
     /// Rolling `now − 30 days`, across the live field and archived sessions.
@@ -386,9 +388,10 @@ pub enum StatsWindow {
 
 impl StatsWindow {
     /// In tab order.
-    pub const ALL: [StatsWindow; 5] = [
+    pub const ALL: [StatsWindow; 6] = [
         StatsWindow::Current,
         StatsWindow::Session,
+        StatsWindow::Day,
         StatsWindow::Week,
         StatsWindow::Month,
         StatsWindow::AllTime,
@@ -398,6 +401,7 @@ impl StatsWindow {
         match self {
             StatsWindow::Current => "Current",
             StatsWindow::Session => "Session",
+            StatsWindow::Day => "Day",
             StatsWindow::Week => "Week",
             StatsWindow::Month => "Month",
             StatsWindow::AllTime => "All time",
@@ -409,6 +413,7 @@ impl StatsWindow {
     pub fn cutoff(self, now: DateTime<chrono::Utc>) -> Option<DateTime<chrono::Utc>> {
         match self {
             StatsWindow::Current | StatsWindow::Session | StatsWindow::AllTime => None,
+            StatsWindow::Day => Some(now - chrono::Duration::hours(24)),
             StatsWindow::Week => Some(now - chrono::Duration::days(7)),
             StatsWindow::Month => Some(now - chrono::Duration::days(30)),
         }

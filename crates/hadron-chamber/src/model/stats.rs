@@ -297,3 +297,113 @@ pub fn downsample_context_points(points: &[(usize, f64)], max_count: usize) -> V
     }
     res
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+    use hadron_lattice::{Transport, Usage, TokenSpend, QuarkState, Mode};
+    use crate::model::{ChamberView, MessageRow, RosterRow};
+
+    fn test_roster_row(id: &str, transport: Transport) -> RosterRow {
+        RosterRow {
+            id: id.into(),
+            display_name: Some(id.into()),
+            state: QuarkState::Ground,
+            mode: Mode::Bypass,
+            mode_is_override: false,
+            vendor: id.into(),
+            model: "test-model".into(),
+            flavor: None,
+            transport,
+            effort: None,
+            enabled: true,
+            adopted: true,
+            tokens: 0,
+            unknown_turns: 0,
+        }
+    }
+
+    fn test_message_row(from: &str, ts: chrono::DateTime<Utc>, usage: Option<Usage>) -> MessageRow {
+        MessageRow {
+            from: from.into(),
+            to: None,
+            body: "test message".into(),
+            kind_label: "message",
+            usage,
+            ts,
+            legacy_used_tokens: None,
+            turn: None,
+            severity: None,
+        }
+    }
+
+    #[test]
+    fn day_window_filters_messages_within_24_hours() {
+        let now = Utc::now();
+        let view = ChamberView {
+            roster: vec![test_roster_row("cli-agy", Transport::Cli)],
+            messages: vec![
+                test_message_row(
+                    "cli-agy",
+                    now - Duration::hours(10),
+                    Some(Usage {
+                        spend: TokenSpend { input: Some(100), output: Some(50), ..Default::default() },
+                        ..Default::default()
+                    }),
+                ),
+                test_message_row(
+                    "cli-agy",
+                    now - Duration::hours(30),
+                    Some(Usage {
+                        spend: TokenSpend { input: Some(500), output: Some(200), ..Default::default() },
+                        ..Default::default()
+                    }),
+                ),
+            ],
+            ..Default::default()
+        };
+
+        let stats_day = view.stats_for(&[], StatsWindow::Day, now);
+        assert_eq!(stats_day.total_fresh, 150);
+
+        let stats_all = view.stats_for(&[], StatsWindow::AllTime, now);
+        assert_eq!(stats_all.total_fresh, 850);
+    }
+
+    #[test]
+    fn spend_timeline_computes_running_totals() {
+        let now = Utc::now();
+        let view = ChamberView {
+            roster: vec![
+                test_roster_row("agy", Transport::Cli),
+                test_roster_row("claude", Transport::Cli),
+            ],
+            messages: vec![
+                test_message_row(
+                    "agy",
+                    now - Duration::minutes(5),
+                    Some(Usage {
+                        spend: TokenSpend { input: Some(100), output: Some(100), ..Default::default() },
+                        ..Default::default()
+                    }),
+                ),
+                test_message_row(
+                    "claude",
+                    now - Duration::minutes(2),
+                    Some(Usage {
+                        spend: TokenSpend { input: Some(300), output: Some(200), ..Default::default() },
+                        ..Default::default()
+                    }),
+                ),
+            ],
+            ..Default::default()
+        };
+
+        let timeline = view.spend_timeline(&[], StatsWindow::Session, now);
+        assert_eq!(timeline.quarks, vec!["agy", "claude"]);
+        assert_eq!(timeline.points.len(), 2);
+        assert_eq!(timeline.points[0].team, 200.0);
+        assert_eq!(timeline.points[1].team, 700.0);
+    }
+}
