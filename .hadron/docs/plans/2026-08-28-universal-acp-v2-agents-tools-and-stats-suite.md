@@ -71,11 +71,11 @@
 - Consumes: Raw JSON-RPC `session/update` notifications, HTTP headers / SSE chunks.
 - Produces: `Usage` struct with 4-way `TokenSpend` (input, output, cache-read, cache-write), `ContextUsage`, `QuotaBucket` vector with `resetsAt` timestamps, and `cost_usd()` real-time pricing calculation.
 
-- [ ] **Step 1: Write unit tests for Claude `_claude/rateLimit`, Gemini quota buckets, and OpenRouter credit parsing**
-- [ ] **Step 2: Expand pricing matrix in `hadron_lattice::telemetry::Usage::cost_usd` for Claude 3.7, Gemini 2.0/Flash, GPT-4o, DeepSeek V3/R1**
-- [ ] **Step 3: Ensure Ollama and LM Studio telemetry (eval_count, prompt_eval_count, eval_duration) are properly captured**
-- [ ] **Step 4: Run cargo test on hadron-lattice telemetry and spend calculations**
-- [ ] **Step 5: Commit changes**
+- [x] **Step 1: Write unit tests for Claude `_claude/rateLimit`, Gemini quota buckets, and OpenRouter credit parsing (commit 6656d1ff)**
+- [x] **Step 2: Expand pricing matrix in `hadron_lattice::telemetry::Usage::cost_usd` for Claude 3.7, Gemini 2.0/Flash, GPT-4o, DeepSeek V3/R1 (commit 6656d1ff)**
+- [x] **Step 3: Ensure Ollama and LM Studio telemetry (eval_count, prompt_eval_count, eval_duration) are properly captured (commit 6656d1ff)**
+- [x] **Step 4: Run cargo test on hadron-lattice telemetry and spend calculations (commit 6656d1ff)**
+- [x] **Step 5: Commit changes (commit 6656d1ff)**
 
 ---
 
