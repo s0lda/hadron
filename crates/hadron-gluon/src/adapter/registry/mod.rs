@@ -436,7 +436,8 @@ impl QuarkKind {
             "claude" => "Anthropic Claude Code, over ACP",
             "codex" => "OpenAI Codex CLI, over ACP",
             "gemini" => "Google Gemini CLI, over ACP",
-            "agy" => "Google Antigravity (Gemini), via the bundled ACP bridge",
+            "agy" => "Google Antigravity (Gemini), via the bundled Python SDK ACP bridge",
+            "antigravity" => "Google Antigravity CLI, over ACP",
             _ => "",
         }
     }
@@ -500,9 +501,11 @@ impl QuarkKind {
                         // `initialize`. Nothing published and nothing to synthesise leaves
                         // our preset alone rather than blanking a command that may be right.
                         None => {
-                            if let Some(args) = loader::binary_acp_args(agent).filter(|a| !a.is_empty()) {
-                                if let Some((program, _)) = existing.command.take() {
-                                    existing.command = Some((program, args));
+                            if existing.command.as_ref().map_or(false, |(prog, _)| prog != "npx" && prog != "uvx") {
+                                if let Some(args) = loader::binary_acp_args(agent).filter(|a| !a.is_empty()) {
+                                    if let Some((program, _)) = existing.command.take() {
+                                        existing.command = Some((program, args));
+                                    }
                                 }
                             }
                         }

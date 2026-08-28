@@ -43,8 +43,8 @@ pub(super) const REGISTRY_ALIASES: &[(&str, &str)] = &[
     ("auggie", "augment"),
     ("kilo-code", "kilo"),
     ("kilocode", "kilo"),
-    ("antigravity-acp", "agy"),
-    ("google-antigravity", "agy"),
+    ("antigravity-acp", "antigravity"),
+    ("google-antigravity", "antigravity"),
 ];
 
 /// Every ACP agent with a built-in boot command. A seat may still override the
@@ -91,7 +91,7 @@ pub(super) const ACP_AGENTS: &[AcpAgentSpec] = &[
     },
     AcpAgentSpec {
         vendor: "agy",
-        name: "Antigravity (SDK)",
+        name: "Antigravity (SDK Bridge)",
         // The ONLY preset that names a path rather than a program on `PATH`, because
         // the bridge is a script rather than a published CLI. Written `{hadron}`-
         // anchored, NOT `{repo}`-anchored: the script and its venv are materialized
@@ -105,6 +105,13 @@ pub(super) const ACP_AGENTS: &[AcpAgentSpec] = &[
         #[cfg(not(windows))]
         program: "{hadron}/bridges/agy/venv/bin/python",
         args: &["{hadron}/bridges/agy/agy_acp.py"],
+        proven: false,
+    },
+    AcpAgentSpec {
+        vendor: "antigravity",
+        name: "Antigravity (ACP)",
+        program: "npx",
+        args: &["-y", "antigravity-acp@latest"],
         proven: false,
     },
     // ── Best-effort presets from docs/research/acp-providers.md (all unproven) ──
