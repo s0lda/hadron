@@ -130,7 +130,7 @@
 - Consumes: All completed subsystems.
 - Produces: Complete end-to-end operational verification across all agents, tools, telemetry collectors, and stats visualizers.
 
-- [ ] **Step 1: Run full gate test suite across all workspace crates (`cargo test --workspace`)**
-- [ ] **Step 2: Update feature map in `.hadron/nucleus/features.md` with updated stats and ACP v2 capabilities**
-- [ ] **Step 3: Verify all invariants and ensure clean git tree state**
-- [ ] **Step 4: Commit changes and prepare final report**
+- [x] **Step 1: Run full gate test suite across all workspace crates (`cargo test --workspace`) (commit 0283f86f)**
+- [x] **Step 2: Update feature map in `.hadron/nucleus/features.md` with updated stats and ACP v2 capabilities (commit 0283f86f)**
+- [x] **Step 3: Verify all invariants and ensure clean git tree state (commit 0283f86f)**
+- [x] **Step 4: Commit changes and prepare final report (commit 0283f86f)**
