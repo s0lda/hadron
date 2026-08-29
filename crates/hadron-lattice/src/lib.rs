@@ -62,4 +62,6 @@ pub mod preon;
 pub use preon::*;
 pub mod nucleus_vec;
 pub use nucleus_vec::*;
+pub mod compaction;
+pub use compaction::*;
 
