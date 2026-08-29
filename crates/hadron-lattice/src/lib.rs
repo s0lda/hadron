@@ -64,4 +64,6 @@ pub mod nucleus_vec;
 pub use nucleus_vec::*;
 pub mod compaction;
 pub use compaction::*;
+pub mod global_sync;
+pub use global_sync::*;
 
