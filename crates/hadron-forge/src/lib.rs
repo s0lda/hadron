@@ -105,3 +105,5 @@ pub use prompt_distiller::*;
 pub use mesh::*;
 pub use pty_pairing::*;
 pub use breakpoints::*;
+pub mod browser_bridge;
+pub use browser_bridge::*;
