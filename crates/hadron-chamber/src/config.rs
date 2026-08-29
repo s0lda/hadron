@@ -182,6 +182,7 @@ impl SoundTheme {
         }
     }
 
+    #[allow(dead_code)]
     pub fn id(self) -> &'static str {
         match self {
             SoundTheme::Classic => "classic",
