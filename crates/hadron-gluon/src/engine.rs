@@ -25,6 +25,8 @@ pub mod dag_auto;
 pub mod heartbeat;
 pub mod speculative_gate;
 pub use speculative_gate::*;
+pub mod dag_scheduler;
+pub use dag_scheduler::*;
 mod routing;
 mod turn;
 mod merge;
