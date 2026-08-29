@@ -45,5 +45,7 @@ pub mod vcr;
 pub use vcr::*;
 pub mod bakeoff;
 pub use bakeoff::*;
+pub mod checkpoint;
+pub use checkpoint::*;
 
 
