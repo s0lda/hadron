@@ -456,24 +456,10 @@ pub fn copy_to_system_clipboard(text: &str) {
         #[cfg(target_os = "linux")]
         {
             if is_wsl() {
-                // Under WSL, copy directly to the Windows host clipboard via clip.exe
-                let mut copied_win = false;
-                if let Ok(mut child) = Command::new("clip.exe")
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                {
-                    if let Some(mut stdin) = child.stdin.take() {
-                        use std::io::Write;
-                        let _ = stdin.write_all(text.as_bytes());
-                    }
-                    if child.wait().map(|s| s.success()).unwrap_or(false) {
-                        copied_win = true;
-                    }
-                }
-                if !copied_win {
-                    if let Ok(mut child) = Command::new("/mnt/c/WINDOWS/system32/clip.exe")
+                // Under WSL, copy directly to the Windows host clipboard via clip.exe or PowerShell
+                let mut copied = false;
+                for prog in ["clip.exe", "/mnt/c/WINDOWS/system32/clip.exe"] {
+                    if let Ok(mut child) = Command::new(prog)
                         .stdin(std::process::Stdio::piped())
                         .stdout(std::process::Stdio::null())
                         .stderr(std::process::Stdio::null())
@@ -482,54 +468,73 @@ pub fn copy_to_system_clipboard(text: &str) {
                         if let Some(mut stdin) = child.stdin.take() {
                             use std::io::Write;
                             let _ = stdin.write_all(text.as_bytes());
+                            drop(stdin);
+                        }
+                        if child.wait().map(|s| s.success()).unwrap_or(false) {
+                            copied = true;
+                            break;
+                        }
+                    }
+                }
+                if !copied {
+                    if let Ok(mut child) = Command::new("powershell.exe")
+                        .args(["-NoProfile", "-Command", "$Input | Set-Clipboard"])
+                        .stdin(std::process::Stdio::piped())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                    {
+                        if let Some(mut stdin) = child.stdin.take() {
+                            use std::io::Write;
+                            let _ = stdin.write_all(text.as_bytes());
+                            drop(stdin);
                         }
                         let _ = child.wait();
                     }
                 }
             }
 
-            // Also populate Wayland clipboard if wl-copy is present
-            if let Ok(mut child) = Command::new("wl-copy")
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-            {
-                if let Some(mut stdin) = child.stdin.take() {
-                    use std::io::Write;
-                    let _ = stdin.write_all(text.as_bytes());
+            // Also populate Wayland clipboard if Wayland is active and wl-copy is present
+            if std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("WAYLAND_SOCKET").is_some() {
+                if let Ok(mut child) = Command::new("wl-copy")
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = stdin.write_all(text.as_bytes());
+                        drop(stdin);
+                    }
+                    let _ = child.wait();
                 }
-                let _ = child.wait();
             }
 
-            // Also populate X11 clipboard if xclip is present
-            if let Ok(mut child) = Command::new("xclip")
-                .args(["-selection", "clipboard"])
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-            {
-                if let Some(mut stdin) = child.stdin.take() {
-                    use std::io::Write;
-                    let _ = stdin.write_all(text.as_bytes());
+            // Also populate X11 clipboard if X11 is active (and not WSL)
+            if std::env::var_os("DISPLAY").is_some() && !is_wsl() {
+                for cmd in ["xclip", "xsel"] {
+                    let mut cmd_builder = Command::new(cmd);
+                    if cmd == "xclip" {
+                        cmd_builder.args(["-selection", "clipboard", "-i"]);
+                    } else {
+                        cmd_builder.args(["-b", "-i"]);
+                    }
+                    if let Ok(mut child) = cmd_builder
+                        .stdin(std::process::Stdio::piped())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                    {
+                        if let Some(mut stdin) = child.stdin.take() {
+                            use std::io::Write;
+                            let _ = stdin.write_all(text.as_bytes());
+                            drop(stdin);
+                        }
+                        let _ = child.wait();
+                        break;
+                    }
                 }
-                let _ = child.wait();
-            }
-
-            // Also populate X11 primary selection if xclip is present
-            if let Ok(mut child) = Command::new("xclip")
-                .args(["-selection", "primary"])
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-            {
-                if let Some(mut stdin) = child.stdin.take() {
-                    use std::io::Write;
-                    let _ = stdin.write_all(text.as_bytes());
-                }
-                let _ = child.wait();
             }
         }
 
@@ -544,6 +549,24 @@ pub fn copy_to_system_clipboard(text: &str) {
                 if let Some(mut stdin) = child.stdin.take() {
                     use std::io::Write;
                     let _ = stdin.write_all(text.as_bytes());
+                    drop(stdin);
+                }
+                let _ = child.wait();
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(mut child) = Command::new("clip.exe")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let _ = stdin.write_all(text.as_bytes());
+                    drop(stdin);
                 }
                 let _ = child.wait();
             }
@@ -1133,6 +1156,9 @@ mod tests {
     fn test_copy_to_system_clipboard_handles_empty_and_text() {
         copy_to_system_clipboard("");
         copy_to_system_clipboard("test clipboard text");
+        copy_to_system_clipboard("Unexposed Adjustable Settings\n1. Audio & Haptics 👥\n2. Swarm Watchdog 🧠");
+        // Give background thread a short tick
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
 
