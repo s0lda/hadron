@@ -107,3 +107,5 @@ pub use pty_pairing::*;
 pub use breakpoints::*;
 pub mod browser_bridge;
 pub use browser_bridge::*;
+pub mod ast_blast_radius;
+pub use ast_blast_radius::*;
