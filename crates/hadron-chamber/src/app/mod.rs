@@ -438,7 +438,7 @@ struct Chamber {
     /// Keep the input subscriptions alive for the window's lifetime. The last
     /// two repaint the Settings overlay so its live preview tracks typing.
     _input_sub: Subscription,
-    _settings_subs: [Subscription; 26],
+    _settings_subs: Vec<Subscription>,
     providers: Vec<ConfiguredQuark>,
     wizard_state: WizardState,
     /// Offered-model probe for the ACP quark whose Settings are open — drives the model
@@ -496,6 +496,30 @@ struct Chamber {
     /// Native SelectState dropdown for General Settings Mono Font Size.
     mono_font_size_select_state: Entity<SelectState<ModelSelectDelegate>>,
     mono_font_size_select_key: Option<Option<f32>>,
+    /// Native SelectState dropdown for Chat Row Density.
+    chat_density_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    chat_density_select_key: Option<config::ChatDensity>,
+    /// Native SelectState dropdown for Timestamp Format.
+    timestamp_format_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    timestamp_format_select_key: Option<config::TimestampFormat>,
+    /// Native SelectState dropdown for Terminal Cursor Style.
+    cursor_style_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    cursor_style_select_key: Option<config::TerminalCursorStyle>,
+    /// Native SelectState dropdown for Terminal Scrollback Depth.
+    scrollback_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    scrollback_select_key: Option<usize>,
+    /// Native SelectState dropdown for Master Audio Volume.
+    volume_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    volume_select_key: Option<u32>,
+    /// Native SelectState dropdown for Turn Silence Deadline.
+    turn_deadline_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    turn_deadline_select_key: Option<u64>,
+    /// Native SelectState dropdown for Live Activity Stale Threshold.
+    stale_timeout_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    stale_timeout_select_key: Option<i64>,
+    pub(super) settings_terminal_shell: Entity<InputState>,
+    pub(super) settings_git_author_name: Entity<InputState>,
+    pub(super) settings_git_author_email: Entity<InputState>,
     pub(super) theme_name_input: Entity<InputState>,
     pub(super) theme_color_hex_input: Entity<InputState>,
     pub(super) theme_selected_token: Option<settings::ThemeTokenKey>,
@@ -712,6 +736,30 @@ impl Chamber {
         let mono_font_size_select_state = cx.new(|cx| {
             SelectState::new(create_model_delegate("13px (Default)", &[], None), None, window, cx).searchable(false)
         });
+        let chat_density_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Comfortable (Standard Spacing)", &["Compact (Dense View)".into()], None), None, window, cx).searchable(false)
+        });
+        let timestamp_format_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("24-Hour (15:04:05)", &["12-Hour (3:04:05 PM)".into(), "Relative (2m ago)".into()], None), None, window, cx).searchable(false)
+        });
+        let cursor_style_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Beam (Vertical Line)", &["Block (Full Rectangle)".into(), "Underline (Bottom Bar)".into()], None), None, window, cx).searchable(false)
+        });
+        let scrollback_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("5,000 lines (Default)", &["1,000 lines".into(), "2,500 lines".into(), "10,000 lines".into(), "50,000 lines".into()], None), None, window, cx).searchable(false)
+        });
+        let volume_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("50% (Default)", &["10%".into(), "25%".into(), "75%".into(), "100%".into()], None), None, window, cx).searchable(false)
+        });
+        let turn_deadline_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("30 minutes (Default)", &["15 minutes".into(), "45 minutes".into(), "60 minutes".into()], None), None, window, cx).searchable(false)
+        });
+        let stale_timeout_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("120 seconds (Default)", &["60 seconds".into(), "300 seconds".into()], None), None, window, cx).searchable(false)
+        });
+        let settings_terminal_shell = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. /bin/zsh, pwsh (blank = default)"));
+        let settings_git_author_name = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. Jane Doe (blank = git config)"));
+        let settings_git_author_email = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. jane@example.com (blank = git config)"));
         let custom_cli_model = cx.new(|cx| InputState::new(window, cx).placeholder("model name (optional)"));
         let custom_cli_flag = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. --prompt (blank = positional)"));
         let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
@@ -719,7 +767,7 @@ impl Chamber {
         let theme_color_hex_input = cx.new(|cx| InputState::new(window, cx).placeholder("#rrggbb"));
         let theme_color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
         // Repaint the Settings overlay on every edit so its preview is live.
-        let _settings_subs = [
+        let _settings_subs = vec![
             cx.subscribe_in(&settings_name, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
             }),
@@ -991,6 +1039,94 @@ impl Chamber {
                     }
                 },
             ),
+            cx.subscribe_in(&chat_density_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                if let Some(density) = config::ChatDensity::from_str(val) {
+                    this.prefs.chat_density = density;
+                    let _ = config::save(&this.prefs);
+                    cx.notify();
+                }
+            }),
+            cx.subscribe_in(&timestamp_format_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                if let Some(fmt) = config::TimestampFormat::from_str(val) {
+                    this.prefs.timestamp_format = fmt;
+                    let _ = config::save(&this.prefs);
+                    cx.notify();
+                }
+            }),
+            cx.subscribe_in(&cursor_style_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                if let Some(style) = config::TerminalCursorStyle::from_str(val) {
+                    this.prefs.terminal_cursor_style = style;
+                    let _ = config::save(&this.prefs);
+                    cx.notify();
+                }
+            }),
+            cx.subscribe_in(&scrollback_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                let num: usize = val.replace(',', "").split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(5000);
+                this.prefs.terminal_scrollback = num;
+                let _ = config::save(&this.prefs);
+                cx.notify();
+            }),
+            cx.subscribe_in(&volume_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                let pct: f32 = val.trim_end_matches('%').split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(50.0);
+                let vol = pct / 100.0;
+                this.prefs.audio.volume = vol;
+                this.audio_manager.config.volume = vol;
+                let _ = config::save(&this.prefs);
+                cx.notify();
+            }),
+            cx.subscribe_in(&turn_deadline_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                let mins: u64 = val.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(30);
+                let secs = mins * 60;
+                this.team.turn_deadline_secs = Some(secs);
+                this.prefs.turn_deadline_secs = Some(secs);
+                this.save_repo_team(cx);
+                let _ = config::save(&this.prefs);
+                cx.notify();
+            }),
+            cx.subscribe_in(&stale_timeout_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                let secs: i64 = val.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(120);
+                this.team.stale_after_secs = Some(secs);
+                this.prefs.stale_after_secs = Some(secs);
+                this.save_repo_team(cx);
+                let _ = config::save(&this.prefs);
+                cx.notify();
+            }),
+            cx.subscribe_in(&settings_terminal_shell, window, |this, _, _: &InputEvent, _, cx| {
+                let val = this.settings_terminal_shell.read(cx).value().trim().to_string();
+                this.prefs.terminal_shell = if val.is_empty() { None } else { Some(val) };
+                let _ = config::save(&this.prefs);
+                cx.notify();
+            }),
+            cx.subscribe_in(&settings_git_author_name, window, |this, _, _: &InputEvent, _, cx| {
+                let val = this.settings_git_author_name.read(cx).value().trim().to_string();
+                this.prefs.git_author_name = if val.is_empty() { None } else { Some(val.clone()) };
+                this.team.git_author_name = if val.is_empty() { None } else { Some(val) };
+                this.save_repo_team(cx);
+                let _ = config::save(&this.prefs);
+                cx.notify();
+            }),
+            cx.subscribe_in(&settings_git_author_email, window, |this, _, _: &InputEvent, _, cx| {
+                let val = this.settings_git_author_email.read(cx).value().trim().to_string();
+                this.prefs.git_author_email = if val.is_empty() { None } else { Some(val.clone()) };
+                this.team.git_author_email = if val.is_empty() { None } else { Some(val) };
+                this.save_repo_team(cx);
+                let _ = config::save(&this.prefs);
+                cx.notify();
+            }),
         ];
 
         // Live tail: re-read the field on an interval so quark turns appended by
@@ -1284,6 +1420,23 @@ impl Chamber {
             mono_font_select_key: None,
             mono_font_size_select_state,
             mono_font_size_select_key: None,
+            chat_density_select_state,
+            chat_density_select_key: None,
+            timestamp_format_select_state,
+            timestamp_format_select_key: None,
+            cursor_style_select_state,
+            cursor_style_select_key: None,
+            scrollback_select_state,
+            scrollback_select_key: None,
+            volume_select_state,
+            volume_select_key: None,
+            turn_deadline_select_state,
+            turn_deadline_select_key: None,
+            stale_timeout_select_state,
+            stale_timeout_select_key: None,
+            settings_terminal_shell,
+            settings_git_author_name,
+            settings_git_author_email,
             theme_name_input,
             theme_color_hex_input,
             theme_selected_token: None,

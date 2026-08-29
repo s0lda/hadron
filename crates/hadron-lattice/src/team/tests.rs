@@ -57,7 +57,7 @@ fn save_team_is_atomic_and_leaves_no_litter() {
         quarks: vec![seat("opus", "claude", "opus", Flavor::Orchestrator)],
         roster: vec![],
         max_exchanges: None,
-        nucleus_index_budget_kb: None, merge_strategy: None,
+        nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
     };
     save_team(&path, &team).unwrap();
 
@@ -77,7 +77,7 @@ fn save_team_is_atomic_and_leaves_no_litter() {
 fn save_team_overwrites_an_existing_file_in_one_step() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("team.json");
-    save_team(&path, &Team { quarks: vec![seat("a", "claude", "m", Flavor::Worker)], roster: vec![], max_exchanges: None, nucleus_index_budget_kb: None, merge_strategy: None }).unwrap();
+    save_team(&path, &Team { quarks: vec![seat("a", "claude", "m", Flavor::Worker)], roster: vec![], max_exchanges: None, nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default() }).unwrap();
 
     let two = Team {
         quarks: vec![
@@ -86,7 +86,7 @@ fn save_team_overwrites_an_existing_file_in_one_step() {
         ],
         roster: vec![],
         max_exchanges: None,
-        nucleus_index_budget_kb: None, merge_strategy: None,
+        nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
     };
     save_team(&path, &two).unwrap();
     assert_eq!(load_team(&path), two);
@@ -343,7 +343,7 @@ fn team_round_trips() {
         ],
         roster: vec![],
         max_exchanges: None,
-        nucleus_index_budget_kb: None, merge_strategy: None,
+        nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
     };
     let json = serde_json::to_string(&team).unwrap();
     let back: Team = serde_json::from_str(&json).unwrap();
@@ -371,7 +371,7 @@ fn team_merge_strategy_defaults_to_fast_forward() {
 
 #[test]
 fn lookup_finds_a_seat_by_id() {
-    let team = Team { quarks: vec![seat("agy", "agy", "gemini-3-pro", Flavor::Worker)], roster: vec![], max_exchanges: None, nucleus_index_budget_kb: None, merge_strategy: None };
+    let team = Team { quarks: vec![seat("agy", "agy", "gemini-3-pro", Flavor::Worker)], roster: vec![], max_exchanges: None, nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default() };
     let s = team.get(&QuarkId::new("agy")).unwrap();
     assert_eq!(s.vendor, "agy");
     assert_eq!(s.model, "gemini-3-pro");
@@ -465,7 +465,7 @@ fn rename_legacy_ids_applies_the_map_to_quarks_and_roster_and_is_idempotent() {
         ],
         roster: vec![SeatOverride::role(QuarkId::new("agy"))],
         max_exchanges: None,
-        nucleus_index_budget_kb: None, merge_strategy: None,
+        nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
     };
     rename_legacy_ids(&mut team);
     assert_eq!(team.quarks[0].id.as_str(), "cli-agy");
@@ -486,7 +486,7 @@ fn acp_ids_already_follow_convention_and_are_untouched() {
         }],
         roster: vec![],
         max_exchanges: None,
-        nucleus_index_budget_kb: None, merge_strategy: None,
+        nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
     };
     rename_legacy_ids(&mut team);
     assert_eq!(team.quarks[0].id.as_str(), "acp-claude", "not in the map, unchanged");
@@ -559,14 +559,14 @@ mod resolve_tests {
             ],
             roster: vec![],
             max_exchanges: Some(7),
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         // A catalogue with *different* defs for the same ids must not leak in.
         let global = Team {
             quarks: vec![seat("opus", "claude", "SONNET-NOT-THIS", Flavor::Worker)],
             roster: vec![],
             max_exchanges: Some(999),
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         let resolved = resolve_team(&repo, &global);
         assert_eq!(resolved.quarks, repo.quarks, "legacy seats kept verbatim");
@@ -583,14 +583,14 @@ mod resolve_tests {
             roster: vec![],
             max_exchanges: None,
             nucleus_index_budget_kb: Some(64),
-            merge_strategy: None,
+            merge_strategy: None, ..Default::default()
         };
         let global = Team {
             quarks: vec![],
             roster: vec![],
             max_exchanges: None,
             nucleus_index_budget_kb: Some(128),
-            merge_strategy: None,
+            merge_strategy: None, ..Default::default()
         };
         let resolved = resolve_team(&repo, &global);
         assert_eq!(resolved.nucleus_index_budget_kb, Some(64), "repo policy is authoritative");
@@ -604,7 +604,7 @@ mod resolve_tests {
             quarks: vec![seat("acp-claude", "acp-claude", "opus", Flavor::Worker)],
             roster: vec![],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         let repo = Team {
             quarks: vec![],
@@ -614,7 +614,7 @@ mod resolve_tests {
                 ..SeatOverride::role(QuarkId::new("acp-claude"))
             }],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         let resolved = resolve_team(&repo, &global);
         assert_eq!(resolved.quarks.len(), 1);
@@ -635,13 +635,13 @@ mod resolve_tests {
             }],
             roster: vec![],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         let repo = Team {
             quarks: vec![],
             roster: vec![SeatOverride::role(QuarkId::new("q"))],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         let s = &resolve_team(&repo, &global).quarks[0];
         assert_eq!(s.flavor, Flavor::Orchestrator, "inherits catalogue role");
@@ -659,7 +659,7 @@ mod resolve_tests {
             }],
             roster: vec![],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         // Absent override fields inherit the catalogue's roles/exclusive.
         let inherit = Team { roster: vec![SeatOverride::role(QuarkId::new("q"))], ..Team::default() };
@@ -690,7 +690,7 @@ mod resolve_tests {
             }],
             roster: vec![],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         // Absent override fields inherit the catalogue's deny_skills.
         let inherit = Team { roster: vec![SeatOverride::role(QuarkId::new("q"))], ..Team::default() };
@@ -717,7 +717,7 @@ mod resolve_tests {
             quarks: vec![seat("q", "acp-claude", "opus", Flavor::Worker)],
             roster: vec![],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         let repo = Team {
             roster: vec![SeatOverride {
@@ -743,7 +743,7 @@ mod resolve_tests {
             }],
             roster: vec![],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         let repo = Team {
             roster: vec![SeatOverride::role(QuarkId::new("q"))],
@@ -766,7 +766,7 @@ mod resolve_tests {
                 ..SeatOverride::role(QuarkId::new("ghost"))
             }],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         assert!(resolve_team(&repo, &global).quarks.is_empty(), "orphan is not seated");
         assert_eq!(orphan_overrides(&repo, &global), vec![QuarkId::new("ghost")]);
@@ -780,7 +780,7 @@ mod resolve_tests {
             quarks: vec![seat("dup", "acp-claude", "CATALOGUE", Flavor::Worker)],
             roster: vec![],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         let repo = Team {
             quarks: vec![seat("dup", "claude", "LEGACY", Flavor::Orchestrator)],
@@ -790,7 +790,7 @@ mod resolve_tests {
                 ..SeatOverride::role(QuarkId::new("dup"))
             }],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         let resolved = resolve_team(&repo, &global);
         assert_eq!(resolved.quarks.len(), 1, "seated once, not twice");
@@ -808,7 +808,7 @@ mod resolve_tests {
             quarks: vec![seat("acp-claude", "acp-claude", "opus", Flavor::Worker)],
             roster: vec![],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         // Repo A: adopt only — inherits the catalogue default.
         let repo_a = Team {
@@ -847,7 +847,7 @@ mod resolve_tests {
             }],
             roster: vec![],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
 
         // effort-only override; mode + name inherit.
@@ -889,7 +889,7 @@ mod resolve_tests {
             }],
             roster: vec![],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         // Absent effort → inherits "high".
         let inherit = Team {
@@ -969,7 +969,7 @@ mod resolve_tests {
                 SeatOverride::role(QuarkId::new("agy")),
             ],
             max_exchanges: Some(12),
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         save_team(&path, &team).unwrap();
         assert_eq!(load_team(&path), team, "the full team must round-trip idempotently");
@@ -990,7 +990,7 @@ mod resolve_tests {
             quarks: vec![def.clone()],
             roster: vec![],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         // The quark is already adopted here (enabled), and the user edits three fields.
         let prev = SeatOverride {
@@ -1033,7 +1033,7 @@ mod resolve_tests {
     #[test]
     fn seat_override_delta_carries_changed_roles_and_exclusive() {
         let def = seat("acp-claude", "acp-claude", "opus", Flavor::Worker); // roles: [], exclusive: false
-        let global = Team { quarks: vec![def.clone()], roster: vec![], max_exchanges: None, nucleus_index_budget_kb: None, merge_strategy: None };
+        let global = Team { quarks: vec![def.clone()], roster: vec![], max_exchanges: None, nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default() };
 
         let desired = Seat {
             roles: vec!["security".into()],
@@ -1057,7 +1057,7 @@ mod resolve_tests {
     #[test]
     fn seat_override_delta_carries_changed_deny_skills() {
         let def = seat("acp-claude", "acp-claude", "opus", Flavor::Worker); // deny_skills: []
-        let global = Team { quarks: vec![def.clone()], roster: vec![], max_exchanges: None, nucleus_index_budget_kb: None, merge_strategy: None };
+        let global = Team { quarks: vec![def.clone()], roster: vec![], max_exchanges: None, nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default() };
 
         let desired = Seat {
             deny_skills: vec!["writing-plans".into()],
@@ -1108,7 +1108,7 @@ mod resolve_tests {
             ],
             roster: vec![],
             max_exchanges: Some(12),
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         let mut global = Team::default();
 
@@ -1138,7 +1138,7 @@ mod resolve_tests {
             quarks: vec![seat("opus", "claude", "opus", Flavor::Orchestrator)],
             roster: vec![],
             max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None,
+            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
         };
         let mut global = Team::default();
         migrate_to_catalogue(&mut repo, &mut global);

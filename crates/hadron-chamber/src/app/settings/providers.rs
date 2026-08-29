@@ -840,10 +840,52 @@ impl super::Chamber {
                 ),
         );
 
+        let chat_display_card = settings_card_section(
+            "Chat Display & Density",
+            Some(IconName::Bot),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "Chat row density",
+                    Some("Control vertical padding and row spacing between chat messages."),
+                    self.chat_density_select(window, cx),
+                ))
+                .child(settings_field(
+                    "Timestamp format",
+                    Some("Display timestamps as 24-hour clock, 12-hour clock (AM/PM), or relative time."),
+                    self.timestamp_format_select(window, cx),
+                ))
+                .child(settings_field(
+                    "Code block word-wrapping",
+                    Some("Wrap code block lines at the edge of the chat container instead of horizontal scrolling."),
+                    Switch::new("code-block-word-wrap")
+                        .checked(self.prefs.code_block_word_wrap)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.code_block_word_wrap = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Auto-fold reasoning blocks",
+                    Some("Automatically collapse reasoning, thinking, and thought chains into compact summary chips."),
+                    Switch::new("auto-fold-reasoning")
+                        .checked(self.prefs.auto_fold_reasoning)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.auto_fold_reasoning = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                )),
+        );
+
         v_flex()
             .w_full()
             .gap_4()
             .child(typography_card)
+            .child(chat_display_card)
             .child(custom_theme_card)
             .child(live_preview_card)
     }
@@ -879,7 +921,60 @@ impl super::Chamber {
                 )),
         );
 
-        v_flex().w_full().gap_4().child(execution_card)
+        let watchdog_card = settings_card_section(
+            "Swarm Watchdog & Thresholds",
+            Some(IconName::Cpu),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "Turn silence limit (TURN_DEADLINE)",
+                    Some("Maximum allowable duration a quark can spend on a single turn before the watchdog triggers an alert."),
+                    self.turn_deadline_select(window, cx),
+                ))
+                .child(settings_field(
+                    "Live activity timeout (STALE_AFTER_SECS)",
+                    Some("Threshold in seconds after which an inactive quark is marked as stale in the swarm monitor."),
+                    self.stale_timeout_select(window, cx),
+                )),
+        );
+
+        let git_card = settings_card_section(
+            "Git & Worktree Automation",
+            Some(IconName::Folder),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "Auto-prune worktrees",
+                    Some("Automatically clean up and delete worktrees upon branch merge, completion, or abandonment."),
+                    Switch::new("git-auto-prune-worktrees")
+                        .checked(self.team.git_auto_prune_worktrees.unwrap_or(self.prefs.git_auto_prune_worktrees))
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.team.git_auto_prune_worktrees = Some(*checked);
+                            this.prefs.git_auto_prune_worktrees = *checked;
+                            this.save_repo_team(cx);
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Git author name override",
+                    Some("Override author name for quark git commits in this workspace (blank = inherit git config)."),
+                    Input::new(&self.settings_git_author_name).w_full().into_any_element(),
+                ))
+                .child(settings_field(
+                    "Git author email override",
+                    Some("Override author email for quark git commits in this workspace (blank = inherit git config)."),
+                    Input::new(&self.settings_git_author_email).w_full().into_any_element(),
+                )),
+        );
+
+        v_flex()
+            .w_full()
+            .gap_4()
+            .child(execution_card)
+            .child(watchdog_card)
+            .child(git_card)
     }
 
     pub(super) fn environment_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -917,7 +1012,168 @@ impl super::Chamber {
                 )),
         );
 
-        v_flex().w_full().gap_4().child(environment_card)
+        let audio_card = settings_card_section(
+            "Audio & Haptics",
+            Some(IconName::Info),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "Audio telemetry cues",
+                    Some("Play synthesized audio chimes for swarm events, gate requests, and collision alerts."),
+                    Switch::new("audio-cues-enabled")
+                        .checked(self.prefs.audio.enabled)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.audio.enabled = *checked;
+                            this.audio_manager.config.enabled = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Master audio volume",
+                    Some("Volume level for all synthesized telemetry audio chimes."),
+                    self.volume_select(window, cx),
+                ))
+                .child(settings_field(
+                    "Haptic feedback pulse",
+                    Some("Emit subtle terminal / device haptic vibrations on critical swarm alerts."),
+                    Switch::new("haptic-feedback-enabled")
+                        .checked(self.prefs.audio.haptic_enabled)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.audio.haptic_enabled = *checked;
+                            this.audio_manager.config.haptic_enabled = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Gate approval cue",
+                    Some("Play chime when a gate requires human decision or verification."),
+                    Switch::new("cue-gate-approval")
+                        .checked(self.prefs.audio.cue_gate_approval)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.audio.cue_gate_approval = *checked;
+                            this.audio_manager.config.cue_gate_approval = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Merge collision cue",
+                    Some("Play alert chime when a merge conflict or collision is detected across worktrees."),
+                    Switch::new("cue-merge-collision")
+                        .checked(self.prefs.audio.cue_merge_collision)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.audio.cue_merge_collision = *checked;
+                            this.audio_manager.config.cue_merge_collision = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Turn completion cue",
+                    Some("Play gentle ping when an autonomous quark finishes its execution turn."),
+                    Switch::new("cue-turn-finish")
+                        .checked(self.prefs.audio.cue_turn_finish)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.audio.cue_turn_finish = *checked;
+                            this.audio_manager.config.cue_turn_finish = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Human blocked cue",
+                    Some("Play attention chime when a quark halts and requires user input in Mode::Ask."),
+                    Switch::new("cue-blocked-human")
+                        .checked(self.prefs.audio.cue_blocked_on_human)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.audio.cue_blocked_on_human = *checked;
+                            this.audio_manager.config.cue_blocked_on_human = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                )),
+        );
+
+        let terminal_card = settings_card_section(
+            "Terminal / PTY",
+            Some(IconName::SquareTerminal),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "Shell executable path",
+                    Some("Path or name of the shell executable to spawn (blank = system $SHELL)."),
+                    Input::new(&self.settings_terminal_shell).w_full().into_any_element(),
+                ))
+                .child(settings_field(
+                    "Cursor rendering style",
+                    Some("Visual cursor indicator in the embedded PTY terminal emulator."),
+                    self.cursor_style_select(window, cx),
+                ))
+                .child(settings_field(
+                    "Scrollback buffer depth",
+                    Some("Maximum lines preserved in the scrollback history buffer per terminal tab."),
+                    self.scrollback_select(window, cx),
+                )),
+        );
+
+        let notifications_card = settings_card_section(
+            "OS Desktop Notifications",
+            Some(IconName::Inbox),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "Native desktop notifications",
+                    Some("Deliver native OS desktop banners and dock alerts when the Chamber window is in background."),
+                    Switch::new("desktop-notifications-master")
+                        .checked(self.prefs.desktop_notifications)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.desktop_notifications = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Notify when blocked on Human (Mode::Ask)",
+                    Some("Trigger desktop alert immediately when a quark is blocked waiting for your input."),
+                    Switch::new("notify-on-blocked")
+                        .checked(self.prefs.notify_on_blocked)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.notify_on_blocked = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Notify when quark finishes turn",
+                    Some("Trigger desktop alert when a background quark finishes running its turn."),
+                    Switch::new("notify-on-turn-finish")
+                        .checked(self.prefs.notify_on_turn_finish)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.notify_on_turn_finish = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                )),
+        );
+
+        v_flex()
+            .w_full()
+            .gap_4()
+            .child(environment_card)
+            .child(audio_card)
+            .child(terminal_card)
+            .child(notifications_card)
     }
 
     pub(super) fn general_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1046,6 +1302,206 @@ impl super::Chamber {
             .w_full()
             .min_w(px(180.0))
             .placeholder("Select strategy...")
+            .into_any_element()
+    }
+
+    /// The chat row density picker using native Select dropdown component.
+    pub(super) fn chat_density_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current = self.prefs.chat_density;
+        if self.chat_density_select_key != Some(current) {
+            self.chat_density_select_key = Some(current);
+            let choices: Vec<String> = vec![
+                "Comfortable (Standard Spacing)".to_string(),
+                "Compact (Dense View)".to_string(),
+            ];
+            let current_label = match current {
+                config::ChatDensity::Comfortable => "Comfortable (Standard Spacing)",
+                config::ChatDensity::Compact => "Compact (Dense View)",
+            }.to_string();
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.chat_density_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.chat_density_select_state)
+            .w_full()
+            .min_w(px(220.0))
+            .placeholder("Select density...")
+            .into_any_element()
+    }
+
+    /// The timestamp format picker using native Select dropdown component.
+    pub(super) fn timestamp_format_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current = self.prefs.timestamp_format;
+        if self.timestamp_format_select_key != Some(current) {
+            self.timestamp_format_select_key = Some(current);
+            let choices: Vec<String> = vec![
+                "24-Hour (15:04:05)".to_string(),
+                "12-Hour (3:04:05 PM)".to_string(),
+                "Relative (2m ago)".to_string(),
+            ];
+            let current_label = match current {
+                config::TimestampFormat::Clock24h => "24-Hour (15:04:05)",
+                config::TimestampFormat::Clock12h => "12-Hour (3:04:05 PM)",
+                config::TimestampFormat::Relative => "Relative (2m ago)",
+            }.to_string();
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.timestamp_format_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.timestamp_format_select_state)
+            .w_full()
+            .min_w(px(220.0))
+            .placeholder("Select format...")
+            .into_any_element()
+    }
+
+    /// The terminal cursor style picker using native Select dropdown component.
+    pub(super) fn cursor_style_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current = self.prefs.terminal_cursor_style;
+        if self.cursor_style_select_key != Some(current) {
+            self.cursor_style_select_key = Some(current);
+            let choices: Vec<String> = vec![
+                "Beam (Vertical Line)".to_string(),
+                "Block (Full Rectangle)".to_string(),
+                "Underline (Bottom Bar)".to_string(),
+            ];
+            let current_label = match current {
+                config::TerminalCursorStyle::Beam => "Beam (Vertical Line)",
+                config::TerminalCursorStyle::Block => "Block (Full Rectangle)",
+                config::TerminalCursorStyle::Underline => "Underline (Bottom Bar)",
+            }.to_string();
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.cursor_style_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.cursor_style_select_state)
+            .w_full()
+            .min_w(px(220.0))
+            .placeholder("Select cursor style...")
+            .into_any_element()
+    }
+
+    /// The terminal scrollback buffer depth picker using native Select dropdown component.
+    pub(super) fn scrollback_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current = self.prefs.terminal_scrollback;
+        if self.scrollback_select_key != Some(current) {
+            self.scrollback_select_key = Some(current);
+            let choices: Vec<String> = vec![
+                "1,000 lines".to_string(),
+                "2,500 lines".to_string(),
+                "5,000 lines (Default)".to_string(),
+                "10,000 lines".to_string(),
+                "50,000 lines".to_string(),
+            ];
+            let current_label = if current == 5000 {
+                "5,000 lines (Default)".to_string()
+            } else {
+                format!("{current} lines")
+            };
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.scrollback_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.scrollback_select_state)
+            .w_full()
+            .min_w(px(220.0))
+            .placeholder("Select scrollback...")
+            .into_any_element()
+    }
+
+    /// The master audio volume picker using native Select dropdown component.
+    pub(super) fn volume_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current_vol = (self.prefs.audio.volume * 100.0).round() as u32;
+        if self.volume_select_key != Some(current_vol) {
+            self.volume_select_key = Some(current_vol);
+            let choices: Vec<String> = vec![
+                "10%".to_string(),
+                "25%".to_string(),
+                "50% (Default)".to_string(),
+                "75%".to_string(),
+                "100%".to_string(),
+            ];
+            let current_label = if current_vol == 50 {
+                "50% (Default)".to_string()
+            } else {
+                format!("{current_vol}%")
+            };
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.volume_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.volume_select_state)
+            .w_full()
+            .min_w(px(220.0))
+            .placeholder("Select volume...")
+            .into_any_element()
+    }
+
+    /// The turn silence deadline picker using native Select dropdown component.
+    pub(super) fn turn_deadline_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current_secs = self.team.turn_deadline_secs();
+        if self.turn_deadline_select_key != Some(current_secs) {
+            self.turn_deadline_select_key = Some(current_secs);
+            let choices: Vec<String> = vec![
+                "15 minutes".to_string(),
+                "30 minutes (Default)".to_string(),
+                "45 minutes".to_string(),
+                "60 minutes".to_string(),
+            ];
+            let mins = current_secs / 60;
+            let current_label = if mins == 30 {
+                "30 minutes (Default)".to_string()
+            } else {
+                format!("{mins} minutes")
+            };
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.turn_deadline_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.turn_deadline_select_state)
+            .w_full()
+            .min_w(px(220.0))
+            .placeholder("Select turn deadline...")
+            .into_any_element()
+    }
+
+    /// The live activity stale threshold picker using native Select dropdown component.
+    pub(super) fn stale_timeout_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current_secs = self.team.stale_after_secs();
+        if self.stale_timeout_select_key != Some(current_secs) {
+            self.stale_timeout_select_key = Some(current_secs);
+            let choices: Vec<String> = vec![
+                "60 seconds".to_string(),
+                "120 seconds (Default)".to_string(),
+                "300 seconds".to_string(),
+            ];
+            let current_label = if current_secs == 120 {
+                "120 seconds (Default)".to_string()
+            } else {
+                format!("{current_secs} seconds")
+            };
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.stale_timeout_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.stale_timeout_select_state)
+            .w_full()
+            .min_w(px(220.0))
+            .placeholder("Select stale timeout...")
             .into_any_element()
     }
 

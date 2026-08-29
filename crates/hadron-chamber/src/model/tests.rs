@@ -603,6 +603,7 @@
             max_exchanges: None,
             nucleus_index_budget_kb: None,
             merge_strategy: None,
+            ..Default::default()
         };
 
         // Both legacy: no `usage` on the envelope, just the bare u32.
@@ -758,6 +759,7 @@
             max_exchanges: None,
             nucleus_index_budget_kb: None,
             merge_strategy: None,
+            ..Default::default()
         };
         let evs = vec![
             ev(Actor::Human, None, Kind::ModeSet { mode: Mode::Write }),
@@ -793,6 +795,7 @@
             max_exchanges: None,
             nucleus_index_budget_kb: None,
             merge_strategy: None,
+            ..Default::default()
         };
         // Catalogue: "opus" (adopted) plus "gemini" (available, not adopted here).
         let global = Team {
@@ -804,6 +807,7 @@
             max_exchanges: None,
             nucleus_index_budget_kb: None,
             merge_strategy: None,
+            ..Default::default()
         };
         let view = project_with_team(&[], &team, &global);
         let opus = view.roster.iter().find(|r| r.id == "opus").unwrap();
