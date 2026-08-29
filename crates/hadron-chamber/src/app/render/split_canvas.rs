@@ -1,8 +1,10 @@
+#[allow(dead_code)]
 pub struct SplitCanvasState {
     active_quarks: Vec<String>,
     focused_idx: usize,
 }
 
+#[allow(dead_code)]
 impl SplitCanvasState {
     pub fn new() -> Self {
         Self {
