@@ -5,6 +5,28 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-08-29
+
+### Added
+- **Sound Themes & Acoustic Feedback Suite (`hadron-chamber`)**:
+  - Implemented `SoundTheme` supporting 4 distinct acoustic profiles: *Classic* (harmonic chimes), *Synth* (electronic FM blips), *Minimal* (soft clicks & pops), and *Retro 8-Bit* (arcade bleeps) in `hadron-chamber::config`.
+  - Added configurable audio and haptic cues for `MessageReceived`, `MessageSent`, `GateApproval`, `MergeCollision`, `TurnFinish`, and `BlockedOnHuman` in `hadron-chamber::app::audio`.
+  - Built platform tone synthesis bridge in `hadron-chamber::sys` generating native acoustic feedback across Linux, WSL, macOS, and Windows.
+  - Added interactive "Play Test Chime" preview button and acoustic configuration controls in Appearance & Environment Settings.
+- **Unexposed Adjustable Settings & Customization (`hadron-chamber`, `hadron-lattice`, `hadron-gluon`)**:
+  - **Swarm Watchdogs & Thresholds**: Added team defaults and user preferences for `turn_deadline_secs` (turn silence deadline) and `stale_after_secs` (live activity timeout) in `hadron-lattice::team` and `hadron-chamber::config`.
+  - **Terminal / PTY Customization**: Added `TerminalCursorStyle` (`Beam`, `Block`, `Underline`), custom shell executable override (`terminal_shell`), and configurable scrollback buffer depth in `hadron-chamber::pty` and `hadron-chamber::app::render::terminal`.
+  - **Chat Display & Density**: Added `ChatDensity` (`Comfortable` standard spacing vs `Compact` high-density spacing), `TimestampFormat` (`24-Hour`, `12-Hour`, `Relative`), code block word-wrapping toggle (`code_block_word_wrap`), and auto-folding for reasoning blocks (`auto_fold_reasoning`) with immediate view repainting.
+  - **Git & Worktree Automation**: Added automatic worktree pruning toggle (`git_auto_prune_worktrees`) on merge/abandonment and author identity overrides (`git_author_name`, `git_author_email`).
+  - **Native OS Desktop Notifications**: Implemented cross-platform desktop notifications (`send_desktop_notification`) triggering on `Mode::Ask` (human blocked) and autonomous turn completion across Linux (`notify-send`), WSL PowerShell toast, macOS `osascript`, and Windows.
+- **Cross-Platform System Clipboard Integration (`hadron-chamber`)**:
+  - Implemented native clipboard bridge streaming copied content directly to `clip.exe` (WSL/Windows), `wl-copy` (Wayland), `xclip` (X11), and `pbcopy` (macOS).
+  - Connected `Ctrl+C`/`Cmd+C` keyboard shortcut capture, message action bar 1-click copy button, and right-click context menus for "Copy Selected Text" and "Copy Message" with non-blocking pipe dispatch.
+
+### Fixed
+- **Settings Dropdown Label Parsing (`hadron-chamber`)**: Fixed `ChatDensity`, `TimestampFormat`, and `TerminalCursorStyle` string deserialization to reliably match full formatted UI dropdown strings without reverting settings.
+- **Compiler Dead Code Warnings (`hadron-chamber`)**: Annotated `SoundTheme::id` and `PtyTerminal::new` to eliminate dead code warnings in release builds.
+
 ## [0.21.0] - 2026-08-29
 
 ### Added

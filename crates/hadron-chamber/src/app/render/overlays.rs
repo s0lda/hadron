@@ -20,6 +20,22 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.22.0",
+        date: Some("2026-08-29"),
+        added: &[
+            "Sound Themes & Acoustic Feedback: 4 distinct acoustic profiles (Classic, Synth, Minimal, Retro 8-Bit) with cross-platform synthetic audio and haptics for chat, turns, and gate events",
+            "Adjustable Settings: Swarm watchdogs (turn silence deadline, activity timeout), PTY cursor styles (Beam/Block/Underline), custom shell & scrollback depth, and native desktop notifications",
+            "Chat Display & Density: Configurable Compact vs Comfortable spacing, 24h/12h/relative timestamp formatting, code word-wrap, and auto-fold reasoning blocks",
+            "Cross-Platform System Clipboard: Native clipboard bridge for Ctrl+C/Cmd+C, 1-click message copy, and context menus via clip.exe, wl-copy, xclip, and pbcopy",
+            "Git & Worktree Automation: Auto-prune worktrees on merge/abandonment and Git author name/email overrides",
+        ],
+        changed: &[],
+        fixed: &[
+            "Fixed chat settings parsing for dropdown labels and connected density/timestamp formatting to immediate view repainting",
+            "Cleaned up compiler warnings for dead code and unused methods in release builds",
+        ],
+    },
+    Release {
         version: "0.21.0",
         date: Some("2026-08-29"),
         added: &[

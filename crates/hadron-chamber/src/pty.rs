@@ -174,6 +174,7 @@ pub fn default_shell() -> String {
 }
 
 impl PtyTerminal {
+    #[allow(dead_code)]
     /// Spawn default shell on a fresh PTY sized `cols × rows`, rooted at `cwd`.
     pub fn new(cwd: &Path, cols: usize, rows: usize) -> Result<Self, String> {
         Self::new_with_options(cwd, cols, rows, None, 5000)
