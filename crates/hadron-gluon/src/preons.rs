@@ -152,6 +152,74 @@ fn parse_preon_file(text: &str) -> Option<Preon> {
     })
 }
 
+/// Manager providing runtime preon hot-swapping and dynamic prompt compilation
+/// for active quark seats without process restarts.
+#[derive(Debug, Clone)]
+pub struct PreonHotSwapManager {
+    registry: hadron_lattice::PreonRegistry,
+    global_dir: Option<PathBuf>,
+    repo_dir: Option<PathBuf>,
+}
+
+impl PreonHotSwapManager {
+    pub fn new(global_dir: Option<&Path>, repo_dir: Option<&Path>) -> Self {
+        let mut manager = Self {
+            registry: hadron_lattice::PreonRegistry::new(),
+            global_dir: global_dir.map(Path::to_path_buf),
+            repo_dir: repo_dir.map(Path::to_path_buf),
+        };
+        manager.reload_from_disk();
+        manager
+    }
+
+    /// Hot-reload preons from disk without daemon restart.
+    pub fn reload_from_disk(&mut self) -> usize {
+        let loaded = load_preons(
+            self.global_dir.as_deref(),
+            self.repo_dir.as_deref(),
+        );
+        let count = loaded.len();
+        for preon in loaded {
+            self.registry.register_preon(
+                &preon.name,
+                &preon.body,
+                preon.preferred_role.as_deref(),
+            );
+        }
+        count
+    }
+
+    /// Attach a registered preon to a specific quark seat.
+    pub fn attach_preon(&mut self, quark_id: &str, preon_name: &str) -> Result<(), String> {
+        self.registry.attach_to_seat(quark_id, preon_name)
+    }
+
+    /// Detach a preon from a specific quark seat.
+    pub fn detach_preon(&mut self, quark_id: &str, preon_name: &str) -> bool {
+        self.registry.detach_from_seat(quark_id, preon_name)
+    }
+
+    /// Inject an ephemeral specialist preon directly into a quark seat.
+    pub fn inject_ephemeral(&mut self, quark_id: &str, role: &str, task: &str) {
+        let preon = synth::synthesize_ephemeral_preon(role, task);
+        self.registry.register_preon(
+            &preon.name,
+            &preon.body,
+            preon.preferred_role.as_deref(),
+        );
+        let _ = self.registry.attach_to_seat(quark_id, &preon.name);
+    }
+
+    /// Compile runtime prompt for a turn with all attached preons.
+    pub fn compile_prompt(&self, quark_id: &str, base_prompt: &str) -> String {
+        self.registry.render_seat_prompt(quark_id, base_prompt)
+    }
+
+    pub fn registry(&self) -> &hadron_lattice::PreonRegistry {
+        &self.registry
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +336,26 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].name, "architect");
         assert!(loaded[0].body.contains("ARCHITECT REPO."));
+    }
+
+    #[test]
+    fn test_preon_hot_swap_manager() {
+        let repo = tempfile::tempdir().unwrap();
+        write_preon(
+            repo.path(),
+            "fuzz-expert.md",
+            "---\nname: fuzz-expert\npreferred_role: Fuzzer\n---\n\nRun cargo fuzz.\n",
+        );
+
+        let mut manager = PreonHotSwapManager::new(None, Some(repo.path()));
+        manager.attach_preon("quark-worker", "fuzz-expert").unwrap();
+
+        // Ephemeral injection
+        manager.inject_ephemeral("quark-worker", "VulkanSpecialist", "Debug swapchain presentation");
+
+        let prompt = manager.compile_prompt("quark-worker", "Base instructions.");
+        assert!(prompt.contains("fuzz-expert"));
+        assert!(prompt.contains("VulkanSpecialist"));
+        assert!(prompt.contains("Lavapipe"));
     }
 }
