@@ -35,4 +35,6 @@ pub use cache_guard::*;
 pub use distiller::*;
 pub mod red_team;
 pub use red_team::*;
+pub mod invariant_linter;
+pub use invariant_linter::*;
 
