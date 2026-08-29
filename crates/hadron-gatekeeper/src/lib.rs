@@ -33,4 +33,6 @@ pub use sandbox::*;
 pub use mutation_quark::*;
 pub use cache_guard::*;
 pub use distiller::*;
+pub mod red_team;
+pub use red_team::*;
 
