@@ -99,7 +99,7 @@ impl Render for Chamber {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|_this, _: &gpui_component::input::Copy, window, cx| {
                 use gpui_component::WindowExt as _;
-                let selected = window.selected_text(cx).trim().to_string();
+                let selected = window.selected_text(cx);
                 if !selected.is_empty() {
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
                 }
