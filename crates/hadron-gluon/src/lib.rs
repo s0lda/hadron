@@ -43,5 +43,7 @@ pub mod pty_injection;
 pub use pty_injection::*;
 pub mod vcr;
 pub use vcr::*;
+pub mod bakeoff;
+pub use bakeoff::*;
 
 
