@@ -97,11 +97,17 @@ impl Render for Chamber {
         let content = v_flex()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|_this, _: &gpui_component::input::Copy, window, cx| {
+            .on_action(cx.listener(|this, _: &gpui_component::input::Copy, window, cx| {
                 use gpui_component::WindowExt as _;
                 let selected = window.selected_text(cx);
                 if !selected.is_empty() {
+                    crate::sys::copy_to_system_clipboard(&selected);
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
+                    this.toast_manager.push(
+                        ToastKind::Success,
+                        "Copied to clipboard".to_string(),
+                        Some(2),
+                    );
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleReplOverlay, window, cx| this.toggle_repl_overlay(window, cx)))
