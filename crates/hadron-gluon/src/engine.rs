@@ -27,6 +27,8 @@ pub mod speculative_gate;
 pub use speculative_gate::*;
 pub mod dag_scheduler;
 pub use dag_scheduler::*;
+pub mod shadow_gate;
+pub use shadow_gate::*;
 mod routing;
 mod turn;
 mod merge;
