@@ -1441,6 +1441,8 @@ fn default_key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-c", gpui_component::input::Copy, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-c", gpui_component::input::Copy, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-c", gpui_component::input::Copy, None),
         // Git Rail scoped shortcuts (when Git panel has focus)
         KeyBinding::new("1", SelectGitBranches, Some(GIT_KEY_CONTEXT)),
         KeyBinding::new("2", SelectGitWorktrees, Some(GIT_KEY_CONTEXT)),

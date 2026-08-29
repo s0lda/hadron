@@ -110,6 +110,23 @@ impl Render for Chamber {
                     );
                 }
             }))
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                let is_copy = (event.keystroke.modifiers.control || event.keystroke.modifiers.platform)
+                    && (event.keystroke.key == "c" || event.keystroke.key == "C");
+                if is_copy {
+                    use gpui_component::WindowExt as _;
+                    let selected = window.selected_text(cx);
+                    if !selected.is_empty() {
+                        crate::sys::copy_to_system_clipboard(&selected);
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
+                        this.toast_manager.push(
+                            ToastKind::Success,
+                            "Copied to clipboard".to_string(),
+                            Some(2),
+                        );
+                    }
+                }
+            }))
             .on_action(cx.listener(|this, _: &ToggleReplOverlay, window, cx| this.toggle_repl_overlay(window, cx)))
             .on_action(cx.listener(|this, _: &CycleMode, _, cx| this.cycle_global_mode(cx)))
             .on_action(cx.listener(|this, _: &NextChatTab, _, cx| this.cycle_chat_tab(1, cx)))

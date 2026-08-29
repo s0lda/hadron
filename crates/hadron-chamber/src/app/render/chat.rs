@@ -811,6 +811,7 @@ impl super::Chamber {
 
         let ui_size = self.prefs.ui_font_size.unwrap_or(14.0);
         div()
+            .id(SharedString::from(format!("md-body-{view}-{ix}")))
             .w_full()
             .min_w_0()
             .text_size(px(ui_size))
@@ -929,6 +930,7 @@ impl super::Chamber {
         let msg_text = m.body.clone();
         let entity = chamber_entity.clone();
         h_flex()
+            .id(SharedString::from(format!("chat-msg-row-{ix}")))
             .items_start()
             .gap_2p5()
             .context_menu(move |mut menu, window, cx| {
@@ -1020,66 +1022,103 @@ impl super::Chamber {
                     .child(
                         h_flex()
                             .items_center()
-                            .gap_2()
+                            .justify_between()
+                            .w_full()
                             .child(
-                                div()
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded_md()
-                                    .bg(id.color.opacity(0.12))
-                                    .border_1()
-                                    .border_color(id.color.opacity(0.28))
-                                    .text_xs()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(id.color)
-                                    .child(id.name.trim_start_matches('@').to_string()),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme::text_muted())
-                                    .child(crate::model::format_clock(m.ts.with_timezone(&tz))),
-                            )
-                            .when_some(m.to.clone(), |this, to| {
-                                this.child(
-                                    div()
-                                        .text_xs()
-                                        .px_1p5()
-                                        .py_0p5()
-                                        .rounded_sm()
-                                        .bg(theme::bg_surface())
-                                        .text_color(theme::text_muted())
-                                        .child(format!("→ {}", to.trim_start_matches('@'))),
-                                )
-                            })
-                            .when_some(m.usage.as_ref(), |this, u| {
-                                let mut parts = Vec::new();
-                                if let Some(ctx) = &u.context {
-                                    parts.push(format!("ctx: {:.1}%", ctx.used_percentage));
-                                }
-                                if !u.spend.is_empty() {
-                                    let fresh = u.spend.fresh().unwrap_or(0);
-                                    let cached = u.spend.cached().unwrap_or(0);
-                                    let cost_str = if let Some(c) = u.cost_usd() { format!(" (${:.2})", c) } else { "".to_string() };
-                                    if cached > 0 {
-                                        parts.push(format!(
-                                            "spent: {} fresh, {} cached{}",
-                                            fresh, cached, cost_str
-                                        ));
-                                    } else {
-                                        parts.push(format!("spent: {} fresh{}", fresh, cost_str));
-                                    }
-                                }
-                                if parts.is_empty() {
-                                    this
-                                } else {
-                                    this.child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_md()
+                                            .bg(id.color.opacity(0.12))
+                                            .border_1()
+                                            .border_color(id.color.opacity(0.28))
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(id.color)
+                                            .child(id.name.trim_start_matches('@').to_string()),
+                                    )
+                                    .child(
                                         div()
                                             .text_xs()
                                             .text_color(theme::text_muted())
-                                            .child(format!("({})", parts.join(" | "))),
+                                            .child(crate::model::format_clock(m.ts.with_timezone(&tz))),
                                     )
-                                }
+                                    .when_some(m.to.clone(), |this, to| {
+                                        this.child(
+                                            div()
+                                                .text_xs()
+                                                .px_1p5()
+                                                .py_0p5()
+                                                .rounded_sm()
+                                                .bg(theme::bg_surface())
+                                                .text_color(theme::text_muted())
+                                                .child(format!("→ {}", to.trim_start_matches('@'))),
+                                        )
+                                    })
+                                    .when_some(m.usage.as_ref(), |this, u| {
+                                        let mut parts = Vec::new();
+                                        if let Some(ctx) = &u.context {
+                                            parts.push(format!("ctx: {:.1}%", ctx.used_percentage));
+                                        }
+                                        if !u.spend.is_empty() {
+                                            let fresh = u.spend.fresh().unwrap_or(0);
+                                            let cached = u.spend.cached().unwrap_or(0);
+                                            let cost_str = if let Some(c) = u.cost_usd() { format!(" (${:.2})", c) } else { "".to_string() };
+                                            if cached > 0 {
+                                                parts.push(format!(
+                                                    "spent: {} fresh, {} cached{}",
+                                                    fresh, cached, cost_str
+                                                ));
+                                            } else {
+                                                parts.push(format!("spent: {} fresh{}", fresh, cost_str));
+                                            }
+                                        }
+                                        if parts.is_empty() {
+                                            this
+                                        } else {
+                                            this.child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(theme::text_muted())
+                                                    .child(format!("({})", parts.join(" | "))),
+                                            )
+                                        }
+                                    }),
+                            )
+                            .child({
+                                let copy_body = m.body.clone();
+                                let ent_btn = chamber_entity.clone();
+                                div()
+                                    .id(SharedString::from(format!("copy-msg-btn-{ix}")))
+                                    .cursor_pointer()
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .hover(|s| s.bg(theme::bg_surface_raised()))
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .tooltip(|window, cx| Tooltip::new("Copy message text").build(window, cx))
+                                    .on_click(move |_, window, cx| {
+                                        let text = copy_body.clone();
+                                        ent_btn.update(cx, |this, cx| {
+                                            this.handle_context_menu_action(
+                                                ContextMenuAction::CopyText(text),
+                                                cx,
+                                            );
+                                        });
+                                        window.refresh();
+                                    })
+                                    .child(
+                                        h_flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .child(Icon::new(IconName::Copy).xsmall())
+                                            .child("Copy"),
+                                    )
                             }),
                     )
                     .when_some(summary_chip, |this, chip| this.child(chip))
