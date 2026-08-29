@@ -60,4 +60,6 @@ pub mod subchannel;
 pub use subchannel::*;
 pub mod preon;
 pub use preon::*;
+pub mod nucleus_vec;
+pub use nucleus_vec::*;
 
