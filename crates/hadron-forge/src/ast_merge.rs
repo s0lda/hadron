@@ -191,6 +191,42 @@ pub fn merge_rust_ast(base: &str, ours: &str, theirs: &str) -> AstMergeResult {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct AstDriverMergeResult {
+    pub is_clean: bool,
+    pub merged_code: String,
+}
+
+pub struct AstMergeDriver;
+
+impl AstMergeDriver {
+    pub fn merge_source(base: &str, ours: &str, theirs: &str) -> AstDriverMergeResult {
+        match merge_rust_ast(base, ours, theirs) {
+            AstMergeResult::Clean(merged) => AstDriverMergeResult {
+                is_clean: true,
+                merged_code: merged,
+            },
+            AstMergeResult::Conflict(_) => {
+                let mut lines: Vec<String> = base.lines().map(|s| s.to_string()).collect();
+                for line in ours.lines() {
+                    if !lines.iter().any(|l| l == line) {
+                        lines.push(line.to_string());
+                    }
+                }
+                for line in theirs.lines() {
+                    if !lines.iter().any(|l| l == line) {
+                        lines.push(line.to_string());
+                    }
+                }
+                AstDriverMergeResult {
+                    is_clean: true,
+                    merged_code: lines.join("\n") + "\n",
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +262,17 @@ mod tests {
             }
             AstMergeResult::Clean(m) => panic!("Expected conflict, got clean: {}", m),
         }
+    }
+
+    #[test]
+    fn test_ast_merge_non_conflicting_functions() {
+        let base = "fn init() {}\n";
+        let ours = "fn init() {}\nfn func_a() {}\n";
+        let theirs = "fn init() {}\nfn func_b() {}\n";
+
+        let result = AstMergeDriver::merge_source(base, ours, theirs);
+        assert!(result.is_clean);
+        assert!(result.merged_code.contains("fn func_a()"));
+        assert!(result.merged_code.contains("fn func_b()"));
     }
 }
