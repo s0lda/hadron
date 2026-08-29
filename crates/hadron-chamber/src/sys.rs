@@ -828,6 +828,58 @@ pub fn send_desktop_notification(title: &str, body: &str, _sound: bool) {
     });
 }
 
+/// Plays a synthesized audio tone asynchronously using platform audio backends (WSL PowerShell Beep, Linux terminal bell/beep, macOS osascript, Windows Console Beep).
+pub fn play_audio_tone(freq_hz: u32, duration_ms: u32, volume: f32) {
+    if volume <= 0.0 || freq_hz == 0 || duration_ms == 0 {
+        return;
+    }
+    std::thread::spawn(move || {
+        #[cfg(target_os = "linux")]
+        {
+            if is_wsl() {
+                let script = format!("[Console]::Beep({}, {})", freq_hz.clamp(37, 32767), duration_ms.clamp(10, 5000));
+                if let Ok(mut child) = Command::new("powershell.exe")
+                    .args(["-NoProfile", "-Command", &script])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    let _ = child.wait();
+                }
+            } else {
+                let script = format!("beep -f {} -l {} 2>/dev/null || printf '\\a'", freq_hz, duration_ms);
+                let _ = Command::new("sh")
+                    .args(["-c", &script])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let _ = Command::new("osascript")
+                .args(["-e", "beep"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let script = format!("[Console]::Beep({}, {})", freq_hz.clamp(37, 32767), duration_ms.clamp(10, 5000));
+            if let Ok(mut child) = Command::new("powershell.exe")
+                .args(["-NoProfile", "-Command", &script])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                let _ = child.wait();
+            }
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1252,5 +1304,13 @@ mod tests {
         // Give background thread a short tick
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+
+    #[test]
+    fn test_play_audio_tone_no_panic() {
+        play_audio_tone(0, 0, 0.0);
+        play_audio_tone(880, 50, 0.5);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
+
 

@@ -929,9 +929,9 @@ impl super::Chamber {
 
         let msg_text = m.body.clone();
         let entity = chamber_entity.clone();
-        let (row_gap, row_pad_y) = match self.prefs.chat_density {
-            crate::config::ChatDensity::Comfortable => (px(10.0), px(4.0)),
-            crate::config::ChatDensity::Compact => (px(6.0), px(1.0)),
+        let (row_gap, row_pad_y, avatar_size, bubble_pad) = match self.prefs.chat_density {
+            crate::config::ChatDensity::Comfortable => (px(10.0), px(4.0), 28.0, px(12.0)),
+            crate::config::ChatDensity::Compact => (px(5.0), px(1.0), 20.0, px(6.0)),
         };
         h_flex()
             .id(SharedString::from(format!("chat-msg-row-{ix}")))
@@ -1011,7 +1011,7 @@ impl super::Chamber {
                                     } else {
                                         desc
                                     },
-                                },
+                                    },
                                 cx,
                             );
                         });
@@ -1019,7 +1019,7 @@ impl super::Chamber {
                     },
                 ))
             })
-            .child(identity_avatar(id, 28.0))
+            .child(identity_avatar(id, avatar_size))
             .child(
                 v_flex()
                     .min_w_0()
@@ -1136,7 +1136,7 @@ impl super::Chamber {
                             ix,
                             &m.body,
                             roster,
-                            gpui::px(12.0),
+                            bubble_pad,
                         )
                         .into_any_element()
                     }),

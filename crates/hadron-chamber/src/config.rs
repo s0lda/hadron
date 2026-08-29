@@ -154,6 +154,59 @@ pub struct ChamberPrefs {
     pub notify_on_turn_finish: bool,
 }
 
+/// Sound themes and acoustic profiles for synthesized telemetry chimes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum SoundTheme {
+    #[default]
+    Classic,
+    Synth,
+    Minimal,
+    Retro8Bit,
+}
+
+impl SoundTheme {
+    pub const ALL: [SoundTheme; 4] = [
+        SoundTheme::Classic,
+        SoundTheme::Synth,
+        SoundTheme::Minimal,
+        SoundTheme::Retro8Bit,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SoundTheme::Classic => "Classic (Harmonic Chimes)",
+            SoundTheme::Synth => "Synth (Electronic FM Blips)",
+            SoundTheme::Minimal => "Minimal (Soft Clicks & Pops)",
+            SoundTheme::Retro8Bit => "Retro 8-Bit (Arcade Bleeps)",
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            SoundTheme::Classic => "classic",
+            SoundTheme::Synth => "synth",
+            SoundTheme::Minimal => "minimal",
+            SoundTheme::Retro8Bit => "retro-8bit",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        let clean = s.trim().to_ascii_lowercase();
+        if clean.starts_with("classic") || clean.contains("harmonic") || clean == "default" {
+            Some(SoundTheme::Classic)
+        } else if clean.starts_with("synth") || clean.contains("electronic") || clean.contains("fm") {
+            Some(SoundTheme::Synth)
+        } else if clean.starts_with("minimal") || clean.contains("click") || clean.contains("soft") || clean.contains("pop") {
+            Some(SoundTheme::Minimal)
+        } else if clean.starts_with("retro") || clean.contains("8bit") || clean.contains("8-bit") || clean.contains("arcade") {
+            Some(SoundTheme::Retro8Bit)
+        } else {
+            None
+        }
+    }
+}
+
 /// Terminal cursor styling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -181,11 +234,15 @@ impl TerminalCursorStyle {
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "beam" | "line" | "vertical" => Some(TerminalCursorStyle::Beam),
-            "block" | "box" | "rectangle" => Some(TerminalCursorStyle::Block),
-            "underline" | "bar" | "bottom" => Some(TerminalCursorStyle::Underline),
-            _ => None,
+        let clean = s.trim().to_ascii_lowercase();
+        if clean.starts_with("beam") || clean.starts_with("line") || clean.starts_with("vertical") {
+            Some(TerminalCursorStyle::Beam)
+        } else if clean.starts_with("block") || clean.starts_with("box") || clean.starts_with("rectangle") {
+            Some(TerminalCursorStyle::Block)
+        } else if clean.starts_with("underline") || clean.starts_with("bar") || clean.starts_with("bottom") {
+            Some(TerminalCursorStyle::Underline)
+        } else {
+            None
         }
     }
 }
@@ -214,10 +271,13 @@ impl ChatDensity {
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "comfortable" | "standard" | "default" => Some(ChatDensity::Comfortable),
-            "compact" | "dense" | "tight" => Some(ChatDensity::Compact),
-            _ => None,
+        let clean = s.trim().to_ascii_lowercase();
+        if clean.starts_with("compact") || clean == "dense" || clean == "tight" {
+            Some(ChatDensity::Compact)
+        } else if clean.starts_with("comfortable") || clean == "standard" || clean == "default" {
+            Some(ChatDensity::Comfortable)
+        } else {
+            None
         }
     }
 }
@@ -249,11 +309,15 @@ impl TimestampFormat {
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "24h" | "clock24h" | "24-hour" | "24_hour" | "24" => Some(TimestampFormat::Clock24h),
-            "12h" | "clock12h" | "12-hour" | "12_hour" | "12" => Some(TimestampFormat::Clock12h),
-            "relative" | "human" | "ago" => Some(TimestampFormat::Relative),
-            _ => None,
+        let clean = s.trim().to_ascii_lowercase();
+        if clean.starts_with("24") || clean.starts_with("clock24") || clean.contains("24-hour") || clean.contains("24_hour") {
+            Some(TimestampFormat::Clock24h)
+        } else if clean.starts_with("12") || clean.starts_with("clock12") || clean.contains("12-hour") || clean.contains("12_hour") {
+            Some(TimestampFormat::Clock12h)
+        } else if clean.starts_with("relative") || clean == "human" || clean == "ago" || clean.contains("relative") {
+            Some(TimestampFormat::Relative)
+        } else {
+            None
         }
     }
 }
@@ -1102,6 +1166,9 @@ mod tests {
                 cue_merge_collision: false,
                 cue_turn_finish: true,
                 cue_blocked_on_human: true,
+                cue_message_received: true,
+                cue_message_sent: true,
+                sound_theme: SoundTheme::Synth,
             },
             turn_deadline_secs: Some(3600),
             stale_after_secs: Some(300),
@@ -1128,13 +1195,30 @@ mod tests {
         assert_eq!(TerminalCursorStyle::from_str("block"), Some(TerminalCursorStyle::Block));
         assert_eq!(TerminalCursorStyle::from_str("beam"), Some(TerminalCursorStyle::Beam));
         assert_eq!(TerminalCursorStyle::from_str("underline"), Some(TerminalCursorStyle::Underline));
+        assert_eq!(TerminalCursorStyle::from_str("Beam (Vertical Line)"), Some(TerminalCursorStyle::Beam));
+        assert_eq!(TerminalCursorStyle::from_str("Block (Full Rectangle)"), Some(TerminalCursorStyle::Block));
+        assert_eq!(TerminalCursorStyle::from_str("Underline (Bottom Bar)"), Some(TerminalCursorStyle::Underline));
 
         assert_eq!(ChatDensity::from_str("compact"), Some(ChatDensity::Compact));
         assert_eq!(ChatDensity::from_str("comfortable"), Some(ChatDensity::Comfortable));
+        assert_eq!(ChatDensity::from_str("Comfortable (Standard Spacing)"), Some(ChatDensity::Comfortable));
+        assert_eq!(ChatDensity::from_str("Compact (Dense View)"), Some(ChatDensity::Compact));
 
         assert_eq!(TimestampFormat::from_str("24h"), Some(TimestampFormat::Clock24h));
         assert_eq!(TimestampFormat::from_str("12h"), Some(TimestampFormat::Clock12h));
         assert_eq!(TimestampFormat::from_str("relative"), Some(TimestampFormat::Relative));
+        assert_eq!(TimestampFormat::from_str("24-Hour (15:04:05)"), Some(TimestampFormat::Clock24h));
+        assert_eq!(TimestampFormat::from_str("12-Hour (3:04:05 PM)"), Some(TimestampFormat::Clock12h));
+        assert_eq!(TimestampFormat::from_str("Relative (2m ago)"), Some(TimestampFormat::Relative));
+
+        assert_eq!(SoundTheme::from_str("classic"), Some(SoundTheme::Classic));
+        assert_eq!(SoundTheme::from_str("synth"), Some(SoundTheme::Synth));
+        assert_eq!(SoundTheme::from_str("minimal"), Some(SoundTheme::Minimal));
+        assert_eq!(SoundTheme::from_str("retro-8bit"), Some(SoundTheme::Retro8Bit));
+        assert_eq!(SoundTheme::from_str("Classic (Harmonic Chimes)"), Some(SoundTheme::Classic));
+        assert_eq!(SoundTheme::from_str("Synth (Electronic FM Blips)"), Some(SoundTheme::Synth));
+        assert_eq!(SoundTheme::from_str("Minimal (Soft Clicks & Pops)"), Some(SoundTheme::Minimal));
+        assert_eq!(SoundTheme::from_str("Retro 8-Bit (Arcade Bleeps)"), Some(SoundTheme::Retro8Bit));
     }
 }
 
