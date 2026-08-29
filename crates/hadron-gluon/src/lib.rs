@@ -41,5 +41,7 @@ pub use skills::review_board::*;
 pub use skills::grill_me::*;
 pub mod pty_injection;
 pub use pty_injection::*;
+pub mod vcr;
+pub use vcr::*;
 
 
