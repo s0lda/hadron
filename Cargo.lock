@@ -3006,6 +3006,7 @@ name = "hadron-gatekeeper"
 version = "0.20.0"
 dependencies = [
  "hadron-lattice",
+ "regex",
  "serde",
  "tempfile",
 ]
@@ -3026,6 +3027,7 @@ dependencies = [
  "keyring",
  "libc",
  "notify 8.2.0",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",
