@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 hadron-lattice = { path = "../hadron-lattice" }
+regex = "1"
 
 [dev-dependencies]
 tempfile = "3"
