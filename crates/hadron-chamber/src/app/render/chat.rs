@@ -704,6 +704,7 @@ impl super::Chamber {
                             let expanded = this.log_expanded.contains(&ix);
                             let color = this.color_for(&m.from);
                             let entity = view.clone();
+                            let msg_body = m.body.clone();
                             return row
                                 .child(
                                     div()
@@ -716,6 +717,51 @@ impl super::Chamber {
                                                 }
                                                 cx.notify();
                                             });
+                                        })
+                                        .context_menu({
+                                            let text = msg_body.clone();
+                                            let ent = view.clone();
+                                            move |mut menu, window, cx| {
+                                                use gpui_component::WindowExt as _;
+                                                let sel = window.selected_text(cx);
+                                                if !sel.trim().is_empty() {
+                                                    let ent_c = ent.clone();
+                                                    let sel_text = sel.clone();
+                                                    menu = menu.item(PopupMenuItem::new("Copy Selected Text").on_click(
+                                                        move |_, window, cx| {
+                                                            let to_copy = {
+                                                                let cur = window.selected_text(cx);
+                                                                if !cur.is_empty() {
+                                                                    cur
+                                                                } else {
+                                                                    sel_text.clone()
+                                                                }
+                                                            };
+                                                            ent_c.update(cx, |this, cx| {
+                                                                this.handle_context_menu_action(
+                                                                    ContextMenuAction::CopyText(to_copy),
+                                                                    cx,
+                                                                );
+                                                            });
+                                                            window.refresh();
+                                                        },
+                                                    ));
+                                                }
+                                                let ent_m = ent.clone();
+                                                let log_text = text.clone();
+                                                menu.item(PopupMenuItem::new("Copy Log Message").on_click(
+                                                    move |_, window, cx| {
+                                                        let to_copy = log_text.clone();
+                                                        ent_m.update(cx, |this, cx| {
+                                                            this.handle_context_menu_action(
+                                                                ContextMenuAction::CopyText(to_copy),
+                                                                cx,
+                                                            );
+                                                        });
+                                                        window.refresh();
+                                                    },
+                                                ))
+                                            }
                                         })
                                         .child(log_row(ix, m, expanded, color, local_offset, &cx.theme().mono_font_family)),
                                 )
@@ -881,85 +927,92 @@ impl super::Chamber {
         h_flex()
             .items_start()
             .gap_2p5()
+            .context_menu(move |mut menu, window, cx| {
+                let text = msg_text.clone();
+                let ent = entity.clone();
+                use gpui_component::WindowExt as _;
+                let sel = window.selected_text(cx);
+                if !sel.trim().is_empty() {
+                    let ent_c = ent.clone();
+                    let sel_text = sel.clone();
+                    menu = menu.item(PopupMenuItem::new("Copy Selected Text").on_click(
+                        move |_, window, cx| {
+                            let to_copy = {
+                                let cur = window.selected_text(cx);
+                                if !cur.is_empty() {
+                                    cur
+                                } else {
+                                    sel_text.clone()
+                                }
+                            };
+                            ent_c.update(cx, |this, cx| {
+                                this.handle_context_menu_action(
+                                    ContextMenuAction::CopyText(to_copy),
+                                    cx,
+                                );
+                            });
+                            window.refresh();
+                        },
+                    ));
+                }
+                let ent_m = ent.clone();
+                let msg_body = text.clone();
+                menu = menu.item(PopupMenuItem::new("Copy Message").on_click(
+                    move |_, window, cx| {
+                        let to_copy = msg_body.clone();
+                        ent_m.update(cx, |this, cx| {
+                            this.handle_context_menu_action(
+                                ContextMenuAction::CopyText(to_copy),
+                                cx,
+                            );
+                        });
+                        window.refresh();
+                    },
+                ));
+                menu.item(PopupMenuItem::new("Promote to Nucleus Lesson").on_click(
+                    move |_, window, cx| {
+                        let first_line = text.lines().next().unwrap_or("lesson").trim();
+                        let slug = first_line
+                            .chars()
+                            .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '-')
+                            .collect::<String>()
+                            .split_whitespace()
+                            .take(4)
+                            .collect::<Vec<_>>()
+                            .join("-")
+                            .to_ascii_lowercase();
+                        let desc = if first_line.len() > 80 {
+                            format!("{}…", &first_line[..80])
+                        } else {
+                            first_line.to_string()
+                        };
+                        ent.update(cx, |this, cx| {
+                            this.handle_context_menu_action(
+                                ContextMenuAction::PromoteToNucleus {
+                                    slug: if slug.is_empty() {
+                                        format!("lesson-{}", chrono::Utc::now().timestamp())
+                                    } else {
+                                        slug
+                                    },
+                                    fact: text.clone(),
+                                    description: if desc.is_empty() {
+                                        "Lesson learned".to_string()
+                                    } else {
+                                        desc
+                                    },
+                                },
+                                cx,
+                            );
+                        });
+                        window.refresh();
+                    },
+                ))
+            })
             .child(identity_avatar(id, 28.0))
             .child(
                 v_flex()
                     .min_w_0()
                     .gap_1()
-                    .context_menu(move |mut menu, window, cx| {
-                        let text = msg_text.clone();
-                        let ent = entity.clone();
-                        use gpui_component::WindowExt as _;
-                        let sel = window.selected_text(cx).trim().to_string();
-                        if !sel.is_empty() {
-                            let ent_c = ent.clone();
-                            let sel_text = sel.clone();
-                            menu = menu.item(PopupMenuItem::new("Copy Selected Text").on_click(
-                                move |_, window, cx| {
-                                    let to_copy = sel_text.clone();
-                                    ent_c.update(cx, |this, cx| {
-                                        this.handle_context_menu_action(
-                                            ContextMenuAction::CopyText(to_copy),
-                                            cx,
-                                        );
-                                    });
-                                    window.refresh();
-                                },
-                            ));
-                        }
-                        let ent_m = ent.clone();
-                        let msg_body = text.clone();
-                        menu = menu.item(PopupMenuItem::new("Copy Message").on_click(
-                            move |_, window, cx| {
-                                let to_copy = msg_body.clone();
-                                ent_m.update(cx, |this, cx| {
-                                    this.handle_context_menu_action(
-                                        ContextMenuAction::CopyText(to_copy),
-                                        cx,
-                                    );
-                                });
-                                window.refresh();
-                            },
-                        ));
-                        menu.item(PopupMenuItem::new("Promote to Nucleus Lesson").on_click(
-                            move |_, window, cx| {
-                                let first_line = text.lines().next().unwrap_or("lesson").trim();
-                                let slug = first_line
-                                    .chars()
-                                    .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '-')
-                                    .collect::<String>()
-                                    .split_whitespace()
-                                    .take(4)
-                                    .collect::<Vec<_>>()
-                                    .join("-")
-                                    .to_ascii_lowercase();
-                                let desc = if first_line.len() > 80 {
-                                    format!("{}…", &first_line[..80])
-                                } else {
-                                    first_line.to_string()
-                                };
-                                ent.update(cx, |this, cx| {
-                                    this.handle_context_menu_action(
-                                        ContextMenuAction::PromoteToNucleus {
-                                            slug: if slug.is_empty() {
-                                                format!("lesson-{}", chrono::Utc::now().timestamp())
-                                            } else {
-                                                slug
-                                            },
-                                            fact: text.clone(),
-                                            description: if desc.is_empty() {
-                                                "Lesson learned".to_string()
-                                            } else {
-                                                desc
-                                            },
-                                        },
-                                        cx,
-                                    );
-                                });
-                                window.refresh();
-                            },
-                        ))
-                    })
                     .child(
                         h_flex()
                             .items_center()
