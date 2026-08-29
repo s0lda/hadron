@@ -20,6 +20,22 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.21.0",
+        date: Some("2026-08-29"),
+        added: &[
+            "Next-Gen Swarm Autonomy: Ephemeral port mesh supervisor, bidirectional PTY stdin injection, deterministic network VCR, and AST blast radius test slicing",
+            "Swarm Coordination & Multi-Agent Intelligence: Speculative parallel bake-offs (/bakeoff), peer sub-channels, DAG barrier task scheduling, pre-gate red team auditor (@auditor), and dynamic capability preon hot-swapping",
+            "Nucleus 2.0 & Living Invariants: Local cosine vector search index, invariant linter synthesizer, autonomous background compaction, and global cross-repo sync",
+            "Merge Gate & VCS Superpowers: Speculative pre-merge shadow gate virtualization, turn micro-checkpointing (/rewind), and semantic AST merge driver",
+            "Chamber GUI & Collaboration: Multi-quark live split-canvas state and interactive in-diff steering with partial hunk staging",
+        ],
+        changed: &[],
+        fixed: &[
+            "Reliably resolve and copy selected text from message context menu and hotkey without stripping indentation",
+            "Cleaned up compiler warnings for unwired preview state models across workspace",
+        ],
+    },
+    Release {
         version: "0.20.0",
         date: Some("2026-08-28"),
         added: &[

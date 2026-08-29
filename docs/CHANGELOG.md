@@ -5,6 +5,34 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-08-29
+
+### Added
+- **Next-Gen Swarm Autonomy & Developer Sandboxing Suite (`hadron-gluon`, `hadron-forge`, `hadron-lattice`, `hadron-gatekeeper`, `hadron-chamber`)**:
+  - **Ephemeral Subprocess & Port Mesh (`hadron-gluon`)**: Automated loopback-bound (`127.0.0.1`) dynamic port namespace allocation and supervisor management per worktree with automatic teardown on branch disposal (`hadron-gluon::worktree::port_mesh`).
+  - **Jailed Headless Browser Bridge (`hadron-forge`)**: Headless browser automation driver with strict screenshot jailing under `.hadron/screenshots/` and DOM snapshot extraction (`hadron-forge::browser_bridge`).
+  - **Bidirectional PTY Stdin Injection (`hadron-gluon`)**: Live regex-pattern-triggered stdin reply matching engine for interactive terminal prompts (`hadron-gluon::pty_injection`).
+  - **Deterministic Network VCR Cassette Engine (`hadron-gluon`)**: HTTP/RPC proxy with cassette recording, sanitized headers, and offline deterministic replay under `.hadron/vcr/` (`hadron-gluon::vcr`).
+  - **AST Blast Radius & Test Slicer (`hadron-forge`)**: Tree-sitter AST syntax and symbol dependency analysis mapping modified rust files to affected unit test targets (`hadron-forge::ast_blast_radius`).
+  - **Speculative Parallel Bake-Offs (`hadron-gluon`)**: Autonomous tournament orchestrator evaluating competing worker quark branches on cyclomatic complexity and test coverage (`hadron-gluon::bakeoff`, `/bakeoff`).
+  - **Ephemeral Peer Sub-Channels (`hadron-lattice`)**: Lightweight peer-to-peer discussion threads between worker quarks and reviewer quarks bubbling synthesized summaries to the main field (`hadron-lattice::subchannel`).
+  - **DAG Barrier Task Scheduler (`hadron-gluon`)**: First-class multi-task dependency graph scheduler in Gluon enabling wave-based parallel dispatch and barrier gating (`hadron-gluon::engine::dag_scheduler`).
+  - **Automated Pre-Gate Red Team Auditor (`hadron-gatekeeper`)**: Pre-merge security analysis scanning branches for hardcoded secrets, unsafe blocks, and unauthorized network calls before Merge Gate entry (`hadron-gatekeeper::red_team`).
+  - **Dynamic Preon Hot-Swapping (`hadron-lattice`)**: Dynamic runtime capability specialization loading and hot-swapping from `.hadron/preons/` without restarting processes (`hadron-lattice::preon`).
+  - **Nucleus 2.0 Vector Search & Semantic Graph (`hadron-lattice`)**: Zero-token cosine vector search index over post-mortems and past lessons (`hadron-lattice::nucleus_vec`).
+  - **Living Invariant Linter Synthesizer (`hadron-gatekeeper`)**: AST-pattern and regex rule generator deriving enforceable linter rules from `always.md` invariants (`hadron-gatekeeper::invariant_linter`).
+  - **Autonomous Background Nucleus Compaction (`hadron-lattice`)**: Automatic clustering, supersession resolution, and index budget compaction for `.hadron/nucleus/` (`hadron-lattice::compaction`).
+  - **Global Cross-Repo Nucleus Sync (`hadron-lattice`)**: Multi-tiered knowledge synchronization between global `~/.hadron/nucleus/` and repo-local nucleus repositories (`hadron-lattice::global_sync`).
+  - **Speculative Pre-Merge Shadow Gate (`hadron-gluon`)**: Concurrent background rebase and test runner virtualizing gate passes ahead of sequential merges (`hadron-gluon::engine::shadow_gate`).
+  - **Turn Time-Travel Micro-Checkpointing (`hadron-gluon`)**: Granular git commit and restore engine enabling instant rewind of dead-end refactors (`hadron-gluon::checkpoint`).
+  - **Semantic AST Merge Driver (`hadron-forge`)**: Structural syntax-aware merge engine automatically resolving disjoint top-level items, imports, and enum variants (`hadron-forge::ast_merge`).
+  - **Multi-Quark Live Split-Canvas (`hadron-chamber`)**: State manager for grid-based multi-tile live inspector views across concurrent active quarks (`hadron-chamber::app::render::split_canvas`).
+  - **Interactive In-Diff Steering & Partial Staging (`hadron-chamber`)**: State manager supporting per-hunk review comments, steering guidance, and selective hunk staging (`hadron-chamber::app::render::diff_steering`).
+
+### Fixed
+- **Chat Text Selection Copying (`hadron-chamber`)**: Attached context menus to full message rows, dynamically resolved selected text from window state on click without stripping indentation or leading/trailing whitespace, and enabled context menus on log view rows.
+- **Build Warnings & Dead Code Cleanup (`hadron-chamber`)**: Removed unused glob re-exports and annotated unwired preview state models pending GUI canvas wiring.
+
 ## [0.20.0] - 2026-08-28
 
 ### Added
