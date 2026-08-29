@@ -181,6 +181,7 @@ impl RenderOnce for MermaidCard {
                                     .hover(|s| s.bg(crate::theme::bg_surface_raised()).text_color(crate::theme::text()))
                                     .child("Copy")
                                     .on_click(move |_, _window, cx| {
+                                        crate::sys::copy_to_system_clipboard(&copy_source);
                                         cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy_source.to_string()));
                                     }),
                             ),
@@ -738,6 +739,7 @@ impl RenderOnce for ImageCard {
                             .hover(|s| s.bg(crate::theme::bg_surface_raised()).text_color(crate::theme::text()))
                             .child("Copy")
                             .on_click(move |_, _window, cx| {
+                                crate::sys::copy_to_system_clipboard(&copy_path);
                                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy_path.clone()));
                             }),
                     ),

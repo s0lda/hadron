@@ -158,6 +158,7 @@ impl super::Chamber {
             // the fork's TextView layer — the grid renders as raw `div`s the TextView
             // selection can't see, so read the copy text from the terminal itself.
             if let Some(selected) = term.selection_text() {
+                crate::sys::copy_to_system_clipboard(&selected);
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
                 return;
             }
@@ -177,6 +178,7 @@ impl super::Chamber {
                     text.push_str(line_text.trim_end());
                     text.push('\n');
                 }
+                crate::sys::copy_to_system_clipboard(&text);
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
                 return;
             }

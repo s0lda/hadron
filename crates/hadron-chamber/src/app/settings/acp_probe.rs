@@ -199,8 +199,14 @@ impl super::Chamber {
                 .cursor_pointer()
                 .hover(|s| s.text_color(theme::text_secondary()))
                 .child(format!("{msg}  ·  click to copy"))
-                .on_click(cx.listener(move |_this, _, _window, cx| {
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    crate::sys::copy_to_system_clipboard(&full);
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(full.clone()));
+                    this.toast_manager.push(
+                        ToastKind::Success,
+                        "Copied error to clipboard".to_string(),
+                        Some(2),
+                    );
                 }))
                 .into_any_element()
         } else {
@@ -261,8 +267,14 @@ impl super::Chamber {
                     .cursor_pointer()
                     .hover(|s| s.text_color(theme::text_secondary()))
                     .child(format!("{msg}  ·  click to copy"))
-                    .on_click(cx.listener(move |_this, _, _window, cx| {
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        crate::sys::copy_to_system_clipboard(&full);
                         cx.write_to_clipboard(gpui::ClipboardItem::new_string(full.clone()));
+                        this.toast_manager.push(
+                            ToastKind::Success,
+                            "Copied error to clipboard".to_string(),
+                            Some(2),
+                        );
                     }))
                     .into_any_element()
             } else {

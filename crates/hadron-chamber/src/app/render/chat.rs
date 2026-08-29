@@ -820,9 +820,13 @@ impl super::Chamber {
                     .style(markdown_style(self.prefs.ui_font_size))
                     .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions())
                     .code_block_actions(|code_block, _window, _cx| {
+                        let code = code_block.code();
                         gpui_component::clipboard::Clipboard::new("code-copy")
-                            .value(code_block.code())
+                            .value(code)
                             .tooltip("Copy")
+                            .on_copied(|val, _window, _cx| {
+                                crate::sys::copy_to_system_clipboard(&val);
+                            })
                     }),
             )
     }

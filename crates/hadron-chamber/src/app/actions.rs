@@ -1805,9 +1805,16 @@ impl Chamber {
                 }
             }
             ContextMenuAction::CopyPath(path) => {
+                crate::sys::copy_to_system_clipboard(&path);
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(path));
+                self.toast_manager.push(
+                    ToastKind::Success,
+                    "Copied path to clipboard".to_string(),
+                    Some(2),
+                );
             }
             ContextMenuAction::CopyText(text) => {
+                crate::sys::copy_to_system_clipboard(&text);
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
                 self.toast_manager.push(
                     ToastKind::Success,

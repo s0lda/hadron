@@ -442,6 +442,115 @@ pub fn is_wsl() -> bool {
     }
 }
 
+/// Write text to the system clipboard across all supported platforms (WSL, Wayland, X11, macOS, Windows).
+///
+/// In addition to GPUI's internal clipboard, this bridges to native OS clipboard utilities
+/// so that copied text is immediately accessible in external applications (host Windows clipboard in WSL,
+/// Wayland/wl-copy, X11/xclip/xsel, macOS pbcopy).
+pub fn copy_to_system_clipboard(text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    let text = text.to_string();
+    std::thread::spawn(move || {
+        #[cfg(target_os = "linux")]
+        {
+            if is_wsl() {
+                // Under WSL, copy directly to the Windows host clipboard via clip.exe
+                let mut copied_win = false;
+                if let Ok(mut child) = Command::new("clip.exe")
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = stdin.write_all(text.as_bytes());
+                    }
+                    if child.wait().map(|s| s.success()).unwrap_or(false) {
+                        copied_win = true;
+                    }
+                }
+                if !copied_win {
+                    if let Ok(mut child) = Command::new("/mnt/c/WINDOWS/system32/clip.exe")
+                        .stdin(std::process::Stdio::piped())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                    {
+                        if let Some(mut stdin) = child.stdin.take() {
+                            use std::io::Write;
+                            let _ = stdin.write_all(text.as_bytes());
+                        }
+                        let _ = child.wait();
+                    }
+                }
+            }
+
+            // Also populate Wayland clipboard if wl-copy is present
+            if let Ok(mut child) = Command::new("wl-copy")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let _ = stdin.write_all(text.as_bytes());
+                }
+                let _ = child.wait();
+            }
+
+            // Also populate X11 clipboard if xclip is present
+            if let Ok(mut child) = Command::new("xclip")
+                .args(["-selection", "clipboard"])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let _ = stdin.write_all(text.as_bytes());
+                }
+                let _ = child.wait();
+            }
+
+            // Also populate X11 primary selection if xclip is present
+            if let Ok(mut child) = Command::new("xclip")
+                .args(["-selection", "primary"])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let _ = stdin.write_all(text.as_bytes());
+                }
+                let _ = child.wait();
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(mut child) = Command::new("pbcopy")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let _ = stdin.write_all(text.as_bytes());
+                }
+                let _ = child.wait();
+            }
+        }
+    });
+}
+
 /// Opens a file path or URL using the platform's default viewer or browser.
 ///
 /// Under WSL:
@@ -1018,6 +1127,12 @@ mod tests {
         // Empty target should early-return without doing anything
         open_path_or_url("");
         open_path_or_url("   ");
+    }
+
+    #[test]
+    fn test_copy_to_system_clipboard_handles_empty_and_text() {
+        copy_to_system_clipboard("");
+        copy_to_system_clipboard("test clipboard text");
     }
 }
 
