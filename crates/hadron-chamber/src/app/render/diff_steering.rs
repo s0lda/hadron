@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
+#[allow(dead_code)]
 pub struct DiffSteeringState {
     hunk_staged: HashMap<usize, bool>,
     hunk_comments: HashMap<usize, String>,
 }
 
+#[allow(dead_code)]
 impl DiffSteeringState {
     pub fn new() -> Self {
         Self {

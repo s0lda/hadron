@@ -25,9 +25,7 @@ mod diff_inspector;
 mod scrubber;
 mod artifacts;
 pub mod split_canvas;
-pub use split_canvas::*;
 pub mod diff_steering;
-pub use diff_steering::*;
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
