@@ -1036,6 +1036,11 @@ impl super::Chamber {
                     self.volume_select(window, cx),
                 ))
                 .child(settings_field(
+                    "Sound theme & acoustic profile",
+                    Some("Choose acoustic timbre: Classic harmonic chimes, Modern synth FM blips, Minimal soft clicks, or Retro 8-bit arcade."),
+                    self.sound_theme_select(window, cx),
+                ))
+                .child(settings_field(
                     "Haptic feedback pulse",
                     Some("Emit subtle terminal / device haptic vibrations on critical swarm alerts."),
                     Switch::new("haptic-feedback-enabled")
@@ -1043,6 +1048,32 @@ impl super::Chamber {
                         .on_click(cx.listener(|this, checked, _window, cx| {
                             this.prefs.audio.haptic_enabled = *checked;
                             this.audio_manager.config.haptic_enabled = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Message received cue",
+                    Some("Play chime and subtle haptic pulse when an incoming message is received from a quark."),
+                    Switch::new("cue-message-received")
+                        .checked(self.prefs.audio.cue_message_received)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.audio.cue_message_received = *checked;
+                            this.audio_manager.config.cue_message_received = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Message sent cue",
+                    Some("Play subtle swoosh chime and tap when submitting a chat message."),
+                    Switch::new("cue-message-sent")
+                        .checked(self.prefs.audio.cue_message_sent)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.audio.cue_message_sent = *checked;
+                            this.audio_manager.config.cue_message_sent = *checked;
                             let _ = config::save(&this.prefs);
                             cx.notify();
                         }))
@@ -1096,6 +1127,17 @@ impl super::Chamber {
                             this.prefs.audio.cue_blocked_on_human = *checked;
                             this.audio_manager.config.cue_blocked_on_human = *checked;
                             let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Test sound & haptic preview",
+                    Some("Preview the active sound theme, volume level, and haptic feedback."),
+                    Button::new("btn-preview-audio")
+                        .label("Play Test Chime")
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.audio_manager.trigger_cue(crate::app::audio::AudioCue::GateApproval);
                             cx.notify();
                         }))
                         .into_any_element(),
@@ -1444,6 +1486,26 @@ impl super::Chamber {
             .w_full()
             .min_w(px(220.0))
             .placeholder("Select volume...")
+            .into_any_element()
+    }
+
+    /// The sound theme & acoustic profile picker using native Select dropdown component.
+    pub(super) fn sound_theme_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current = self.prefs.audio.sound_theme;
+        if self.sound_theme_select_key != Some(current) {
+            self.sound_theme_select_key = Some(current);
+            let choices: Vec<String> = config::SoundTheme::ALL.iter().map(|t| t.label().to_string()).collect();
+            let current_label = current.label().to_string();
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.sound_theme_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.sound_theme_select_state)
+            .w_full()
+            .min_w(px(220.0))
+            .placeholder("Select sound theme...")
             .into_any_element()
     }
 

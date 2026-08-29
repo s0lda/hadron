@@ -511,6 +511,9 @@ struct Chamber {
     /// Native SelectState dropdown for Master Audio Volume.
     volume_select_state: Entity<SelectState<ModelSelectDelegate>>,
     volume_select_key: Option<u32>,
+    /// Native SelectState dropdown for Sound Theme / Profile.
+    sound_theme_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    sound_theme_select_key: Option<config::SoundTheme>,
     /// Native SelectState dropdown for Turn Silence Deadline.
     turn_deadline_select_state: Entity<SelectState<ModelSelectDelegate>>,
     turn_deadline_select_key: Option<u64>,
@@ -750,6 +753,9 @@ impl Chamber {
         });
         let volume_select_state = cx.new(|cx| {
             SelectState::new(create_model_delegate("50% (Default)", &["10%".into(), "25%".into(), "75%".into(), "100%".into()], None), None, window, cx).searchable(false)
+        });
+        let sound_theme_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Classic (Harmonic Chimes)", &["Synth (Electronic FM Blips)".into(), "Minimal (Soft Clicks & Pops)".into(), "Retro 8-Bit (Arcade Bleeps)".into()], None), None, window, cx).searchable(false)
         });
         let turn_deadline_select_state = cx.new(|cx| {
             SelectState::new(create_model_delegate("30 minutes (Default)", &["15 minutes".into(), "45 minutes".into(), "60 minutes".into()], None), None, window, cx).searchable(false)
@@ -1045,6 +1051,7 @@ impl Chamber {
                 if let Some(density) = config::ChatDensity::from_str(val) {
                     this.prefs.chat_density = density;
                     let _ = config::save(&this.prefs);
+                    cx.refresh_windows();
                     cx.notify();
                 }
             }),
@@ -1054,6 +1061,7 @@ impl Chamber {
                 if let Some(fmt) = config::TimestampFormat::from_str(val) {
                     this.prefs.timestamp_format = fmt;
                     let _ = config::save(&this.prefs);
+                    cx.refresh_windows();
                     cx.notify();
                 }
             }),
@@ -1063,6 +1071,7 @@ impl Chamber {
                 if let Some(style) = config::TerminalCursorStyle::from_str(val) {
                     this.prefs.terminal_cursor_style = style;
                     let _ = config::save(&this.prefs);
+                    cx.refresh_windows();
                     cx.notify();
                 }
             }),
@@ -1082,7 +1091,19 @@ impl Chamber {
                 this.prefs.audio.volume = vol;
                 this.audio_manager.config.volume = vol;
                 let _ = config::save(&this.prefs);
+                this.audio_manager.trigger_cue(crate::app::audio::AudioCue::TurnFinish);
                 cx.notify();
+            }),
+            cx.subscribe_in(&sound_theme_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                if let Some(theme) = config::SoundTheme::from_str(val) {
+                    this.prefs.audio.sound_theme = theme;
+                    this.audio_manager.config.sound_theme = theme;
+                    let _ = config::save(&this.prefs);
+                    this.audio_manager.trigger_cue(crate::app::audio::AudioCue::MessageReceived);
+                    cx.notify();
+                }
             }),
             cx.subscribe_in(&turn_deadline_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
                 let SelectEvent::Confirm(selected) = event;
@@ -1266,6 +1287,7 @@ impl Chamber {
             })
             .collect();
         let delegations = delegation::parse_delegations(&events, &alias_map);
+        let audio_manager = audio::AudioTelemetryManager::new(prefs.audio.clone());
 
         let mut chamber = Chamber {
             view,
@@ -1430,6 +1452,8 @@ impl Chamber {
             scrollback_select_key: None,
             volume_select_state,
             volume_select_key: None,
+            sound_theme_select_state,
+            sound_theme_select_key: None,
             turn_deadline_select_state,
             turn_deadline_select_key: None,
             stale_timeout_select_state,
@@ -1475,7 +1499,7 @@ impl Chamber {
             ),
             gluon_stopped_notice: false,
             update_state: UpdateState::default(),
-            audio_manager: audio::AudioTelemetryManager::default(),
+            audio_manager,
         };
         chamber.update_active_plan();
         chamber.check_for_updates(cx);

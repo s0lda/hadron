@@ -105,6 +105,7 @@ impl Chamber {
                                 );
                             }
                         } else {
+                            self.audio_manager.trigger_cue(crate::app::audio::AudioCue::MessageReceived);
                             self.audio_manager.trigger_cue(crate::app::audio::AudioCue::TurnFinish);
                             if self.prefs.desktop_notifications && self.prefs.notify_on_turn_finish {
                                 crate::sys::send_desktop_notification(

@@ -288,7 +288,7 @@ impl Chamber {
         for (ix, m) in self.view.messages.iter().enumerate() {
             let is_active_step = ix == active_ix;
             let is_past_or_current = ix < cursor;
-            let time_str = m.ts.with_timezone(&local_offset).format("%H:%M:%S").to_string();
+            let time_str = crate::model::format_timestamp(m.ts.with_timezone(&local_offset), self.prefs.timestamp_format);
             let author_id = self.resolve_identity(&m.from);
             let author_name = if author_id.name.starts_with('@') {
                 author_id.name.clone()

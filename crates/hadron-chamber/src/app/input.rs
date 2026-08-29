@@ -100,6 +100,7 @@ impl super::Chamber {
             return;
         }
 
+        self.audio_manager.trigger_cue(crate::app::audio::AudioCue::MessageSent);
         input.update(cx, |state, cx| state.set_value("", window, cx));
         let events = io::read_events(&self.path).unwrap_or_default();
         self.sync_view(&events);
