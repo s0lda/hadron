@@ -213,9 +213,23 @@ impl super::Chamber {
                                         .text_color(gpui::rgb(pack_rgb(run.fg)))
                                         .bg(gpui::rgb(pack_rgb(run.bg)));
                                     if run.has_cursor {
-                                        run_div = run_div
-                                            .border_l(px(2.0))
-                                            .border_color(gpui::rgb(pack_rgb(run.fg)));
+                                        match self.prefs.terminal_cursor_style {
+                                            crate::config::TerminalCursorStyle::Beam => {
+                                                run_div = run_div
+                                                    .border_l(px(2.0))
+                                                    .border_color(gpui::rgb(pack_rgb(run.fg)));
+                                            }
+                                            crate::config::TerminalCursorStyle::Block => {
+                                                run_div = run_div
+                                                    .text_color(gpui::rgb(pack_rgb(run.bg)))
+                                                    .bg(gpui::rgb(pack_rgb(run.fg)));
+                                            }
+                                            crate::config::TerminalCursorStyle::Underline => {
+                                                run_div = run_div
+                                                    .border_b(px(2.0))
+                                                    .border_color(gpui::rgb(pack_rgb(run.fg)));
+                                            }
+                                        }
                                     }
                                     row = row.child(run_div.child(run.text.clone()));
                                 }

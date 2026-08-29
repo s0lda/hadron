@@ -1267,7 +1267,7 @@ where
                     .text_color(theme::text_secondary())
                     .child(
                         gpui_component::text::TextView::markdown(("log-body", ix), body_text)
-                            .style(markdown_style(None))
+                            .style(markdown_style(None, false))
                             .selectable(true)
                             .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions()),
                     ),
@@ -1318,7 +1318,7 @@ where
                     .truncate()
                     .child(
                         gpui_component::text::TextView::markdown(("log-body", ix), body_text)
-                            .style(markdown_style(None))
+                            .style(markdown_style(None, false))
                             .selectable(true)
                             .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions()),
                     ),
@@ -1413,7 +1413,7 @@ pub(super) fn github_syntax_theme() -> std::sync::Arc<gpui_component::highlighte
     THEME.clone()
 }
 
-pub(super) fn markdown_style(ui_font_size: Option<f32>) -> gpui_component::text::TextViewStyle {
+pub(super) fn markdown_style(ui_font_size: Option<f32>, word_wrap: bool) -> gpui_component::text::TextViewStyle {
     let base_size = ui_font_size.unwrap_or(14.0);
     let mut style = gpui_component::text::TextViewStyle::default();
     style.heading_base_font_size = px(base_size);
@@ -1429,11 +1429,15 @@ pub(super) fn markdown_style(ui_font_size: Option<f32>) -> gpui_component::text:
     // Fenced code blocks: a solid dark card (header row with language label +
     // copy button, divider, then the code body) so they read as a distinct
     // block over the flat #101010 field instead of blending into body text.
-    style.code_block = gpui::StyleRefinement::default()
+    let mut cb = gpui::StyleRefinement::default()
         .bg(theme::input_bg())
         .border_1()
         .border_color(theme::border())
         .rounded_md();
+    if !word_wrap {
+        cb.overflow.x = Some(gpui::Overflow::Scroll);
+    }
+    style.code_block = cb;
     style
 }
 
@@ -1597,11 +1601,11 @@ mod tests {
 
     #[test]
     fn markdown_style_heading_base_font_size_matches_preference() {
-        let default_style = markdown_style(None);
+        let default_style = markdown_style(None, false);
         assert_eq!(default_style.heading_base_font_size, px(14.0));
         assert_eq!(default_style.highlight_theme.name, "GitHub Dark (Custom)");
 
-        let custom_style = markdown_style(Some(18.0));
+        let custom_style = markdown_style(Some(18.0), true);
         assert_eq!(custom_style.heading_base_font_size, px(18.0));
         assert_eq!(custom_style.highlight_theme.name, "GitHub Dark (Custom)");
     }

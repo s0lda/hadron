@@ -20,15 +20,43 @@ pub use repl::{evaluate_repl_input, ReplResult};
 pub use stats::{downsample_context_points, downsample_spend_points, downsample_turn_spend};
 pub use tasks::{SwarmTask, TaskState};
 
-/// Wall-clock of an event, to the second.
+/// Wall-clock of an event, to the second (24h format).
 ///
 /// Generic over the timezone so the *conversion* stays at the render site
 /// (which uses `Local`) and this stays deterministic under test.
+#[allow(dead_code)]
 pub fn format_clock<Tz: TimeZone>(ts: DateTime<Tz>) -> String
 where
     Tz::Offset: std::fmt::Display,
 {
-    ts.format("%H:%M:%S").to_string()
+    format_timestamp(ts, crate::config::TimestampFormat::Clock24h)
+}
+
+/// Formats timestamp according to the user's selected format (24h, 12h, or Relative).
+pub fn format_timestamp<Tz: TimeZone>(ts: DateTime<Tz>, fmt: crate::config::TimestampFormat) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    match fmt {
+        crate::config::TimestampFormat::Clock24h => ts.format("%H:%M:%S").to_string(),
+        crate::config::TimestampFormat::Clock12h => ts.format("%-I:%M:%S %p").to_string(),
+        crate::config::TimestampFormat::Relative => {
+            let now = chrono::Utc::now();
+            let diff = now.signed_duration_since(ts.with_timezone(&chrono::Utc));
+            let secs = diff.num_seconds();
+            if secs < 5 {
+                "just now".to_string()
+            } else if secs < 60 {
+                format!("{secs}s ago")
+            } else if secs < 3600 {
+                format!("{}m ago", secs / 60)
+            } else if secs < 86400 {
+                format!("{}h ago", secs / 3600)
+            } else {
+                format!("{}d ago", secs / 86400)
+            }
+        }
+    }
 }
 
 /// The label on a Discord-style date divider: relative for the two days a

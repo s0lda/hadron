@@ -21,7 +21,12 @@ impl super::Chamber {
             match dims {
                 Some((cols, rows)) => {
                     let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                    let shell = crate::pty::default_shell();
+                    let custom_shell = self.prefs.terminal_shell.as_deref();
+                    let scrollback = self.prefs.terminal_scrollback;
+                    let shell = custom_shell
+                        .filter(|s| !s.trim().is_empty())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(crate::pty::default_shell);
                     let stem = std::path::Path::new(&shell)
                         .file_stem()
                         .and_then(|s| s.to_str())
@@ -36,7 +41,7 @@ impl super::Chamber {
                             rows
                         ),
                     );
-                    match crate::pty::PtyTerminal::new(&root, cols, rows) {
+                    match crate::pty::PtyTerminal::new_with_options(&root, cols, rows, custom_shell, scrollback) {
                         Ok(mut term) => {
                             term::info(Source::Chamber, &format!("terminal: created tab '{title}'"));
                             term.title = title.clone();

@@ -104,6 +104,158 @@ pub struct ChamberPrefs {
     /// Optional custom theme definition override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_theme: Option<ThemeDefinition>,
+    /// Audio & haptics telemetry configuration.
+    #[serde(default)]
+    pub audio: crate::app::audio::AudioConfig,
+    /// Turn watchdog silence limit in seconds (default 1800s / 30m).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_deadline_secs: Option<u64>,
+    /// Live activity stale threshold in seconds (default 120s).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_after_secs: Option<i64>,
+    /// Custom terminal shell path override (defaults to $SHELL or platform default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_shell: Option<String>,
+    /// Terminal cursor rendering style (Beam, Block, Underline).
+    #[serde(default)]
+    pub terminal_cursor_style: TerminalCursorStyle,
+    /// Terminal scrollback buffer line depth (defaults to 5,000).
+    #[serde(default = "default_terminal_scrollback")]
+    pub terminal_scrollback: usize,
+    /// Chat row density (Comfortable vs Compact).
+    #[serde(default)]
+    pub chat_density: ChatDensity,
+    /// Whether markdown code blocks should wrap text instead of scrolling horizontally.
+    #[serde(default)]
+    pub code_block_word_wrap: bool,
+    /// Chat timestamp format (24h, 12h, Relative).
+    #[serde(default)]
+    pub timestamp_format: TimestampFormat,
+    /// Whether to auto-fold thinking/reasoning blocks in chat by default.
+    #[serde(default = "default_true")]
+    pub auto_fold_reasoning: bool,
+    /// Whether git worktrees should be automatically pruned on merge/abandonment.
+    #[serde(default = "default_true")]
+    pub git_auto_prune_worktrees: bool,
+    /// Custom Git author name override for commits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_author_name: Option<String>,
+    /// Custom Git author email override for commits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_author_email: Option<String>,
+    /// Native OS desktop notifications master toggle.
+    #[serde(default = "default_true")]
+    pub desktop_notifications: bool,
+    /// Show desktop notification when a quark is blocked on Mode::Ask.
+    #[serde(default = "default_true")]
+    pub notify_on_blocked: bool,
+    /// Show desktop notification when a quark finishes a turn.
+    #[serde(default = "default_true")]
+    pub notify_on_turn_finish: bool,
+}
+
+/// Terminal cursor styling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum TerminalCursorStyle {
+    #[default]
+    Beam,
+    Block,
+    Underline,
+}
+
+#[allow(dead_code)]
+impl TerminalCursorStyle {
+    pub const ALL: [TerminalCursorStyle; 3] = [
+        TerminalCursorStyle::Beam,
+        TerminalCursorStyle::Block,
+        TerminalCursorStyle::Underline,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TerminalCursorStyle::Beam => "Beam (Vertical Line)",
+            TerminalCursorStyle::Block => "Block (Full Rectangle)",
+            TerminalCursorStyle::Underline => "Underline (Bottom Bar)",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "beam" | "line" | "vertical" => Some(TerminalCursorStyle::Beam),
+            "block" | "box" | "rectangle" => Some(TerminalCursorStyle::Block),
+            "underline" | "bar" | "bottom" => Some(TerminalCursorStyle::Underline),
+            _ => None,
+        }
+    }
+}
+
+/// Chat view row density and spacing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChatDensity {
+    #[default]
+    Comfortable,
+    Compact,
+}
+
+#[allow(dead_code)]
+impl ChatDensity {
+    pub const ALL: [ChatDensity; 2] = [
+        ChatDensity::Comfortable,
+        ChatDensity::Compact,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ChatDensity::Comfortable => "Comfortable (Standard Spacing)",
+            ChatDensity::Compact => "Compact (Dense View)",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "comfortable" | "standard" | "default" => Some(ChatDensity::Comfortable),
+            "compact" | "dense" | "tight" => Some(ChatDensity::Compact),
+            _ => None,
+        }
+    }
+}
+
+/// Timestamp formatting style for chat messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum TimestampFormat {
+    #[default]
+    Clock24h,
+    Clock12h,
+    Relative,
+}
+
+#[allow(dead_code)]
+impl TimestampFormat {
+    pub const ALL: [TimestampFormat; 3] = [
+        TimestampFormat::Clock24h,
+        TimestampFormat::Clock12h,
+        TimestampFormat::Relative,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Clock24h => "24-Hour (15:04:05)",
+            Self::Clock12h => "12-Hour (3:04:05 PM)",
+            Self::Relative => "Relative (2m ago)",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "24h" | "clock24h" | "24-hour" | "24_hour" | "24" => Some(TimestampFormat::Clock24h),
+            "12h" | "clock12h" | "12-hour" | "12_hour" | "12" => Some(TimestampFormat::Clock12h),
+            "relative" | "human" | "ago" => Some(TimestampFormat::Relative),
+            _ => None,
+        }
+    }
 }
 
 /// Curated color theme presets.
@@ -537,6 +689,9 @@ fn default_true() -> bool {
 fn default_false() -> bool {
     false
 }
+fn default_terminal_scrollback() -> usize {
+    5000
+}
 fn default_roster_width() -> f32 {
     // Wide enough for effort + mode tags beside the name/model column, trimmed
     // ~11% from the previous 450 default (Jake's request).
@@ -579,6 +734,22 @@ impl Default for ChamberPrefs {
             theme_preset: None,
             accent_choice: None,
             custom_theme: None,
+            audio: crate::app::audio::AudioConfig::default(),
+            turn_deadline_secs: None,
+            stale_after_secs: None,
+            terminal_shell: None,
+            terminal_cursor_style: TerminalCursorStyle::default(),
+            terminal_scrollback: default_terminal_scrollback(),
+            chat_density: ChatDensity::default(),
+            code_block_word_wrap: false,
+            timestamp_format: TimestampFormat::default(),
+            auto_fold_reasoning: default_true(),
+            git_auto_prune_worktrees: default_true(),
+            git_author_name: None,
+            git_author_email: None,
+            desktop_notifications: default_true(),
+            notify_on_blocked: default_true(),
+            notify_on_turn_finish: default_true(),
         }
     }
 }
@@ -670,6 +841,7 @@ mod tests {
             theme_preset: None,
             accent_choice: None,
             custom_theme: None,
+            ..Default::default()
         };
         let json = serde_json::to_string(&prefs).unwrap();
         let back: ChamberPrefs = serde_json::from_str(&json).unwrap();
@@ -918,5 +1090,52 @@ mod tests {
 
         assert_eq!(parse_hex_color("invalid"), None);
     }
+
+    #[test]
+    fn test_new_adjustable_preferences_serde_roundtrip() {
+        let prefs = ChamberPrefs {
+            audio: crate::app::audio::AudioConfig {
+                enabled: true,
+                volume: 0.85,
+                haptic_enabled: true,
+                cue_gate_approval: true,
+                cue_merge_collision: false,
+                cue_turn_finish: true,
+                cue_blocked_on_human: true,
+            },
+            turn_deadline_secs: Some(3600),
+            stale_after_secs: Some(300),
+            terminal_shell: Some("/usr/bin/zsh".to_string()),
+            terminal_cursor_style: TerminalCursorStyle::Underline,
+            terminal_scrollback: 10000,
+            chat_density: ChatDensity::Compact,
+            code_block_word_wrap: true,
+            timestamp_format: TimestampFormat::Relative,
+            auto_fold_reasoning: false,
+            git_auto_prune_worktrees: true,
+            git_author_name: Some("Hadron Orchestrator".to_string()),
+            git_author_email: Some("swarm@hadron.internal".to_string()),
+            desktop_notifications: true,
+            notify_on_blocked: true,
+            notify_on_turn_finish: false,
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&prefs).expect("serialize prefs");
+        let loaded: ChamberPrefs = serde_json::from_str(&json).expect("deserialize prefs");
+        assert_eq!(prefs, loaded);
+
+        assert_eq!(TerminalCursorStyle::from_str("block"), Some(TerminalCursorStyle::Block));
+        assert_eq!(TerminalCursorStyle::from_str("beam"), Some(TerminalCursorStyle::Beam));
+        assert_eq!(TerminalCursorStyle::from_str("underline"), Some(TerminalCursorStyle::Underline));
+
+        assert_eq!(ChatDensity::from_str("compact"), Some(ChatDensity::Compact));
+        assert_eq!(ChatDensity::from_str("comfortable"), Some(ChatDensity::Comfortable));
+
+        assert_eq!(TimestampFormat::from_str("24h"), Some(TimestampFormat::Clock24h));
+        assert_eq!(TimestampFormat::from_str("12h"), Some(TimestampFormat::Clock12h));
+        assert_eq!(TimestampFormat::from_str("relative"), Some(TimestampFormat::Relative));
+    }
 }
+
 

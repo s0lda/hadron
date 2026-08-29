@@ -742,6 +742,91 @@ pub fn init_windows_app_icon() {
 #[cfg(not(windows))]
 pub fn init_windows_app_icon() {}
 
+/// Send a native desktop OS notification asynchronously (Linux notify-send, WSL PowerShell toast, macOS osascript, Windows PowerShell).
+pub fn send_desktop_notification(title: &str, body: &str, _sound: bool) {
+    if title.is_empty() && body.is_empty() {
+        return;
+    }
+    let title = title.to_string();
+    let body = body.to_string();
+    std::thread::spawn(move || {
+        #[cfg(target_os = "linux")]
+        {
+            if is_wsl() {
+                // WSL: send via PowerShell toast on Windows host
+                let ps_script = format!(
+                    "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; \
+                     $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); \
+                     $textNodes = $template.GetElementsByTagName('text'); \
+                     $textNodes.Item(0).AppendChild($template.CreateTextNode('{}')) > $null; \
+                     $textNodes.Item(1).AppendChild($template.CreateTextNode('{}')) > $null; \
+                     $toast = [Windows.UI.Notifications.ToastNotification]::new($template); \
+                     [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Hadron Swarm').Show($toast);",
+                    title.replace('\'', "''"),
+                    body.replace('\'', "''")
+                );
+                if let Ok(mut child) = Command::new("powershell.exe")
+                    .args(["-NoProfile", "-Command", &ps_script])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    let _ = child.wait();
+                }
+            }
+
+            // Also send via notify-send if present (Linux native desktop / X11 / Wayland)
+            if let Ok(mut child) = Command::new("notify-send")
+                .args(["-a", "Hadron", &title, &body])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                let _ = child.wait();
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let script = format!(
+                "display notification \"{}\" with title \"{}\"",
+                body.replace('"', "\\\""),
+                title.replace('"', "\\\"")
+            );
+            if let Ok(mut child) = Command::new("osascript")
+                .args(["-e", &script])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                let _ = child.wait();
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let ps_script = format!(
+                "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; \
+                 $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); \
+                 $textNodes = $template.GetElementsByTagName('text'); \
+                 $textNodes.Item(0).AppendChild($template.CreateTextNode('{}')) > $null; \
+                 $textNodes.Item(1).AppendChild($template.CreateTextNode('{}')) > $null; \
+                 $toast = [Windows.UI.Notifications.ToastNotification]::new($template); \
+                 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Hadron Swarm').Show($toast);",
+                title.replace('\'', "''"),
+                body.replace('\'', "''")
+            );
+            if let Ok(mut child) = Command::new("powershell.exe")
+                .args(["-NoProfile", "-Command", &ps_script])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                let _ = child.wait();
+            }
+        }
+    });
+}
 
 #[cfg(test)]
 mod tests {
@@ -1142,6 +1227,13 @@ mod tests {
             format_file_preview("lib.rs", code_with_backticks),
             "````rust\n/// ```\n/// example\n/// ```\n````"
         );
+    }
+
+    #[test]
+    fn test_send_desktop_notification_no_panic() {
+        send_desktop_notification("", "", true);
+        send_desktop_notification("Hadron Swarm", "Test Notification", true);
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
     #[test]

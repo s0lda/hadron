@@ -818,7 +818,7 @@ impl super::Chamber {
             .child(
                 gpui_component::text::TextView::markdown((view, ix), content)
                     .selectable(true)
-                    .style(markdown_style(self.prefs.ui_font_size))
+                    .style(markdown_style(self.prefs.ui_font_size, self.prefs.code_block_word_wrap))
                     .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions())
                     .code_block_actions(|code_block, _window, _cx| {
                         let code = code_block.code();
@@ -929,10 +929,15 @@ impl super::Chamber {
 
         let msg_text = m.body.clone();
         let entity = chamber_entity.clone();
+        let (row_gap, row_pad_y) = match self.prefs.chat_density {
+            crate::config::ChatDensity::Comfortable => (px(10.0), px(4.0)),
+            crate::config::ChatDensity::Compact => (px(6.0), px(1.0)),
+        };
         h_flex()
             .id(SharedString::from(format!("chat-msg-row-{ix}")))
             .items_start()
-            .gap_2p5()
+            .gap(row_gap)
+            .py(row_pad_y)
             .context_menu(move |mut menu, window, cx| {
                 let text = msg_text.clone();
                 let ent = entity.clone();
@@ -1045,7 +1050,7 @@ impl super::Chamber {
                                         div()
                                             .text_xs()
                                             .text_color(theme::text_muted())
-                                            .child(crate::model::format_clock(m.ts.with_timezone(&tz))),
+                                            .child(crate::model::format_timestamp(m.ts.with_timezone(&tz), self.prefs.timestamp_format)),
                                     )
                                     .when_some(m.to.clone(), |this, to| {
                                         this.child(
@@ -1277,7 +1282,7 @@ impl super::Chamber {
                         div()
                             .text_xs()
                             .text_color(theme::text_muted())
-                            .child(crate::model::format_clock(m.ts.with_timezone(&chrono::Local))),
+                            .child(crate::model::format_timestamp(m.ts.with_timezone(&chrono::Local), self.prefs.timestamp_format)),
                     )
                     .child(
                         div()

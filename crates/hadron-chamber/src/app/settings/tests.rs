@@ -312,6 +312,7 @@ fn first_adopted_catalogue_quark_becomes_orchestrator_when_team_has_none() {
         max_exchanges: None,
         nucleus_index_budget_kb: None,
         merge_strategy: None,
+        ..Default::default()
     };
 
     // When adopting first quark into empty repo:

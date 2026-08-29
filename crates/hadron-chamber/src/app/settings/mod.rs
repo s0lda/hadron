@@ -190,6 +190,22 @@ impl Chamber {
         self.settings_max_exchanges
             .update(cx, |s, cx| s.set_value(max_exchanges, window, cx));
 
+        let terminal_shell = self.prefs.terminal_shell.clone().unwrap_or_default();
+        self.settings_terminal_shell
+            .update(cx, |s, cx| s.set_value(terminal_shell, window, cx));
+
+        let git_author_name = self.team.git_author_name.clone()
+            .or_else(|| self.prefs.git_author_name.clone())
+            .unwrap_or_default();
+        self.settings_git_author_name
+            .update(cx, |s, cx| s.set_value(git_author_name, window, cx));
+
+        let git_author_email = self.team.git_author_email.clone()
+            .or_else(|| self.prefs.git_author_email.clone())
+            .unwrap_or_default();
+        self.settings_git_author_email
+            .update(cx, |s, cx| s.set_value(git_author_email, window, cx));
+
         if let Some(custom) = &self.prefs.custom_theme {
             self.theme_name_input
                 .update(cx, |s, cx| s.set_value(custom.name.clone(), window, cx));
@@ -262,6 +278,33 @@ impl Chamber {
             if new_max_exchanges != self.team.max_exchanges {
                 self.team.max_exchanges = new_max_exchanges;
                 self.save_repo_team(cx);
+            }
+
+            let git_author_name_val = self.settings_git_author_name.read(cx).value().trim().to_string();
+            let new_author_name = if git_author_name_val.is_empty() { None } else { Some(git_author_name_val) };
+            if new_author_name != self.team.git_author_name {
+                self.team.git_author_name = new_author_name.clone();
+                self.prefs.git_author_name = new_author_name;
+                self.save_repo_team(cx);
+                let _ = config::save(&self.prefs);
+            }
+
+            let git_author_email_val = self.settings_git_author_email.read(cx).value().trim().to_string();
+            let new_author_email = if git_author_email_val.is_empty() { None } else { Some(git_author_email_val) };
+            if new_author_email != self.team.git_author_email {
+                self.team.git_author_email = new_author_email.clone();
+                self.prefs.git_author_email = new_author_email;
+                self.save_repo_team(cx);
+                let _ = config::save(&self.prefs);
+            }
+        }
+
+        if matches!(self.settings_target, SettingsTarget::General | SettingsTarget::Environment) {
+            let terminal_shell_val = self.settings_terminal_shell.read(cx).value().trim().to_string();
+            let new_shell = if terminal_shell_val.is_empty() { None } else { Some(terminal_shell_val) };
+            if new_shell != self.prefs.terminal_shell {
+                self.prefs.terminal_shell = new_shell;
+                let _ = config::save(&self.prefs);
             }
         }
 

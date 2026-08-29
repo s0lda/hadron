@@ -176,10 +176,20 @@ pub fn default_shell() -> String {
 impl PtyTerminal {
     /// Spawn default shell on a fresh PTY sized `cols × rows`, rooted at `cwd`.
     pub fn new(cwd: &Path, cols: usize, rows: usize) -> Result<Self, String> {
+        Self::new_with_options(cwd, cols, rows, None, 5000)
+    }
+
+    /// Spawn shell on a fresh PTY with custom shell override and scrollback depth.
+    pub fn new_with_options(
+        cwd: &Path,
+        cols: usize,
+        rows: usize,
+        custom_shell: Option<&str>,
+        scrollback: usize,
+    ) -> Result<Self, String> {
         // Ensure dimensions are within safe bounds for ConPTY to avoid silent hangs
         let cols = cols.max(10).min(500);
         let rows = rows.max(1).min(500);
-
 
         let pty_system = native_pty_system();
         let pty_size = PtySize {
@@ -196,7 +206,10 @@ impl PtyTerminal {
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
         };
 
-        let primary_shell = default_shell();
+        let primary_shell = custom_shell
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(default_shell);
         let mut shells = vec![primary_shell.clone()];
         if cfg!(windows) {
             if !shells.contains(&"powershell.exe".to_string()) {
@@ -313,7 +326,7 @@ impl PtyTerminal {
         };
 
         let mut config = Config::default();
-        config.scrolling_history = 5000;
+        config.scrolling_history = scrollback.max(100);
         let term = Term::new(config, &GridSize { cols, rows }, listener);
         let term = Arc::new(Mutex::new(term));
         let dirty = Arc::new(AtomicBool::new(true));

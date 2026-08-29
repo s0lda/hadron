@@ -85,6 +85,37 @@ impl Chamber {
             if new_chat_count > old_chat_count {
                 self.chat_list_state
                     .splice(old_chat_count..old_chat_count, new_chat_count - old_chat_count);
+
+                // Notify and play audio cue if from an autonomous quark
+                if let Some(last_msg) = self.view.messages.last() {
+                    let from_quark = last_msg.from != "human";
+                    if from_quark {
+                        let is_ask = self.view.pending_permission.is_some()
+                            || last_msg.kind_label == "gate"
+                            || last_msg.body.contains("waiting for approval")
+                            || last_msg.body.contains("Mode::Ask")
+                            || self.view.roster.iter().find(|r| r.id == last_msg.from).map(|r| r.mode == hadron_lattice::Mode::Ask).unwrap_or(false);
+                        if is_ask {
+                            self.audio_manager.trigger_cue(crate::app::audio::AudioCue::BlockedOnHuman);
+                            if self.prefs.desktop_notifications && self.prefs.notify_on_blocked {
+                                crate::sys::send_desktop_notification(
+                                    &format!("{} needs approval", last_msg.from),
+                                    &last_msg.body,
+                                    self.prefs.audio.enabled,
+                                );
+                            }
+                        } else {
+                            self.audio_manager.trigger_cue(crate::app::audio::AudioCue::TurnFinish);
+                            if self.prefs.desktop_notifications && self.prefs.notify_on_turn_finish {
+                                crate::sys::send_desktop_notification(
+                                    &format!("{} finished turn", last_msg.from),
+                                    &last_msg.body,
+                                    self.prefs.audio.enabled,
+                                );
+                            }
+                        }
+                    }
+                }
             }
             let new_log_count = self.view.messages.len();
             if new_log_count > old_log_count {
@@ -1520,13 +1551,18 @@ impl Chamber {
             .map(|(_, _, w, h)| term_dims((w, h)))
             .unwrap_or((80, 24));
         let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let shell = crate::pty::default_shell();
+        let custom_shell = self.prefs.terminal_shell.as_deref();
+        let scrollback = self.prefs.terminal_scrollback;
+        let shell = custom_shell
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(crate::pty::default_shell);
         let stem = std::path::Path::new(&shell)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("term");
         let title = format!("{stem} #{}", self.terminals.len() + 1);
-        match crate::pty::PtyTerminal::new(&root, dims.0, dims.1) {
+        match crate::pty::PtyTerminal::new_with_options(&root, dims.0, dims.1, custom_shell, scrollback) {
             Ok(mut term) => {
                 term.title = title.clone();
                 self.terminals.push(TerminalTab {
@@ -1901,6 +1937,9 @@ impl Chamber {
         let Some(pending) = self.view.pending_permission.clone() else {
             return;
         };
+        if approved {
+            self.audio_manager.trigger_cue(crate::app::audio::AudioCue::GateApproval);
+        }
         let ev = hadron_gatekeeper::grant(&pending, approved);
         if let Err(e) = io::append_event(&self.path, &ev) {
             eprintln!("chamber: failed to append permission grant: {e}");
@@ -1921,6 +1960,7 @@ impl Chamber {
         let Some(pending) = self.view.pending_permission.clone() else {
             return;
         };
+        self.audio_manager.trigger_cue(crate::app::audio::AudioCue::GateApproval);
         self.append_and_reload(hadron_gatekeeper::grant_remembering(&pending), cx);
     }
 
@@ -2435,6 +2475,7 @@ mod tests {
             max_exchanges: None,
             nucleus_index_budget_kb: None,
             merge_strategy: None,
+            ..Default::default()
         };
 
         let global = Team {
@@ -2450,6 +2491,7 @@ mod tests {
             max_exchanges: None,
             nucleus_index_budget_kb: None,
             merge_strategy: None,
+            ..Default::default()
         };
 
         apply_orchestrator_exclusivity(&mut team, &global, &QuarkId::new("override-one"));
@@ -2485,6 +2527,7 @@ mod tests {
             max_exchanges: None,
             nucleus_index_budget_kb: None,
             merge_strategy: None,
+            ..Default::default()
         };
 
         let mut global = Team {
@@ -2496,6 +2539,7 @@ mod tests {
             max_exchanges: None,
             nucleus_index_budget_kb: None,
             merge_strategy: None,
+            ..Default::default()
         };
 
         // Before removal: target_id is present and resolved in the repo
@@ -2539,6 +2583,7 @@ mod tests {
             max_exchanges: None,
             nucleus_index_budget_kb: None,
             merge_strategy: None,
+            ..Default::default()
         };
 
         let mut global = Team {
@@ -2550,6 +2595,7 @@ mod tests {
             max_exchanges: None,
             nucleus_index_budget_kb: None,
             merge_strategy: None,
+            ..Default::default()
         };
 
         remove_quark_from_teams(&mut repo, &mut global, &orch_id);
@@ -2581,6 +2627,7 @@ mod tests {
             max_exchanges: None,
             nucleus_index_budget_kb: None,
             merge_strategy: None,
+            ..Default::default()
         };
 
         // When target_id is removed from global catalogue:
@@ -2592,6 +2639,7 @@ mod tests {
             max_exchanges: None,
             nucleus_index_budget_kb: None,
             merge_strategy: None,
+            ..Default::default()
         };
 
         // target_id is not in global catalogue so resolve_team drops both legacy seats and overrides for it

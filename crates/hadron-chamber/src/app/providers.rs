@@ -413,6 +413,7 @@ mod tests {
             max_exchanges: None,
             nucleus_index_budget_kb: None,
             merge_strategy: None,
+            ..Default::default()
         };
 
         let providers = configured_providers(&team);
