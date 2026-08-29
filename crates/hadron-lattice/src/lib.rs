@@ -56,4 +56,6 @@ pub use artifacts::*;
 pub use nucleus_search::*;
 pub use nucleus_distill::*;
 pub use budget::*;
+pub mod subchannel;
+pub use subchannel::*;
 
