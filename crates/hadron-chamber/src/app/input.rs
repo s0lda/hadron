@@ -800,6 +800,13 @@ mod tests {
             "bakeoff",
             "grill-me",
             "research",
+            "home",
+            "canvas",
+            "intercom",
+            "dream",
+            "timelapse",
+            "radar",
+            "baseline",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(

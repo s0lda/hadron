@@ -66,4 +66,10 @@ pub mod compaction;
 pub use compaction::*;
 pub mod global_sync;
 pub use global_sync::*;
+pub mod rpc;
+pub use rpc::*;
+pub mod context_governor;
+pub use context_governor::*;
+pub mod transport_scrubber;
+pub use transport_scrubber::*;
 

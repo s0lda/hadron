@@ -37,4 +37,10 @@ pub mod red_team;
 pub use red_team::*;
 pub mod invariant_linter;
 pub use invariant_linter::*;
+pub mod baseline;
+pub use baseline::*;
+pub mod test_minimizer;
+pub use test_minimizer::*;
+pub mod intent_radar;
+pub use intent_radar::*;
 

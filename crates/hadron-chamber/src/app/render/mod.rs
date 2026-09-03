@@ -26,6 +26,9 @@ mod scrubber;
 mod artifacts;
 pub mod split_canvas;
 pub mod diff_steering;
+pub mod quark_home;
+pub mod canvas;
+pub mod nucleus_graph;
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

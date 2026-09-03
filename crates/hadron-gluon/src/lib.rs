@@ -47,5 +47,11 @@ pub mod bakeoff;
 pub use bakeoff::*;
 pub mod checkpoint;
 pub use checkpoint::*;
+pub mod quark_probe;
+pub use quark_probe::*;
+pub mod pair_quark;
+pub use pair_quark::*;
+pub mod dream_daemon;
+pub use dream_daemon::*;
 
 
