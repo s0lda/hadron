@@ -500,7 +500,7 @@ git commit -m "feat(gluon): implement Tokio actor bus and concurrent mailbox rou
 
 ---
 
-### Task 3: Headless Daemon JSON-RPC Server & Subscription Engine in `hadron-gluon`
+### Task 3: Headless Daemon JSON-RPC Server & Subscription Engine in `hadron-gluon` - [x] (commit `3855e95f`)
 
 **Files:**
 - Create: `crates/hadron-gluon/src/rpc_server/mod.rs`
@@ -512,7 +512,7 @@ git commit -m "feat(gluon): implement Tokio actor bus and concurrent mailbox rou
 - Consumes: `hadron_lattice::wire::*`, `ActorBus`, `serde_json::Value`
 - Produces: `RpcServer`, `RpcDispatcher`, `handle_rpc_frame`
 
-- [ ] **Step 1: Write failing integration test for RPC Dispatcher**
+- [x] **Step 1: Write failing integration test for RPC Dispatcher**
 
 ```rust
 // crates/hadron-gluon/src/rpc_server/tests.rs
@@ -547,11 +547,11 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Verify test fails**
+- [x] **Step 2: Verify test fails**
 Run: `cargo test -p hadron-gluon --lib rpc_server::tests`
 Expected: FAIL with `cannot find module rpc_server in hadron_gluon`
 
-- [ ] **Step 3: Implement minimal code for RpcDispatcher**
+- [x] **Step 3: Implement minimal code for RpcDispatcher**
 
 ```rust
 // crates/hadron-gluon/src/rpc_server/dispatcher.rs
@@ -643,11 +643,11 @@ pub mod rpc_server;
 pub use rpc_server::*;
 ```
 
-- [ ] **Step 4: Verify test passes**
+- [x] **Step 4: Verify test passes**
 Run: `cargo test -p hadron-gluon --lib rpc_server::tests`
 Expected: `test result: ok. 1 passed; 0 failed; 0 ignored`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add crates/hadron-gluon/src/rpc_server/ crates/hadron-gluon/src/lib.rs
 git commit -m "feat(gluon): implement headless JSON-RPC dispatcher and method router"
