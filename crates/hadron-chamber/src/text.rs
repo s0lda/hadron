@@ -195,7 +195,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "bakeoff", detail: "Spawn speculative tournament bake-off across competing solutions", arity: Arity::Body, arg: ArgSource::None, listed: true },
     Command { name: "grill-me", detail: "Interactive requirement alignment interview before plan synthesis", arity: Arity::Body, arg: ArgSource::None, listed: true },
     Command { name: "research", detail: "Research a topic or architecture and save findings to .hadron/docs/research/", arity: Arity::Body, arg: ArgSource::None, listed: true },
-    Command { name: "home", detail: "Open Quark personal home & telemetry dashboard", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "home", detail: "Open Quark personal home & telemetry dashboard (e.g. /home @Quark)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "canvas", detail: "Open interactive GPUI canvas preview", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "intercom", detail: "Toggle audio intercom voice bridge", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "dream", detail: "Trigger an immediate idle workspace maintenance cycle", arity: Arity::None, arg: ArgSource::None, listed: true },

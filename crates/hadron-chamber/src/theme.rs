@@ -875,8 +875,11 @@ mod tests {
         assert_eq!(oled.canvas_base, rgb(0x000000));
     }
 
+    static THEME_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_dynamic_preset_and_accent_switching() {
+        let _guard = THEME_TEST_MUTEX.lock().unwrap();
         set_active_preset(crate::config::ThemePreset::Obsidian);
         set_active_accent(crate::config::AccentChoice::Amethyst);
         assert_eq!(active_preset(), crate::config::ThemePreset::Obsidian);
@@ -893,10 +896,12 @@ mod tests {
         // Restore default obsidian for subsequent tests
         set_active_preset(crate::config::ThemePreset::Obsidian);
         set_active_accent(crate::config::AccentChoice::Amethyst);
+        set_active_custom_theme(None);
     }
 
     #[test]
     fn test_github_semantic_syntax_tokens() {
+        let _guard = THEME_TEST_MUTEX.lock().unwrap();
         assert_eq!(syntax_function(), rgb(0xb392f0));
         assert_eq!(syntax_keyword(), rgb(0xf97583));
         assert_eq!(syntax_type(), rgb(0x79b8ff));
@@ -921,6 +926,7 @@ mod tests {
 
     #[test]
     fn test_custom_theme_switching_and_token_override() {
+        let _guard = THEME_TEST_MUTEX.lock().unwrap();
         let mut custom = crate::config::ThemeDefinition::preset_obsidian();
         custom.id = "custom-neon".to_string();
         custom.name = "Neon Cyber".to_string();

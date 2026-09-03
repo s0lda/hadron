@@ -742,6 +742,116 @@ pub fn init_windows_app_icon() {
 #[cfg(not(windows))]
 pub fn init_windows_app_icon() {}
 
+/// Diagnostic snapshot of the display server, compositor layer shell, and notification pipeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayEnvironment {
+    pub server: &'static str,
+    pub is_wsl: bool,
+    pub layer_shell_status: &'static str,
+    pub notification_backend: &'static str,
+    pub graphics_pipeline: &'static str,
+    pub display_var: String,
+}
+
+/// Detect the active desktop display server, Wayland compositor capability, and notification mechanism.
+pub fn detect_display_environment() -> DisplayEnvironment {
+    let wsl = is_wsl();
+    let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
+    let wayland_socket = std::env::var("WAYLAND_SOCKET").ok();
+    let x11_display = std::env::var("DISPLAY").ok();
+
+    #[cfg(target_os = "linux")]
+    {
+        if wayland_display.is_some() || wayland_socket.is_some() {
+            if wsl {
+                DisplayEnvironment {
+                    server: "Wayland (WSLg)",
+                    is_wsl: true,
+                    layer_shell_status: "Unsupported (WSLg compositor lacks zwlr_layer_shell_v1)",
+                    notification_backend: "Windows Toast (PowerShell · notify-send bypassed)",
+                    graphics_pipeline: "LAVAPIPE (Software Vulkan ICD, CPU rasterized)",
+                    display_var: wayland_display.unwrap_or_else(|| "wayland-0".to_string()),
+                }
+            } else {
+                DisplayEnvironment {
+                    server: "Wayland (Native)",
+                    is_wsl: false,
+                    layer_shell_status: "Compositor-dependent (requires zwlr_layer_shell_v1)",
+                    notification_backend: "Linux Desktop (notify-send via DBus)",
+                    graphics_pipeline: "Vulkan / GPU",
+                    display_var: wayland_display.unwrap_or_else(|| "wayland-0".to_string()),
+                }
+            }
+        } else if let Some(disp) = x11_display {
+            DisplayEnvironment {
+                server: "X11",
+                is_wsl: wsl,
+                layer_shell_status: "N/A (X11 root & override-redirect windows)",
+                notification_backend: if wsl {
+                    "Windows Toast (PowerShell)"
+                } else {
+                    "Linux Desktop (notify-send via DBus)"
+                },
+                graphics_pipeline: if wsl {
+                    "LAVAPIPE (Software Fallback)"
+                } else {
+                    "OpenGL / Vulkan"
+                },
+                display_var: disp,
+            }
+        } else {
+            DisplayEnvironment {
+                server: "Headless / Unknown",
+                is_wsl: wsl,
+                layer_shell_status: "Unsupported (No Wayland display)",
+                notification_backend: if wsl {
+                    "Windows Toast (PowerShell)"
+                } else {
+                    "None / Headless"
+                },
+                graphics_pipeline: "Software / Offscreen",
+                display_var: "none".to_string(),
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        DisplayEnvironment {
+            server: "macOS Quartz / Cocoa",
+            is_wsl: false,
+            layer_shell_status: "N/A (macOS Window Server)",
+            notification_backend: "macOS UserNotifications (osascript)",
+            graphics_pipeline: "Metal",
+            display_var: "macOS".to_string(),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        DisplayEnvironment {
+            server: "Windows DWM",
+            is_wsl: false,
+            layer_shell_status: "N/A (DirectComposition / Win32)",
+            notification_backend: "Windows Toast (PowerShell WinRT)",
+            graphics_pipeline: "Direct3D / Vulkan",
+            display_var: "win32".to_string(),
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        DisplayEnvironment {
+            server: "Unknown",
+            is_wsl: false,
+            layer_shell_status: "Unknown",
+            notification_backend: "Standard IO",
+            graphics_pipeline: "Unknown",
+            display_var: "unknown".to_string(),
+        }
+    }
+}
+
 /// Send a native desktop OS notification asynchronously (Linux notify-send, WSL PowerShell toast, macOS osascript, Windows PowerShell).
 pub fn send_desktop_notification(title: &str, body: &str, _sound: bool) {
     if title.is_empty() && body.is_empty() {
@@ -753,7 +863,9 @@ pub fn send_desktop_notification(title: &str, body: &str, _sound: bool) {
         #[cfg(target_os = "linux")]
         {
             if is_wsl() {
-                // WSL: send via PowerShell toast on Windows host
+                // WSL: send via PowerShell toast on Windows host.
+                // Deliberately do NOT run Linux notify-send here: WSLg does not implement
+                // the zwlr_layer_shell_v1 protocol, causing xfce4-notifyd to crash and timeout.
                 let ps_script = format!(
                     "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; \
                      $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); \
@@ -773,16 +885,17 @@ pub fn send_desktop_notification(title: &str, body: &str, _sound: bool) {
                 {
                     let _ = child.wait();
                 }
-            }
-
-            // Also send via notify-send if present (Linux native desktop / X11 / Wayland)
-            if let Ok(mut child) = Command::new("notify-send")
-                .args(["-a", "Hadron", &title, &body])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-            {
-                let _ = child.wait();
+            } else {
+                // Native Linux desktop (X11 / Wayland): notify-send via DBus.
+                // Stdio is nulled so broken notification daemons never pollute the terminal.
+                if let Ok(mut child) = Command::new("notify-send")
+                    .args(["-a", "Hadron", &title, &body])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    let _ = child.wait();
+                }
             }
         }
 
@@ -1310,6 +1423,15 @@ mod tests {
         play_audio_tone(0, 0, 0.0);
         play_audio_tone(880, 50, 0.5);
         std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    #[test]
+    fn test_detect_display_environment() {
+        let env = detect_display_environment();
+        assert!(!env.server.is_empty());
+        assert!(!env.layer_shell_status.is_empty());
+        assert!(!env.notification_backend.is_empty());
+        assert!(!env.graphics_pipeline.is_empty());
     }
 }
 

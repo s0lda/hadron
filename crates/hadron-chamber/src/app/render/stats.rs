@@ -287,6 +287,61 @@ impl super::Chamber {
                 .child(perm_chip),
         );
 
+        let disp_env = crate::sys::detect_display_environment();
+        config_section = config_section
+            .child(div().mt_2().child(panel_eyebrow("DISPLAY & ENVIRONMENT")))
+            .child(kv_row("Display server", disp_env.server))
+            .child(kv_row("Layer Shell (wlr)", disp_env.layer_shell_status))
+            .child(kv_row("Notifications", disp_env.notification_backend))
+            .child(kv_row("Graphics pipeline", disp_env.graphics_pipeline));
+
+        // --- Home section ---
+        let home_snap = crate::app::render::quark_home::QuarkTelemetrySnapshot::from_stats_and_messages(
+            &qid,
+            &q_stats,
+            &self.view.messages,
+        );
+        let mut home_section = v_flex()
+            .gap_1p5()
+            .child(panel_eyebrow("PERSONAL TELEMETRY & PERFORMANCE"))
+            .child(kv_row("Total turns", home_snap.total_turns.to_string()))
+            .child(kv_row("Fresh spent", format!("{} tokens", format_num(q_stats.fresh))))
+            .child(kv_row(
+                "Cache efficiency",
+                format!("{:.1}% hit rate ({} tokens)", home_snap.cache_hit_rate_pct, format_num(q_stats.cached)),
+            ));
+
+        if !home_snap.favorite_tools.is_empty() {
+            let tools_str = home_snap
+                .favorite_tools
+                .iter()
+                .map(|(t, c)| format!("{t} ({c})"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            home_section = home_section.child(kv_row("Active tools", tools_str));
+        }
+
+        if !home_snap.completed_milestones.is_empty() {
+            home_section = home_section
+                .child(div().mt_1().child(panel_eyebrow("RECENT MILESTONES")))
+                .children(home_snap.completed_milestones.iter().map(|m| {
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(div().text_color(theme::accent()).child("✓"))
+                        .child(m.clone())
+                }));
+        }
+
+        home_section = home_section
+            .child(div().mt_2().child(panel_eyebrow("WORKSPACE & DISPLAY COMPATIBILITY")))
+            .child(kv_row("Display server", disp_env.server))
+            .child(kv_row("Layer Shell (wlr)", disp_env.layer_shell_status))
+            .child(kv_row("Notifications", disp_env.notification_backend))
+            .child(kv_row("Graphics pipeline", disp_env.graphics_pipeline));
+
         // --- Session stats ---
         let avg = if q_stats.turns > 0 { q_stats.fresh / q_stats.turns } else { 0 };
         let first_seen_str = q_stats
@@ -449,6 +504,7 @@ impl super::Chamber {
 
         let body = match info_selected {
             InfoTab::Identity => identity_section.into_any_element(),
+            InfoTab::Home => home_section.into_any_element(),
             InfoTab::Config => config_section.into_any_element(),
             InfoTab::Stats => v_flex()
                 .gap_3()
