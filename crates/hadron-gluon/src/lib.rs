@@ -55,5 +55,7 @@ pub mod dream_daemon;
 pub use dream_daemon::*;
 pub mod actor;
 pub use actor::*;
+pub mod rpc_server;
+pub use rpc_server::*;
 
 
