@@ -57,5 +57,7 @@ pub mod actor;
 pub use actor::*;
 pub mod rpc_server;
 pub use rpc_server::*;
+pub mod nucleus_store;
+pub use nucleus_store::*;
 
 
