@@ -25,7 +25,7 @@ status: draft
 
 ---
 
-### Task 1: Typed JSON-RPC 2.0 Wire Protocol Envelopes & Codec in `hadron-lattice`
+### Task 1: Typed JSON-RPC 2.0 Wire Protocol Envelopes & Codec in `hadron-lattice` - [x] (commit `a5639614`)
 
 **Files:**
 - Create: `crates/hadron-lattice/src/wire/protocol.rs`
@@ -38,7 +38,7 @@ status: draft
 - Consumes: `serde::Serialize`, `serde::Deserialize`, `serde_json::Value`, `ulid::Ulid`, `tokio_util::codec::{Decoder, Encoder}`, `bytes::{Bytes, BytesMut}`
 - Produces: `JsonRpcRequest`, `JsonRpcResponse`, `JsonRpcNotification`, `JsonRpcError`, `JsonRpcMessage`, `JsonRpcCodec`
 
-- [ ] **Step 1: Write failing unit test for wire protocol serialization and framing**
+- [x] **Step 1: Write failing unit test for wire protocol serialization and framing**
 
 ```rust
 // crates/hadron-lattice/src/wire/tests.rs
@@ -97,11 +97,11 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Verify test fails**
+- [x] **Step 2: Verify test fails**
 Run: `cargo test -p hadron-lattice --lib wire::tests`
 Expected: FAIL with `cannot find module wire in hadron_lattice`
 
-- [ ] **Step 3: Implement minimal code for wire protocol and codec**
+- [x] **Step 3: Implement minimal code for wire protocol and codec**
 
 ```rust
 // crates/hadron-lattice/src/wire/protocol.rs
@@ -263,11 +263,11 @@ pub mod wire;
 pub use wire::*;
 ```
 
-- [ ] **Step 4: Verify test passes**
+- [x] **Step 4: Verify test passes**
 Run: `cargo test -p hadron-lattice --lib wire::tests`
 Expected: `test result: ok. 2 passed; 0 failed; 0 ignored`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add crates/hadron-lattice/src/wire/ crates/hadron-lattice/src/lib.rs
 git commit -m "feat(lattice): implement typed JSON-RPC 2.0 protocol envelopes and stream codec"
