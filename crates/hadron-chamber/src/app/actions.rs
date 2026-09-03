@@ -399,11 +399,46 @@ impl Chamber {
                 true
             }
             "home" => {
-                self.post_chat_message(
-                    Actor::Gluon,
-                    "Quark Home: Navigated to personal telemetry & performance view.".to_string(),
-                    cx,
-                );
+                let trimmed = args.trim();
+                let (named, _) = crate::text::split_target(trimmed);
+                let target_name = named.or_else(|| {
+                    let first_word = trimmed.split_whitespace().next()?;
+                    (!first_word.is_empty()).then_some(first_word)
+                });
+
+                let default_quark = self
+                    .view
+                    .roster
+                    .iter()
+                    .find(|r| r.flavor == Some(hadron_lattice::Flavor::Orchestrator))
+                    .or_else(|| self.view.roster.first())
+                    .map(|r| r.id.clone())
+                    .unwrap_or_else(|| "cli-agy".to_string());
+
+                let target_id = if let Some(target) = target_name {
+                    let cleaned = target.trim_start_matches('@');
+                    self.view
+                        .roster
+                        .iter()
+                        .find(|r| {
+                            r.id.eq_ignore_ascii_case(cleaned)
+                                || self.resolve_identity(&r.id).name.eq_ignore_ascii_case(cleaned)
+                        })
+                        .map(|r| r.id.clone())
+                        .unwrap_or_else(|| cleaned.to_string())
+                } else if let Some(sel_ix) = self.selected_quark_ix {
+                    self.view
+                        .roster
+                        .get(sel_ix)
+                        .map(|r| r.id.clone())
+                        .unwrap_or(default_quark)
+                } else {
+                    default_quark
+                };
+
+                self.info_panel = Some(target_id);
+                self.info_tab = InfoTab::Home;
+                cx.notify();
                 true
             }
             "canvas" => {
