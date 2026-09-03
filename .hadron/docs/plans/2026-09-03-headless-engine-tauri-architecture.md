@@ -275,7 +275,7 @@ git commit -m "feat(lattice): implement typed JSON-RPC 2.0 protocol envelopes an
 
 ---
 
-### Task 2: Tokio Actor Bus & Mailbox Routing Engine in `hadron-gluon`
+### Task 2: Tokio Actor Bus & Mailbox Routing Engine in `hadron-gluon` - [x] (commit `3275c7a1`)
 
 **Files:**
 - Create: `crates/hadron-gluon/src/actor/bus.rs`
@@ -288,7 +288,7 @@ git commit -m "feat(lattice): implement typed JSON-RPC 2.0 protocol envelopes an
 - Consumes: `hadron_lattice::wire::*`, `hadron_lattice::QuarkId`, `tokio::sync::mpsc`, `tokio::sync::broadcast`
 - Produces: `ActorBus`, `ActorMailbox`, `QuarkMessage`, `ActorEnvelope`, `ActorDispatchResult`
 
-- [ ] **Step 1: Write failing test for Actor Mailbox and Concurrent Swarm Bus**
+- [x] **Step 1: Write failing test for Actor Mailbox and Concurrent Swarm Bus**
 
 ```rust
 // crates/hadron-gluon/src/actor/tests.rs
@@ -348,11 +348,11 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Verify test fails**
+- [x] **Step 2: Verify test fails**
 Run: `cargo test -p hadron-gluon --lib actor::tests`
 Expected: FAIL with `cannot find module actor in hadron_gluon`
 
-- [ ] **Step 3: Implement minimal code for ActorBus and Mailbox**
+- [x] **Step 3: Implement minimal code for ActorBus and Mailbox**
 
 ```rust
 // crates/hadron-gluon/src/actor/mailbox.rs
@@ -488,11 +488,11 @@ pub mod actor;
 pub use actor::*;
 ```
 
-- [ ] **Step 4: Verify test passes**
+- [x] **Step 4: Verify test passes**
 Run: `cargo test -p hadron-gluon --lib actor::tests`
 Expected: `test result: ok. 1 passed; 0 failed; 0 ignored`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add crates/hadron-gluon/src/actor/ crates/hadron-gluon/src/lib.rs
 git commit -m "feat(gluon): implement Tokio actor bus and concurrent mailbox routing"
