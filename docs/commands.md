@@ -12,6 +12,7 @@ Hadron provides an interactive suite of `/slash` commands directly inside the Ch
 | `/research` | `/research <topic>` | Conduct in-depth research across the codebase or web, synthesising findings into a structured document in `.hadron/docs/research/`. | `/research memory lifecycle and compaction` |
 | `/loop` | `/loop [count] <objective>` | Execute an iterative evaluation loop until completion criteria are met or count expires. | `/loop 5 fix compiler errors` |
 | `/absorb` | `/absorb [options]` | Scan foreign assistant folders (`.agents/`, `.claude/`, `CLAUDE.md`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`) and distill memories, skills, invariants, and plans into `.hadron/`. | `/absorb` |
+| `/dream` | `/dream` | Trigger an immediate idle workspace maintenance cycle (compaction & worktree cleanup). | `/dream` |
 
 ---
 
@@ -90,6 +91,8 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/unabandon` | `/unabandon <tag>` | Restore an archived branch from its archive tag. | `/unabandon archive/my-branch` |
 | `/revert` | `/revert` | Revert the last landed commit on `main` via `git revert`. | `/revert` |
 | `/prune` | `/prune [dry-run]` | Safely clean up merged and stale quark worktrees and branches. | `/prune` |
+| `/radar` | `/radar` | Run human intent drift radar against in-flight git diff to detect goal divergence. | `/radar` |
+| `/baseline` | `/baseline` | Snapshot pre-turn baseline test health and quarantine pre-existing failures (Rule 5). | `/baseline` |
 
 ---
 
@@ -131,4 +134,8 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/theme` | `/theme <preset>` | Switch color theme (`oled`, `tokyo`, `obsidian`, `midnight`). | `/theme tokyo` |
 | `/toggle-roster` | `/toggle-roster` | Toggle visibility of the left Roster sidebar. | `/toggle-roster` |
 | `/toggle-inspector` | `/toggle-inspector` | Toggle visibility of the right Inspector sidebar. | `/toggle-inspector` |
+| `/home` | `/home [@Quark]` | Open Quark personal home & telemetry dashboard. | `/home @Agy` |
+| `/canvas` | `/canvas` | Open interactive GPUI vector canvas preview. | `/canvas` |
+| `/intercom` | `/intercom` | Toggle sub-channel audio intercom voice bridge. | `/intercom` |
+| `/timelapse` | `/timelapse` | Generate visual architectural feature time-lapse from git history. | `/timelapse` |
 | `/exit` (alias `/quit`) | `/exit` | Exit the Hadron Chamber desktop application. | `/exit` |
