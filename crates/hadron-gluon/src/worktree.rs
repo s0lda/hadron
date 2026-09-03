@@ -35,6 +35,8 @@ pub mod port_mesh;
 pub use port_mesh::*;
 pub mod build_cache;
 pub use build_cache::*;
+pub mod sccache_guard;
+pub use sccache_guard::*;
 
 /// Where a quark works. Stable per quark; the branch inside it changes per assignment.
 #[derive(Debug, Clone, PartialEq, Eq)]
