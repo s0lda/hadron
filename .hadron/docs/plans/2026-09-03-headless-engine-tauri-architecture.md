@@ -787,7 +787,7 @@ git commit -m "feat(gluon): implement centralized daemon nucleus memory store"
 
 ---
 
-### Task 5: Milestone 2 Scaffolding — CoW Workspaces & Compiler Cache Guard in `hadron-gluon`
+### Task 5: Milestone 2 Scaffolding — CoW Workspaces & Compiler Cache Guard in `hadron-gluon` - [x] (commit `2663bd8d`)
 
 **Files:**
 - Create: `crates/hadron-gluon/src/worktree/cow.rs`
@@ -799,7 +799,7 @@ git commit -m "feat(gluon): implement centralized daemon nucleus memory store"
 - Consumes: `std::path::Path`, `hadron_lattice::QuarkId`
 - Produces: `CowWorkspace`, `SccacheGuard`, `prepare_quark_env`
 
-- [ ] **Step 1: Write failing test for CoW workspace preparation and sccache environment config**
+- [x] **Step 1: Write failing test for CoW workspace preparation and sccache environment config**
 
 ```rust
 // crates/hadron-gluon/tests/cow_worktree_tests.rs
@@ -819,11 +819,11 @@ fn test_sccache_env_generation_and_target_isolation() {
 }
 ```
 
-- [ ] **Step 2: Verify test fails**
+- [x] **Step 2: Verify test fails**
 Run: `cargo test -p hadron-gluon --test cow_worktree_tests`
 Expected: FAIL with `cannot find module cow in worktree`
 
-- [ ] **Step 3: Implement minimal code for CowWorkspace and SccacheGuard**
+- [x] **Step 3: Implement minimal code for CowWorkspace and SccacheGuard**
 
 ```rust
 // crates/hadron-gluon/src/worktree/sccache_guard.rs
@@ -874,11 +874,11 @@ impl CowWorkspace {
 
 Modify `crates/hadron-gluon/src/worktree.rs` to expose `cow` and `sccache_guard`.
 
-- [ ] **Step 4: Verify test passes**
+- [x] **Step 4: Verify test passes**
 Run: `cargo test -p hadron-gluon --test cow_worktree_tests`
 Expected: `test result: ok. 1 passed; 0 failed; 0 ignored`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add crates/hadron-gluon/src/worktree/cow.rs crates/hadron-gluon/src/worktree/sccache_guard.rs crates/hadron-gluon/src/worktree.rs crates/hadron-gluon/tests/cow_worktree_tests.rs
 git commit -m "feat(gluon): scaffold CoW workspace and sccache compiler target isolation"
