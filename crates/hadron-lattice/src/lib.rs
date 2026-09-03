@@ -72,4 +72,6 @@ pub mod context_governor;
 pub use context_governor::*;
 pub mod transport_scrubber;
 pub use transport_scrubber::*;
+pub mod wire;
+pub use wire::*;
 

@@ -16,6 +16,8 @@ ulid = { version = "1", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 dunce = "1.0"
 tokio = { version = "1", features = ["sync"] }
+bytes = "1"
+tokio-util = { version = "0.7", features = ["codec"] }
 
 [dev-dependencies]
 tempfile = "3"

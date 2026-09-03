@@ -3043,6 +3043,7 @@ name = "hadron-lattice"
 version = "0.23.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "chrono",
  "dunce",
  "libc",
@@ -3050,6 +3051,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "ulid",
  "windows-sys 0.59.0",
 ]
