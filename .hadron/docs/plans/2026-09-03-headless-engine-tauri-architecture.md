@@ -655,7 +655,7 @@ git commit -m "feat(gluon): implement headless JSON-RPC dispatcher and method ro
 
 ---
 
-### Task 4: Centralized Nucleus Memory Store in `hadron-gluon`
+### Task 4: Centralized Nucleus Memory Store in `hadron-gluon` - [x] (commit `b518e857`)
 
 **Files:**
 - Create: `crates/hadron-gluon/src/nucleus_store.rs`
@@ -666,7 +666,7 @@ git commit -m "feat(gluon): implement headless JSON-RPC dispatcher and method ro
 - Consumes: `std::path::Path`, `hadron_lattice::nucleus::*`
 - Produces: `NucleusStore`, `LessonNote`, `sync_worktree_note`, `query_memory_index`
 
-- [ ] **Step 1: Write failing test for Nucleus Central Store**
+- [x] **Step 1: Write failing test for Nucleus Central Store**
 
 ```rust
 // crates/hadron-gluon/tests/nucleus_store_tests.rs
@@ -700,11 +700,11 @@ async fn test_nucleus_central_store_note_and_index_lifecycle() {
 }
 ```
 
-- [ ] **Step 2: Verify test fails**
+- [x] **Step 2: Verify test fails**
 Run: `cargo test -p hadron-gluon --test nucleus_store_tests`
 Expected: FAIL with `cannot find module nucleus_store in hadron_gluon`
 
-- [ ] **Step 3: Implement minimal code for NucleusStore**
+- [x] **Step 3: Implement minimal code for NucleusStore**
 
 ```rust
 // crates/hadron-gluon/src/nucleus_store.rs
@@ -775,11 +775,11 @@ pub mod nucleus_store;
 pub use nucleus_store::*;
 ```
 
-- [ ] **Step 4: Verify test passes**
+- [x] **Step 4: Verify test passes**
 Run: `cargo test -p hadron-gluon --test nucleus_store_tests`
 Expected: `test result: ok. 1 passed; 0 failed; 0 ignored`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add crates/hadron-gluon/src/nucleus_store.rs crates/hadron-gluon/src/lib.rs crates/hadron-gluon/tests/nucleus_store_tests.rs
 git commit -m "feat(gluon): implement centralized daemon nucleus memory store"
