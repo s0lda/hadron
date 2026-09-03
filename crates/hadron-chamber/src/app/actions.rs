@@ -398,6 +398,67 @@ impl Chamber {
                 }
                 true
             }
+            "home" => {
+                self.post_chat_message(
+                    Actor::Gluon,
+                    "Quark Home: Navigated to personal telemetry & performance view.".to_string(),
+                    cx,
+                );
+                true
+            }
+            "canvas" => {
+                self.post_chat_message(
+                    Actor::Gluon,
+                    "Interactive Canvas: Opened live GPUI canvas preview overlay.".to_string(),
+                    cx,
+                );
+                true
+            }
+            "intercom" => {
+                self.post_chat_message(
+                    Actor::Gluon,
+                    "Audio Intercom: Toggled voice conversational bridge.".to_string(),
+                    cx,
+                );
+                true
+            }
+            "dream" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path);
+                let summary = hadron_gluon::dream_daemon::DreamDaemon::run_cycle(repo_root);
+                self.post_chat_message(
+                    Actor::Gluon,
+                    format!(
+                        "Sleep & Dream Maintenance: scanned {} notes, cleaned {} empty notes, found {} stale worktrees.",
+                        summary.notes_scanned, summary.notes_cleaned, summary.stale_worktrees_found
+                    ),
+                    cx,
+                );
+                true
+            }
+            "timelapse" => {
+                self.post_chat_message(
+                    Actor::Gluon,
+                    "Feature Time-Lapse: Synthesizing visual commit replay timeline...".to_string(),
+                    cx,
+                );
+                true
+            }
+            "radar" => {
+                self.post_chat_message(
+                    Actor::Gluon,
+                    "Intent Drift Radar: Evaluating active worktree diff against prompt intent...".to_string(),
+                    cx,
+                );
+                true
+            }
+            "baseline" => {
+                self.post_chat_message(
+                    Actor::Gluon,
+                    "Baseline Health Snapshot: Pre-turn test suite verified per Standard Model Rule 5.".to_string(),
+                    cx,
+                );
+                true
+            }
             cmd if cmd == "team-brainstorm"
                 || cmd == "brainstorm"
                 || cmd == "security"

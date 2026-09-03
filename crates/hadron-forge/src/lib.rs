@@ -59,6 +59,17 @@ pub mod tree_checkpoint;
 pub mod vcr;
 pub mod profile_runner;
 pub mod dap;
+pub mod fs_tx;
+pub mod tree_guard;
+pub mod lsp_daemon;
+pub mod mock_synth;
+pub mod timelapse;
+
+pub use fs_tx::*;
+pub use tree_guard::*;
+pub use lsp_daemon::*;
+pub use mock_synth::*;
+pub use timelapse::*;
 
 pub use ast_merge::*;
 pub use ast_slice::*;

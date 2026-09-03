@@ -107,6 +107,9 @@ pub mod update;
 pub use update::UpdateState;
 pub mod replay;
 pub mod audio;
+pub mod audio_intercom;
+#[allow(unused_imports)]
+pub use audio_intercom::*;
 
 actions!(
     chamber,

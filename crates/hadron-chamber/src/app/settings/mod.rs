@@ -19,6 +19,9 @@ mod http_probe;
 mod model_select;
 mod overlay;
 pub(super) mod providers;
+pub mod quark_theme;
+#[allow(unused_imports)]
+pub use quark_theme::*;
 #[cfg(test)]
 mod tests;
 
