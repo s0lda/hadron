@@ -5,6 +5,40 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-09-03
+
+### Added
+- **10 Net New Operational Needs Suite (`hadron-gluon`, `hadron-lattice`, `hadron-forge`, `hadron-gatekeeper`)**:
+  - **Target Cache Isolation & Hardlink CoW Mesh (`hadron-gluon`)**: Per-worktree build cache isolation with cross-worktree hardlink deduplication (`hadron_gluon::worktree::build_cache`), eliminating cargo lock contention, 40GB+ build bloat, and foreign `.rlib` contamination.
+  - **Synchronous Fast-Path Peer Micro-RPC Bus (`hadron-lattice`)**: In-memory synchronous RPC bus (`hadron_lattice::rpc`) enabling sub-millisecond point-to-point queries between concurrent quarks without turn handoff overhead.
+  - **Stale Buffer & Concurrent Mutation Inotify Guard (`hadron-forge`)**: Hash-anchored file modification guard (`hadron_forge::tree_guard`) detecting background file mutations and preventing stale buffer overwrites.
+  - **In-Flight Context Budget Auto-Governor (`hadron-lattice`)**: Dynamic tool output compaction and AST summarizer (`hadron_lattice::context_governor`) preventing prompt token budget blowout.
+  - **Diagnostic Crash-Dump & `/proc` Watchdog Probe (`hadron-gluon`)**: Low-level `/proc` inspector (`hadron_gluon::quark_probe`) capturing call stacks, open file descriptors, and forensic reports for hung or silent quark processes.
+  - **In-Process Micro-Filesystem Transactions (`hadron-forge`)**: ACID staging buffer (`hadron_forge::fs_tx`) for scratch files and multi-file code modifications with atomic commit and rollback.
+  - **Resident Rust-Analyzer / LSP Service in Forge (`hadron-forge`)**: Persistent LSP supervisor (`hadron_forge::lsp_daemon`) wrapping `GenericLspClient` for type definitions, references, and document symbol queries.
+  - **Semantic Test Failure Minimizer (`hadron-gatekeeper`)**: Assertion failure clustering and diff minimization (`hadron_gatekeeper::test_minimizer`) isolating exact failure signatures from verbose test output.
+  - **Low-Level Transport Secret Masker (`hadron-lattice`)**: Regex-driven transport-level credential and token scrubber (`hadron_lattice::transport_scrubber`) protecting logs and NDJSON streams.
+  - **Pre-Turn Baseline Health Snapshotter (`hadron-gatekeeper`)**: Test health snapshotter (`hadron_gatekeeper::baseline`, `/baseline`) isolating pre-existing test breakages per Standard Model Rule 5.
+- **10 Net New Workspace Likes & Autonomy Suite (`hadron-chamber`, `hadron-gluon`, `hadron-forge`, `hadron-gatekeeper`)**:
+  - **Sub-Channel Intercom & Voice Conversational Bridge (`hadron-chamber`)**: Low-latency voice activity and audio packet streaming bridge (`hadron_chamber::app::audio_intercom`, `/intercom`) for real-time quark pairing.
+  - **Synthetic Fixture & Offline Mock Synthesizer (`hadron-forge`)**: Automated mock route generator (`hadron_forge::mock_synth`) synthesizing fixture responses directly from JSON schemas.
+  - **Visual Time-Lapse Feature Replay Generator (`hadron-forge`)**: Historical commit visualizer (`hadron_forge::timelapse`, `/timelapse`) transforming git commit trajectories into architectural timeline replays.
+  - **Human Intent Drift Radar (`hadron-gatekeeper`)**: Lexical and semantic diff analyzer (`hadron_gatekeeper::intent_radar`, `/radar`) measuring alignment between in-flight code changes and user prompt intent.
+  - **Dual-Cursor Pair-Quarking Mode (`hadron-gluon`)**: Collaborative editing coordinator (`hadron_gluon::pair_quark`) synchronizing driver (implementation) and navigator (tests/review) quarks.
+  - **"Sleep & Dream" Idle Autonomous Daemon (`hadron-gluon`)**: Background maintenance daemon (`hadron_gluon::dream_daemon`, `/dream`) running memory compaction and stale worktree cleanup during idle periods.
+  - **Bespoke Quark Persona & Theme Customizer (`hadron-chamber`)**: Persona registry (`hadron_chamber::app::settings::quark_theme`) managing custom accent colors, avatar glyphs, and sound theme overrides.
+  - **Quark Personal Home & Telemetry Dashboard (`hadron-chamber`)**: Performance telemetry visualizer (`hadron_chamber::app::render::quark_home`, `/home [@Quark]`) tracking turn latency, cache hit ratios, and completed milestones.
+  - **Live Interactive GPUI / Wasm Canvas Preview (`hadron-chamber`)**: Interactive 2D vector coordinate manager (`hadron_chamber::app::render::canvas`, `/canvas`) for live UI wireframes and diagram previews.
+  - **2D/3D Force-Directed Nucleus Knowledge Graph (`hadron-chamber`)**: Spring-embedder physical layout engine (`hadron_chamber::app::render::nucleus_graph`) simulating force graphs of wiki-linked notes.
+- **Chamber GUI & Slash Command Enhancements (`hadron-chamber`)**:
+  - **Unified Slash-Command Pipeline**: Registered 7 new interactive slash commands (`/home`, `/canvas`, `/intercom`, `/dream`, `/timelapse`, `/radar`, `/baseline`) in `hadron_chamber::text::COMMANDS`.
+  - **Dual-Pane Diff Staging Expansion**: Granular hunk-level stage, unstage, toggle, reject, and commit drafting operations in `hadron_chamber::app::render::diff_steering`.
+  - **Quark Info Home & Environment Diagnostics**: Added `InfoTab::Home` tab to Quark Info rail and surface system display and layer-shell compatibility diagnostics.
+
+### Fixed
+- **WSLg Wayland Notification Stability (`hadron-chamber`)**: Bypassed Linux `notify-send` under WSL in `sys::send_desktop_notification`, routing exclusively to Windows host toast to eliminate `xfce4-notifyd` crashes on compositors lacking `zwlr_layer_shell_v1`.
+- **Quark Home Slash Command Routing (`hadron-chamber`)**: Routed `/home [@Quark]` to reliably resolve target quark arguments and switch Quark Info directly to the Home dashboard.
+
 ## [0.22.0] - 2026-08-29
 
 ### Added

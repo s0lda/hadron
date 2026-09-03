@@ -52,6 +52,11 @@ Hadron Forge (`crates/hadron-forge` and `crates/hadron-forge-mcp`) provides a co
 | **Deterministic Network VCR** | `hadron_forge_vcr` | Loopback-bound HTTP/RPC cassette recording and deterministic offline playback. |
 | **Headless Profiler Runner** | `hadron_forge_profile_runner` | Automated CPU/heap execution sampling and SVG flamegraph generation. |
 | **Headless DAP Debugger** | `hadron_forge_dap_debug` | Breakpoint management, execution stepping, call stack inspection, and local variable evaluation. |
+| **Micro-Filesystem Transactions** | `hadron_forge_fs_tx` | ACID staging buffer for scratch files and multi-file code modifications with atomic commit and rollback. |
+| **Concurrent Mutation Tree Guard** | `hadron_forge_tree_guard` | Hash-anchored file modification guard detecting background file mutations and preventing stale buffer overwrites. |
+| **Resident LSP Service** | `hadron_forge_lsp_daemon` | Persistent LSP supervisor wrapping GenericLspClient for type definitions, references, and document symbol queries. |
+| **Synthetic Mock Synthesizer** | `hadron_forge_mock_synth` | Automated mock route generator synthesizing fixture responses directly from JSON schemas. |
+| **Architectural Time-Lapse** | `hadron_forge_timelapse` | Historical commit visualizer transforming git commit trajectories into architectural timeline replays. |
 
 ---
 

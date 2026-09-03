@@ -20,6 +20,24 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.23.0",
+        date: Some("2026-09-03"),
+        added: &[
+            "10 Net New Operational Needs: Target cache isolation & CoW hardlink mesh, fast-path peer micro-RPC bus, inotify-backed tree mutation guard, dynamic context budget auto-governor, and diagnostic crash-dump /proc watchdog probe",
+            "In-Process Micro-Transactions & LSP Service: ACID staging buffer (fs_tx) for scratch files and multi-file code modifications, and persistent in-process LSP daemon wrapping rust-analyzer and polyglot language servers",
+            "Test Minimization & Baseline Snapshotting: Semantic assertion failure clustering and diff minimization, and pre-turn test health snapshotter (Rule 5)",
+            "10 Net New Workspace Likes: Sub-channel audio intercom voice bridge (/intercom), synthetic fixture mock synthesizer, visual architectural time-lapse generator (/timelapse), and human intent drift radar (/radar)",
+            "Swarm Collaboration & Autonomy: Dual-cursor pair-quarking mode, idle maintenance dream daemon (/dream), bespoke persona & theme customizer, live interactive GPUI canvas preview (/canvas), and force-directed nucleus graph engine",
+            "Chamber GUI & Slash Command Suite: First-class registration and routing for /home, /canvas, /intercom, /dream, /timelapse, /radar, /baseline, and granular dual-pane hunk staging expansion",
+            "Quark Info Diagnostics: Integrated dedicated Home dashboard and runtime display and layer-shell compatibility inspection in Quark Info",
+        ],
+        changed: &[],
+        fixed: &[
+            "Fixed WSLg Wayland notification crashes by bypassing notify-send and routing exclusively to Windows host toast when zwlr_layer_shell_v1 is unsupported",
+            "Fixed /home slash command routing to reliably resolve target quark and switch Quark Info directly to the Home dashboard",
+        ],
+    },
+    Release {
         version: "0.22.0",
         date: Some("2026-08-29"),
         added: &[
