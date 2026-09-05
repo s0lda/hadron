@@ -82,6 +82,7 @@ pub struct QuarkHomeState {
     milestones: Vec<String>,
 }
 
+#[allow(dead_code)]
 impl QuarkHomeState {
     pub fn new(quark_name: impl Into<String>) -> Self {
         Self {

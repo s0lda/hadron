@@ -17,6 +17,7 @@ pub struct CanvasElement {
     pub fill_color: String,
 }
 
+#[allow(dead_code)]
 impl CanvasElement {
     pub fn new(
         id: impl Into<String>,
@@ -49,6 +50,7 @@ pub struct InteractiveCanvasState {
     pub elements: Vec<CanvasElement>,
 }
 
+#[allow(dead_code)]
 impl InteractiveCanvasState {
     pub fn new() -> Self {
         Self {

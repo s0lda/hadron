@@ -4,8 +4,6 @@ fn main() {
     // compilation runs correctly even when cross-compiling from a non-Windows
     // host (build.rs is compiled for the host, not the target).
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
-    println!("cargo:warning=[hadron build.rs] Target OS: {target_os}, Target Env: {target_env}");
 
     if target_os == "windows" {
         if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {

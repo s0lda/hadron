@@ -30,6 +30,7 @@ pub struct ForceDirectedGraph {
     pub edges: Vec<ForceEdge>,
 }
 
+#[allow(dead_code)]
 impl ForceDirectedGraph {
     pub fn new() -> Self {
         Self {
