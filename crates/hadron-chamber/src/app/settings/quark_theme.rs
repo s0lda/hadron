@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuarkPersonaTheme {
     pub quark_id: String,
@@ -15,6 +16,7 @@ pub struct QuarkPersonaTheme {
     pub badge_label: Option<String>,
 }
 
+#[allow(dead_code)]
 impl QuarkPersonaTheme {
     pub fn new(quark_id: impl Into<String>, accent_hex: impl Into<String>, avatar_glyph: impl Into<String>) -> Self {
         Self {
@@ -27,11 +29,13 @@ impl QuarkPersonaTheme {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct QuarkThemeRegistry {
     themes: HashMap<String, QuarkPersonaTheme>,
 }
 
+#[allow(dead_code)]
 impl QuarkThemeRegistry {
     pub fn new() -> Self {
         Self {

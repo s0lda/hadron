@@ -35,6 +35,7 @@ impl Default for IntercomStatus {
     }
 }
 
+#[allow(dead_code)]
 impl AudioIntercomBridge {
     pub fn new() -> Self {
         Self {
