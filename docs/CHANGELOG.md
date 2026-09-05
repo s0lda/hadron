@@ -5,6 +5,23 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-09-05
+
+### Added
+- **Headless Engine Decoupling & JSON-RPC Protocol (`hadron-lattice`, `hadron-gluon`)**:
+  - **Typed JSON-RPC 2.0 Wire Protocol & Stream Codec (`hadron-lattice`)**: Implemented full specification-compliant JSON-RPC 2.0 envelopes (`JsonRpcRequest`, `JsonRpcResponse`, `JsonRpcNotification`, `JsonRpcError`) and asynchronous stream `JsonRpcCodec` in `hadron_lattice::wire`.
+  - **Tokio Actor Bus & Concurrent Mailbox Routing (`hadron-gluon`)**: Decoupled actor-model event bus and non-blocking actor mailboxes (`hadron_gluon::actor`) enabling high-throughput concurrent swarm coordination.
+  - **Headless JSON-RPC Dispatcher & Router (`hadron-gluon`)**: Built headless RPC method dispatcher and async router (`hadron_gluon::rpc_server`) serving daemon state and tool execution.
+  - **Centralized Daemon Nucleus Memory Store (`hadron-gluon`)**: Implemented atomic daemon-held memory notes and index synchronization store (`hadron_gluon::nucleus_store`).
+  - **CoW Workspaces & Sccache Target Isolation (`hadron-gluon`)**: Scaffolded Copy-on-Write worktrees (`CowWorkspace`) and compiler target cache guard (`SccacheGuard`) in `hadron_gluon::worktree`.
+- **System Architecture RFC & Milestone Specifications (`docs`)**:
+  - Authored Next-Gen Architecture RFC and milestone specifications for headless engine decoupling and modular UI shells in `.hadron/docs/specs/` and `.hadron/docs/plans/`.
+
+### Fixed
+- **Chamber GUI Compiler Warnings & Build Cleanliness (`hadron-chamber`)**:
+  - Cleaned up compiler warnings for dead code and experimental canvas, intercom, and theme preview models across workspace crates.
+  - Silenced verbose target OS build script warnings in `hadron-chamber::build.rs`.
+
 ## [0.23.0] - 2026-09-03
 
 ### Added
