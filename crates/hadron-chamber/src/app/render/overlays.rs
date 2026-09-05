@@ -20,6 +20,23 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.24.0",
+        date: Some("2026-09-05"),
+        added: &[
+            "Headless Engine & Wire Protocol: Specification-compliant JSON-RPC 2.0 envelopes and async stream codec in hadron-lattice",
+            "Tokio Actor Bus & Mailbox Routing: Decoupled actor-model event bus and concurrent mailboxes in hadron-gluon",
+            "Headless RPC Dispatcher & Router: Headless JSON-RPC server and method routing for daemon state and tool execution",
+            "Centralized Daemon Nucleus Store: Atomic daemon-held memory notes and index synchronization store in hadron-gluon",
+            "CoW Workspaces & Compiler Isolation: Copy-on-Write worktree scaffolding and sccache compiler target isolation guards",
+            "Architecture Specifications: System Architecture RFC and milestone specifications for decoupled headless engine architecture",
+        ],
+        changed: &[],
+        fixed: &[
+            "Cleaned up compiler warnings for dead code and experimental canvas, intercom, and theme preview models",
+            "Silenced verbose target OS build script warnings in hadron-chamber build.rs",
+        ],
+    },
+    Release {
         version: "0.23.0",
         date: Some("2026-09-03"),
         added: &[
