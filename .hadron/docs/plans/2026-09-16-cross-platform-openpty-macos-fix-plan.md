@@ -17,7 +17,7 @@
 
 ---
 
-### Task 1: Fix `libc::openpty` `winsize` Mutability Mismatch
+### Task 1: Fix `libc::openpty` `winsize` Mutability Mismatch (commit 7898ce1d)
 
 **Files:**
 - Modify: `crates/hadron-forge/src/pty.rs:125-145`
@@ -26,19 +26,19 @@
 - Consumes: `libc::winsize`, `libc::openpty`
 - Produces: Cross-platform Unix PTY supervisor spawn method
 
-- [ ] **Step 1: Verify failing condition on Darwin target**
+- [x] **Step 1: Verify failing condition on Darwin target**
   Run `rustc --target x86_64-apple-darwin` snippet to confirm `E0308` type mismatch on `&ws`.
 
-- [ ] **Step 2: Update `pty.rs` to declare `mut ws` and pass `&mut ws`**
+- [x] **Step 2: Update `pty.rs` to declare `mut ws` and pass `&mut ws`**
   In `crates/hadron-forge/src/pty.rs`, change `let ws = libc::winsize { ... };` to `let mut ws = ...` and pass `&mut ws` to `libc::openpty`.
 
-- [ ] **Step 3: Verify resolution on Darwin target**
+- [x] **Step 3: Verify resolution on Darwin target**
   Run `rustc --target x86_64-apple-darwin` snippet with `&mut ws` to verify clean compilation.
 
-- [ ] **Step 4: Run full `hadron-forge` test suite on Linux**
+- [x] **Step 4: Run full `hadron-forge` test suite on Linux**
   Run `cargo test -p hadron-forge` to confirm all 147 tests pass.
 
-- [ ] **Step 5: Commit implementation**
+- [x] **Step 5: Commit implementation**
   Commit with message `fix(forge): make winsize mutable for cross-platform openpty on macOS`.
 
 ---
