@@ -1,8 +1,199 @@
 use super::*;
 use gpui_component::ActiveTheme;
 
+/// Layout mode for tiling multiple PTY terminals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PtySplitMode {
+    #[default]
+    Single,
+    Horizontal,
+    Vertical,
+    Grid,
+}
+
+impl PtySplitMode {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Single => Self::Horizontal,
+            Self::Horizontal => Self::Vertical,
+            Self::Vertical => Self::Grid,
+            Self::Grid => Self::Single,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Single => "⊡ Single",
+            Self::Horizontal => "⬒ Horizontal",
+            Self::Vertical => "⬓ Vertical",
+            Self::Grid => "⊞ Grid",
+        }
+    }
+}
+
 impl Chamber {
-    /// Renders the Multi-Quark PTY Grid (Capability #17).
+    fn render_pty_card(&self, tab_ix: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(tab) = self.terminals.get(tab_ix) else {
+            return div().into_any_element();
+        };
+
+        let is_active = tab_ix == self.active_terminal_index;
+        let (border, bg): (gpui::Hsla, gpui::Hsla) = if is_active {
+            (theme::accent().into(), theme::bg_elevated().into())
+        } else {
+            (theme::glass_highlight(), theme::bg_surface().into())
+        };
+
+        let pty_content = if let Some(term) = &tab.term {
+            let snap = term.snapshot();
+            let mut lines_div = v_flex()
+                .flex_1()
+                .size_full()
+                .min_h_0()
+                .min_w_0()
+                .p_2()
+                .font_family(cx.theme().mono_font_family.clone())
+                .text_size(px(11.0))
+                .line_height(px(14.0))
+                .overflow_hidden();
+
+            let mut has_text = false;
+            for line in &snap.lines {
+                let mut line_row = h_flex()
+                    .h(px(14.0))
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
+                    .min_w_0();
+                let mut line_empty = true;
+                for run in &line.runs {
+                    if !run.text.is_empty() {
+                        line_empty = false;
+                        has_text = true;
+                        let mut run_div = div()
+                            .text_color(gpui::rgb(pack_rgb(run.fg)))
+                            .bg(gpui::rgb(pack_rgb(run.bg)));
+                        if run.has_cursor {
+                            run_div = run_div
+                                .border_l(px(2.0))
+                                .border_color(gpui::rgb(pack_rgb(run.fg)));
+                        }
+                        line_row = line_row.child(run_div.child(run.text.clone()));
+                    }
+                }
+                if line_empty {
+                    line_row = line_row.child(div().child(" "));
+                }
+                lines_div = lines_div.child(line_row);
+            }
+
+            if has_text {
+                lines_div.into_any_element()
+            } else {
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .p_2()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child("Terminal ready (idle)")
+                    .into_any_element()
+            }
+        } else {
+            div()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .p_2()
+                .text_xs()
+                .text_color(theme::text_muted())
+                .child("Starting shell / PTY process...")
+                .into_any_element()
+        };
+
+        let tab_title = tab.title.clone();
+        v_flex()
+            .id(SharedString::from(format!("pty-grid-card-{tab_ix}")))
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .size_full()
+            .rounded_lg()
+            .border_1()
+            .border_color(border)
+            .bg(bg)
+            .overflow_hidden()
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.select_terminal(tab_ix, cx);
+                window.focus(&this.terminal_focus, cx);
+            }))
+            .on_scroll_wheel(cx.listener(move |this, ev: &gpui::ScrollWheelEvent, _window, cx| {
+                if let Some(tab) = this.terminals.get(tab_ix) {
+                    if let Some(term) = &tab.term {
+                        let lines = match ev.delta {
+                            gpui::ScrollDelta::Lines(delta) => (delta.y * 3.0) as i32,
+                            gpui::ScrollDelta::Pixels(delta) => {
+                                (f32::from(delta.y) / 14.0 * 3.0) as i32
+                            }
+                        };
+                        if lines != 0 {
+                            term.scroll(lines);
+                            cx.notify();
+                        }
+                    }
+                }
+            }))
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .justify_between()
+                    .items_center()
+                    .px_2()
+                    .py_1()
+                    .bg(theme::term_bg())
+                    .border_b_1()
+                    .border_color(theme::glass_highlight())
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(
+                                div()
+                                    .size(px(6.0))
+                                    .rounded_full()
+                                    .bg(if is_active { theme::halo_active() } else { theme::halo_idle() }),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(if is_active { theme::accent() } else { theme::text() })
+                                    .child(tab_title),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("pty-grid-close-{tab_ix}")))
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded_full()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::glass_surface()).text_color(theme::text()))
+                            .text_color(theme::text_muted())
+                            .text_xs()
+                            .child("×")
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.close_terminal(tab_ix, cx);
+                            })),
+                    ),
+            )
+            .child(pty_content)
+            .into_any_element()
+    }
+
+    /// Renders the Multi-Quark PTY Grid (Capability #17, extended with Horizontal/Vertical/Grid splits).
     pub(super) fn multi_pty_grid(&self, cx: &mut Context<Self>) -> impl IntoElement {
         if self.terminals.is_empty() {
             return div()
@@ -13,237 +204,134 @@ impl Chamber {
                 .into_any_element();
         }
 
-        let num_terms = self.terminals.len();
-        let cols = if num_terms <= 1 { 1 } else { 2 };
-        let num_rows = (num_terms + cols - 1) / cols;
-
-        let mut grid_items = v_flex().gap_2().w_full().min_w_0();
-        if num_rows <= 2 {
-            grid_items = grid_items.flex_1().min_h_0().size_full();
-        }
-
-        for (row_ix, chunk) in self.terminals.chunks(cols).enumerate() {
-            let mut row = h_flex().gap_2().w_full().min_w_0();
-            if num_rows <= 2 {
-                row = row.flex_1().min_h_0().size_full();
-            } else {
-                row = row.flex_shrink_0().min_h(px(160.0)).h(px(180.0));
+        match self.terminal_split_mode {
+            PtySplitMode::Horizontal => {
+                let mut row = h_flex().gap_2().w_full().size_full().min_w_0().min_h_0();
+                for tab_ix in 0..self.terminals.len() {
+                    row = row.child(self.render_pty_card(tab_ix, cx));
+                }
+                div()
+                    .size_full()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .track_focus(&self.terminal_focus)
+                    .on_key_down(cx.listener(Self::on_terminal_key))
+                    .child(row)
+                    .into_any_element()
             }
+            PtySplitMode::Vertical => {
+                let mut col = v_flex().gap_2().w_full().size_full().min_w_0().min_h_0();
+                for tab_ix in 0..self.terminals.len() {
+                    col = col.child(self.render_pty_card(tab_ix, cx));
+                }
+                div()
+                    .size_full()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .track_focus(&self.terminal_focus)
+                    .on_key_down(cx.listener(Self::on_terminal_key))
+                    .child(col)
+                    .into_any_element()
+            }
+            PtySplitMode::Grid | PtySplitMode::Single => {
+                let num_terms = self.terminals.len();
+                let cols = if num_terms <= 1 { 1 } else { 2 };
+                let num_rows = (num_terms + cols - 1) / cols;
 
-            for (col_ix, tab) in chunk.iter().enumerate() {
-                let tab_ix = row_ix * cols + col_ix;
-                let is_active = tab_ix == self.active_terminal_index;
-                let (border, bg): (gpui::Hsla, gpui::Hsla) = if is_active {
-                    (theme::accent().into(), theme::bg_elevated().into())
+                let mut grid_items = v_flex().gap_2().w_full().min_w_0();
+                if num_rows <= 2 {
+                    grid_items = grid_items.flex_1().min_h_0().size_full();
+                }
+
+                for (row_ix, chunk) in self.terminals.chunks(cols).enumerate() {
+                    let mut row = h_flex().gap_2().w_full().min_w_0();
+                    if num_rows <= 2 {
+                        row = row.flex_1().min_h_0().size_full();
+                    } else {
+                        row = row.flex_shrink_0().min_h(px(160.0)).h(px(180.0));
+                    }
+
+                    for (col_ix, _) in chunk.iter().enumerate() {
+                        let tab_ix = row_ix * cols + col_ix;
+                        row = row.child(self.render_pty_card(tab_ix, cx));
+                    }
+
+                    // Fill empty columns in the last row to keep aligned grid columns
+                    if chunk.len() < cols {
+                        for _ in 0..(cols - chunk.len()) {
+                            row = row.child(div().flex_1().min_w_0().min_h_0().size_full());
+                        }
+                    }
+
+                    grid_items = grid_items.child(row);
+                }
+
+                if num_rows <= 2 {
+                    div()
+                        .size_full()
+                        .flex_1()
+                        .min_h_0()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .track_focus(&self.terminal_focus)
+                        .on_key_down(cx.listener(Self::on_terminal_key))
+                        .child(grid_items)
+                        .into_any_element()
                 } else {
-                    (theme::glass_highlight(), theme::bg_surface().into())
-                };
+                    let scroll_container = div()
+                        .id("multi-pty-grid-scroll")
+                        .size_full()
+                        .flex_1()
+                        .min_h_0()
+                        .min_w_0()
+                        .overflow_x_hidden()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.terminal_grid_scroll)
+                        .track_focus(&self.terminal_focus)
+                        .on_key_down(cx.listener(Self::on_terminal_key))
+                        .child(grid_items);
 
-                let pty_content = if let Some(term) = &tab.term {
-                    let snap = term.snapshot();
-                    let mut lines_div = v_flex()
+                    div()
+                        .relative()
                         .flex_1()
                         .size_full()
                         .min_h_0()
                         .min_w_0()
-                        .p_2()
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .text_size(px(11.0))
-                        .line_height(px(14.0))
-                        .overflow_hidden();
-
-                    let mut has_text = false;
-                    for line in &snap.lines {
-                        let mut line_row = h_flex()
-                            .h(px(14.0))
-                            .flex_shrink_0()
-                            .whitespace_nowrap()
-                            .min_w_0();
-                        let mut line_empty = true;
-                        for run in &line.runs {
-                            if !run.text.is_empty() {
-                                line_empty = false;
-                                has_text = true;
-                                let mut run_div = div()
-                                    .text_color(gpui::rgb(pack_rgb(run.fg)))
-                                    .bg(gpui::rgb(pack_rgb(run.bg)));
-                                if run.has_cursor {
-                                    run_div = run_div
-                                        .border_l(px(2.0))
-                                        .border_color(gpui::rgb(pack_rgb(run.fg)));
-                                }
-                                line_row = line_row.child(run_div.child(run.text.clone()));
-                            }
-                        }
-                        if line_empty {
-                            line_row = line_row.child(div().child(" "));
-                        }
-                        lines_div = lines_div.child(line_row);
-                    }
-
-                    if has_text {
-                        lines_div.into_any_element()
-                    } else {
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .min_w_0()
-                            .p_2()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_xs()
-                            .text_color(theme::text_muted())
-                            .child("Terminal ready (idle)")
-                            .into_any_element()
-                    }
-                } else {
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .min_w_0()
-                        .p_2()
-                        .text_xs()
-                        .text_color(theme::text_muted())
-                        .child("Starting shell / PTY process...")
-                        .into_any_element()
-                };
-
-                let tab_title = tab.title.clone();
-                let card = v_flex()
-                    .id(SharedString::from(format!("pty-grid-card-{tab_ix}")))
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .size_full()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(border)
-                    .bg(bg)
-                    .overflow_hidden()
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.select_terminal(tab_ix, cx);
-                        window.focus(&this.terminal_focus, cx);
-                    }))
-                    .on_scroll_wheel(cx.listener(move |this, ev: &gpui::ScrollWheelEvent, _window, cx| {
-                        if let Some(tab) = this.terminals.get(tab_ix) {
-                            if let Some(term) = &tab.term {
-                                let lines = match ev.delta {
-                                    gpui::ScrollDelta::Lines(delta) => (delta.y * 3.0) as i32,
-                                    gpui::ScrollDelta::Pixels(delta) => {
-                                        (f32::from(delta.y) / 14.0 * 3.0) as i32
-                                    }
-                                };
-                                if lines != 0 {
-                                    term.scroll(lines);
-                                    cx.notify();
-                                }
-                            }
-                        }
-                    }))
-                    .child(
-                        h_flex()
-                            .flex_shrink_0()
-                            .justify_between()
-                            .items_center()
-                            .px_2()
-                            .py_1()
-                            .bg(theme::term_bg())
-                            .border_b_1()
-                            .border_color(theme::glass_highlight())
-                            .child(
-                                h_flex()
-                                    .gap_1p5()
-                                    .items_center()
-                                    .child(
-                                        div()
-                                            .size(px(6.0))
-                                            .rounded_full()
-                                            .bg(if is_active { theme::halo_active() } else { theme::halo_idle() }),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .text_color(if is_active { theme::accent() } else { theme::text() })
-                                            .child(tab_title),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id(SharedString::from(format!("pty-grid-close-{tab_ix}")))
-                                    .px_1p5()
-                                    .py_0p5()
-                                    .rounded_full()
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(theme::glass_surface()).text_color(theme::text()))
-                                    .text_color(theme::text_muted())
-                                    .text_xs()
-                                    .child("×")
-                                    .on_click(cx.listener(move |this, _, _window, cx| {
-                                        this.close_terminal(tab_ix, cx);
-                                    })),
+                        .child(scroll_container)
+                        .child(
+                            div().absolute().top_0().bottom_0().right_0().child(
+                                Scrollbar::vertical(&self.terminal_grid_scroll)
+                                    .scrollbar_show(ScrollbarShow::Always),
                             ),
-                    )
-                    .child(pty_content);
-
-                row = row.child(card);
-            }
-
-            // Fill empty columns in the last row to keep aligned grid columns
-            if chunk.len() < cols {
-                for _ in 0..(cols - chunk.len()) {
-                    row = row.child(div().flex_1().min_w_0().min_h_0().size_full());
+                        )
+                        .into_any_element()
                 }
             }
-
-            grid_items = grid_items.child(row);
-        }
-
-        if num_rows <= 2 {
-            div()
-                .size_full()
-                .flex_1()
-                .min_h_0()
-                .min_w_0()
-                .overflow_hidden()
-                .track_focus(&self.terminal_focus)
-                .on_key_down(cx.listener(Self::on_terminal_key))
-                .child(grid_items)
-                .into_any_element()
-        } else {
-            let scroll_container = div()
-                .id("multi-pty-grid-scroll")
-                .size_full()
-                .flex_1()
-                .min_h_0()
-                .min_w_0()
-                .overflow_x_hidden()
-                .overflow_y_scroll()
-                .track_scroll(&self.terminal_grid_scroll)
-                .track_focus(&self.terminal_focus)
-                .on_key_down(cx.listener(Self::on_terminal_key))
-                .child(grid_items);
-
-            div()
-                .relative()
-                .flex_1()
-                .size_full()
-                .min_h_0()
-                .min_w_0()
-                .child(scroll_container)
-                .child(
-                    div().absolute().top_0().bottom_0().right_0().child(
-                        Scrollbar::vertical(&self.terminal_grid_scroll)
-                            .scrollbar_show(ScrollbarShow::Always),
-                    ),
-                )
-                .into_any_element()
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pty_split_mode_cycle() {
+        assert_eq!(PtySplitMode::Single.next(), PtySplitMode::Horizontal);
+        assert_eq!(PtySplitMode::Horizontal.next(), PtySplitMode::Vertical);
+        assert_eq!(PtySplitMode::Vertical.next(), PtySplitMode::Grid);
+        assert_eq!(PtySplitMode::Grid.next(), PtySplitMode::Single);
+
+        assert_eq!(PtySplitMode::default(), PtySplitMode::Single);
+        assert_eq!(PtySplitMode::Horizontal.label(), "⬒ Horizontal");
+        assert_eq!(PtySplitMode::Vertical.label(), "⬓ Vertical");
+        assert_eq!(PtySplitMode::Grid.label(), "⊞ Grid");
+        assert_eq!(PtySplitMode::Single.label(), "⊡ Single");
+    }
 
     #[test]
     fn test_multi_terminal_grid_chunking() {

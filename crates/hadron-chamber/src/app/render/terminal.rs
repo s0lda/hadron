@@ -168,17 +168,18 @@ impl super::Chamber {
                             .rounded_md()
                             .cursor_pointer()
                             .text_xs()
-                            .bg(if self.terminal_grid_mode { theme::accent().opacity(0.2) } else { theme::bg_surface() })
-                            .text_color(if self.terminal_grid_mode { theme::accent() } else { theme::text_muted() })
+                            .bg(if self.terminal_split_mode != render::pty_grid::PtySplitMode::Single { theme::accent().opacity(0.2) } else { theme::bg_surface() })
+                            .text_color(if self.terminal_split_mode != render::pty_grid::PtySplitMode::Single { theme::accent() } else { theme::text_muted() })
                             .hover(|s| s.text_color(theme::text()))
                             .on_click(cx.listener(|this, _, _window, cx| {
-                                this.terminal_grid_mode = !this.terminal_grid_mode;
+                                this.terminal_split_mode = this.terminal_split_mode.next();
+                                this.terminal_grid_mode = this.terminal_split_mode != render::pty_grid::PtySplitMode::Single;
                                 cx.notify();
                             }))
-                            .child(if self.terminal_grid_mode { "⊞ Grid" } else { "⊡ Single" }),
+                            .child(self.terminal_split_mode.label()),
                     );
 
-                if self.terminal_grid_mode {
+                if self.terminal_split_mode != render::pty_grid::PtySplitMode::Single {
                     v_flex()
                         .flex_1()
                         .min_h_0()

@@ -551,6 +551,7 @@ struct Chamber {
     pub(super) terminals: Vec<TerminalTab>,
     pub(super) active_terminal_index: usize,
     pub(super) terminal_grid_mode: bool,
+    pub(super) terminal_split_mode: render::pty_grid::PtySplitMode,
     /// Keyboard focus for the terminal grid — keystrokes flow to the PTY only
     /// while this holds focus.
     terminal_focus: FocusHandle,
@@ -1480,6 +1481,7 @@ impl Chamber {
             terminals: Vec::new(),
             active_terminal_index: 0,
             terminal_grid_mode: false,
+            terminal_split_mode: render::pty_grid::PtySplitMode::Single,
             terminal_focus: cx.focus_handle(),
             terminal_px: std::rc::Rc::new(std::cell::Cell::new(None)),
             terminal_warmup: 0,

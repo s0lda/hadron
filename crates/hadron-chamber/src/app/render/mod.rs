@@ -19,7 +19,7 @@ mod breadcrumb;
 mod repl_overlay;
 mod dag_visualizer;
 mod attention_hud;
-mod pty_grid;
+pub(crate) mod pty_grid;
 mod flamechart;
 mod diff_inspector;
 mod scrubber;

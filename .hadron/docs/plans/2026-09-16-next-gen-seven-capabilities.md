@@ -81,11 +81,11 @@
 - Consumes: `PtySplitMode` (Single, Horizontal, Vertical, Grid).
 - Produces: Dynamic tiled PTY split layout in GPUI with cycling toggle and aligned split panes.
 
-- [ ] **Step 1: Define `PtySplitMode` enum and add mode cycle tests**
-- [ ] **Step 2: Update `multi_pty_grid` rendering for horizontal split, vertical split, and grid**
-- [ ] **Step 3: Wire split mode toggle into terminal toolbar in `terminal.rs`**
-- [ ] **Step 4: Verify tests pass**
-- [ ] **Step 5: Commit Task 4**
+- [x] **Step 1: Define `PtySplitMode` enum and add mode cycle tests**
+- [x] **Step 2: Update `multi_pty_grid` rendering for horizontal split, vertical split, and grid**
+- [x] **Step 3: Wire split mode toggle into terminal toolbar in `terminal.rs`**
+- [x] **Step 4: Verify tests pass**
+- [x] **Step 5: Commit Task 4**
 
 ---
 
