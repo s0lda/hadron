@@ -85,7 +85,7 @@
 - [x] **Step 2: Update `multi_pty_grid` rendering for horizontal split, vertical split, and grid**
 - [x] **Step 3: Wire split mode toggle into terminal toolbar in `terminal.rs`**
 - [x] **Step 4: Verify tests pass**
-- [x] **Step 5: Commit Task 4**
+- [x] **Step 5: Commit Task 4 (`bf71f93d`)**
 
 ---
 
@@ -100,10 +100,10 @@
 - Consumes: Nucleus directory path, index byte budget.
 - Produces: `NucleusHealthReport` checking orphaned notes, broken markdown links, dead symbol refs, and byte budget overruns.
 
-- [ ] **Step 1: Write failing test for nucleus integrity linter**
-- [ ] **Step 2: Implement `NucleusIntegrityLinter` and report generation**
-- [ ] **Step 3: Verify tests pass**
-- [ ] **Step 4: Commit Task 5**
+- [x] **Step 1: Write failing test for nucleus integrity linter**
+- [x] **Step 2: Implement `NucleusIntegrityLinter` and report generation**
+- [x] **Step 3: Verify tests pass**
+- [x] **Step 4: Commit Task 5 (`a104662e`)**
 
 ---
 
@@ -118,11 +118,11 @@
 - Consumes: CLI subcommand (`run <prompt>` or `ci --plan <path>`).
 - Produces: Headless execution appending turn event, driving engine, and returning exit code 0 or non-zero.
 
-- [ ] **Step 1: Write failing test for headless runner CLI argument parsing**
-- [ ] **Step 2: Implement `run_headless_batch` in `headless_runner.rs`**
-- [ ] **Step 3: Wire into `main.rs` entrypoint**
-- [ ] **Step 4: Verify tests pass**
-- [ ] **Step 5: Commit Task 6**
+- [x] **Step 1: Write failing test for headless runner CLI argument parsing**
+- [x] **Step 2: Implement `run_headless_batch` in `headless_runner.rs`**
+- [x] **Step 3: Wire into `main.rs` entrypoint**
+- [x] **Step 4: Verify tests pass**
+- [x] **Step 5: Commit Task 6 (`531eed1d`)**
 
 ---
 

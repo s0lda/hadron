@@ -45,4 +45,6 @@ pub mod intent_radar;
 pub use intent_radar::*;
 pub mod nucleus_linter;
 pub use nucleus_linter::*;
+pub mod repo_monitor;
+pub use repo_monitor::*;
 
