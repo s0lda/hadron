@@ -124,7 +124,7 @@ impl PtyManager {
 
             let mut master_fd: RawFd = -1;
             let mut slave_fd: RawFd = -1;
-            let ws = libc::winsize {
+            let mut ws = libc::winsize {
                 ws_row: terminal_rows,
                 ws_col: terminal_cols,
                 ws_xpixel: 0,
@@ -137,7 +137,7 @@ impl PtyManager {
                     &mut slave_fd,
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
-                    &ws,
+                    &mut ws,
                 )
             };
             if res != 0 {
