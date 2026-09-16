@@ -59,5 +59,7 @@ pub mod rpc_server;
 pub use rpc_server::*;
 pub mod nucleus_store;
 pub use nucleus_store::*;
+pub mod sliding_pruner;
+pub use sliding_pruner::*;
 
 

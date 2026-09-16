@@ -144,6 +144,31 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
     format!("{}\n{TRUNCATION_MARKER}", &out[..cut])
 }
 
+/// Fit a prompt into budget, using SlidingContextPruner first to preserve recent turns and
+/// summarized older context, falling back to hard truncation if still over budget.
+pub fn fit_prompt_with_sliding_pruner(
+    projection: &Projection,
+    self_id: &QuarkId,
+    max_bytes: usize,
+    config: &crate::sliding_pruner::SlidingPrunerConfig,
+) -> String {
+    let render = |p: &Projection| crate::adapter::prompt::build(p, self_id);
+    let prompt = render(projection);
+    if prompt.len() <= max_bytes {
+        return prompt;
+    }
+
+    let mut p = projection.clone();
+    if crate::sliding_pruner::SlidingContextPruner::prune_projection(&mut p, config) {
+        let compacted_prompt = render(&p);
+        if compacted_prompt.len() <= max_bytes {
+            return compacted_prompt;
+        }
+    }
+
+    fit_prompt_to_budget(&p, self_id, max_bytes)
+}
+
 /// Strip the transcript from a projection bound for a resident conversation.
 ///
 /// The identity, task, authority and diff sections stay: they are *this turn's*
@@ -1028,5 +1053,19 @@ mod tests {
         assert_eq!(selector.available[0].label, "Gemini 3.6 Flash");
         assert_eq!(selector.available[1].value, "gemini-3.6-pro");
         assert_eq!(selector.available[1].label, "Gemini 3.6 Pro");
+    }
+
+    #[test]
+    fn test_fit_prompt_with_sliding_pruner_compacts_field() {
+        let p = huge_projection(12, 100);
+        let id = QuarkId::new("agy");
+        let config = crate::sliding_pruner::SlidingPrunerConfig {
+            max_recent_events: 3,
+            max_summary_tokens: 100,
+            compaction_threshold_tokens: 50,
+        };
+        let initial_len = crate::adapter::prompt::build(&p, &id).len();
+        let prompt = fit_prompt_with_sliding_pruner(&p, &id, initial_len - 10, &config);
+        assert!(prompt.contains("Sliding Context Pruner: compacted"));
     }
 }

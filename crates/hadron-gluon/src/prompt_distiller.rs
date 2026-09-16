@@ -62,6 +62,14 @@ impl PromptDistiller {
 
         (distilled, metrics)
     }
+
+    /// Distill a projection by running sliding context pruning on its field window before prompt generation.
+    pub fn distill_projection(
+        projection: &mut hadron_lattice::Projection,
+        config: &crate::sliding_pruner::SlidingPrunerConfig,
+    ) -> bool {
+        crate::sliding_pruner::SlidingContextPruner::prune_projection(projection, config)
+    }
 }
 
 #[cfg(test)]
