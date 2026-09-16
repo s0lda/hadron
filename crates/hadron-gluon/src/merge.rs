@@ -19,6 +19,9 @@ use hadron_lattice::MergeStrategy;
 use crate::snapshot::{git, git_ok};
 use crate::worktree::Worktree;
 
+pub mod ast_healer;
+pub use ast_healer::*;
+
 /// How a branch was brought up to date with `base` **before** the gate tested it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Synced {
@@ -375,6 +378,10 @@ pub fn sync(wt: &Worktree, base: &str) -> Synced {
         return Synced::AlreadyCurrent;
     }
     if let Err(e) = git(&wt.path, &["rebase", base]) {
+        // Attempt AST-aware rebase healing before aborting
+        if let Ok(true) = ast_healer::heal_rebase_conflicts(&wt.path) {
+            return Synced::Rebased;
+        }
         // Leave no half-rebase behind for the next turn to trip over.
         let _ = git(&wt.path, &["rebase", "--abort"]);
         return Synced::Conflicted(format!("{e:#}"));
