@@ -42,11 +42,11 @@
 - Consumes: Field events window, token budget, compaction threshold.
 - Produces: Summarized sliding window preserving prompt cache prefix and recent turns verbatim.
 
-- [ ] **Step 1: Write failing test for sliding context pruner**
-- [ ] **Step 2: Implement `SlidingContextPruner` with rolling turn summarization**
-- [ ] **Step 3: Wire into prompt generation / CLI truncation**
-- [ ] **Step 4: Verify tests pass**
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 1: Write failing test for sliding context pruner**
+- [x] **Step 2: Implement `SlidingContextPruner` with rolling turn summarization**
+- [x] **Step 3: Wire into prompt generation / CLI truncation**
+- [x] **Step 4: Verify tests pass**
+- [x] **Step 5: Commit Task 2 (`f687a55a`)**
 
 ---
 
