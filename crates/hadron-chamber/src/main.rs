@@ -38,11 +38,25 @@ mod theme;
 mod window_frame;
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 mod symbols;
+mod headless_runner;
 
 fn main() {
     // `--no-daemon` attaches to an already-running gluon without auto-spawning one;
     // the field path is the first non-flag argument (so flag order does not matter).
     let args: Vec<String> = std::env::args().collect();
+
+    // Check for headless batch subcommands (`hadron run <prompt>` or `hadron ci --plan <path>`)
+    if let Some(cmd) = headless_runner::parse_headless_command(&args) {
+        let repo_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        match headless_runner::run_headless_batch(cmd, &repo_root) {
+            Ok(()) => std::process::exit(0),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     let no_daemon = args.iter().any(|a| a == "--no-daemon");
     let path = resolve_field_path(&args);
 
