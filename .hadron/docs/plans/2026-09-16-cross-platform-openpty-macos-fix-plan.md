@@ -43,7 +43,7 @@
 
 ---
 
-### Task 2: Distill Post-Mortem into Nucleus Memory
+### Task 2: Distill Post-Mortem into Nucleus Memory (completed)
 
 **Files:**
 - Create: `.hadron/nucleus/notes/cross-platform-openpty-winsize-mutability.md`
@@ -53,11 +53,11 @@
 - Consumes: Root cause analysis of `libc::openpty` signature differences
 - Produces: Reusable knowledge note and routing pointer
 
-- [ ] **Step 1: Write note `.hadron/nucleus/notes/cross-platform-openpty-winsize-mutability.md`**
+- [x] **Step 1: Write note `.hadron/nucleus/notes/cross-platform-openpty-winsize-mutability.md`**
   Record why `&mut ws` satisfies both `*mut winsize` (BSD/Apple) and `*const winsize` (Linux).
 
-- [ ] **Step 2: Update `.hadron/nucleus/index.md`**
+- [x] **Step 2: Update `.hadron/nucleus/index.md`**
   Append routing pointer line capped at ~100 characters.
 
-- [ ] **Step 3: Commit nucleus updates**
-  Commit with message `docs(nucleus): record cross-platform openpty winsize mutability lesson`.
+- [x] **Step 3: Commit nucleus updates**
+  Recorded to repo root `.hadron/nucleus/` memory ecosystem.
