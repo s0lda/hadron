@@ -37,7 +37,8 @@ impl super::Chamber {
                     .pl(px(8.0))
                     .gap_2()
                     .child(menu_button(&cx.entity()))
-                    .children(self.update_pill(cx)),
+                    .children(self.update_pill(cx))
+                    .children(self.repo_monitor_pill(cx)),
             )
             .child(drag_region("drag-c"))
             .child(
@@ -271,6 +272,59 @@ impl super::Chamber {
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.trigger_update_flow(window, cx);
                 }))
+                .child(Icon::new(icon).small())
+                .child(label)
+                .tooltip(move |window, cx| Tooltip::new(SharedString::from(tip.clone())).build(window, cx)),
+        )
+    }
+
+    pub(super) fn repo_monitor_pill(&self, _cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if !self.prefs.repo_monitor {
+            return None;
+        }
+        let repo_root = crate::vcs::repo_root_of(&self.path);
+        let report = hadron_gatekeeper::RepoMonitor::check_repo(&repo_root);
+        let (label, tip, bg_color, text_color, icon) = if report.is_healthy() {
+            (
+                "Repo: Clean".to_string(),
+                "Repository is healthy: no Cargo.lock drift, no stale worktrees, nucleus intact.".to_string(),
+                theme::bg_surface_raised(),
+                theme::text_muted(),
+                IconName::CircleCheck,
+            )
+        } else {
+            let mut alerts = Vec::new();
+            if report.has_cargo_lock_drift {
+                alerts.push("drift");
+            }
+            if !report.stale_worktrees.is_empty() {
+                alerts.push("stale trees");
+            }
+            if report.nucleus_issues > 0 {
+                alerts.push("nucleus issues");
+            }
+            (
+                format!("Repo: {}", alerts.join(", ")),
+                format!("Repository health alerts: {}", alerts.join(", ")),
+                theme::accent_soft(),
+                theme::accent(),
+                IconName::Info,
+            )
+        };
+
+        Some(
+            div()
+                .id("repo-monitor-pill")
+                .flex()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .py_0p5()
+                .rounded_full()
+                .bg(bg_color)
+                .text_xs()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(text_color)
                 .child(Icon::new(icon).small())
                 .child(label)
                 .tooltip(move |window, cx| Tooltip::new(SharedString::from(tip.clone())).build(window, cx)),

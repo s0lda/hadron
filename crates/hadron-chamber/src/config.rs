@@ -152,6 +152,16 @@ pub struct ChamberPrefs {
     /// Show desktop notification when a quark finishes a turn.
     #[serde(default = "default_true")]
     pub notify_on_turn_finish: bool,
+    /// Whether periodic repository diagnostics (drift, stale trees, nucleus health) are enabled.
+    #[serde(default = "default_true")]
+    pub repo_monitor: bool,
+    /// Periodic repository diagnostics interval in seconds (default 300s / 5m).
+    #[serde(default = "default_repo_monitor_interval")]
+    pub repo_monitor_interval_secs: u64,
+}
+
+fn default_repo_monitor_interval() -> u64 {
+    300
 }
 
 /// Sound themes and acoustic profiles for synthesized telemetry chimes.
@@ -815,6 +825,8 @@ impl Default for ChamberPrefs {
             desktop_notifications: default_true(),
             notify_on_blocked: default_true(),
             notify_on_turn_finish: default_true(),
+            repo_monitor: default_true(),
+            repo_monitor_interval_secs: default_repo_monitor_interval(),
         }
     }
 }
@@ -1220,6 +1232,18 @@ mod tests {
         assert_eq!(SoundTheme::from_str("Synth (Electronic FM Blips)"), Some(SoundTheme::Synth));
         assert_eq!(SoundTheme::from_str("Minimal (Soft Clicks & Pops)"), Some(SoundTheme::Minimal));
         assert_eq!(SoundTheme::from_str("Retro 8-Bit (Arcade Bleeps)"), Some(SoundTheme::Retro8Bit));
+    }
+
+    #[test]
+    fn test_repo_monitor_preferences_default_and_roundtrip() {
+        let prefs = ChamberPrefs::default();
+        assert!(prefs.repo_monitor);
+        assert_eq!(prefs.repo_monitor_interval_secs, 300);
+
+        let json = serde_json::to_string(&prefs).expect("serialize");
+        let loaded: ChamberPrefs = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(prefs.repo_monitor, loaded.repo_monitor);
+        assert_eq!(prefs.repo_monitor_interval_secs, loaded.repo_monitor_interval_secs);
     }
 }
 

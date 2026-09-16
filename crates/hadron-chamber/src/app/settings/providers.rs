@@ -969,12 +969,32 @@ impl super::Chamber {
                 )),
         );
 
+        let repo_monitor_card = settings_card_section(
+            "Repository Health Diagnostics",
+            Some(IconName::Info),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "Periodic repo monitor",
+                    Some("Regularly checks repository for uncommitted Cargo.lock drift, stale worktrees, and nucleus health issues."),
+                    Switch::new("repo-monitor-toggle")
+                        .checked(self.prefs.repo_monitor)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.repo_monitor = *checked;
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                )),
+        );
+
         v_flex()
             .w_full()
             .gap_4()
             .child(execution_card)
             .child(watchdog_card)
             .child(git_card)
+            .child(repo_monitor_card)
     }
 
     pub(super) fn environment_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

@@ -140,9 +140,9 @@
 - Consumes: Repo root, `ChamberPrefs::repo_monitor`, interval.
 - Produces: `RepoHealthReport` (tests, stale trees, lock drift, nucleus issues), UI settings toggle, status indicator.
 
-- [ ] **Step 1: Write failing test for `RepoMonitor` diagnostics**
-- [ ] **Step 2: Implement `RepoMonitor::check_repo` combining baseline, worktree, and lock checks**
-- [ ] **Step 3: Add `repo_monitor` & `repo_monitor_interval_secs` to `ChamberPrefs` and Settings → Execution**
-- [ ] **Step 4: Render non-intrusive status indicator in Chamber**
-- [ ] **Step 5: Verify tests pass**
-- [ ] **Step 6: Commit Task 7**
+- [x] **Step 1: Write failing test for `RepoMonitor` diagnostics**
+- [x] **Step 2: Implement `RepoMonitor::check_repo` combining baseline, worktree, and lock checks**
+- [x] **Step 3: Add `repo_monitor` & `repo_monitor_interval_secs` to `ChamberPrefs` and Settings → Execution**
+- [x] **Step 4: Render non-intrusive status indicator in Chamber**
+- [x] **Step 5: Verify tests pass**
+- [x] **Step 6: Commit Task 7**
