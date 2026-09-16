@@ -507,6 +507,8 @@ pub struct Engine {
     /// a slot through its own clone — never the quark's `Mutex` a running turn
     /// holds for its whole duration, which is the entire reason this exists.
     cancel_slots: HashMap<(QuarkId, Lane), crate::quark::CancelSlot>,
+    /// Speculative merge pre-testing cache and shadow gate execution queue.
+    shadow_gate: Arc<AsyncMutex<ShadowGate>>,
 }
 
 /// Parse the DO-NOT-ACTIVATE toggle from `HADRON_NO_HUMAN_MODE`. Read ONCE, at
@@ -598,7 +600,19 @@ impl Engine {
             // Same hermetic default, same reason — see `global_preons_dir`'s field doc.
             global_preons_dir: None,
             cancel_slots,
+            shadow_gate: Arc::new(AsyncMutex::new(ShadowGate::new("main"))),
         }
+    }
+
+    /// Access the engine's speculative pre-testing shadow gate cache.
+    pub fn shadow_gate(&self) -> Arc<AsyncMutex<ShadowGate>> {
+        self.shadow_gate.clone()
+    }
+
+    /// Set an explicit shadow gate instance.
+    pub fn with_shadow_gate(mut self, gate: Arc<AsyncMutex<ShadowGate>>) -> Self {
+        self.shadow_gate = gate;
+        self
     }
 
     /// Explicitly set the No-Human-Mode toggle, overriding whatever

@@ -468,8 +468,23 @@ impl super::Engine {
 
         // Tests run IN the quark's worktree, on the branch as it now stands — so we
         // never land untested commits, even on the re-asked second pass.
-        heartbeat.set_stage("running test suite");
-        let (tests_passed, tail) = runner.tests(&t.wt).await?;
+        // Speculative pre-testing cache lookup: avoid duplicate test runs if already run.
+        let head_sha = crate::worktree::head(&t.wt.path).unwrap_or_default();
+        let cached_result = {
+            let gate = self.shadow_gate.lock().await;
+            gate.get_speculative_result(&t.wt.branch, &head_sha).cloned()
+        };
+
+        let (tests_passed, tail) = if let Some(spec) = cached_result {
+            heartbeat.set_stage("using cached speculative test result");
+            (spec.passed, spec.tail)
+        } else {
+            heartbeat.set_stage("running test suite");
+            let (passed, tail) = runner.tests(&t.wt).await?;
+            let mut gate = self.shadow_gate.lock().await;
+            gate.record_speculative_result(&t.wt.branch, &head_sha, passed, &tail);
+            (passed, tail)
+        };
 
         match hadron_gatekeeper::merge_decision(tests_passed, approved, &state) {
             MergeVerdict::Merge => {

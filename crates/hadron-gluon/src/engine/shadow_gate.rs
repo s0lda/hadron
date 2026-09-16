@@ -163,4 +163,22 @@ mod tests {
         let g = gate.lock().await;
         assert!(g.is_eligible_for_fast_forward("quark/feature-spec"));
     }
+
+    #[tokio::test]
+    async fn test_shadow_gate_cache_hit_and_eviction() {
+        let mut gate = ShadowGate::new("main");
+        gate.record_speculative_result("quark/feat-1", "sha1", true, "tests passed 10/10");
+        gate.record_speculative_result("quark/feat-2", "sha2", false, "tests failed at test_x");
+
+        let res1 = gate.get_speculative_result("quark/feat-1", "sha1").unwrap();
+        assert!(res1.passed);
+        assert_eq!(res1.tail, "tests passed 10/10");
+
+        let res2 = gate.get_speculative_result("quark/feat-2", "sha2").unwrap();
+        assert!(!res2.passed);
+        assert_eq!(res2.tail, "tests failed at test_x");
+
+        // Miss on different sha
+        assert!(gate.get_speculative_result("quark/feat-1", "sha_other").is_none());
+    }
 }
