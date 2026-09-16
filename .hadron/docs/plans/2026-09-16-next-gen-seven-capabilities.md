@@ -21,11 +21,11 @@
 - Consumes: Worktree, head commit SHA, base branch.
 - Produces: `SpeculativeTestResult`, asynchronous pre-test execution, test cache lookup during merge gate.
 
-- [ ] **Step 1: Write failing test for speculative pre-testing cache**
-- [ ] **Step 2: Implement speculative test execution & result caching in `shadow_gate.rs`**
-- [ ] **Step 3: Wire speculative pre-test cache check into `merge_gate_body` in `merge.rs`**
-- [ ] **Step 4: Verify tests pass**
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 1: Write failing test for speculative pre-testing cache**
+- [x] **Step 2: Implement speculative test execution & result caching in `shadow_gate.rs`**
+- [x] **Step 3: Wire speculative pre-test cache check into `merge_gate_body` in `merge.rs`**
+- [x] **Step 4: Verify tests pass**
+- [x] **Step 5: Commit Task 1**
 
 ---
 
