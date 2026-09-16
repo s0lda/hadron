@@ -20,6 +20,16 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.24.1",
+        date: Some("2026-09-16"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Cross-platform PTY openpty compilation on macOS by passing mutable winsize pointer (resolves GitHub Issue #1)",
+            "Restored native Windows MSVC support to repository prerequisites and build documentation",
+        ],
+    },
+    Release {
         version: "0.24.0",
         date: Some("2026-09-05"),
         added: &[

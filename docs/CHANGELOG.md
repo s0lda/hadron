@@ -5,6 +5,14 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.1] - 2026-09-16
+
+### Fixed
+- **Cross-Platform PTY Compilation on macOS (`hadron-forge`)**:
+  - Made `libc::winsize` mutable when calling `libc::openpty` in `hadron-forge::pty`, resolving compilation failure `E0308` (`*mut winsize` expected on Darwin/BSD vs `*const winsize` on Linux glibc) for cross-platform macOS builds (resolves GitHub Issue #1).
+- **Windows MSVC Prerequisites (`README.md`, `docs`)**:
+  - Restored native Windows MSVC support to repository prerequisites and build documentation.
+
 ## [0.24.0] - 2026-09-05
 
 ### Added
