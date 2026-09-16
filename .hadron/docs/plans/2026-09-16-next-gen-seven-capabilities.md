@@ -61,11 +61,11 @@
 - Consumes: Conflicted worktree path, base branch, conflicting files.
 - Produces: `heal_rebase_conflicts` calling `hadron_forge::ast_merge::merge_rust_ast` to resolve non-overlapping AST changes.
 
-- [ ] **Step 1: Write failing test for AST rebase healing**
-- [ ] **Step 2: Implement `heal_rebase_conflicts` using `hadron_forge::ast_merge::merge_rust_ast`**
-- [ ] **Step 3: Wire healer into `sync` on `Synced::Conflicted`**
-- [ ] **Step 4: Verify tests pass**
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 1: Write failing test for AST rebase healing**
+- [x] **Step 2: Implement `heal_rebase_conflicts` using `hadron_forge::ast_merge::merge_rust_ast`**
+- [x] **Step 3: Wire healer into `sync` on `Synced::Conflicted`**
+- [x] **Step 4: Verify tests pass**
+- [x] **Step 5: Commit Task 3 (`1122ceb5`)**
 
 ---
 
