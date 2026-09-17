@@ -38,7 +38,8 @@ impl super::Chamber {
                     .gap_2()
                     .child(menu_button(&cx.entity()))
                     .children(self.update_pill(cx))
-                    .children(self.repo_monitor_pill(cx)),
+                    .children(self.repo_monitor_pill(cx))
+                    .children(self.github_monitor_pill(cx)),
             )
             .child(drag_region("drag-c"))
             .child(
@@ -282,12 +283,15 @@ impl super::Chamber {
         if !self.prefs.repo_monitor {
             return None;
         }
-        let repo_root = crate::vcs::repo_root_of(&self.path);
-        let report = hadron_gatekeeper::RepoMonitor::check_repo(&repo_root);
+        let cached = self.repo_health_report.clone();
+        let report = cached.unwrap_or_else(|| {
+            let repo_root = crate::vcs::repo_root_of(&self.path);
+            hadron_gatekeeper::RepoMonitor::check_repo(&repo_root)
+        });
         let (label, tip, bg_color, text_color, icon) = if report.is_healthy() {
             (
                 "Repo: Clean".to_string(),
-                "Repository is healthy: no Cargo.lock drift, no stale worktrees, nucleus intact.".to_string(),
+                "Repository is healthy: no Cargo.lock drift, no stale worktrees, nucleus intact. Click to inspect.".to_string(),
                 theme::bg_surface_raised(),
                 theme::text_muted(),
                 IconName::CircleCheck,
@@ -305,7 +309,7 @@ impl super::Chamber {
             }
             (
                 format!("Repo: {}", alerts.join(", ")),
-                format!("Repository health alerts: {}", alerts.join(", ")),
+                format!("Repository health alerts: {}. Click to view details and repair.", alerts.join(", ")),
                 theme::accent_soft(),
                 theme::accent(),
                 IconName::Info,
@@ -325,6 +329,116 @@ impl super::Chamber {
                 .text_xs()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(text_color)
+                .cursor_pointer()
+                .hover(|s| s.opacity(0.85))
+                .on_click(_cx.listener(|this, _, window, cx| {
+                    this.prefs.inspector_collapsed = false;
+                    this.select_git_subtab(GitSubtab::Remote, cx);
+                    window.focus(&this.git_focus, cx);
+                    cx.notify();
+                }))
+                .child(Icon::new(icon).small())
+                .child(label)
+                .tooltip(move |window, cx| Tooltip::new(SharedString::from(tip.clone())).build(window, cx)),
+        )
+    }
+
+    pub(super) fn github_monitor_pill(&self, _cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if !self.prefs.repo_monitor {
+            return None;
+        }
+        let info = self.git_remote_info.as_ref()?;
+        if info.remote_url.is_empty() {
+            return None;
+        }
+
+        let (label, tip, bg_color, text_color, icon) = if info.is_github {
+            let slug = info.repo_slug.as_deref().unwrap_or("GitHub");
+            if let Some(issues) = &self.github_issues {
+                if !issues.is_empty() {
+                    (
+                        format!("GH: {} issues", issues.len()),
+                        format!("{slug} has {} open issue(s). Click to inspect.", issues.len()),
+                        theme::accent_soft(),
+                        theme::accent(),
+                        IconName::Inbox,
+                    )
+                } else if info.ahead > 0 || info.behind > 0 {
+                    (
+                        format!("GH: {}↑ {}↓", info.ahead, info.behind),
+                        format!("{slug} is {} commits ahead, {} behind origin. Click to inspect.", info.ahead, info.behind),
+                        theme::bg_surface_raised(),
+                        theme::accent(),
+                        IconName::Globe,
+                    )
+                } else {
+                    (
+                        "GH: Synced".to_string(),
+                        format!("{slug} is up to date. Click to view GitHub activity."),
+                        theme::bg_surface_raised(),
+                        theme::text_muted(),
+                        IconName::CircleCheck,
+                    )
+                }
+            } else if info.ahead > 0 || info.behind > 0 {
+                (
+                    format!("GH: {}↑ {}↓", info.ahead, info.behind),
+                    format!("{slug} is {} commits ahead, {} behind origin. Click to inspect.", info.ahead, info.behind),
+                    theme::bg_surface_raised(),
+                    theme::accent(),
+                    IconName::Globe,
+                )
+            } else {
+                (
+                    "GitHub: Connected".to_string(),
+                    format!("{slug} connected. Click to view GitHub activity."),
+                    theme::bg_surface_raised(),
+                    theme::text_muted(),
+                    IconName::Globe,
+                )
+            }
+        } else {
+            let name = if info.remote_name.is_empty() { "Remote" } else { &info.remote_name };
+            if info.ahead > 0 || info.behind > 0 {
+                (
+                    format!("{name}: {}↑ {}↓", info.ahead, info.behind),
+                    format!("{name} is {} commits ahead, {} behind origin. Click to inspect.", info.ahead, info.behind),
+                    theme::bg_surface_raised(),
+                    theme::accent(),
+                    IconName::Globe,
+                )
+            } else {
+                (
+                    format!("{name}: Synced"),
+                    format!("{name} is up to date. Click to inspect."),
+                    theme::bg_surface_raised(),
+                    theme::text_muted(),
+                    IconName::CircleCheck,
+                )
+            }
+        };
+
+        Some(
+            div()
+                .id("github-monitor-pill")
+                .flex()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .py_0p5()
+                .rounded_full()
+                .bg(bg_color)
+                .text_xs()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(text_color)
+                .cursor_pointer()
+                .hover(|s| s.opacity(0.85))
+                .on_click(_cx.listener(|this, _, window, cx| {
+                    this.prefs.inspector_collapsed = false;
+                    this.select_git_subtab(GitSubtab::Remote, cx);
+                    window.focus(&this.git_focus, cx);
+                    cx.notify();
+                }))
                 .child(Icon::new(icon).small())
                 .child(label)
                 .tooltip(move |window, cx| Tooltip::new(SharedString::from(tip.clone())).build(window, cx)),

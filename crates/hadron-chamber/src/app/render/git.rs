@@ -181,6 +181,15 @@ impl super::Chamber {
                 .pb_3()
                 .child(self.git_diff_inspector_section(cx))
                 .into_any_element(),
+            GitSubtab::Remote => div()
+                .id("git-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.git_scroll)
+                .px_3()
+                .pb_3()
+                .child(self.git_remote_section(cx))
+                .into_any_element(),
         };
         let git_pane = div()
             .flex_1()
@@ -205,6 +214,7 @@ impl super::Chamber {
             .on_action(cx.listener(|this, _: &SelectGitWorktrees, _, cx| this.select_git_subtab(GitSubtab::Worktrees, cx)))
             .on_action(cx.listener(|this, _: &SelectGitGraph, _, cx| this.select_git_subtab(GitSubtab::Graph, cx)))
             .on_action(cx.listener(|this, _: &SelectGitDiff3Way, _, cx| this.select_git_subtab(GitSubtab::Diff3Way, cx)))
+            .on_action(cx.listener(|this, _: &SelectGitRemote, _, cx| this.select_git_subtab(GitSubtab::Remote, cx)))
             .on_action(cx.listener(|this, _: &NextGitItem, _, cx| this.move_git_selection(1, cx)))
             .on_action(cx.listener(|this, _: &PrevGitItem, _, cx| this.move_git_selection(-1, cx)))
             .on_action(cx.listener(|this, _: &OpenGitItem, _, cx| this.open_git_selection(cx)))
@@ -1398,6 +1408,556 @@ impl super::Chamber {
         }
 
         list.into_any_element()
+    }
+
+    // ── Remote & Repository Health ─────────────────────────────────────────────
+
+    fn git_remote_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let repo_root = crate::vcs::repo_root_of(&self.path);
+        let repo_str = repo_root.display().to_string();
+
+        let mut container = v_flex().w_full().gap_3().pt_1();
+
+        // 1. Header & Actions Bar
+        let header = h_flex()
+            .w_full()
+            .items_center()
+            .justify_between()
+            .p_2p5()
+            .rounded_lg()
+            .bg(theme::bg_surface())
+            .border_1()
+            .border_color(theme::border())
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::text())
+                            .child("Workspace Repository"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .truncate()
+                            .child(repo_str),
+                    ),
+            )
+            .child(
+                div()
+                    .id("refresh-remote-btn")
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .px_2p5()
+                    .py_1()
+                    .rounded_md()
+                    .bg(theme::bg_surface_raised())
+                    .border_1()
+                    .border_color(theme::border())
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(theme::text())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::accent_soft()))
+                    .child(Icon::new(IconName::Globe).small())
+                    .child("Refresh")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.refresh_remote_and_github(cx);
+                    })),
+            );
+        container = container.child(header);
+
+        // 2. Remote Tracking & Sync Card
+        let remote_card = match &self.git_remote_info {
+            None => v_flex()
+                .p_3()
+                .rounded_lg()
+                .bg(theme::bg_surface())
+                .border_1()
+                .border_color(theme::border())
+                .child(Self::muted("Loading remote tracking info...")),
+            Some(info) => {
+                let mut card = v_flex()
+                    .p_3()
+                    .gap_2()
+                    .rounded_lg()
+                    .bg(theme::bg_surface())
+                    .border_1()
+                    .border_color(theme::border());
+
+                let header_row = h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(Icon::new(IconName::Globe).small())
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::text())
+                                    .child(if info.remote_url.is_empty() {
+                                        "Local Git Tracking".to_string()
+                                    } else {
+                                        format!("Remote: {}", info.remote_name)
+                                    }),
+                            ),
+                    );
+
+                let header_row = if let Some(slug) = &info.repo_slug {
+                    let url_clone = info.remote_url.clone();
+                    header_row.child(
+                        h_flex()
+                            .id("open-remote-url-btn")
+                            .items_center()
+                            .gap_1()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_full()
+                            .bg(theme::bg_surface_raised())
+                            .text_xs()
+                            .text_color(theme::accent())
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.85))
+                            .child(slug.clone())
+                            .on_click(cx.listener(move |_, _, _, _| {
+                                crate::sys::open_path_or_url(&url_clone);
+                            })),
+                    )
+                } else {
+                    header_row
+                };
+
+                card = card.child(header_row);
+
+                if !info.remote_url.is_empty() {
+                    card = card.child(
+                        div()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .truncate()
+                            .child(format!("URL: {}", info.remote_url)),
+                    );
+                }
+
+                let sync_row = h_flex()
+                    .gap_2()
+                    .items_center()
+                    .text_xs()
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(div().text_color(theme::text_muted()).child("Branch:"))
+                            .child(div().text_color(theme::accent()).font_weight(gpui::FontWeight::SEMIBOLD).child(info.current_branch.clone())),
+                    )
+                    .child(div().text_color(theme::text_muted()).child("•"))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(div().text_color(theme::text_muted()).child("Upstream:"))
+                            .child(div().text_color(theme::text()).child(info.tracking_branch.clone().unwrap_or_else(|| "None".to_string()))),
+                    );
+                card = card.child(sync_row);
+
+                let status_pill = if info.ahead > 0 || info.behind > 0 {
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .text_xs()
+                        .child(
+                            div()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(theme::bg_surface_raised())
+                                .text_color(gpui::rgb(ADD_COLOR))
+                                .child(format!("↑ {} ahead", info.ahead)),
+                        )
+                        .child(
+                            div()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(theme::bg_surface_raised())
+                                .text_color(gpui::rgb(DEL_COLOR))
+                                .child(format!("↓ {} behind", info.behind)),
+                        )
+                } else if info.tracking_branch.is_some() {
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(Icon::new(IconName::CircleCheck).small())
+                        .child("Up to date with upstream")
+                } else {
+                    h_flex()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child("No upstream tracking branch configured")
+                };
+
+                card = card.child(status_pill);
+                card
+            }
+        };
+        container = container.child(remote_card);
+
+        // 3. Local Repository Health (Repo Monitor)
+        let health_card = match &self.repo_health_report {
+            None => v_flex()
+                .p_3()
+                .rounded_lg()
+                .bg(theme::bg_surface())
+                .border_1()
+                .border_color(theme::border())
+                .child(Self::muted("Running repository health check...")),
+            Some(report) => {
+                let mut card = v_flex()
+                    .p_3()
+                    .gap_2()
+                    .rounded_lg()
+                    .bg(theme::bg_surface())
+                    .border_1()
+                    .border_color(theme::border());
+
+                let (badge_text, badge_bg, badge_fg) = if report.is_healthy() {
+                    ("Clean", theme::bg_surface_raised(), theme::text_muted())
+                } else {
+                    ("Issues Detected", theme::accent_soft(), theme::accent())
+                };
+
+                let card_header = h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(Icon::new(IconName::CircleCheck).small())
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::text())
+                                    .child("Local Repository Health"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_full()
+                            .bg(badge_bg)
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(badge_fg)
+                            .child(badge_text),
+                    );
+                card = card.child(card_header);
+
+                // Drift Item
+                let drift_row = h_flex()
+                    .gap_2()
+                    .items_center()
+                    .text_xs()
+                    .child(Icon::new(if report.has_cargo_lock_drift {
+                        IconName::Info
+                    } else {
+                        IconName::CircleCheck
+                    }).small())
+                    .child(
+                        div()
+                            .text_color(if report.has_cargo_lock_drift {
+                                theme::accent()
+                            } else {
+                                theme::text()
+                            })
+                            .child(if report.has_cargo_lock_drift {
+                                "Cargo.lock has uncommitted drift in repository root"
+                            } else {
+                                "Cargo.lock clean (no drift)"
+                            }),
+                    );
+                card = card.child(drift_row);
+
+                // Stale trees Item
+                let stale_count = report.stale_worktrees.len();
+                let stale_row = h_flex()
+                    .gap_2()
+                    .items_center()
+                    .text_xs()
+                    .child(Icon::new(if stale_count > 0 {
+                        IconName::Info
+                    } else {
+                        IconName::CircleCheck
+                    }).small())
+                    .child(
+                        div()
+                            .text_color(if stale_count > 0 {
+                                theme::accent()
+                            } else {
+                                theme::text()
+                            })
+                            .child(if stale_count > 0 {
+                                format!("{stale_count} stale worktree(s) marked in .hadron/trees/")
+                            } else {
+                                "No stale worktrees".to_string()
+                            }),
+                    );
+                card = card.child(stale_row);
+
+                // Nucleus Item
+                let nucleus_row = v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .text_xs()
+                            .child(Icon::new(if report.nucleus_issues > 0 {
+                                IconName::Info
+                            } else {
+                                IconName::CircleCheck
+                            }).small())
+                            .child(
+                                div()
+                                    .text_color(if report.nucleus_issues > 0 {
+                                        theme::accent()
+                                    } else {
+                                        theme::text()
+                                    })
+                                    .child(if report.nucleus_issues > 0 {
+                                        format!("Nucleus issues: {} alert(s)", report.nucleus_issues)
+                                    } else {
+                                        "Nucleus intact (index and lessons in sync)".to_string()
+                                    }),
+                            ),
+                    );
+
+                let mut nucleus_details = v_flex().pl_5().gap_0p5().text_xs().text_color(theme::text_muted());
+                if report.nucleus_index_bytes > 0 {
+                    let over_badge = if report.nucleus_budget_exceeded { " [OVER BUDGET]" } else { "" };
+                    nucleus_details = nucleus_details.child(div().child(format!(
+                        "Index budget: {} / {} bytes{}",
+                        report.nucleus_index_bytes, report.nucleus_index_budget, over_badge
+                    )));
+                }
+                for broken in &report.nucleus_broken_links {
+                    nucleus_details = nucleus_details.child(div().text_color(theme::accent()).child(format!("Broken link: {broken}")));
+                }
+                if !report.nucleus_orphaned_notes.is_empty() {
+                    nucleus_details = nucleus_details.child(div().child(format!(
+                        "{} unindexed orphan note(s) in notes/",
+                        report.nucleus_orphaned_notes.len()
+                    )));
+                }
+                card = card.child(nucleus_row).child(nucleus_details);
+
+                card
+            }
+        };
+        container = container.child(health_card);
+
+        // 4. GitHub Remote Issues & PRs
+        let github_card = if let Some(info) = &self.git_remote_info {
+            if !info.is_github {
+                v_flex()
+                    .p_3()
+                    .rounded_lg()
+                    .bg(theme::bg_surface())
+                    .border_1()
+                    .border_color(theme::border())
+                    .child(Self::muted("Remote is not a GitHub repository. Issues & PR tracking requires GitHub."))
+            } else {
+                let mut card = v_flex()
+                    .p_3()
+                    .gap_2p5()
+                    .rounded_lg()
+                    .bg(theme::bg_surface())
+                    .border_1()
+                    .border_color(theme::border());
+
+                let slug = info.repo_slug.as_deref().unwrap_or("GitHub");
+                let gh_header = h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(Icon::new(IconName::Inbox).small())
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::text())
+                                    .child(format!("GitHub: {slug}")),
+                            ),
+                    );
+                card = card.child(gh_header);
+
+                if let Some(status_msg) = &self.github_status_msg {
+                    card = card.child(
+                        div()
+                            .p_2()
+                            .rounded_md()
+                            .bg(theme::accent_soft())
+                            .text_xs()
+                            .text_color(theme::accent())
+                            .child(status_msg.clone()),
+                    );
+                }
+
+                // Pull requests list
+                let pr_count = self.github_prs.as_ref().map(|p| p.len()).unwrap_or(0);
+                let pr_header = h_flex()
+                    .items_center()
+                    .justify_between()
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(theme::text())
+                    .child("Pull Requests")
+                    .child(div().text_color(theme::text_muted()).child(format!("{pr_count} open")));
+                card = card.child(pr_header);
+
+                if let Some(prs) = &self.github_prs {
+                    if prs.is_empty() {
+                        card = card.child(div().pl_2().child(Self::muted("No open pull requests.")));
+                    } else {
+                        let mut pr_list = v_flex().gap_1p5();
+                        for (ix, pr) in prs.iter().take(10).enumerate() {
+                            let url_clone = pr.url.clone();
+                            let row = h_flex()
+                                .id(("gh-pr-row", ix))
+                                .w_full()
+                                .gap_2()
+                                .items_center()
+                                .p_1p5()
+                                .rounded_md()
+                                .bg(theme::bg_surface_raised())
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.85))
+                                .on_click(cx.listener(move |_, _, _, _| {
+                                    crate::sys::open_path_or_url(&url_clone);
+                                }))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(gpui::rgb(ADD_COLOR))
+                                        .child(format!("#{}", pr.number)),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_xs()
+                                        .truncate()
+                                        .text_color(theme::text())
+                                        .child(pr.title.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(pr.head_branch.clone()),
+                                );
+                            pr_list = pr_list.child(row);
+                        }
+                        card = card.child(pr_list);
+                    }
+                } else {
+                    card = card.child(div().pl_2().child(Self::muted("No PRs fetched yet.")));
+                }
+
+                // Issues list
+                let issue_count = self.github_issues.as_ref().map(|i| i.len()).unwrap_or(0);
+                let issue_header = h_flex()
+                    .items_center()
+                    .justify_between()
+                    .pt_1()
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(theme::text())
+                    .child("Issues")
+                    .child(div().text_color(theme::text_muted()).child(format!("{issue_count} open")));
+                card = card.child(issue_header);
+
+                if let Some(issues) = &self.github_issues {
+                    if issues.is_empty() {
+                        card = card.child(div().pl_2().child(Self::muted("No open issues.")));
+                    } else {
+                        let mut issue_list = v_flex().gap_1p5();
+                        for (ix, issue) in issues.iter().take(10).enumerate() {
+                            let url_clone = issue.url.clone();
+                            let row = h_flex()
+                                .id(("gh-issue-row", ix))
+                                .w_full()
+                                .gap_2()
+                                .items_center()
+                                .p_1p5()
+                                .rounded_md()
+                                .bg(theme::bg_surface_raised())
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.85))
+                                .on_click(cx.listener(move |_, _, _, _| {
+                                    crate::sys::open_path_or_url(&url_clone);
+                                }))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme::accent())
+                                        .child(format!("#{}", issue.number)),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_xs()
+                                        .truncate()
+                                        .text_color(theme::text())
+                                        .child(issue.title.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(issue.author.clone()),
+                                );
+                            issue_list = issue_list.child(row);
+                        }
+                        card = card.child(issue_list);
+                    }
+                } else {
+                    card = card.child(div().pl_2().child(Self::muted("No issues fetched yet.")));
+                }
+
+                card
+            }
+        } else {
+            v_flex()
+                .p_3()
+                .rounded_lg()
+                .bg(theme::bg_surface())
+                .border_1()
+                .border_color(theme::border())
+                .child(Self::muted("No remote configured for this workspace."))
+        };
+        container = container.child(github_card);
+
+        container
     }
 }
 

@@ -175,6 +175,45 @@ impl Chamber {
         .detach();
     }
 
+    /// Asynchronously refresh local repository health, git remote tracking, and GitHub issues/PRs.
+    pub(super) fn refresh_remote_and_github(&mut self, cx: &mut Context<Self>) {
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        self.github_status_msg = Some("Refreshing remote & GitHub...".to_string());
+        cx.spawn(async move |this, cx| {
+            let (health, remote_info, issues_res, prs_res) = cx
+                .background_executor()
+                .spawn(async move {
+                    let health = hadron_gatekeeper::RepoMonitor::check_repo(&repo_root);
+                    let remote_info = crate::vcs::get_remote_tracking_info(&repo_root);
+                    let issues_res = crate::vcs::fetch_github_issues(&repo_root);
+                    let prs_res = crate::vcs::fetch_github_prs(&repo_root);
+                    (health, remote_info, issues_res, prs_res)
+                })
+                .await;
+
+            let _ = this.update(cx, |chamber, cx| {
+                chamber.repo_health_report = Some(health);
+                chamber.git_remote_info = Some(remote_info);
+                match issues_res {
+                    Ok(issues) => {
+                        chamber.github_issues = Some(issues);
+                        chamber.github_status_msg = None;
+                    }
+                    Err(e) => {
+                        chamber.github_issues = None;
+                        chamber.github_status_msg = Some(e);
+                    }
+                }
+                match prs_res {
+                    Ok(prs) => chamber.github_prs = Some(prs),
+                    Err(_) => chamber.github_prs = None,
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Post a chat message from `from` and reveal it. The shared tail of every
     /// command that *speaks*, so the chat-list bookkeeping has one home rather than
     /// one copy per command.
@@ -1595,7 +1634,7 @@ impl Chamber {
                 self.git_cursor_graph = Some(next);
                 self.git_graph_list.scroll_to_reveal_item(next);
             }
-            GitSubtab::Diff3Way => {}
+            GitSubtab::Diff3Way | GitSubtab::Remote => {}
         }
         cx.notify();
     }
@@ -1636,7 +1675,7 @@ impl Chamber {
                     }
                 }
             }
-            GitSubtab::Diff3Way => {}
+            GitSubtab::Diff3Way | GitSubtab::Remote => {}
         }
     }
 
@@ -2827,13 +2866,14 @@ mod tests {
         assert_eq!(GitSubtab::from_index(1), GitSubtab::Worktrees);
         assert_eq!(GitSubtab::from_index(2), GitSubtab::Graph);
         assert_eq!(GitSubtab::from_index(3), GitSubtab::Diff3Way);
+        assert_eq!(GitSubtab::from_index(4), GitSubtab::Remote);
         assert_eq!(GitSubtab::from_index(99), GitSubtab::Branches);
 
         let n = GitSubtab::ALL.len() as isize;
         let next = (0isize + 1).rem_euclid(n) as usize;
         assert_eq!(GitSubtab::from_index(next), GitSubtab::Worktrees);
         let prev = (0isize - 1).rem_euclid(n) as usize;
-        assert_eq!(GitSubtab::from_index(prev), GitSubtab::Diff3Way);
+        assert_eq!(GitSubtab::from_index(prev), GitSubtab::Remote);
     }
 
     #[test]

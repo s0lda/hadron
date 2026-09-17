@@ -7,6 +7,16 @@ pub struct RepoHealthReport {
     pub has_cargo_lock_drift: bool,
     pub stale_worktrees: Vec<PathBuf>,
     pub nucleus_issues: usize,
+    #[serde(default)]
+    pub nucleus_broken_links: Vec<String>,
+    #[serde(default)]
+    pub nucleus_orphaned_notes: Vec<PathBuf>,
+    #[serde(default)]
+    pub nucleus_budget_exceeded: bool,
+    #[serde(default)]
+    pub nucleus_index_bytes: usize,
+    #[serde(default)]
+    pub nucleus_index_budget: usize,
     pub healthy: bool,
     pub timestamp: u64,
 }
@@ -77,7 +87,41 @@ impl RepoMonitor {
     pub fn check_repo(repo_root: &Path) -> RepoHealthReport {
         let has_cargo_lock_drift = Self::check_cargo_lock_drift(repo_root);
         let stale_worktrees = Self::check_stale_worktrees(repo_root);
-        let nucleus_issues = Self::check_nucleus(repo_root);
+        let nucleus_dir = repo_root.join(".hadron").join("nucleus");
+        let (
+            nucleus_issues,
+            nucleus_broken_links,
+            nucleus_orphaned_notes,
+            nucleus_budget_exceeded,
+            nucleus_index_bytes,
+            nucleus_index_budget,
+        ) = if nucleus_dir.exists() {
+            let linter = crate::nucleus_linter::NucleusIntegrityLinter::default_budget();
+            let report = linter.lint(&nucleus_dir);
+            let mut issues = 0;
+            if report.budget_exceeded {
+                issues += 1;
+            }
+            issues += report.broken_links.len();
+            issues += report.orphaned_notes.len();
+            (
+                issues,
+                report.broken_links,
+                report.orphaned_notes,
+                report.budget_exceeded,
+                report.index_bytes,
+                report.index_budget,
+            )
+        } else {
+            (
+                0,
+                Vec::new(),
+                Vec::new(),
+                false,
+                0,
+                crate::nucleus_linter::NucleusIntegrityLinter::DEFAULT_INDEX_BUDGET,
+            )
+        };
         let healthy = !has_cargo_lock_drift && stale_worktrees.is_empty() && nucleus_issues == 0;
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -88,6 +132,11 @@ impl RepoMonitor {
             has_cargo_lock_drift,
             stale_worktrees,
             nucleus_issues,
+            nucleus_broken_links,
+            nucleus_orphaned_notes,
+            nucleus_budget_exceeded,
+            nucleus_index_bytes,
+            nucleus_index_budget,
             healthy,
             timestamp,
         }
@@ -146,5 +195,7 @@ mod tests {
         let report = RepoMonitor::check_repo(root);
         assert!(!report.is_healthy());
         assert!(report.nucleus_issues > 0);
+        assert_eq!(report.nucleus_broken_links, vec!["notes/broken.md".to_string()]);
+        assert!(report.nucleus_index_bytes > 0);
     }
 }

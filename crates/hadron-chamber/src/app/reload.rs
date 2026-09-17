@@ -7,6 +7,8 @@ pub(super) struct WorkspaceScan {
     pub(super) git_statuses: std::collections::HashMap<String, crate::vcs::GitStatus>,
     pub(super) working_diff: Option<Vec<crate::vcs::FileDiff>>,
     pub(super) git_branch_fingerprint: Option<String>,
+    pub(super) repo_health: Option<hadron_gatekeeper::RepoHealthReport>,
+    pub(super) remote_tracking: Option<crate::vcs::RemoteTrackingInfo>,
 }
 
 impl WorkspaceScan {
@@ -28,11 +30,23 @@ impl WorkspaceScan {
         } else {
             None
         };
+        let repo_health = if scan_git {
+            Some(hadron_gatekeeper::RepoMonitor::check_repo(repo_root))
+        } else {
+            None
+        };
+        let remote_tracking = if scan_git {
+            Some(crate::vcs::get_remote_tracking_info(repo_root))
+        } else {
+            None
+        };
         Some(Self {
             files,
             git_statuses,
             working_diff,
             git_branch_fingerprint,
+            repo_health,
+            remote_tracking,
         })
     }
 }
@@ -294,6 +308,20 @@ impl super::Chamber {
                     self.rebuild_graph_rows();
                     changed = true;
                 }
+
+                if let Some(health) = scan.repo_health {
+                    if self.repo_health_report.as_ref() != Some(&health) {
+                        self.repo_health_report = Some(health);
+                        changed = true;
+                    }
+                }
+
+                if let Some(remote) = scan.remote_tracking {
+                    if self.git_remote_info.as_ref() != Some(&remote) {
+                        self.git_remote_info = Some(remote);
+                        changed = true;
+                    }
+                }
             }
 
             let live_dir = hadron_lattice::live::live_dir(&self.path);
@@ -337,6 +365,14 @@ impl super::Chamber {
 
             if self.toast_manager.prune(std::time::Instant::now()) {
                 changed = true;
+            }
+
+            if self.right_rail_tab == RightRailTab::Git
+                && self.git_subtab == GitSubtab::Remote
+                && self.github_issues.is_none()
+                && self.github_status_msg.is_none()
+            {
+                self.refresh_remote_and_github(cx);
             }
 
             if changed {

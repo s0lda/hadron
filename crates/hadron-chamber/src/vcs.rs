@@ -987,6 +987,230 @@ pub fn init_repository(repo_root: &Path) -> anyhow::Result<String> {
     }
 }
 
+/// Detailed tracking of the local repo against its remote upstream.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RemoteTrackingInfo {
+    pub remote_name: String,
+    pub remote_url: String,
+    pub repo_slug: Option<String>,
+    pub current_branch: String,
+    pub tracking_branch: Option<String>,
+    pub ahead: usize,
+    pub behind: usize,
+    pub is_github: bool,
+}
+
+/// Metadata for an open GitHub issue.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GitHubIssueInfo {
+    pub number: u64,
+    pub title: String,
+    pub author: String,
+    pub state: String,
+    pub url: String,
+    pub created_at: String,
+}
+
+/// Metadata for an open GitHub pull request.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GitHubPrInfo {
+    pub number: u64,
+    pub title: String,
+    pub author: String,
+    pub state: String,
+    pub url: String,
+    pub head_branch: String,
+}
+
+/// Extracts repository slug (owner/repo) from an HTTP, SSH, or git remote URL.
+pub fn parse_repo_slug_from_url(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Handle SSH format: git@github.com:owner/repo.git or user@host:owner/repo.git
+    if let Some((_host, path)) = trimmed.split_once(':') {
+        if !trimmed.contains("://") {
+            let clean_path = path.trim_end_matches(".git").trim_start_matches('/');
+            let parts: Vec<&str> = clean_path.split('/').filter(|s| !s.is_empty()).collect();
+            if parts.len() >= 2 {
+                return Some(format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1]));
+            }
+        }
+    }
+    // Handle URL format: https://github.com/owner/repo.git or ssh://git@github.com/owner/repo.git
+    if let Some(pos) = trimmed.find("://") {
+        let after_scheme = &trimmed[pos + 3..];
+        if let Some((_host, path)) = after_scheme.split_once('/') {
+            let clean_path = path.trim_end_matches(".git").trim_start_matches('/');
+            let parts: Vec<&str> = clean_path.split('/').filter(|s| !s.is_empty()).collect();
+            if parts.len() >= 2 {
+                return Some(format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1]));
+            }
+        }
+    }
+    None
+}
+
+/// Parse ahead and behind numbers from `git rev-list --left-right --count A...B`.
+pub fn parse_ahead_behind(output: &str) -> (usize, usize) {
+    let parts: Vec<&str> = output.split_whitespace().collect();
+    if parts.len() >= 2 {
+        let ahead = parts[0].parse().unwrap_or(0);
+        let behind = parts[1].parse().unwrap_or(0);
+        (ahead, behind)
+    } else {
+        (0, 0)
+    }
+}
+
+/// Query local git configuration and rev-list to get upstream tracking info for `repo_root`.
+pub fn get_remote_tracking_info(repo_root: &Path) -> RemoteTrackingInfo {
+    let mut remote_url = run_git(repo_root, &["remote", "get-url", "origin"]).trim().to_string();
+    let mut remote_name = "origin".to_string();
+    if remote_url.is_empty() {
+        let remotes = run_git(repo_root, &["remote"]);
+        if let Some(first) = remotes.lines().next() {
+            let first = first.trim();
+            if !first.is_empty() {
+                remote_name = first.to_string();
+                remote_url = run_git(repo_root, &["remote", "get-url", first]).trim().to_string();
+            }
+        }
+    }
+
+    let repo_slug = parse_repo_slug_from_url(&remote_url);
+    let is_github = remote_url.contains("github.com");
+
+    let current_branch = run_git(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"]).trim().to_string();
+    let mut tracking_branch = run_git(repo_root, &["rev-parse", "--abbrev-ref", "@{u}"]).trim().to_string();
+    if tracking_branch.is_empty() || tracking_branch.contains("@{u}") {
+        let check_origin_main = run_git(repo_root, &["rev-parse", "--verify", "origin/main"]);
+        if !check_origin_main.trim().is_empty() {
+            tracking_branch = "origin/main".to_string();
+        } else {
+            let check_origin_master = run_git(repo_root, &["rev-parse", "--verify", "origin/master"]);
+            if !check_origin_master.trim().is_empty() {
+                tracking_branch = "origin/master".to_string();
+            } else {
+                tracking_branch = String::new();
+            }
+        }
+    }
+
+    let (ahead, behind) = if !tracking_branch.is_empty() {
+        let rev_list = run_git(repo_root, &["rev-list", "--left-right", "--count", &format!("HEAD...{tracking_branch}")]);
+        parse_ahead_behind(&rev_list)
+    } else {
+        (0, 0)
+    };
+
+    RemoteTrackingInfo {
+        remote_name,
+        remote_url,
+        repo_slug,
+        current_branch,
+        tracking_branch: if tracking_branch.is_empty() { None } else { Some(tracking_branch) },
+        ahead,
+        behind,
+        is_github,
+    }
+}
+
+/// Fetch open GitHub issues via the `gh` CLI in `repo_root`.
+pub fn fetch_github_issues(repo_root: &Path) -> Result<Vec<GitHubIssueInfo>, String> {
+    let output = Command::new("gh")
+        .current_dir(repo_root)
+        .args(["issue", "list", "--limit", "25", "--json", "number,title,author,state,url,createdAt"])
+        .output();
+
+    let output = match output {
+        Ok(out) => out,
+        Err(e) => {
+            return Err(format!("GitHub CLI (`gh`) execution failed: {e}"));
+        }
+    };
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if err.is_empty() { "gh returned non-zero exit status".to_string() } else { err });
+    }
+
+    #[derive(serde::Deserialize)]
+    struct RawAuthor {
+        login: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawIssue {
+        number: u64,
+        title: String,
+        author: Option<RawAuthor>,
+        state: Option<String>,
+        url: Option<String>,
+        #[serde(rename = "createdAt")]
+        created_at: Option<String>,
+    }
+
+    let raw: Vec<RawIssue> = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse gh output: {e}"))?;
+
+    Ok(raw.into_iter().map(|i| GitHubIssueInfo {
+        number: i.number,
+        title: i.title,
+        author: i.author.and_then(|a| a.login).unwrap_or_else(|| "ghost".to_string()),
+        state: i.state.unwrap_or_else(|| "OPEN".to_string()),
+        url: i.url.unwrap_or_default(),
+        created_at: i.created_at.map(|d| d.chars().take(10).collect()).unwrap_or_default(),
+    }).collect())
+}
+
+/// Fetch open GitHub pull requests via the `gh` CLI in `repo_root`.
+pub fn fetch_github_prs(repo_root: &Path) -> Result<Vec<GitHubPrInfo>, String> {
+    let output = Command::new("gh")
+        .current_dir(repo_root)
+        .args(["pr", "list", "--limit", "25", "--json", "number,title,author,state,url,headRefName"])
+        .output();
+
+    let output = match output {
+        Ok(out) => out,
+        Err(e) => {
+            return Err(format!("GitHub CLI (`gh`) execution failed: {e}"));
+        }
+    };
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if err.is_empty() { "gh returned non-zero exit status".to_string() } else { err });
+    }
+
+    #[derive(serde::Deserialize)]
+    struct RawAuthor {
+        login: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawPr {
+        number: u64,
+        title: String,
+        author: Option<RawAuthor>,
+        state: Option<String>,
+        url: Option<String>,
+        #[serde(rename = "headRefName")]
+        head_ref_name: Option<String>,
+    }
+
+    let raw: Vec<RawPr> = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse gh output: {e}"))?;
+
+    Ok(raw.into_iter().map(|p| GitHubPrInfo {
+        number: p.number,
+        title: p.title,
+        author: p.author.and_then(|a| a.login).unwrap_or_else(|| "ghost".to_string()),
+        state: p.state.unwrap_or_else(|| "OPEN".to_string()),
+        url: p.url.unwrap_or_default(),
+        head_branch: p.head_ref_name.unwrap_or_default(),
+    }).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1017,6 +1241,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_parse_repo_slug_from_url_various_formats() {
+        assert_eq!(
+            parse_repo_slug_from_url("https://github.com/s0lda/hadron.git"),
+            Some("s0lda/hadron".to_string())
+        );
+        assert_eq!(
+            parse_repo_slug_from_url("https://github.com/s0lda/hadron"),
+            Some("s0lda/hadron".to_string())
+        );
+        assert_eq!(
+            parse_repo_slug_from_url("git@github.com:s0lda/hadron.git"),
+            Some("s0lda/hadron".to_string())
+        );
+        assert_eq!(
+            parse_repo_slug_from_url("ssh://git@github.com/s0lda/hadron.git"),
+            Some("s0lda/hadron".to_string())
+        );
+        assert_eq!(
+            parse_repo_slug_from_url("https://gitlab.com/group/project.git"),
+            Some("group/project".to_string())
+        );
+        assert_eq!(parse_repo_slug_from_url(""), None);
+        assert_eq!(parse_repo_slug_from_url("   "), None);
+    }
+
+    #[test]
+    fn test_parse_ahead_behind_formatting() {
+        assert_eq!(parse_ahead_behind("94\t82\n"), (94, 82));
+        assert_eq!(parse_ahead_behind("0 0"), (0, 0));
+        assert_eq!(parse_ahead_behind("12 0"), (12, 0));
+        assert_eq!(parse_ahead_behind("invalid"), (0, 0));
+    }
 
     #[test]
     fn parse_branches_flags_current_and_merged() {

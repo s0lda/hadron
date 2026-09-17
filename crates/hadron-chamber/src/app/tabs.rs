@@ -100,14 +100,16 @@ pub(super) enum GitSubtab {
     Worktrees,
     Graph,
     Diff3Way,
+    Remote,
 }
 
 impl GitSubtab {
-    pub(super) const ALL: [GitSubtab; 4] = [
+    pub(super) const ALL: [GitSubtab; 5] = [
         GitSubtab::Branches,
         GitSubtab::Worktrees,
         GitSubtab::Graph,
         GitSubtab::Diff3Way,
+        GitSubtab::Remote,
     ];
 
     pub(super) fn index(self) -> usize {
@@ -116,6 +118,7 @@ impl GitSubtab {
             GitSubtab::Worktrees => 1,
             GitSubtab::Graph => 2,
             GitSubtab::Diff3Way => 3,
+            GitSubtab::Remote => 4,
         }
     }
 
@@ -129,6 +132,7 @@ impl GitSubtab {
             GitSubtab::Worktrees => "Worktrees",
             GitSubtab::Graph => "Graph",
             GitSubtab::Diff3Way => "3-Way Diff",
+            GitSubtab::Remote => "Remote & Issues",
         }
     }
 }
