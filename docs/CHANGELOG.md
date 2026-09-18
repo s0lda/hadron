@@ -5,6 +5,34 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0] - 2026-09-18
+
+### Added
+- **Git Remote & Issues Inspector Rail (`hadron-chamber`, `hadron-gatekeeper`)**:
+  - **Dynamic Remote Tracking & Sync**: Added 5th subtab (`GitSubtab::Remote`, "Remote & Issues") in the Inspector Git rail showing commits ahead/behind `origin/main`, unpushed branches, and active workspace root dynamically resolved per project.
+  - **Local Health & Diagnostics**: Integrated live audit reporting uncommitted drift, stale/divergent quark worktrees, and nucleus memory health.
+  - **Live GitHub PRs & Issues**: Asynchronously queries open pull requests and issues via the authenticated `gh` CLI with formatted labels, authors, issue numbers, and click-to-open links.
+  - **Interactive Titlebar Status Badges**: Added clickable titlebar pills for `Repo: <Status>` and `GitHub: <Sync/Issues>` with instantaneous navigation into the Remote inspector tab.
+- **Autonomous Headless Swarm Runner (`hadron-chamber`)**:
+  - **Standalone Batch Runner**: Implemented `hadron run "<prompt>"` and `hadron ci --plan <path>` CLI entrypoints in `hadron-chamber::headless_runner` executing multi-turn swarm workflows without GUI dependencies.
+  - **Deterministic Exit Status**: Exits with code `0` on completed plans and non-zero on blockers or unrecoverable gate failures, enabling automated CI/CD pipelines.
+- **Speculative Merge Pre-Testing (`hadron-gluon`)**:
+  - **Asynchronous Shadow Gate**: Pre-tests worktree HEAD asynchronously prior to turn completion (`hadron_gluon::engine::shadow_gate`), slashing merge landing turnaround by pre-warming compilation caches and verifying suites in the background.
+  - **Speculative Result Caching**: Stores verified SHA test results so the merge gate skips redundant re-testing when worktree HEAD is already green.
+- **AST-Aware Rebase Healer (`hadron-gluon`)**:
+  - **Structural 3-Way AST Conflict Healer**: Detects merge/rebase conflicts and repairs non-overlapping abstract syntax tree modifications (`hadron_gluon::merge::ast_healer`) when concurrent quark turns land on `main`.
+- **Sliding Context Window Pruning (`hadron-gluon`)**:
+  - **Background Turn Summarization**: Periodically compacts older `field.jsonl` turns into nucleus digests (`hadron_gluon::sliding_pruner`), preventing context blowup while maximizing prompt cache hit rates.
+- **Tiled Multi-PTY Terminal Panes (`hadron-chamber`)**:
+  - **Responsive Terminal Split Modes**: Added horizontal, vertical, and 2x2 grid split layouts (`hadron_chamber::app::render::pty_grid`) in Chamber's GPUI terminal tabs for concurrent background process monitoring.
+- **Continuous Repo Monitor & Nucleus Integrity Linter (`hadron-gatekeeper`, `hadron-chamber`)**:
+  - **Repo Monitor Diagnostics**: Background engine auditing drift, stale worktrees, and memory integrity (`hadron_gatekeeper::repo_monitor`), configurable via Settings → Execution.
+  - **Nucleus Integrity Linter**: Automated health checker (`hadron_gatekeeper::nucleus_linter`) auditing broken wiki-links, orphaned notes, and strict compliance with the 32 KiB prompt budget.
+
+### Fixed
+- **Long-Running Turn Timeout Diagnostics (`hadron-gluon`)**:
+  - Isolated and distilled print timeout constraints preventing silent empty turns during large batch executions (`notes/print-timeout-produces-empty-completed-turn.md`).
+
 ## [0.24.1] - 2026-09-16
 
 ### Fixed

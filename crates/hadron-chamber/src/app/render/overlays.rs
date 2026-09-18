@@ -20,6 +20,24 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.25.0",
+        date: Some("2026-09-18"),
+        added: &[
+            "Git Remote & Issues Inspector: New 'Remote & Issues' subtab in Inspector Git rail with ahead/behind sync tracking, local health diagnostics, and live GitHub PRs/Issues",
+            "Interactive Titlebar Status: Clickable Repo Health and GitHub Sync/Issue count status pills in Chamber titlebar with 1-click drill-down",
+            "Headless Swarm Runner: Standalone CLI batch runner (`hadron run \"<prompt>\"` and `hadron ci --plan <path>`) for CI/CD automation without GPUI",
+            "Speculative Merge Pre-Testing: Async shadow gate test runner and result caching eliminating merge landing lag on worktree turns",
+            "AST-Aware Rebase Healer: Structural conflict resolution for concurrent worktree rebases across non-overlapping AST changes",
+            "Sliding Context Window Pruning: Background turn summarizer preserving prompt cache hits without context blowup",
+            "Tiled PTY Terminal Panes: Horizontal, vertical, and 2x2 grid split layouts in Chamber GPUI terminal tabs",
+            "Repo Monitor & Nucleus Linter: Continuous background repo health checks and nucleus integrity diagnostics (orphans, broken links, 32 KiB budget)",
+        ],
+        changed: &[],
+        fixed: &[
+            "Gracefully handle long-running turn timeouts and ensure prompt timeout notes prevent silent empty completion loops",
+        ],
+    },
+    Release {
         version: "0.24.1",
         date: Some("2026-09-16"),
         added: &[],

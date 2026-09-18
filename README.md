@@ -35,6 +35,7 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 - ⚡ **Native GPUI Desktop App**: Lightning-fast GPU-accelerated UI with multi-tab PTY terminals, interactive git commit graph, live plan tracking, interactive 3D cosmic swarm visualizer, native interactive Mermaid diagram rendering, robust color emoji font fallbacks, and real-time multi-protocol token telemetry.
 - 🛠️ **Hadron Forge & Next-Gen Swarm Capabilities**: Target cache isolation & hardlink CoW mesh, synchronous fast-path peer micro-RPC bus, inotify-backed tree guard, dynamic context budget auto-governor, diagnostic /proc watchdog probe, in-process micro-filesystem transactions, resident Rust-Analyzer / LSP daemon, semantic test failure minimizer, transport secret scrubber, pre-turn baseline health snapshotter, sub-channel audio intercom, synthetic mock synthesizer, architectural time-lapse generator, human intent drift radar, pair-quarking mode, idle maintenance dream daemon, bespoke persona customizer, Quark personal telemetry home dashboard, live GPUI vector canvas preview, force-directed nucleus graph engine, AST-level precision code edits via `blake3` hashes, Lattice turn rewind and time-travel, mutation testing gate, benchmark regression guard, spatial architecture topology graph, visual task DAG scheduler, preon dynamic evolution, swarm prompt distiller, hybrid swarm container mesh, interactive multi-quark PTY pairing, dynamic tool breakpoints, blast radius analyzer, automated git bisection, wiretap protocol monitor, AST structural rewrite, secret vault proxy, flamegraph CPU/memory profiler, property fuzz harness, nucleus graph analyzer, binary bloat inspector, release sync, headless DAP runtime debugger, diagnostic & trace slicer, deterministic network VCR, atomic worktree micro-checkpointing, headless profiler runner, background process supervisor, 3-tier polyglot LSP, browser testing, jailed screenshots, and local SQLite engine.
 - 🧠 **Persistent Nucleus Memory & Universal Absorption**: Cross-session shared memory within a configurable budget (16/32/64/128 KiB), plus `/absorb` to seamlessly import memories, invariants, skills, and plans from `.agents/`, `.claude/`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`, and many more.
+- 🤖 **Autonomous Headless Swarm Runner**: Standalone non-interactive CLI runner (`hadron run` / `hadron ci`) for CI/CD automation, speculative shadow pre-testing, AST-aware rebase healing, and tiled multi-PTY terminals.
 - 🎯 **Autonomous Swarm Control**: Built-in slash commands (`/goal`, `/loop`, `/absorb`, `/release`, `/git-init`, `/resume`, `/clear`, `/home`, `/canvas`, `/intercom`, `/dream`, `/timelapse`, `/radar`, `/baseline`) and 25 bundled workflow & engineering skills (TDD, security review, architecture audit, systematic debugging, design specs).
 
 ---
@@ -59,6 +60,10 @@ cargo install --locked --git https://github.com/s0lda/hadron.git hadron
 ```bash
 # Open or create a swarm workspace in your project directory
 cd ~/dev/my_project && hadron
+
+# Or execute headlessly in CI / terminal batch mode
+hadron run "Implement user authentication with tests"
+hadron ci --plan .hadron/docs/plans/2026-09-16-next-gen-seven-capabilities.md
 ```
 
 ---
