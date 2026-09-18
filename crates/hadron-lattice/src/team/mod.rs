@@ -19,7 +19,7 @@ mod tests;
 
 pub use transport::{Transport, AcpCommand, PromptChannel, ResumeMode, TimeoutArg, PostureMap, CliProbeSpec, CliSpec, StreamSpec, StreamFormat};
 pub use seat::{ExternalRootSpec, ModelParams, Seat, SeatCommands, SeatOverride};
-pub use io::{parse_team, load_team, save_team, team_config_path, team_for_field, user_hadron_dir};
+pub use io::{parse_team, load_team, save_team, team_config_path, team_for_field, team_for_repo, load_team_for_repo, user_hadron_dir};
 pub use migrate::{migrate_to_catalogue, seat_override_delta, orphan_overrides, legacy_id_renames, rename_legacy_ids, id_follows_convention};
 
 pub(crate) use seat::is_false;
@@ -114,6 +114,16 @@ impl Team {
     /// Whether git worktrees should be automatically pruned on merge/abandonment.
     pub fn git_auto_prune_worktrees(&self) -> bool {
         self.git_auto_prune_worktrees.unwrap_or(true)
+    }
+
+    /// Resolve this project's nucleus index budget, in bytes, from repo policy
+    /// (`Team::nucleus_index_budget_kb`). Absent or `0` falls back to
+    /// [`crate::DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES`].
+    pub fn nucleus_index_budget_bytes(&self) -> usize {
+        self.nucleus_index_budget_kb
+            .filter(|&kb| kb > 0)
+            .map(|kb| kb * 1024)
+            .unwrap_or(crate::DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES)
     }
 }
 

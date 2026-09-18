@@ -72,7 +72,7 @@ impl RepoMonitor {
         if !nucleus_dir.exists() {
             return 0;
         }
-        let linter = crate::nucleus_linter::NucleusIntegrityLinter::default_budget();
+        let linter = crate::nucleus_linter::NucleusIntegrityLinter::for_repo(repo_root);
         let report = linter.lint(&nucleus_dir);
         let mut issues = 0;
         if report.budget_exceeded {
@@ -88,6 +88,8 @@ impl RepoMonitor {
         let has_cargo_lock_drift = Self::check_cargo_lock_drift(repo_root);
         let stale_worktrees = Self::check_stale_worktrees(repo_root);
         let nucleus_dir = repo_root.join(".hadron").join("nucleus");
+        let team = hadron_lattice::load_team_for_repo(repo_root);
+        let budget = team.nucleus_index_budget_bytes();
         let (
             nucleus_issues,
             nucleus_broken_links,
@@ -96,7 +98,7 @@ impl RepoMonitor {
             nucleus_index_bytes,
             nucleus_index_budget,
         ) = if nucleus_dir.exists() {
-            let linter = crate::nucleus_linter::NucleusIntegrityLinter::default_budget();
+            let linter = crate::nucleus_linter::NucleusIntegrityLinter::new(budget);
             let report = linter.lint(&nucleus_dir);
             let mut issues = 0;
             if report.budget_exceeded {
@@ -119,7 +121,7 @@ impl RepoMonitor {
                 Vec::new(),
                 false,
                 0,
-                crate::nucleus_linter::NucleusIntegrityLinter::DEFAULT_INDEX_BUDGET,
+                budget,
             )
         };
         let healthy = !has_cargo_lock_drift && stale_worktrees.is_empty() && nucleus_issues == 0;
@@ -197,5 +199,28 @@ mod tests {
         assert!(report.nucleus_issues > 0);
         assert_eq!(report.nucleus_broken_links, vec!["notes/broken.md".to_string()]);
         assert!(report.nucleus_index_bytes > 0);
+    }
+
+    #[test]
+    fn test_repo_monitor_respects_custom_team_budget() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let hadron_dir = root.join(".hadron");
+        let nucleus = hadron_dir.join("nucleus");
+        std::fs::create_dir_all(&nucleus).unwrap();
+
+        // Write team.json with 64 KiB budget
+        let team_json = r#"{"quarks":[],"nucleus_index_budget_kb":64}"#;
+        std::fs::write(hadron_dir.join("team.json"), team_json).unwrap();
+
+        // Write 40 KB index.md (exceeds default 32 KB, but under 64 KB)
+        let big_index = "A".repeat(40 * 1024);
+        std::fs::write(nucleus.join("index.md"), big_index).unwrap();
+
+        let report = RepoMonitor::check_repo(root);
+        assert_eq!(report.nucleus_index_budget, 64 * 1024);
+        assert!(!report.nucleus_budget_exceeded);
+        assert_eq!(report.nucleus_issues, 0);
+        assert!(report.is_healthy());
     }
 }

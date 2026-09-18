@@ -1717,32 +1717,71 @@ impl super::Chamber {
                 card = card.child(stale_row);
 
                 // Nucleus Item
-                let nucleus_row = v_flex()
-                    .gap_1()
+                let nucleus_status = h_flex()
+                    .gap_2()
+                    .items_center()
+                    .text_xs()
+                    .child(Icon::new(if report.nucleus_issues > 0 {
+                        IconName::Info
+                    } else {
+                        IconName::CircleCheck
+                    }).small())
                     .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .text_xs()
-                            .child(Icon::new(if report.nucleus_issues > 0 {
-                                IconName::Info
+                        div()
+                            .text_color(if report.nucleus_issues > 0 {
+                                theme::accent()
                             } else {
-                                IconName::CircleCheck
-                            }).small())
-                            .child(
-                                div()
-                                    .text_color(if report.nucleus_issues > 0 {
-                                        theme::accent()
-                                    } else {
-                                        theme::text()
-                                    })
-                                    .child(if report.nucleus_issues > 0 {
-                                        format!("Nucleus issues: {} alert(s)", report.nucleus_issues)
-                                    } else {
-                                        "Nucleus intact (index and lessons in sync)".to_string()
-                                    }),
-                            ),
+                                theme::text()
+                            })
+                            .child(if report.nucleus_issues > 0 {
+                                format!("Nucleus issues: {} alert(s)", report.nucleus_issues)
+                            } else {
+                                "Nucleus intact (index and lessons in sync)".to_string()
+                            }),
                     );
+
+                let mut nucleus_header = h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .child(nucleus_status);
+
+                if report.nucleus_issues > 0 {
+                    let orphans_count = report.nucleus_orphaned_notes.len();
+                    let broken_count = report.nucleus_broken_links.len();
+                    nucleus_header = nucleus_header.child(
+                        h_flex()
+                            .id("dispatch-nucleus-fix")
+                            .gap_1p5()
+                            .items_center()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(theme::bg_surface_raised())
+                            .border_1()
+                            .border_color(theme::border())
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(theme::accent())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme::accent_soft()))
+                            .child(Icon::new(IconName::Bot).small())
+                            .child("Dispatch Fix")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.chat_tab = ChatTab::Chat;
+                                this.post_chat_message(
+                                    Actor::Human,
+                                    format!(
+                                        "@orchestrator /memory-curation Repair nucleus integrity: audit .hadron/nucleus, index {} orphan note(s), prune {} broken link(s), and ensure budget constraints.",
+                                        orphans_count, broken_count
+                                    ),
+                                    cx,
+                                );
+                            })),
+                    );
+                }
+
+                let nucleus_row = v_flex().w_full().gap_1().child(nucleus_header);
 
                 let mut nucleus_details = v_flex().pl_5().gap_0p5().text_xs().text_color(theme::text_muted());
                 if report.nucleus_index_bytes > 0 {

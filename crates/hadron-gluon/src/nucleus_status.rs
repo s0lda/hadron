@@ -18,10 +18,7 @@ pub use hadron_lattice::DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES as BUDGET_BYTES;
 /// `0` is treated as "not set" rather than "no budget at all", the same tolerance
 /// `max_exchanges` gives a hand-edited `0`.
 pub fn resolve_budget_bytes(team: &Team) -> usize {
-    team.nucleus_index_budget_kb
-        .filter(|&kb| kb > 0)
-        .map(|kb| kb * 1024)
-        .unwrap_or(BUDGET_BYTES)
+    team.nucleus_index_budget_bytes()
 }
 
 /// Whether an index line names a lesson, in EITHER shape the index has had.

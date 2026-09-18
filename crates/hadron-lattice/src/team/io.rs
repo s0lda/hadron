@@ -54,6 +54,23 @@ pub fn team_for_field(field_path: &Path) -> Option<PathBuf> {
     team_config_path()
 }
 
+/// Resolve the `team.json` path for a given repository root. Checks `<repo_root>/.hadron/team.json`,
+/// then falls back to `team_config_path()` (`~/.hadron/team.json`).
+pub fn team_for_repo(repo_root: &Path) -> Option<PathBuf> {
+    let repo_team = repo_root.join(".hadron").join("team.json");
+    if repo_team.exists() {
+        return Some(repo_team);
+    }
+    team_config_path()
+}
+
+/// Load the configured team for a repository root, falling back to global or default team.
+pub fn load_team_for_repo(repo_root: &Path) -> Team {
+    team_for_repo(repo_root)
+        .map(|p| load_team(&p))
+        .unwrap_or_default()
+}
+
 /// Parse a team from JSON text, **keeping the error**.
 ///
 /// The one parser. The daemon re-reads `team.json` while the swarm is live and must
