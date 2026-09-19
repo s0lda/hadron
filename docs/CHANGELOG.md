@@ -5,6 +5,19 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.1] - 2026-09-19
+
+### Added
+- **Repo Monitor 1-Click Fix Action (`hadron-chamber`)**:
+  - Added an interactive one-click dispatch action in the Git Remote & Issues inspector allowing users to immediately trigger an automated cleanup and repair quark for broken wiki-links and orphaned nucleus notes.
+
+### Fixed
+- **Custom Nucleus Index Budget Support (`hadron-gatekeeper`, `hadron-lattice`)**:
+  - Dynamically resolves user-configured nucleus index budgets (`nucleus_index_budget_kb` in `.hadron/team.json`, e.g. 64 KiB) across `RepoMonitor` and `NucleusIntegrityLinter` instead of enforcing a hardcoded 32 KiB ceiling.
+- **Nucleus Integrity Linter False Positives (`hadron-gatekeeper`)**:
+  - Filtered out template placeholders (`notes/<slug>.md`) from broken link detection.
+  - Recognized cross-references in `.hadron/nucleus/invariants/always.md` so valid invariant rule notes are not falsely flagged as unindexed orphans.
+
 ## [0.25.0] - 2026-09-18
 
 ### Added

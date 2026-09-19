@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.25.1",
+        date: Some("2026-09-19"),
+        added: &[
+            "Repo Monitor Nucleus Fix Action: Interactive 1-click dispatch action in Git Remote & Issues inspector to fix broken links and prune orphaned memory notes",
+        ],
+        changed: &[],
+        fixed: &[
+            "Nucleus Index Budget Override: Respect custom user budget (e.g. 64 KiB) configured in .hadron/team.json across RepoMonitor and NucleusIntegrityLinter instead of hardcoded 32 KiB default",
+            "Nucleus Linter False Positives: Ignore template placeholders (<slug>) and recognize invariant cross-references in invariants/always.md during link and orphan validation",
+        ],
+    },
+    Release {
         version: "0.25.0",
         date: Some("2026-09-18"),
         added: &[
