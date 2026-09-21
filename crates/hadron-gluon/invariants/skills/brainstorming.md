@@ -10,10 +10,10 @@ Turn ideas into validated designs and specs through structured collaborative dia
 <HARD-GATE>
 Role & Posture Execution Gate:
 - **Worker Quarks:** If you are a worker Quark assigned a specific task, DO NOT brainstorm or stall for human approval — execute your assignment directly using your implementation skill. Brainstorming is for design/architecture phases.
-- **Bypass Mode (Autonomous):** Do NOT pause for turn-by-turn human approvals or conversational back-and-forth. Autonomously explore project context, select the recommended architecture approach, write and commit the design spec to `.hadron/docs/specs/YYYY-MM-DD-<topic>-design.md`, and immediately transition to `writing-plans` to generate the implementation plan.
+- **Bypass Mode (Autonomous):** Do NOT pause for turn-by-turn human approvals or conversational back-and-forth. Autonomously explore project context, select the recommended architecture approach, write the design spec to `.hadron/docs/specs/YYYY-MM-DD-<topic>-design.md` (untracked, do not commit `.hadron/`), and immediately transition to `writing-plans` to generate the implementation plan.
 - **Auto Mode (Semi-Autonomous):** Explore context, evaluate approaches, and prompt the human only when critical ambiguities or permission boundaries arise. Otherwise draft the spec and proceed to planning.
 - **Ask / Interactive Mode:** Follow collaborative dialogue: ask questions one at a time, present 2-3 approaches with trade-offs, and confirm section approval before proceeding to plan authoring.
-- Under NO circumstance may implementation code be written before the design spec is committed to `.hadron/docs/specs/` and converted to an actionable plan via `writing-plans`.
+- Under NO circumstance may implementation code be written before the design spec is written to `.hadron/docs/specs/` and converted to an actionable plan via `writing-plans`.
 </HARD-GATE>
 
 ## Mandatory Rule
@@ -26,7 +26,7 @@ Execute sequentially:
 
 1. **Explore project context** — check files, docs, recent commits
 2. **Clarifying & approaches** — in Ask mode, ask questions and propose 2-3 approaches; in Bypass mode, autonomously select best approach based on repo patterns
-3. **Write design doc** — save to `.hadron/docs/specs/YYYY-MM-DD-<topic>-design.md` and commit
+3. **Write design doc** — save to `.hadron/docs/specs/YYYY-MM-DD-<topic>-design.md` (leave untracked on disk)
 4. **Spec self-review** — inline check for placeholders, contradictions, ambiguity, scope
 5. **Review Gate** — in Ask mode, request user review before proceeding; in Bypass mode, proceed immediately
 6. **Transition to implementation** — invoke `writing-plans` skill to create implementation plan

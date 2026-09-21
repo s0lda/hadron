@@ -232,7 +232,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         if projection.mode == Mode::Bypass {
             p.push_str(
                 "**Autonomous Bypass Execution Loop:** You are in Bypass Mode. Drive the overall task to 100% completion autonomously:\n\
-                 1. **Plan State Update**: When a task is verified complete, update the active plan file on disk (`.hadron/docs/plans/*.md`) changing `- [ ]` to `- [x] Task N (commit <hash>)` and commit the edit.\n\
+                 1. **Plan State Update**: When a task is verified complete, update the active plan file on disk (`.hadron/docs/plans/*.md`) changing `- [ ]` to `- [x] Task N (commit <hash>)` (leave it on disk; do NOT commit `.hadron/` files).\n\
                  2. **Continuous Dispatch**: Immediately dispatch the next unchecked task (`- [ ]`) without pausing or asking the human for options.\n\
                  3. **Recover, don't ask**: A blocker you can fix inside your own worktree is NOT a reason to stop — a failed or stranded merge, a branch that did not land, a rebase conflict, a dirty tree: carry the commit forward onto THIS turn's branch and keep going. NEVER hand the human a menu of options or ask which path to take when you can settle it yourself; decide and proceed.\n\
                  4. **Autonomous Distillation (No Proposals)**: When discovering a non-obvious failure mode, invariant, or constraint, persist it directly to `.hadron/nucleus/` (`notes/<slug>.md` and `index.md`). Never generate proposal artifacts or pause for human approval before learning.\n\

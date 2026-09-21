@@ -63,7 +63,7 @@ cd ~/dev/my_project && hadron
 
 # Or execute headlessly in CI / terminal batch mode
 hadron run "Implement user authentication with tests"
-hadron ci --plan .hadron/docs/plans/2026-09-16-next-gen-seven-capabilities.md
+hadron ci --plan .hadron/docs/plans/<plan_name>
 ```
 
 ---
