@@ -97,6 +97,22 @@ impl ForgeMcpServer {
         root_path: impl Into<std::path::PathBuf>,
         nucleus_root: impl Into<std::path::PathBuf>,
     ) -> Self {
+        Self::with_filter(root_path, nucleus_root, pruning::ToolFilter::all())
+    }
+
+    pub fn with_skill(
+        root_path: impl Into<std::path::PathBuf>,
+        nucleus_root: impl Into<std::path::PathBuf>,
+        skill: &str,
+    ) -> Self {
+        Self::with_filter(root_path, nucleus_root, pruning::ToolFilter::from_skill(skill))
+    }
+
+    pub fn with_filter(
+        root_path: impl Into<std::path::PathBuf>,
+        nucleus_root: impl Into<std::path::PathBuf>,
+        filter: pruning::ToolFilter,
+    ) -> Self {
         let root = Root::new(root_path);
         let nucleus_root = Root::new(nucleus_root);
         let process_manager = ProcessManager::new(root.clone());
@@ -104,57 +120,81 @@ impl ForgeMcpServer {
         let mock_manager = MockServerManager::new();
         let vcr_manager = VcrProxyManager::new();
         let dap_manager = DapSessionManager::new();
-        Self {
-            tool_router: Self::edit_router()
-                + Self::exec_router()
-                + Self::inspect_router()
+
+        let mut tool_router = Self::edit_router()
+            + Self::exec_router()
+            + Self::inspect_router()
+            + Self::git_router();
+
+        if filter.categories.contains(&pruning::ToolCategory::Nucleus) {
+            tool_router = tool_router
                 + Self::nucleus_router()
-                + Self::git_router()
+                + Self::nucleus_lint_router()
+                + Self::nucleus_graph_router();
+        }
+        if filter.categories.contains(&pruning::ToolCategory::Diagnostics) {
+            tool_router = tool_router
                 + Self::diagnostics_router()
                 + Self::cargo_tree_router()
-                + Self::process_router()
                 + Self::semantic_router()
                 + Self::symbols_router()
+                + Self::trace_slicer_router();
+        }
+        if filter.categories.contains(&pruning::ToolCategory::Debugger) {
+            tool_router = tool_router
+                + Self::dap_router()
+                + Self::breakpoints_router()
+                + Self::vcr_router();
+        }
+        if filter.categories.contains(&pruning::ToolCategory::Profiling) {
+            tool_router = tool_router
+                + Self::flamegraph_router()
+                + Self::profile_runner_router()
+                + Self::binary_bloat_router()
+                + Self::benchmark_guard_router();
+        }
+        if filter.categories.contains(&pruning::ToolCategory::Swarm) {
+            tool_router = tool_router
+                + Self::peers_router()
+                + Self::topology_router()
+                + Self::mesh_router()
+                + Self::gate_router()
+                + Self::task_scheduler_router();
+        }
+        if filter.categories.contains(&pruning::ToolCategory::Web) {
+            tool_router = tool_router
                 + Self::browser_router()
                 + Self::screenshot_router()
-                + Self::pty_router()
-                + Self::mock_router()
-                + Self::sqlite_router()
-                + Self::gate_router()
-                + Self::peers_router()
-                + Self::nucleus_lint_router()
-                + Self::spec_router()
-                + Self::e2e_router()
                 + Self::preview_router()
-                + Self::scaffold_router()
-                + Self::security_audit_router()
-                + Self::watchdog_router()
-                + Self::blast_radius_router()
-                + Self::git_bisect_router()
-                + Self::wiretap_router()
-                + Self::ast_rewrite_router()
-                + Self::secret_vault_router()
-                + Self::flamegraph_router()
-                + Self::fuzz_harness_router()
-                + Self::nucleus_graph_router()
-                + Self::binary_bloat_router()
-                + Self::release_sync_router()
-                + Self::time_travel_router()
-                + Self::mutation_router()
-                + Self::benchmark_guard_router()
-                + Self::topology_router()
-                + Self::task_scheduler_router()
-                + Self::preon_evolution_router()
-                + Self::prompt_distiller_router()
-                + Self::mesh_router()
-                + Self::pty_pairing_router()
-                + Self::breakpoints_router()
-                + Self::research_router()
-                + Self::trace_slicer_router()
-                + Self::tree_checkpoint_router()
-                + Self::vcr_router()
-                + Self::profile_runner_router()
-                + Self::dap_router(),
+                + Self::e2e_router();
+        }
+
+        tool_router = tool_router
+            + Self::process_router()
+            + Self::pty_router()
+            + Self::mock_router()
+            + Self::sqlite_router()
+            + Self::spec_router()
+            + Self::scaffold_router()
+            + Self::security_audit_router()
+            + Self::watchdog_router()
+            + Self::blast_radius_router()
+            + Self::git_bisect_router()
+            + Self::wiretap_router()
+            + Self::ast_rewrite_router()
+            + Self::secret_vault_router()
+            + Self::fuzz_harness_router()
+            + Self::release_sync_router()
+            + Self::time_travel_router()
+            + Self::mutation_router()
+            + Self::preon_evolution_router()
+            + Self::prompt_distiller_router()
+            + Self::pty_pairing_router()
+            + Self::research_router()
+            + Self::tree_checkpoint_router();
+
+        Self {
+            tool_router,
             root,
             nucleus_root,
             process_manager,

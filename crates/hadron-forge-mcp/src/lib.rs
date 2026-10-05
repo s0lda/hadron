@@ -17,16 +17,22 @@ use tools::ForgeMcpServer;
 /// <dir>` may appear anywhere and each grants ONE directory outside the root — read-only
 /// and read-write respectively. With none given the jail is exactly what it always was.
 pub async fn run() -> Result<()> {
-    let (positional, external) = parse_args(env::args().skip(1));
+    let (positional, external, skill) = parse_args(env::args().skip(1));
 
     let root_path = match positional.first() {
         Some(p) => PathBuf::from(p),
         None => env::current_dir().context("Failed to get current directory")?,
     };
 
-    let server = match positional.get(1) {
-        Some(nucleus) => ForgeMcpServer::with_nucleus(root_path, PathBuf::from(nucleus)),
-        None => ForgeMcpServer::new(root_path),
+    let server = match (positional.get(1), skill.as_deref()) {
+        (Some(nucleus), Some(sk)) => ForgeMcpServer::with_skill(root_path, PathBuf::from(nucleus), sk),
+        (Some(nucleus), None) => ForgeMcpServer::with_nucleus(root_path, PathBuf::from(nucleus)),
+        (None, Some(sk)) => {
+            let nucleus = hadron_forge::nucleus::derive_nucleus_root(&root_path)
+                .unwrap_or_else(|_| hadron_forge::file::Root::new(root_path.join(".hadron").join("nucleus")));
+            ForgeMcpServer::with_skill(root_path, nucleus.path(), sk)
+        }
+        (None, None) => ForgeMcpServer::new(root_path),
     };
     let server = server.allowing_external(external);
 
@@ -35,16 +41,21 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-/// Split argv into positionals and granted external roots.
+/// Split argv into positionals, granted external roots, and optional active skill filter.
 ///
 /// A granted root that does not exist on disk is **reported and dropped**, never fatal:
 /// a stale entry in `team.json` must not stop a quark's whole tool surface from booting,
 /// and dropping it fails closed (the path simply stays unreachable).
-fn parse_args(args: impl Iterator<Item = String>) -> (Vec<String>, Vec<ExternalRoot>) {
+fn parse_args(args: impl Iterator<Item = String>) -> (Vec<String>, Vec<ExternalRoot>, Option<String>) {
     let mut positional = Vec::new();
     let mut external = Vec::new();
+    let mut skill = None;
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
+        if arg == "--skill" {
+            skill = args.next();
+            continue;
+        }
         let access = match arg.as_str() {
             "--external-root" => ExternalAccess::ReadOnly,
             "--external-root-rw" => ExternalAccess::ReadWrite,
@@ -62,7 +73,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> (Vec<String>, Vec<ExternalR
             Err(e) => eprintln!("[forge] ignoring external root {path:?}: {e}"),
         }
     }
-    (positional, external)
+    (positional, external, skill)
 }
 
 #[cfg(test)]
@@ -71,16 +82,17 @@ mod tests {
 
     #[test]
     fn no_flags_grants_nothing_and_keeps_both_positionals() {
-        let (pos, ext) = parse_args(["/root".to_string(), "/nucleus".to_string()].into_iter());
+        let (pos, ext, sk) = parse_args(["/root".to_string(), "/nucleus".to_string()].into_iter());
         assert_eq!(pos, vec!["/root".to_string(), "/nucleus".to_string()]);
         assert!(ext.is_empty());
+        assert_eq!(sk, None);
     }
 
     #[test]
     fn a_granted_root_is_parsed_with_its_access_and_positionals_survive() {
         let dir = tempfile::tempdir().unwrap();
         let rw = tempfile::tempdir().unwrap();
-        let (pos, ext) = parse_args(
+        let (pos, ext, sk) = parse_args(
             [
                 "/root".to_string(),
                 "--external-root".to_string(),
@@ -94,19 +106,23 @@ mod tests {
         assert_eq!(ext.len(), 2);
         assert_eq!(ext[0].access(), ExternalAccess::ReadOnly);
         assert_eq!(ext[1].access(), ExternalAccess::ReadWrite);
+        assert_eq!(sk, None);
     }
 
     #[test]
     fn a_root_that_does_not_exist_is_dropped_not_fatal() {
-        let (pos, ext) = parse_args(
+        let (pos, ext, sk) = parse_args(
             [
                 "/root".to_string(),
                 "--external-root".to_string(),
                 "/no-such-dir-hadron".to_string(),
+                "--skill".to_string(),
+                "writing-plans".to_string(),
             ]
             .into_iter(),
         );
         assert_eq!(pos, vec!["/root".to_string()]);
         assert!(ext.is_empty(), "a missing root must fail closed, not open");
+        assert_eq!(sk, Some("writing-plans".to_string()));
     }
 }
