@@ -55,6 +55,7 @@ pub mod tree_checkpoint;
 pub mod vcr;
 pub mod profile_runner;
 pub mod dap;
+pub mod pruning;
 
 use hadron_forge::file::Root;
 use hadron_forge::mock::MockServerManager;
