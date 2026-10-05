@@ -146,14 +146,52 @@ pub fn detect_runner(worktree_path: &Path) -> (&'static str, &'static [&'static 
     }
 }
 
-/// The production runner: `cargo test --workspace` and a local `--ff-only` merge.
+/// Slices the test command down to only affected crates if a subset of workspace
+/// crates was modified, otherwise falling back to the full workspace test suite.
+pub fn detect_affected_runner(worktree_path: &Path, base: &str) -> (&'static str, Vec<String>) {
+    if !worktree_path.join("Cargo.toml").is_file() {
+        let (p, args) = detect_runner(worktree_path);
+        return (p, args.iter().map(|s| s.to_string()).collect());
+    }
+    let diff_files = match git_ok(
+        worktree_path,
+        &["diff", "--name-only", &format!("{base}...HEAD")],
+    ) {
+        Ok(Some(out)) => out
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    let file_refs: Vec<&str> = diff_files.iter().map(|s| s.as_str()).collect();
+    match hadron_forge::ast_blast_radius::AstBlastRadiusAnalyzer::find_affected_crates(&file_refs) {
+        hadron_forge::ast_blast_radius::AffectedCratesResult::Specific(crates) => {
+            let mut args = vec!["test".to_string()];
+            for c in crates {
+                args.push("-p".to_string());
+                args.push(c);
+            }
+            ("cargo", args)
+        }
+        hadron_forge::ast_blast_radius::AffectedCratesResult::WorkspaceWide(_) => {
+            ("cargo", vec!["test".to_string(), "--workspace".to_string()])
+        }
+    }
+}
+
+/// The production runner: `cargo test --workspace` (or affected slice) and a local `--ff-only` merge.
 pub struct CargoMergeRunner;
 
 #[async_trait]
 impl MergeRunner for CargoMergeRunner {
     async fn tests(&self, wt: &Worktree) -> anyhow::Result<(bool, String)> {
-        let (program, args) = detect_runner(&wt.path);
-        run_tests_with(wt, program, args).await
+        let base = crate::snapshot::main_repo_root(&wt.path)
+            .map(|r| crate::worktree::default_branch(&r))
+            .unwrap_or_else(|_| "main".to_string());
+        let (program, args) = detect_affected_runner(&wt.path, &base);
+        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        run_tests_with(wt, program, &arg_refs).await
     }
 
     fn land(&self, repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Landed> {
@@ -887,6 +925,24 @@ mod tests {
         std::fs::write(dir.path().join("Cargo.toml"), "[workspace]").unwrap();
         std::fs::write(dir.path().join("package.json"), "{}").unwrap();
         assert_eq!(detect_runner(dir.path()), ("cargo", &["test", "--workspace"][..]));
+    }
+
+    #[test]
+    fn test_detect_affected_runner_slicing() {
+        let repo = git_repo();
+        std::fs::write(repo.path().join("Cargo.toml"), "[workspace]\nmembers = [\"crates/*\"]\n").unwrap();
+        git(repo.path(), &["add", "Cargo.toml"]).unwrap();
+        git(repo.path(), &["commit", "-q", "-m", "init workspace"]).unwrap();
+
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01AFF").unwrap();
+        let crate_dir = wt.path.join("crates").join("hadron-chamber");
+        std::fs::create_dir_all(&crate_dir).unwrap();
+        std::fs::write(crate_dir.join("main.rs"), "fn main() {}\n").unwrap();
+        worktree::commit_turn(&wt, "opus: touched chamber").unwrap();
+
+        let (program, args) = detect_affected_runner(&wt.path, "main");
+        assert_eq!(program, "cargo");
+        assert_eq!(args, vec!["test".to_string(), "-p".to_string(), "hadron-chamber".to_string()]);
     }
 
     #[test]

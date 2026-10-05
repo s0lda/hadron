@@ -29,6 +29,44 @@ impl AstBlastRadiusAnalyzer {
         list.sort();
         list
     }
+
+    pub fn find_affected_crates(changed_files: &[&str]) -> AffectedCratesResult {
+        let mut crates = HashSet::new();
+        for file in changed_files {
+            let normalized = file.trim_start_matches("./");
+            if normalized == "Cargo.toml"
+                || normalized == "Cargo.lock"
+                || normalized.starts_with(".cargo")
+            {
+                return AffectedCratesResult::WorkspaceWide(format!(
+                    "Root build file changed: {normalized}"
+                ));
+            }
+            if let Some(rest) = normalized.strip_prefix("crates/") {
+                if let Some(crate_name) = rest.split('/').next() {
+                    crates.insert(crate_name.to_string());
+                    continue;
+                }
+            }
+            // Any change outside crates/ (or top-level file) triggers full workspace test
+            return AffectedCratesResult::WorkspaceWide(format!(
+                "Non-crate file changed: {normalized}"
+            ));
+        }
+        if crates.is_empty() {
+            AffectedCratesResult::WorkspaceWide("No specific crate changes detected".to_string())
+        } else {
+            let mut list: Vec<String> = crates.into_iter().collect();
+            list.sort();
+            AffectedCratesResult::Specific(list)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AffectedCratesResult {
+    Specific(Vec<String>),
+    WorkspaceWide(String),
 }
 
 #[cfg(test)]
@@ -43,5 +81,19 @@ mod tests {
 
         let impacted = analyzer.find_impacted_tests(&["PortMesh::allocate"]);
         assert_eq!(impacted, vec!["test_port_mesh".to_string()]);
+    }
+
+    #[test]
+    fn test_affected_crates_detection() {
+        let changed_single = vec!["crates/hadron-chamber/src/main.rs"];
+        let res = AstBlastRadiusAnalyzer::find_affected_crates(&changed_single);
+        assert_eq!(
+            res,
+            AffectedCratesResult::Specific(vec!["hadron-chamber".to_string()])
+        );
+
+        let changed_root = vec!["Cargo.toml", "crates/hadron-chamber/src/main.rs"];
+        let res_root = AstBlastRadiusAnalyzer::find_affected_crates(&changed_root);
+        assert!(matches!(res_root, AffectedCratesResult::WorkspaceWide(_)));
     }
 }
