@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.25.2",
+        date: Some("2026-10-05"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Rust 1.93 MSRV Enforcement: Declared rust-version = \"1.93\" across workspace manifests and documented toolchain requirements to resolve E0658 slice_as_array build errors (resolves GitHub Issue #2)",
+        ],
+    },
+    Release {
         version: "0.25.1",
         date: Some("2026-09-19"),
         added: &[

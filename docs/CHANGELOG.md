@@ -5,6 +5,13 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.2] - 2026-10-05
+
+### Fixed
+- **Rust 1.93 MSRV Enforcement Across Workspace (`hadron`, `docs`)**:
+  - Declared `rust-version = "1.93"` in workspace root `Cargo.toml` and inherited across all member crates (`hadron-chamber`, `hadron-gluon`, `hadron-lattice`, `hadron-forge`, `hadron-forge-mcp`, `hadron-gatekeeper`), ensuring cargo fails fast with clear errors instead of compile-time `E0658` on older toolchains lacking `slice_as_array` support (resolves GitHub Issue #2).
+  - Updated prerequisite documentation in `README.md` and `docs/development/building-from-source.md` to reflect Rust 1.93+.
+
 ## [0.25.1] - 2026-09-19
 
 ### Added
