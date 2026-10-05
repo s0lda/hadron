@@ -83,6 +83,34 @@ impl DiffSteeringState {
             title, staged, rejected
         )
     }
+
+    pub fn dispatch_steering_directive(&self, quark_id: &str, file_path: &str) -> String {
+        let mut prompt = format!("@{quark_id} Steering Directive for `{file_path}`:\n");
+        let mut all_hunk_indices: Vec<usize> = self.hunk_staged.keys().copied().collect();
+        for k in self.hunk_rejected.keys() {
+            if !all_hunk_indices.contains(k) {
+                all_hunk_indices.push(*k);
+            }
+        }
+        all_hunk_indices.sort();
+
+        for idx in all_hunk_indices {
+            let is_rejected = self.hunk_rejected.get(&idx).copied().unwrap_or(false);
+            let is_staged = self.hunk_staged.get(&idx).copied().unwrap_or(false);
+            let comment = self.hunk_comments.get(&idx).map(|s| s.as_str()).unwrap_or("");
+
+            if is_rejected {
+                if comment.is_empty() {
+                    prompt.push_str(&format!("- Hunk #{idx}: [REJECTED]\n"));
+                } else {
+                    prompt.push_str(&format!("- Hunk #{idx}: [REJECTED] {comment}\n"));
+                }
+            } else if is_staged {
+                prompt.push_str(&format!("- Hunk #{idx}: [APPROVED]\n"));
+            }
+        }
+        prompt
+    }
 }
 
 #[cfg(test)]
@@ -114,4 +142,19 @@ mod tests {
         assert!(msg.contains("Staged hunks: [1]"));
         assert!(msg.contains("Rejected hunks: [0]"));
     }
+
+    #[test]
+    fn test_steering_directive_generation() {
+        let mut steering = DiffSteeringState::new();
+        steering.register_hunk(0, true);
+        steering.reject_hunk(1);
+        steering.set_hunk_comment(1, "Use anyhow::Context instead of unwrap");
+
+        let prompt = steering.dispatch_steering_directive("cli-agy", "crates/hadron-gluon/src/merge.rs");
+        assert!(prompt.starts_with("@cli-agy"));
+        assert!(prompt.contains("Steering Directive for `crates/hadron-gluon/src/merge.rs`"));
+        assert!(prompt.contains("Hunk #1: [REJECTED] Use anyhow::Context"));
+        assert!(prompt.contains("Hunk #0: [APPROVED]"));
+    }
 }
+
