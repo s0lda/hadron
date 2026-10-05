@@ -44,7 +44,13 @@ impl AstBlastRadiusAnalyzer {
             }
             if let Some(rest) = normalized.strip_prefix("crates/") {
                 if let Some(crate_name) = rest.split('/').next() {
-                    crates.insert(crate_name.to_string());
+                    // crates/hadron-chamber declares package "hadron" in Cargo.toml
+                    let pkg_name = if crate_name == "hadron-chamber" {
+                        "hadron"
+                    } else {
+                        crate_name
+                    };
+                    crates.insert(pkg_name.to_string());
                     continue;
                 }
             }
@@ -89,7 +95,14 @@ mod tests {
         let res = AstBlastRadiusAnalyzer::find_affected_crates(&changed_single);
         assert_eq!(
             res,
-            AffectedCratesResult::Specific(vec!["hadron-chamber".to_string()])
+            AffectedCratesResult::Specific(vec!["hadron".to_string()])
+        );
+
+        let changed_forge = vec!["crates/hadron-forge/src/lib.rs"];
+        let res_forge = AstBlastRadiusAnalyzer::find_affected_crates(&changed_forge);
+        assert_eq!(
+            res_forge,
+            AffectedCratesResult::Specific(vec!["hadron-forge".to_string()])
         );
 
         let changed_root = vec!["Cargo.toml", "crates/hadron-chamber/src/main.rs"];

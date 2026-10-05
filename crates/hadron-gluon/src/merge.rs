@@ -942,7 +942,7 @@ mod tests {
 
         let (program, args) = detect_affected_runner(&wt.path, "main");
         assert_eq!(program, "cargo");
-        assert_eq!(args, vec!["test".to_string(), "-p".to_string(), "hadron-chamber".to_string()]);
+        assert_eq!(args, vec!["test".to_string(), "-p".to_string(), "hadron".to_string()]);
     }
 
     #[test]

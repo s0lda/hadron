@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.25.2] - 2026-10-05
 
 ### Fixed
+- **Affected Test Runner Package Resolution (`hadron-forge`, `hadron-gluon`)**:
+  - Mapped `crates/hadron-chamber` directory to package name `hadron` in `AstBlastRadiusAnalyzer::find_affected_crates` and `detect_affected_runner`, preventing `cargo test -p hadron-chamber` failure when slicing test suites for chamber changes.
 - **Rust 1.93 MSRV Enforcement Across Workspace (`hadron`, `docs`)**:
   - Declared `rust-version = "1.93"` in workspace root `Cargo.toml` and inherited across all member crates (`hadron-chamber`, `hadron-gluon`, `hadron-lattice`, `hadron-forge`, `hadron-forge-mcp`, `hadron-gatekeeper`), ensuring cargo fails fast with clear errors instead of compile-time `E0658` on older toolchains lacking `slice_as_array` support (resolves GitHub Issue #2).
   - Updated prerequisite documentation in `README.md` and `docs/development/building-from-source.md` to reflect Rust 1.93+.
