@@ -150,12 +150,10 @@ pub(super) enum RightRailTab {
     Tasks,
     /// Interactive 3D Sphere Topology visualizer showing live active and excited quarks.
     Visualizer,
-    /// Live headless preview panel for web and GUI artifacts.
-    Preview,
 }
 
 impl RightRailTab {
-    pub(super) const ALL: [RightRailTab; 8] = [
+    pub(super) const ALL: [RightRailTab; 7] = [
         RightRailTab::Terminal,
         RightRailTab::FileTree,
         RightRailTab::Git,
@@ -163,7 +161,6 @@ impl RightRailTab {
         RightRailTab::Plan,
         RightRailTab::Tasks,
         RightRailTab::Visualizer,
-        RightRailTab::Preview,
     ];
 
     pub(super) fn index(self) -> usize {
@@ -175,7 +172,6 @@ impl RightRailTab {
             RightRailTab::Plan => 4,
             RightRailTab::Tasks => 5,
             RightRailTab::Visualizer => 6,
-            RightRailTab::Preview => 7,
         }
     }
 
@@ -192,7 +188,6 @@ impl RightRailTab {
             RightRailTab::Plan => "Plan",
             RightRailTab::Tasks => "Tasks",
             RightRailTab::Visualizer => "Visualizer",
-            RightRailTab::Preview => "Preview",
         }
     }
 }

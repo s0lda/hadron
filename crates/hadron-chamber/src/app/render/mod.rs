@@ -29,9 +29,6 @@ pub mod diff_steering;
 pub mod quark_home;
 pub mod canvas;
 pub mod nucleus_graph;
-pub mod preview_panel;
-#[allow(unused_imports)]
-pub use preview_panel::PreviewPanelState;
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
