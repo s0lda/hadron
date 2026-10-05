@@ -191,6 +191,37 @@ pub fn merge_rust_ast(base: &str, ours: &str, theirs: &str) -> AstMergeResult {
     }
 }
 
+/// Merges Rust `use` imports when both branches add or remove disjoint import statements.
+pub fn merge_rust_use_statements(base: &str, ours: &str, theirs: &str) -> AstMergeResult {
+    let parse_uses = |src: &str| -> HashSet<String> {
+        src.lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| l.starts_with("use ") && l.ends_with(';'))
+            .collect()
+    };
+
+    let base_uses = parse_uses(base);
+    let ours_uses = parse_uses(ours);
+    let theirs_uses = parse_uses(theirs);
+
+    let mut merged_uses = base_uses.clone();
+    for u in ours_uses.difference(&base_uses) {
+        merged_uses.insert(u.clone());
+    }
+    for u in theirs_uses.difference(&base_uses) {
+        merged_uses.insert(u.clone());
+    }
+
+    let mut sorted: Vec<String> = merged_uses.into_iter().collect();
+    sorted.sort();
+    let mut out = String::new();
+    for u in sorted {
+        out.push_str(&u);
+        out.push('\n');
+    }
+    AstMergeResult::Clean(out)
+}
+
 #[derive(Debug, Clone)]
 pub struct AstDriverMergeResult {
     pub is_clean: bool,
@@ -274,5 +305,22 @@ mod tests {
         assert!(result.is_clean);
         assert!(result.merged_code.contains("fn func_a()"));
         assert!(result.merged_code.contains("fn func_b()"));
+    }
+
+    #[test]
+    fn test_merge_rust_use_statements_disjoint() {
+        let base = "use std::collections::HashMap;\n";
+        let ours = "use std::collections::HashMap;\nuse std::path::Path;\n";
+        let theirs = "use std::collections::HashMap;\nuse std::sync::Arc;\n";
+
+        let result = merge_rust_use_statements(base, ours, theirs);
+        match result {
+            AstMergeResult::Clean(merged) => {
+                assert!(merged.contains("use std::path::Path;"));
+                assert!(merged.contains("use std::sync::Arc;"));
+                assert!(merged.contains("use std::collections::HashMap;"));
+            }
+            AstMergeResult::Conflict(_) => panic!("Expected clean merge of disjoint use statements"),
+        }
     }
 }

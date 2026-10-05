@@ -10,9 +10,18 @@ use crate::snapshot::git;
 
 /// Attempts to resolve conflicting Rust source contents using AST block merge.
 pub fn heal_conflicting_rust_content(base: &str, ours: &str, theirs: &str) -> Option<String> {
+    // Attempt standard block merge first
     match merge_rust_ast(base, ours, theirs) {
         AstMergeResult::Clean(merged) => Some(merged),
-        AstMergeResult::Conflict(_) => None,
+        AstMergeResult::Conflict(_) => {
+            // Check if conflict is purely in use statements
+            if base.lines().all(|l| l.trim().starts_with("use ") || l.trim().is_empty()) {
+                if let AstMergeResult::Clean(merged_uses) = hadron_forge::ast_merge::merge_rust_use_statements(base, ours, theirs) {
+                    return Some(merged_uses);
+                }
+            }
+            None
+        }
     }
 }
 
@@ -140,5 +149,17 @@ pub fn compute() -> i32 {
         let healed = heal_conflicting_rust_content(base, ours, theirs);
         // Both modified compute() differently — should not heal automatically
         assert!(healed.is_none());
+    }
+
+    #[test]
+    fn test_heal_conflicting_rust_content_disjoint_use_statements() {
+        let base = "use std::collections::HashMap;\n";
+        let ours = "use std::collections::HashMap;\nuse std::path::Path;\n";
+        let theirs = "use std::collections::HashMap;\nuse std::sync::Arc;\n";
+        let healed = heal_conflicting_rust_content(base, ours, theirs);
+        assert!(healed.is_some());
+        let code = healed.unwrap();
+        assert!(code.contains("use std::path::Path;"));
+        assert!(code.contains("use std::sync::Arc;"));
     }
 }
