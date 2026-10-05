@@ -1497,6 +1497,7 @@ impl super::Chamber {
                     .into_any_element()
             }
             RightRailTab::Visualizer => self.visualizer_view(cx).into_any_element(),
+            RightRailTab::Preview => self.preview_view(cx).into_any_element(),
         };
 
         if let Some(start) = tab_start {
