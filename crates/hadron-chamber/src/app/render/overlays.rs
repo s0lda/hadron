@@ -20,6 +20,23 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.26.0",
+        date: Some("2026-10-05"),
+        added: &[
+            "Affected-Only Gate Runner: AST blast-radius crate slicing in merge runner, cutting CI/gate turnarounds for localized crate changes",
+            "Built-in Compiler Accelerator: Automated sccache and mold compiler detection and environment injection across worktrees",
+            "Dynamic MCP Tool Schema Pruning: Category-based tool router filtering by active skill to reduce prompt token consumption",
+            "Nucleus Index Auto-Sharding: Automated index partition management and budget monitoring under Rule 9 prompt limits",
+            "Semantic 3-Way AST Merge Healer: Reconciliation of non-overlapping disjoint use imports to prevent false git conflicts",
+            "Inline Diff Steering: Click-to-direct feedback mechanism generating targeted quark steering instructions from diff hunks",
+        ],
+        changed: &[],
+        fixed: &[
+            "ACP Config Options Response: Returned configOptions in session/set_config_option handler to satisfy schema and support gemini-3.8-flash and gemini-3.8-pro fallback models",
+            "Affected Test Slicer Package Mapping: Mapped crates/hadron-chamber directory to package hadron in test runner to ensure targeted cargo test execution",
+        ],
+    },
+    Release {
         version: "0.25.2",
         date: Some("2026-10-05"),
         added: &[],

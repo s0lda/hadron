@@ -9,6 +9,7 @@ Hadron Forge (`crates/hadron-forge` and `crates/hadron-forge-mcp`) provides a co
 | Tool Subsystem | MCP Tools | Key Capabilities |
 | :--- | :--- | :--- |
 | **Pre-Flight Merge Gate** | `hadron_forge_preflight_gate`, `hadron_forge_acceptance_gate` | In-worktree merge gate simulation, entrypoint mtime refreshing, branch rebase sync, test runner and acceptance suite execution. |
+| **Dynamic Tool Schema Pruning** | `ToolFilter` in `hadron-forge-mcp` | Category-based MCP tool router filtering by active skill to minimize prompt token consumption. |
 | **Peer Worktree Inspector**| `hadron_forge_peer_inspect`, `hadron_forge_peers_detect_conflicts` | Inspect peer worktree commits, uncommitted diffs, export symbols, and detect cross-worktree merge conflicts before gate submission. |
 | **Nucleus Memory & Distillation** | `hadron_forge_nucleus_lint`, `hadron_forge_nucleus_distill_lesson` | Configured budget checking (16–128 KB), YAML schema validation, orphan detection, and autonomous 1-line pointer distillation. |
 | **Autonomous Spec & DAG Compiler** | `hadron_forge_spec_compile` | Compile high-level natural language prompts into formal Design Specs and validated Gluon DAG plans (`.hadron/docs/plans/*.md`). |

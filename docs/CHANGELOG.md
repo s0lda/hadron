@@ -5,11 +5,35 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0] - 2026-10-05
+
+### Added
+- **Affected-Only Gate Test Runner Slicing (`hadron-forge`, `hadron-gluon`)**:
+  - Implemented `AstBlastRadiusAnalyzer::find_affected_crates` to detect affected workspace crates from git diffs.
+  - Sliced gate test execution in `detect_affected_runner` and `CargoMergeRunner` to test strictly changed crate dependency closures for isolated modifications, slashing merge landing cycle times.
+- **Built-in `sccache` & `mold` Compiler Accelerator (`hadron-gluon`)**:
+  - Implemented `CompilerAccelerator` with automated discovery and probing for `sccache` and `mold` linkers.
+  - Integrated automatic environment injection (`RUSTC_WRAPPER="sccache"` and `-fuse-ld=mold`) into `shared_build_env` across all active quark worktrees.
+- **Dynamic MCP Tool Schema Pruning by Skill (`hadron-forge-mcp`)**:
+  - Added category-based `ToolFilter` (Core, Diagnostics, Debugger, Swarm, Nucleus, Profiling, Web) in `pruning.rs`.
+  - Dynamically prunes tool router schemas exposed to ACP Quarks based on the active preon/skill, reducing prompt token tax and latency.
+- **Nucleus Index Auto-Sharding (`hadron-gatekeeper`)**:
+  - Implemented automatic index sharding in `NucleusIntegrityLinter` to partition `.hadron/nucleus/index.md` by subsystem when nearing the 32 KiB Rule 9 prompt budget limit.
+- **Semantic 3-Way AST Merge Healer (`hadron-forge`, `hadron-gluon`)**:
+  - Enhanced `ast_merge` and `ast_healer` with disjoint `use` reconciliation to resolve non-overlapping Rust import conflicts cleanly without human intervention.
+- **Inline Diff Steering Directives (`hadron-chamber`)**:
+  - Added `dispatch_steering_directive` in `DiffSteeringState` enabling users to click diff lines and generate targeted steering instructions for active quarks.
+
+### Fixed
+- **ACP Config Options Deserialization (`hadron-gluon`)**:
+  - Returned updated `configOptions` dictionary in `session/set_config_option` response in `agy_acp.py`, adhering to the ACP `SetSessionConfigOptionResponse` schema.
+  - Added `gemini-3.8-flash` and `gemini-3.8-pro` to the fallback model list.
+- **Affected Test Runner Package Resolution (`hadron-forge`, `hadron-gluon`)**:
+  - Mapped `crates/hadron-chamber` directory to package name `hadron` in `AstBlastRadiusAnalyzer::find_affected_crates` and `detect_affected_runner`, preventing `cargo test -p hadron-chamber` failure when slicing test suites for chamber changes.
+
 ## [0.25.2] - 2026-10-05
 
 ### Fixed
-- **Affected Test Runner Package Resolution (`hadron-forge`, `hadron-gluon`)**:
-  - Mapped `crates/hadron-chamber` directory to package name `hadron` in `AstBlastRadiusAnalyzer::find_affected_crates` and `detect_affected_runner`, preventing `cargo test -p hadron-chamber` failure when slicing test suites for chamber changes.
 - **Rust 1.93 MSRV Enforcement Across Workspace (`hadron`, `docs`)**:
   - Declared `rust-version = "1.93"` in workspace root `Cargo.toml` and inherited across all member crates (`hadron-chamber`, `hadron-gluon`, `hadron-lattice`, `hadron-forge`, `hadron-forge-mcp`, `hadron-gatekeeper`), ensuring cargo fails fast with clear errors instead of compile-time `E0658` on older toolchains lacking `slice_as_array` support (resolves GitHub Issue #2).
   - Updated prerequisite documentation in `README.md` and `docs/development/building-from-source.md` to reflect Rust 1.93+.
