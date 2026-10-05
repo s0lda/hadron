@@ -26,6 +26,57 @@ pub struct NucleusIntegrityLinter {
     byte_budget: usize,
 }
 
+/// Automatically shards .hadron/nucleus/index.md into domain-specific shards
+/// under .hadron/nucleus/shards/<slug>.md when the file exceeds `byte_threshold`.
+pub fn auto_shard_index(nucleus_dir: &Path, byte_threshold: usize) -> std::io::Result<bool> {
+    let index_file = nucleus_dir.join("index.md");
+    if !index_file.exists() {
+        return Ok(false);
+    }
+
+    let content = std::fs::read_to_string(&index_file)?;
+    if content.len() <= byte_threshold {
+        return Ok(false);
+    }
+
+    let shards_dir = nucleus_dir.join("shards");
+    std::fs::create_dir_all(&shards_dir)?;
+
+    let mut master_lines = Vec::new();
+    let mut current_section: Option<String> = None;
+    let mut current_shard_lines: Vec<String> = Vec::new();
+
+    for line in content.lines() {
+        if line.starts_with("## ") {
+            if let Some(sec) = current_section.take() {
+                let slug = sec.to_lowercase().replace(' ', "-").replace(|c: char| !c.is_alphanumeric() && c != '-', "");
+                let shard_file = shards_dir.join(format!("{slug}.md"));
+                let count = current_shard_lines.iter().filter(|l| l.trim().starts_with("- [")).count();
+                std::fs::write(&shard_file, format!("# {sec}\n\n{}\n", current_shard_lines.join("\n")))?;
+                master_lines.push(format!("- [{slug}](shards/{slug}.md) — {sec} ({count} lessons)"));
+                current_shard_lines.clear();
+            }
+            let heading = line.trim_start_matches("## ").trim();
+            current_section = Some(heading.to_string());
+        } else if current_section.is_some() {
+            current_shard_lines.push(line.to_string());
+        } else {
+            master_lines.push(line.to_string());
+        }
+    }
+
+    if let Some(sec) = current_section.take() {
+        let slug = sec.to_lowercase().replace(' ', "-").replace(|c: char| !c.is_alphanumeric() && c != '-', "");
+        let shard_file = shards_dir.join(format!("{slug}.md"));
+        let count = current_shard_lines.iter().filter(|l| l.trim().starts_with("- [")).count();
+        std::fs::write(&shard_file, format!("# {sec}\n\n{}\n", current_shard_lines.join("\n")))?;
+        master_lines.push(format!("- [{slug}](shards/{slug}.md) — {sec} ({count} lessons)"));
+    }
+
+    std::fs::write(&index_file, format!("{}\n", master_lines.join("\n")))?;
+    Ok(true)
+}
+
 impl NucleusIntegrityLinter {
     /// Standard Model Rule 9: 32 KB prompt budget for `.hadron/nucleus/index.md`.
     pub const DEFAULT_INDEX_BUDGET: usize = 32 * 1024;
@@ -264,5 +315,36 @@ mod tests {
         assert_eq!(report.broken_links.len(), 0);
         assert_eq!(report.orphaned_notes.len(), 0);
         assert_eq!(report.indexed_notes, 1);
+    }
+
+    #[test]
+    fn test_nucleus_auto_sharding_at_threshold() {
+        let temp = tempfile::tempdir().unwrap();
+        let nucleus_dir = temp.path();
+        let index_file = nucleus_dir.join("index.md");
+
+        // Create an index with two H2 sections
+        let mut large_text = String::from("# Memory Index\n\n## Section One\n");
+        for i in 0..100 {
+            large_text.push_str(&format!("- [slug-one-{i}](notes/slug-one-{i}.md) — lesson hook number {i}\n"));
+        }
+        large_text.push_str("\n## Section Two\n");
+        for i in 0..100 {
+            large_text.push_str(&format!("- [slug-two-{i}](notes/slug-two-{i}.md) — lesson hook number {i}\n"));
+        }
+        std::fs::write(&index_file, &large_text).unwrap();
+
+        let sharded = auto_shard_index(nucleus_dir, 1024).unwrap();
+        assert!(sharded);
+
+        // Master index must be rewritten and shards directory created
+        let shards_dir = nucleus_dir.join("shards");
+        assert!(shards_dir.exists());
+        assert!(shards_dir.join("section-one.md").exists());
+        assert!(shards_dir.join("section-two.md").exists());
+
+        let master_content = std::fs::read_to_string(&index_file).unwrap();
+        assert!(master_content.contains("shards/section-one.md"));
+        assert!(master_content.len() < large_text.len());
     }
 }
