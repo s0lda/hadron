@@ -12,10 +12,11 @@ default-members = ["crates/hadron-chamber"]
 # published manifest is effectively permanent, and a broken URL is worse than a
 # missing field (neither is required by `cargo publish`).
 #
-# No `rust-version`. It is the field people actually hit, so it has to be MEASURED
-# against older toolchains rather than guessed — this box builds on 1.96.0 and that
-# is evidence of nothing about the floor.
+# `rust-version` measured 2026-09-30 (issue #2): pinned `gpui_util` (s0lda/zed@84ce4d78)
+# calls `[T]::as_array`, which was stabilized in Rust 1.93.0 (`core_slice_as_array`,
+# rust-lang/rust#133508). Older toolchains fail with E0658 during dependency build.
 [workspace.package]
+rust-version = "1.93"
 version = "0.25.1"
 edition = "2021"
 license = "Apache-2.0"

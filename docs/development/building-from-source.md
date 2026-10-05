@@ -7,7 +7,7 @@ This guide covers prerequisites, installation options, local workspace execution
 ## Prerequisites
 
 - **Rust Toolchain**: 
-  - A recent stable `rustup` toolchain (edition 2021; verified on Rust 1.96.0).
+  - A recent stable `rustup` toolchain (edition 2021, Rust 1.93+ required; verified on Rust 1.96.0).
 - **Supported Platforms**:
   - **Linux** (X11 or Wayland)
   - **macOS**

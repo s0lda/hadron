@@ -1,6 +1,7 @@
 [package]
 name = "hadron-forge"
 description = "Compare-and-swap file editing by content hash, with an AST block parser for Rust, Python, TypeScript and Go"
+rust-version.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true

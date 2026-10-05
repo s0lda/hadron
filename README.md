@@ -44,7 +44,7 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 
 ### Prerequisites
 
-- **Rust**: Toolchain (edition 2021, tested on Rust 1.80+).
+- **Rust**: Toolchain (edition 2021, Rust 1.93+ required).
 - **OS**: Linux (X11/Wayland), macOS, or Windows (native MSVC or WSL2).
 - **LLM Access**: Any ACP agent (e.g. Claude Code), Antigravity, local Ollama, or API key for OpenAI / OpenRouter / Anthropic.
 
