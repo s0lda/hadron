@@ -22,6 +22,7 @@ class TestAgyAcpModels(unittest.TestCase):
         self.assertEqual(model_opt["category"], "model")
         self.assertGreaterEqual(len(model_opt["options"]), 3)
         model_vals = [o["value"] for o in model_opt["options"]]
+        self.assertIn("gemini-3.8-flash", model_vals)
         self.assertIn("gemini-3.6-flash", model_vals)
         self.assertIn("gemini-3.1-pro", model_vals)
 
@@ -35,13 +36,18 @@ class TestAgyAcpModels(unittest.TestCase):
         }
         # Simulate updating config option for model
         old_model = agy_acp.sessions[session_id].get("model")
-        new_model = "gemini-3.1-pro"
+        new_model = "gemini-3.8-flash"
         agy_acp.sessions[session_id]["model"] = new_model
         if old_model != new_model and agy_acp.sessions[session_id].get("agent") is not None:
             agy_acp.sessions[session_id]["agent"] = None
 
-        self.assertEqual(agy_acp.sessions[session_id]["model"], "gemini-3.1-pro")
+        self.assertEqual(agy_acp.sessions[session_id]["model"], "gemini-3.8-flash")
         self.assertIsNone(agy_acp.sessions[session_id]["agent"])
+        # Verify session_config_options returns configOptions matching ACP schema
+        opts = agy_acp.session_config_options(session_id)
+        self.assertEqual(len(opts), 1)
+        self.assertEqual(opts[0]["id"], "model")
+        self.assertEqual(opts[0]["currentValue"], "gemini-3.8-flash")
 
     def test_fetch_sdk_models_fallback_when_no_api_key(self):
         with patch.dict(os.environ, {}, clear=True):

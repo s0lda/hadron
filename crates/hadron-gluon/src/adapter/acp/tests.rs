@@ -1266,6 +1266,33 @@ fn the_python_adapters_session_new_response_yields_the_model_selector() {
 }
 
 #[test]
+fn the_python_adapters_set_config_option_response_deserializes() {
+    use agent_client_protocol::schema::v1::SetSessionConfigOptionResponse;
+
+    let resp: SetSessionConfigOptionResponse = serde_json::from_value(serde_json::json!({
+        "configOptions": [{
+            "id": "model",
+            "name": "Model",
+            "type": "select",
+            "category": "model",
+            "currentValue": "gemini-3.8-flash",
+            "options": [
+                {"value": "gemini-3.8-flash", "name": "Gemini 3.8 Flash"},
+                {"value": "gemini-3.6-flash", "name": "Gemini 3.6 Flash"}
+            ]
+        }]
+    }))
+    .expect("the adapter's session/set_config_option response must deserialize to SetSessionConfigOptionResponse");
+
+    let selector = model_selector(&resp.config_options).expect("model selector found in updated options");
+    assert_eq!(selector.current, "gemini-3.8-flash");
+
+    // Negative control: the empty object {} that agy_acp.py used to return MUST fail to deserialize
+    let empty_res = serde_json::from_value::<SetSessionConfigOptionResponse>(serde_json::json!({}));
+    assert!(empty_res.is_err(), "empty object without configOptions must fail deserialization");
+}
+
+#[test]
 fn native_edit_request_is_detected_and_rejected() {
     use agent_client_protocol::schema::v1::{
         PermissionOption, PermissionOptionKind, RequestPermissionRequest, ToolCallUpdate, ToolCallUpdateFields, ToolKind,

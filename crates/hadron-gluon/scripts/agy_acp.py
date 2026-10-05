@@ -30,6 +30,8 @@ SEAT_MODEL = "gemini-3.6-flash"
 
 # Default supported Gemini models in the Antigravity Python SDK fallback.
 DEFAULT_SUPPORTED_MODELS = [
+    {"value": "gemini-3.8-flash", "name": "Gemini 3.8 Flash"},
+    {"value": "gemini-3.8-pro", "name": "Gemini 3.8 Pro"},
     {"value": "gemini-3.6-flash", "name": "Gemini 3.6 Flash"},
     {"value": "gemini-3.5-flash", "name": "Gemini 3.5 Flash"},
     {"value": "gemini-3.1-pro", "name": "Gemini 3.1 Pro"},
@@ -198,25 +200,30 @@ async def handle_prompt(msg_id, session_id, prompt):
         send_error(msg_id, f"Antigravity SDK turn failed: {e}")
 
 
+def session_config_options(session_id):
+    """The current configuration options for a session."""
+    current_model = sessions.get(session_id, {}).get("model", SEAT_MODEL)
+    options = fetch_sdk_models()
+    return [
+        {
+            "id": "model",
+            "name": "Model",
+            "type": "select",
+            # Without `category`, the client does not recognise this as
+            # the model selector at all.
+            "category": "model",
+            "currentValue": current_model,
+            "options": options
+        }
+    ]
+
+
 def session_config_response(session_id):
     """The capabilities a `session/new` advertises: supported Gemini models.
     Queries models dynamically via SDK if key available, falling back to static defaults."""
-    current_model = sessions.get(session_id, {}).get("model", SEAT_MODEL)
-    options = fetch_sdk_models()
     return {
         "sessionId": session_id,
-        "configOptions": [
-            {
-                "id": "model",
-                "name": "Model",
-                "type": "select",
-                # Without `category`, the client does not recognise this as
-                # the model selector at all.
-                "category": "model",
-                "currentValue": current_model,
-                "options": options
-            }
-        ]
+        "configOptions": session_config_options(session_id)
     }
 
 
@@ -291,9 +298,9 @@ async def main():
                 sessions[session_id]["model"] = value
                 if old_model != value and sessions[session_id].get("agent") is not None:
                     sessions[session_id]["agent"] = None
-                send_response(msg_id, {})
+                send_response(msg_id, {"configOptions": session_config_options(session_id)})
             else:
-                send_response(msg_id, {})
+                send_response(msg_id, {"configOptions": session_config_options(session_id)})
 
         elif method == "session/prompt":
             session_id = params.get("sessionId")
