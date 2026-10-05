@@ -8,6 +8,73 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompilerAccelerator {
+    pub has_sccache: bool,
+    pub has_mold: bool,
+    pub sccache_dir: PathBuf,
+}
+
+impl CompilerAccelerator {
+    pub fn detect() -> Self {
+        let has_sccache = std::process::Command::new("sccache")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        let has_mold = if cfg!(target_os = "linux") {
+            std::process::Command::new("mold")
+                .arg("-v")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let sccache_dir = PathBuf::from(home).join(".hadron").join("cache").join("sccache");
+
+        Self {
+            has_sccache,
+            has_mold,
+            sccache_dir,
+        }
+    }
+
+    pub fn apply_to_env(&self, env: &mut Vec<(String, String)>) {
+        if self.has_sccache {
+            let _ = std::fs::create_dir_all(&self.sccache_dir);
+            env.push(("RUSTC_WRAPPER".to_string(), "sccache".to_string()));
+            env.push((
+                "SCCACHE_DIR".to_string(),
+                self.sccache_dir.to_string_lossy().to_string(),
+            ));
+        }
+        if self.has_mold {
+            let existing_rustflags = env
+                .iter()
+                .find(|(k, _)| k == "RUSTFLAGS")
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            let new_flags = if existing_rustflags.is_empty() {
+                "-C link-arg=-fuse-ld=mold".to_string()
+            } else if !existing_rustflags.contains("-fuse-ld=mold") {
+                format!("{existing_rustflags} -C link-arg=-fuse-ld=mold")
+            } else {
+                existing_rustflags
+            };
+            env.retain(|(k, _)| k != "RUSTFLAGS");
+            env.push(("RUSTFLAGS".to_string(), new_flags));
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BuildCacheMesh {
     base_dir: PathBuf,
@@ -126,5 +193,21 @@ mod tests {
         assert_eq!(pruned, 1);
         assert!(mesh.worktrees_root().join("wt-alpha").exists());
         assert!(!mesh.worktrees_root().join("wt-beta").exists());
+    }
+
+    #[test]
+    fn test_compiler_accelerator_env_application() {
+        let accelerator = CompilerAccelerator {
+            has_sccache: true,
+            has_mold: true,
+            sccache_dir: PathBuf::from("/tmp/hadron_test_sccache"),
+        };
+        let mut env = Vec::new();
+        accelerator.apply_to_env(&mut env);
+
+        let map: std::collections::HashMap<String, String> = env.into_iter().collect();
+        assert_eq!(map.get("RUSTC_WRAPPER").map(|s| s.as_str()), Some("sccache"));
+        assert_eq!(map.get("SCCACHE_DIR").map(|s| s.as_str()), Some("/tmp/hadron_test_sccache"));
+        assert!(map.get("RUSTFLAGS").unwrap().contains("-fuse-ld=mold"));
     }
 }

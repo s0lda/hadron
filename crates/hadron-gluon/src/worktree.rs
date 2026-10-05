@@ -271,6 +271,7 @@ pub fn shared_build_env(cwd: &Path) -> Vec<(String, String)> {
             root.join("target").to_string_lossy().to_string(),
         ));
     }
+    CompilerAccelerator::detect().apply_to_env(&mut env);
     env
 }
 
