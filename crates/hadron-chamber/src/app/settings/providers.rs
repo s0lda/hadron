@@ -1603,8 +1603,8 @@ impl super::Chamber {
             current_pref.unwrap_or_default().label().to_string()
         };
 
-        if self.theme_preset_select_key != Some(current_pref) || self.prefs.custom_theme.is_some() {
-            self.theme_preset_select_key = Some(current_pref);
+        if self.theme_preset_select_key.as_deref() != Some(&current_label) {
+            self.theme_preset_select_key = Some(current_label.clone());
             let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
             self.theme_preset_select_state.update(cx, |s, cx| {
                 s.set_items(delegate, window, cx);

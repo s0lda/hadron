@@ -1053,6 +1053,7 @@ impl Chamber {
                     self.post_chat_message(Actor::Gluon, body, cx);
                 } else if let Some(preset) = crate::config::ThemePreset::from_str(trimmed) {
                     self.prefs.theme_preset = Some(preset);
+                    self.prefs.custom_theme = None;
                     let _ = config::save(&self.prefs);
                     Self::apply_theme_and_typography(cx, &self.prefs);
                     self.show_toast(
@@ -1066,8 +1067,30 @@ impl Chamber {
                     let body = crate::text::theme_body(trimmed, preset);
                     self.post_chat_message(Actor::Gluon, body, cx);
                 } else {
-                    let body = crate::text::theme_body(trimmed, current);
-                    self.post_chat_message(Actor::Gluon, body, cx);
+                    let custom_themes = theme::load_custom_themes();
+                    if let Some(custom) = custom_themes
+                        .into_iter()
+                        .find(|t| t.id.eq_ignore_ascii_case(trimmed) || t.name.eq_ignore_ascii_case(trimmed))
+                    {
+                        let name = custom.name.clone();
+                        self.prefs.custom_theme = Some(custom);
+                        self.prefs.theme_preset = None;
+                        let _ = config::save(&self.prefs);
+                        Self::apply_theme_and_typography(cx, &self.prefs);
+                        self.show_toast(
+                            toasts::ToastKind::Success,
+                            format!("Custom theme set to {name}"),
+                            Some(3),
+                            cx,
+                        );
+                        cx.refresh_windows();
+                        cx.notify();
+                        let body = format!("Theme set to custom **{name}**.");
+                        self.post_chat_message(Actor::Gluon, body, cx);
+                    } else {
+                        let body = crate::text::theme_body(trimmed, current);
+                        self.post_chat_message(Actor::Gluon, body, cx);
+                    }
                 }
                 true
             }

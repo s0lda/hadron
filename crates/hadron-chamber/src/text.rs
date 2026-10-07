@@ -938,18 +938,55 @@ pub fn export_body(dest: &std::path::Path, count: usize) -> String {
 pub fn theme_body(arg: &str, current: crate::config::ThemePreset) -> String {
     let trimmed = arg.trim();
     if trimmed.is_empty() {
-        let mut out = format!("**Current Theme:** {}\n\n**Available Presets:**\n", current.label());
+        let active_custom = crate::theme::active_custom_theme();
+        let header = if let Some(ref c) = active_custom {
+            format!("**Current Theme:** {} (custom)\n\n", c.name)
+        } else {
+            format!("**Current Theme:** {}\n\n", current.label())
+        };
+
+        let mut out = format!("{header}**Available Presets:**\n");
         for p in crate::config::ThemePreset::ALL {
-            let marker = if p == current { " (active)" } else { "" };
+            let marker = if active_custom.is_none() && p == current {
+                " (active)"
+            } else {
+                ""
+            };
             out.push_str(&format!("- `{}` — {}{}\n", p.id(), p.label(), marker));
+        }
+
+        let custom_themes = crate::theme::load_custom_themes();
+        if !custom_themes.is_empty() {
+            out.push_str("\n**Custom Themes (`~/.hadron/themes/`):**\n");
+            for t in &custom_themes {
+                let is_active = active_custom.as_ref().map(|c| c.id == t.id).unwrap_or(false);
+                let marker = if is_active { " (active)" } else { "" };
+                out.push_str(&format!("- `{}` — {}{}\n", t.id, t.name, marker));
+            }
         }
         out
     } else if let Some(preset) = crate::config::ThemePreset::from_str(trimmed) {
         format!("Theme set to **{}** (`{}`).", preset.label(), preset.id())
     } else {
-        format!(
-            "Unknown theme preset `{trimmed}`. Available presets: `obsidian`, `oled`, `midnight`, `tokyo`."
-        )
+        let custom_themes = crate::theme::load_custom_themes();
+        if let Some(custom) = custom_themes
+            .iter()
+            .find(|t| t.id.eq_ignore_ascii_case(trimmed) || t.name.eq_ignore_ascii_case(trimmed))
+        {
+            format!("Theme set to custom **{}** (`{}`).", custom.name, custom.id)
+        } else {
+            let mut available: Vec<String> = crate::config::ThemePreset::ALL
+                .iter()
+                .map(|p| format!("`{}`", p.id()))
+                .collect();
+            for t in &custom_themes {
+                available.push(format!("`{}`", t.id));
+            }
+            format!(
+                "Unknown theme preset `{trimmed}`. Available: {}.",
+                available.join(", ")
+            )
+        }
     }
 }
 
@@ -2583,12 +2620,25 @@ mod tests {
         assert!(body.contains("oled"));
         assert!(body.contains("midnight"));
         assert!(body.contains("tokyo"));
+        assert!(body.contains("nord"));
+        assert!(body.contains("catppuccin"));
+        assert!(body.contains("gruvbox"));
 
         let set_body = theme_body("tokyo", crate::config::ThemePreset::Obsidian);
         assert!(set_body.contains("Tokyo Dark"));
 
+        let set_nord = theme_body("nord", crate::config::ThemePreset::Obsidian);
+        assert!(set_nord.contains("Nord Frost"));
+
+        let set_cat = theme_body("catppuccin", crate::config::ThemePreset::Obsidian);
+        assert!(set_cat.contains("Catppuccin Mocha"));
+
+        let set_gruv = theme_body("gruvbox", crate::config::ThemePreset::Obsidian);
+        assert!(set_gruv.contains("Gruvbox Dark"));
+
         let unknown = theme_body("neon", crate::config::ThemePreset::Obsidian);
         assert!(unknown.contains("Unknown theme preset"));
+        assert!(unknown.contains("gruvbox"));
     }
 
     #[test]

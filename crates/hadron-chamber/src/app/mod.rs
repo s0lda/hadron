@@ -489,7 +489,7 @@ struct Chamber {
     merge_strategy_select_key: Option<hadron_lattice::MergeStrategy>,
     /// Native SelectState dropdown for General Settings Theme Preset.
     theme_preset_select_state: Entity<SelectState<ModelSelectDelegate>>,
-    theme_preset_select_key: Option<Option<config::ThemePreset>>,
+    theme_preset_select_key: Option<String>,
     /// Native SelectState dropdown for General Settings Primary Accent Choice.
     accent_choice_select_state: Entity<SelectState<ModelSelectDelegate>>,
     accent_choice_select_key: Option<Option<config::AccentChoice>>,
