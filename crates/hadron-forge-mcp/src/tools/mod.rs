@@ -56,6 +56,7 @@ pub mod vcr;
 pub mod profile_runner;
 pub mod dap;
 pub mod pruning;
+pub mod scratch;
 
 use hadron_forge::file::Root;
 use hadron_forge::mock::MockServerManager;
@@ -126,7 +127,8 @@ impl ForgeMcpServer {
         let mut tool_router = Self::edit_router()
             + Self::exec_router()
             + Self::inspect_router()
-            + Self::git_router();
+            + Self::git_router()
+            + Self::scratch_router();
 
         if filter.categories.contains(&pruning::ToolCategory::Nucleus) {
             tool_router = tool_router

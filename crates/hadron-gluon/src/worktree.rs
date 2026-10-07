@@ -37,6 +37,8 @@ pub mod build_cache;
 pub use build_cache::*;
 pub mod sccache_guard;
 pub use sccache_guard::*;
+pub mod scratch_bus;
+pub use scratch_bus::*;
 
 /// Where a quark works. Stable per quark; the branch inside it changes per assignment.
 #[derive(Debug, Clone, PartialEq, Eq)]
