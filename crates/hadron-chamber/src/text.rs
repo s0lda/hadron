@@ -770,14 +770,16 @@ pub fn compact_nucleus_index(workspace_root: &std::path::Path, _target_arg: &str
         kept_lines.push(line);
     }
 
-    let new_content = if kept_lines.is_empty() {
+    let uncompacted = if kept_lines.is_empty() {
         String::new()
     } else {
         format!("{}\n", kept_lines.join("\n"))
     };
+    let new_content = hadron_lattice::NucleusCompactor::compact_index(&uncompacted);
+    let within_budget = hadron_lattice::NucleusCompactor::check_budget(&new_content, 32 * 1024);
     let new_bytes = new_content.len();
 
-    if let Err(e) = std::fs::write(&index_path, new_content) {
+    if let Err(e) = std::fs::write(&index_path, &new_content) {
         return format!("Failed to write compacted index to `{}`: {e}", index_path.display());
     }
 
@@ -785,13 +787,14 @@ pub fn compact_nucleus_index(workspace_root: &std::path::Path, _target_arg: &str
         "**Nucleus Index Compacted**\n\n\
          - **Lines**: {} -> {}\n\
          - **Orphan Pointers Pruned**: {}\n\
-         - **Size**: {} B -> {} B (saved {} B)\n",
+         - **Size**: {} B -> {} B (saved {} B, within budget: {})\n",
         orig_lines,
         kept_lines.len(),
         pruned_count,
         orig_bytes,
         new_bytes,
-        orig_bytes.saturating_sub(new_bytes)
+        orig_bytes.saturating_sub(new_bytes),
+        within_budget
     )
 }
 

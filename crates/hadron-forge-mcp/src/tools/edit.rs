@@ -88,6 +88,21 @@ impl ForgeMcpServer {
         description = "Write whole file content under optimistic concurrency (Compare-And-Swap on file hash)"
     )]
     pub async fn write_file(&self, Parameters(args): Parameters<WriteFileArgs>) -> Json<ToolResponse> {
+        let full_path = self.root.path().join(&args.path);
+        let mut guard = hadron_forge::tree_guard::TreeGuard::new();
+        if full_path.exists() {
+            if let Ok(hash) = guard.watch_file(&full_path) {
+                if let Some(expected) = &args.expected_hash {
+                    if !hash.starts_with(expected) {
+                        return Json(ToolResponse::error(format!(
+                            "TreeGuard detected stale buffer conflict on {}: expected hash {} but disk has {}",
+                            args.path, expected, hash
+                        )));
+                    }
+                }
+            }
+        }
+
         let res = write_file_cas(&self.root, &args.path, &args.content, args.expected_hash.as_deref());
         if res.is_ok() {
             if let Ok(bus) = hadron_lattice::GossipBus::new(&self.root.path().join(".hadron")) {
@@ -113,6 +128,26 @@ impl ForgeMcpServer {
         description = "Execute an atomic multi-file batch edit transaction with rollback on failure"
     )]
     pub async fn batch_edit(&self, Parameters(args): Parameters<BatchEditArgs>) -> Json<ToolResponse> {
+        let mut guard = hadron_forge::tree_guard::TreeGuard::new();
+        let mut fs_tx = hadron_forge::fs_tx::FsTx::new("mcp-batch-tx");
+
+        for op in &args.operations {
+            let full_path = self.root.path().join(&op.path);
+            if full_path.exists() {
+                if let Ok(hash) = guard.watch_file(&full_path) {
+                    if let Some(expected) = &op.expected_hash {
+                        if !hash.starts_with(expected) {
+                            return Json(ToolResponse::error(format!(
+                                "TreeGuard detected stale buffer conflict on {}: expected hash {} but disk has {}",
+                                op.path, expected, hash
+                            )));
+                        }
+                    }
+                }
+            }
+            fs_tx.stage_write(&full_path, &op.new_content);
+        }
+
         let mut tx = hadron_forge::transaction::BatchEditTransaction::new();
         for op in args.operations {
             let full_path = self.root.path().join(&op.path);
@@ -128,7 +163,10 @@ impl ForgeMcpServer {
                 report.files_modified.len(),
                 report.total_bytes_written
             )))),
-            Err(e) => Json(ToolResponse::error(format!("Batch transaction rolled back: {e}"))),
+            Err(e) => {
+                let _ = fs_tx.rollback();
+                Json(ToolResponse::error(format!("Batch transaction rolled back: {e}")))
+            }
         }
     }
 

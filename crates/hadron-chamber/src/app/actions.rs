@@ -1360,9 +1360,65 @@ impl Chamber {
             }
             "nucleus" => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                // The ONE resolver. `/nucleus` must report the same number the prompt
-                // builder enforces, or the command becomes a second opinion on the
-                // budget — which is the drift the resolve-once change existed to stop.
+                let trimmed = args.trim();
+                if trimmed == "sync" {
+                    let local_notes_dir = repo_root.join(".hadron").join("nucleus").join("notes");
+                    let mut local_map = std::collections::HashMap::new();
+                    if let Ok(rd) = std::fs::read_dir(&local_notes_dir) {
+                        for e in rd.flatten() {
+                            if let Ok(c) = std::fs::read_to_string(e.path()) {
+                                local_map.insert(e.file_name().to_string_lossy().to_string(), c);
+                            }
+                        }
+                    }
+                    let mut global_map = std::collections::HashMap::new();
+                    if let Some(home) = dirs::home_dir() {
+                        let global_notes_dir = home.join(".hadron").join("nucleus").join("notes");
+                        if let Ok(rd) = std::fs::read_dir(&global_notes_dir) {
+                            for e in rd.flatten() {
+                                if let Ok(c) = std::fs::read_to_string(e.path()) {
+                                    global_map.insert(e.file_name().to_string_lossy().to_string(), c);
+                                }
+                            }
+                        }
+                    }
+                    let (merged, report) = hadron_lattice::GlobalNucleusSync::merge_notes(&local_map, &global_map);
+                    let body = format!(
+                        "**Nucleus Global Sync**\n\n\
+                         - **Merged Note Count**: {}\n\
+                         - **New Local Notes**: {}\n\
+                         - **New Global Notes**: {}\n",
+                        merged.len(),
+                        report.new_local,
+                        report.new_global
+                    );
+                    self.post_chat_message(Actor::Gluon, body, cx);
+                    return true;
+                }
+                if let Some(query) = trimmed.strip_prefix("search ") {
+                    let notes_dir = repo_root.join(".hadron").join("nucleus").join("notes");
+                    let mut vec_index = hadron_lattice::NucleusVectorIndex::new();
+                    if let Ok(rd) = std::fs::read_dir(&notes_dir) {
+                        for e in rd.flatten() {
+                            let slug = e.file_name().to_string_lossy().replace(".md", "");
+                            if let Ok(content) = std::fs::read_to_string(e.path()) {
+                                let desc = content.lines().find(|l| l.starts_with("description:")).unwrap_or(&slug);
+                                let hash_bytes = blake3::hash(content.as_bytes());
+                                let emb: Vec<f32> = hash_bytes.as_bytes()[..16].iter().map(|&b| (b as f32) / 255.0).collect();
+                                vec_index.insert(&slug, emb, desc);
+                            }
+                        }
+                    }
+                    let query_hash = blake3::hash(query.as_bytes());
+                    let query_emb: Vec<f32> = query_hash.as_bytes()[..16].iter().map(|&b| (b as f32) / 255.0).collect();
+                    let matches = vec_index.search(&query_emb, 5);
+                    let mut out = format!("**Nucleus Semantic Search for `{query}`**:\n\n");
+                    for m in matches {
+                        out.push_str(&format!("- [{}] `{}` (score: {:.2})\n", m.slug, m.description, m.score));
+                    }
+                    self.post_chat_message(Actor::Gluon, out, cx);
+                    return true;
+                }
                 let budget_bytes = hadron_gluon::nucleus_status::resolve_budget_bytes(&self.team);
                 let body = crate::text::nucleus_body(&repo_root, budget_bytes);
                 self.post_chat_message(Actor::Gluon, body, cx);

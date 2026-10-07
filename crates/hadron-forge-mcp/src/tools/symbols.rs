@@ -51,6 +51,14 @@ pub struct LspQueryArgs {
     pub path: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AstSliceArgs {
+    /// File path to slice
+    pub path: String,
+    /// Target symbols to extract (functions, structs, enums)
+    pub target_symbols: Vec<String>,
+}
+
 #[tool_router(router = symbols_router, vis = "pub(super)")]
 impl ForgeMcpServer {
     #[tool(
@@ -242,6 +250,25 @@ impl ForgeMcpServer {
             Err(e) => Json(ToolResponse::error(e.to_string())),
         }
     }
+
+    #[tool(
+        name = "hadron_forge_ast_slice",
+        description = "Extract only the AST blocks enclosing or referencing specific target symbols to minimize token consumption"
+    )]
+    pub async fn ast_slice(&self, Parameters(args): Parameters<AstSliceArgs>) -> Json<ToolResponse> {
+        let abs_path = match resolve_jailed_path(&self.root, &args.path) {
+            Ok(p) => p,
+            Err(e) => return Json(ToolResponse::error(e.to_string())),
+        };
+        let content = match std::fs::read_to_string(&abs_path) {
+            Ok(c) => c,
+            Err(e) => return Json(ToolResponse::error(format!("Failed to read {}: {e}", args.path))),
+        };
+        let targets: Vec<&str> = args.target_symbols.iter().map(|s| s.as_str()).collect();
+        let slices = hadron_forge::ast_slice::slice_source_by_symbols(&content, &targets);
+        let serialized = serde_json::to_string_pretty(&slices).unwrap_or_default();
+        Json(ToolResponse::success(Some(serialized)))
+    }
 }
 
 #[cfg(test)]
@@ -338,5 +365,14 @@ impl Auth for User {
             .await;
         assert!(def_res.0.ok);
         assert!(def_res.0.blocks.unwrap().contains("Definition"));
+
+        let slice_res = server
+            .ast_slice(Parameters(AstSliceArgs {
+                path: "src/models.rs".into(),
+                target_symbols: vec!["User".into()],
+            }))
+            .await;
+        assert!(slice_res.0.ok);
+        assert!(slice_res.0.blocks.unwrap().contains("User"));
     }
 }

@@ -18,6 +18,8 @@ impl Chamber {
 
         let is_expanded = self.plan_dag_expanded;
         let ready_ids: std::collections::HashSet<String> = graph.ready_tasks().into_iter().map(|t| t.id).collect();
+        let barrier_scheduler = hadron_gluon::engine::dag_scheduler::DagBarrierScheduler::from_plan_markdown(content).ok();
+        let unblocked_count = barrier_scheduler.as_ref().map(|s| s.unblocked_tasks().len()).unwrap_or(0);
 
         let header_bar = h_flex()
             .id("dag-toggle-header")
@@ -60,7 +62,7 @@ impl Chamber {
                             .text_xs()
                             .font_family(cx.theme().mono_font_family.clone())
                             .text_color(theme::text_muted())
-                            .child(format!("({} waves · {} nodes)", waves.len(), graph.tasks.len())),
+                            .child(format!("({} waves · {} nodes · {} unblocked)", waves.len(), graph.tasks.len(), unblocked_count)),
                     ),
             )
             .child(

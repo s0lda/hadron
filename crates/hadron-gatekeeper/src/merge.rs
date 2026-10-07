@@ -101,6 +101,29 @@ pub fn record_mutation_run(
     tracker.overall_score_pct()
 }
 
+/// Lint candidate file contents against operational and structural invariants.
+pub fn lint_candidate_invariants(
+    files: &[(&str, &str)],
+) -> Vec<crate::invariant_linter::InvariantViolation> {
+    let mut linter = crate::invariant_linter::InvariantLinter::new();
+    linter.add_forbidden_pattern("One Font Family", r#"font_family\s*=\s*.*,"#);
+    linter.add_forbidden_pattern("No Raw HTML Font Tags", r#"<font[^>]*>"#);
+    let mut violations = Vec::new();
+    for (path, content) in files {
+        violations.extend(linter.lint_file(path, content));
+    }
+    violations
+}
+
+/// Distill and persist a failure recovery lesson into the nucleus if candidate matches failure pattern.
+pub fn distill_failure_recovery_lesson(
+    repo_root: &std::path::Path,
+    error_tail: &str,
+    fix_diff: &str,
+) -> Option<(hadron_lattice::CandidateLesson, std::path::PathBuf)> {
+    crate::distiller::FailureDistillationGatekeeper::distill_and_persist(repo_root, error_tail, fix_diff)
+}
+
 /// The canonical operation string for merging `branch` into `base`.
 ///
 /// It is derivable from `(branch, base)` alone — deliberately carrying no commit

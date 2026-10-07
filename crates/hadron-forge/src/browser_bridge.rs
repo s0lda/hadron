@@ -2,14 +2,30 @@ use std::path::{Path, PathBuf};
 
 pub fn is_jailed_screenshot_path(repo_root: &Path, candidate: &Path) -> bool {
     let allowed_dir = repo_root.join(".hadron/screenshots");
-    if let (Ok(canon_allowed), Ok(canon_cand)) = (
-        std::fs::canonicalize(&allowed_dir).or_else(|_| Ok::<PathBuf, std::io::Error>(allowed_dir.clone())),
-        std::fs::canonicalize(candidate).or_else(|_| Ok::<PathBuf, std::io::Error>(candidate.to_path_buf()))
-    ) {
-        canon_cand.starts_with(canon_allowed)
+    let canon_allowed = match std::fs::canonicalize(&allowed_dir) {
+        Ok(p) => p,
+        Err(_) => allowed_dir.clone(),
+    };
+    let canon_cand = if candidate.exists() {
+        match std::fs::canonicalize(candidate) {
+            Ok(p) => p,
+            Err(_) => return false,
+        }
+    } else if let Some(parent) = candidate.parent() {
+        match std::fs::canonicalize(parent) {
+            Ok(p) => {
+                if let Some(file_name) = candidate.file_name() {
+                    p.join(file_name)
+                } else {
+                    p
+                }
+            }
+            Err(_) => candidate.to_path_buf(),
+        }
     } else {
-        false
-    }
+        candidate.to_path_buf()
+    };
+    canon_cand.starts_with(&canon_allowed)
 }
 
 #[derive(Debug, Clone)]

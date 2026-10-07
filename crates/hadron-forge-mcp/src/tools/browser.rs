@@ -176,9 +176,16 @@ impl ForgeMcpServer {
         let rel_file = args
             .output_path
             .unwrap_or_else(|| "screenshot.png".to_string());
-        let artifact_dir = self.root.path().join(".hadron").join("artifacts");
-        let _ = fs::create_dir_all(&artifact_dir);
-        let file_path = artifact_dir.join(&rel_file);
+        let screenshot_dir = self.root.path().join(".hadron").join("screenshots");
+        let _ = fs::create_dir_all(&screenshot_dir);
+        let file_path = screenshot_dir.join(&rel_file);
+
+        if !hadron_forge::browser_bridge::is_jailed_screenshot_path(self.root.path(), &file_path) {
+            return Json(ToolResponse::error(format!(
+                "Screenshot path escapes jailed directory (.hadron/screenshots): {}",
+                file_path.display()
+            )));
+        }
 
         // Write a minimal valid 1x1 PNG if not on disk
         let png_bytes = [
@@ -191,7 +198,7 @@ impl ForgeMcpServer {
         let _ = fs::write(&file_path, &png_bytes);
 
         Json(ToolResponse::success(Some(format!(
-            "Screenshot captured to `.hadron/artifacts/{}` (1280x800)",
+            "Screenshot captured to `.hadron/screenshots/{}` (1280x800)",
             rel_file
         ))))
     }
@@ -319,5 +326,21 @@ mod tests {
             }))
             .await;
         assert!(smoke_res.0.ok);
+
+        let shot_res = server
+            .browser_screenshot(Parameters(BrowserScreenshotArgs {
+                output_path: Some("view.png".into()),
+            }))
+            .await;
+        assert!(shot_res.0.ok);
+        assert!(dir.path().join(".hadron/screenshots/view.png").exists());
+
+        let escape_res = server
+            .browser_screenshot(Parameters(BrowserScreenshotArgs {
+                output_path: Some("../../escaped.png".into()),
+            }))
+            .await;
+        assert!(!escape_res.0.ok);
+        assert!(escape_res.0.reason.unwrap().contains("escapes jailed directory"));
     }
 }
