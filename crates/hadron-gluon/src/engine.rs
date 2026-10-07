@@ -17,7 +17,8 @@ use crate::quark::Quark;
 // `nucleus_status` so it has ONE home. The RESOLVED (possibly configured) budget the
 // prompt actually enforces travels on `Projection::nucleus_index_budget_bytes`
 // instead — see `Engine::nucleus_index_budget_bytes`.
-pub(crate) mod nucleus;
+pub mod nucleus;
+pub use nucleus::*;
 pub mod review;
 pub mod cross_exam;
 pub mod dag;
@@ -509,6 +510,14 @@ pub struct Engine {
     cancel_slots: HashMap<(QuarkId, Lane), crate::quark::CancelSlot>,
     /// Speculative merge pre-testing cache and shadow gate execution queue.
     shadow_gate: Arc<AsyncMutex<ShadowGate>>,
+    /// Fast-path micro-RPC bus between active quarks.
+    pub rpc_bus: hadron_lattice::MicroRpcBus,
+    /// Ephemeral peer-to-peer subchannel manager.
+    pub subchannel_manager: Arc<AsyncMutex<hadron_lattice::SubChannelManager>>,
+    /// Checkpoints store tracking rewind targets per turn.
+    pub checkpoints: Arc<AsyncMutex<HashMap<String, crate::checkpoint::CheckpointStore>>>,
+    /// Content-addressable storage for build and test artifacts.
+    pub cas: Option<crate::cas::SemanticCas>,
 }
 
 /// Parse the DO-NOT-ACTIVATE toggle from `HADRON_NO_HUMAN_MODE`. Read ONCE, at
@@ -575,6 +584,7 @@ impl Engine {
                 (id, Lanes { work: Arc::new(AsyncMutex::new(q)) as SharedQuark, chat: None })
             })
             .collect();
+        let cas = crate::cas::SemanticCas::new(field_path.parent().unwrap_or(Path::new(".hadron"))).ok();
         Engine {
             field_path,
             quarks,
@@ -601,6 +611,15 @@ impl Engine {
             global_preons_dir: None,
             cancel_slots,
             shadow_gate: Arc::new(AsyncMutex::new(ShadowGate::new("main"))),
+            rpc_bus: {
+                let bus = hadron_lattice::MicroRpcBus::new();
+                bus.register_method("gluon", "ping", |_| Ok(serde_json::json!({"status": "pong"})));
+                bus.register_method("gluon", "health", |_| Ok(serde_json::json!({"status": "healthy"})));
+                bus
+            },
+            subchannel_manager: Arc::new(AsyncMutex::new(hadron_lattice::SubChannelManager::new())),
+            checkpoints: Arc::new(AsyncMutex::new(HashMap::new())),
+            cas,
         }
     }
 
@@ -613,6 +632,26 @@ impl Engine {
     pub fn with_shadow_gate(mut self, gate: Arc<AsyncMutex<ShadowGate>>) -> Self {
         self.shadow_gate = gate;
         self
+    }
+
+    /// Micro-RPC bus for synchronous inter-quark communication.
+    pub fn rpc_bus(&self) -> &hadron_lattice::MicroRpcBus {
+        &self.rpc_bus
+    }
+
+    /// Subchannel manager for ephemeral peer-to-peer communication.
+    pub fn subchannel_manager(&self) -> Arc<AsyncMutex<hadron_lattice::SubChannelManager>> {
+        self.subchannel_manager.clone()
+    }
+
+    /// Checkpoints store tracking rewind targets per turn.
+    pub fn checkpoints(&self) -> Arc<AsyncMutex<HashMap<String, crate::checkpoint::CheckpointStore>>> {
+        self.checkpoints.clone()
+    }
+
+    /// Semantic CAS for build and artifact caching.
+    pub fn cas(&self) -> Option<&crate::cas::SemanticCas> {
+        self.cas.as_ref()
     }
 
     /// Explicitly set the No-Human-Mode toggle, overriding whatever

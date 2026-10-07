@@ -357,6 +357,19 @@ impl super::Engine {
             }
         }
 
+        if let Some(t) = tree.as_ref() {
+            if let Ok(head_sha) = crate::snapshot::git(&t.wt.path, &["rev-parse", "HEAD"]) {
+                let trimmed = head_sha.trim().to_string();
+                if !trimmed.is_empty() {
+                    let mut cp_map = self.checkpoints.lock().await;
+                    let store = cp_map.entry(target.as_str().to_string()).or_insert_with(|| {
+                        crate::checkpoint::CheckpointStore::new(target.as_str())
+                    });
+                    store.record_checkpoint(1, &trimmed);
+                }
+            }
+        }
+
         self.append(
             Event::new(
                 Actor::Quark(target.clone()),

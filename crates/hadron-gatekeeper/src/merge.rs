@@ -108,6 +108,7 @@ pub fn lint_candidate_invariants(
     let mut linter = crate::invariant_linter::InvariantLinter::new();
     linter.add_forbidden_pattern("One Font Family", r#"font_family\s*=\s*.*,"#);
     linter.add_forbidden_pattern("No Raw HTML Font Tags", r#"<font[^>]*>"#);
+    linter.add_forbidden_pattern("Ban Allow Dead Code", r#"#\[allow\(dead_code\)\]"#);
     let mut violations = Vec::new();
     for (path, content) in files {
         violations.extend(linter.lint_file(path, content));
@@ -258,5 +259,13 @@ mod tests {
         let op = merge_op("quark/opus/01A", "main");
         let events = vec![grant("opus", true), req("opus", &op)];
         assert!(!merge_approved(&events, &q("opus"), &op));
+    }
+
+    #[test]
+    fn invariant_linter_bans_allow_dead_code() {
+        let files = [("src/lib.rs", "#[allow(dead_code)]\npub fn unused() {}")];
+        let violations = lint_candidate_invariants(&files);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].rule_name, "Ban Allow Dead Code");
     }
 }

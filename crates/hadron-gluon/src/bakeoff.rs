@@ -192,6 +192,16 @@ impl BakeOffManager {
         winner
     }
 
+    /// Cache the winning tournament artifact in Semantic CAS.
+    pub fn cache_winner_artifact(
+        &self,
+        cas: &crate::cas::SemanticCas,
+        winner: &BakeOffCandidateResult,
+    ) -> std::io::Result<std::path::PathBuf> {
+        let hash = crate::cas::SemanticCas::hash_bytes(winner.branch_name.as_bytes());
+        cas.store(&hash, winner.quark_id.as_bytes())
+    }
+
     /// Evaluate a head-to-head speculative duel between two candidate executions.
     pub fn evaluate_speculative_duel(
         &self,

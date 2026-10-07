@@ -312,7 +312,11 @@ pub async fn run_tests_within(
         // traded for a slow loop. A red gate is a state the engine already handles:
         // `Status{Blocked}` with a reason, the branch untouched, the quark excitable.
         Err(_) => {
+            let mut forensic_info = String::new();
             if let Some(pid) = pid {
+                if let Some(dump) = crate::quark_probe::QuarkProbe::capture_dump(pid) {
+                    forensic_info = format!("\n\n{}", crate::quark_probe::QuarkProbe::format_dump(&dump));
+                }
                 crate::proc::unregister(pid);
                 kill_process_group(pid);
             }
@@ -322,7 +326,7 @@ pub async fn run_tests_within(
                     "the gate's tests ({program}) did not finish within {}s and were killed. \
                      The branch is untouched and nothing was landed. A suite that hangs here \
                      stops the daemon dispatching ANY quark, so fix or exclude the hanging \
-                     test before the next turn.",
+                     test before the next turn.{forensic_info}",
                     deadline.as_secs(),
                 ),
             ));
@@ -367,6 +371,19 @@ pub fn land(repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Lande
             return Ok(Landed::Conflicted(format!(
                 "Merge gate rejected by RedTeamAuditor: {} critical, {} high security vulnerability(ies) found",
                 critical_count, high_count
+            )));
+        }
+
+        // Pre-merge invariant linting via InvariantLinter (Standard Model Rule 2 & 3)
+        let violations = hadron_gatekeeper::lint_candidate_invariants(&[(&wt.branch, &diff_bytes)]);
+        if !violations.is_empty() {
+            let details = violations
+                .iter()
+                .map(|v| format!("- Invariant `{}` violated in `{}`: {}", v.rule_name, v.file_path, v.snippet))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Ok(Landed::Conflicted(format!(
+                "Merge gate rejected by InvariantLinter:\n{details}"
             )));
         }
     }

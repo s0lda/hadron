@@ -47,6 +47,11 @@ impl CompilerAccelerator {
         }
     }
 
+    /// Computes deterministic CAS content hash across files.
+    pub fn compute_cas_artifact_hash(files: &[(&str, &[u8])]) -> String {
+        crate::cas::SemanticCas::hash_files(files)
+    }
+
     pub fn apply_to_env(&self, env: &mut Vec<(String, String)>) {
         if self.has_sccache {
             let _ = std::fs::create_dir_all(&self.sccache_dir);

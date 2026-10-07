@@ -569,7 +569,8 @@ impl super::Engine {
         // Truncation must be *observable*, not just performed: a quark that cannot
         // see an earlier instruction, and is not told so, acts on a partial field
         // as confidently as on a whole one.
-        let window = bounded_window(events, FIELD_WINDOW_BUDGET_BYTES);
+        let filtered_events = hadron_lattice::field_channel::filter_field_events(events, true);
+        let window = bounded_window(&filtered_events, FIELD_WINDOW_BUDGET_BYTES);
         let truncated = window.len() < events.len();
 
         let nucleus_index_path = nucleus_index_path(&workspace_root);

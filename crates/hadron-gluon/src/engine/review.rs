@@ -124,6 +124,11 @@ impl ReviewGate {
         let lane = crate::engine::cross_exam::CrossExaminationLane::new();
         lane.create_critic_prompt(author, turn_id, diff)
     }
+
+    /// Create a collaborative pair session for driver and navigator review.
+    pub fn create_pair_session(&self, session_id: &str, author: &str, reviewer: &str) -> crate::pair_quark::PairQuarkSession {
+        crate::pair_quark::PairQuarkSession::new(session_id, author, reviewer)
+    }
 }
 
 /// The branch's effective verdict, computed as "the last write from any reviewer".

@@ -1372,7 +1372,8 @@ impl Chamber {
                         }
                     }
                     let mut global_map = std::collections::HashMap::new();
-                    if let Some(home) = dirs::home_dir() {
+                    let home_opt = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).map(std::path::PathBuf::from).ok();
+                    if let Some(home) = home_opt {
                         let global_notes_dir = home.join(".hadron").join("nucleus").join("notes");
                         if let Ok(rd) = std::fs::read_dir(&global_notes_dir) {
                             for e in rd.flatten() {
@@ -1403,14 +1404,14 @@ impl Chamber {
                             let slug = e.file_name().to_string_lossy().replace(".md", "");
                             if let Ok(content) = std::fs::read_to_string(e.path()) {
                                 let desc = content.lines().find(|l| l.starts_with("description:")).unwrap_or(&slug);
-                                let hash_bytes = blake3::hash(content.as_bytes());
-                                let emb: Vec<f32> = hash_bytes.as_bytes()[..16].iter().map(|&b| (b as f32) / 255.0).collect();
+                                let hash_hex = hadron_gluon::cas::SemanticCas::hash_bytes(content.as_bytes());
+                                let emb: Vec<f32> = hash_hex.as_bytes()[..16].iter().map(|&b| (b as f32) / 255.0).collect();
                                 vec_index.insert(&slug, emb, desc);
                             }
                         }
                     }
-                    let query_hash = blake3::hash(query.as_bytes());
-                    let query_emb: Vec<f32> = query_hash.as_bytes()[..16].iter().map(|&b| (b as f32) / 255.0).collect();
+                    let query_hex = hadron_gluon::cas::SemanticCas::hash_bytes(query.as_bytes());
+                    let query_emb: Vec<f32> = query_hex.as_bytes()[..16].iter().map(|&b| (b as f32) / 255.0).collect();
                     let matches = vec_index.search(&query_emb, 5);
                     let mut out = format!("**Nucleus Semantic Search for `{query}`**:\n\n");
                     for m in matches {
@@ -1418,6 +1419,15 @@ impl Chamber {
                     }
                     self.post_chat_message(Actor::Gluon, out, cx);
                     return true;
+                }
+                if let Some(slug) = trimmed.strip_prefix("note ") {
+                    let runtime = tokio::runtime::Runtime::new().ok();
+                    if let Some(rt) = runtime {
+                        if let Ok(content) = rt.block_on(hadron_gluon::engine::nucleus::read_nucleus_lesson(&repo_root, slug.trim())) {
+                            self.post_chat_message(Actor::Gluon, content, cx);
+                            return true;
+                        }
+                    }
                 }
                 let budget_bytes = hadron_gluon::nucleus_status::resolve_budget_bytes(&self.team);
                 let body = crate::text::nucleus_body(&repo_root, budget_bytes);

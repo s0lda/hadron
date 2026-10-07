@@ -605,6 +605,24 @@ impl super::Engine {
                     .take(NUDGE_LOOKBACK)
                     .any(|e| matches!(&e.kind, Kind::Message { body } if looks_like_a_debugging_turn(body)))
                 {
+                    if let Ok(diff_str) = crate::snapshot::git(&t.wt.path, &["diff", &format!("{}...{}", t.base, t.wt.branch)]) {
+                        if !diff_str.is_empty() {
+                            if let Some((lesson, path)) = hadron_gatekeeper::distill_failure_recovery_lesson(root, &tail, &diff_str) {
+                                term::info(Source::Gluon, &format!("Distilled failure recovery lesson `{}` to `{}`", lesson.slug, path.display()));
+                                let existing = crate::engine::nucleus::read_nucleus_lesson(root, &lesson.slug).await;
+                                if existing.is_err() {
+                                    let _ = crate::engine::nucleus::write_nucleus_lesson(
+                                        root,
+                                        &lesson.slug,
+                                        &lesson.fact_markdown,
+                                        &lesson.description,
+                                        "Apply fix pattern when compiler error pattern matches",
+                                    ).await;
+                                }
+                            }
+                        }
+                    }
+
                     self.append(Event::new(
                         Actor::Gluon,
                         None,

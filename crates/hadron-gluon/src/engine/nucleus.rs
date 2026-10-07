@@ -106,6 +106,27 @@ pub(super) fn read_nucleus_index_with_fallback(workspace_root: &std::path::Path)
     read_nucleus_index(&legacy_memory_dir(workspace_root).join("index.md"))
 }
 
+/// Asynchronously writes a distilled nucleus lesson backed by NucleusStore.
+pub async fn write_nucleus_lesson(
+    workspace_root: &std::path::Path,
+    slug: &str,
+    fact: &str,
+    why: &str,
+    how_to_apply: &str,
+) -> anyhow::Result<()> {
+    let store = crate::nucleus_store::NucleusStore::new(&nucleus_lessons_dir(workspace_root));
+    store.write_note(slug, fact, why, how_to_apply).await
+}
+
+/// Asynchronously reads a nucleus lesson by slug backed by NucleusStore.
+pub async fn read_nucleus_lesson(
+    workspace_root: &std::path::Path,
+    slug: &str,
+) -> anyhow::Result<String> {
+    let store = crate::nucleus_store::NucleusStore::new(&nucleus_lessons_dir(workspace_root));
+    store.read_note(slug).await
+}
+
 fn home_dir() -> Option<std::path::PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     Some(std::path::PathBuf::from(home))
