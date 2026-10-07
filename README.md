@@ -36,7 +36,7 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 - 🛠️ **Hadron Forge & Developer Power Tools**: 50+ built-in MCP developer capabilities — AST precision edits via `blake3`, isolated PTY terminals, headless browser testing, LSP code intelligence, background process supervision, automated git bisect, and flamegraph profiling. Detailed in [`Power Tools Suite`](docs/forge/power-tools.md).
 - 🧠 **Persistent Nucleus Memory & Universal Absorption**: Cross-session shared memory within a configurable budget (16/32/64/128 KiB), plus `/absorb` to seamlessly import memories, invariants, skills, and plans from `.agents/`, `.claude/`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`, and many more.
 - 🤖 **Autonomous Headless Swarm Runner**: Standalone non-interactive CLI runner (`hadron run` / `hadron ci`) for CI/CD automation, speculative shadow pre-testing, AST-aware rebase healing, and tiled multi-PTY terminals.
-- 🎯 **Autonomous Swarm Control**: Built-in slash commands (`/goal`, `/loop`, `/absorb`, `/release`, `/git-init`, `/resume`, `/clear`, `/home`, `/canvas`, `/intercom`, `/dream`, `/timelapse`, `/radar`, `/baseline`) and 25 bundled workflow & engineering skills (TDD, security review, architecture audit, systematic debugging, design specs).
+- 🎯 **Autonomous Swarm Control**: Built-in slash commands (`/goal`, `/loop`, `/absorb`, `/release`, `/git-init`, `/resume`, `/clear`, `/home`, `/canvas`, `/intercom`, `/dream`, `/timelapse`, `/radar`, `/baseline`, `/preview-rebase`, `/steer`, `/scout`) and 25 bundled workflow & engineering skills (TDD, security review, architecture audit, systematic debugging, design specs).
 
 ---
 

@@ -58,6 +58,9 @@ Hadron Forge (`crates/hadron-forge` and `crates/hadron-forge-mcp`) provides a co
 | **Resident LSP Service** | `hadron_forge_lsp_daemon` | Persistent LSP supervisor wrapping GenericLspClient for type definitions, references, and document symbol queries. |
 | **Synthetic Mock Synthesizer** | `hadron_forge_mock_synth` | Automated mock route generator synthesizing fixture responses directly from JSON schemas. |
 | **Architectural Time-Lapse** | `hadron_forge_timelapse` | Historical commit visualizer transforming git commit trajectories into architectural timeline replays. |
+| **Cross-Worktree Scratch Bus** | `hadron_forge_scratch_write`, `hadron_forge_scratch_read`, `hadron_forge_scratch_list` | Cross-quark scratchpad storage under `.hadron/scratch/` projected across worktrees via symlinks. |
+| **Distributed Peer Leases** | `peers_acquire_lease`, `peers_release_lease`, `peers_list_leases` | Cross-worktree lease locks for files and symbols with collision detection and JSON persistence. |
+| **Headless Visual Smoke Tester** | `hadron_forge_visual_smoke` | Non-headless DOM visual regression and software rasterization smoke assertions. |
 
 ---
 

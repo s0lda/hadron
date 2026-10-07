@@ -13,6 +13,7 @@ Hadron provides an interactive suite of `/slash` commands directly inside the Ch
 | `/loop` | `/loop [count] <objective>` | Execute an iterative evaluation loop until completion criteria are met or count expires. | `/loop 5 fix compiler errors` |
 | `/absorb` | `/absorb [options]` | Scan foreign assistant folders (`.agents/`, `.claude/`, `CLAUDE.md`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`) and distill memories, skills, invariants, and plans into `.hadron/`. | `/absorb` |
 | `/dream` | `/dream` | Trigger an immediate idle workspace maintenance cycle (compaction & worktree cleanup). | `/dream` |
+| `/scout` | `/scout <prompt>` | Spawn ephemeral read-only sub-worker for zero-footprint codebase search. | `/scout find all references to IntentLockTable` |
 
 ---
 
@@ -65,6 +66,7 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/reboot` | `/reboot [@Quark \| all]` | Force-restart resident ACP / CLI agent subprocesses. | `/reboot @Quark` |
 | `/bridge` | `/bridge [status \| update]` | Manage Antigravity Python bridge dependencies and evaluate virtual environment health. | `/bridge update` |
 | `/stop` | `/stop @Quark` | Gracefully stop a Quark's in-flight turn. | `/stop @Quark` |
+| `/steer` | `/steer [@Quark] <guidance>` | Inject mid-turn steering guidance to an active running Quark. | `/steer @Quark focus on error handling` |
 | `/kill` | `/kill @Quark` | Force-kill a Quark's subprocess group (`-pgid`). | `/kill @Quark` |
 | `/cancel` | `/cancel [@Quark]` | Cancel pending unhandled dispatch for a seat. | `/cancel @Quark` |
 | `/retry` | `/retry [@Quark]` | Re-dispatch the last failed message or turn. | `/retry @Quark` |
@@ -94,6 +96,7 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/prune` | `/prune [dry-run]` | Safely clean up merged and stale quark worktrees and branches. | `/prune` |
 | `/radar` | `/radar` | Run human intent drift radar against in-flight git diff to detect goal divergence. | `/radar` |
 | `/baseline` | `/baseline` | Snapshot pre-turn baseline test health and quarantine pre-existing failures (Rule 5). | `/baseline` |
+| `/preview-rebase` | `/preview-rebase [@Quark]` | Dry-run rebase inspection of a quark branch onto main to preview incoming conflicts. | `/preview-rebase @Quark` |
 
 ---
 
