@@ -443,9 +443,9 @@ impl super::Chamber {
                             theme::text_muted()
                         } else {
                             match git_status {
-                                Some(crate::vcs::GitStatus::Modified) => gpui::rgb(0xf59e0b),
-                                Some(crate::vcs::GitStatus::Added) => gpui::rgb(0x34d399),
-                                Some(crate::vcs::GitStatus::Deleted) => gpui::rgb(0xf87171),
+                                Some(crate::vcs::GitStatus::Modified) => theme::git_modified(),
+                                Some(crate::vcs::GitStatus::Added) => theme::git_added(),
+                                Some(crate::vcs::GitStatus::Deleted) => theme::git_deleted(),
                                 None => theme::text(),
                             }
                         };
@@ -456,21 +456,21 @@ impl super::Chamber {
                                     div()
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(gpui::rgb(0xf59e0b))
+                                        .text_color(theme::git_modified())
                                         .child("M"),
                                 ),
                                 Some(crate::vcs::GitStatus::Added) => Some(
                                     div()
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(gpui::rgb(0x34d399))
+                                        .text_color(theme::git_added())
                                         .child("+"),
                                 ),
                                 Some(crate::vcs::GitStatus::Deleted) => Some(
                                     div()
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(gpui::rgb(0xf87171))
+                                        .text_color(theme::git_deleted())
                                         .child("D"),
                                 ),
                                 None => None,
@@ -871,18 +871,18 @@ impl super::Chamber {
                                     .bg(theme::bg_base())
                                     .border_1()
                                     .border_color(if landed_count == total && total > 0 {
-                                        gpui::rgb(0x34d399).into()
+                                        theme::success().into()
                                     } else if branch_count > 0 {
-                                        gpui::rgb(0x60a5fa).into()
+                                        theme::info().into()
                                     } else {
                                         theme::glass_highlight()
                                     })
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(if landed_count == total && total > 0 {
-                                        gpui::rgb(0x34d399)
+                                        theme::success()
                                     } else if branch_count > 0 {
-                                        gpui::rgb(0x60a5fa)
+                                        theme::info()
                                     } else {
                                         theme::accent()
                                     })
@@ -1018,7 +1018,7 @@ impl super::Chamber {
                             header_card = header_card.child(select_button);
                         }
 
-                        header_card = header_card.child(progress_meter(frac, gpui::rgb(0x34d399)));
+                        header_card = header_card.child(progress_meter(frac, theme::success()));
                         list = list.child(header_card);
 
                         // Optional Plan Overview prose card
@@ -1139,10 +1139,10 @@ impl super::Chamber {
                                     .rounded_full()
                                     .bg(theme::bg_base())
                                     .border_1()
-                                    .border_color(gpui::rgb(0x34d399))
+                                    .border_color(theme::success())
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(gpui::rgb(0x34d399))
+                                    .text_color(theme::success())
                                     .child(format!("{landed_step_count}/{total_count} Complete"))
                                     .into_any_element()
                             } else if branch_step_count > 0 {
@@ -1152,10 +1152,10 @@ impl super::Chamber {
                                     .rounded_full()
                                     .bg(theme::bg_base())
                                     .border_1()
-                                    .border_color(gpui::rgb(0x60a5fa))
+                                    .border_color(theme::info())
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(gpui::rgb(0x60a5fa))
+                                    .text_color(theme::info())
                                     .child(format!("{done_count}/{total_count} In Branch"))
                                     .into_any_element()
                             } else {
@@ -1236,13 +1236,13 @@ impl super::Chamber {
                                         StepStatus::MainLanded => {
                                             Icon::new(IconName::CircleCheck)
                                                 .small()
-                                                .text_color(gpui::rgb(0x34d399))
+                                                .text_color(theme::success())
                                                 .into_any_element()
                                         }
                                         StepStatus::BranchCompleted => {
                                             Icon::new(IconName::CircleCheck)
                                                 .small()
-                                                .text_color(gpui::rgb(0x60a5fa))
+                                                .text_color(theme::info())
                                                 .into_any_element()
                                         }
                                         StepStatus::Pending => {
@@ -1585,18 +1585,18 @@ impl super::Chamber {
                 .rounded_full()
                 .bg(theme::bg_elevated())
                 .border_1()
-                .border_color(gpui::rgb(0x34d399))
+                .border_color(theme::success())
                 .child(
                     div()
                         .size(px(6.0))
                         .rounded_full()
-                        .bg(gpui::rgb(0x34d399)),
+                        .bg(theme::success()),
                 )
                 .child(
                     div()
                         .text_xs()
                         .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(gpui::rgb(0x34d399))
+                        .text_color(theme::success())
                         .child("● LIVE TASK FEED"),
                 )
                 .into_any_element()

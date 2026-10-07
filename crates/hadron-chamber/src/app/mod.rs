@@ -1797,13 +1797,13 @@ impl Chamber {
         t.tokens.popover_foreground = gpui::Hsla::from(theme::text()).into();
         t.border = brd.into();
         t.drag_border = acc.into();
-        t.selection = acc.opacity(0.3).into();
+        t.selection = theme::selection_bg().into();
         t.list_active = acc.opacity(0.2).into();
         t.list_active_border = acc.into();
         t.accent = gpui::rgba(0xffffff20).into();
         t.tokens.tab_bar_segmented = gpui::Hsla::from(bg_surf_raised).into();
-        t.danger = rgb(0xef4444).into();
-        t.danger_foreground = rgb(0xf5f5f6).into();
+        t.danger = theme::error().into();
+        t.danger_foreground = theme::text().into();
         t.link = theme::link().into();
         t.link_hover = theme::link_hover().into();
         t.link_active = theme::link_active().into();
@@ -1813,7 +1813,7 @@ impl Chamber {
         t.scrollbar_thumb_hover = gpui::rgba(0xffffffa0).into();
         t.tokens.scrollbar_thumb = gpui::Hsla::from(gpui::rgba(0xffffff40)).into();
         t.tokens.scrollbar_thumb_hover = gpui::Hsla::from(gpui::rgba(0xffffffa0)).into();
-        t.window_border = rgb(0x2a2b2c).into();
+        t.window_border = theme::window_border().into();
         t.tokens.background = gpui::Hsla::from(bg_surf).into();
         t.mode = gpui_component::ThemeMode::Dark;
         t.highlight_theme = widgets::github_syntax_theme();

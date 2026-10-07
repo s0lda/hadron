@@ -982,10 +982,10 @@ pub(super) fn mode_label(mode: Mode) -> &'static str {
 /// from neutral slate (Ask) through cyan/amethyst to warm amber gold (Bypass).
 pub(super) fn mode_color(mode: Mode) -> gpui::Hsla {
     match mode {
-        Mode::Ask => gpui::rgb(0x94a3b8).into(),    // slate — ask
-        Mode::Write => gpui::rgb(0x60a5fa).into(),   // soft sapphire blue — write
-        Mode::Auto => gpui::rgb(0xc084fc).into(),    // soft amethyst — auto
-        Mode::Bypass => gpui::rgb(0xf59e0b).into(),  // warm amber gold — bypass
+        Mode::Ask => theme::text_secondary().into(),
+        Mode::Write => theme::info().into(),
+        Mode::Auto => theme::accent().into(),
+        Mode::Bypass => theme::warning().into(),
     }
 }
 
@@ -1011,10 +1011,10 @@ pub(super) fn empty_hint(text: &'static str) -> impl IntoElement {
 /// danger tags so a bad outcome cannot read as a green one.
 pub(super) fn task_state_info(state: TaskState) -> (Rgba, &'static str) {
     match state {
-        TaskState::Working => (gpui::rgb(0x60a5fa), "Working"),
-        TaskState::Done => (gpui::rgb(0x34d399), "Done"),
-        TaskState::Blocked => (gpui::rgb(0xf59e0b), "Blocked"),
-        TaskState::Failed => (gpui::rgb(0xf87171), "Failed"),
+        TaskState::Working => (theme::info(), "Working"),
+        TaskState::Done => (theme::success(), "Done"),
+        TaskState::Blocked => (theme::warning(), "Blocked"),
+        TaskState::Failed => (theme::error(), "Failed"),
     }
 }
 
@@ -1331,8 +1331,8 @@ where
 pub(super) fn log_kind_color(kind: &str) -> gpui::Rgba {
     match kind {
         "status" => theme::accent_secondary(),
-        "edit" => rgb(0x22c55e),
-        "command" => rgb(0xf59e0b),
+        "edit" => theme::success(),
+        "command" => theme::warning(),
         "snapshot" => theme::accent(),
         _ => theme::text_muted(),
     }
@@ -1514,12 +1514,12 @@ pub(super) fn stat_tile_with_note(
                             .px_1p5()
                             .py_0p5()
                             .rounded_full()
-                            .bg(gpui::rgb(0xca8a04).opacity(0.2))
+                            .bg(theme::warning().opacity(0.2))
                             .border_1()
-                            .border_color(gpui::rgb(0xca8a04).opacity(0.4))
+                            .border_color(theme::warning().opacity(0.4))
                             .text_xs()
                             .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(gpui::rgb(0xfacc15))
+                            .text_color(theme::warning())
                             .child(badge_str)
                             .tooltip(move |window, cx| {
                                 Tooltip::new(SharedString::from(tt_str.clone())).build(window, cx)
@@ -1597,6 +1597,20 @@ mod tests {
         let comment_span = styles.iter().find(|(range, _)| range.start >= 18 && range.end <= 37);
         assert!(comment_span.is_some(), "Expected style span for comment");
         assert_eq!(comment_span.unwrap().1.color, comment_style.color);
+    }
+
+    #[test]
+    fn test_task_state_and_mode_tokens() {
+        let (done_col, done_lbl) = task_state_info(TaskState::Done);
+        assert_eq!(done_lbl, "Done");
+        assert_eq!(done_col, theme::success());
+
+        let (failed_col, failed_lbl) = task_state_info(TaskState::Failed);
+        assert_eq!(failed_lbl, "Failed");
+        assert_eq!(failed_col, theme::error());
+
+        assert_eq!(mode_color(Mode::Write), gpui::Hsla::from(theme::info()));
+        assert_eq!(mode_color(Mode::Bypass), gpui::Hsla::from(theme::warning()));
     }
 
     #[test]
