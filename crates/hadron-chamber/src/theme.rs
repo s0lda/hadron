@@ -25,7 +25,7 @@ use gpui::{rgb, rgba, Hsla, Rgba};
 
 use hadron_lattice::QuarkState;
 
-static ACTIVE_PRESET: AtomicU8 = AtomicU8::new(0); // 0: Obsidian, 1: Oled, 2: Midnight, 3: Tokyo
+static ACTIVE_PRESET: AtomicU8 = AtomicU8::new(0); // 0: Obsidian, 1: Oled, 2: Midnight, 3: Tokyo, 4: Nord, 5: Catppuccin, 6: Gruvbox
 static ACTIVE_ACCENT: AtomicU32 = AtomicU32::new(0xc084fc); // 0xRRGGBB (soft amethyst default)
 static ACTIVE_CUSTOM_THEME: std::sync::RwLock<Option<ResolvedTheme>> = std::sync::RwLock::new(None);
 
@@ -72,6 +72,11 @@ pub struct ResolvedTheme {
     pub syntax_boolean: Rgba,
     pub syntax_delimiter: Rgba,
     pub syntax_punctuation: Rgba,
+    // status
+    pub status_success: Rgba,
+    pub status_warning: Rgba,
+    pub status_error: Rgba,
+    pub status_info: Rgba,
 }
 
 impl ResolvedTheme {
@@ -115,6 +120,11 @@ impl ResolvedTheme {
         let syn_del = parse_hex_color(&def.syntax.delimiter).unwrap_or_else(|| rgb(0xf97583));
         let syn_punc = parse_hex_color(&def.syntax.punctuation).unwrap_or_else(|| rgb(0xbbbebf));
 
+        let stat_succ = parse_hex_color(&def.status.success).unwrap_or_else(|| rgb(0x22c55e));
+        let stat_warn = parse_hex_color(&def.status.warning).unwrap_or_else(|| rgb(0xf59e0b));
+        let stat_err = parse_hex_color(&def.status.error).unwrap_or_else(|| rgb(0xef4444));
+        let stat_info = parse_hex_color(&def.status.info).unwrap_or_else(|| rgb(0x3b82f6));
+
         Self {
             id: def.id.clone(),
             name: def.name.clone(),
@@ -152,6 +162,10 @@ impl ResolvedTheme {
             syntax_boolean: syn_bool,
             syntax_delimiter: syn_del,
             syntax_punctuation: syn_punc,
+            status_success: stat_succ,
+            status_warning: stat_warn,
+            status_error: stat_err,
+            status_info: stat_info,
         }
     }
 }
@@ -222,6 +236,9 @@ pub fn set_active_preset(preset: crate::config::ThemePreset) {
         crate::config::ThemePreset::Oled => 1,
         crate::config::ThemePreset::Midnight => 2,
         crate::config::ThemePreset::Tokyo => 3,
+        crate::config::ThemePreset::Nord => 4,
+        crate::config::ThemePreset::Catppuccin => 5,
+        crate::config::ThemePreset::Gruvbox => 6,
     };
     ACTIVE_PRESET.store(val, Ordering::Relaxed);
     // Clear custom theme override when selecting a curated preset
@@ -233,6 +250,9 @@ pub fn active_preset() -> crate::config::ThemePreset {
         1 => crate::config::ThemePreset::Oled,
         2 => crate::config::ThemePreset::Midnight,
         3 => crate::config::ThemePreset::Tokyo,
+        4 => crate::config::ThemePreset::Nord,
+        5 => crate::config::ThemePreset::Catppuccin,
+        6 => crate::config::ThemePreset::Gruvbox,
         _ => crate::config::ThemePreset::Obsidian,
     }
 }
@@ -578,6 +598,10 @@ pub struct PresetPalette {
     pub input_bg: Rgba,
     pub term_bg: Rgba,
     pub border: Rgba,
+    pub success: Rgba,
+    pub warning: Rgba,
+    pub error: Rgba,
+    pub info: Rgba,
 }
 
 pub fn palette_for_preset(preset: crate::config::ThemePreset) -> PresetPalette {
@@ -591,6 +615,10 @@ pub fn palette_for_preset(preset: crate::config::ThemePreset) -> PresetPalette {
             input_bg: rgb(0x181818),
             term_bg: rgb(0x080808),
             border: rgb(0x444444),
+            success: rgb(0x22c55e),
+            warning: rgb(0xf59e0b),
+            error: rgb(0xef4444),
+            info: rgb(0x3b82f6),
         },
         crate::config::ThemePreset::Oled => PresetPalette {
             canvas_base: rgb(0x000000),
@@ -601,6 +629,10 @@ pub fn palette_for_preset(preset: crate::config::ThemePreset) -> PresetPalette {
             input_bg: rgb(0x101010),
             term_bg: rgb(0x000000),
             border: rgb(0x383838),
+            success: rgb(0x22c55e),
+            warning: rgb(0xf59e0b),
+            error: rgb(0xef4444),
+            info: rgb(0x3b82f6),
         },
         crate::config::ThemePreset::Midnight => PresetPalette {
             canvas_base: rgb(0x090d16),
@@ -611,6 +643,10 @@ pub fn palette_for_preset(preset: crate::config::ThemePreset) -> PresetPalette {
             input_bg: rgb(0x172033),
             term_bg: rgb(0x0b1120),
             border: rgb(0x475569),
+            success: rgb(0x34d399),
+            warning: rgb(0xfbbf24),
+            error: rgb(0xf87171),
+            info: rgb(0x60a5fa),
         },
         crate::config::ThemePreset::Tokyo => PresetPalette {
             canvas_base: rgb(0x0d0f18),
@@ -621,9 +657,118 @@ pub fn palette_for_preset(preset: crate::config::ThemePreset) -> PresetPalette {
             input_bg: rgb(0x181c2b),
             term_bg: rgb(0x0f121d),
             border: rgb(0x414868),
+            success: rgb(0x73daca),
+            warning: rgb(0xe0af68),
+            error: rgb(0xf7768e),
+            info: rgb(0x7aa2f7),
+        },
+        crate::config::ThemePreset::Nord => PresetPalette {
+            canvas_base: rgb(0x242933),
+            bg_base: rgb(0x2e3440),
+            bg_surface: rgb(0x3b4252),
+            bg_surface_raised: rgb(0x434c5e),
+            bg_elevated: rgb(0x4c566a),
+            input_bg: rgb(0x2e3440),
+            term_bg: rgb(0x2e3440),
+            border: rgb(0x4c566a),
+            success: rgb(0xa3be8c),
+            warning: rgb(0xebcb8b),
+            error: rgb(0xbf616a),
+            info: rgb(0x81a1c1),
+        },
+        crate::config::ThemePreset::Catppuccin => PresetPalette {
+            canvas_base: rgb(0x11111b),
+            bg_base: rgb(0x181825),
+            bg_surface: rgb(0x1e1e2e),
+            bg_surface_raised: rgb(0x313244),
+            bg_elevated: rgb(0x45475a),
+            input_bg: rgb(0x181825),
+            term_bg: rgb(0x181825),
+            border: rgb(0x45475a),
+            success: rgb(0xa6e3a1),
+            warning: rgb(0xf9e2af),
+            error: rgb(0xf38ba8),
+            info: rgb(0x89b4fa),
+        },
+        crate::config::ThemePreset::Gruvbox => PresetPalette {
+            canvas_base: rgb(0x1d2021),
+            bg_base: rgb(0x282828),
+            bg_surface: rgb(0x32302f),
+            bg_surface_raised: rgb(0x3c3836),
+            bg_elevated: rgb(0x504945),
+            input_bg: rgb(0x282828),
+            term_bg: rgb(0x282828),
+            border: rgb(0x504945),
+            success: rgb(0xb8bb26),
+            warning: rgb(0xfabd2f),
+            error: rgb(0xfb4934),
+            info: rgb(0x83a598),
         },
     }
 }
+
+// --- semantic status and chrome tokens ---
+/// Semantic success status color (e.g. tests passing, added files, completion).
+pub fn success() -> Rgba {
+    if let Some(custom) = active_custom_theme() {
+        custom.status_success
+    } else {
+        palette_for_preset(active_preset()).success
+    }
+}
+
+/// Semantic warning status color (e.g. modified files, waiting states, caveats).
+pub fn warning() -> Rgba {
+    if let Some(custom) = active_custom_theme() {
+        custom.status_warning
+    } else {
+        palette_for_preset(active_preset()).warning
+    }
+}
+
+/// Semantic error / danger status color (e.g. failures, deleted files, close-button hovers).
+pub fn error() -> Rgba {
+    if let Some(custom) = active_custom_theme() {
+        custom.status_error
+    } else {
+        palette_for_preset(active_preset()).error
+    }
+}
+
+/// Semantic info status color (e.g. working state, informative notices, links).
+pub fn info() -> Rgba {
+    if let Some(custom) = active_custom_theme() {
+        custom.status_info
+    } else {
+        palette_for_preset(active_preset()).info
+    }
+}
+
+/// Contextual alias for git added file badges and diff additions.
+pub fn git_added() -> Rgba {
+    success()
+}
+
+/// Contextual alias for git modified file badges and diff changes.
+pub fn git_modified() -> Rgba {
+    warning()
+}
+
+/// Contextual alias for git deleted file badges and diff deletions.
+pub fn git_deleted() -> Rgba {
+    error()
+}
+
+/// Chrome border token for top-level window framing.
+pub fn window_border() -> Rgba {
+    border()
+}
+
+/// Background token for text and cell selection highlights.
+pub fn selection_bg() -> Rgba {
+    active_accent().opacity(0.30)
+}
+
 /// A muted, low-alpha amethyst for chrome that should whisper rather than shout —
 /// the focused chat-input border.
 pub fn accent_soft() -> Rgba {
@@ -633,7 +778,7 @@ pub fn accent_secondary() -> Rgba {
     rgb(0xa855f7) // purple — thinking
 }
 pub fn danger() -> Rgba {
-    rgb(0xef4444) // red — close-button hover
+    error() // red — close-button hover
 }
 /// Markdown link colour in chat — light blue (sky), distinct from the amethyst accent.
 pub fn link() -> Rgba {
@@ -868,14 +1013,72 @@ mod tests {
         let oled = palette_for_preset(crate::config::ThemePreset::Oled);
         let midnight = palette_for_preset(crate::config::ThemePreset::Midnight);
         let tokyo = palette_for_preset(crate::config::ThemePreset::Tokyo);
+        let nord = palette_for_preset(crate::config::ThemePreset::Nord);
+        let catppuccin = palette_for_preset(crate::config::ThemePreset::Catppuccin);
+        let gruvbox = palette_for_preset(crate::config::ThemePreset::Gruvbox);
 
         assert_ne!(obsidian.canvas_base, oled.canvas_base);
         assert_ne!(obsidian.bg_base, midnight.bg_base);
         assert_ne!(midnight.bg_surface, tokyo.bg_surface);
+        assert_ne!(nord.canvas_base, catppuccin.canvas_base);
+        assert_ne!(catppuccin.bg_base, gruvbox.bg_base);
         assert_eq!(oled.canvas_base, rgb(0x000000));
+        assert_eq!(nord.success, rgb(0xa3be8c));
+        assert_eq!(catppuccin.success, rgb(0xa6e3a1));
+        assert_eq!(gruvbox.success, rgb(0xb8bb26));
     }
 
     static THEME_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_semantic_status_and_chrome_tokens() {
+        let _guard = THEME_TEST_MUTEX.lock().unwrap();
+
+        // Obsidian preset
+        set_active_preset(crate::config::ThemePreset::Obsidian);
+        assert_eq!(success(), rgb(0x22c55e));
+        assert_eq!(warning(), rgb(0xf59e0b));
+        assert_eq!(error(), rgb(0xef4444));
+        assert_eq!(info(), rgb(0x3b82f6));
+        assert_eq!(git_added(), success());
+        assert_eq!(git_modified(), warning());
+        assert_eq!(git_deleted(), error());
+        assert_eq!(window_border(), border());
+
+        // Tokyo preset
+        set_active_preset(crate::config::ThemePreset::Tokyo);
+        assert_eq!(success(), rgb(0x73daca));
+        assert_eq!(warning(), rgb(0xe0af68));
+        assert_eq!(error(), rgb(0xf7768e));
+        assert_eq!(info(), rgb(0x7aa2f7));
+
+        // Nord preset
+        set_active_preset(crate::config::ThemePreset::Nord);
+        assert_eq!(success(), rgb(0xa3be8c));
+        assert_eq!(error(), rgb(0xbf616a));
+
+        // Catppuccin preset
+        set_active_preset(crate::config::ThemePreset::Catppuccin);
+        assert_eq!(success(), rgb(0xa6e3a1));
+        assert_eq!(error(), rgb(0xf38ba8));
+
+        // Gruvbox preset
+        set_active_preset(crate::config::ThemePreset::Gruvbox);
+        assert_eq!(success(), rgb(0xb8bb26));
+        assert_eq!(error(), rgb(0xfb4934));
+
+        // Custom theme override
+        let mut custom = crate::config::ThemeDefinition::preset_obsidian();
+        custom.status.success = "#10b981".to_string();
+        custom.status.error = "#e11d48".to_string();
+        set_active_custom_theme(Some(custom));
+        assert_eq!(success(), rgb(0x10b981));
+        assert_eq!(error(), rgb(0xe11d48));
+
+        // Restore default obsidian
+        set_active_preset(crate::config::ThemePreset::Obsidian);
+        set_active_custom_theme(None);
+    }
 
     #[test]
     fn test_dynamic_preset_and_accent_switching() {
@@ -889,6 +1092,10 @@ mod tests {
         assert_eq!(active_preset(), crate::config::ThemePreset::Oled);
         assert_eq!(canvas_base(), rgb(0x000000).into());
         assert_eq!(bg_base(), rgb(0x050505));
+
+        set_active_preset(crate::config::ThemePreset::Nord);
+        assert_eq!(active_preset(), crate::config::ThemePreset::Nord);
+        assert_eq!(bg_base(), rgb(0x2e3440));
 
         set_active_accent(crate::config::AccentChoice::Emerald);
         assert_eq!(accent(), rgb(0x34d399));

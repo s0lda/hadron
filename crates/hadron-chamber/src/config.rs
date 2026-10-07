@@ -342,14 +342,20 @@ pub enum ThemePreset {
     Oled,
     Midnight,
     Tokyo,
+    Nord,
+    Catppuccin,
+    Gruvbox,
 }
 
 impl ThemePreset {
-    pub const ALL: [ThemePreset; 4] = [
+    pub const ALL: [ThemePreset; 7] = [
         ThemePreset::Obsidian,
         ThemePreset::Oled,
         ThemePreset::Midnight,
         ThemePreset::Tokyo,
+        ThemePreset::Nord,
+        ThemePreset::Catppuccin,
+        ThemePreset::Gruvbox,
     ];
 
     pub fn label(self) -> &'static str {
@@ -358,6 +364,9 @@ impl ThemePreset {
             ThemePreset::Oled => "OLED True Black",
             ThemePreset::Midnight => "Midnight Slate",
             ThemePreset::Tokyo => "Tokyo Dark",
+            ThemePreset::Nord => "Nord Frost",
+            ThemePreset::Catppuccin => "Catppuccin Mocha",
+            ThemePreset::Gruvbox => "Gruvbox Dark",
         }
     }
 
@@ -367,6 +376,9 @@ impl ThemePreset {
             ThemePreset::Oled => "oled",
             ThemePreset::Midnight => "midnight",
             ThemePreset::Tokyo => "tokyo",
+            ThemePreset::Nord => "nord",
+            ThemePreset::Catppuccin => "catppuccin",
+            ThemePreset::Gruvbox => "gruvbox",
         }
     }
 
@@ -376,6 +388,9 @@ impl ThemePreset {
             "oled" | "oled true black" | "oled-true-black" | "oled-black" | "black" => Some(ThemePreset::Oled),
             "midnight" | "midnight slate" | "midnight-slate" | "slate" => Some(ThemePreset::Midnight),
             "tokyo" | "tokyo dark" | "tokyo-dark" | "indigo" => Some(ThemePreset::Tokyo),
+            "nord" | "nord frost" | "nord-frost" | "arctic" => Some(ThemePreset::Nord),
+            "catppuccin" | "catppuccin mocha" | "catppuccin-mocha" | "mocha" => Some(ThemePreset::Catppuccin),
+            "gruvbox" | "gruvbox dark" | "gruvbox-dark" | "retro" => Some(ThemePreset::Gruvbox),
             _ => None,
         }
     }
@@ -463,6 +478,8 @@ pub struct ThemeDefinition {
     pub text: TextPalette,
     pub syntax: SyntaxPalette,
     pub terminal: TerminalPalette,
+    #[serde(default)]
+    pub status: StatusPalette,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -527,6 +544,34 @@ pub struct TerminalPalette {
     pub prompt: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StatusPalette {
+    #[serde(default = "default_status_success")]
+    pub success: String,
+    #[serde(default = "default_status_warning")]
+    pub warning: String,
+    #[serde(default = "default_status_error")]
+    pub error: String,
+    #[serde(default = "default_status_info")]
+    pub info: String,
+}
+
+fn default_status_success() -> String { "#22c55e".to_string() }
+fn default_status_warning() -> String { "#f59e0b".to_string() }
+fn default_status_error() -> String { "#ef4444".to_string() }
+fn default_status_info() -> String { "#3b82f6".to_string() }
+
+impl Default for StatusPalette {
+    fn default() -> Self {
+        Self {
+            success: default_status_success(),
+            warning: default_status_warning(),
+            error: default_status_error(),
+            info: default_status_info(),
+        }
+    }
+}
+
 impl Default for ThemeDefinition {
     fn default() -> Self {
         Self::preset_obsidian()
@@ -567,6 +612,7 @@ impl ThemeDefinition {
                 fg: "#e8e8e8".into(),
                 prompt: "#4ade80".into(),
             },
+            status: StatusPalette::default(),
         }
     }
 
@@ -603,6 +649,7 @@ impl ThemeDefinition {
                 fg: "#e8e8e8".into(),
                 prompt: "#4ade80".into(),
             },
+            status: StatusPalette::default(),
         }
     }
 
@@ -638,6 +685,12 @@ impl ThemeDefinition {
                 bg: "#0b1120".into(),
                 fg: "#f1f5f9".into(),
                 prompt: "#38bdf8".into(),
+            },
+            status: StatusPalette {
+                success: "#34d399".into(),
+                warning: "#fbbf24".into(),
+                error: "#f87171".into(),
+                info: "#60a5fa".into(),
             },
         }
     }
@@ -675,6 +728,138 @@ impl ThemeDefinition {
                 fg: "#c0caf5".into(),
                 prompt: "#73daca".into(),
             },
+            status: StatusPalette {
+                success: "#73daca".into(),
+                warning: "#e0af68".into(),
+                error: "#f7768e".into(),
+                info: "#7aa2f7".into(),
+            },
+        }
+    }
+
+    pub fn preset_nord() -> Self {
+        Self {
+            id: "nord".into(),
+            name: "Nord Frost".into(),
+            is_dark: true,
+            surfaces: SurfacePalette {
+                canvas_base: "#242933".into(),
+                bg_base: "#2e3440".into(),
+                bg_surface: "#3b4252".into(),
+                bg_surface_raised: "#434c5e".into(),
+                bg_elevated: "#4c566a".into(),
+                input_bg: "#2e3440".into(),
+                border: "#4c566a".into(),
+                popover: "#3b4252".into(),
+            },
+            accents: AccentPalette {
+                primary: "#88c0d0".into(),
+                glow_blue: "#81a1c1".into(),
+                glow_pink: "#b48ead".into(),
+                glow_green: "#a3be8c".into(),
+                glow_amber: "#ebcb8b".into(),
+            },
+            text: TextPalette {
+                primary: "#eceff4".into(),
+                secondary: "#e5e9f0".into(),
+                muted: "#d8dee9".into(),
+            },
+            syntax: SyntaxPalette::default_dark(),
+            terminal: TerminalPalette {
+                bg: "#2e3440".into(),
+                fg: "#eceff4".into(),
+                prompt: "#88c0d0".into(),
+            },
+            status: StatusPalette {
+                success: "#a3be8c".into(),
+                warning: "#ebcb8b".into(),
+                error: "#bf616a".into(),
+                info: "#81a1c1".into(),
+            },
+        }
+    }
+
+    pub fn preset_catppuccin() -> Self {
+        Self {
+            id: "catppuccin".into(),
+            name: "Catppuccin Mocha".into(),
+            is_dark: true,
+            surfaces: SurfacePalette {
+                canvas_base: "#11111b".into(),
+                bg_base: "#181825".into(),
+                bg_surface: "#1e1e2e".into(),
+                bg_surface_raised: "#313244".into(),
+                bg_elevated: "#45475a".into(),
+                input_bg: "#181825".into(),
+                border: "#45475a".into(),
+                popover: "#1e1e2e".into(),
+            },
+            accents: AccentPalette {
+                primary: "#cba6f7".into(),
+                glow_blue: "#89b4fa".into(),
+                glow_pink: "#f5c2e7".into(),
+                glow_green: "#a6e3a1".into(),
+                glow_amber: "#f9e2af".into(),
+            },
+            text: TextPalette {
+                primary: "#cdd6f4".into(),
+                secondary: "#bac2de".into(),
+                muted: "#a6adc8".into(),
+            },
+            syntax: SyntaxPalette::default_dark(),
+            terminal: TerminalPalette {
+                bg: "#181825".into(),
+                fg: "#cdd6f4".into(),
+                prompt: "#a6e3a1".into(),
+            },
+            status: StatusPalette {
+                success: "#a6e3a1".into(),
+                warning: "#f9e2af".into(),
+                error: "#f38ba8".into(),
+                info: "#89b4fa".into(),
+            },
+        }
+    }
+
+    pub fn preset_gruvbox() -> Self {
+        Self {
+            id: "gruvbox".into(),
+            name: "Gruvbox Dark".into(),
+            is_dark: true,
+            surfaces: SurfacePalette {
+                canvas_base: "#1d2021".into(),
+                bg_base: "#282828".into(),
+                bg_surface: "#32302f".into(),
+                bg_surface_raised: "#3c3836".into(),
+                bg_elevated: "#504945".into(),
+                input_bg: "#282828".into(),
+                border: "#504945".into(),
+                popover: "#32302f".into(),
+            },
+            accents: AccentPalette {
+                primary: "#d79921".into(),
+                glow_blue: "#83a598".into(),
+                glow_pink: "#d3869b".into(),
+                glow_green: "#b8bb26".into(),
+                glow_amber: "#fabd2f".into(),
+            },
+            text: TextPalette {
+                primary: "#ebdbb2".into(),
+                secondary: "#d5c4a1".into(),
+                muted: "#a89984".into(),
+            },
+            syntax: SyntaxPalette::default_dark(),
+            terminal: TerminalPalette {
+                bg: "#282828".into(),
+                fg: "#ebdbb2".into(),
+                prompt: "#b8bb26".into(),
+            },
+            status: StatusPalette {
+                success: "#b8bb26".into(),
+                warning: "#fabd2f".into(),
+                error: "#fb4934".into(),
+                info: "#83a598".into(),
+            },
         }
     }
 
@@ -684,6 +869,9 @@ impl ThemeDefinition {
             ThemePreset::Oled => Self::preset_oled(),
             ThemePreset::Midnight => Self::preset_midnight(),
             ThemePreset::Tokyo => Self::preset_tokyo(),
+            ThemePreset::Nord => Self::preset_nord(),
+            ThemePreset::Catppuccin => Self::preset_catppuccin(),
+            ThemePreset::Gruvbox => Self::preset_gruvbox(),
         }
     }
 }
@@ -1140,6 +1328,12 @@ mod tests {
         assert_eq!(ThemePreset::from_str("Tokyo Dark"), Some(ThemePreset::Tokyo));
         assert_eq!(ThemePreset::from_str("Midnight Slate"), Some(ThemePreset::Midnight));
         assert_eq!(ThemePreset::from_str("Obsidian Neutral"), Some(ThemePreset::Obsidian));
+        assert_eq!(ThemePreset::from_str("nord"), Some(ThemePreset::Nord));
+        assert_eq!(ThemePreset::from_str("Nord Frost"), Some(ThemePreset::Nord));
+        assert_eq!(ThemePreset::from_str("catppuccin"), Some(ThemePreset::Catppuccin));
+        assert_eq!(ThemePreset::from_str("Catppuccin Mocha"), Some(ThemePreset::Catppuccin));
+        assert_eq!(ThemePreset::from_str("gruvbox"), Some(ThemePreset::Gruvbox));
+        assert_eq!(ThemePreset::from_str("Gruvbox Dark"), Some(ThemePreset::Gruvbox));
         assert_eq!(AccentChoice::from_str("blue"), Some(AccentChoice::Sapphire));
         assert_eq!(AccentChoice::from_str("Sapphire"), Some(AccentChoice::Sapphire));
         assert_eq!(AccentChoice::from_str("emerald"), Some(AccentChoice::Emerald));
@@ -1153,6 +1347,8 @@ mod tests {
         let loaded: ThemeDefinition = serde_json::from_str(&json).unwrap();
         assert_eq!(loaded.name, "Tokyo Dark");
         assert_eq!(loaded.surfaces.canvas_base, "#0d0f18");
+        assert_eq!(loaded.status.success, "#73daca");
+        assert_eq!(loaded.status.error, "#f7768e");
 
         let c1 = parse_hex_color("#c084fc").unwrap();
         assert_eq!((c1.r * 255.0).round() as u8, 0xc0);
