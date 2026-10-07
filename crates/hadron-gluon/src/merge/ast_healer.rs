@@ -25,8 +25,23 @@ pub fn heal_conflicting_rust_content(base: &str, ours: &str, theirs: &str) -> Op
     }
 }
 
-/// Attempts to heal rebase conflicts in `worktree_path` if all conflicts are in `.rs` files
-/// and can be cleanly reconciled via AST merging.
+/// Attempts to heal conflicting file content based on file extension and semantics.
+///
+/// For Rust (`.rs`), attempts AST block merging and use-statement merging,
+/// then falls back to `attempt_auto_reconcile`.
+/// For Markdown (`.md`), attempts checklist and item reconciliation.
+/// For all supported files, attempts disjoint block reconciliation.
+pub fn heal_conflicting_content(rel_path: &str, base: &str, ours: &str, theirs: &str) -> Option<String> {
+    if rel_path.ends_with(".rs") {
+        if let Some(merged) = heal_conflicting_rust_content(base, ours, theirs) {
+            return Some(merged);
+        }
+    }
+    hadron_forge::conflict_resolve::attempt_auto_reconcile(base, ours, theirs)
+}
+
+/// Attempts to heal rebase conflicts in `worktree_path` if all conflicts can be cleanly
+/// reconciled via AST or structural conflict reconciliation (`hadron_forge::conflict_resolve`).
 pub fn heal_rebase_conflicts(worktree_path: &Path) -> Result<bool, String> {
     // 1. Get list of unmerged files
     let unmerged_output = git(worktree_path, &["diff", "--name-only", "--diff-filter=U"])
@@ -39,11 +54,6 @@ pub fn heal_rebase_conflicts(worktree_path: &Path) -> Result<bool, String> {
         .collect();
 
     if unmerged_files.is_empty() {
-        return Ok(false);
-    }
-
-    // Only heal if EVERY unmerged file is a Rust source file
-    if unmerged_files.iter().any(|f| !f.ends_with(".rs")) {
         return Ok(false);
     }
 
@@ -60,18 +70,18 @@ pub fn heal_rebase_conflicts(worktree_path: &Path) -> Result<bool, String> {
         let theirs_content = git(worktree_path, &["show", &theirs_spec])
             .unwrap_or_default();
 
-        match heal_conflicting_rust_content(&base_content, &ours_content, &theirs_content) {
+        match heal_conflicting_content(rel_path, &base_content, &ours_content, &theirs_content) {
             Some(resolved) => {
                 let full_path = worktree_path.join(rel_path);
                 if let Err(e) = std::fs::write(&full_path, resolved) {
-                    return Err(format!("Failed to write healed AST merge to {rel_path}: {e}"));
+                    return Err(format!("Failed to write healed merge to {rel_path}: {e}"));
                 }
                 if let Err(e) = git(worktree_path, &["add", rel_path]) {
                     return Err(format!("Failed to git add healed file {rel_path}: {e:#}"));
                 }
             }
             None => {
-                // Semantic AST conflict detected — cannot heal automatically
+                // Semantic or AST conflict detected — cannot heal automatically
                 return Ok(false);
             }
         }
@@ -161,5 +171,18 @@ pub fn compute() -> i32 {
         let code = healed.unwrap();
         assert!(code.contains("use std::path::Path;"));
         assert!(code.contains("use std::sync::Arc;"));
+    }
+
+    #[test]
+    fn test_heal_conflicting_content_markdown_checklists() {
+        let base = "- [ ] Task 1: Baseline setup\n";
+        let ours = "- [x] Task 1: Baseline setup (commit 111)\n- [ ] Task 2: Peer leases\n";
+        let theirs = "- [ ] Task 1: Baseline setup\n- [ ] Task 3: Scratch bus\n";
+        let healed = heal_conflicting_content("plan.md", base, ours, theirs);
+        assert!(healed.is_some());
+        let content = healed.unwrap();
+        assert!(content.contains("Task 1: Baseline setup (commit 111)"));
+        assert!(content.contains("Task 2: Peer leases"));
+        assert!(content.contains("Task 3: Scratch bus"));
     }
 }
