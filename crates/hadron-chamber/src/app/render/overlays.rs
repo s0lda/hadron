@@ -20,6 +20,22 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.28.0",
+        date: Some("2026-10-07"),
+        added: &[
+            "Interactive Chamber Suite: Live commands for /preview-rebase, /steer, /scout, /canvas, /intercom, /timelapse, /baseline, and /radar",
+            "Cross-Worktree Collaboration: SharedScratchBus cross-quark scratchpad MCP tools and IntentLockTable distributed peer lease locking",
+            "Resident Tooling: Persistent zero-token LspDaemon symbol definitions, FsTx ACID file transactions, and TreeGuard concurrent mutation protection",
+            "Swarm Orchestration: PortMesh collision-free port allocation, DagBarrierScheduler wave fan-out, and MockSynthesizer schema mocking",
+        ],
+        changed: &[],
+        fixed: &[
+            "Rule 1 Gate Enforcement: Pre-merge InvariantLinter banning #[allow(dead_code)] in production paths to eliminate unwired scaffolding",
+            "Merge Gate Hardening: RedTeamAuditor pre-merge diff scanning, CacheGuard compiler salt injection, and IsolatedSandbox environment scrubbing",
+            "AST Conflict Reconciliation: Automated 3-way structural conflict healing for markdown checklists and disjoint import blocks",
+        ],
+    },
+    Release {
         version: "0.27.0",
         date: Some("2026-10-07"),
         added: &[

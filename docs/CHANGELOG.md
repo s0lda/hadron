@@ -5,6 +5,36 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.0] - 2026-10-07
+
+### Added
+- **Interactive Chamber Suite & Diagnostic Commands (`hadron-chamber`)**:
+  - Implemented `/preview-rebase` slash command with dry-run rebase inspection via `git merge-tree` to detect ahead/behind counts and incoming merge conflicts before gate submission.
+  - Implemented `/steer` command enabling users to inject live mid-turn steering guidance directly to active running Quarks.
+  - Implemented `/scout` command spawning ephemeral read-only sub-workers for zero-footprint codebase search and symbol queries.
+  - Activated live command wiring and interactive UI renderers for `/canvas` (interactive vector canvas), `/intercom` (audio intercom bridge), `/timelapse` (architectural commit visualizer), `/baseline` (pre-turn test health snapshotter), and `/radar` (goal divergence evaluation with live diffs).
+  - Integrated `plan_dag_visualizer` in terminal, `DiffSteeringState` in diff inspector, `SplitCanvasState` in roster grid, and `ForceDirectedGraph` in git commit graph.
+- **Cross-Worktree Collaboration & Concurrency (`hadron-lattice`, `hadron-gluon`, `hadron-forge-mcp`)**:
+  - Implemented `SharedScratchBus` under `.hadron/scratch/` with MCP tools `hadron_forge_scratch_write`, `hadron_forge_scratch_read`, and `hadron_forge_scratch_list`, symlinked into worktrees.
+  - Implemented `IntentLockTable` for cross-worktree peer lease management and conflict detection with MCP tools `hadron_forge_peers_acquire_lease`, `peers_release_lease`, and `peers_list_leases`.
+  - Added `PortMesh` dynamic port allocator to assign non-conflicting network ports across concurrent worktree servers and test runners.
+  - Integrated `DagBarrierScheduler` and `HybridDagScheduler` for multi-task wave fan-out and topological dependency scheduling in Gluon.
+- **Resident Tooling & Advanced MCP Capabilities (`hadron-forge`, `hadron-forge-mcp`)**:
+  - Wired resident `LspDaemon` into `hadron_forge_symbol_definition` for zero-token persistent LSP symbol lookups.
+  - Added `FsTx` ACID micro-filesystem transactions with atomic staging, rollback, and commit for multi-file operations.
+  - Added `TreeGuard` hash-anchored concurrency guard to prevent stale background buffer overwrites.
+  - Enforced strictly jailed media paths (`is_jailed_screenshot_path`) in browser screenshot and capture tools, restricting file output to `.hadron/screenshots/`.
+  - Added `MockSynthesizer` in `hadron_forge_mock_synth` for automated route response generation directly from JSON schemas.
+
+### Fixed
+- **Rule 1 Enforcement & Merge Gate Invariant Linter (`hadron-gatekeeper`, `hadron-gluon`)**:
+  - Wired `InvariantLinter` into merge gate `land` path to ban `#[allow(dead_code)]` in production code paths, ensuring unwired scaffolding cannot silently pass CI.
+  - Wired `RedTeamAuditor` automated pre-merge diff security auditing into gate execution.
+  - Wired `CacheGuard` compiler salt injection (`-C metadata`) into gate test commands to prevent stale rlib reuse across concurrent worktrees.
+  - Wired `TestFailureMinimizer` to compact and deduplicate compiler errors and panic backtraces on gate failures.
+  - Wired `IsolatedSandbox` allowlist environment scrubbing into gate test execution.
+  - Wired `attempt_auto_reconcile` into `ast_healer` for semantic 3-way structural conflict reconciliation of markdown checklists and disjoint imports.
+
 ## [0.27.0] - 2026-10-07
 
 ### Added
