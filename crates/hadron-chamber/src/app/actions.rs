@@ -832,6 +832,104 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
+            "preview-rebase" => {
+                let (target, _) = crate::text::split_target(args);
+                let Some(target) = target else {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/preview-rebase @Quark`".to_string(),
+                        cx,
+                    );
+                    return true;
+                };
+                let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) else {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("chamber: `/preview-rebase` target not found: {target}"),
+                        cx,
+                    );
+                    return true;
+                };
+
+                let quark_id = row.id.clone();
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let wt_path = hadron_gluon::worktree::trees_dir(&repo_root).join(&quark_id);
+
+                if !wt_path.exists() {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("`{quark_id}` has no worktree at {}", wt_path.display()),
+                        cx,
+                    );
+                    return true;
+                }
+
+                let base = hadron_gluon::worktree::default_branch(&repo_root);
+                let preview = hadron_gluon::merge::preview_rebase(&wt_path, &base);
+
+                let body = match preview {
+                    hadron_gluon::merge::RebasePreview::AlreadyUpToDate => {
+                        format!("**Preview Rebase (@{})**: Branch is already up-to-date with `{}` (zero commits behind).", quark_id, base)
+                    }
+                    hadron_gluon::merge::RebasePreview::Clean { commits_ahead, commits_behind } => {
+                        format!("**Preview Rebase (@{})**: Clean rebase onto `{}`! ({} commits ahead, {} commits behind, 0 conflicts)", quark_id, base, commits_ahead, commits_behind)
+                    }
+                    hadron_gluon::merge::RebasePreview::Conflicts { conflicting_files, .. } => {
+                        format!("**Preview Rebase (@{})**: Conflicts detected when rebasing onto `{}`:\n{}", quark_id, base, conflicting_files.iter().map(|f| format!("- `{f}`")).collect::<Vec<_>>().join("\n"))
+                    }
+                };
+
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
+            "steer" => {
+                let (target, guidance) = crate::text::split_target(args);
+                let Some(target) = target else {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/steer @Quark <steering guidance>`".to_string(),
+                        cx,
+                    );
+                    return true;
+                };
+                let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) else {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("chamber: `/steer` target not found: {target}"),
+                        cx,
+                    );
+                    return true;
+                };
+
+                let guidance = guidance.trim();
+                if guidance.is_empty() {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Provide steering guidance: `/steer @Quark <guidance>`".to_string(),
+                        cx,
+                    );
+                    return true;
+                }
+
+                let quark_id = row.id.clone();
+                let steer_msg = format!("@{} [STEERING GUIDANCE]: {}", quark_id, guidance);
+                let ev = Event::new(Actor::Human, Some(hadron_lattice::QuarkId::new(&quark_id)), Kind::Message { body: steer_msg });
+                if let Err(e) = io::append_event(&self.path, &ev) {
+                    eprintln!("chamber: failed to append steer event: {e}");
+                }
+
+                let steer_dir = hadron_lattice::hadron_dir_of(&self.path).join("steer");
+                let _ = std::fs::create_dir_all(&steer_dir);
+                let steer_file = steer_dir.join(format!("{quark_id}.steer"));
+                let _ = std::fs::write(&steer_file, guidance);
+
+                self.post_chat_message(
+                    Actor::Gluon,
+                    format!("Steering guidance dispatched to `@{}`.", quark_id),
+                    cx,
+                );
+                true
+            }
             "approve" | "deny" => {
                 let target = args.trim().trim_start_matches('@');
                 let parts: Vec<&str> = target.split_whitespace().collect();

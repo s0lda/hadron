@@ -189,6 +189,8 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "gate-cancel", detail: "Force cancel a hung merge-gate run by killing its process group", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "revert", detail: "Revert the last landed commit on main via git revert", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "unabandon", detail: "Restore an archived branch from its archive tag", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "preview-rebase", detail: "Dry-run rebase inspection of a quark branch onto main to preview incoming conflicts", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
+    Command { name: "steer", detail: "Inject mid-turn steering guidance to an active running quark", arity: Arity::Body, arg: ArgSource::Quark, listed: true },
     Command { name: "theme", detail: "Switch color theme preset (e.g. /theme oled, /theme tokyo, /theme obsidian, /theme midnight)", arity: Arity::Line, arg: ArgSource::Theme, listed: true },
     Command { name: "stats", detail: "Switch to telemetry and token spend statistics tab", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "team", detail: "Display active swarm roster, models, and seats", arity: Arity::None, arg: ArgSource::None, listed: true },

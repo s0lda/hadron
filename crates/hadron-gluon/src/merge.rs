@@ -408,6 +408,67 @@ fn land_github_pr(_repo_root: &Path, wt: &Worktree, _base: &str) -> anyhow::Resu
 ///   `Landed::RebasedThenFastForward`'s message told the human it had been
 ///   "re-tested first". Rebasing first is what makes that sentence true.
 ///
+/// Result of dry-running a rebase or merge against a base branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RebasePreview {
+    /// Already up-to-date with base branch.
+    AlreadyUpToDate,
+    /// Can rebase or fast-forward cleanly onto base.
+    Clean {
+        commits_ahead: usize,
+        commits_behind: usize,
+    },
+    /// Conflicts detected when dry-running rebase against base.
+    Conflicts {
+        conflicting_files: Vec<String>,
+        details: String,
+    },
+}
+
+/// Dry-run rebase inspection of `wt_path` against `base` using `git merge-tree`.
+/// Leaves zero repository state behind and produces no file modifications.
+pub fn preview_rebase(wt_path: &Path, base: &str) -> RebasePreview {
+    // 1. Base is already an ancestor of HEAD
+    if git(wt_path, &["merge-base", "--is-ancestor", base, "HEAD"]).is_ok() {
+        return RebasePreview::AlreadyUpToDate;
+    }
+
+    // 2. Count commits ahead and behind
+    let commits_ahead = git(wt_path, &["rev-list", "--count", &format!("{base}..HEAD")])
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    let commits_behind = git(wt_path, &["rev-list", "--count", &format!("HEAD..{base}")])
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+
+    // 3. Dry-run merge check via git merge-tree --write-tree
+    match git(wt_path, &["merge-tree", "--write-tree", base, "HEAD"]) {
+        Ok(_) => RebasePreview::Clean {
+            commits_ahead,
+            commits_behind,
+        },
+        Err(e) => {
+            let err_str = e.to_string();
+            let mut conflicting_files = Vec::new();
+            for line in err_str.lines() {
+                if let Some(rest) = line.strip_prefix("CONFLICT (content): Merge conflict in ") {
+                    conflicting_files.push(rest.trim().to_string());
+                } else if line.contains("CONFLICT") {
+                    conflicting_files.push(line.trim().to_string());
+                }
+            }
+            conflicting_files.sort();
+            conflicting_files.dedup();
+            RebasePreview::Conflicts {
+                conflicting_files,
+                details: err_str,
+            }
+        }
+    }
+}
+
 /// A conflict is aborted and reported — a machine must not guess at a resolution —
 /// and nothing is ever deleted: the branch still points at the quark's own commits.
 pub fn sync(wt: &Worktree, base: &str) -> Synced {
@@ -1053,6 +1114,36 @@ mod tests {
 
         assert!(matches!(res, CoupledLanded::Conflicted { .. }));
         assert!(!repo.path().join("shared.txt").exists());
+    }
+
+    #[test]
+    fn preview_rebase_detects_up_to_date_and_clean_states() {
+        let repo = git_repo();
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+
+        // 1. Fresh worktree right on base -> AlreadyUpToDate
+        let preview = preview_rebase(&wt.path, "main");
+        assert_eq!(preview, RebasePreview::AlreadyUpToDate);
+
+        // 2. Commit on worktree, base has not moved -> Still up to date ancestor check
+        std::fs::write(wt.path.join("file.txt"), "change\n").unwrap();
+        worktree::commit_turn(&wt, "opus: change").unwrap();
+        let preview2 = preview_rebase(&wt.path, "main");
+        assert_eq!(preview2, RebasePreview::AlreadyUpToDate);
+
+        // 3. Move main ahead with orthogonal commit -> Clean preview
+        std::fs::write(repo.path().join("other.txt"), "main commit\n").unwrap();
+        let _ = git(repo.path(), &["add", "other.txt"]);
+        let _ = git(repo.path(), &["commit", "-m", "main: other"]);
+
+        let preview3 = preview_rebase(&wt.path, "main");
+        match preview3 {
+            RebasePreview::Clean { commits_ahead, commits_behind } => {
+                assert_eq!(commits_ahead, 1);
+                assert_eq!(commits_behind, 1);
+            }
+            _ => panic!("Expected RebasePreview::Clean, got {:?}", preview3),
+        }
     }
 }
 
