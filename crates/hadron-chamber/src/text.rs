@@ -180,6 +180,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "add-skill", detail: "Add a custom skill (e.g. /add-skill @path/to/file.md, or /add-skill my-skill then paste the file content)", arity: Arity::Body, arg: ArgSource::File, listed: true },
     Command { name: "retry", detail: "Re-dispatch the last failed message or turn for a seat or global", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "doctor", detail: "Run automated system diagnostics on daemon, locks, nucleus, fonts, and git worktrees", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "bridge", detail: "Manage Antigravity Python bridge dependencies (status | update)", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "prune", detail: "Preview or clean up merged/stale quark worktrees and branches safely", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "compact-nucleus", detail: "Audit and compact nucleus index against target budget limit", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "stop", detail: "Gracefully stop a quark's in-flight turn", arity: Arity::Line, arg: ArgSource::Quark, listed: true },

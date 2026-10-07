@@ -1310,6 +1310,74 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
+            "bridge" => {
+                let trimmed = args.trim();
+                let is_update = trimmed.eq_ignore_ascii_case("update") || trimmed.eq_ignore_ascii_case("upgrade");
+                if is_update {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Starting Antigravity Python bridge dependencies upgrade…".to_string(),
+                        cx,
+                    );
+                    cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                        let mut cx = cx.clone();
+                        async move {
+                            let result = cx
+                                .background_spawn(async move {
+                                    hadron_gluon::adapter::bridge::materialize_script()?;
+                                    hadron_gluon::adapter::bridge::upgrade_venv()
+                                })
+                                .await;
+                            this.update(&mut cx, |this, cx| {
+                                let msg = match result {
+                                    Ok(m) => {
+                                        format!(
+                                            "Antigravity bridge dependencies updated successfully (spec v{}):\n- {}",
+                                            m.spec_version,
+                                            m.installed_packages.join("\n- ")
+                                        )
+                                    }
+                                    Err(e) => {
+                                        format!("Antigravity bridge update failed: {e:#}")
+                                    }
+                                };
+                                this.post_chat_message(Actor::Gluon, msg, cx);
+                            })
+                            .ok();
+                        }
+                    })
+                    .detach();
+                } else {
+                    let health = hadron_gluon::adapter::bridge::check_bridge_health();
+                    let manifest = hadron_gluon::adapter::bridge::read_manifest();
+                    let pkgs = manifest
+                        .as_ref()
+                        .map(|m| m.installed_packages.join(", "))
+                        .unwrap_or_else(|| "none recorded".to_string());
+                    let status_str = match health {
+                        hadron_gluon::adapter::bridge::BridgeHealth::UpToDate { spec_version } => {
+                            format!("Up-to-date (spec v{spec_version}, packages: {pkgs})")
+                        }
+                        hadron_gluon::adapter::bridge::BridgeHealth::Outdated {
+                            installed_spec,
+                            target_spec,
+                        } => {
+                            format!(
+                                "Outdated (installed: spec v{installed_spec}, target: spec v{target_spec}, packages: {pkgs}).\nRun `/bridge update` to upgrade dependencies."
+                            )
+                        }
+                        hadron_gluon::adapter::bridge::BridgeHealth::Unprovisioned => {
+                            "Unprovisioned (venv does not exist yet).\nRun `/bridge update` to create the venv and install dependencies.".to_string()
+                        }
+                    };
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("Antigravity Bridge Status:\n{status_str}"),
+                        cx,
+                    );
+                }
+                true
+            }
             "prune" => {
                 let confirm = args.trim().eq_ignore_ascii_case("confirm");
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();

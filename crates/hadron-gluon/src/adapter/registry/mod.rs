@@ -629,16 +629,18 @@ impl QuarkKind {
                 let mut program = std::path::Path::new(resolved.program()).to_path_buf();
                 let is_agy_bridge =
                     seat.vendor == "agy" || seat.id.as_str() == "acp-agy" || seat.id.as_str() == "agy";
-                if is_agy_bridge && program.is_absolute() && !program.exists() {
-                    crate::adapter::bridge::materialize_script()?;
-                    if let Err(e) = crate::adapter::bridge::provision_venv() {
-                        anyhow::bail!(
-                            "Failed to provision `agy` bridge for seat '{}': {e:#}",
-                            seat.id.as_str()
-                        );
-                    }
-                    if let Ok(py) = crate::adapter::bridge::venv_python() {
-                        program = py;
+                if is_agy_bridge {
+                    let _ = crate::adapter::bridge::materialize_script();
+                    if program.is_absolute() && !program.exists() {
+                        if let Err(e) = crate::adapter::bridge::provision_venv() {
+                            anyhow::bail!(
+                                "Failed to provision `agy` bridge for seat '{}': {e:#}",
+                                seat.id.as_str()
+                            );
+                        }
+                        if let Ok(py) = crate::adapter::bridge::venv_python() {
+                            program = py;
+                        }
                     }
                 }
                 if program.is_absolute() && !program.exists() {

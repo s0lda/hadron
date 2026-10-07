@@ -754,6 +754,7 @@ mod tests {
             "add-skill",
             "retry",
             "doctor",
+            "bridge",
             "prune",
             "compact-nucleus",
             "stop",

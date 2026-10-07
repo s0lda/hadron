@@ -247,10 +247,12 @@ pub(super) struct AgyBridgeProbe {
 }
 
 pub(super) enum AgyBridgeState {
-    /// Running `python3 -m venv` + `pip install google-antigravity` off the UI thread.
+    /// Running `python3 -m venv` + `pip install` off the UI thread.
     Provisioning,
+    /// Upgrading packages in the existing venv off the UI thread.
+    Updating,
     Ready,
-    /// The venv couldn't be created — a short human-readable reason (e.g. `python3`
+    /// The venv couldn't be created or updated — a short human-readable reason (e.g. `python3`
     /// missing, or the install failed).
     Failed(String),
 }
