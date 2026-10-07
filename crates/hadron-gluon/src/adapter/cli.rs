@@ -329,7 +329,7 @@ impl<R: CliRunner> CliQuark<R> {
         // quark runs itself lands in the main checkout's warm `target/` instead of
         // growing a 37 GB one per worktree (`worktree::shared_build_env`). Seat env
         // is applied last: a seat that deliberately sets one of these wins.
-        let mut env = crate::worktree::shared_build_env(&cwd);
+        let mut env = crate::worktree::shared_build_env_for_quark(&cwd, self.id.as_str());
         env.extend(self.env.iter().cloned());
 
         CliInvocation {

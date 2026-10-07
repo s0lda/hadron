@@ -428,7 +428,7 @@ impl super::AcpQuark {
         // `cargo` in its worktree exactly like a CLI quark does, and without this it
         // grows a duplicate 37 GB `target/` there (`worktree::shared_build_env`).
         // Seat env last, so a seat that sets one of these deliberately still wins.
-        let mut spawn_env = crate::worktree::shared_build_env(&cwd);
+        let mut spawn_env = crate::worktree::shared_build_env_for_quark(&cwd, quark.as_str());
         spawn_env.extend(env.iter().cloned());
         let agent_source = acp_stdio_descriptor(&target, &spawn_env);
         // The reply accumulator and the context watermark are written by the

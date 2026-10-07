@@ -275,6 +275,35 @@ pub fn shared_build_env(cwd: &Path) -> Vec<(String, String)> {
     env
 }
 
+/// Configures compiler environment for a specific quark worktree.
+/// When `sccache` is available, partitions the target directory under `target/quarks/<quark_id>`
+/// using [`SccacheGuard`], eliminating file lock serialization on `target/` between concurrent quarks
+/// while sharing the compilation cache via `SCCACHE_DIR`.
+/// When `sccache` is not present, falls back to the shared `target/` directory per Standard Model invariant.
+pub fn shared_build_env_for_quark(cwd: &Path, quark_id: &str) -> Vec<(String, String)> {
+    let mut env = vec![("CARGO_INCREMENTAL".to_string(), "0".to_string())];
+    if let Ok(root) = crate::snapshot::main_repo_root(cwd) {
+        if crate::env::is_sccache_available() {
+            let guard = sccache_guard::SccacheGuard::new(&root);
+            for (k, v) in guard.build_env_for_quark(quark_id) {
+                env.retain(|(ek, _)| ek != &k);
+                env.push((k, v));
+            }
+            let sccache_dir = hadron_lattice::user_hadron_dir()
+                .map(|d| d.join("sccache"))
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp/hadron-sccache"));
+            env.push(("SCCACHE_DIR".to_string(), sccache_dir.to_string_lossy().to_string()));
+        } else {
+            env.push((
+                "CARGO_TARGET_DIR".to_string(),
+                root.join("target").to_string_lossy().to_string(),
+            ));
+        }
+    }
+    CompilerAccelerator::detect().apply_to_env(&mut env);
+    env
+}
+
 /// How long a build artifact must sit unused before [`reap_build_artifacts`]
 /// reclaims it.
 ///
@@ -936,6 +965,19 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let env = shared_build_env(dir.path());
         assert!(env.iter().all(|(k, _)| k != "CARGO_TARGET_DIR"));
+    }
+
+    #[test]
+    fn shared_build_env_for_quark_sets_valid_target_and_incremental_flags() {
+        let repo = git_repo();
+        let wt = ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+        let env = shared_build_env_for_quark(&wt.path, "opus");
+        let target = env.iter().find(|(k, _)| k == "CARGO_TARGET_DIR").expect("target dir is set");
+        assert!(target.1.contains("target"));
+        assert_eq!(
+            env.iter().find(|(k, _)| k == "CARGO_INCREMENTAL").map(|(_, v)| v.as_str()),
+            Some("0")
+        );
     }
 
     /// A merged branch is swept; an unmerged one SURVIVES. The second half is the
