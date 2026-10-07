@@ -5,6 +5,35 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0] - 2026-10-07
+
+### Added
+- **Tokenized Theme System & Modern Presets (`hadron-chamber`)**:
+  - Expanded `ThemePreset` and `PresetPalette` with `Nord` (Frost), `Catppuccin` (Mocha), and `Gruvbox` (Dark) curated themes alongside `Obsidian`, `OLED`, `Midnight`, and `Tokyo`.
+  - Added semantic status tokens (`success`, `warning`, `error`, `info`, `git_added`, `git_modified`, `git_deleted`, `window_border`, `selection_bg`) wired to `StatusPalette` in `ThemeDefinition` and `PresetPalette`.
+  - Added custom theme variant auto-numbering (`next_available_theme_name`, `disambiguate_theme_names`) so sequentially created custom themes display distinctly in Settings and `/theme`.
+  - Upgraded `/theme` command and Settings overlay dropdown to list all 7 built-in presets and discover custom themes from `~/.hadron/themes/`.
+- **Python ACP Bridge Automation & `/bridge` Command (`hadron-gluon`, `hadron-chamber`)**:
+  - Implemented manifest-backed Python dependency tracking (`BridgeManifest`, `evaluate_health`, `check_bridge_health`, `upgrade_venv`) with SSOT package specifications (`google-antigravity>=0.1.21`, `google-genai>=2.28.0`).
+  - Added `/bridge [status | update]` chat command to inspect and upgrade ACP Python virtual environments.
+  - Wired automated bridge health evaluation and upgrade triggers into Chamber settings provider probe.
+- **UI Modernization & Token Migration (`hadron-chamber`)**:
+  - Migrated hardcoded RGB values across `widgets.rs`, `terminal.rs`, and `app/mod.rs` to semantic theme tokens.
+  - Enhanced chat capsule tabs with hairline borders on selection and subtle hover backgrounds.
+  - Refined streaming draft cards with identity accent outlines and identity dots; added status halo borders to live action badges.
+  - Added hairline border outlines to titlebar pills (update, repo monitor, GitHub monitor).
+
+### Fixed
+- **Changelog Overlay Modal Bounds & Text Wrapping (`hadron-chamber`)**:
+  - Constrained changelog item text containers with `flex_1` and `min_w_0` to properly wrap multi-line notes instead of overflowing single-line.
+  - Added `line_height` and `flex_shrink_0` to bullet indicators and widened overlay modal to 580px (`max_w(0.9)`).
+- **Git Graph Rail Alignment on Commit Selection (`hadron-chamber`)**:
+  - Applied `.border_1().border_color(transparent_black())` by default across commit graph rows, branch rows, and expanded panels.
+  - Kept layout border geometry constant and updated only border color on cursor selection, eliminating the 1px canvas horizontal shift.
+- **Diagnostics Hygiene in Quark Info Dashboard (`hadron-chamber`)**:
+  - Removed duplicate `DISPLAY & ENVIRONMENT` and `WORKSPACE & DISPLAY COMPATIBILITY` blocks from Quark Info card.
+  - Consolidated display server, layer shell, notifications, and graphics pipeline diagnostics under Settings → Environment.
+
 ## [0.26.0] - 2026-10-05
 
 ### Added

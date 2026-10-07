@@ -63,6 +63,7 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/mode` | `/mode [@Quark] <ask\|write\|auto\|bypass>` | Set execution permission mode for a seat or global default. | `/mode @Quark bypass` |
 | `/toggle` | `/toggle @Quark` | Park or unpark a Quark — retains seat configuration while skipping turns. | `/toggle @Quark` |
 | `/reboot` | `/reboot [@Quark \| all]` | Force-restart resident ACP / CLI agent subprocesses. | `/reboot @Quark` |
+| `/bridge` | `/bridge [status \| update]` | Manage Antigravity Python bridge dependencies and evaluate virtual environment health. | `/bridge update` |
 | `/stop` | `/stop @Quark` | Gracefully stop a Quark's in-flight turn. | `/stop @Quark` |
 | `/kill` | `/kill @Quark` | Force-kill a Quark's subprocess group (`-pgid`). | `/kill @Quark` |
 | `/cancel` | `/cancel [@Quark]` | Cancel pending unhandled dispatch for a seat. | `/cancel @Quark` |
@@ -131,7 +132,7 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/search` | `/search <query>` | Search this session's message stream for matching text. | `/search merge gate` |
 | `/clear` | `/clear` | Archive and clear the current chat history. | `/clear` |
 | `/clear-history` | `/clear-history` | Delete all archived sessions while preserving token usage ledger. | `/clear-history` |
-| `/theme` | `/theme <preset>` | Switch color theme (`oled`, `tokyo`, `obsidian`, `midnight`). | `/theme tokyo` |
+| `/theme` | `/theme <preset \| custom>` | Switch color theme preset (`obsidian`, `oled`, `midnight`, `tokyo`, `nord`, `catppuccin`, `gruvbox`) or custom theme ID. | `/theme nord` |
 | `/toggle-roster` | `/toggle-roster` | Toggle visibility of the left Roster sidebar. | `/toggle-roster` |
 | `/toggle-inspector` | `/toggle-inspector` | Toggle visibility of the right Inspector sidebar. | `/toggle-inspector` |
 | `/home` | `/home [@Quark]` | Open Quark personal home & telemetry dashboard. | `/home @Agy` |

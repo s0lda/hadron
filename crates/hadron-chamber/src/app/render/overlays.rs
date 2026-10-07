@@ -20,6 +20,22 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.27.0",
+        date: Some("2026-10-07"),
+        added: &[
+            "Tokenized Theme System: 100% tokenized color palette with Nord, Catppuccin, and Gruvbox presets, semantic status tokens, and custom theme variant auto-numbering",
+            "Python ACP Bridge Automation: Automated manifest-backed dependency tracking (BridgeManifest) and /bridge (status | update) chat command",
+            "UI Instrument Polish: Hairline borders on chat capsule tabs, streaming draft accent halos, and titlebar pill outlines",
+            "Color Token Migration: Replaced hardcoded RGB values across widgets, terminal, and chamber views with unified theme tokens",
+        ],
+        changed: &[],
+        fixed: &[
+            "Changelog Overlay Text Wrapping: Constrained bullet containers with flex_1 and min_w_0 to wrap multi-line release notes cleanly within 580px modal bounds",
+            "Git Graph Commit Alignment: Preserved stable 1px border geometry across unselected and selected states to eliminate canvas horizontal jitter",
+            "Quark Info Diagnostics Hygiene: Relocated display server, layer shell, and graphics pipeline diagnostics from Quark Info to Settings -> Environment",
+        ],
+    },
+    Release {
         version: "0.26.0",
         date: Some("2026-10-05"),
         added: &[
