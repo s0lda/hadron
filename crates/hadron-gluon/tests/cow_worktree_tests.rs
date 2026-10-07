@@ -16,7 +16,9 @@ fn test_sccache_env_generation_and_target_isolation() {
 #[test]
 fn test_cow_workspace_creation() {
     let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("Cargo.toml"), b"[package]\nname = \"demo\"\n").expect("write file");
     let ws = CowWorkspace::create(dir.path(), "http-ollama").expect("create cow workspace");
     assert_eq!(ws.quark_id, "http-ollama");
     assert!(ws.path.is_dir());
+    assert!(ws.path.join("Cargo.toml").is_file());
 }

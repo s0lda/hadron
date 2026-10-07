@@ -433,6 +433,7 @@ fn reset_session_drops_the_session_and_stays_rebootable() {
         cancels: cancels_tx,
         in_turn: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         live: None,
+        breakpoints: Arc::new(Mutex::new(crate::breakpoints::BreakpointsRegistry::new())),
     });
     assert!(q.session.is_some(), "precondition: a session is open");
 
@@ -459,6 +460,7 @@ fn a_cancel_with_no_turn_in_flight_is_a_no_op() {
         cancels: cancels_tx,
         in_turn: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         live: None,
+        breakpoints: Arc::new(Mutex::new(crate::breakpoints::BreakpointsRegistry::new())),
     };
 
     assert!(!session.request_cancel(), "no turn is in flight — must report false");
@@ -481,6 +483,7 @@ fn a_cancel_with_a_turn_in_flight_signals_the_pump() {
         cancels: cancels_tx,
         in_turn: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         live: None,
+        breakpoints: Arc::new(Mutex::new(crate::breakpoints::BreakpointsRegistry::new())),
     };
 
     assert!(session.request_cancel(), "a turn is in flight — must report true");
@@ -1462,5 +1465,27 @@ fn test_protocol_version_variants() {
     let v1 = ProtocolVersion::V1;
     let serialized = serde_json::to_string(&v1).unwrap();
     assert!(!serialized.is_empty());
+}
+
+#[test]
+fn test_breakpoints_registry_interception() {
+    let mut registry = crate::breakpoints::BreakpointsRegistry::new();
+    registry.set_breakpoint(
+        "bp-danger".into(),
+        crate::breakpoints::BreakpointCondition {
+            tool_name_pattern: "execute".into(),
+            argument_substring: Some("rm -rf".into()),
+            hit_count_threshold: 1,
+        },
+    );
+
+    assert_eq!(
+        registry.should_intercept("execute", r#"{"command":"rm -rf /"}"#),
+        Some("bp-danger".into())
+    );
+    assert_eq!(
+        registry.should_intercept("execute", r#"{"command":"cargo test"}"#),
+        None
+    );
 }
 

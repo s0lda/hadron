@@ -139,6 +139,8 @@ pub struct PtyTerminal {
     _slave: Box<dyn SlavePty + Send>,
     _child: Box<dyn Child + Send + Sync>,
     dirty: Arc<AtomicBool>,
+    #[allow(dead_code)]
+    pub injector: Arc<Mutex<hadron_gluon::pty_injection::PtyInjector>>,
     cols: usize,
     rows: usize,
 }
@@ -331,11 +333,14 @@ impl PtyTerminal {
         let term = Term::new(config, &GridSize { cols, rows }, listener);
         let term = Arc::new(Mutex::new(term));
         let dirty = Arc::new(AtomicBool::new(true));
+        let injector = Arc::new(Mutex::new(hadron_gluon::pty_injection::PtyInjector::new()));
 
         // Reader thread: pump PTY bytes through the VTE parser into the grid.
         // Spawn BEFORE sending initial newline so no incoming bytes are lost.
         let term_r = Arc::clone(&term);
         let dirty_r = Arc::clone(&dirty);
+        let injector_r = Arc::clone(&injector);
+        let writer_r = Arc::clone(&writer);
         let sh_label = primary_shell.clone();
         std::thread::Builder::new()
             .name("hadron-pty-reader".into())
@@ -366,6 +371,18 @@ impl PtyTerminal {
                                 parser.advance(&mut *term, &buf[..n]);
                             }
                             dirty_r.store(true, Ordering::Relaxed);
+
+                            // Auto-inject matching responses if an injection rule triggers
+                            if let Ok(chunk_str) = std::str::from_utf8(&buf[..n]) {
+                                if let Ok(inj) = injector_r.lock() {
+                                    if let Some(resp) = inj.eval_chunk(chunk_str) {
+                                        if let Ok(mut w) = writer_r.lock() {
+                                            let _ = w.write_all(resp.as_bytes());
+                                            let _ = w.flush();
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -389,9 +406,18 @@ impl PtyTerminal {
             _slave: pair.slave,
             _child: child,
             dirty,
+            injector,
             cols,
             rows,
         })
+    }
+
+    /// Add an automatic PTY injection rule matching chunk patterns.
+    #[allow(dead_code)]
+    pub fn add_injection_rule(&self, pattern: &str, response: &str) {
+        if let Ok(mut inj) = self.injector.lock() {
+            inj.add_rule(pattern, response);
+        }
     }
 
 
@@ -940,6 +966,16 @@ mod tests {
     fn test_default_shell_resolution() {
         let shell = default_shell();
         assert!(!shell.trim().is_empty(), "default_shell must return a non-empty shell command");
+    }
+
+    #[test]
+    fn test_pty_injection_rule_matching() {
+        let dir = tempdir().unwrap();
+        let term = PtyTerminal::new(dir.path(), 80, 24).unwrap();
+        term.add_injection_rule(r"echo_probe", "response_probe\n");
+        let inj = term.injector.lock().unwrap();
+        let eval = inj.eval_chunk("Please echo_probe here");
+        assert_eq!(eval, Some("response_probe\n".to_string()));
     }
 }
 

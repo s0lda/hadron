@@ -165,6 +165,17 @@ pub fn detect_affected_runner(worktree_path: &Path, base: &str) -> (&'static str
         _ => Vec::new(),
     };
     let file_refs: Vec<&str> = diff_files.iter().map(|s| s.as_str()).collect();
+    let tia_plan = hadron_forge::tia::compute_impacted_tests(&file_refs);
+    if !tia_plan.requires_full_workspace {
+        if let Some(target_pkg) = tia_plan.target_package {
+            let mut args = vec!["test".to_string(), "-p".to_string(), target_pkg];
+            for sym in tia_plan.target_symbols {
+                args.push(sym);
+            }
+            return ("cargo", args);
+        }
+    }
+
     match hadron_forge::ast_blast_radius::AstBlastRadiusAnalyzer::find_affected_crates(&file_refs) {
         hadron_forge::ast_blast_radius::AffectedCratesResult::Specific(crates) => {
             let mut args = vec!["test".to_string()];
@@ -257,6 +268,12 @@ pub async fn run_tests_within(
         // `wait_with_output` is dropped with the child still running. Same guarantee
         // `ProcessRunner` relies on (`engine/run.rs`'s watchdog comment).
         .kill_on_drop(true);
+
+    // Ephemeral scrubbed environment from IsolatedSandbox for secure isolation
+    let sandbox = hadron_gatekeeper::IsolatedSandbox::new(&wt.path, Default::default());
+    for (k, v) in sandbox.scrub_environment() {
+        cmd.env(k, v);
+    }
 
     // **The gate's cost lives or dies on this line** — and so does the disk. See
     // `worktree::shared_build_env` for why; the quark's own subprocess gets the very
@@ -1144,6 +1161,26 @@ mod tests {
             }
             _ => panic!("Expected RebasePreview::Clean, got {:?}", preview3),
         }
+    }
+
+    #[test]
+    fn detect_affected_runner_uses_tia_plan() {
+        let repo = git_repo();
+        let base = worktree::default_branch(repo.path());
+        std::fs::write(repo.path().join("Cargo.toml"), "[workspace]\nmembers = [\"crates/*\"]\n").unwrap();
+        git(repo.path(), &["add", "Cargo.toml"]).unwrap();
+        git(repo.path(), &["commit", "-q", "-m", "init workspace"]).unwrap();
+
+        let wt = worktree::ensure(repo.path(), &q("tia-quark"), "01TIA").unwrap();
+        let crate_dir = wt.path.join("crates").join("hadron-lattice").join("src");
+        std::fs::create_dir_all(&crate_dir).unwrap();
+        std::fs::write(crate_dir.join("nucleus.rs"), "pub fn fact() {}\n").unwrap();
+        worktree::commit_turn(&wt, "tia-quark: nucleus fact").unwrap();
+
+        let (prog, args) = detect_affected_runner(&wt.path, &base);
+        assert_eq!(prog, "cargo");
+        assert!(args.contains(&"-p".to_string()));
+        assert!(args.contains(&"hadron-lattice".to_string()));
     }
 }
 

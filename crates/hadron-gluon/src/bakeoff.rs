@@ -145,27 +145,81 @@ impl BakeOffManager {
 
     /// Select the highest scoring viable winner (must have passed gate).
     pub fn select_winner(&mut self) -> Option<BakeOffCandidateResult> {
-        let winner = self
-            .candidates
-            .iter()
-            .filter(|c| c.gate_passed)
-            .max_by(|a, b| {
-                a.score
-                    .partial_cmp(&b.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then_with(|| b.lines_changed().cmp(&a.lines_changed()))
-            })
-            .cloned();
-
-        if let Some(ref w) = winner {
-            self.status = TournamentStatus::Completed { winner: w.clone() };
-        } else if !self.candidates.is_empty() {
-            self.status = TournamentStatus::Failed {
-                reason: "No candidate passed the Merge Gate verification".to_string(),
-            };
+        let mut passing: Vec<_> = self.candidates.iter().filter(|c| c.gate_passed).cloned().collect();
+        if passing.is_empty() {
+            if !self.candidates.is_empty() {
+                self.status = TournamentStatus::Failed {
+                    reason: "No candidate passed the Merge Gate verification".to_string(),
+                };
+            }
+            return None;
         }
 
+        // Rank passing candidates using the speculative gate evaluation
+        passing.sort_by(|a, b| {
+            let exec_a = crate::engine::speculative_gate::CandidateExecution {
+                candidate_id: a.quark_id.clone(),
+                branch: a.branch_name.clone(),
+                passed_tests: a.gate_passed,
+                duration_ms: a.duration_ms,
+                lines_changed: a.lines_changed(),
+                memory_peak_mb: None,
+            };
+            let exec_b = crate::engine::speculative_gate::CandidateExecution {
+                candidate_id: b.quark_id.clone(),
+                branch: b.branch_name.clone(),
+                passed_tests: b.gate_passed,
+                duration_ms: b.duration_ms,
+                lines_changed: b.lines_changed(),
+                memory_peak_mb: None,
+            };
+            match crate::engine::speculative_gate::select_speculative_winner(&exec_a, &exec_b) {
+                crate::engine::speculative_gate::SpeculativeWinner::Winner { candidate_id, .. } => {
+                    if candidate_id == a.quark_id {
+                        std::cmp::Ordering::Less
+                    } else {
+                        std::cmp::Ordering::Greater
+                    }
+                }
+                _ => b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal),
+            }
+        });
+
+        let winner = passing.first().cloned();
+        if let Some(ref w) = winner {
+            self.status = TournamentStatus::Completed { winner: w.clone() };
+        }
         winner
+    }
+
+    /// Evaluate a head-to-head speculative duel between two candidate executions.
+    pub fn evaluate_speculative_duel(
+        &self,
+        quark_a: &str,
+        quark_b: &str,
+    ) -> Option<crate::engine::speculative_gate::SpeculativeWinner> {
+        let cand_a = self.candidates.iter().find(|c| c.quark_id == quark_a)?;
+        let cand_b = self.candidates.iter().find(|c| c.quark_id == quark_b)?;
+
+        let exec_a = crate::engine::speculative_gate::CandidateExecution {
+            candidate_id: cand_a.quark_id.clone(),
+            branch: cand_a.branch_name.clone(),
+            passed_tests: cand_a.gate_passed,
+            duration_ms: cand_a.duration_ms,
+            lines_changed: cand_a.lines_changed(),
+            memory_peak_mb: None,
+        };
+
+        let exec_b = crate::engine::speculative_gate::CandidateExecution {
+            candidate_id: cand_b.quark_id.clone(),
+            branch: cand_b.branch_name.clone(),
+            passed_tests: cand_b.gate_passed,
+            duration_ms: cand_b.duration_ms,
+            lines_changed: cand_b.lines_changed(),
+            memory_peak_mb: None,
+        };
+
+        Some(crate::engine::speculative_gate::select_speculative_winner(&exec_a, &exec_b))
     }
 
     /// Generate a structured Markdown report summarizing tournament standings.
@@ -283,5 +337,20 @@ mod tests {
         let winner = manager.select_winner();
         assert!(winner.is_none());
         assert!(matches!(manager.status, TournamentStatus::Failed { .. }));
+    }
+
+    #[test]
+    fn test_bakeoff_evaluate_speculative_duel() {
+        let mut manager = BakeOffManager::new("spec-duel", "Compare duel candidates");
+        manager.record_result("quark-fast", "quark/fast/01", 30, 5, 2, 1000, true);
+        manager.record_result("quark-slow", "quark/slow/01", 30, 5, 2, 3000, true);
+
+        let duel = manager.evaluate_speculative_duel("quark-fast", "quark-slow").unwrap();
+        match duel {
+            crate::engine::speculative_gate::SpeculativeWinner::Winner { candidate_id, .. } => {
+                assert_eq!(candidate_id, "quark-fast");
+            }
+            _ => panic!("Expected quark-fast to win speculative duel"),
+        }
     }
 }

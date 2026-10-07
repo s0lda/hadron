@@ -56,7 +56,12 @@ pub fn compute_impacted_tests(changed_files: &[&str]) -> TestImpactPlan {
         if let Some(rest) = file.strip_prefix("crates/") {
             if let Some(slash_idx) = rest.find('/') {
                 let pkg = &rest[..slash_idx];
-                detected_packages.insert(pkg.to_string());
+                let pkg_name = if pkg == "hadron-chamber" {
+                    "hadron"
+                } else {
+                    pkg
+                };
+                detected_packages.insert(pkg_name.to_string());
             } else {
                 return TestImpactPlan::full_workspace();
             }

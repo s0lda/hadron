@@ -121,6 +121,11 @@ impl CowWorkspace {
     pub fn create(repo_root: &Path, quark_id: &str) -> anyhow::Result<Self> {
         let path = repo_root.join(".hadron/trees").join(quark_id);
         std::fs::create_dir_all(&path)?;
+        let _ = provision_cow_worktree(
+            repo_root,
+            &path,
+            &[".git", ".hadron", "target", "node_modules", "vendor"],
+        )?;
         Ok(Self {
             quark_id: quark_id.to_string(),
             path,

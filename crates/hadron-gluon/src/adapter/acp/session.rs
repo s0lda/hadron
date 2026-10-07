@@ -264,6 +264,8 @@ pub(super) struct AcpSession {
     /// rather than silently queued for whatever turn starts next.
     pub(super) in_turn: Arc<std::sync::atomic::AtomicBool>,
     pub(super) live: Option<LiveFeed>,
+    #[allow(dead_code)]
+    pub(super) breakpoints: Arc<Mutex<crate::breakpoints::BreakpointsRegistry>>,
 }
 
 impl AcpSession {
@@ -286,6 +288,12 @@ impl AcpSession {
         } else {
             false
         }
+    }
+
+    /// Set an execution breakpoint condition intercepting tool invocations.
+    #[allow(dead_code)]
+    pub fn set_breakpoint(&self, id: String, cond: crate::breakpoints::BreakpointCondition) {
+        self.breakpoints.lock().unwrap().set_breakpoint(id, cond);
     }
 }
 
@@ -401,6 +409,9 @@ impl super::AcpQuark {
 
         let mode = Arc::new(Mutex::new(Mode::default()));
         let handler_mode = Arc::clone(&mode);
+
+        let breakpoints = Arc::new(Mutex::new(crate::breakpoints::BreakpointsRegistry::new()));
+        let handler_breakpoints = Arc::clone(&breakpoints);
 
         // What the agent says it is running, written once at boot by the pump.
         let model = Arc::new(Mutex::new(None::<String>));
@@ -564,10 +575,21 @@ impl super::AcpQuark {
                         )
                         .on_receive_request(
                             async move |req: RequestPermissionRequest, responder, _cx| {
-                                let want = permission_choice(
-                                    *handler_mode.lock().unwrap(),
-                                    classify_request(&req),
-                                );
+                                let tool_name = req.tool_call.fields.title.as_deref().unwrap_or("unknown");
+                                let args_json = req.tool_call.fields.raw_input.as_ref().map(|v| v.to_string()).unwrap_or_default();
+                                let intercepted = {
+                                    let mut bp = handler_breakpoints.lock().unwrap();
+                                    bp.should_intercept(tool_name, &args_json)
+                                };
+
+                                let want = if intercepted.is_some() {
+                                    PermissionOptionKind::RejectOnce
+                                } else {
+                                    permission_choice(
+                                        *handler_mode.lock().unwrap(),
+                                        classify_request(&req),
+                                    )
+                                };
                                 let chosen = req
                                     .options
                                     .iter()
@@ -821,7 +843,7 @@ impl super::AcpQuark {
         // `recv` errors only if the thread died without reporting — surface that as a
         // boot failure rather than hanging.
         match ready_rx.recv() {
-            Ok(Ok(())) => Ok(AcpSession { turns: turns_tx, mode, model, cancels: cancels_tx, in_turn, live }),
+            Ok(Ok(())) => Ok(AcpSession { turns: turns_tx, mode, model, cancels: cancels_tx, in_turn, live, breakpoints }),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(anyhow::anyhow!(
                 "the ACP agent ({}) exited before opening a session",

@@ -599,6 +599,31 @@ impl super::Engine {
                             base,
                             assignment: driver.assignment,
                         });
+
+                        // Pre-turn peer conflict and intent lease radar
+                        let root_obj = hadron_forge::file::Root::new(root.clone());
+                        if let Ok(conflicts) = hadron_forge::peers::detect_cross_worktree_conflicts(&root_obj) {
+                            if conflicts.conflicts_detected > 0 {
+                                term::info(
+                                    Source::Gluon,
+                                    &format!(
+                                        "cross-worktree conflict radar: {} conflicting file entries detected across active peers",
+                                        conflicts.conflicts.len()
+                                    ),
+                                );
+                            }
+                        }
+                        let locks_path = root.join(".hadron").join("locks.json");
+                        if locks_path.exists() {
+                            let lock_table = hadron_lattice::locks::IntentLockTable::load_from_file(&locks_path);
+                            let active = lock_table.active_leases();
+                            if !active.is_empty() {
+                                term::info(
+                                    Source::Gluon,
+                                    &format!("pre-turn lease radar: {} active intent leases held", active.len()),
+                                );
+                            }
+                        }
                     }
 
                     let projection = self.projection_for(

@@ -518,11 +518,83 @@ impl Chamber {
                 true
             }
             "radar" => {
-                self.post_chat_message(
-                    Actor::Gluon,
-                    "Intent Drift Radar: Evaluating active worktree diff against prompt intent...".to_string(),
-                    cx,
+                let (target, _) = crate::text::split_target(args);
+                let default_quark = self
+                    .view
+                    .roster
+                    .iter()
+                    .find(|r| r.flavor == Some(hadron_lattice::Flavor::Orchestrator))
+                    .or_else(|| self.view.roster.first())
+                    .map(|r| r.id.clone())
+                    .unwrap_or_else(|| "cli-agy".to_string());
+
+                let quark_id = if let Some(target) = target {
+                    let cleaned = target.trim_start_matches('@');
+                    self.view
+                        .roster
+                        .iter()
+                        .find(|r| {
+                            r.id.eq_ignore_ascii_case(cleaned)
+                                || self.resolve_identity(&r.id).name.eq_ignore_ascii_case(cleaned)
+                        })
+                        .map(|r| r.id.clone())
+                        .unwrap_or_else(|| cleaned.to_string())
+                } else if let Some(sel_ix) = self.selected_quark_ix {
+                    self.view
+                        .roster
+                        .get(sel_ix)
+                        .map(|r| r.id.clone())
+                        .unwrap_or(default_quark)
+                } else {
+                    default_quark
+                };
+
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let wt_path = hadron_gluon::worktree::trees_dir(&repo_root).join(&quark_id);
+                let check_path = if wt_path.exists() {
+                    wt_path
+                } else {
+                    repo_root.clone()
+                };
+
+                let base = hadron_gluon::worktree::default_branch(&repo_root);
+                let diff_output = match std::process::Command::new("git")
+                    .args(&["diff", &format!("{base}...HEAD")])
+                    .current_dir(&check_path)
+                    .output()
+                {
+                    Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
+                    Err(_) => String::new(),
+                };
+
+                // Find the latest human prompt from view.messages
+                let last_prompt = self
+                    .view
+                    .messages
+                    .iter()
+                    .rev()
+                    .find_map(|m| {
+                        if m.from.eq_ignore_ascii_case("human") {
+                            Some(m.body.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| "Default workspace intent".to_string());
+
+                let report = hadron_gatekeeper::intent_radar::IntentDriftRadar::evaluate(&last_prompt, &diff_output);
+                let pct = (report.score * 100.0).round() as u32;
+                let status_icon = if report.drift_detected { "⚠️ DRIFT DETECTED" } else { "✅ ALIGNED" };
+                let body = format!(
+                    "**Intent Drift Radar (@{})**: {} (Alignment: {}%)\n- **Matched Keywords**: {}\n- **Prompt Keywords**: {}",
+                    quark_id,
+                    status_icon,
+                    pct,
+                    if report.matched_keywords.is_empty() { "none".to_string() } else { report.matched_keywords.join(", ") },
+                    report.prompt_keywords.join(", ")
                 );
+
+                self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
             "baseline" => {
