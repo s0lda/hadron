@@ -88,6 +88,12 @@ impl super::Chamber {
                                 .items_center()
                                 .child(
                                     div()
+                                        .size(px(6.0))
+                                        .rounded_full()
+                                        .bg(identity.color),
+                                )
+                                .child(
+                                    div()
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_color(identity.color)
@@ -224,7 +230,7 @@ impl super::Chamber {
                                 .rounded_sm()
                                 .bg(theme::glass_card())
                                 .border_1()
-                                .border_color(theme::glass_highlight())
+                                .border_color(state_color.opacity(0.35))
                                 .child(
                                     Icon::new(action_icon)
                                         .xsmall()
@@ -293,14 +299,20 @@ impl super::Chamber {
                     .py_1()
                     .rounded_full()
                     .cursor_pointer()
+                    .border_1()
                     .when(is_selected, |s| {
                         s.bg(theme::bg_elevated())
                             .text_color(theme::accent())
                             .font_weight(gpui::FontWeight::BOLD)
+                            .border_color(theme::hairline_border())
                     })
                     .when(!is_selected, |s| {
-                        s.text_color(theme::text_muted())
-                            .hover(|h| h.text_color(theme::text()))
+                        s.border_color(gpui::transparent_black())
+                            .text_color(theme::text_muted())
+                            .hover(|h| {
+                                h.text_color(theme::text())
+                                    .bg(theme::bg_surface_raised().opacity(0.5))
+                            })
                     })
                     .text_xs()
                     .child(label)
