@@ -808,6 +808,8 @@ mod tests {
             "timelapse",
             "radar",
             "baseline",
+            "preview-rebase",
+            "steer",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(
