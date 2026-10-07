@@ -40,3 +40,28 @@ fn test_concurrent_write_detection_and_orthogonal_locks() {
     table.release(&lease2);
     table.release(&lease3);
 }
+
+#[test]
+fn test_active_leases_and_file_persistence() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lock_file = tmp.path().join("intent_locks.json");
+
+    let mut table = IntentLockTable::new();
+    let q = QuarkId::new("worker-alpha");
+    let p = PathBuf::from("crates/hadron-gluon/src/lib.rs");
+
+    let lease = table.try_acquire(q.clone(), &[p.clone()], Duration::from_secs(60)).unwrap();
+    assert_eq!(table.active_leases().len(), 1);
+
+    table.save_to_file(&lock_file).unwrap();
+    assert!(lock_file.exists());
+
+    let restored = IntentLockTable::load_from_file(&lock_file);
+    assert_eq!(restored.active_leases().len(), 1);
+    assert_eq!(restored.active_leases()[0].quark, q);
+
+    let mut restored_mut = restored;
+    assert!(restored_mut.release_by_id(&q, lease.id));
+    assert_eq!(restored_mut.active_leases().len(), 0);
+}
+
