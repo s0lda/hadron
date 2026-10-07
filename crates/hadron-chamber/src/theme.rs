@@ -185,6 +185,45 @@ pub fn custom_themes_dir() -> Option<std::path::PathBuf> {
     Some(hadron_lattice::user_hadron_dir()?.join("themes"))
 }
 
+/// Disambiguate a base theme name if it already exists, appending incremental variant numbers
+/// (e.g. "Custom Obsidian Neutral 2", "Custom Obsidian Neutral 3").
+pub fn next_available_theme_name(base_name: &str, existing: &[crate::config::ThemeDefinition]) -> String {
+    let base = base_name.trim();
+    let (root, start_num, is_copy) = if let Some(stripped) = base.strip_suffix(" (Copy)") {
+        (stripped.trim(), 2, true)
+    } else {
+        let mut parts = base.rsplitn(2, ' ');
+        let last = parts.next().unwrap_or("");
+        if let Ok(num) = last.parse::<usize>() {
+            let prefix = parts.next().unwrap_or("").trim();
+            if !prefix.is_empty() {
+                (prefix, num + 1, false)
+            } else {
+                (base, 2, false)
+            }
+        } else {
+            (base, 2, false)
+        }
+    };
+
+    if !is_copy && !existing.iter().any(|t| t.name.eq_ignore_ascii_case(base)) {
+        return base.to_string();
+    }
+
+    if is_copy && !existing.iter().any(|t| t.name.eq_ignore_ascii_case(root)) {
+        return root.to_string();
+    }
+
+    let mut n = start_num;
+    loop {
+        let candidate = format!("{root} {n}");
+        if !existing.iter().any(|t| t.name.eq_ignore_ascii_case(&candidate)) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
 pub fn load_custom_themes() -> Vec<crate::config::ThemeDefinition> {
     let Some(dir) = custom_themes_dir() else {
         return Vec::new();
@@ -205,8 +244,46 @@ pub fn load_custom_themes() -> Vec<crate::config::ThemeDefinition> {
             }
         }
     }
+    // Sort deterministically by id (which contains creation timestamp)
+    themes.sort_by(|a, b| a.id.cmp(&b.id));
+
+    // Ensure all custom themes have unique names by numbering duplicates (e.g. "Custom Obsidian Neutral 2")
+    if disambiguate_theme_names(&mut themes) {
+        for theme in &themes {
+            let _ = save_custom_theme(theme);
+        }
+    }
+
     themes.sort_by(|a, b| a.name.cmp(&b.name));
     themes
+}
+
+/// Disambiguate duplicate theme names in-place by appending incremental variant numbers.
+/// Returns true if any names were modified.
+pub fn disambiguate_theme_names(themes: &mut [crate::config::ThemeDefinition]) -> bool {
+    let mut modified = false;
+    let mut allocated_names: Vec<String> = Vec::new();
+    let original_names: Vec<String> = themes.iter().map(|t| t.name.clone()).collect();
+    for theme in themes.iter_mut() {
+        if allocated_names.iter().any(|n| n.eq_ignore_ascii_case(&theme.name)) {
+            let mut n = 2;
+            loop {
+                let candidate = format!("{} {n}", theme.name);
+                if !allocated_names.iter().any(|name| name.eq_ignore_ascii_case(&candidate))
+                    && !original_names.iter().any(|name| name.eq_ignore_ascii_case(&candidate))
+                {
+                    theme.name = candidate.clone();
+                    allocated_names.push(candidate);
+                    modified = true;
+                    break;
+                }
+                n += 1;
+            }
+        } else {
+            allocated_names.push(theme.name.clone());
+        }
+    }
+    modified
 }
 
 pub fn save_custom_theme(theme: &crate::config::ThemeDefinition) -> std::io::Result<()> {
@@ -1157,5 +1234,61 @@ mod tests {
         assert_eq!(canvas_base(), rgb(0x050505).into());
         assert_eq!(syntax_keyword(), rgb(0xf97583));
     }
+
+    #[test]
+    fn test_next_available_theme_name() {
+        let mut t1 = crate::config::ThemeDefinition::preset_obsidian();
+        t1.name = "Custom Obsidian Neutral".to_string();
+        let mut t2 = crate::config::ThemeDefinition::preset_obsidian();
+        t2.name = "Custom Obsidian Neutral 2".to_string();
+
+        let existing = vec![t1, t2];
+
+        // Unique name when none exists
+        assert_eq!(
+            next_available_theme_name("Custom Catppuccin Mocha", &existing),
+            "Custom Catppuccin Mocha"
+        );
+
+        // Appends 3 when base and 2 exist
+        assert_eq!(
+            next_available_theme_name("Custom Obsidian Neutral", &existing),
+            "Custom Obsidian Neutral 3"
+        );
+
+        // Starts from 3 when starting from 2
+        assert_eq!(
+            next_available_theme_name("Custom Obsidian Neutral 2", &existing),
+            "Custom Obsidian Neutral 3"
+        );
+
+        // Strips (Copy) and finds next available variant number
+        assert_eq!(
+            next_available_theme_name("Custom Obsidian Neutral (Copy)", &existing),
+            "Custom Obsidian Neutral 3"
+        );
+    }
+
+    #[test]
+    fn test_disambiguate_theme_names() {
+        let mut t1 = crate::config::ThemeDefinition::preset_obsidian();
+        t1.name = "Custom Obsidian Neutral".to_string();
+        let mut t2 = crate::config::ThemeDefinition::preset_obsidian();
+        t2.name = "Custom Obsidian Neutral".to_string();
+        let mut t3 = crate::config::ThemeDefinition::preset_obsidian();
+        t3.name = "Custom Obsidian Neutral".to_string();
+
+        let mut themes = vec![t1, t2, t3];
+        let modified = disambiguate_theme_names(&mut themes);
+        assert!(modified);
+        assert_eq!(themes[0].name, "Custom Obsidian Neutral");
+        assert_eq!(themes[1].name, "Custom Obsidian Neutral 2");
+        assert_eq!(themes[2].name, "Custom Obsidian Neutral 3");
+
+        // Second pass does nothing since names are now unique
+        let second_pass = disambiguate_theme_names(&mut themes);
+        assert!(!second_pass);
+    }
 }
+
 

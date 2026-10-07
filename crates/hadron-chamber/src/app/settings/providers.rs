@@ -602,7 +602,8 @@ impl super::Chamber {
                                                 let base_preset = this.prefs.theme_preset.unwrap_or_default();
                                                 let mut new_theme = config::ThemeDefinition::from_preset(base_preset);
                                                 new_theme.id = format!("custom-{}", chrono::Utc::now().timestamp());
-                                                new_theme.name = format!("Custom {}", base_preset.label());
+                                                let existing = theme::load_custom_themes();
+                                                new_theme.name = theme::next_available_theme_name(&format!("Custom {}", base_preset.label()), &existing);
                                                 let _ = theme::save_custom_theme(&new_theme);
                                                 this.prefs.custom_theme = Some(new_theme.clone());
                                                 this.prefs.theme_preset = None;
@@ -631,7 +632,8 @@ impl super::Chamber {
                                                 let base_theme = this.prefs.custom_theme.clone().unwrap_or_default();
                                                 let mut new_theme = base_theme;
                                                 new_theme.id = format!("custom-{}", chrono::Utc::now().timestamp());
-                                                new_theme.name = format!("{} (Copy)", new_theme.name);
+                                                let existing = theme::load_custom_themes();
+                                                new_theme.name = theme::next_available_theme_name(&new_theme.name, &existing);
                                                 let _ = theme::save_custom_theme(&new_theme);
                                                 this.prefs.custom_theme = Some(new_theme.clone());
                                                 this.prefs.theme_preset = None;
@@ -1229,6 +1231,34 @@ impl super::Chamber {
                 )),
         );
 
+        let disp_env = crate::sys::detect_display_environment();
+        let display_card = settings_card_section(
+            "Display & Desktop Environment",
+            Some(IconName::Settings),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "Display server",
+                    Some("Active desktop windowing protocol (X11 or Wayland compositor)."),
+                    div().text_sm().text_color(theme::text()).child(disp_env.server).into_any_element(),
+                ))
+                .child(settings_field(
+                    "Layer Shell protocol",
+                    Some("Wayland zwlr_layer_shell_v1 protocol support for desktop overlays."),
+                    div().text_sm().text_color(theme::text()).child(disp_env.layer_shell_status).into_any_element(),
+                ))
+                .child(settings_field(
+                    "Notification backend",
+                    Some("Platform notification delivery mechanism (PowerShell host toast on WSL, notify-send on Linux)."),
+                    div().text_sm().text_color(theme::text()).child(disp_env.notification_backend).into_any_element(),
+                ))
+                .child(settings_field(
+                    "Graphics pipeline",
+                    Some("Vulkan / GPU hardware driver or LAVAPIPE software CPU fallback."),
+                    div().text_sm().text_color(theme::text()).child(disp_env.graphics_pipeline).into_any_element(),
+                )),
+        );
+
         v_flex()
             .w_full()
             .gap_4()
@@ -1236,6 +1266,7 @@ impl super::Chamber {
             .child(audio_card)
             .child(terminal_card)
             .child(notifications_card)
+            .child(display_card)
     }
 
     pub(super) fn general_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2695,7 +2726,8 @@ impl super::Chamber {
             let base_preset = self.prefs.theme_preset.unwrap_or_default();
             let mut new_theme = config::ThemeDefinition::from_preset(base_preset);
             new_theme.id = format!("custom-{}", chrono::Utc::now().timestamp());
-            new_theme.name = format!("Custom {}", base_preset.label());
+            let existing = theme::load_custom_themes();
+            new_theme.name = theme::next_available_theme_name(&format!("Custom {}", base_preset.label()), &existing);
             let _ = theme::save_custom_theme(&new_theme);
             self.prefs.custom_theme = Some(new_theme.clone());
             self.prefs.theme_preset = None;
@@ -2718,7 +2750,9 @@ impl super::Chamber {
             let base_preset = self.prefs.theme_preset.unwrap_or_default();
             let mut new_theme = config::ThemeDefinition::from_preset(base_preset);
             new_theme.id = format!("custom-{}", chrono::Utc::now().timestamp());
-            new_theme.name = format!("Custom {}", base_preset.label());
+            let existing = theme::load_custom_themes();
+            new_theme.name = theme::next_available_theme_name(&format!("Custom {}", base_preset.label()), &existing);
+            let _ = theme::save_custom_theme(&new_theme);
             self.prefs.custom_theme = Some(new_theme);
             self.prefs.theme_preset = None;
         }

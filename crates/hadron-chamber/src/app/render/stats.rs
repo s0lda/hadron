@@ -287,14 +287,6 @@ impl super::Chamber {
                 .child(perm_chip),
         );
 
-        let disp_env = crate::sys::detect_display_environment();
-        config_section = config_section
-            .child(div().mt_2().child(panel_eyebrow("DISPLAY & ENVIRONMENT")))
-            .child(kv_row("Display server", disp_env.server))
-            .child(kv_row("Layer Shell (wlr)", disp_env.layer_shell_status))
-            .child(kv_row("Notifications", disp_env.notification_backend))
-            .child(kv_row("Graphics pipeline", disp_env.graphics_pipeline));
-
         // --- Home section ---
         let home_snap = crate::app::render::quark_home::QuarkTelemetrySnapshot::from_stats_and_messages(
             &qid,
@@ -334,13 +326,6 @@ impl super::Chamber {
                         .child(m.clone())
                 }));
         }
-
-        home_section = home_section
-            .child(div().mt_2().child(panel_eyebrow("WORKSPACE & DISPLAY COMPATIBILITY")))
-            .child(kv_row("Display server", disp_env.server))
-            .child(kv_row("Layer Shell (wlr)", disp_env.layer_shell_status))
-            .child(kv_row("Notifications", disp_env.notification_backend))
-            .child(kv_row("Graphics pipeline", disp_env.graphics_pipeline));
 
         // --- Session stats ---
         let avg = if q_stats.turns > 0 { q_stats.fresh / q_stats.turns } else { 0 };

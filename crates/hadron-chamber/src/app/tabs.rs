@@ -58,7 +58,7 @@ impl ChatTab {
 pub(super) enum InfoTab {
     /// Who this quark is: header, role, state, adoption, and the Restart action.
     Identity,
-    /// Personal telemetry, tool usage, milestones, and workspace display/Wayland diagnostics.
+    /// Personal telemetry, tool usage, and milestones.
     Home,
     /// How it is wired: provider, agent command, model, transport, effort, permission.
     Config,
