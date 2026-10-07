@@ -1147,9 +1147,9 @@ impl super::Chamber {
     /// The Changelog overlay modal displaying release history back to v0.1.0.
     pub(super) fn changelog_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let render_section = |release: &'static Release| {
-            let mut sec = v_flex().gap_2().pb_4().border_b_1().border_color(theme::border());
+            let mut sec = v_flex().w_full().gap_2().pb_4().border_b_1().border_color(theme::border());
 
-            let mut header = h_flex().items_center().gap_2();
+            let mut header = h_flex().w_full().items_center().gap_2();
             header = header.child(
                 div()
                     .text_base()
@@ -1178,7 +1178,7 @@ impl super::Chamber {
                 if items.is_empty() {
                     return None;
                 }
-                let mut grp = v_flex().gap_1();
+                let mut grp = v_flex().w_full().gap_1();
                 grp = grp.child(
                     div()
                         .text_xs()
@@ -1189,17 +1189,23 @@ impl super::Chamber {
                 for item in items {
                     grp = grp.child(
                         h_flex()
+                            .w_full()
                             .gap_2()
                             .items_start()
                             .child(
                                 div()
+                                    .flex_shrink_0()
                                     .text_xs()
+                                    .line_height(gpui::relative(1.4))
                                     .text_color(theme::text_muted())
                                     .child("•"),
                             )
                             .child(
                                 div()
+                                    .flex_1()
+                                    .min_w_0()
                                     .text_xs()
+                                    .line_height(gpui::relative(1.4))
                                     .text_color(theme::text())
                                     .child(*item),
                             ),
@@ -1239,8 +1245,9 @@ impl super::Chamber {
             .child(
                 v_flex()
                     .occlude()
-                    .w(px(540.0))
-                    .max_h(px(580.0))
+                    .w(px(580.0))
+                    .max_w(gpui::relative(0.9))
+                    .max_h(px(620.0))
                     .p_5()
                     .gap_4()
                     .rounded(INNER_RADIUS)
@@ -1299,7 +1306,7 @@ impl super::Chamber {
                             .min_h_0()
                             .overflow_y_scroll()
                             .gap_4()
-                            .pr_1()
+                            .pr_2()
                             .children(RELEASES.iter().map(render_section)),
                     )
                     .child(
@@ -1755,5 +1762,16 @@ mod tests {
             env!("CARGO_PKG_VERSION"),
             "overlay's newest release vs the version this binary was built at",
         );
+    }
+
+    #[test]
+    fn releases_entries_have_valid_items_and_non_empty_bullets() {
+        assert!(!RELEASES.is_empty(), "RELEASES array cannot be empty");
+        for release in RELEASES {
+            assert!(!release.version.is_empty(), "release version cannot be empty");
+            for item in release.added.iter().chain(release.changed).chain(release.fixed) {
+                assert!(!item.trim().is_empty(), "changelog bullet cannot be empty");
+            }
+        }
     }
 }
