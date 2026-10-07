@@ -71,10 +71,16 @@ impl Landed {
             ),
             Landed::SquashAndMerge => format!("merged `{branch}` → `{base}` (squash commit)."),
             Landed::GitHubPrOpened(detail) => format!("mirrored `{branch}` → origin ({detail})."),
-            Landed::Conflicted(err) => format!(
-                "could not merge `{branch}` → `{base}`: rebasing onto `{base}` conflicts, and \
-                 a machine must not guess at a resolution. The branch is untouched.\n\n{err}"
-            ),
+            Landed::Conflicted(err) => {
+                if err.starts_with("Merge gate rejected") {
+                    format!("could not merge `{branch}` → `{base}`:\n\n{err}")
+                } else {
+                    format!(
+                        "could not merge `{branch}` → `{base}`: rebasing onto `{base}` conflicts, and \
+                         a machine must not guess at a resolution. The branch is untouched.\n\n{err}"
+                    )
+                }
+            }
         }
     }
 }
@@ -375,7 +381,7 @@ pub fn land(repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Lande
         }
 
         // Pre-merge invariant linting via InvariantLinter (Standard Model Rule 2 & 3)
-        let violations = hadron_gatekeeper::lint_candidate_invariants(&[(&wt.branch, &diff_bytes)]);
+        let violations = hadron_gatekeeper::lint_candidate_diff(&diff_bytes);
         if !violations.is_empty() {
             let details = violations
                 .iter()

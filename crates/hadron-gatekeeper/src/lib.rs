@@ -24,8 +24,8 @@ pub use matrix::{
     AllowRules, Decision, DenyRules,
 };
 pub use merge::{
-    distill_failure_recovery_lesson, evaluate_benchmark_verdict, lint_candidate_invariants,
-    merge_approved, merge_decision, merge_op, record_mutation_run,
+    distill_failure_recovery_lesson, evaluate_benchmark_verdict, lint_candidate_diff,
+    lint_candidate_invariants, merge_approved, merge_decision, merge_op, record_mutation_run,
     BlockReason, BranchState, MergeVerdict,
 };
 pub use mutation::*;

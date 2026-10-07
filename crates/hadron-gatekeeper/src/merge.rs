@@ -116,6 +116,17 @@ pub fn lint_candidate_invariants(
     violations
 }
 
+/// Lint candidate unified git diff against operational and structural invariants.
+pub fn lint_candidate_diff(
+    diff: &str,
+) -> Vec<crate::invariant_linter::InvariantViolation> {
+    let mut linter = crate::invariant_linter::InvariantLinter::new();
+    linter.add_forbidden_pattern("One Font Family", r#"font_family\s*=\s*.*,"#);
+    linter.add_forbidden_pattern("No Raw HTML Font Tags", r#"<font[^>]*>"#);
+    linter.add_forbidden_pattern("Ban Allow Dead Code", r#"#\[allow\(dead_code\)\]"#);
+    linter.lint_diff(diff)
+}
+
 /// Distill and persist a failure recovery lesson into the nucleus if candidate matches failure pattern.
 pub fn distill_failure_recovery_lesson(
     repo_root: &std::path::Path,
@@ -267,5 +278,23 @@ mod tests {
         let violations = lint_candidate_invariants(&files);
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_name, "Ban Allow Dead Code");
+    }
+
+    #[test]
+    fn lint_candidate_diff_passes_release_changelog_and_overlay_strings() {
+        let diff = r#"
+diff --git a/docs/CHANGELOG.md b/docs/CHANGELOG.md
+--- a/docs/CHANGELOG.md
++++ b/docs/CHANGELOG.md
+@@ -10,2 +10,4 @@
++  - Wired `InvariantLinter` into merge gate `land` path to ban `#[allow(dead_code)]` in production code paths
+diff --git a/crates/hadron-chamber/src/app/render/overlays.rs b/crates/hadron-chamber/src/app/render/overlays.rs
+--- a/crates/hadron-chamber/src/app/render/overlays.rs
++++ b/crates/hadron-chamber/src/app/render/overlays.rs
+@@ -33,1 +33,2 @@
++            "Rule 1 Gate Enforcement: Pre-merge InvariantLinter banning #[allow(dead_code)] in production paths",
+"#;
+        let violations = lint_candidate_diff(diff);
+        assert_eq!(violations.len(), 0);
     }
 }
