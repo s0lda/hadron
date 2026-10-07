@@ -275,9 +275,10 @@ impl super::Chamber {
                         .rounded_md()
                         .cursor_pointer()
                         .hover(|s| s.bg(theme::bg_surface_raised()))
+                        .border_1()
+                        .border_color(gpui::transparent_black())
                         .when(is_cursor, |d| {
                             d.bg(theme::bg_surface_raised())
-                                .border_1()
                                 .border_color(theme::accent())
                         })
                         .when(is_selected && !is_cursor, |d| d.bg(theme::bg_surface_raised()))
@@ -770,6 +771,8 @@ impl super::Chamber {
             .px_1()
             .rounded_md()
             .overflow_hidden()
+            .border_1()
+            .border_color(gpui::transparent_black())
             .child(Self::render_rail_canvas(row, max_lanes, row_h));
 
         let Some(hash) = &row.hash else {
@@ -861,7 +864,6 @@ impl super::Chamber {
             .hover(|s| s.bg(theme::border()))
             .when(is_cursor, |d| {
                 d.bg(theme::border())
-                    .border_1()
                     .border_color(theme::accent())
             })
             .when(is_selected && !is_cursor, |d| d.bg(theme::border()))
@@ -878,6 +880,8 @@ impl super::Chamber {
             let expanded_panel = h_flex()
                 .w_full()
                 .px_1()
+                .border_1()
+                .border_color(gpui::transparent_black())
                 .child(continuation_rail)
                 .child(
                     div()
@@ -2170,6 +2174,20 @@ mod tests {
         };
         // Verify continuation canvas helper constructs without panicking for multiple lanes
         let _elem = Chamber::render_rail_continuation_canvas(&row, 2);
+    }
+
+    #[test]
+    fn render_rail_canvas_constructs_element() {
+        use crate::vcs::LaneSeg;
+        let row = crate::vcs::GraphRow {
+            lanes: vec![
+                LaneSeg { from_col: 0, to_col: 0 },
+                LaneSeg { from_col: 1, to_col: 1 },
+            ],
+            node_col: Some(0),
+            ..Default::default()
+        };
+        let _elem = Chamber::render_rail_canvas(&row, 2, 24.0);
     }
 
     #[test]
