@@ -113,6 +113,17 @@ impl ReviewGate {
             },
         }
     }
+
+    /// Check whether a branch change set requires adversarial cross-examination before landing.
+    pub fn requires_cross_examination(&self, author: &str, files_changed: &[&str]) -> bool {
+        crate::engine::cross_exam::should_cross_examine(author, files_changed)
+    }
+
+    /// Construct a critique prompt using CrossExaminationLane.
+    pub fn build_critique_prompt(&self, author: &str, turn_id: &str, diff: &str) -> String {
+        let lane = crate::engine::cross_exam::CrossExaminationLane::new();
+        lane.create_critic_prompt(author, turn_id, diff)
+    }
 }
 
 /// The branch's effective verdict, computed as "the last write from any reviewer".

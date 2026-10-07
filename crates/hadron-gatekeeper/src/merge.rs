@@ -83,6 +83,24 @@ pub fn merge_decision(
     MergeVerdict::Merge
 }
 
+/// Evaluate candidate performance metrics against baseline with maximum allowable degradation percentage.
+pub fn evaluate_benchmark_verdict(
+    baseline: &crate::benchmark_guard::BenchmarkBaseline,
+    candidate_metrics: &[crate::benchmark_guard::BenchmarkMetric],
+    max_tolerance_pct: f64,
+) -> crate::benchmark_guard::BenchmarkVerdict {
+    crate::benchmark_guard::BenchmarkVerdict::evaluate(baseline, candidate_metrics, max_tolerance_pct)
+}
+
+/// Record a background mutation evaluation into the persistent mutation tracker.
+pub fn record_mutation_run(
+    tracker: &mut crate::mutation_quark::MutationQuarkTracker,
+    eval: &crate::mutation::MutationEvaluation,
+) -> f64 {
+    tracker.record_evaluation(eval);
+    tracker.overall_score_pct()
+}
+
 /// The canonical operation string for merging `branch` into `base`.
 ///
 /// It is derivable from `(branch, base)` alone — deliberately carrying no commit

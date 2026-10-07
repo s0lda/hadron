@@ -24,7 +24,8 @@ pub use matrix::{
     AllowRules, Decision, DenyRules,
 };
 pub use merge::{
-    merge_approved, merge_decision, merge_op, BlockReason, BranchState, MergeVerdict,
+    evaluate_benchmark_verdict, merge_approved, merge_decision, merge_op, record_mutation_run,
+    BlockReason, BranchState, MergeVerdict,
 };
 pub use mutation::*;
 pub use benchmark_guard::*;

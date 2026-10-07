@@ -823,7 +823,7 @@ mod tests {
             recorded[0].env,
         );
         assert!(
-            recorded[0].env.0.iter().all(|(k, _)| k == "GEMINI_API_KEY" || k.starts_with("CARGO_")),
+            recorded[0].env.0.iter().all(|(k, _)| k == "GEMINI_API_KEY" || k.starts_with("CARGO_") || k.starts_with("HADRON_PORT_")),
             "only the seat's secret and the shared build env belong here, got {:?}",
             recorded[0].env,
         );

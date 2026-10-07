@@ -303,6 +303,15 @@ pub fn shared_build_env_for_quark(cwd: &Path, quark_id: &str) -> Vec<(String, St
         }
     }
     CompilerAccelerator::detect().apply_to_env(&mut env);
+
+    // Allocate non-conflicting ephemeral ports for worktree services via PortMesh
+    let mesh = port_mesh::PortMesh::new(30000..32000);
+    if let Ok(alloc) = mesh.allocate(quark_id, &["HTTP", "DEBUG"]) {
+        for (name, port) in alloc.bindings {
+            env.push((format!("HADRON_PORT_{name}"), port.to_string()));
+        }
+    }
+
     env
 }
 

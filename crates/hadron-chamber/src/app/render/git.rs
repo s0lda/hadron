@@ -1804,6 +1804,22 @@ impl super::Chamber {
                         report.nucleus_orphaned_notes.len()
                     )));
                 }
+
+                let mut graph = crate::app::render::nucleus_graph::ForceDirectedGraph::new();
+                for broken in &report.nucleus_broken_links {
+                    graph.add_node(broken, 0.0, 0.0);
+                }
+                for orphan in &report.nucleus_orphaned_notes {
+                    graph.add_node(orphan.to_string_lossy().to_string(), 10.0, 10.0);
+                }
+                graph.step_simulation(100.0, 0.05, 0.9);
+                if !graph.nodes.is_empty() {
+                    nucleus_details = nucleus_details.child(div().child(format!(
+                        "Knowledge graph simulation: {} active nodes tracked",
+                        graph.nodes.len()
+                    )));
+                }
+
                 card = card.child(nucleus_row).child(nucleus_details);
 
                 card

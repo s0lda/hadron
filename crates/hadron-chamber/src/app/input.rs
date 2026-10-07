@@ -810,6 +810,7 @@ mod tests {
             "baseline",
             "preview-rebase",
             "steer",
+            "scout",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(

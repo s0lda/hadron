@@ -55,6 +55,22 @@ impl DagBarrierScheduler {
         }
     }
 
+    /// Construct a barrier scheduler directly from a parsed HybridDagScheduler.
+    pub fn from_hybrid_dag(hybrid: &crate::engine::dag_auto::HybridDagScheduler) -> Self {
+        let mut scheduler = Self::new();
+        for (id, node) in &hybrid.tasks {
+            let deps: Vec<&str> = node.dependencies.iter().map(|s| s.as_str()).collect();
+            let _ = scheduler.add_task_with_files(id, &node.title, &deps, &[]);
+        }
+        scheduler
+    }
+
+    /// Parse markdown implementation plan content and construct barrier scheduler.
+    pub fn from_plan_markdown(content: &str) -> Result<Self, String> {
+        let hybrid = crate::engine::dag_auto::HybridDagScheduler::parse_plan(content)?;
+        Ok(Self::from_hybrid_dag(&hybrid))
+    }
+
     /// Add a task to the barrier scheduler.
     pub fn add_task(&mut self, id: &str, title: &str, deps: &[&str]) -> Result<(), String> {
         self.add_task_with_files(id, title, deps, &[])

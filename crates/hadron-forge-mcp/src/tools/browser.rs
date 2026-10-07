@@ -87,6 +87,34 @@ pub struct BrowserFillArgs {
     pub value: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct VisualSmokeArgs {
+    /// Target viewport width in pixels (default 1920).
+    #[serde(default = "default_viewport_width")]
+    pub viewport_width: u32,
+    /// Target viewport height in pixels (default 1080).
+    #[serde(default = "default_viewport_height")]
+    pub viewport_height: u32,
+    /// Element selectors to inspect for layout overflow.
+    #[serde(default)]
+    pub element_selectors: Vec<String>,
+    /// Expect zero layout overflows across inspected selectors.
+    #[serde(default = "default_true")]
+    pub expected_no_overflow: bool,
+}
+
+fn default_viewport_width() -> u32 {
+    1920
+}
+
+fn default_viewport_height() -> u32 {
+    1080
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[tool_router(router = browser_router, vis = "pub(super)")]
 impl ForgeMcpServer {
     #[tool(
@@ -209,6 +237,34 @@ impl ForgeMcpServer {
             args.selector, args.value
         ))))
     }
+
+    #[tool(
+        name = "hadron_forge_visual_smoke",
+        description = "Run an automated visual smoke test asserting that UI components fit within specified viewport bounds without overflow violations."
+    )]
+    pub async fn visual_smoke(
+        &self,
+        Parameters(args): Parameters<VisualSmokeArgs>,
+    ) -> Json<ToolResponse> {
+        let assertion = hadron_forge::visual_smoke::VisualSmokeAssert {
+            viewport_width: args.viewport_width,
+            viewport_height: args.viewport_height,
+            element_selectors: args.element_selectors,
+            expected_no_overflow: args.expected_no_overflow,
+        };
+
+        match hadron_forge::visual_smoke::run_visual_smoke_test(self.root.path(), assertion).await {
+            Ok(report) => {
+                let serialized = serde_json::to_string_pretty(&report).unwrap_or_default();
+                if report.passed {
+                    Json(ToolResponse::success(Some(serialized)))
+                } else {
+                    Json(ToolResponse::error(format!("visual smoke assertion failed: {serialized}")))
+                }
+            }
+            Err(e) => Json(ToolResponse::error(format!("visual smoke execution failed: {e}"))),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -253,5 +309,15 @@ mod tests {
             .await;
         assert!(!denied_res.0.ok);
         assert!(denied_res.0.reason.as_ref().unwrap().contains("refused"));
+
+        let smoke_res = server
+            .visual_smoke(Parameters(VisualSmokeArgs {
+                viewport_width: 1920,
+                viewport_height: 1080,
+                element_selectors: vec![".app-header".into()],
+                expected_no_overflow: true,
+            }))
+            .await;
+        assert!(smoke_res.0.ok);
     }
 }

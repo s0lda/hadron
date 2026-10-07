@@ -39,6 +39,9 @@ pub struct MockRouteAddArgs {
     /// Simulated response delay in milliseconds.
     #[serde(default)]
     pub delay_ms: Option<u64>,
+    /// Optional JSON schema to synthesize the mock route response body from.
+    #[serde(default)]
+    pub schema_json: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -103,13 +106,30 @@ impl ForgeMcpServer {
         &self,
         Parameters(args): Parameters<MockRouteAddArgs>,
     ) -> Json<ToolResponse> {
-        let route = MockRoute {
-            method: args.method,
-            path: args.path,
-            status: args.status.unwrap_or(200),
-            headers: args.headers.unwrap_or_default(),
-            body: args.body.unwrap_or_else(|| r#"{"status":"ok"}"#.to_string()),
-            delay_ms: args.delay_ms,
+        let route = if let Some(ref schema) = args.schema_json {
+            match hadron_forge::mock_synth::MockSynthesizer::synthesize_route(
+                &args.path,
+                &args.method,
+                args.status.unwrap_or(200),
+                schema,
+            ) {
+                Ok(mut r) => {
+                    if let Some(delay) = args.delay_ms {
+                        r.delay_ms = Some(delay);
+                    }
+                    r
+                }
+                Err(e) => return Json(ToolResponse::error(format!("Schema synthesis error: {e}"))),
+            }
+        } else {
+            MockRoute {
+                method: args.method,
+                path: args.path,
+                status: args.status.unwrap_or(200),
+                headers: args.headers.unwrap_or_default(),
+                body: args.body.unwrap_or_else(|| r#"{"status":"ok"}"#.to_string()),
+                delay_ms: args.delay_ms,
+            }
         };
 
         match self.mock_manager.add_route(args.port, route).await {
@@ -236,6 +256,7 @@ pub mod tests {
                 headers: None,
                 body: Some(r#"{"received":true}"#.into()),
                 delay_ms: None,
+                schema_json: None,
             }))
             .await;
         assert!(route_res.0.ok);

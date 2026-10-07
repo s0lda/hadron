@@ -11,7 +11,15 @@ use crate::Event;
 /// Append a single event as one JSON line. Line-atomic; creates the file if
 /// missing. Never rewrites existing content.
 pub fn append_event(path: &Path, event: &Event) -> std::io::Result<()> {
-    let line = serde_json::to_string(event)?;
+    let mut ev = event.clone();
+    if let crate::Kind::Message { ref mut body } = ev.kind {
+        *body = crate::context_governor::ContextGovernor::compact_tool_output(
+            body,
+            &crate::context_governor::GovernorConfig::default(),
+        );
+        *body = crate::transport_scrubber::TransportScrubber::scrub_string(body);
+    }
+    let line = serde_json::to_string(&ev)?;
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;
     writeln!(f, "{line}")?;
     Ok(())

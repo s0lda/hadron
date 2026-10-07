@@ -1105,6 +1105,9 @@ impl super::Chamber {
                             }
                         }
 
+                        // Interactive Plan DAG & Wave Visualizer
+                        list = list.child(self.plan_dag_visualizer(&content, cx));
+
                         // Task groups checklist
                         let task_groups = parse_plan_tasks_with_status(&repo, &content);
                         for (task_name, steps) in task_groups {

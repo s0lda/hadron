@@ -280,6 +280,30 @@ impl BakeOffManager {
             fast_forward_command: ff_cmd,
         }
     }
+
+    /// Construct a BakeOffManager directly from a TournamentSpec.
+    pub fn from_tournament_spec(spec: &crate::tournament::TournamentSpec) -> Self {
+        let mut manager = Self::new(&spec.task, &spec.task);
+        for branch in &spec.branches {
+            manager.record_result("tournament-worker", branch, 0, 0, 0, 0, false);
+        }
+        manager
+    }
+
+    /// Convert recorded results to TournamentSpec candidates and evaluate winner.
+    pub fn evaluate_tournament(&self) -> crate::tournament::WinnerReport {
+        let candidates: Vec<crate::tournament::CandidateResult> = self
+            .candidates
+            .iter()
+            .map(|c| crate::tournament::CandidateResult {
+                branch: c.branch_name.clone(),
+                gate_passed: c.gate_passed,
+                test_duration_ms: c.duration_ms,
+                diff_lines: c.lines_changed(),
+            })
+            .collect();
+        crate::tournament::TournamentSpec::evaluate_winner(&candidates)
+    }
 }
 
 #[cfg(test)]

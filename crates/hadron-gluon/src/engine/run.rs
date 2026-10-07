@@ -89,6 +89,7 @@ impl super::Engine {
         // whole point. Every non-orchestrator seat only ever inserts `Work`, so this is
         // byte-for-byte the old single-lane behaviour for every seat without a chat lane.
         let mut in_flight: HashSet<(QuarkId, Lane)> = HashSet::new();
+        let mut heartbeat_tracker = crate::engine::heartbeat::HeartbeatTracker::new();
         // The abort handle for each in-flight turn, so the human's force-restart
         // ([`Kind::Reboot`]) can kill a wedged quark's turn *now* instead of waiting
         // out the 30-minute deadline. Kept in lockstep with `in_flight`: inserted at
@@ -739,6 +740,7 @@ impl super::Engine {
                     // but then hit an unrelated gate (exclusivity, energy, disabled)
                     // this same pass must keep its interrupted task for the next one.
                     interrupted_task.remove(&target);
+                    heartbeat_tracker.register(target.clone());
                     in_flight.insert((target, lane));
                     exchanges += 1;
                     spawned_any = true;
@@ -787,6 +789,7 @@ impl super::Engine {
 
             match joined {
                 Ok((target, lane, tree, assignment, Ok(outcome))) => {
+                    heartbeat_tracker.unregister(&target);
                     in_flight.remove(&(target.clone(), lane));
                     abort_handles.remove(&(target.clone(), lane));
                     cancel_requested.remove(&(target.clone(), lane));

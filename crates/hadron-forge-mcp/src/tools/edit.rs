@@ -44,6 +44,18 @@ pub struct ReadBlocksArgs {
     pub path: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BatchEditItem {
+    pub path: String,
+    pub expected_hash: Option<String>,
+    pub new_content: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BatchEditArgs {
+    pub operations: Vec<BatchEditItem>,
+}
+
 #[tool_router(router = edit_router, vis = "pub(super)")]
 impl ForgeMcpServer {
     #[tool(
@@ -51,7 +63,21 @@ impl ForgeMcpServer {
         description = "Replace a specific AST block in a source file by its 8-hex content hash"
     )]
     pub async fn edit(&self, Parameters(args): Parameters<EditArgs>) -> Json<ToolResponse> {
-        match apply_block_edit(&self.root, &args.path, &args.target_hash, &args.new_text) {
+        let res = apply_block_edit(&self.root, &args.path, &args.target_hash, &args.new_text);
+        if res.is_ok() {
+            if let Ok(bus) = hadron_lattice::GossipBus::new(&self.root.path().join(".hadron")) {
+                let msg = hadron_lattice::GossipMessage {
+                    quark: "mcp-forge".to_string(),
+                    timestamp: chrono::Utc::now(),
+                    payload: hadron_lattice::GossipPayload::FileTouch {
+                        path: args.path.clone(),
+                        is_edit: true,
+                    },
+                };
+                let _ = bus.publish(&msg);
+            }
+        }
+        match res {
             Ok(rep) => Json(ToolResponse::success(Some(rep.blocks))),
             Err(e) => Json(ToolResponse::error(e.to_string())),
         }
@@ -62,9 +88,47 @@ impl ForgeMcpServer {
         description = "Write whole file content under optimistic concurrency (Compare-And-Swap on file hash)"
     )]
     pub async fn write_file(&self, Parameters(args): Parameters<WriteFileArgs>) -> Json<ToolResponse> {
-        match write_file_cas(&self.root, &args.path, &args.content, args.expected_hash.as_deref()) {
+        let res = write_file_cas(&self.root, &args.path, &args.content, args.expected_hash.as_deref());
+        if res.is_ok() {
+            if let Ok(bus) = hadron_lattice::GossipBus::new(&self.root.path().join(".hadron")) {
+                let msg = hadron_lattice::GossipMessage {
+                    quark: "mcp-forge".to_string(),
+                    timestamp: chrono::Utc::now(),
+                    payload: hadron_lattice::GossipPayload::FileTouch {
+                        path: args.path.clone(),
+                        is_edit: true,
+                    },
+                };
+                let _ = bus.publish(&msg);
+            }
+        }
+        match res {
             Ok(rep) => Json(ToolResponse::success(Some(rep.blocks))),
             Err(e) => Json(ToolResponse::error(e.to_string())),
+        }
+    }
+
+    #[tool(
+        name = "hadron_forge_batch_edit",
+        description = "Execute an atomic multi-file batch edit transaction with rollback on failure"
+    )]
+    pub async fn batch_edit(&self, Parameters(args): Parameters<BatchEditArgs>) -> Json<ToolResponse> {
+        let mut tx = hadron_forge::transaction::BatchEditTransaction::new();
+        for op in args.operations {
+            let full_path = self.root.path().join(&op.path);
+            tx.add_edit(hadron_forge::transaction::FileEditOp {
+                path: full_path,
+                expected_hash: op.expected_hash,
+                new_content: op.new_content,
+            });
+        }
+        match tx.validate_and_apply() {
+            Ok(report) => Json(ToolResponse::success(Some(format!(
+                "Committed batch transaction: {} file(s) modified, {} bytes written",
+                report.files_modified.len(),
+                report.total_bytes_written
+            )))),
+            Err(e) => Json(ToolResponse::error(format!("Batch transaction rolled back: {e}"))),
         }
     }
 
@@ -153,5 +217,24 @@ mod tests {
         })).await;
         assert_eq!(res.0.ok, true);
         assert!(!dir.path().join("foo.rs").exists());
+
+        // Batch Edit
+        let res = server.batch_edit(Parameters(BatchEditArgs {
+            operations: vec![
+                BatchEditItem {
+                    path: "batch_a.rs".into(),
+                    expected_hash: None,
+                    new_content: "pub fn a() {}".into(),
+                },
+                BatchEditItem {
+                    path: "batch_b.rs".into(),
+                    expected_hash: None,
+                    new_content: "pub fn b() {}".into(),
+                },
+            ],
+        })).await;
+        assert!(res.0.ok);
+        assert!(dir.path().join("batch_a.rs").exists());
+        assert!(dir.path().join("batch_b.rs").exists());
     }
 }

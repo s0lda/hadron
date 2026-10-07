@@ -114,6 +114,29 @@ impl Chamber {
 
         let mut list = v_flex().gap_3().w_full();
 
+        let staged_count = self.diff_steering.staged_hunks().len();
+        let rejected_count = self.diff_steering.rejected_hunks().len();
+        if staged_count > 0 || rejected_count > 0 {
+            list = list.child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(theme::bg_elevated())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .text_xs()
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::accent())
+                            .child(format!("Diff Steering Active: {} staged, {} rejected", staged_count, rejected_count)),
+                    ),
+            );
+        }
+
         // 3-Way Column Headers
         list = list.child(
             h_flex()

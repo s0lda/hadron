@@ -280,6 +280,9 @@ pub async fn run_tests_within(
     // same env, which is the point of it living in one place.
     cmd.envs(crate::worktree::shared_build_env(&wt.path));
 
+    // Inject cache metadata isolation flags to prevent foreign rlib collisions
+    hadron_gatekeeper::cache_guard::inject_cache_isolation_flags(cmd.as_std_mut(), program, &wt.path);
+
     // Its own process group, so the deadline can kill the whole tree rather than just
     // the launcher. `cargo test` is a launcher: killing it orphans the test binary,
     // which is exactly the process that was still burning four CPU-hours after the
@@ -354,6 +357,18 @@ pub fn land(repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Lande
     // after `sync` replayed it onto a `base` that had already absorbed its work.
     if git(repo_root, &["merge-base", "--is-ancestor", &wt.branch, base]).is_ok() {
         return Ok(Landed::AlreadyLanded);
+    }
+
+    // Pre-merge security audit via RedTeamAuditor (Standard Model Rule 7)
+    if let Ok(diff_bytes) = git(&wt.path, &["diff", &format!("{base}...{}", wt.branch)]) {
+        let auditor = hadron_gatekeeper::RedTeamAuditor::new();
+        let report = auditor.audit_diff(&diff_bytes);
+        if let hadron_gatekeeper::AuditVerdict::Rejected { critical_count, high_count } = report.verdict {
+            return Ok(Landed::Conflicted(format!(
+                "Merge gate rejected by RedTeamAuditor: {} critical, {} high security vulnerability(ies) found",
+                critical_count, high_count
+            )));
+        }
     }
 
     if let Ok(()) = ff_only(repo_root, &wt.branch) {

@@ -205,6 +205,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "timelapse", detail: "Generate visual architectural feature time-lapse", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "radar", detail: "Run human intent drift radar against in-flight git diff", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "baseline", detail: "Snapshot pre-turn baseline test health (Rule 5)", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "scout", detail: "Spawn ephemeral read-only sub-worker for zero-footprint codebase search", arity: Arity::Body, arg: ArgSource::None, listed: true },
 ];
 
 /// A short kebab-case id for a lesson line: the first few words, lowercased,

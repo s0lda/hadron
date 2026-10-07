@@ -173,8 +173,25 @@ pub fn extract_structured_diagnostics(output: &str) -> StructuredDiagnostics {
         i += 1;
     }
 
-    if primary_kind == DiagnosticErrorKind::Unknown && output.contains("FAILED") {
-        primary_kind = DiagnosticErrorKind::TestFailure;
+    if output.contains("FAILED") {
+        if primary_kind == DiagnosticErrorKind::Unknown {
+            primary_kind = DiagnosticErrorKind::TestFailure;
+        }
+        let (minimized_failures, _) = hadron_gatekeeper::TestFailureMinimizer::minimize(output);
+        for f in minimized_failures {
+            let f_clean_loc = f.panic_location.trim().trim_end_matches(':');
+            if !items.iter().any(|it| {
+                it.location.as_deref().unwrap_or("").trim_end_matches(':') == f_clean_loc
+                    || it.message.contains(&f.test_name)
+            }) {
+                items.push(DiagnosticItem {
+                    kind: DiagnosticErrorKind::TestFailure,
+                    location: Some(f_clean_loc.to_string()),
+                    message: format!("{} (assertion: {})", f.test_name, f.assertion_diff),
+                    code_snippet: None,
+                });
+            }
+        }
     }
 
     let summary = match primary_kind {
