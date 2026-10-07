@@ -203,6 +203,26 @@ impl ForgeMcpServer {
             return Json(ToolResponse::error(e.to_string()));
         }
 
+        // Tier 2: Resident LSP daemon query
+        let lsp_res = self
+            .get_or_init_lsp_daemon()
+            .await
+            .goto_definition(&args.path, args.line, args.col)
+            .await;
+
+        if let Ok(locs) = lsp_res {
+            if !locs.is_empty() {
+                let mut out = format!("Definition (LSP, {} location(s)):\n", locs.len());
+                for loc in locs {
+                    out.push_str(&format!(
+                        "- {}:{}:{} - {}:{}\n",
+                        loc.file, loc.start_line, loc.start_col, loc.end_line, loc.end_col
+                    ));
+                }
+                return Json(ToolResponse::success(Some(out)));
+            }
+        }
+
         // Tier 1 fallback: scan document outline to find matching symbol span
         match extract_file_symbols(&self.root, &args.path) {
             Ok(symbols) => {
@@ -308,5 +328,15 @@ impl Auth for User {
             }))
             .await;
         assert!(lsp_res.0.ok);
+
+        let def_res = server
+            .symbol_definition(Parameters(SymbolDefinitionArgs {
+                path: "src/models.rs".into(),
+                line: 2,
+                col: 12,
+            }))
+            .await;
+        assert!(def_res.0.ok);
+        assert!(def_res.0.blocks.unwrap().contains("Definition"));
     }
 }

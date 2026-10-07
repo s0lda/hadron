@@ -81,6 +81,7 @@ pub struct ForgeMcpServer {
     pub mock_manager: MockServerManager,
     pub vcr_manager: VcrProxyManager,
     pub dap_manager: DapSessionManager,
+    pub lsp_daemon: std::sync::Arc<tokio::sync::RwLock<Option<hadron_forge::lsp_daemon::LspDaemon>>>,
 }
 
 impl ForgeMcpServer {
@@ -120,6 +121,7 @@ impl ForgeMcpServer {
         let mock_manager = MockServerManager::new();
         let vcr_manager = VcrProxyManager::new();
         let dap_manager = DapSessionManager::new();
+        let lsp_daemon = std::sync::Arc::new(tokio::sync::RwLock::new(None));
 
         let mut tool_router = Self::edit_router()
             + Self::exec_router()
@@ -202,7 +204,25 @@ impl ForgeMcpServer {
             mock_manager,
             vcr_manager,
             dap_manager,
+            lsp_daemon,
         }
+    }
+
+    /// Retrieve or lazily initialize resident LspDaemon.
+    pub async fn get_or_init_lsp_daemon(&self) -> hadron_forge::lsp_daemon::LspDaemon {
+        {
+            let guard = self.lsp_daemon.read().await;
+            if let Some(d) = guard.as_ref() {
+                return d.clone();
+            }
+        }
+        let mut guard = self.lsp_daemon.write().await;
+        if let Some(d) = guard.as_ref() {
+            return d.clone();
+        }
+        let daemon = hadron_forge::lsp_daemon::LspDaemon::new_mock(self.root.path());
+        *guard = Some(daemon.clone());
+        daemon
     }
 
     /// Grant external roots to the **project** root only.
