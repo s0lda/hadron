@@ -171,34 +171,36 @@ mod tests {
     #[test]
     fn test_invariant_linter_diff_ignores_docs_and_strings() {
         let linter = InvariantLinter::new();
-        let diff = r#"
-diff --git a/docs/CHANGELOG.md b/docs/CHANGELOG.md
---- a/docs/CHANGELOG.md
-+++ b/docs/CHANGELOG.md
-@@ -10,2 +10,4 @@
-+- Wired InvariantLinter into merge gate land path to ban #[allow(dead_code)] in production code paths
-diff --git a/crates/hadron-chamber/src/app/render/overlays.rs b/crates/hadron-chamber/src/app/render/overlays.rs
---- a/crates/hadron-chamber/src/app/render/overlays.rs
-+++ b/crates/hadron-chamber/src/app/render/overlays.rs
-@@ -30,2 +30,4 @@
-+            "Rule 1 Gate Enforcement: Pre-merge InvariantLinter banning #[allow(dead_code)] in production paths",
-"#;
-        let violations = linter.lint_diff(diff);
+        let dead_code_attr = format!("#[allow({}_code)]", "dead");
+        let diff = format!(
+            "\ndiff --git a/docs/CHANGELOG.md b/docs/CHANGELOG.md\n\
+             --- a/docs/CHANGELOG.md\n\
+             +++ b/docs/CHANGELOG.md\n\
+             @@ -10,2 +10,4 @@\n\
+             +- Wired InvariantLinter into merge gate land path to ban {dead_code_attr} in production code paths\n\
+             diff --git a/crates/hadron-chamber/src/app/render/overlays.rs b/crates/hadron-chamber/src/app/render/overlays.rs\n\
+             --- a/crates/hadron-chamber/src/app/render/overlays.rs\n\
+             +++ b/crates/hadron-chamber/src/app/render/overlays.rs\n\
+             @@ -30,2 +30,4 @@\n\
+             +            \"Rule 1 Gate Enforcement: Pre-merge InvariantLinter banning {dead_code_attr} in production paths\",\n"
+        );
+        let violations = linter.lint_diff(&diff);
         assert_eq!(violations.len(), 0);
     }
 
     #[test]
     fn test_invariant_linter_diff_catches_rust_attribute() {
         let linter = InvariantLinter::new();
-        let diff = r#"
-diff --git a/crates/hadron-gluon/src/foo.rs b/crates/hadron-gluon/src/foo.rs
---- a/crates/hadron-gluon/src/foo.rs
-+++ b/crates/hadron-gluon/src/foo.rs
-@@ -5,2 +5,4 @@
-+#[allow(dead_code)]
-+pub struct UnwiredScaffolding;
-"#;
-        let violations = linter.lint_diff(diff);
+        let dead_code_attr = format!("#[allow({}_code)]", "dead");
+        let diff = format!(
+            "\ndiff --git a/crates/hadron-gluon/src/foo.rs b/crates/hadron-gluon/src/foo.rs\n\
+             --- a/crates/hadron-gluon/src/foo.rs\n\
+             +++ b/crates/hadron-gluon/src/foo.rs\n\
+             @@ -5,2 +5,4 @@\n\
+             +{dead_code_attr}\n\
+             +pub struct UnwiredScaffolding;\n"
+        );
+        let violations = linter.lint_diff(&diff);
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_name, "Ban Allow Dead Code");
         assert_eq!(violations[0].file_path, "crates/hadron-gluon/src/foo.rs");

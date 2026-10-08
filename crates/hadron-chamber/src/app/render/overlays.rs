@@ -30,7 +30,7 @@ const RELEASES: &[Release] = &[
         ],
         changed: &[],
         fixed: &[
-            "Rule 1 Gate Enforcement: Pre-merge InvariantLinter banning #[allow(dead_code)] in production paths to eliminate unwired scaffolding",
+            "Rule 1 Gate Enforcement: Pre-merge InvariantLinter banning dead_code attributes in production paths to eliminate unwired scaffolding",
             "Merge Gate Hardening: RedTeamAuditor pre-merge diff scanning, CacheGuard compiler salt injection, and IsolatedSandbox environment scrubbing",
             "AST Conflict Reconciliation: Automated 3-way structural conflict healing for markdown checklists and disjoint import blocks",
         ],

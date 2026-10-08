@@ -321,6 +321,12 @@ impl super::Engine {
             String::new()
         };
 
+        let id_str = if self.is_orchestrator(target) {
+            crate::router::ORCHESTRATOR_ALIAS
+        } else {
+            target.as_str()
+        };
+
         self.append(
             Event::new(
                 Actor::Gluon,
@@ -333,7 +339,7 @@ impl super::Engine {
                          end your turn as you normally would; the gate retries the merge on its own. \
                          Do not touch the main checkout, and do not start new work until this lands. \
                          If you cannot fix it, say so and hand back to a human rather than forcing it.",
-                        id = target.as_str(),
+                        id = id_str,
                     ),
                 },
             )
@@ -410,9 +416,29 @@ impl super::Engine {
                     self.hand_back_to_quark(
                         target,
                         t.assignment,
-                        &crate::merge::Landed::Conflicted(err).describe(&t.wt.branch, &t.base),
+                        &crate::merge::Landed::Conflicted(err.clone()).describe(&t.wt.branch, &t.base),
                     )
                     .await?;
+                    if !self.is_orchestrator(target) {
+                        if let Some(_orch) = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator) {
+                            self.append(
+                                Event::new(
+                                    Actor::Gluon,
+                                    None,
+                                    Kind::Message {
+                                        body: format!(
+                                            "@{} Merge gate conflict syncing `{}` onto `{}`: {err}",
+                                            crate::router::ORCHESTRATOR_ALIAS,
+                                            t.wt.branch,
+                                            t.base
+                                        ),
+                                    },
+                                )
+                                .with_severity(hadron_lattice::Severity::Error),
+                            )
+                            .await?;
+                        }
+                    }
                     return Ok(true);
                 }
                 crate::merge::Synced::AlreadyCurrent => state,
@@ -585,6 +611,30 @@ impl super::Engine {
                         return Ok(true);
                     }
                 };
+
+                if let crate::merge::Landed::Conflicted(ref err) = landed {
+                    let desc = landed.describe(&t.wt.branch, &t.base);
+                    self.hand_back_to_quark(target, t.assignment, &desc).await?;
+                    if delegated && !self.is_orchestrator(target) {
+                        self.append(
+                            Event::new(
+                                Actor::Gluon,
+                                None,
+                                Kind::Message {
+                                    body: format!(
+                                        "@{} Merge gate rejected `{}`: {err}",
+                                        crate::router::ORCHESTRATOR_ALIAS,
+                                        t.wt.branch
+                                    ),
+                                },
+                            )
+                            .with_severity(hadron_lattice::Severity::Error),
+                        )
+                        .await?;
+                    }
+                    return Ok(true);
+                }
+
                 let body = landed.describe(&t.wt.branch, &t.base);
                 self.append(
                     Event::new(Actor::Gluon, None, Kind::Message { body })
@@ -690,6 +740,26 @@ impl super::Engine {
                     // already standing in the right place to fix them.
                     BlockReason::TestsFailed | BlockReason::DirtyWorktree => {
                         self.hand_back_to_quark(target, t.assignment, &why).await?;
+                        if delegated && !self.is_orchestrator(target) {
+                            if let Some(_orch) = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator) {
+                                self.append(
+                                    Event::new(
+                                        Actor::Gluon,
+                                        None,
+                                        Kind::Message {
+                                            body: format!(
+                                                "@{} Merge gate blocked `{}` on {}: {why}",
+                                                crate::router::ORCHESTRATOR_ALIAS,
+                                                t.wt.branch,
+                                                reason.describe()
+                                            ),
+                                        },
+                                    )
+                                    .with_severity(hadron_lattice::Severity::Error),
+                                )
+                                .await?;
+                            }
+                        }
                     }
                     // `BranchIsDefault` is a discipline violation the quark cannot undo
                     // from inside (it is standing ON the branch it must never be on), and

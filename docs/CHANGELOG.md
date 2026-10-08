@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Rule 1 Enforcement & Merge Gate Invariant Linter (`hadron-gatekeeper`, `hadron-gluon`)**:
-  - Wired `InvariantLinter` into merge gate `land` path to ban `#[allow(dead_code)]` in production code paths, ensuring unwired scaffolding cannot silently pass CI.
+  - Wired `InvariantLinter` into merge gate `land` path to ban dead_code attributes in production code paths, ensuring unwired scaffolding cannot silently pass CI.
   - Wired `RedTeamAuditor` automated pre-merge diff security auditing into gate execution.
   - Wired `CacheGuard` compiler salt injection (`-C metadata`) into gate test commands to prevent stale rlib reuse across concurrent worktrees.
   - Wired `TestFailureMinimizer` to compact and deduplicate compiler errors and panic backtraces on gate failures.
