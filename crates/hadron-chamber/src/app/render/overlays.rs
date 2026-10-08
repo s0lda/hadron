@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.28.2",
+        date: Some("2026-10-08"),
+        added: &[],
+        changed: &[
+            "Dependency Updates: Upgraded rustls (0.23.42 -> 0.23.45) and rustls-webpki (0.103.13 -> 0.103.15) to incorporate upstream security hardening and handshake alignment validation",
+        ],
+        fixed: &[],
+    },
+    Release {
         version: "0.28.1",
         date: Some("2026-10-08"),
         added: &[],

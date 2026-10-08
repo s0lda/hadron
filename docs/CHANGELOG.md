@@ -5,6 +5,12 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.2] - 2026-10-08
+
+### Changed
+- **Dependency Updates (`rustls`)**:
+  - Upgraded `rustls` from 0.23.42 to 0.23.45 and `rustls-webpki` from 0.103.13 to 0.103.15, incorporating upstream security hardening, handshake alignment validation, and TLS 1.2 negotiation fixes.
+
 ## [0.28.1] - 2026-10-08
 
 ### Fixed

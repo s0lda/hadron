@@ -17,7 +17,7 @@ default-members = ["crates/hadron-chamber"]
 # rust-lang/rust#133508). Older toolchains fail with E0658 during dependency build.
 [workspace.package]
 rust-version = "1.93"
-version = "0.28.1"
+version = "0.28.2"
 edition = "2021"
 license = "Apache-2.0"
 
