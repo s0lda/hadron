@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.28.1",
+        date: Some("2026-10-08"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Merge Gate Orchestrator Alerting: Automated @orchestrator notification routing on merge gate rejections, rebase conflicts, and test regressions for autonomous recovery loops",
+            "Invariant Linter Diff Scoping: Scoped Ban Allow Dead Code invariant checks strictly to Rust files and attribute syntax to eliminate false positive diff rejections",
+            "Gate Conflict Reconciliation: Matched Landed::Conflicted in land_with_strategy and cleanly returned turn control to worker quarks rather than grounding",
+        ],
+    },
+    Release {
         version: "0.28.0",
         date: Some("2026-10-07"),
         added: &[

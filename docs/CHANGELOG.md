@@ -5,6 +5,16 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.1] - 2026-10-08
+
+### Fixed
+- **Merge Gate Orchestrator Alerting (`hadron-gluon`)**:
+  - Implemented automatic routing of merge gate rejections, rebase sync conflicts, and test suite regressions to `@orchestrator` via `Actor::Gluon` events, keeping the orchestrator actively excited to handle recovery loops autonomously.
+  - Reconciled `Landed::Conflicted` error handling in `land_with_strategy` to cleanly hand turn control back to worker quarks rather than abnormally grounding execution.
+- **Invariant Linter Diff Scoping & False Positive Elimination (`hadron-gatekeeper`, `hadron-gluon`)**:
+  - Scoped `Ban Allow Dead Code` invariant diff inspection strictly to Rust source files (`.rs`) and attribute syntax (`#[allow(...)` / `#![allow(...)`), preventing false gate rejections caused by docs, markdown, and changelog mentions.
+  - Replaced raw forbidden pattern literals in gatekeeper test fixtures and regex declarations to eliminate self-matching during diff verification.
+
 ## [0.28.0] - 2026-10-07
 
 ### Added
