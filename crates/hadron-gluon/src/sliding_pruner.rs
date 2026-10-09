@@ -1,3 +1,4 @@
+use std::path::Path;
 use hadron_lattice::{Actor, Event, Kind, Projection};
 use serde::{Deserialize, Serialize};
 
@@ -137,6 +138,34 @@ impl SlidingContextPruner {
         }
         compacted
     }
+
+    /// Fold long test runner output into a compact summary, persisting the full output to disk.
+    pub fn fold_test_output(raw: &str, scratch_dir: &Path) -> (String, bool) {
+        let line_count = raw.lines().count();
+        if line_count < 30 || !raw.contains("test result:") {
+            return (raw.to_string(), false);
+        }
+
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let log_file = scratch_dir.join(format!("test_output_{ts}.log"));
+        let _ = std::fs::write(&log_file, raw);
+
+        let summary_line = raw
+            .lines()
+            .rev()
+            .find(|l| l.contains("test result:"))
+            .unwrap_or("test suite completed");
+
+        let folded = format!(
+            "[Folded test output: {line_count} lines. Full log saved to {}]\n{}",
+            log_file.display(),
+            summary_line
+        );
+        (folded, true)
+    }
 }
 
 #[cfg(test)]
@@ -192,5 +221,22 @@ mod tests {
         } else {
             panic!("Expected message 14 at tail");
         }
+    }
+
+    #[test]
+    fn test_fold_test_output_compacts_large_test_suites() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut lines = Vec::new();
+        lines.push("running 45 tests".to_string());
+        for i in 0..60 {
+            lines.push(format!("test test_case_{i} ... ok"));
+        }
+        lines.push("test result: ok. 45 passed; 0 failed; 0 ignored".to_string());
+        let raw = lines.join("\n");
+
+        let (folded, did_fold) = SlidingContextPruner::fold_test_output(&raw, tmp.path());
+        assert!(did_fold);
+        assert!(folded.contains("[Folded test output: 62 lines. Full log saved to"));
+        assert!(folded.contains("test result: ok. 45 passed; 0 failed"));
     }
 }
