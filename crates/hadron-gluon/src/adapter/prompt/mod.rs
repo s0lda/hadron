@@ -84,15 +84,20 @@ pub fn frame_interrupted_resumption(interrupted_task: &str, new_message: &str) -
     )
 }
 
-/// Build the full Markdown prompt handed to a quark's CLI for one turn.
-/// Deterministic and side-effect-free so it can be unit-tested exactly.
-/// `self_id` is the quark's own handle — a human message can address several
-/// quarks at once ("@alpha X and @beta Y"), each of whom receives the whole
-/// message, so each must know which mentions are its part.
-pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
-    let mut p = String::new();
+/// Description of available forge tools.
+const AVAILABLE_FORGE_TOOLS_DESCRIPTION: &str =
+    "# Available Hadron Forge Tools\n\
+     The `hadron-forge-mcp` suite provides 62 tools across 24 families:\n\
+     - **Inspect & Edit**: `hadron_forge_read_file`, `hadron_forge_list_dir`, `hadron_forge_grep`, `hadron_forge_edit`, `hadron_forge_write_file`, `hadron_forge_create_file`, `hadron_forge_delete_file`, `hadron_forge_read_blocks`\n\
+     - **Exec & PTY**: `hadron_forge_exec`, `hadron_forge_pty_start`, `hadron_forge_pty_write`, `hadron_forge_pty_read`, `hadron_forge_pty_resize`, `hadron_forge_pty_kill`, `hadron_forge_pty_list`, `hadron_forge_process_start`, `hadron_forge_process_logs`, `hadron_forge_process_list`, `hadron_forge_process_send_stdin`, `hadron_forge_process_kill`\n\
+     - **Code Intelligence**: `hadron_forge_diagnostics`, `hadron_forge_cargo_tree`, `hadron_forge_symbol_find_callers`, `hadron_forge_symbol_hierarchy`, `hadron_forge_symbol_document_outline`, `hadron_forge_symbol_definition`, `hadron_forge_lsp_query`, `hadron_forge_semantic_search`, `hadron_forge_semantic_index_status`\n\
+     - **Testing & Verification**: `hadron_forge_gate_run`, `hadron_forge_gate_status`, `hadron_forge_mock_start`, `hadron_forge_mock_route_add`, `hadron_forge_mock_requests_list`, `hadron_forge_mock_assert`, `hadron_forge_mock_stop`, `hadron_forge_e2e_assert`, `hadron_forge_security_audit`, `hadron_forge_service_watchdog`\n\
+     - **Browser & UI**: `hadron_forge_browser_navigate`, `hadron_forge_browser_snapshot`, `hadron_forge_browser_screenshot`, `hadron_forge_browser_evaluate`, `hadron_forge_browser_click`, `hadron_forge_browser_fill`, `hadron_forge_screenshot_capture`, `hadron_forge_screenshot_list`, `hadron_forge_screenshot_prune`, `hadron_forge_preview_launch`\n\
+     - **Nucleus & Swarm**: `hadron_forge_query_nucleus`, `hadron_forge_note_create`, `hadron_forge_note_update`, `hadron_forge_note_read`, `hadron_forge_index_read`, `hadron_forge_nucleus_lint`, `hadron_forge_peer_inspect`, `hadron_forge_peers_detect_conflicts`, `hadron_forge_spec_compile`, `hadron_forge_sqlite_query`, `hadron_forge_sqlite_schema`, `hadron_forge_sqlite_migrate`, `hadron_forge_sqlite_export`, `hadron_forge_scaffold`\n\n";
 
-    // Part A: Cache-Stable Prefix (rendered first)
+/// Part A: Immutable, cache-stable prefix consisting of invariants, instructions, and tools.
+pub fn build_cache_stable_prefix(projection: &Projection) -> String {
+    let mut p = String::new();
 
     // 1. Critical directive header
     p.push_str(CRITICAL_DIRECTIVE_HEADER);
@@ -112,16 +117,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
 
     // 3. Available Hadron Forge Tools (gated on has_forge_tools)
     if projection.has_forge_tools {
-        p.push_str(
-            "# Available Hadron Forge Tools\n\
-             The `hadron-forge-mcp` suite provides 62 tools across 24 families:\n\
-             - **Inspect & Edit**: `hadron_forge_read_file`, `hadron_forge_list_dir`, `hadron_forge_grep`, `hadron_forge_edit`, `hadron_forge_write_file`, `hadron_forge_create_file`, `hadron_forge_delete_file`, `hadron_forge_read_blocks`\n\
-             - **Exec & PTY**: `hadron_forge_exec`, `hadron_forge_pty_start`, `hadron_forge_pty_write`, `hadron_forge_pty_read`, `hadron_forge_pty_resize`, `hadron_forge_pty_kill`, `hadron_forge_pty_list`, `hadron_forge_process_start`, `hadron_forge_process_logs`, `hadron_forge_process_list`, `hadron_forge_process_send_stdin`, `hadron_forge_process_kill`\n\
-             - **Code Intelligence**: `hadron_forge_diagnostics`, `hadron_forge_cargo_tree`, `hadron_forge_symbol_find_callers`, `hadron_forge_symbol_hierarchy`, `hadron_forge_symbol_document_outline`, `hadron_forge_symbol_definition`, `hadron_forge_lsp_query`, `hadron_forge_semantic_search`, `hadron_forge_semantic_index_status`\n\
-             - **Testing & Verification**: `hadron_forge_gate_run`, `hadron_forge_gate_status`, `hadron_forge_mock_start`, `hadron_forge_mock_route_add`, `hadron_forge_mock_requests_list`, `hadron_forge_mock_assert`, `hadron_forge_mock_stop`, `hadron_forge_e2e_assert`, `hadron_forge_security_audit`, `hadron_forge_service_watchdog`\n\
-             - **Browser & UI**: `hadron_forge_browser_navigate`, `hadron_forge_browser_snapshot`, `hadron_forge_browser_screenshot`, `hadron_forge_browser_evaluate`, `hadron_forge_browser_click`, `hadron_forge_browser_fill`, `hadron_forge_screenshot_capture`, `hadron_forge_screenshot_list`, `hadron_forge_screenshot_prune`, `hadron_forge_preview_launch`\n\
-             - **Nucleus & Swarm**: `hadron_forge_query_nucleus`, `hadron_forge_note_create`, `hadron_forge_note_update`, `hadron_forge_note_read`, `hadron_forge_index_read`, `hadron_forge_nucleus_lint`, `hadron_forge_peer_inspect`, `hadron_forge_peers_detect_conflicts`, `hadron_forge_spec_compile`, `hadron_forge_sqlite_query`, `hadron_forge_sqlite_schema`, `hadron_forge_sqlite_migrate`, `hadron_forge_sqlite_export`, `hadron_forge_scaffold`\n\n",
-        );
+        p.push_str(AVAILABLE_FORGE_TOOLS_DESCRIPTION);
     }
 
     // 4. Authority & Permission Mode
@@ -129,7 +125,21 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     p.push_str(mode_guidance(projection.mode));
     p.push_str("\n\n");
 
-    // 5. Response Format & Zero-Essay Directive
+    // 5. Nucleus Digest
+    if !projection.nucleus_digest.trim().is_empty() {
+        p.push_str("# Project knowledge (nucleus) — index only, open `.hadron/nucleus/features.md` before touching a feature\n");
+        p.push_str(projection.nucleus_digest.trim());
+        p.push_str("\n\n");
+    }
+
+    p
+}
+
+/// Part B: Dynamic per-turn suffix containing identities, task, field events, and working diff.
+pub fn build_dynamic_suffix(projection: &Projection, self_id: &QuarkId) -> String {
+    let mut p = String::new();
+
+    // Response Format & Zero-Essay Directive
     p.push_str("# Response Format & Output Strictness\n");
     if is_orchestrator(projection, self_id) {
         p.push_str(
@@ -199,7 +209,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         );
     }
 
-    // 6. Role & Escalation Directives
+    // Role & Escalation Directives
     if is_worker(projection, self_id) {
         p.push_str(
             "**When your task is complete or if your turn encounters an error, start a line with `@orchestrator` and report there.** \
@@ -276,22 +286,13 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
          could not do something, say so.\n\n",
     );
 
-    // 7. Nucleus Digest
-    if !projection.nucleus_digest.trim().is_empty() {
-        p.push_str("# Project knowledge (nucleus) — index only, open `.hadron/nucleus/features.md` before touching a feature\n");
-        p.push_str(projection.nucleus_digest.trim());
-        p.push_str("\n\n");
-    }
-
-    // Part B: Dynamic Suffix (rendered second)
-
-    // 8. Who you are
+    // Who you are
     p.push_str(&format!(
         "# Who you are\nYou are `@{}` in this swarm.\n\n",
         display_for(&projection.roster, self_id)
     ));
 
-    // 9. Where you are
+    // Where you are
     if !projection.cwd.as_os_str().is_empty() {
         p.push_str("# Where you are\n");
         if projection.isolated {
@@ -320,7 +321,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         }
     }
 
-    // 10. Swarm Memory Index
+    // Swarm Memory Index
     if !projection.nucleus_index_path.as_os_str().is_empty() {
         p.push_str("# What the swarm has learned (nucleus index)\n");
         if projection.nucleus_index.trim().is_empty() {
@@ -359,7 +360,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         ));
     }
 
-    // 11. Live Activity
+    // Live Activity
     if !projection.live_activities.is_empty() {
         p.push_str("# Live Activity\n");
         p.push_str("The following quarks are currently working in parallel:\n");
@@ -374,7 +375,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         p.push_str("\n");
     }
 
-    // 12. Broadcast Status
+    // Broadcast Status
     if is_worker(projection, self_id) && !projection.named_specifically {
         p.push_str(
             "# This is a broadcast, not an assignment\n\
@@ -386,7 +387,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         );
     }
 
-    // 13. Active Skill
+    // Active Skill
     if let Some(ref skill) = projection.active_skill {
         if !skill.trim().is_empty() {
             p.push_str(skill.trim());
@@ -394,12 +395,12 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         }
     }
 
-    // 14. Your task
+    // Your task
     p.push_str("# Your task\n");
     p.push_str(projection.task.trim());
     p.push_str("\n\n");
 
-    // 15. Recent field
+    // Recent field
     if !projection.field_window.is_empty() {
         p.push_str("# Recent field (most recent last)\n");
         if projection.field_truncated {
@@ -418,7 +419,7 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
         p.push('\n');
     }
 
-    // 16. Current working diff
+    // Current working diff
     if !projection.git_diff.trim().is_empty() {
         p.push_str("# Current working diff\n");
         if projection.isolated {
@@ -437,6 +438,19 @@ pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
     }
 
     p
+}
+
+/// Build the full Markdown prompt handed to a quark's CLI for one turn.
+/// Deterministic and side-effect-free so it can be unit-tested exactly.
+/// `self_id` is the quark's own handle — a human message can address several
+/// quarks at once ("@alpha X and @beta Y"), each of whom receives the whole
+/// message, so each must know which mentions are its part.
+pub fn build(projection: &Projection, self_id: &QuarkId) -> String {
+    format!(
+        "{}{}",
+        build_cache_stable_prefix(projection),
+        build_dynamic_suffix(projection, self_id)
+    )
 }
 
 /// Byte size of each section [`build`] writes, in the same order. Deliberately a

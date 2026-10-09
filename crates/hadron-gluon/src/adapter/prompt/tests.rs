@@ -1097,5 +1097,18 @@ fn stress_test_zero_and_extreme_budget_restrictions() {
     assert!(built_max.contains("note1"));
 }
 
+#[test]
+fn test_cache_stable_prefix_remains_byte_identical_across_different_tasks() {
+    let proj1 = projection("First task description");
+    let proj2 = projection("Completely different second task");
+
+    let prefix1 = build_cache_stable_prefix(&proj1);
+    let prefix2 = build_cache_stable_prefix(&proj2);
+
+    assert_eq!(prefix1, prefix2, "Stable prefix must match 100% byte-for-byte to preserve KV cache");
+    assert!(prefix1.contains(CRITICAL_DIRECTIVE_HEADER));
+}
+
+
 
 
