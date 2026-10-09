@@ -1261,6 +1261,26 @@ impl super::Chamber {
                 )),
         );
 
+        let sandbox_platform = hadron_gatekeeper::detect_sandbox_platform();
+        let sandbox_card = settings_card_section(
+            "Native Process Sandbox Engine",
+            Some(IconName::Settings),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "Active sandbox driver",
+                    Some("Platform kernel containment mechanism jailing tool and command execution."),
+                    div().text_sm().text_color(theme::text()).child(sandbox_platform.name()).into_any_element(),
+                ))
+                .child(settings_field(
+                    "Containment status",
+                    Some("Whether process, filesystem, and network isolation are enforced by the platform driver."),
+                    div().text_sm().text_color(if sandbox_platform.is_isolated() { theme::success() } else { theme::warning() })
+                        .child(if sandbox_platform.is_isolated() { "Active (Native Isolation)" } else { "Host Fallback" })
+                        .into_any_element(),
+                )),
+        );
+
         v_flex()
             .w_full()
             .gap_4()
@@ -1269,6 +1289,7 @@ impl super::Chamber {
             .child(terminal_card)
             .child(notifications_card)
             .child(display_card)
+            .child(sandbox_card)
     }
 
     pub(super) fn general_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

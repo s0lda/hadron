@@ -413,3 +413,27 @@ fn test_theme_token_get_and_set_hex() {
     assert_eq!(ThemeTokenKey::SyntaxKeyword.get_hex(&theme), "#ff007f");
     assert_eq!(ThemeTokenKey::TermBg.get_hex(&theme), "#000000");
 }
+
+#[test]
+fn test_sandbox_environment_diagnostics() {
+    let platform = hadron_gatekeeper::detect_sandbox_platform();
+    assert!(!platform.name().is_empty());
+    match platform {
+        hadron_gatekeeper::SandboxPlatform::LinuxBwrap => {
+            assert!(platform.is_isolated());
+            assert!(platform.name().contains("Bubblewrap"));
+        }
+        hadron_gatekeeper::SandboxPlatform::MacOsSeatbelt => {
+            assert!(platform.is_isolated());
+            assert!(platform.name().contains("Apple Seatbelt"));
+        }
+        hadron_gatekeeper::SandboxPlatform::WindowsHarness => {
+            assert!(platform.is_isolated());
+            assert!(platform.name().contains("Windows"));
+        }
+        hadron_gatekeeper::SandboxPlatform::Fallback => {
+            assert!(!platform.is_isolated());
+        }
+    }
+}
+
