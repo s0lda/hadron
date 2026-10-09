@@ -314,6 +314,13 @@ impl BakeOffManager {
             .collect();
         crate::tournament::TournamentSpec::evaluate_winner(&candidates)
     }
+
+    /// Evaluate candidate results and select the tournament winner prioritizing green gate and minimal diff.
+    pub fn speculative_tournament_winner(
+        candidates: &[crate::tournament::CandidateResult],
+    ) -> crate::tournament::WinnerReport {
+        crate::tournament::TournamentSpec::evaluate_winner(candidates)
+    }
 }
 
 #[cfg(test)]

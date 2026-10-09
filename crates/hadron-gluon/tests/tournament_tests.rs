@@ -38,3 +38,27 @@ fn test_tournament_spec_winner_selection() {
     );
     assert!(winner_report.reason.contains("24 lines"));
 }
+
+#[test]
+fn test_speculative_tournament_prefers_minimal_diff_and_green_gate() {
+    let candidates = vec![
+        CandidateResult {
+            branch: "feat/fast-model".to_string(),
+            gate_passed: true,
+            diff_lines: 35,
+            test_duration_ms: 1200,
+        },
+        CandidateResult {
+            branch: "feat/frontier-model".to_string(),
+            gate_passed: true,
+            diff_lines: 120,
+            test_duration_ms: 8500,
+        },
+    ];
+    let report = TournamentSpec::evaluate_winner(&candidates);
+    assert_eq!(report.winner_branch.as_deref(), Some("feat/fast-model"));
+
+    let bakeoff_report = hadron_gluon::bakeoff::BakeOffManager::speculative_tournament_winner(&candidates);
+    assert_eq!(bakeoff_report.winner_branch.as_deref(), Some("feat/fast-model"));
+}
+
