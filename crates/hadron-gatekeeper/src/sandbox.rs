@@ -215,10 +215,66 @@ pub fn build_windows_sandbox_args(
 
 
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SandboxPlatform {
+    LinuxBwrap,
+    MacOsSeatbelt,
+    WindowsHarness,
+    Fallback,
+}
+
+impl SandboxPlatform {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::LinuxBwrap => "Bubblewrap (Linux/WSL)",
+            Self::MacOsSeatbelt => "Apple Seatbelt (macOS)",
+            Self::WindowsHarness => "PowerShell & JobObject (Windows)",
+            Self::Fallback => "Host Environment Isolation",
+        }
+    }
+
+    pub fn is_isolated(&self) -> bool {
+        !matches!(self, Self::Fallback)
+    }
+}
+
+pub fn detect_sandbox_platform() -> SandboxPlatform {
+    #[cfg(target_os = "macos")]
+    {
+        if is_macos_sandbox_available() {
+            return SandboxPlatform::MacOsSeatbelt;
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if is_windows_sandbox_available() {
+            return SandboxPlatform::WindowsHarness;
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        if is_bwrap_available() {
+            return SandboxPlatform::LinuxBwrap;
+        }
+    }
+
+    // Dynamic checks for cross-platform / container / non-standard environments
+    if is_macos_sandbox_available() {
+        SandboxPlatform::MacOsSeatbelt
+    } else if is_bwrap_available() {
+        SandboxPlatform::LinuxBwrap
+    } else if is_windows_sandbox_available() {
+        SandboxPlatform::WindowsHarness
+    } else {
+        SandboxPlatform::Fallback
+    }
+}
+
 /// Cross-platform sandboxed command resolver.
-/// Jails via Bubblewrap (`bwrap`) where available (Linux/WSL),
-/// while falling back to host executable with directory and environment scrubbing
-/// on Windows, macOS, and Linux systems without bwrap.
+/// Jails via Bubblewrap (`bwrap`) on Linux/WSL, Apple Seatbelt (`sandbox-exec`) on macOS,
+/// and PowerShell containment harness with Job Objects on Windows.
 pub fn resolve_sandboxed_command(
     work_dir: &Path,
     program: &str,
@@ -226,11 +282,25 @@ pub fn resolve_sandboxed_command(
     mode: SandboxMode,
     unshare_net: bool,
 ) -> (String, Vec<String>) {
-    if mode != SandboxMode::Off && is_bwrap_available() {
-        let bwrap_args = build_bwrap_args(work_dir, program, args, mode, unshare_net);
-        ("bwrap".to_string(), bwrap_args)
-    } else {
-        (program.to_string(), args.to_vec())
+    if mode == SandboxMode::Off {
+        return (program.to_string(), args.to_vec());
+    }
+
+    match detect_sandbox_platform() {
+        SandboxPlatform::LinuxBwrap => {
+            let bwrap_args = build_bwrap_args(work_dir, program, args, mode, unshare_net);
+            ("bwrap".to_string(), bwrap_args)
+        }
+        SandboxPlatform::MacOsSeatbelt => {
+            let macos_args = build_macos_sandbox_args(work_dir, program, args, mode, unshare_net);
+            ("/usr/bin/sandbox-exec".to_string(), macos_args)
+        }
+        SandboxPlatform::WindowsHarness => {
+            build_windows_sandbox_args(work_dir, program, args, mode, unshare_net)
+        }
+        SandboxPlatform::Fallback => {
+            (program.to_string(), args.to_vec())
+        }
     }
 }
 
@@ -401,6 +471,24 @@ mod tests {
         assert!(script.contains("C:\\Users\\Jake\\hadron\\.hadron\\trees\\test-quark"));
         assert!(script.contains("HTTP_PROXY"));
         assert!(script.contains("cargo.exe"));
+    }
+
+    #[test]
+    fn test_detect_sandbox_platform_and_resolution() {
+        use std::path::Path;
+        let platform = detect_sandbox_platform();
+        assert!(matches!(
+            platform,
+            SandboxPlatform::LinuxBwrap
+                | SandboxPlatform::MacOsSeatbelt
+                | SandboxPlatform::WindowsHarness
+                | SandboxPlatform::Fallback
+        ));
+
+        let work_dir = Path::new("/tmp/test-tree");
+        let (prog, args) = resolve_sandboxed_command(work_dir, "echo", &["test".to_string()], SandboxMode::Off, false);
+        assert_eq!(prog, "echo");
+        assert_eq!(args, vec!["test".to_string()]);
     }
 }
 
