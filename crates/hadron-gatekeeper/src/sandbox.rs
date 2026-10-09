@@ -67,6 +67,76 @@ pub fn build_bwrap_args(
     bwrap
 }
 
+pub fn is_macos_sandbox_available() -> bool {
+    cfg!(target_os = "macos") || Path::new("/usr/bin/sandbox-exec").exists()
+}
+
+pub fn build_macos_sandbox_profile(
+    work_dir: &Path,
+    mode: SandboxMode,
+    unshare_net: bool,
+) -> String {
+    let work_dir_str = work_dir.display().to_string();
+    let network_rule = if unshare_net || mode == SandboxMode::Strict {
+        "(deny network*)"
+    } else {
+        "(allow network*)"
+    };
+
+    format!(
+        r#"(version 1)
+(deny default)
+(allow process-exec*)
+(allow process-fork)
+(allow sysctl-read)
+(allow file-read*)
+(allow file-write*
+    (subpath "{work_dir_str}")
+    (subpath "/private/tmp")
+    (subpath "/tmp")
+    (subpath "/private/var/folders")
+    (subpath "/var/folders")
+    (literal "/dev/null")
+    (literal "/dev/zero")
+    (literal "/dev/dtracehelper")
+    (literal "/dev/tty")
+    (literal "/dev/stdin")
+    (literal "/dev/stdout")
+    (literal "/dev/stderr")
+)
+(allow file-write-data
+    (literal "/dev/null")
+    (literal "/dev/zero")
+    (literal "/dev/tty")
+)
+(allow mach-lookup)
+(allow signal (target self))
+(allow ipc-posix-shm*)
+{network_rule}
+"#
+    )
+}
+
+pub fn build_macos_sandbox_args(
+    work_dir: &Path,
+    program: &str,
+    args: &[String],
+    mode: SandboxMode,
+    unshare_net: bool,
+) -> Vec<String> {
+    if mode == SandboxMode::Off {
+        let mut full = vec![program.to_string()];
+        full.extend_from_slice(args);
+        return full;
+    }
+
+    let profile = build_macos_sandbox_profile(work_dir, mode, unshare_net);
+    let mut cmd_args = vec!["-p".to_string(), profile, program.to_string()];
+    cmd_args.extend_from_slice(args);
+    cmd_args
+}
+
+
 /// Cross-platform sandboxed command resolver.
 /// Jails via Bubblewrap (`bwrap`) where available (Linux/WSL),
 /// while falling back to host executable with directory and environment scrubbing
@@ -214,6 +284,27 @@ mod tests {
         assert!(bwrap_args.contains(&work_dir.to_str().unwrap().to_string()));
         assert!(bwrap_args.contains(&"--chdir".to_string()));
         assert!(bwrap_args.contains(&"cargo".to_string()));
+    }
+
+    #[test]
+    fn test_macos_sandbox_profile_generation_and_args() {
+        use std::path::Path;
+        let work_dir = Path::new("/Users/developer/hadron/.hadron/trees/test-quark");
+        let profile = build_macos_sandbox_profile(work_dir, SandboxMode::WorktreeOnly, false);
+        assert!(profile.contains("(version 1)"));
+        assert!(profile.contains("(deny default)"));
+        assert!(profile.contains("(allow file-read*)"));
+        assert!(profile.contains("/Users/developer/hadron/.hadron/trees/test-quark"));
+        assert!(profile.contains("(allow network*)"));
+
+        let strict_profile = build_macos_sandbox_profile(work_dir, SandboxMode::Strict, false);
+        assert!(strict_profile.contains("(deny network*)"));
+
+        let args = build_macos_sandbox_args(work_dir, "cargo", &["test".to_string()], SandboxMode::WorktreeOnly, false);
+        assert_eq!(args[0], "-p");
+        assert!(args[1].contains("(version 1)"));
+        assert_eq!(args[2], "cargo");
+        assert_eq!(args[3], "test");
     }
 }
 
