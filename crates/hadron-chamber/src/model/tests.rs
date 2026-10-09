@@ -575,6 +575,7 @@
                     external_roots: vec![],
                     http_base_url: None,
                     model_params: hadron_lattice::ModelParams::default(),
+                    sandbox: None,
                 },
                 Seat {
                     id: QuarkId::new("opus"),
@@ -597,6 +598,7 @@
                     external_roots: vec![],
                     http_base_url: None,
                     model_params: hadron_lattice::ModelParams::default(),
+                    sandbox: None,
                 },
             ],
             roster: vec![],
