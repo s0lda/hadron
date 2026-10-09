@@ -132,6 +132,23 @@ pub struct Seat {
     /// Empty by default, and omitted when empty.
     #[serde(default, skip_serializing_if = "ModelParams::is_empty")]
     pub model_params: ModelParams,
+    /// Optional sandbox confinement mode for this seat's executions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<SandboxMode>,
+}
+
+/// Sandbox confinement mode for command and process execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SandboxMode {
+    Off,
+    WorktreeOnly,
+    Strict,
+}
+
+impl Default for SandboxMode {
+    fn default() -> Self {
+        Self::WorktreeOnly
+    }
 }
 
 /// Per-seat model parameters (e.g. temperature, top_p, max_tokens).
@@ -213,7 +230,7 @@ impl Seat {
     /// a field to `Seat` without deciding which side of this line it falls on will not
     /// compile.
     pub fn same_agent(&self, other: &Seat) -> bool {
-        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env, energy_limit, deny_skills, external_roots, http_base_url, model_params } = self;
+        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env, energy_limit, deny_skills, external_roots, http_base_url, model_params, sandbox } = self;
         id == &other.id
             && vendor == &other.vendor
             && model == &other.model
@@ -232,6 +249,7 @@ impl Seat {
             && external_roots == &other.external_roots
             && http_base_url == &other.http_base_url
             && model_params == &other.model_params
+            && sandbox == &other.sandbox
     }
 
     /// Whether this seat supports model parameters (temperature, top_p, max_tokens).
@@ -277,6 +295,7 @@ impl Seat {
             external_roots: vec![],
             http_base_url: None,
             model_params: ModelParams::default(),
+            sandbox: None,
         }
     }
 
@@ -380,6 +399,9 @@ pub struct SeatOverride {
     /// Per-repo model parameters. Absent = inherit the catalogue's `model_params`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_params: Option<ModelParams>,
+    /// Per-repo sandbox mode. Absent = inherit the catalogue's `sandbox`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<Option<SandboxMode>>,
 }
 
 /// Deserialize an `Option<Option<T>>` field so the three states stay distinct: an
@@ -417,6 +439,26 @@ impl SeatOverride {
             energy_limit: None,
             deny_skills: None,
             model_params: None,
+            sandbox: None,
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_seat_deserializes_sandbox_mode() {
+        let json = r#"{
+            "id": "agy",
+            "vendor": "agy",
+            "model": "gemini-3.8-flash",
+            "flavor": "worker",
+            "sandbox": "Strict"
+        }"#;
+        let seat: Seat = serde_json::from_str(json).expect("valid seat json");
+        assert_eq!(seat.sandbox, Some(SandboxMode::Strict));
+    }
+}
+

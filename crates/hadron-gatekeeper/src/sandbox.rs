@@ -7,18 +7,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SandboxMode {
-    Off,
-    WorktreeOnly,
-    Strict,
-}
+pub use hadron_lattice::SandboxMode;
 
-impl Default for SandboxMode {
-    fn default() -> Self {
-        Self::WorktreeOnly
-    }
-}
 
 pub fn is_bwrap_available() -> bool {
     std::path::Path::new("/usr/bin/bwrap").exists()

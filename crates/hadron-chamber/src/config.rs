@@ -158,6 +158,9 @@ pub struct ChamberPrefs {
     /// Periodic repository diagnostics interval in seconds (default 300s / 5m).
     #[serde(default = "default_repo_monitor_interval")]
     pub repo_monitor_interval_secs: u64,
+    /// Global process sandbox confinement mode for command execution.
+    #[serde(default)]
+    pub sandbox_mode: hadron_lattice::SandboxMode,
 }
 
 fn default_repo_monitor_interval() -> u64 {
@@ -1015,6 +1018,7 @@ impl Default for ChamberPrefs {
             notify_on_turn_finish: default_true(),
             repo_monitor: default_true(),
             repo_monitor_interval_secs: default_repo_monitor_interval(),
+            sandbox_mode: hadron_lattice::SandboxMode::default(),
         }
     }
 }

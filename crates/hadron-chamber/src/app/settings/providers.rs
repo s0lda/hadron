@@ -188,6 +188,7 @@ impl super::Chamber {
             external_roots: vec![],
             http_base_url: None,
             model_params: hadron_lattice::ModelParams::default(),
+            sandbox: None,
         };
         seat.normalize_vendor();
         if !hadron_lattice::id_follows_convention(seat.id.as_str(), seat.transport) {
@@ -264,6 +265,7 @@ impl super::Chamber {
             external_roots: vec![],
             http_base_url: Some(base_url.to_string()),
             model_params: hadron_lattice::ModelParams::default(),
+            sandbox: None,
         };
         seat.normalize_vendor();
         self.add_configured_quark(seat, cx);
