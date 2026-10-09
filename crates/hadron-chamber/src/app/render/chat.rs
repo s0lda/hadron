@@ -483,6 +483,21 @@ impl super::Chamber {
                                                     .child(mode_tag(self.view.global_mode, false)),
                                             )
                                             .child(
+                                                div()
+                                                    .id("global-sandbox")
+                                                    .cursor_pointer()
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.cycle_sandbox_mode(cx)
+                                                    }))
+                                                    .tooltip(|window, cx| {
+                                                        Tooltip::new(
+                                                            "Sandbox confinement — F7 or click to cycle",
+                                                        )
+                                                        .build(window, cx)
+                                                    })
+                                                    .child(sandbox_tag(self.prefs.sandbox_mode)),
+                                            )
+                                            .child(
                                                  h_flex()
                                                      .id("picker-quark")
                                                      .items_center()

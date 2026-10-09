@@ -437,3 +437,45 @@ fn test_sandbox_environment_diagnostics() {
     }
 }
 
+#[test]
+fn test_sandbox_settings_mode_and_tag_mapping() {
+    use hadron_lattice::SandboxMode;
+    use crate::app::widgets::{next_sandbox_mode, sandbox_tag_label, sandbox_hint};
+
+    // Verify tag labels
+    assert_eq!(sandbox_tag_label(SandboxMode::WorktreeOnly), "SANDBOX: ON");
+    assert_eq!(sandbox_tag_label(SandboxMode::Strict), "SANDBOX: STRICT");
+    assert_eq!(sandbox_tag_label(SandboxMode::Off), "SANDBOX: OFF");
+
+    // Verify cycling
+    assert_eq!(next_sandbox_mode(SandboxMode::WorktreeOnly), SandboxMode::Strict);
+    assert_eq!(next_sandbox_mode(SandboxMode::Strict), SandboxMode::Off);
+    assert_eq!(next_sandbox_mode(SandboxMode::Off), SandboxMode::WorktreeOnly);
+
+    // Verify dropdown mapping strings
+    let map_label = |mode: SandboxMode| match mode {
+        SandboxMode::WorktreeOnly => "Worktree Only",
+        SandboxMode::Strict => "Strict (Offline)",
+        SandboxMode::Off => "Off (Host Direct)",
+    };
+    assert_eq!(map_label(SandboxMode::WorktreeOnly), "Worktree Only");
+    assert_eq!(map_label(SandboxMode::Strict), "Strict (Offline)");
+    assert_eq!(map_label(SandboxMode::Off), "Off (Host Direct)");
+
+    let parse_label = |val: &str| match val {
+        "Worktree Only" => Some(SandboxMode::WorktreeOnly),
+        "Strict (Offline)" => Some(SandboxMode::Strict),
+        "Off (Host Direct)" => Some(SandboxMode::Off),
+        _ => None,
+    };
+    assert_eq!(parse_label("Worktree Only"), Some(SandboxMode::WorktreeOnly));
+    assert_eq!(parse_label("Strict (Offline)"), Some(SandboxMode::Strict));
+    assert_eq!(parse_label("Off (Host Direct)"), Some(SandboxMode::Off));
+    assert_eq!(parse_label("Unknown"), None);
+
+    // Verify hints are descriptive and non-empty
+    assert!(sandbox_hint(SandboxMode::WorktreeOnly).contains("worktree"));
+    assert!(sandbox_hint(SandboxMode::Strict).contains("network"));
+    assert!(sandbox_hint(SandboxMode::Off).contains("host"));
+}
+

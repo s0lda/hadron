@@ -1000,6 +1000,59 @@ pub(super) fn mode_hint(mode: Mode) -> &'static str {
     }
 }
 
+/// The next sandbox confinement mode for cycling: WorktreeOnly -> Strict -> Off -> WorktreeOnly.
+pub(super) fn next_sandbox_mode(mode: SandboxMode) -> SandboxMode {
+    match mode {
+        SandboxMode::WorktreeOnly => SandboxMode::Strict,
+        SandboxMode::Strict => SandboxMode::Off,
+        SandboxMode::Off => SandboxMode::WorktreeOnly,
+    }
+}
+
+/// The text on a sandbox confinement badge.
+pub(super) fn sandbox_tag_label(mode: SandboxMode) -> &'static str {
+    match mode {
+        SandboxMode::WorktreeOnly => "SANDBOX: ON",
+        SandboxMode::Strict => "SANDBOX: STRICT",
+        SandboxMode::Off => "SANDBOX: OFF",
+    }
+}
+
+/// The border/text color for a sandbox badge.
+pub(super) fn sandbox_color(mode: SandboxMode) -> gpui::Hsla {
+    match mode {
+        SandboxMode::WorktreeOnly => theme::success().into(),
+        SandboxMode::Strict => theme::accent().into(),
+        SandboxMode::Off => theme::warning().into(),
+    }
+}
+
+/// A sandbox confinement badge.
+pub(super) fn sandbox_tag(mode: SandboxMode) -> gpui::AnyElement {
+    let label = sandbox_tag_label(mode);
+    let color = sandbox_color(mode);
+    div()
+        .px_2()
+        .py_0p5()
+        .rounded_md()
+        .border_1()
+        .border_color(color)
+        .text_xs()
+        .font_weight(gpui::FontWeight::BOLD)
+        .text_color(color)
+        .child(label)
+        .into_any_element()
+}
+
+/// A one-line human-readable gloss of what a sandbox confinement mode enforces.
+pub(super) fn sandbox_hint(mode: SandboxMode) -> &'static str {
+    match mode {
+        SandboxMode::WorktreeOnly => "Confinement active: execution is jailed to the worktree with sanitized environment.",
+        SandboxMode::Strict => "Strict isolation: worktree jailing plus external network access is blocked.",
+        SandboxMode::Off => "Sandboxing disabled: tools and commands run directly on the host with full permissions.",
+    }
+}
+
 /// A muted placeholder line shown when a tab view has nothing to render.
 pub(super) fn empty_hint(text: &'static str) -> impl IntoElement {
     div().text_sm().text_color(theme::text_muted()).child(text)
@@ -1680,6 +1733,21 @@ mod tests {
         assert_eq!(next_global_mode(Mode::Write), Mode::Auto);
         assert_eq!(next_global_mode(Mode::Auto), Mode::Bypass, "MUST reach Bypass");
         assert_eq!(next_global_mode(Mode::Bypass), Mode::Ask, "and wrap back round");
+    }
+
+    #[test]
+    fn sandbox_tag_label_and_cycling() {
+        assert_eq!(sandbox_tag_label(SandboxMode::WorktreeOnly), "SANDBOX: ON");
+        assert_eq!(sandbox_tag_label(SandboxMode::Strict), "SANDBOX: STRICT");
+        assert_eq!(sandbox_tag_label(SandboxMode::Off), "SANDBOX: OFF");
+
+        assert_eq!(next_sandbox_mode(SandboxMode::WorktreeOnly), SandboxMode::Strict);
+        assert_eq!(next_sandbox_mode(SandboxMode::Strict), SandboxMode::Off);
+        assert_eq!(next_sandbox_mode(SandboxMode::Off), SandboxMode::WorktreeOnly);
+
+        assert!(!sandbox_hint(SandboxMode::WorktreeOnly).is_empty());
+        assert!(!sandbox_hint(SandboxMode::Strict).is_empty());
+        assert!(!sandbox_hint(SandboxMode::Off).is_empty());
     }
 
     #[test]

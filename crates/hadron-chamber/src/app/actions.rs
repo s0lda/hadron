@@ -2524,6 +2524,21 @@ impl Chamber {
         );
     }
 
+    /// Cycle the global sandbox confinement mode: WorktreeOnly -> Strict -> Off -> WorktreeOnly.
+    pub(super) fn cycle_sandbox_mode(&mut self, cx: &mut Context<Self>) {
+        let next = next_sandbox_mode(self.prefs.sandbox_mode);
+        self.set_sandbox_mode(next, cx);
+    }
+
+    /// Set the sandbox confinement mode explicitly, updating preferences and repo team.
+    pub(super) fn set_sandbox_mode(&mut self, mode: SandboxMode, cx: &mut Context<Self>) {
+        self.prefs.sandbox_mode = mode;
+        let _ = config::save(&self.prefs);
+        self.team.sandbox_mode = Some(mode);
+        self.save_repo_team(cx);
+        cx.notify();
+    }
+
     /// Cycle a single quark's permission mode by appending a per-quark `ModeSet`
     /// (addressed to it). This always creates/updates an explicit override.
     pub(super) fn cycle_quark_mode(&mut self, id: &str, cx: &mut Context<Self>) {

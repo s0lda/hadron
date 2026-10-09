@@ -132,6 +132,7 @@ impl Render for Chamber {
             }))
             .on_action(cx.listener(|this, _: &ToggleReplOverlay, window, cx| this.toggle_repl_overlay(window, cx)))
             .on_action(cx.listener(|this, _: &CycleMode, _, cx| this.cycle_global_mode(cx)))
+            .on_action(cx.listener(|this, _: &CycleSandbox, _, cx| this.cycle_sandbox_mode(cx)))
             .on_action(cx.listener(|this, _: &NextChatTab, _, cx| this.cycle_chat_tab(1, cx)))
             .on_action(cx.listener(|this, _: &PrevChatTab, _, cx| this.cycle_chat_tab(-1, cx)))
             .on_action(cx.listener(|this, _: &NextRosterTab, _, cx| this.cycle_roster_tab(1, cx)))

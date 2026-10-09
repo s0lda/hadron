@@ -1405,3 +1405,32 @@ fn same_agent_rebuilds_on_an_external_root_change() {
     b.external_roots = vec![ExternalRootSpec { path: "/tmp".into(), writable: true }];
     assert!(!a.same_agent(&b), "granting a root must re-seat, not silently apply later");
 }
+
+#[test]
+fn resolve_team_inherits_team_sandbox_mode() {
+    let mut s1 = seat("s1", "claude", "opus", Flavor::Worker);
+    s1.sandbox = None;
+    let mut s2 = seat("s2", "claude", "opus", Flavor::Worker);
+    s2.sandbox = Some(SandboxMode::Strict); // explicit seat override
+
+    let mut repo = Team::default();
+    repo.quarks = vec![s1, s2];
+    repo.sandbox_mode = Some(SandboxMode::Off);
+
+    let global = Team::default();
+    let resolved = resolve_team(&repo, &global);
+    assert_eq!(resolved.sandbox_mode, Some(SandboxMode::Off));
+    assert_eq!(resolved.quarks[0].sandbox, Some(SandboxMode::Off), "s1 inherits team sandbox mode");
+    assert_eq!(resolved.quarks[1].sandbox, Some(SandboxMode::Strict), "s2 preserves explicit override");
+}
+
+#[test]
+fn team_sandbox_mode_serde_round_trip() {
+    let mut team = Team::default();
+    team.sandbox_mode = Some(SandboxMode::Strict);
+    let json = serde_json::to_string(&team).unwrap();
+    assert!(json.contains("\"sandbox_mode\":\"Strict\"") || json.contains("\"sandbox_mode\":\"strict\"") || json.contains("Strict"));
+    let deserialized: Team = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized.sandbox_mode, Some(SandboxMode::Strict));
+    assert_eq!(deserialized.sandbox_mode(), SandboxMode::Strict);
+}

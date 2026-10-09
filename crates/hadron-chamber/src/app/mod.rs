@@ -39,7 +39,7 @@ use gpui_component::{
     h_flex, v_flex, Icon, IconName, Root, Sizable, Size, Theme, ThemeMode, TitleBar,
 };
 use hadron_lattice::{
-    io, load_team, resolve_team, Actor, Event, Kind, Mode, QuarkId, QuarkState, Seat, SeatOverride, Team,
+    io, load_team, resolve_team, Actor, Event, Kind, Mode, QuarkId, QuarkState, SandboxMode, Seat, SeatOverride, Team,
 };
 
 use crate::config::{self, ChamberPrefs, Identity};
@@ -89,8 +89,9 @@ use widgets::{
     control_button, drag_region, effective_presence_state, effort_tag, empty_hint,
     fallback_pick_image, format_num, frame_corner_radii, kind_icon, kv_row, log_row,
     markdown_style, menu_button, mode_color, mode_hint, mode_label, mode_tag, next_global_mode,
-    next_mode, panel_eyebrow, progress_meter, session_card, settings_card_section, settings_field,
-    settings_field_stacked, stat_tile, stat_tile_with_note, streaming_drafts, task_row, text_button,
+    next_mode, next_sandbox_mode, panel_eyebrow, progress_meter, sandbox_tag, session_card,
+    settings_card_section, settings_field, settings_field_stacked, stat_tile, stat_tile_with_note,
+    streaming_drafts, task_row, text_button,
 };
 
 mod actions;
@@ -115,6 +116,7 @@ actions!(
     chamber,
     [
         CycleMode,
+        CycleSandbox,
         NextChatTab,
         PrevChatTab,
         NextRosterTab,
@@ -533,6 +535,9 @@ struct Chamber {
     /// Native SelectState dropdown for Live Activity Stale Threshold.
     stale_timeout_select_state: Entity<SelectState<ModelSelectDelegate>>,
     stale_timeout_select_key: Option<i64>,
+    /// Native SelectState dropdown for Sandbox Confinement Mode.
+    sandbox_mode_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    sandbox_mode_select_key: Option<SandboxMode>,
     pub(super) settings_terminal_shell: Entity<InputState>,
     pub(super) settings_git_author_name: Entity<InputState>,
     pub(super) settings_git_author_email: Entity<InputState>,
@@ -776,6 +781,9 @@ impl Chamber {
         });
         let stale_timeout_select_state = cx.new(|cx| {
             SelectState::new(create_model_delegate("120 seconds (Default)", &["60 seconds".into(), "300 seconds".into()], None), None, window, cx).searchable(false)
+        });
+        let sandbox_mode_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Worktree Only", &["Strict (Offline)".into(), "Off (Host Direct)".into()], None), None, window, cx).searchable(false)
         });
         let settings_terminal_shell = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. /bin/zsh, pwsh (blank = default)"));
         let settings_git_author_name = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. Jane Doe (blank = git config)"));
@@ -1140,6 +1148,18 @@ impl Chamber {
                 let _ = config::save(&this.prefs);
                 cx.notify();
             }),
+            cx.subscribe_in(&sandbox_mode_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                if let Some(m) = match val {
+                    "Worktree Only" => Some(hadron_lattice::SandboxMode::WorktreeOnly),
+                    "Strict (Offline)" => Some(hadron_lattice::SandboxMode::Strict),
+                    "Off (Host Direct)" => Some(hadron_lattice::SandboxMode::Off),
+                    _ => None,
+                } {
+                    this.set_sandbox_mode(m, cx);
+                }
+            }),
             cx.subscribe_in(&settings_terminal_shell, window, |this, _, _: &InputEvent, _, cx| {
                 let val = this.settings_terminal_shell.read(cx).value().trim().to_string();
                 this.prefs.terminal_shell = if val.is_empty() { None } else { Some(val) };
@@ -1482,6 +1502,8 @@ impl Chamber {
             turn_deadline_select_key: None,
             stale_timeout_select_state,
             stale_timeout_select_key: None,
+            sandbox_mode_select_state,
+            sandbox_mode_select_key: None,
             settings_terminal_shell,
             settings_git_author_name,
             settings_git_author_email,
@@ -1598,6 +1620,7 @@ fn default_key_bindings() -> Vec<KeyBinding> {
     vec![
         // Verified-free (was shift-tab, dead while typing — see above).
         KeyBinding::new("f6", CycleMode, Some(KEY_CONTEXT)),
+        KeyBinding::new("f7", CycleSandbox, Some(KEY_CONTEXT)),
         // Chat column tabs (Chat / Log / Stats).
         KeyBinding::new("alt-right", NextChatTab, None),
         KeyBinding::new("alt-left", PrevChatTab, None),

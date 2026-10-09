@@ -1262,11 +1262,32 @@ impl super::Chamber {
         );
 
         let sandbox_platform = hadron_gatekeeper::detect_sandbox_platform();
+        let is_sandbox_on = self.prefs.sandbox_mode != hadron_lattice::SandboxMode::Off;
         let sandbox_card = settings_card_section(
             "Native Process Sandbox Engine",
             Some(IconName::Settings),
             v_flex()
                 .gap_3()
+                .child(settings_field(
+                    "Enable process sandbox",
+                    Some("Enforce filesystem and environment containment on command and tool executions across all platforms."),
+                    Switch::new("enable-sandbox-switch")
+                        .checked(is_sandbox_on)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            let next = if *checked {
+                                hadron_lattice::SandboxMode::WorktreeOnly
+                            } else {
+                                hadron_lattice::SandboxMode::Off
+                            };
+                            this.set_sandbox_mode(next, cx);
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Confinement mode",
+                    Some("Isolation level: Worktree Only (jailed to repo), Strict (jailed + network denied), or Off (host direct)."),
+                    self.sandbox_mode_select(window, cx),
+                ))
                 .child(settings_field(
                     "Active sandbox driver",
                     Some("Platform kernel containment mechanism jailing tool and command execution."),
@@ -1275,8 +1296,20 @@ impl super::Chamber {
                 .child(settings_field(
                     "Containment status",
                     Some("Whether process, filesystem, and network isolation are enforced by the platform driver."),
-                    div().text_sm().text_color(if sandbox_platform.is_isolated() { theme::success() } else { theme::warning() })
-                        .child(if sandbox_platform.is_isolated() { "Active (Native Isolation)" } else { "Host Fallback" })
+                    div().text_sm().text_color(if !is_sandbox_on {
+                        theme::warning()
+                    } else if sandbox_platform.is_isolated() {
+                        theme::success()
+                    } else {
+                        theme::warning()
+                    })
+                        .child(if !is_sandbox_on {
+                            "Disabled (Host Execution)"
+                        } else if sandbox_platform.is_isolated() {
+                            "Active (Native Isolation)"
+                        } else {
+                            "Host Fallback"
+                        })
                         .into_any_element(),
                 )),
         );
@@ -1349,6 +1382,56 @@ impl super::Chamber {
                     .text_xs()
                     .text_color(theme::text_muted())
                     .child(widgets::mode_hint(current)),
+            )
+            .into_any_element()
+    }
+
+    /// The sandbox confinement mode picker using native Select dropdown component.
+    pub(super) fn sandbox_mode_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current = self.prefs.sandbox_mode;
+        if self.sandbox_mode_select_key != Some(current) {
+            self.sandbox_mode_select_key = Some(current);
+            let choices = vec![
+                "Worktree Only".to_string(),
+                "Strict (Offline)".to_string(),
+                "Off (Host Direct)".to_string(),
+            ];
+            let current_label = match current {
+                hadron_lattice::SandboxMode::WorktreeOnly => "Worktree Only",
+                hadron_lattice::SandboxMode::Strict => "Strict (Offline)",
+                hadron_lattice::SandboxMode::Off => "Off (Host Direct)",
+            };
+            let delegate = create_model_delegate(current_label, &choices, Some(current_label));
+            self.sandbox_mode_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        v_flex()
+            .gap_1p5()
+            .w_full()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .w_full()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(140.0))
+                            .child(
+                                Select::new(&self.sandbox_mode_select_state)
+                                    .w_full()
+                                    .placeholder("Select sandbox mode..."),
+                            ),
+                    )
+                    .child(widgets::sandbox_tag(current)),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(widgets::sandbox_hint(current)),
             )
             .into_any_element()
     }

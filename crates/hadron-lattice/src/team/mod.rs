@@ -83,6 +83,9 @@ pub struct Team {
     /// Custom Git author email override for commits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_author_email: Option<String>,
+    /// Optional default process sandbox confinement mode for team executions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_mode: Option<SandboxMode>,
 }
 
 impl Team {
@@ -124,6 +127,11 @@ impl Team {
             .filter(|&kb| kb > 0)
             .map(|kb| kb * 1024)
             .unwrap_or(crate::DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES)
+    }
+
+    /// The configured sandbox confinement mode, defaulting to `SandboxMode::WorktreeOnly`.
+    pub fn sandbox_mode(&self) -> SandboxMode {
+        self.sandbox_mode.unwrap_or_default()
     }
 }
 
@@ -213,6 +221,12 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
         seen.insert(ov.id.clone());
         quarks.push(seat);
     }
+    let team_sandbox = repo.sandbox_mode.or(global.sandbox_mode);
+    for seat in &mut quarks {
+        if seat.sandbox.is_none() {
+            seat.sandbox = team_sandbox;
+        }
+    }
     Team {
         quarks,
         roster: Vec::new(),
@@ -224,5 +238,6 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
         git_auto_prune_worktrees: repo.git_auto_prune_worktrees.or(global.git_auto_prune_worktrees),
         git_author_name: repo.git_author_name.clone().or_else(|| global.git_author_name.clone()),
         git_author_email: repo.git_author_email.clone().or_else(|| global.git_author_email.clone()),
+        sandbox_mode: repo.sandbox_mode.or(global.sandbox_mode),
     }
 }
