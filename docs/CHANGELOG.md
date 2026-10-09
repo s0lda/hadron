@@ -5,6 +5,21 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.0] - 2026-10-09
+
+### Added
+- **Interactive Event Log Observability & Rich Context Menu (`hadron-chamber`)**:
+  - Full mouse text selection support for event log row metadata including timestamps (`[HH:MM:SS]`), author badges (`@quark`), target indicators (`➜ @target`), status/kind badges, row indexes, and token spend counters across both compact and expanded rows.
+  - Added rich right-click context menu options to Event Log: `Copy Event Line` (`[HH:MM:SS] @author [➜ @target] [kind] body`) and `Copy Event as JSON` (serializing the complete `MessageRow` model to formatted JSON).
+  - Added command event emission for human slash commands in `on_input_submit` and explicit session reset events (`"Archiving session to {session_id}"` and `"Session reset (archived {session_id})"`) around `/clear` operations.
+  - Enhanced target legibility in `render_row` with clear formatting for `Kind::Reboot` (`"force-restart requested for @{to}"`) and `Kind::ModeSet` (`"mode → {mode} for @{to}"` / `"(global)"`), plus clean slash command formatting without terminal `$ ` prefixes.
+
+### Fixed
+- **Merge Gate Impacted Test Runner Arity (`hadron-gluon`, `hadron-forge`)**:
+  - Resolved `cargo test` multi-symbol positional argument error by strictly constraining test execution commands in `detect_affected_runner` and `compute_impacted_tests` to at most one positional filter argument before `--`, falling back to full-crate testing when multiple files in a crate are modified.
+  - Filtered generic test stems (`"tests"`, `"test"`) from Test Impact Analysis (TIA) target symbol extraction.
+  - Protected `theme.rs` token tests with `THEME_TEST_MUTEX` to prevent race conditions during concurrent test suite execution.
+
 ## [0.29.0] - 2026-10-09
 
 ### Added

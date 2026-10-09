@@ -20,6 +20,21 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.30.0",
+        date: Some("2026-10-09"),
+        added: &[
+            "Event Log Observability: Full text drag-selection for timestamps, author tags, target badges, and status/kind columns across compact and expanded rows",
+            "Event Log Context Menu: Right-click actions for 'Copy Event Line' ([HH:MM:SS] @actor [➜ @target] [kind] body) and 'Copy Event as JSON' row serialization",
+            "Command Event Persistence: Slash command submission logging and pre/post lifecycle auditing for session resets and /clear operations",
+            "Target Legibility: Formatted target quark badges and labels for force-restart requests and mode transitions in log rows",
+        ],
+        changed: &[],
+        fixed: &[
+            "Merge Gate Test Runner Arity: Enforced single-symbol positional filter bounds for cargo test in detect_affected_runner and TIA target extraction",
+            "Theme Token Test Isolation: Protected theme token test execution with THEME_TEST_MUTEX to eliminate concurrent test races",
+        ],
+    },
+    Release {
         version: "0.29.0",
         date: Some("2026-10-09"),
         added: &[
