@@ -1,6 +1,6 @@
 # 🕹️ Hadron Chat Commands
 
-Hadron provides an interactive suite of `/slash` commands directly inside the Chamber chat interface. Commands can be invoked at the beginning of any line (and are ignored inside markdown code fences).
+Hadron provides an interactive suite of `/slash` commands directly inside the Chamber chat interface. Commands can be invoked at the beginning of any line (and are ignored inside markdown code fences). All command executions (including `/clear` session resets) are recorded directly into the Event Log audit trail.
 
 ---
 
