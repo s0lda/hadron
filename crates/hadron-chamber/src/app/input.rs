@@ -78,6 +78,12 @@ impl super::Chamber {
         // multi-line message (Shift+Enter, a markdown list) keeps its newlines.
         let (cmds, body) = split_leading_commands(&full);
         for (cmd, args) in &cmds {
+            if cmd != "clear" {
+                let cmd_ev = slash_command_event(cmd, args);
+                if let Err(e) = io::append_event(&self.path, &cmd_ev) {
+                    eprintln!("chamber: failed to append command event: {e}");
+                }
+            }
             self.handle_chat_command(cmd, args, window, cx);
         }
         let text = match body {
@@ -86,6 +92,11 @@ impl super::Chamber {
                 // Only recognised commands were present (`body` is `None` only when at
                 // least one command ran): clear the box and stop before posting nothing.
                 input.update(cx, |state, cx| state.set_value("", window, cx));
+                if !cmds.is_empty() && !cmds.iter().any(|(c, _)| c == "clear") {
+                    let events = io::read_events(&self.path).unwrap_or_default();
+                    self.sync_view(&events);
+                    cx.notify();
+                }
                 return;
             }
         };
@@ -343,6 +354,24 @@ impl super::Chamber {
 /// reached it. The table is now the single source of truth for the menu and for this
 /// parser both; the remaining un-checkable link is the `match` in `handle_chat_command`,
 /// which `every_listed_command_is_handled` guards.
+/// Formats a slash command invocation into a `Kind::Command` event for the field log.
+pub(crate) fn slash_command_event(cmd: &str, args: &str) -> Event {
+    let full_cmd = if args.is_empty() {
+        format!("/{cmd}")
+    } else {
+        format!("/{cmd} {args}")
+    };
+    Event::new(
+        Actor::Human,
+        None,
+        Kind::Command {
+            cmd: full_cmd,
+            exit: 0,
+            out_summary: String::new(),
+        },
+    )
+}
+
 pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Option<String>) {
     let mut cmds = Vec::new();
     let mut body_lines: Vec<&str> = Vec::new();
@@ -934,6 +963,33 @@ mod tests {
         }
         assert_eq!(history_index, None);
         assert_eq!(restored, "in-progress draft");
+    }
+
+    #[test]
+    fn test_slash_command_event_formatting() {
+        let ev1 = slash_command_event("toggle-roster", "");
+        assert_eq!(ev1.from, Actor::Human);
+        assert_eq!(ev1.to, None);
+        match ev1.kind {
+            Kind::Command { cmd, exit, out_summary } => {
+                assert_eq!(cmd, "/toggle-roster");
+                assert_eq!(exit, 0);
+                assert_eq!(out_summary, "");
+            }
+            other => panic!("expected Kind::Command, got {other:?}"),
+        }
+
+        let ev2 = slash_command_event("mode", "bypass");
+        assert_eq!(ev2.from, Actor::Human);
+        assert_eq!(ev2.to, None);
+        match ev2.kind {
+            Kind::Command { cmd, exit, out_summary } => {
+                assert_eq!(cmd, "/mode bypass");
+                assert_eq!(exit, 0);
+                assert_eq!(out_summary, "");
+            }
+            other => panic!("expected Kind::Command, got {other:?}"),
+        }
     }
 }
 

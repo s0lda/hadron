@@ -253,7 +253,77 @@ impl Chamber {
         let global_dir = hadron_lattice::user_hadron_dir().map(|d| d.join("skills"));
         hadron_gluon::skills::load_skills(global_dir.as_deref(), Some(&repo_dir))
     }
+}
 
+/// Archive the current field to `session_dir`, reset `field_path`, and seed the new field
+/// with a post-clear `/clear` command event, the default mode seed, and resident reboots.
+///
+/// Both pre-clear and post-clear command events are recorded to make `/clear` observable
+/// in the Event Log (preserving auditability in both the archived and newly active fields).
+pub(super) fn perform_clear_field(
+    field_path: &std::path::Path,
+    session_dir: &std::path::Path,
+    session_id: &str,
+    default_mode: hadron_lattice::Mode,
+    roster: &[crate::model::RosterRow],
+) -> Result<(), std::io::Error> {
+    std::fs::create_dir_all(session_dir)?;
+
+    // Record pre-clear command event into the field before archiving.
+    let pre_clear_ev = Event::new(
+        Actor::Human,
+        None,
+        Kind::Command {
+            cmd: "/clear".to_string(),
+            exit: 0,
+            out_summary: format!("Archiving session to {session_id}"),
+        },
+    );
+    let _ = io::append_event(field_path, &pre_clear_ev);
+
+    let archive_path = session_dir.join("field.jsonl");
+    std::fs::copy(field_path, &archive_path)?;
+    std::fs::write(field_path, "")?;
+
+    // Record post-clear command event into the fresh field.
+    let post_clear_ev = Event::new(
+        Actor::Human,
+        None,
+        Kind::Command {
+            cmd: "/clear".to_string(),
+            exit: 0,
+            out_summary: format!("Session reset (archived {session_id})"),
+        },
+    );
+    let _ = io::append_event(field_path, &post_clear_ev);
+
+    // Re-arm the human's standing permission mode. The effective mode
+    // is folded from the field's `ModeSet` events, and the truncation
+    // above just deleted every one of them — so without this a `/clear`
+    // silently dropped the swarm back to `Mode::Ask` however the human
+    // had it set, every single session. Seeded FIRST, so it is the base
+    // the reboots below land on.
+    if let Some(seed) = crate::model::default_mode_seed(default_mode) {
+        if let Err(e) = io::append_event(field_path, &seed) {
+            eprintln!("chamber: failed to seed the default mode: {e}");
+        }
+    }
+
+    // The archived agents still hold their pre-clear resident ACP
+    // sessions. Restart every resident quark so it re-boots into the
+    // fresh (empty) field instead of carrying stale context (see
+    // `post_clear_reboots` for the rule). The daemon's service_reboots
+    // ignores any id not currently seated.
+    for ev in crate::model::post_clear_reboots(roster) {
+        if let Err(e) = io::append_event(field_path, &ev) {
+            eprintln!("chamber: failed to append post-clear reboot: {e}");
+        }
+    }
+
+    Ok(())
+}
+
+impl Chamber {
     pub(super) fn handle_chat_command(
         &mut self,
         cmd: &str,
@@ -277,53 +347,27 @@ impl Chamber {
             "clear" => {
                 let session_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
                 let session_dir = self.sessions_dir().join(&session_id);
-                if let Err(e) = std::fs::create_dir_all(&session_dir) {
-                    eprintln!("chamber: failed to create session archive directory: {e}");
+                if let Err(e) = perform_clear_field(
+                    &self.path,
+                    &session_dir,
+                    &session_id,
+                    self.prefs.default_mode,
+                    &self.view.roster,
+                ) {
+                    eprintln!("chamber: failed to clear session: {e}");
                 } else {
-                    let archive_path = session_dir.join("field.jsonl");
-                    if let Err(e) = std::fs::copy(&self.path, &archive_path) {
-                        eprintln!("chamber: failed to archive field.jsonl: {e}");
-                    } else if let Err(e) = std::fs::write(&self.path, "") {
-                        eprintln!("chamber: failed to clear field.jsonl: {e}");
-                    } else {
-                        // Re-arm the human's standing permission mode. The effective mode
-                        // is folded from the field's `ModeSet` events, and the truncation
-                        // above just deleted every one of them — so without this a `/clear`
-                        // silently dropped the swarm back to `Mode::Ask` however the human
-                        // had it set, every single session. Seeded FIRST, so it is the base
-                        // the reboots below land on.
-                        //
-                        // `default_mode_seed` owns the "is a seed needed at all" rule and
-                        // is tested there; this stays a thin caller, like the reboots below.
-                        if let Some(seed) = crate::model::default_mode_seed(self.prefs.default_mode)
-                        {
-                            if let Err(e) = io::append_event(&self.path, &seed) {
-                                eprintln!("chamber: failed to seed the default mode: {e}");
-                            }
-                        }
-                        // The archived agents still hold their pre-clear resident ACP
-                        // sessions. Restart every resident quark so it re-boots into the
-                        // fresh (empty) field instead of carrying stale context (see
-                        // `post_clear_reboots` for the rule). The daemon's service_reboots
-                        // ignores any id not currently seated.
-                        for ev in crate::model::post_clear_reboots(&self.view.roster) {
-                            if let Err(e) = io::append_event(&self.path, &ev) {
-                                eprintln!("chamber: failed to append post-clear reboot: {e}");
-                            }
-                        }
-                        let events = io::read_events(&self.path).unwrap_or_default();
-                        self.sync_view(&events);
-                        // `/clear` is a KNOWN wholesale swap, not a guess `sync_view`'s
-                        // append-heuristic should make: force the unconditional resync the
-                        // `A Field Swap Resets Every List Cache` invariant requires, rather
-                        // than trust `is_pure_append` (a short/empty pre-clear field can look
-                        // like pure growth to that heuristic).
-                        self.resync_lists_to_projection();
-                        // The just-archived field is now part of history: fold it into the
-                        // wider Stats windows and offer it in the Sessions submenu.
-                        self.reload_archives();
-                        cx.notify();
-                    }
+                    let events = io::read_events(&self.path).unwrap_or_default();
+                    self.sync_view(&events);
+                    // `/clear` is a KNOWN wholesale swap, not a guess `sync_view`'s
+                    // append-heuristic should make: force the unconditional resync the
+                    // `A Field Swap Resets Every List Cache` invariant requires, rather
+                    // than trust `is_pure_append` (a short/empty pre-clear field can look
+                    // like pure growth to that heuristic).
+                    self.resync_lists_to_projection();
+                    // The just-archived field is now part of history: fold it into the
+                    // wider Stats windows and offer it in the Sessions submenu.
+                    self.reload_archives();
+                    cx.notify();
                 }
                 true
             }
@@ -3312,5 +3356,85 @@ mod tests {
         assert_eq!(RosterTab::from_index(next), RosterTab::All);
         let prev = (0isize - 1).rem_euclid(n) as usize;
         assert_eq!(RosterTab::from_index(prev), RosterTab::All);
+    }
+
+    #[test]
+    fn test_perform_clear_field_logs_pre_and_post_clear_events() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let field_path = tmp.path().join("field.jsonl");
+        let session_dir = tmp.path().join("sessions").join("20261009_120000");
+
+        let initial_ev = Event::new(
+            Actor::Human,
+            None,
+            Kind::Message {
+                body: "hello swarm".to_string(),
+            },
+        );
+        io::append_event(&field_path, &initial_ev).expect("write initial event");
+
+        let roster = vec![
+            crate::model::RosterRow {
+                id: "acp-agy".to_string(),
+                display_name: Some("agy".to_string()),
+                state: hadron_lattice::QuarkState::Ground,
+                mode: hadron_lattice::Mode::Bypass,
+                mode_is_override: false,
+                vendor: "google".to_string(),
+                model: "gemini-2.5-pro".to_string(),
+                flavor: None,
+                transport: hadron_lattice::Transport::Acp,
+                effort: None,
+                enabled: true,
+                adopted: true,
+                tokens: 0,
+                unknown_turns: 0,
+            },
+        ];
+
+        perform_clear_field(
+            &field_path,
+            &session_dir,
+            "20261009_120000",
+            hadron_lattice::Mode::Bypass,
+            &roster,
+        )
+        .expect("perform_clear_field must succeed");
+
+        let archive_path = session_dir.join("field.jsonl");
+        let archived_events = io::read_events(&archive_path).expect("read archived events");
+        assert_eq!(archived_events.len(), 2);
+        assert!(matches!(archived_events[0].kind, Kind::Message { .. }));
+        match &archived_events[1].kind {
+            Kind::Command { cmd, exit, out_summary } => {
+                assert_eq!(cmd, "/clear");
+                assert_eq!(*exit, 0);
+                assert_eq!(out_summary, "Archiving session to 20261009_120000");
+            }
+            other => panic!("expected Kind::Command, got {other:?}"),
+        }
+
+        let active_events = io::read_events(&field_path).expect("read active events");
+        assert!(active_events.len() >= 3);
+        match &active_events[0].kind {
+            Kind::Command { cmd, exit, out_summary } => {
+                assert_eq!(cmd, "/clear");
+                assert_eq!(*exit, 0);
+                assert_eq!(out_summary, "Session reset (archived 20261009_120000)");
+            }
+            other => panic!("expected Kind::Command for first event, got {other:?}"),
+        }
+        match &active_events[1].kind {
+            Kind::ModeSet { mode } => {
+                assert_eq!(*mode, hadron_lattice::Mode::Bypass);
+            }
+            other => panic!("expected Kind::ModeSet for second event, got {other:?}"),
+        }
+        match &active_events[2].kind {
+            Kind::Reboot => {
+                assert_eq!(active_events[2].to.as_ref().map(|q| q.as_str()), Some("acp-agy"));
+            }
+            other => panic!("expected Kind::Reboot for third event, got {other:?}"),
+        }
     }
 }
