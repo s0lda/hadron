@@ -1029,3 +1029,12 @@ pub(super) fn forge_mcp_args(
     args
 }
 
+/// Concurrently evaluates a batch of asynchronous tool executions or permission checks.
+pub fn dispatch_batched_tool_calls<I, F>(calls: I) -> impl std::future::Future<Output = Vec<F::Output>>
+where
+    I: IntoIterator<Item = F>,
+    F: std::future::Future,
+{
+    futures::future::join_all(calls)
+}
+

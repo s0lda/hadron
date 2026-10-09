@@ -49,6 +49,7 @@ mod spend;
 mod tests;
 
 use session::{AcpSession, LiveFeed};
+pub use session::dispatch_batched_tool_calls;
 
 // Re-exported: `AcpModel`/`probe`/`probe_selector` are the crate's public ACP
 // surface (the chamber's Settings "Connect" wizard and model dropdown call these

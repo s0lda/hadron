@@ -1489,3 +1489,16 @@ fn test_breakpoints_registry_interception() {
     );
 }
 
+#[tokio::test]
+async fn test_batched_tool_call_evaluation_runs_concurrently() {
+    let calls: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = i32> + Send>>> = vec![
+        Box::pin(async { tokio::time::sleep(std::time::Duration::from_millis(50)).await; 1 }),
+        Box::pin(async { tokio::time::sleep(std::time::Duration::from_millis(50)).await; 2 }),
+    ];
+    let start = std::time::Instant::now();
+    let res = dispatch_batched_tool_calls(calls).await;
+    let elapsed = start.elapsed();
+    assert_eq!(res, vec![1, 2]);
+    assert!(elapsed.as_millis() < 90, "Batched tool execution must run in parallel");
+}
+
