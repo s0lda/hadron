@@ -175,8 +175,9 @@ pub fn detect_affected_runner(worktree_path: &Path, base: &str) -> (&'static str
     if !tia_plan.requires_full_workspace {
         if let Some(target_pkg) = tia_plan.target_package {
             let mut args = vec!["test".to_string(), "-p".to_string(), target_pkg];
-            for sym in tia_plan.target_symbols {
-                args.push(sym);
+            // cargo test only accepts at most one positional [TESTNAME] filter argument.
+            if tia_plan.target_symbols.len() == 1 {
+                args.push(tia_plan.target_symbols[0].clone());
             }
             return ("cargo", args);
         }
@@ -1219,6 +1220,26 @@ mod tests {
         assert_eq!(prog, "cargo");
         assert!(args.contains(&"-p".to_string()));
         assert!(args.contains(&"hadron-lattice".to_string()));
+    }
+
+    #[test]
+    fn detect_affected_runner_multi_file_does_not_pass_multiple_symbols() {
+        let repo = git_repo();
+        let base = worktree::default_branch(repo.path());
+        std::fs::write(repo.path().join("Cargo.toml"), "[workspace]\nmembers = [\"crates/*\"]\n").unwrap();
+        git(repo.path(), &["add", "Cargo.toml"]).unwrap();
+        git(repo.path(), &["commit", "-q", "-m", "init workspace"]).unwrap();
+
+        let wt = worktree::ensure(repo.path(), &q("tia-multi"), "01TIAM").unwrap();
+        let crate_dir = wt.path.join("crates").join("hadron-chamber").join("src");
+        std::fs::create_dir_all(&crate_dir).unwrap();
+        std::fs::write(crate_dir.join("widgets.rs"), "pub fn w() {}\n").unwrap();
+        std::fs::write(crate_dir.join("tests.rs"), "pub fn t() {}\n").unwrap();
+        worktree::commit_turn(&wt, "tia-multi: widgets and tests").unwrap();
+
+        let (prog, args) = detect_affected_runner(&wt.path, &base);
+        assert_eq!(prog, "cargo");
+        assert_eq!(args, vec!["test", "-p", "hadron"]);
     }
 }
 

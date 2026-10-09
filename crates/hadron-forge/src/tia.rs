@@ -75,7 +75,7 @@ pub fn compute_impacted_tests(changed_files: &[&str]) -> TestImpactPlan {
             .file_stem()
             .and_then(|s| s.to_str())
         {
-            if stem != "lib" && stem != "mod" && stem != "main" {
+            if stem != "lib" && stem != "mod" && stem != "main" && stem != "tests" && stem != "test" {
                 symbols.push(stem.to_string());
             }
         }
@@ -83,9 +83,17 @@ pub fn compute_impacted_tests(changed_files: &[&str]) -> TestImpactPlan {
 
     if detected_packages.len() == 1 {
         let pkg = detected_packages.into_iter().next().unwrap();
+        // If exactly one file changed, we can target that symbol.
+        // If multiple files changed in the crate, testing the entire crate ensures
+        // all affected modules are tested and cargo test CLI is not passed invalid arguments.
+        let target_symbols = if changed_files.len() == 1 {
+            symbols
+        } else {
+            Vec::new()
+        };
         TestImpactPlan {
             target_package: Some(pkg),
-            target_symbols: symbols,
+            target_symbols,
             requires_full_workspace: false,
         }
     } else {
@@ -122,5 +130,18 @@ mod tests {
         ];
         let plan = compute_impacted_tests(&files);
         assert!(plan.requires_full_workspace);
+    }
+
+    #[test]
+    fn tia_clears_target_symbols_when_multiple_files_in_single_crate_modified() {
+        let files = [
+            "crates/hadron-chamber/src/app/widgets.rs",
+            "crates/hadron-chamber/src/model/mod.rs",
+            "crates/hadron-chamber/src/model/tests.rs",
+        ];
+        let plan = compute_impacted_tests(&files);
+        assert_eq!(plan.target_package, Some("hadron".to_string()));
+        assert!(plan.target_symbols.is_empty());
+        assert!(!plan.requires_full_workspace);
     }
 }

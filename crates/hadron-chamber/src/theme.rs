@@ -943,8 +943,11 @@ mod tests {
     use super::*;
     use gpui::{rgb, rgba, Hsla};
 
+    static THEME_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_canvas_base_token() {
+        let _guard = THEME_TEST_MUTEX.lock().unwrap();
         set_active_preset(crate::config::ThemePreset::Obsidian);
         let base = canvas_base();
         let expected: Hsla = rgb(0x050505).into();
@@ -954,6 +957,8 @@ mod tests {
 
     #[test]
     fn test_glass_surface_token() {
+        let _guard = THEME_TEST_MUTEX.lock().unwrap();
+        set_active_preset(crate::config::ThemePreset::Obsidian);
         let surface = glass_surface();
         let expected: Hsla = rgba(0x0b0b0bf2).into();
         assert_eq!(surface, expected);
@@ -961,6 +966,8 @@ mod tests {
 
     #[test]
     fn test_tab_bar_bg_token() {
+        let _guard = THEME_TEST_MUTEX.lock().unwrap();
+        set_active_preset(crate::config::ThemePreset::Obsidian);
         let bg = tab_bar_bg();
         let expected = rgb(0x050505);
         assert_eq!(bg, expected);
@@ -968,6 +975,8 @@ mod tests {
 
     #[test]
     fn test_glass_card_token() {
+        let _guard = THEME_TEST_MUTEX.lock().unwrap();
+        set_active_preset(crate::config::ThemePreset::Obsidian);
         let card = glass_card();
         let expected: Hsla = rgba(0x0b0b0bf8).into();
         assert_eq!(card, expected);
@@ -1104,8 +1113,6 @@ mod tests {
         assert_eq!(catppuccin.success, rgb(0xa6e3a1));
         assert_eq!(gruvbox.success, rgb(0xb8bb26));
     }
-
-    static THEME_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn test_semantic_status_and_chrome_tokens() {
