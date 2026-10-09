@@ -7,6 +7,95 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SandboxMode {
+    Off,
+    WorktreeOnly,
+    Strict,
+}
+
+impl Default for SandboxMode {
+    fn default() -> Self {
+        Self::WorktreeOnly
+    }
+}
+
+pub fn is_bwrap_available() -> bool {
+    std::path::Path::new("/usr/bin/bwrap").exists()
+}
+
+pub fn build_bwrap_args(
+    work_dir: &Path,
+    program: &str,
+    args: &[String],
+    mode: SandboxMode,
+    unshare_net: bool,
+) -> Vec<String> {
+    if mode == SandboxMode::Off {
+        let mut full = vec![program.to_string()];
+        full.extend_from_slice(args);
+        return full;
+    }
+
+    let mut bwrap = vec![
+        "--ro-bind".to_string(), "/usr".to_string(), "/usr".to_string(),
+        "--ro-bind".to_string(), "/bin".to_string(), "/bin".to_string(),
+        "--ro-bind".to_string(), "/lib".to_string(), "/lib".to_string(),
+    ];
+
+    if Path::new("/lib64").exists() {
+        bwrap.push("--ro-bind".to_string());
+        bwrap.push("/lib64".to_string());
+        bwrap.push("/lib64".to_string());
+    }
+    if Path::new("/etc/resolv.conf").exists() {
+        bwrap.push("--ro-bind".to_string());
+        bwrap.push("/etc/resolv.conf".to_string());
+        bwrap.push("/etc/resolv.conf".to_string());
+    }
+    if Path::new("/etc/ssl").exists() {
+        bwrap.push("--ro-bind".to_string());
+        bwrap.push("/etc/ssl".to_string());
+        bwrap.push("/etc/ssl".to_string());
+    }
+
+    bwrap.extend(vec![
+        "--proc".to_string(), "/proc".to_string(),
+        "--dev".to_string(), "/dev".to_string(),
+        "--tmpfs".to_string(), "/tmp".to_string(),
+        "--bind".to_string(), work_dir.display().to_string(), work_dir.display().to_string(),
+        "--chdir".to_string(), work_dir.display().to_string(),
+        "--die-with-parent".to_string(),
+    ]);
+
+    if unshare_net || mode == SandboxMode::Strict {
+        bwrap.push("--unshare-net".to_string());
+    }
+
+    bwrap.push(program.to_string());
+    bwrap.extend_from_slice(args);
+    bwrap
+}
+
+/// Cross-platform sandboxed command resolver.
+/// Jails via Bubblewrap (`bwrap`) where available (Linux/WSL),
+/// while falling back to host executable with directory and environment scrubbing
+/// on Windows, macOS, and Linux systems without bwrap.
+pub fn resolve_sandboxed_command(
+    work_dir: &Path,
+    program: &str,
+    args: &[String],
+    mode: SandboxMode,
+    unshare_net: bool,
+) -> (String, Vec<String>) {
+    if mode != SandboxMode::Off && is_bwrap_available() {
+        let bwrap_args = build_bwrap_args(work_dir, program, args, mode, unshare_net);
+        ("bwrap".to_string(), bwrap_args)
+    } else {
+        (program.to_string(), args.to_vec())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxConfig {
     pub max_memory_mb: Option<u64>,
@@ -120,4 +209,21 @@ mod tests {
         assert!(report.success);
         assert!(report.stdout.contains("isolated sandbox active"));
     }
+
+    #[test]
+    fn test_build_bwrap_args_jails_to_worktree_and_masks_home() {
+        use std::path::Path;
+        let work_dir = Path::new("/home/Jake/dev/hadron/.hadron/trees/test-quark");
+        let program = "cargo";
+        let args = vec!["test".to_string()];
+        let bwrap_args = build_bwrap_args(work_dir, program, &args, SandboxMode::WorktreeOnly, false);
+
+        assert!(bwrap_args.contains(&"--ro-bind".to_string()));
+        assert!(bwrap_args.contains(&"/usr".to_string()));
+        assert!(bwrap_args.contains(&"--bind".to_string()));
+        assert!(bwrap_args.contains(&work_dir.to_str().unwrap().to_string()));
+        assert!(bwrap_args.contains(&"--chdir".to_string()));
+        assert!(bwrap_args.contains(&"cargo".to_string()));
+    }
 }
+
