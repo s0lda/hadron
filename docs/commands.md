@@ -143,3 +143,17 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/intercom` | `/intercom` | Toggle sub-channel audio intercom voice bridge. | `/intercom` |
 | `/timelapse` | `/timelapse` | Generate visual architectural feature time-lapse from git history. | `/timelapse` |
 | `/exit` (alias `/quit`) | `/exit` | Exit the Hadron Chamber desktop application. | `/exit` |
+
+---
+
+## 📋 Event Log Observability & Context Menu
+
+The Chamber Event Log (`ChatTab::Log`) provides dense, console-like audit records:
+- **Command Logging**: All slash commands and `/clear` lifecycle resets are persisted as `Kind::Command` events.
+- **Selectable Metadata**: Timestamp, author (`@quark`), target (`➜ @quark`), and kind tags can be selected via mouse drag without triggering row expansion.
+- **Context Menu Actions**:
+  - `Copy Selected Text`: Copies actively highlighted text in the window.
+  - `Copy Event Line`: Copies `[HH:MM:SS] @author [➜ @target] [kind] body`.
+  - `Copy Log Message`: Copies the event body verbatim.
+  - `Copy Event as JSON`: Copies the event row serialized as formatted JSON.
+

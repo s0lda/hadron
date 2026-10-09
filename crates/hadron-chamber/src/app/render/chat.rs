@@ -737,17 +737,27 @@ impl super::Chamber {
                                     div()
                                         .id(SharedString::from(format!("log-row-{ix}")))
                                         .cursor_pointer()
-                                        .on_click(move |_, _window, cx| {
-                                            entity.update(cx, |this, cx| {
-                                                if !this.log_expanded.remove(&ix) {
-                                                    this.log_expanded.insert(ix);
+                                        .on_click({
+                                            let ent = entity.clone();
+                                            move |_, window, cx| {
+                                                use gpui_component::WindowExt as _;
+                                                // If the user has highlighted text (e.g. mouse drag selection), don't toggle row expansion
+                                                if !window.selected_text(cx).trim().is_empty() {
+                                                    return;
                                                 }
-                                                cx.notify();
-                                            });
+                                                ent.update(cx, |this, cx| {
+                                                    if !this.log_expanded.remove(&ix) {
+                                                        this.log_expanded.insert(ix);
+                                                    }
+                                                    cx.notify();
+                                                });
+                                            }
                                         })
                                         .context_menu({
                                             let text = msg_body.clone();
                                             let ent = view.clone();
+                                            let event_line = m.format_event_line(&local_offset);
+                                            let event_json = m.to_json();
                                             move |mut menu, window, cx| {
                                                 use gpui_component::WindowExt as _;
                                                 let sel = window.selected_text(cx);
@@ -774,12 +784,40 @@ impl super::Chamber {
                                                         },
                                                     ));
                                                 }
+                                                let ent_line = ent.clone();
+                                                let line_copy = event_line.clone();
+                                                menu = menu.item(PopupMenuItem::new("Copy Event Line").on_click(
+                                                    move |_, window, cx| {
+                                                        let to_copy = line_copy.clone();
+                                                        ent_line.update(cx, |this, cx| {
+                                                            this.handle_context_menu_action(
+                                                                ContextMenuAction::CopyText(to_copy),
+                                                                cx,
+                                                            );
+                                                        });
+                                                        window.refresh();
+                                                    },
+                                                ));
                                                 let ent_m = ent.clone();
                                                 let log_text = text.clone();
-                                                menu.item(PopupMenuItem::new("Copy Log Message").on_click(
+                                                menu = menu.item(PopupMenuItem::new("Copy Log Message").on_click(
                                                     move |_, window, cx| {
                                                         let to_copy = log_text.clone();
                                                         ent_m.update(cx, |this, cx| {
+                                                            this.handle_context_menu_action(
+                                                                ContextMenuAction::CopyText(to_copy),
+                                                                cx,
+                                                            );
+                                                        });
+                                                        window.refresh();
+                                                    },
+                                                ));
+                                                let ent_j = ent.clone();
+                                                let json_copy = event_json.clone();
+                                                menu.item(PopupMenuItem::new("Copy Event as JSON").on_click(
+                                                    move |_, window, cx| {
+                                                        let to_copy = json_copy.clone();
+                                                        ent_j.update(cx, |this, cx| {
                                                             this.handle_context_menu_action(
                                                                 ContextMenuAction::CopyText(to_copy),
                                                                 cx,

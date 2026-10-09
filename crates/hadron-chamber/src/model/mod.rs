@@ -73,16 +73,20 @@ pub fn date_divider_label(day: NaiveDate, today: NaiveDate) -> String {
 
 /// One rendered chat row. `kind_label` lets the UI style/filter by event type;
 /// `body` is a display string synthesized for non-message events.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct MessageRow {
     pub from: String,
     pub to: Option<String>,
     pub body: String,
     pub kind_label: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<hadron_lattice::Usage>,
     pub ts: chrono::DateTime<chrono::Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub legacy_used_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub turn: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub severity: Option<hadron_lattice::Severity>,
 }
 
@@ -92,6 +96,21 @@ impl MessageRow {
     /// it used to be the literal `m.kind_label == "message"` copied into five places.
     pub fn is_chat(&self) -> bool {
         self.kind_label == "message"
+    }
+
+    /// Formats a single-line audit representation: `[{time_str}] @{from}{to_part} [{kind_label}] {body}`
+    pub fn format_event_line<Tz: TimeZone>(&self, tz: &Tz) -> String
+    where
+        Tz::Offset: std::fmt::Display,
+    {
+        let time_str = self.ts.with_timezone(tz).format("%H:%M:%S").to_string();
+        let to_part = self.to.as_deref().map(|t| format!(" ➜ @{t}")).unwrap_or_default();
+        format!("[{time_str}] @{}{to_part} [{}] {}", self.from, self.kind_label, self.body)
+    }
+
+    /// Serializes the event row to pretty-printed JSON.
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string())
     }
 }
 

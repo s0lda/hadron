@@ -1271,21 +1271,30 @@ where
                                     .text_xs()
                                     .font_family(mono_font.clone())
                                     .text_color(theme::text_muted())
-                                    .child(time),
+                                    .child(
+                                        gpui_component::text::TextView::markdown(("log-time-exp", ix), &time)
+                                            .selectable(true),
+                                    ),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(author_color)
-                                    .child(format!("@{}", m.from)),
+                                    .child(
+                                        gpui_component::text::TextView::markdown(("log-from-exp", ix), format!("@{}", m.from))
+                                            .selectable(true),
+                                    ),
                             )
                             .when_some(to_tag.clone(), |d, to| {
                                 d.child(
                                     div()
                                         .text_xs()
                                         .text_color(theme::text_muted())
-                                        .child(to),
+                                        .child(
+                                            gpui_component::text::TextView::markdown(("log-to-exp", ix), to)
+                                                .selectable(true),
+                                        ),
                                 )
                             })
                             .child(
@@ -1342,7 +1351,10 @@ where
                     .text_xs()
                     .font_family(mono_font.clone())
                     .text_color(theme::text_muted())
-                    .child(time),
+                    .child(
+                        gpui_component::text::TextView::markdown(("log-time", ix), &time)
+                            .selectable(true),
+                    ),
             )
             .child(
                 h_flex()
@@ -1356,7 +1368,10 @@ where
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(author_color)
                             .truncate()
-                            .child(m.from.clone()),
+                            .child(
+                                gpui_component::text::TextView::markdown(("log-from", ix), format!("@{}", m.from))
+                                    .selectable(true),
+                            ),
                     )
                     .when_some(to_tag, |d, to| {
                         d.child(
@@ -1364,7 +1379,10 @@ where
                                 .text_xs()
                                 .text_color(theme::text_muted())
                                 .truncate()
-                                .child(to),
+                                .child(
+                                    gpui_component::text::TextView::markdown(("log-to", ix), to)
+                                        .selectable(true),
+                                ),
                         )
                     }),
             )

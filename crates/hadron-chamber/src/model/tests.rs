@@ -1166,3 +1166,37 @@ fn test_render_row_target_formatting_and_command_rendering() {
     assert_eq!(row.body, "$ cargo check (exit 0)");
     assert_eq!(row.kind_label, "command");
 }
+
+#[test]
+fn test_message_row_format_event_line_and_to_json() {
+    let ts = chrono::Utc.with_ymd_and_hms(2026, 10, 9, 12, 34, 56).unwrap();
+    let row = MessageRow {
+        from: "human".to_string(),
+        to: Some("acp-agy".to_string()),
+        body: "force-restart requested for @acp-agy".to_string(),
+        kind_label: "reboot",
+        usage: None,
+        ts,
+        legacy_used_tokens: None,
+        turn: None,
+        severity: None,
+    };
+
+    let line = row.format_event_line(&chrono::Utc);
+    assert_eq!(line, "[12:34:56] @human ➜ @acp-agy [reboot] force-restart requested for @acp-agy");
+
+    let mut row_untargeted = row.clone();
+    row_untargeted.to = None;
+    row_untargeted.body = "/clear".to_string();
+    row_untargeted.kind_label = "command";
+    let untargeted_line = row_untargeted.format_event_line(&chrono::Utc);
+    assert_eq!(untargeted_line, "[12:34:56] @human [command] /clear");
+
+    let json_str = row.to_json();
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).expect("must parse JSON");
+    assert_eq!(parsed["from"], "human");
+    assert_eq!(parsed["to"], "acp-agy");
+    assert_eq!(parsed["body"], "force-restart requested for @acp-agy");
+    assert_eq!(parsed["kind_label"], "reboot");
+    assert_eq!(parsed["ts"], "2026-10-09T12:34:56Z");
+}
