@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use hadron_lattice::term::{self, Source};
 use hadron_lattice::{
-    live, Activity, ContextUsage, Doing, Mode, Projection, QuarkId, QuotaBucket, TurnOutcome, Usage,
+    live, Activity, ContextUsage, Doing, Kind, Mode, Projection, QuarkId, QuotaBucket, TurnOutcome, Usage,
 };
 
 use agent_client_protocol::schema::v1::{
@@ -226,6 +226,69 @@ pub(super) fn append_message_chunk(transcript: &mut String, chunk: &str) {
         transcript.push('\n');
     }
     transcript.push_str(chunk);
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as usize;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as usize;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as usize;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[(triple >> 18) & 0x3F] as char);
+        out.push(TABLE[(triple >> 12) & 0x3F] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[(triple >> 6) & 0x3F] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[triple & 0x3F] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+pub(super) fn extract_screenshot_images(turn: &Projection) -> Vec<String> {
+    let mut images = Vec::new();
+    let re = match regex::Regex::new(r#"(\.hadron/screenshots/[^\s\)\]'"\`]+|screenshots/[^\s\)\]'"\`]+)"#) {
+        Ok(r) => r,
+        Err(_) => return images,
+    };
+    let mut candidates = Vec::new();
+    for cap in re.captures_iter(&turn.task) {
+        if let Some(m) = cap.get(1) {
+            candidates.push(m.as_str().to_string());
+        }
+    }
+    for ev in turn.field_window.iter().rev().take(5) {
+        if let Kind::Message { body } = &ev.kind {
+            for cap in re.captures_iter(body) {
+                if let Some(m) = cap.get(1) {
+                    candidates.push(m.as_str().to_string());
+                }
+            }
+        }
+    }
+    for rel in candidates {
+        let full = if std::path::Path::new(&rel).is_absolute() {
+            PathBuf::from(&rel)
+        } else {
+            turn.cwd.join(&rel)
+        };
+        if full.exists() && full.extension().is_some_and(|ext| ext == "png") {
+            if let Ok(bytes) = std::fs::read(&full) {
+                let b64 = base64_encode(&bytes);
+                if !images.contains(&b64) {
+                    images.push(b64);
+                }
+            }
+        }
+    }
+    images
 }
 
 /// One turn, handed to the resident pump.
@@ -920,8 +983,9 @@ impl super::AcpQuark {
         // erroring on a dead channel for the life of the daemon. The conversation is
         // lost (it lived in the agent), but the quark recovers — which is exactly
         // what the one-shot CLI path gets for free by spawning per turn.
+        let images = extract_screenshot_images(&turn);
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-        if session.turns.send(TurnRequest { prompt, images: Vec::new(), reply: reply_tx }).is_err() {
+        if session.turns.send(TurnRequest { prompt, images, reply: reply_tx }).is_err() {
             self.session = None;
             self.sync_cancel_slot();
             anyhow::bail!("the ACP agent's session is gone (it will re-boot on the next turn)");

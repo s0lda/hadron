@@ -750,21 +750,33 @@ impl Quark for LocalQuark {
                     "function": { "name": c.function.name, "arguments": c.echoed_arguments(self.target.vendor) }
                 })).collect::<Vec<_>>(),
             }));
-            for call in &calls {
-                if let Some(dir) = &self.live_dir {
-                    let _ = live::publish(
-                        dir,
-                        &Activity::new(
-                            quark_id.clone(),
-                            Doing::Working,
-                            &format!("round {}: {}", round + 1, call.function.name),
-                        ),
-                    );
+            let call_futs = calls.iter().map(|call| {
+                let root = &root;
+                let quark_id = quark_id.clone();
+                let live_dir = self.live_dir.clone();
+                let call_name = call.function.name.clone();
+                let call_args = call.arguments_json();
+                let call_id = call.id.clone();
+                async move {
+                    if let Some(dir) = &live_dir {
+                        let _ = live::publish(
+                            dir,
+                            &Activity::new(
+                                quark_id,
+                                Doing::Working,
+                                &format!("round {}: {}", round + 1, call_name),
+                            ),
+                        );
+                    }
+                    let result =
+                        crate::adapter::local_tools::execute(root, mode, &call_name, &call_args);
+                    (call_id, truncate_tool_result(&result))
                 }
-                let result =
-                    crate::adapter::local_tools::execute(&root, mode, &call.function.name, &call.arguments_json());
+            });
+            let batch_results = crate::adapter::acp::dispatch_batched_tool_calls(call_futs).await;
+            for (call_id, content) in batch_results {
                 messages.push(json!({
-                    "role": "tool", "tool_call_id": call.id, "content": truncate_tool_result(&result),
+                    "role": "tool", "tool_call_id": call_id, "content": content,
                 }));
             }
         }

@@ -131,12 +131,24 @@ impl SlidingContextPruner {
 
     /// Compact a projection's field window in place using the sliding pruner.
     pub fn prune_projection(projection: &mut Projection, config: &SlidingPrunerConfig) -> bool {
+        let scratch_dir = projection.cwd.join(".hadron").join("scratch");
+        let _ = std::fs::create_dir_all(&scratch_dir);
+        let mut folded_any = false;
+        for ev in &mut projection.field_window {
+            if let Kind::Message { body } = &mut ev.kind {
+                let (folded, did_fold) = Self::fold_test_output(body, &scratch_dir);
+                if did_fold {
+                    *body = folded;
+                    folded_any = true;
+                }
+            }
+        }
         let (pruned, compacted) = Self::prune_events(&projection.field_window, config);
         if compacted {
             projection.field_window = pruned;
             projection.field_truncated = true;
         }
-        compacted
+        compacted || folded_any
     }
 
     /// Fold long test runner output into a compact summary, persisting the full output to disk.

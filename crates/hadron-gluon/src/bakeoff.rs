@@ -312,7 +312,7 @@ impl BakeOffManager {
                 diff_lines: c.lines_changed(),
             })
             .collect();
-        crate::tournament::TournamentSpec::evaluate_winner(&candidates)
+        Self::speculative_tournament_winner(&candidates)
     }
 
     /// Evaluate candidate results and select the tournament winner prioritizing green gate and minimal diff.
