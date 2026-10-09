@@ -9,7 +9,7 @@ use hadron_lattice::{
 };
 
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ContentBlock, InitializeRequest, McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind, PlanEntryStatus,
+    CancelNotification, ContentBlock, ImageContent, InitializeRequest, McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind, PlanEntryStatus,
     PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SelectedPermissionOutcome, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
     StopReason, TextContent, ToolCall, ToolCallContent, ToolCallUpdate, ToolKind, Usage as AcpUsage,
@@ -231,6 +231,7 @@ pub(super) fn append_message_chunk(transcript: &mut String, chunk: &str) {
 /// One turn, handed to the resident pump.
 pub(super) struct TurnRequest {
     prompt: String,
+    images: Vec<String>,
     reply: tokio::sync::oneshot::Sender<anyhow::Result<TurnReply>>,
 }
 
@@ -797,10 +798,14 @@ impl super::AcpQuark {
                                 *pump_context.lock().unwrap() = None;
                                 pump_in_turn.store(true, std::sync::atomic::Ordering::Relaxed);
 
+                                let mut blocks = vec![ContentBlock::Text(TextContent::new(turn.prompt))];
+                                for img_b64 in turn.images {
+                                    blocks.push(ContentBlock::Image(ImageContent::new(img_b64, "image/png")));
+                                }
                                 let prompt_fut = cx
                                     .send_request(PromptRequest::new(
                                         sid.clone(),
-                                        vec![ContentBlock::Text(TextContent::new(turn.prompt))],
+                                        blocks,
                                     ))
                                     .block_task();
                                 tokio::pin!(prompt_fut);
@@ -916,7 +921,7 @@ impl super::AcpQuark {
         // lost (it lived in the agent), but the quark recovers — which is exactly
         // what the one-shot CLI path gets for free by spawning per turn.
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-        if session.turns.send(TurnRequest { prompt, reply: reply_tx }).is_err() {
+        if session.turns.send(TurnRequest { prompt, images: Vec::new(), reply: reply_tx }).is_err() {
             self.session = None;
             self.sync_cancel_slot();
             anyhow::bail!("the ACP agent's session is gone (it will re-boot on the next turn)");

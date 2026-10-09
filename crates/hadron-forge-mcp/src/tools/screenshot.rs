@@ -36,7 +36,7 @@ pub struct ScreenshotPruneArgs {
     pub older_than_mins: Option<u64>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ScreenshotResult {
     pub path: String,
     pub filename: String,
@@ -45,6 +45,8 @@ pub struct ScreenshotResult {
     pub byte_size: u64,
     pub timestamp_ms: u64,
     pub format: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base64_png: Option<String>,
 }
 
 #[tool_router(router = screenshot_router, vis = "pub(super)")]
@@ -79,6 +81,15 @@ impl ForgeMcpServer {
 
         match manager.capture(args.filename.as_deref(), target) {
             Ok(meta) => {
+                let full_path = self.root.path().join(&meta.path);
+                let base64_png = std::fs::read(&full_path)
+                    .or_else(|_| std::fs::read(&meta.path))
+                    .ok()
+                    .map(|bytes| {
+                        use base64::Engine;
+                        base64::prelude::BASE64_STANDARD.encode(&bytes)
+                    });
+
                 let res = ScreenshotResult {
                     path: meta.path,
                     filename: meta.filename,
@@ -87,6 +98,7 @@ impl ForgeMcpServer {
                     byte_size: meta.byte_size,
                     timestamp_ms: meta.timestamp_ms,
                     format: meta.format,
+                    base64_png,
                 };
                 match serde_json::to_string_pretty(&res) {
                     Ok(json) => Json(ToolResponse::success(Some(json))),
@@ -169,5 +181,20 @@ pub mod tests {
             .await;
         assert!(prune_res.0.ok);
         assert!(prune_res.0.blocks.unwrap().contains("pruned 1"));
+    }
+
+    #[test]
+    fn test_screenshot_result_carries_base64_png() {
+        let res = ScreenshotResult {
+            path: ".hadron/screenshots/capture.png".to_string(),
+            filename: "capture.png".to_string(),
+            width: 1920,
+            height: 1080,
+            byte_size: 1024,
+            timestamp_ms: 12345678,
+            format: "png".to_string(),
+            base64_png: Some("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==".to_string()),
+        };
+        assert!(res.base64_png.is_some());
     }
 }

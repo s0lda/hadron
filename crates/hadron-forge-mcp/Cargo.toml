@@ -20,6 +20,7 @@ serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
