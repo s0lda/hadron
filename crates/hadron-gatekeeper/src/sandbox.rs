@@ -136,6 +136,84 @@ pub fn build_macos_sandbox_args(
     cmd_args
 }
 
+pub fn is_windows_sandbox_available() -> bool {
+    cfg!(windows)
+        || Path::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe").exists()
+        || Path::new("/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe").exists()
+}
+
+pub fn escape_powershell_single_quote(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+pub fn build_windows_sandbox_script(
+    work_dir: &Path,
+    program: &str,
+    args: &[String],
+    mode: SandboxMode,
+    unshare_net: bool,
+) -> String {
+    let work_dir_escaped = escape_powershell_single_quote(&work_dir.display().to_string());
+    let prog_escaped = escape_powershell_single_quote(program);
+
+    let mut parts = Vec::new();
+
+    // 1. Lock execution to worktree directory
+    parts.push(format!("Set-Location -LiteralPath '{work_dir_escaped}'"));
+
+    // 2. Scrub sensitive environment variables
+    parts.push(
+        "Get-ChildItem env: | Where-Object { $_.Name -match '^(AWS_|GITHUB_|ANTHROPIC_|OPENAI_|SSH_|TOKEN|SECRET|PASSWORD)' } | ForEach-Object { Remove-Item \"env:$($_.Name)\" -ErrorAction SilentlyContinue }".to_string()
+    );
+
+    // 3. Network containment if Strict or unshare_net
+    if unshare_net || mode == SandboxMode::Strict {
+        parts.push(
+            "$env:HTTP_PROXY='http://127.0.0.1:0'; $env:HTTPS_PROXY='http://127.0.0.1:0'; $env:ALL_PROXY='http://127.0.0.1:0'; $env:NO_PROXY=''".to_string()
+        );
+    }
+
+    // 4. Build argument array
+    if args.is_empty() {
+        parts.push(format!("& '{prog_escaped}'; exit $LASTEXITCODE"));
+    } else {
+        let formatted_args: Vec<String> = args
+            .iter()
+            .map(|a| format!("'{}'", escape_powershell_single_quote(a)))
+            .collect();
+        let args_array = formatted_args.join(", ");
+        parts.push(format!("& '{prog_escaped}' @({args_array}); exit $LASTEXITCODE"));
+    }
+
+    parts.join("; ")
+}
+
+pub fn build_windows_sandbox_args(
+    work_dir: &Path,
+    program: &str,
+    args: &[String],
+    mode: SandboxMode,
+    unshare_net: bool,
+) -> (String, Vec<String>) {
+    if mode == SandboxMode::Off {
+        return (program.to_string(), args.to_vec());
+    }
+
+    let script = build_windows_sandbox_script(work_dir, program, args, mode, unshare_net);
+    (
+        "powershell.exe".to_string(),
+        vec![
+            "-NoProfile".to_string(),
+            "-NonInteractive".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-Command".to_string(),
+            script,
+        ],
+    )
+}
+
+
 
 /// Cross-platform sandboxed command resolver.
 /// Jails via Bubblewrap (`bwrap`) where available (Linux/WSL),
@@ -305,6 +383,24 @@ mod tests {
         assert!(args[1].contains("(version 1)"));
         assert_eq!(args[2], "cargo");
         assert_eq!(args[3], "test");
+    }
+
+    #[test]
+    fn test_windows_sandbox_args_and_script() {
+        use std::path::Path;
+        let work_dir = Path::new("C:\\Users\\Jake\\hadron\\.hadron\\trees\\test-quark");
+        let (prog, args) = build_windows_sandbox_args(work_dir, "cargo.exe", &["check".to_string()], SandboxMode::WorktreeOnly, false);
+        assert_eq!(prog, "powershell.exe");
+        assert!(args.contains(&"-NoProfile".to_string()));
+        assert!(args.contains(&"-NonInteractive".to_string()));
+        assert!(args.contains(&"-ExecutionPolicy".to_string()));
+        assert!(args.contains(&"Bypass".to_string()));
+
+        let script = build_windows_sandbox_script(work_dir, "cargo.exe", &["check".to_string()], SandboxMode::Strict, true);
+        assert!(script.contains("Set-Location -LiteralPath"));
+        assert!(script.contains("C:\\Users\\Jake\\hadron\\.hadron\\trees\\test-quark"));
+        assert!(script.contains("HTTP_PROXY"));
+        assert!(script.contains("cargo.exe"));
     }
 }
 
