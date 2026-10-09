@@ -708,6 +708,8 @@ pub struct QuarkSpec {
     /// Directories outside the worktree this seat's forge tools may reach (see
     /// `Seat::external_roots`). Empty = the jail is exactly what it always was.
     pub external_roots: Vec<hadron_lattice::ExternalRootSpec>,
+    /// Process sandbox confinement mode for this quark's execution.
+    pub sandbox: hadron_gatekeeper::SandboxMode,
 }
 
 /// Enforce the naming contract: ids must be non-empty, whitespace-free, path- and
@@ -797,10 +799,12 @@ fn build_watched(spec: QuarkSpec, live_dir: Option<&std::path::Path>) -> anyhow:
     let env = spec.env.clone();
     let energy_limit = spec.energy_limit;
     let deny_skills = spec.deny_skills.clone();
+    let sandbox = spec.sandbox;
     let quark: Box<dyn Quark> = match spec.kind {
         QuarkKind::Cli(cli_spec) => {
             let watch = live_dir.filter(|_| cli_spec.stream.is_some());
             let mut q = CliQuark::new(spec.id, spec.flavor, spec.model, cli_spec, ProcessRunner)
+                .with_sandbox(sandbox)
                 .with_display_name(name)
                 .with_roles(roles, exclusive)
                 .with_commands(commands)
@@ -815,6 +819,7 @@ fn build_watched(spec: QuarkSpec, live_dir: Option<&std::path::Path>) -> anyhow:
         QuarkKind::Acp(target) => {
             let mut q =
                 AcpQuark::new(spec.id, spec.flavor, spec.model, spec.effort, spec.mode_config, target)
+                    .with_sandbox(sandbox)
                     .with_display_name(name)
                     .with_roles(roles, exclusive)
                     .with_commands(commands)
@@ -884,6 +889,7 @@ fn spec_for_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore) 
         energy_limit: seat.energy_limit,
         deny_skills: seat.deny_skills.clone(),
         external_roots: seat.external_roots.clone(),
+        sandbox: seat.sandbox.unwrap_or_default(),
     })
 }
 

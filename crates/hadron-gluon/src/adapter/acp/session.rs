@@ -35,7 +35,23 @@ use super::spend::turn_spend;
 /// Pure and side-effect-free on purpose: no process is spawned here, so it is
 /// unit-testable without touching a real agent.
 pub(super) fn acp_stdio_descriptor(target: &ResolvedAcpTarget, env: &[(String, String)]) -> String {
-    let (program, args) = (target.program(), target.args());
+    acp_stdio_descriptor_sandboxed(target, env, std::path::Path::new("."), hadron_gatekeeper::SandboxMode::Off)
+}
+
+pub(super) fn acp_stdio_descriptor_sandboxed(
+    target: &ResolvedAcpTarget,
+    env: &[(String, String)],
+    work_dir: &std::path::Path,
+    mode: hadron_gatekeeper::SandboxMode,
+) -> String {
+    let (raw_prog, raw_args) = (target.program(), target.args());
+    let (program, args) = hadron_gatekeeper::resolve_sandboxed_command(
+        work_dir,
+        raw_prog,
+        &raw_args,
+        mode,
+        false,
+    );
     let env_json: Vec<serde_json::Value> = env
         .iter()
         .map(|(name, value)| serde_json::json!({ "name": name, "value": value }))
@@ -402,6 +418,7 @@ impl super::AcpQuark {
         quota_dir: Option<PathBuf>,
         env: Vec<(String, String)>,
         external_roots: Vec<hadron_lattice::ExternalRootSpec>,
+        sandbox: hadron_gatekeeper::SandboxMode,
     ) -> anyhow::Result<AcpSession> {
         let (turns_tx, mut turns_rx) = tokio::sync::mpsc::unbounded_channel::<TurnRequest>();
         let (cancels_tx, mut cancels_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
@@ -441,7 +458,7 @@ impl super::AcpQuark {
         // Seat env last, so a seat that sets one of these deliberately still wins.
         let mut spawn_env = crate::worktree::shared_build_env_for_quark(&cwd, quark.as_str());
         spawn_env.extend(env.iter().cloned());
-        let agent_source = acp_stdio_descriptor(&target, &spawn_env);
+        let agent_source = acp_stdio_descriptor_sandboxed(&target, &spawn_env, &cwd, sandbox);
         // The reply accumulator and the context watermark are written by the
         // notification handler (which the SDK drives on the connection) and read by
         // the turn pump. Hence the Arcs.
@@ -880,6 +897,7 @@ impl super::AcpQuark {
                 self.quota_dir.clone(),
                 self.env.0.clone(),
                 self.external_roots.clone(),
+                self.sandbox,
             )?);
         }
         // The session is guaranteed `Some` from here on (freshly booted, or already

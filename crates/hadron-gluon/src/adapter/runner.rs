@@ -56,6 +56,20 @@ pub struct CliInvocation {
     pub env: RedactedEnv,
     /// Optional streaming spec.
     pub stream: Option<hadron_lattice::StreamSpec>,
+    /// Sandbox confinement mode for this execution.
+    pub sandbox: hadron_gatekeeper::SandboxMode,
+}
+
+impl CliInvocation {
+    pub fn resolve_sandboxed_command(&self) -> (String, Vec<String>) {
+        hadron_gatekeeper::resolve_sandboxed_command(
+            &self.cwd,
+            &self.program,
+            &self.args,
+            self.sandbox,
+            false,
+        )
+    }
 }
 
 /// The result of one invocation. Kept CLI-agnostic: session ids and other
@@ -109,9 +123,10 @@ impl CliRunner for ProcessRunner {
         use std::process::Stdio;
         use tokio::io::AsyncWriteExt;
 
-        let mut child_cmd = tokio::process::Command::new(&inv.program);
+        let (prog, args) = inv.resolve_sandboxed_command();
+        let mut child_cmd = tokio::process::Command::new(&prog);
         child_cmd
-            .args(&inv.args)
+            .args(&args)
             // THE fix: the CLI runs in the quark's own worktree, not wherever the
             // daemon happened to be launched from.
             .current_dir(&inv.cwd)
@@ -460,6 +475,7 @@ mod tests {
                 cwd: std::env::temp_dir(),
                 env: RedactedEnv::default(),
                 stream: None,
+                sandbox: hadron_gatekeeper::SandboxMode::Off,
             })
             .await
             .unwrap();
@@ -481,6 +497,7 @@ mod tests {
                 cwd: PathBuf::from("/definitely/not/a/real/directory"),
                 env: RedactedEnv::default(),
                 stream: None,
+                sandbox: hadron_gatekeeper::SandboxMode::Off,
             })
             .await
             .expect_err("a missing cwd must fail the spawn");
@@ -510,6 +527,7 @@ mod tests {
                 cwd: want.clone(),
                 env: RedactedEnv::default(),
                 stream: None,
+                sandbox: hadron_gatekeeper::SandboxMode::Off,
             })
             .await
             .unwrap();
@@ -527,6 +545,7 @@ mod tests {
                 cwd: std::env::temp_dir(),
                 env: RedactedEnv::default(),
                 stream: None,
+                sandbox: hadron_gatekeeper::SandboxMode::Off,
             })
             .await
             .unwrap_err();
@@ -549,6 +568,7 @@ mod tests {
                 cwd: std::env::temp_dir(),
                 env: RedactedEnv(vec![("SECRET_VAR".into(), "s3cr3t-payload".into())]),
                 stream: None,
+                sandbox: hadron_gatekeeper::SandboxMode::Off,
             })
             .await
             .unwrap();
@@ -566,6 +586,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp"),
                 env: RedactedEnv::default(),
                 stream: None,
+                sandbox: hadron_gatekeeper::SandboxMode::Off,
             })
             .await
             .unwrap();
@@ -577,6 +598,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp"),
                 env: RedactedEnv::default(),
                 stream: None,
+                sandbox: hadron_gatekeeper::SandboxMode::Off,
             })
             .await
             .unwrap();
@@ -603,6 +625,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             env: RedactedEnv(vec![("GEMINI_API_KEY".into(), secret_value.into())]),
             stream: None,
+            sandbox: hadron_gatekeeper::SandboxMode::Off,
         };
         let debug = format!("{inv:?}");
         assert!(!debug.contains(secret_value), "the secret VALUE leaked into Debug: {debug}");
@@ -630,6 +653,7 @@ mod tests {
                     format: hadron_lattice::StreamFormat::AgyStreamJson,
                     flags: vec![],
                 }),
+                sandbox: hadron_gatekeeper::SandboxMode::Off,
             })
             .await
             .unwrap();
@@ -657,9 +681,31 @@ mod tests {
                 cwd: std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir()),
                 env: RedactedEnv::default(),
                 stream: Some(spec),
+                sandbox: hadron_gatekeeper::SandboxMode::Off,
             })
             .await
             .unwrap();
         assert!(!out.stdout.is_empty(), "live agy stream-json should return stdout");
     }
+
+    #[test]
+    fn test_cli_invocation_sandbox_wrapping() {
+        let inv = CliInvocation {
+            program: "cargo".to_string(),
+            args: vec!["check".to_string()],
+            stdin: String::new(),
+            cwd: PathBuf::from("/home/Jake/dev/hadron/.hadron/trees/test"),
+            env: RedactedEnv::default(),
+            stream: None,
+            sandbox: hadron_gatekeeper::SandboxMode::WorktreeOnly,
+        };
+        let wrapped = inv.resolve_sandboxed_command();
+        if hadron_gatekeeper::is_bwrap_available() {
+            assert_eq!(wrapped.0, "bwrap");
+            assert!(wrapped.1.contains(&"cargo".to_string()));
+        } else {
+            assert_eq!(wrapped.0, "cargo");
+        }
+    }
 }
+

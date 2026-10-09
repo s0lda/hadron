@@ -109,6 +109,8 @@ pub struct AcpQuark {
     /// change to the seat only takes effect on the next session (a re-seat), never
     /// mid-conversation.
     external_roots: Vec<hadron_lattice::ExternalRootSpec>,
+    /// Optional process sandbox confinement mode for this seat.
+    sandbox: hadron_gatekeeper::SandboxMode,
     /// The engine's handle for a graceful mid-turn cancel (Task 4). `None` until
     /// `attach_cancel_slot` is called at seating; kept in sync with `session` by
     /// `sync_cancel_slot`, called everywhere `session`'s identity changes.
@@ -137,8 +139,15 @@ impl AcpQuark {
             energy_limit: None,
             deny_skills: Vec::new(),
             external_roots: Vec::new(),
+            sandbox: hadron_gatekeeper::SandboxMode::default(),
             cancel_slot: None,
         }
+    }
+
+    /// Set the process sandbox confinement mode.
+    pub fn with_sandbox(mut self, sandbox: hadron_gatekeeper::SandboxMode) -> Self {
+        self.sandbox = sandbox;
+        self
     }
 
     /// Grant this quark the seat's external roots. Chained like the other `with_*`

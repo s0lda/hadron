@@ -216,6 +216,7 @@ pub struct CliQuark<R: CliRunner> {
     runner: R,
     energy_limit: Option<u32>,
     deny_skills: Vec<String>,
+    sandbox: hadron_gatekeeper::SandboxMode,
     /// Where to publish mid-turn draft activity for a `spec.stream` seat. `None` =
     /// nobody is watching (tests, and any quark this daemon is not watching) —
     /// same shape as `adapter::local::LocalQuark::live_dir`. A `spec.stream: None`
@@ -239,8 +240,14 @@ impl<R: CliRunner> CliQuark<R> {
             env: RedactedEnv::default(),
             energy_limit: None,
             deny_skills: Vec::new(),
+            sandbox: hadron_gatekeeper::SandboxMode::default(),
             live_dir: None,
         }
+    }
+
+    pub fn with_sandbox(mut self, sandbox: hadron_gatekeeper::SandboxMode) -> Self {
+        self.sandbox = sandbox;
+        self
     }
 
     /// Stream this quark's mid-turn draft into `dir` (see `hadron_lattice::live`).
@@ -339,6 +346,7 @@ impl<R: CliRunner> CliQuark<R> {
             cwd,
             env: env.into(),
             stream: self.spec.stream.clone(),
+            sandbox: self.sandbox,
         }
     }
 
