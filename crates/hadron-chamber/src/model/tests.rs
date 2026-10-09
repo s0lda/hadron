@@ -1076,3 +1076,93 @@ fn stats_aggregates_multi_protocol_and_activity_metrics() {
     assert_eq!(stats.total_commands, 1);
     assert!(stats.protocol_turns.contains_key("cli") || stats.protocol_turns.contains_key("acp"));
 }
+
+#[test]
+fn test_render_row_target_formatting_and_command_rendering() {
+    let usages = HashMap::new();
+
+    // 1. Kind::Reboot with target
+    let reboot_targeted = ev(
+        Actor::Human,
+        Some("acp-codex"),
+        Kind::Reboot,
+    );
+    let row = render_row(&reboot_targeted, &usages);
+    assert_eq!(row.body, "force-restart requested for @acp-codex");
+    assert_eq!(row.kind_label, "reboot");
+
+    // 2. Kind::Reboot without target
+    let reboot_untargeted = ev(
+        Actor::Human,
+        None,
+        Kind::Reboot,
+    );
+    let row = render_row(&reboot_untargeted, &usages);
+    assert_eq!(row.body, "force-restart requested");
+    assert_eq!(row.kind_label, "reboot");
+
+    // 3. Kind::ModeSet with target
+    let mode_targeted = ev(
+        Actor::Human,
+        Some("acp-claude"),
+        Kind::ModeSet { mode: Mode::Bypass },
+    );
+    let row = render_row(&mode_targeted, &usages);
+    assert_eq!(row.body, "mode → bypass for @acp-claude");
+    assert_eq!(row.kind_label, "mode_set");
+
+    // 4. Kind::ModeSet without target
+    let mode_global = ev(
+        Actor::Human,
+        None,
+        Kind::ModeSet { mode: Mode::Bypass },
+    );
+    let row = render_row(&mode_global, &usages);
+    assert_eq!(row.body, "mode → bypass (global)");
+    assert_eq!(row.kind_label, "mode_set");
+
+    // 5. Kind::Command with slash command and out_summary
+    let slash_cmd = ev(
+        Actor::Human,
+        None,
+        Kind::Command {
+            cmd: "/clear".into(),
+            exit: 0,
+            out_summary: "Session reset (archived 20260101_000000)".into(),
+        },
+    );
+    let row = render_row(&slash_cmd, &usages);
+    assert_eq!(
+        row.body,
+        "/clear · Session reset (archived 20260101_000000)"
+    );
+    assert_eq!(row.kind_label, "command");
+
+    // 6. Kind::Command with slash command and empty out_summary
+    let slash_no_summary = ev(
+        Actor::Human,
+        None,
+        Kind::Command {
+            cmd: "/mode bypass".into(),
+            exit: 0,
+            out_summary: String::new(),
+        },
+    );
+    let row = render_row(&slash_no_summary, &usages);
+    assert_eq!(row.body, "/mode bypass");
+    assert_eq!(row.kind_label, "command");
+
+    // 7. Regular shell command
+    let shell_cmd = ev(
+        Actor::Quark(QuarkId::new("agy")),
+        None,
+        Kind::Command {
+            cmd: "cargo check".into(),
+            exit: 0,
+            out_summary: String::new(),
+        },
+    );
+    let row = render_row(&shell_cmd, &usages);
+    assert_eq!(row.body, "$ cargo check (exit 0)");
+    assert_eq!(row.kind_label, "command");
+}

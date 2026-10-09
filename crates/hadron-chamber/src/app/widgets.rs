@@ -1228,9 +1228,9 @@ where
     } else {
         crate::text::flatten_to_single_line(&m.body)
     };
+    let to_tag = m.to.as_ref().map(|t| format!("➜ @{t}"));
 
     if expanded {
-        let to_tag = m.to.as_ref().map(|t| format!("➜ @{t}"));
         let token_tag = m.usage.as_ref().and_then(|u| {
             let in_tok = u.spend.input.unwrap_or(0);
             let out_tok = u.spend.output.unwrap_or(0);
@@ -1280,7 +1280,7 @@ where
                                     .text_color(author_color)
                                     .child(format!("@{}", m.from)),
                             )
-                            .when_some(to_tag, |d, to| {
+                            .when_some(to_tag.clone(), |d, to| {
                                 d.child(
                                     div()
                                         .text_xs()
@@ -1345,14 +1345,28 @@ where
                     .child(time),
             )
             .child(
-                div()
+                h_flex()
                     .flex_none()
-                    .w(px(92.0))
-                    .text_xs()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(author_color)
-                    .truncate()
-                    .child(m.from.clone()),
+                    .w(px(130.0))
+                    .gap_1()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(author_color)
+                            .truncate()
+                            .child(m.from.clone()),
+                    )
+                    .when_some(to_tag, |d, to| {
+                        d.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .truncate()
+                                .child(to),
+                        )
+                    }),
             )
             .child(
                 div()

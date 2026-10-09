@@ -537,7 +537,18 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
         Kind::Edit { paths, summary, .. } => {
             (format!("edited {} path(s): {summary}", paths.len()), "edit")
         }
-        Kind::Command { cmd, exit, .. } => (format!("$ {cmd} (exit {exit})"), "command"),
+        Kind::Command { cmd, exit, out_summary } => {
+            if cmd.starts_with('/') {
+                let summary = if out_summary.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {out_summary}")
+                };
+                (format!("{cmd}{summary}"), "command")
+            } else {
+                (format!("$ {cmd} (exit {exit})"), "command")
+            }
+        }
         Kind::Snapshot { label, .. } => (format!("snapshot: {label}"), "snapshot"),
         Kind::EnergyReport { used_tokens } => {
             legacy_used_tokens = Some(*used_tokens);
@@ -569,9 +580,21 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
                 "message",
             )
         }
-        Kind::ModeSet { mode } => (format!("mode → {mode:?}").to_lowercase(), "mode_set"),
+        Kind::ModeSet { mode } => {
+            let target = to
+                .as_deref()
+                .map(|t| format!(" for @{t}"))
+                .unwrap_or_else(|| " (global)".to_string());
+            (format!("mode → {mode:?}{target}").to_lowercase(), "mode_set")
+        }
         Kind::ModeClear => ("mode → default (inherit global)".to_string(), "mode_clear"),
-        Kind::Reboot => ("force-restart requested".to_string(), "reboot"),
+        Kind::Reboot => {
+            let target = to
+                .as_deref()
+                .map(|t| format!(" for @{t}"))
+                .unwrap_or_default();
+            (format!("force-restart requested{target}"), "reboot")
+        }
         Kind::SessionName { name } => (format!("session renamed to \"{name}\""), "session_name"),
         Kind::Unknown { kind, .. } => (format!("unrecognized event: {kind}"), "unrecognized"),
     };
