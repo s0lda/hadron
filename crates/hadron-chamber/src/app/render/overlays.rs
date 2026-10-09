@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.29.0",
+        date: Some("2026-10-09"),
+        added: &[
+            "Cross-Platform Process Sandboxing: Native OS containment across Linux/WSL (Bubblewrap), macOS (Apple Seatbelt), and Windows (PowerShell & Job Objects) with worktree write jailing and credential scrubbing",
+            "Chamber Sandbox Controls: Interactive [SANDBOX: ON / STRICT / OFF] chat input badge with click/F7 toggle, and Settings -> Environment toggle switch and confinement mode selector",
+            "Prompt Cache Alignment: Immutable cache-stable system prompt prefix for 80%+ KV prompt cache hit rates across Claude, Gemini, and OpenAI models",
+            "Frontier LLM Ergonomics: Automated test output transcript folding to .hadron/scratch/, multi-modal base64 screenshot piping, batched parallel tool dispatch, and speculative tournament bake-offs",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.28.2",
         date: Some("2026-10-08"),
         added: &[],

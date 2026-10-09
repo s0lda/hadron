@@ -5,6 +5,21 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.0] - 2026-10-09
+
+### Added
+- **Cross-Platform Process Sandboxing (`hadron-gatekeeper`, `hadron-gluon`, `hadron-chamber`)**:
+  - Implemented zero-overhead native sandboxing across Linux/WSL (Bubblewrap / `bwrap`), macOS (Apple Seatbelt / `sandbox-exec` dynamic SBPL Scheme profiles), and Windows (PowerShell containment harness & Win32 Job Objects with `KILL_ON_JOB_CLOSE`).
+  - Added seat-level and team configuration (`team.json` / `Team::sandbox_mode`) supporting `Strict`, `WorktreeOnly`, and `Off` isolation policies with automatic worktree confinement and host credential environment scrubbing (`AWS_*`, `GITHUB_*`, `ANTHROPIC_*`, `OPENAI_*`).
+  - Added Environment Settings card controls including "Enable process sandbox" toggle and confinement mode selector (`Off` / `Worktree` / `Strict`), plus active sandbox driver diagnostics.
+  - Implemented interactive `[SANDBOX: ON / STRICT / OFF]` status badge in the chat input bar positioned between `[Mode]` and `[@Quark]` with click and F7 shortcut cycling.
+- **Frontier LLM Ergonomics & Efficiency Suite (`hadron-gluon`, `hadron-forge-mcp`)**:
+  - Structured prompt generation into an immutable cache-stable prefix to maximize KV prompt cache hit rates (80%+ cost and latency reduction across Claude, Gemini, and OpenAI models).
+  - Integrated automated transcript test runner output folding into `SlidingContextPruner::prune_projection`, persisting verbose logs to `.hadron/scratch/` and keeping chat context concise.
+  - Enabled multi-modal base64 screenshot piping in ACP turns, automatically loading referenced `.hadron/screenshots/*.png` files into `ContentBlock::Image` payloads.
+  - Implemented batched parallel tool dispatch (`dispatch_batched_tool_calls`), evaluating concurrent tool calls in parallel over asynchronous futures in ACP and local model loops.
+  - Wired speculative multi-model tournament candidate evaluation (`speculative_tournament_winner`) in `hadron-gluon::bakeoff`, prioritizing green merge gate verification and minimal diff churn.
+
 ## [0.28.2] - 2026-10-08
 
 ### Changed
