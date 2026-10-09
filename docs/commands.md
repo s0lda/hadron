@@ -150,7 +150,7 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 
 The Chamber Event Log (`ChatTab::Log`) provides dense, console-like audit records:
 - **Command Logging**: All slash commands and `/clear` lifecycle resets are persisted as `Kind::Command` events.
-- **Selectable Metadata**: Timestamp, author (`@quark`), target (`➜ @quark`), and kind tags can be selected via mouse drag without triggering row expansion.
+- **Selectable Metadata**: Timestamp, author (`@quark`), target (`➜ @quark`), status/kind tags, and body can be selected via mouse drag without triggering row expansion.
 - **Context Menu Actions**:
   - `Copy Selected Text`: Copies actively highlighted text in the window.
   - `Copy Event Line`: Copies `[HH:MM:SS] @author [➜ @target] [kind] body`.

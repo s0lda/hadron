@@ -1264,7 +1264,10 @@ where
                                     .font_family(mono_font.clone())
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(theme::accent())
-                                    .child(format!("#{}", ix + 1)),
+                                    .child(
+                                        gpui_component::text::TextView::markdown(("log-idx-exp", ix), format!("#{}", ix + 1))
+                                            .selectable(true),
+                                    ),
                             )
                             .child(
                                 div()
@@ -1307,7 +1310,10 @@ where
                                     .border_color(theme::hairline_border())
                                     .text_xs()
                                     .text_color(log_kind_color(m.kind_label))
-                                    .child(m.kind_label),
+                                    .child(
+                                        gpui_component::text::TextView::markdown(("log-kind-exp", ix), m.kind_label)
+                                            .selectable(true),
+                                    ),
                             ),
                     )
                     .when_some(token_tag, |d, tokens| {
@@ -1316,7 +1322,10 @@ where
                                 .text_xs()
                                 .font_family(mono_font.clone())
                                 .text_color(theme::text_muted())
-                                .child(tokens),
+                                .child(
+                                    gpui_component::text::TextView::markdown(("log-tokens-exp", ix), tokens)
+                                        .selectable(true),
+                                ),
                         )
                     }),
             )
@@ -1392,7 +1401,10 @@ where
                     .w(px(80.0))
                     .text_xs()
                     .text_color(log_kind_color(m.kind_label))
-                    .child(m.kind_label),
+                    .child(
+                        gpui_component::text::TextView::markdown(("log-kind", ix), m.kind_label)
+                            .selectable(true),
+                    ),
             )
             .child(
                 div()
@@ -1932,6 +1944,24 @@ mod tests {
             classify_pick(Some(Some(vec![PathBuf::from("/home/jake/dev")]))),
             Picked::Path("/home/jake/dev".to_string())
         );
+    }
+
+    #[test]
+    fn test_log_row_constructs_expanded_and_compact() {
+        let msg = MessageRow {
+            from: "acp-claude".to_string(),
+            to: Some("cli-agy".to_string()),
+            body: "blocked".to_string(),
+            kind_label: "status",
+            usage: None,
+            ts: chrono::Utc::now(),
+            legacy_used_tokens: None,
+            turn: None,
+            severity: None,
+        };
+        let font = gpui::SharedString::from("monospace");
+        let _compact = log_row(0, &msg, false, gpui::hsla(0.0, 0.0, 0.0, 1.0), chrono::Utc, &font);
+        let _expanded = log_row(0, &msg, true, gpui::hsla(0.0, 0.0, 0.0, 1.0), chrono::Utc, &font);
     }
 }
 
