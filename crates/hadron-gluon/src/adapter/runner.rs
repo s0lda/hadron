@@ -700,12 +700,48 @@ mod tests {
             sandbox: hadron_gatekeeper::SandboxMode::WorktreeOnly,
         };
         let wrapped = inv.resolve_sandboxed_command();
-        if hadron_gatekeeper::is_bwrap_available() {
-            assert_eq!(wrapped.0, "bwrap");
-            assert!(wrapped.1.contains(&"cargo".to_string()));
-        } else {
-            assert_eq!(wrapped.0, "cargo");
+        match hadron_gatekeeper::detect_sandbox_platform() {
+            hadron_gatekeeper::SandboxPlatform::LinuxBwrap => {
+                assert_eq!(wrapped.0, "bwrap");
+                assert!(wrapped.1.contains(&"cargo".to_string()));
+            }
+            hadron_gatekeeper::SandboxPlatform::MacOsSeatbelt => {
+                assert_eq!(wrapped.0, "/usr/bin/sandbox-exec");
+                assert!(wrapped.1.contains(&"-p".to_string()));
+                assert!(wrapped.1.contains(&"cargo".to_string()));
+            }
+            hadron_gatekeeper::SandboxPlatform::WindowsHarness => {
+                assert_eq!(wrapped.0, "powershell.exe");
+                assert!(wrapped.1.contains(&"-NoProfile".to_string()));
+            }
+            hadron_gatekeeper::SandboxPlatform::Fallback => {
+                assert_eq!(wrapped.0, "cargo");
+            }
         }
+    }
+
+    #[test]
+    fn test_cli_invocation_cross_platform_sandbox_builders() {
+        let cwd = PathBuf::from("/home/Jake/dev/hadron/.hadron/trees/test");
+        let mac_args = hadron_gatekeeper::build_macos_sandbox_args(
+            &cwd,
+            "cargo",
+            &["check".to_string()],
+            hadron_gatekeeper::SandboxMode::WorktreeOnly,
+            false,
+        );
+        assert_eq!(mac_args[0], "-p");
+        assert!(mac_args[1].contains("(version 1)"));
+
+        let (win_prog, win_args) = hadron_gatekeeper::build_windows_sandbox_args(
+            &cwd,
+            "cargo.exe",
+            &["check".to_string()],
+            hadron_gatekeeper::SandboxMode::WorktreeOnly,
+            false,
+        );
+        assert_eq!(win_prog, "powershell.exe");
+        assert!(win_args.contains(&"-NoProfile".to_string()));
     }
 }
 
