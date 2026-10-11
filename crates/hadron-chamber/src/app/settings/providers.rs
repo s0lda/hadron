@@ -15,6 +15,57 @@ pub(super) fn unique_seat_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String
         .expect("an unbounded counter always finds a free id")
 }
 
+/// Cloud LLM provider candidate detected from environment variables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvProviderCandidate {
+    Anthropic,
+    OpenAi,
+    Gemini,
+}
+
+impl EnvProviderCandidate {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Anthropic => "Anthropic Claude",
+            Self::OpenAi => "OpenAI",
+            Self::Gemini => "Google Gemini",
+        }
+    }
+
+    pub fn env_var(&self) -> &'static str {
+        match self {
+            Self::Anthropic => "ANTHROPIC_API_KEY",
+            Self::OpenAi => "OPENAI_API_KEY",
+            Self::Gemini => "GEMINI_API_KEY",
+        }
+    }
+}
+
+/// Detects available provider presets based on standard API key environment variables.
+pub fn detect_available_env_provider<'a, I, K, V>(vars: I) -> Option<EnvProviderCandidate>
+where
+    I: IntoIterator<Item = &'a (K, V)>,
+    K: AsRef<str> + 'a,
+    V: AsRef<str> + 'a,
+{
+    let map: std::collections::HashMap<&str, &str> = vars
+        .into_iter()
+        .map(|(k, v)| (k.as_ref(), v.as_ref()))
+        .collect();
+
+    if map.get("ANTHROPIC_API_KEY").copied().is_some_and(|v| !v.trim().is_empty()) {
+        Some(EnvProviderCandidate::Anthropic)
+    } else if map.get("OPENAI_API_KEY").copied().is_some_and(|v| !v.trim().is_empty()) {
+        Some(EnvProviderCandidate::OpenAi)
+    } else if map.get("GEMINI_API_KEY").copied().is_some_and(|v| !v.trim().is_empty()) {
+        Some(EnvProviderCandidate::Gemini)
+    } else {
+        None
+    }
+}
+
+
+
 impl super::Chamber {
     /// Connect = GET the vendor's model-list endpoint, off the UI thread — a slow
     /// or unreachable local server must not freeze the window. Mirrors

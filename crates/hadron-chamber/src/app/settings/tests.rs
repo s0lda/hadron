@@ -479,3 +479,24 @@ fn test_sandbox_settings_mode_and_tag_mapping() {
     assert!(sandbox_hint(SandboxMode::Off).contains("host"));
 }
 
+#[test]
+fn test_auto_detect_env_provider() {
+    use super::providers::{detect_available_env_provider, EnvProviderCandidate};
+
+    let fake_env = [("ANTHROPIC_API_KEY", "sk-ant-test")];
+    let candidate = detect_available_env_provider(&fake_env);
+    assert_eq!(candidate, Some(EnvProviderCandidate::Anthropic));
+
+    let fake_env_openai = [("OPENAI_API_KEY", "sk-proj-test")];
+    let candidate_openai = detect_available_env_provider(&fake_env_openai);
+    assert_eq!(candidate_openai, Some(EnvProviderCandidate::OpenAi));
+
+    let fake_env_gemini = [("GEMINI_API_KEY", "AIzaSyTest")];
+    let candidate_gemini = detect_available_env_provider(&fake_env_gemini);
+    assert_eq!(candidate_gemini, Some(EnvProviderCandidate::Gemini));
+
+    let fake_env_empty: [(&str, &str); 0] = [];
+    assert_eq!(detect_available_env_provider(&fake_env_empty), None);
+}
+
+
