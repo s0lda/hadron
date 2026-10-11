@@ -734,6 +734,8 @@ impl Chamber {
             }
             cmd if cmd == "team-brainstorm"
                 || cmd == "brainstorm"
+                || cmd == "team-debate"
+                || cmd == "debate"
                 || cmd == "security"
                 || cmd == "arch"
                 || cmd == "code-review"
@@ -747,10 +749,13 @@ impl Chamber {
                 || cmd == "triage"
                 || cmd == "investigate"
                 || cmd == "curate-memory"
+                || cmd == "deprecate"
+                || cmd == "benchmark"
                 || self.skill_corpus().iter().any(|s| s.id == cmd) =>
             {
                 let skill_id = match cmd {
                     "team-brainstorm" | "brainstorm" => "brainstorming",
+                    "team-debate" | "debate" => "debate",
                     "security" => "security-review",
                     "arch" => "architecture-audit",
                     "code-review" => "reviewing-work",
@@ -760,6 +765,8 @@ impl Chamber {
                     "contract" => "api-design",
                     "triage" | "investigate" => "incident-investigation",
                     "curate-memory" => "memory-curation",
+                    "deprecate" => "migration-deprecation",
+                    "benchmark" => "benchmarking",
                     other => other,
                 };
                 let corpus = self.skill_corpus();
@@ -770,7 +777,7 @@ impl Chamber {
                     .or_else(|| hadron_gluon::skills::canonical_trigger(skill_id).map(String::from))
                     .unwrap_or_else(|| skill_id.to_string());
 
-                let (target, task) = if cmd == "team-brainstorm" {
+                let (target, task) = if cmd == "team-brainstorm" || cmd == "team-debate" {
                     (hadron_gluon::router::TEAM_ALIAS, args.trim())
                 } else {
                     let (named, task) = crate::text::split_target(args);
@@ -825,6 +832,45 @@ impl Chamber {
                     })
                     .collect();
                 self.post_chat_message(Actor::Gluon, crate::text::skills_body(&rows), cx);
+                true
+            }
+            "settle" | "adr" => {
+                let verdict = args.trim();
+                if verdict.is_empty() {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/settle <verdict>` (e.g. `/settle Adopt SQLite for metadata`). This records an Architectural Decision Record (ADR) in `.hadron/docs/adr/` and settles the debate.".to_string(),
+                        cx,
+                    );
+                } else {
+                    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                    let slug = crate::text::slugify(verdict);
+                    let filename = format!("{today}-{slug}.md");
+                    let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                    let adr_dir = repo_root.join(".hadron").join("docs").join("adr");
+                    let _ = std::fs::create_dir_all(&adr_dir);
+                    let filepath = adr_dir.join(&filename);
+                    let adr_content = format!(
+                        "# Architectural Decision Record: {verdict}\n\n\
+                         - **Date:** {today}\n\
+                         - **Status:** Accepted\n\
+                         - **Decided by:** Human Consensus\n\n\
+                         ## Context & Problem Statement\n\
+                         Debate concluded.\n\n\
+                         ## Decision Outcome\n\
+                         {verdict}\n\n\
+                         ## Consequences\n\
+                         - Architectural alignment established across participating quarks.\n\
+                         - Ready for spec authoring via `/brainstorm` or implementation planning via `/writing-plans`.\n"
+                    );
+                    let _ = std::fs::write(&filepath, adr_content);
+                    let msg = format!(
+                        "⚖️ **Debate Settled**: {verdict}\n\n\
+                         Architectural Decision Record saved to `.hadron/docs/adr/{filename}`.\n\
+                         Proceed with `/brainstorm` or `/writing-plans` when ready to plan implementation."
+                    );
+                    self.post_chat_message(Actor::Human, msg, cx);
+                }
                 true
             }
             // Park an expensive seat without unseating it: the seat, its config and its
