@@ -119,13 +119,16 @@ pub fn run_cli_update(target_version: Option<&str>) -> Result<(), String> {
             .unwrap_or_else(|| std::env::temp_dir().join("hadron-update"));
         std::fs::create_dir_all(&update_dir)
             .map_err(|e| format!("Failed to create update directory: {e}"))?;
-        let script_path = update_dir.join("install.sh");
+
+        let is_windows = cfg!(windows);
+        let script_filename = if is_windows { "install.ps1" } else { "install.sh" };
+        let script_path = update_dir.join(script_filename);
 
         term::info(Source::Chamber, "Downloading installer script...");
         let curl_out = std::process::Command::new("curl")
             .args([
                 "-fsSL",
-                "https://raw.githubusercontent.com/s0lda/hadron/main/install.sh",
+                &format!("https://raw.githubusercontent.com/s0lda/hadron/main/{script_filename}"),
                 "-o",
             ])
             .arg(&script_path)
@@ -139,12 +142,29 @@ pub fn run_cli_update(target_version: Option<&str>) -> Result<(), String> {
             ));
         }
 
-        let mut cmd = std::process::Command::new("sh");
-        cmd.arg(&script_path);
-        if let Some(v) = target_version {
-            cmd.args(["--version", v]);
-        }
-        cmd.args(["-b", &parent.to_string_lossy()]);
+        let mut cmd = if is_windows {
+            let mut c = std::process::Command::new("powershell.exe");
+            c.args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+            ]);
+            c.arg(&script_path);
+            if let Some(v) = target_version {
+                c.args(["-Version", v]);
+            }
+            c.args(["-InstallDir", &parent.to_string_lossy(), "-NoShortcut"]);
+            c
+        } else {
+            let mut c = std::process::Command::new("sh");
+            c.arg(&script_path);
+            if let Some(v) = target_version {
+                c.args(["--version", v]);
+            }
+            c.args(["-b", &parent.to_string_lossy()]);
+            c
+        };
         cmd.stdin(std::process::Stdio::null());
         term::info(Source::Chamber, &format!("Executing installer: {:?}", cmd));
         let status = cmd.status().map_err(|e| format!("Failed to run installer: {e}"))?;

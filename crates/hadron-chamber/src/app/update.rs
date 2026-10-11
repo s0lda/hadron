@@ -300,8 +300,9 @@ pub fn detect_install_method_from_path(path: &Path) -> InstallMethod {
 
 /// Builds the release asset tarball URL for a target platform.
 pub fn release_asset_url(version: &str, target_triple: &str) -> String {
+    let ext = if target_triple.contains("windows") { "zip" } else { "tar.gz" };
     format!(
-        "https://github.com/s0lda/hadron/releases/download/v{version}/hadron-v{version}-{target_triple}.tar.gz"
+        "https://github.com/s0lda/hadron/releases/download/v{version}/hadron-v{version}-{target_triple}.{ext}"
     )
 }
 
@@ -320,7 +321,7 @@ pub fn perform_update(target_version: &str) -> UpdateState {
     }
 }
 
-/// Performs in-place binary self-update using install.sh.
+/// Performs in-place binary self-update using install.sh or install.ps1.
 pub fn perform_binary_install(target_version: &str, exe_path: &Path) -> UpdateState {
     let clean = target_version.trim_start_matches('v');
     if clean.is_empty()
@@ -344,12 +345,14 @@ pub fn perform_binary_install(target_version: &str, exe_path: &Path) -> UpdateSt
     if let Err(e) = std::fs::create_dir_all(&update_dir) {
         return UpdateState::Failed(format!("Failed to create update directory: {e}"));
     }
-    let script_path = update_dir.join("install.sh");
+    let is_windows = cfg!(windows);
+    let script_filename = if is_windows { "install.ps1" } else { "install.sh" };
+    let script_path = update_dir.join(script_filename);
 
     let curl_out = Command::new("curl")
         .args([
             "-fsSL",
-            "https://raw.githubusercontent.com/s0lda/hadron/main/install.sh",
+            &format!("https://raw.githubusercontent.com/s0lda/hadron/main/{script_filename}"),
             "-o",
         ])
         .arg(&script_path)
@@ -366,9 +369,29 @@ pub fn perform_binary_install(target_version: &str, exe_path: &Path) -> UpdateSt
         Ok(_) => {}
     }
 
-    let mut cmd = Command::new("sh");
-    cmd.arg(&script_path);
-    cmd.args(["--version", target_version, "-b", &parent.to_string_lossy()]);
+    let mut cmd = if is_windows {
+        let mut c = Command::new("powershell.exe");
+        c.args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ]);
+        c.arg(&script_path);
+        c.args([
+            "-Version",
+            target_version,
+            "-InstallDir",
+            &parent.to_string_lossy(),
+            "-NoShortcut",
+        ]);
+        c
+    } else {
+        let mut c = Command::new("sh");
+        c.arg(&script_path);
+        c.args(["--version", target_version, "-b", &parent.to_string_lossy()]);
+        c
+    };
     cmd.stdin(std::process::Stdio::null());
     let shown = format!("{cmd:?}");
     let out = cmd.output();
@@ -691,10 +714,16 @@ mod tests {
 
     #[test]
     fn test_release_tarball_url() {
-        let url = release_asset_url("0.31.1", "x86_64-unknown-linux-gnu");
+        let url_linux = release_asset_url("0.31.1", "x86_64-unknown-linux-gnu");
         assert_eq!(
-            url,
+            url_linux,
             "https://github.com/s0lda/hadron/releases/download/v0.31.1/hadron-v0.31.1-x86_64-unknown-linux-gnu.tar.gz"
+        );
+
+        let url_windows = release_asset_url("0.31.1", "x86_64-pc-windows-msvc");
+        assert_eq!(
+            url_windows,
+            "https://github.com/s0lda/hadron/releases/download/v0.31.1/hadron-v0.31.1-x86_64-pc-windows-msvc.zip"
         );
     }
 

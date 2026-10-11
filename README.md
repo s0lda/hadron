@@ -53,11 +53,17 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 
 #### Quick Install (Prebuilt Binaries — Recommended)
 
+**Linux & macOS:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/s0lda/hadron/main/install.sh | sh
 ```
-
 *Detects Linux and macOS architectures, validates SHA256 checksums, and installs all three binaries (`hadron`, `hadron-gluon`, `hadron-forge-mcp`) into `~/.local/bin`.*
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/s0lda/hadron/main/install.ps1 | iex
+```
+*Installs Hadron to `$env:LOCALAPPDATA\Programs\Hadron`, verifies SHA256 checksums, configures user PATH, and sets up Start Menu / Desktop shortcuts with the custom Hadron application icon.*
 
 #### Build from Source (Cargo)
 

@@ -22,6 +22,8 @@ jobs:
             os: macos-13
           - target: aarch64-apple-darwin
             os: macos-14
+          - target: x86_64-pc-windows-msvc
+            os: windows-2022
 
     steps:
       - name: Checkout repository
@@ -42,22 +44,40 @@ jobs:
         run: |
           cargo build --release --target ${{ matrix.target }} --features gui -p hadron --bins
 
-      - name: Package tarball
+      - name: Package release archive
         shell: bash
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           ARCHIVE_NAME="hadron-${TAG}-${{ matrix.target }}"
           DIR="dist/${ARCHIVE_NAME}"
           mkdir -p "${DIR}"
-          cp "target/${{ matrix.target }}/release/hadron" "${DIR}/"
-          cp "target/${{ matrix.target }}/release/hadron-gluon" "${DIR}/"
-          cp "target/${{ matrix.target }}/release/hadron-forge-mcp" "${DIR}/"
-          tar -czvf "dist/${ARCHIVE_NAME}.tar.gz" -C dist "${ARCHIVE_NAME}"
-          cd dist
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            cp "target/${{ matrix.target }}/release/hadron.exe" "${DIR}/"
+            cp "target/${{ matrix.target }}/release/hadron-gluon.exe" "${DIR}/"
+            cp "target/${{ matrix.target }}/release/hadron-forge-mcp.exe" "${DIR}/"
+            cp "crates/hadron-chamber/assets/hadron.ico" "${DIR}/"
+            cd dist
+            7z a "${ARCHIVE_NAME}.zip" "${ARCHIVE_NAME}"
+            tar -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "${ARCHIVE_NAME}.zip" > "${ARCHIVE_NAME}.zip.sha256"
+              sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+            else
+              shasum -a 256 "${ARCHIVE_NAME}.zip" > "${ARCHIVE_NAME}.zip.sha256"
+              shasum -a 256 "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+            fi
           else
-            shasum -a 256 "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+            cp "target/${{ matrix.target }}/release/hadron" "${DIR}/"
+            cp "target/${{ matrix.target }}/release/hadron-gluon" "${DIR}/"
+            cp "target/${{ matrix.target }}/release/hadron-forge-mcp" "${DIR}/"
+            cp "crates/hadron-chamber/assets/hadron.ico" "${DIR}/"
+            tar -czvf "dist/${ARCHIVE_NAME}.tar.gz" -C dist "${ARCHIVE_NAME}"
+            cd dist
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+            else
+              shasum -a 256 "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+            fi
           fi
 
       - name: Upload Release Asset
@@ -65,4 +85,5 @@ jobs:
         with:
           files: |
             dist/*.tar.gz
+            dist/*.zip
             dist/*.sha256
