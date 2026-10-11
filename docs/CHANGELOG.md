@@ -5,6 +5,18 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.0] - 2026-10-11
+
+### Added
+- **Architectural Dialectic & Decision Records (`hadron-chamber`, `hadron-gluon`)**:
+  - Implemented `/debate` and `/team-debate` slash commands for non-generative, read-only architectural discourse, locking out file writes and plan synthesis while quarks stress-test competing technical trade-offs.
+  - Implemented `/settle` (and `/adr` alias) command to conclude debates and record structured Architectural Decision Records directly to `.hadron/docs/adr/`.
+  - Added read-only tool gating support via `is_tool_allowed` in `hadron-gluon` and forge tool filtering during active debate turns.
+- **Workflow & Engineering Skills Suite Expansion (`hadron-gluon`)**:
+  - Registered 4 net-new procedural skills with canonical triggers, preferred roles, and front-matter schemas: `debate` (adversarial trade-off analysis), `migration-deprecation` (safe multi-crate API deprecation and backward-compatible shims), `benchmarking` (empirical performance and latency benchmarking against verified baselines), and `doc-drift-audit` (cross-referencing feature maps, CLI tables, and docs against live symbol call sites).
+  - Codified Standard Model Rule 1 (caller verification / "implemented, unwired") into `verification-before-completion` procedure.
+  - Added Hadron-specific failure vectors (NDJSON framing corruption, turn watchdog silence, and daemon process group teardown) to `chaos-testing` procedure.
+
 ## [0.30.0] - 2026-10-09
 
 ### Added

@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.31.0",
+        date: Some("2026-10-11"),
+        added: &[
+            "Architectural Dialectic: Slash commands for /debate, /team-debate, and /settle to conduct read-only trade-off analysis and persist ADRs to .hadron/docs/adr/",
+            "Read-Only Debate Tool Gating: Enforced read-only tool gating via is_tool_allowed during debate turns to prevent premature code churn and spec writing",
+            "Skills Suite Expansion: Added debate, migration-deprecation, benchmarking, and doc-drift-audit workflow procedures",
+            "Standard Model Invariants: Codified Rule 1 live caller verification in verification-before-completion and Hadron chaos failure modes in chaos-testing",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.30.0",
         date: Some("2026-10-09"),
         added: &[

@@ -25,6 +25,9 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | :--- | :--- | :--- | :--- |
 | `/brainstorm` | `/brainstorm [@Quark] <prompt>` | Explore user intent, requirements, and design before any code. | `/brainstorm @Quark the new menu` |
 | `/team-brainstorm` | `/team-brainstorm <prompt>` | Kick off multi-agent brainstorming with the whole team. | `/team-brainstorm new LSP architecture` |
+| `/debate` | `/debate [@Quark] <topic>` | Debate an architectural question or trade-off without code changes (read-only discourse). | `/debate @Quark SQLite vs sled` |
+| `/team-debate` | `/team-debate <topic>` | Kick off multi-quark dialectic debate on architectural trade-offs. | `/team-debate microservices vs monolith` |
+| `/settle` (alias `/adr`) | `/settle <verdict>` | Settle an ongoing debate, recording an Architectural Decision Record in `.hadron/docs/adr/`. | `/settle Adopt SQLite for metadata` |
 | `/writing-plans` | `/writing-plans [@Quark] <prompt>` | Turn a settled design into a detailed, bite-sized implementation plan. | `/writing-plans @Quark database schema` |
 | `/executing-plans` | `/executing-plans [@Quark] <prompt>` | Work through an existing plan task-by-task with review checkpoints. | `/executing-plans @Quark task 2` |
 | `/reviewing-work` | `/reviewing-work [@Quark] <prompt>` | Perform code review or plan verification on changes or commit diffs. | `/reviewing-work @Quark recent changes` |
@@ -48,6 +51,9 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/api-design` (alias `/contract`) | `/api-design [@Quark] <prompt>` | Design type-safe API contracts, wire protocols, and error schemas. | `/api-design @Quark daemon RPC` |
 | `/incident-investigation` (aliases `/triage`, `/investigate`) | `/incident-investigation [@Quark] <prompt>` | Systematic failure reproduction, log dissection, and post-mortem analysis. | `/triage @Quark flaky gate test` |
 | `/memory-curation` (alias `/curate-memory`) | `/memory-curation [@Quark] <prompt>` | Maintain Nucleus (Rule 9) — distill lessons into notes/, prune index.md, update features.md. | `/curate-memory @Quark` |
+| `/migration-deprecation` (aliases `/deprecate`, `/migration`) | `/migration-deprecation [@Quark] <prompt>` | Design and execute safe multi-crate API deprecations and shims. | `/deprecate @Quark legacy router API` |
+| `/benchmarking` (alias `/benchmark`) | `/benchmarking [@Quark] <prompt>` | Measure empirical performance, latency, and throughput deltas against a baseline. | `/benchmark @Quark event channel throughput` |
+| `/doc-drift-audit` (alias `/audit-docs`) | `/doc-drift-audit [@Quark] <prompt>` | Audit features.md, CLI tables, and docs against live symbol call sites and invariants. | `/doc-drift-audit @Quark` |
 | `/team-review` | `/team-review [@Quark] <prompt>` | Multi-quark peer review board across security, architecture, and simplicity. | `/team-review @Quark auth layer` |
 | `/bakeoff` | `/bakeoff <prompt>` | Spawn speculative tournament bake-off across competing solutions. | `/bakeoff json parser vs regex` |
 | `/grill-me` | `/grill-me <prompt>` | Interactive requirement alignment interview before plan synthesis. | `/grill-me session manager design` |
