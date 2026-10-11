@@ -5,6 +5,15 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.1] - 2026-10-11
+
+### Fixed
+- **ACP Session Cancellation & Prompt Interruption (`hadron-gluon`)**:
+  - Implemented ACP `session/cancel` notification handling and task cancellation in `agy_acp.py` to catch `asyncio.CancelledError` and respond with `stopReason: "cancelled"`.
+  - Added live activity card cleanup on cancellation deadline timeout in `hadron-gluon` turn runner and in `AcpQuark::reset_session` to prevent orphaned UI speaking indicators.
+- **Pending Turn Routing & Assignment Masking (`hadron-gluon`)**:
+  - Fixed `router::next_pending` to verify request answer stamps via `is_request_answered`, preventing an aborted turn's `Ground` status from masking newer interrupting turn requests directed to the same quark.
+
 ## [0.31.0] - 2026-10-11
 
 ### Added

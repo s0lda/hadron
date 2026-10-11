@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.31.1",
+        date: Some("2026-10-11"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "ACP Session Cancellation: Handled session/cancel in agy_acp.py with stopReason: cancelled to cleanly interrupt active turns",
+            "Live Activity Cleanup: Clear stale live cards on cancellation deadline abort and session reset",
+            "Pending Turn Routing: Fixed router::next_pending to match assignment stamps, preventing aborted Ground events from masking interrupting tasks",
+        ],
+    },
+    Release {
         version: "0.31.0",
         date: Some("2026-10-11"),
         added: &[
