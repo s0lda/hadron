@@ -51,10 +51,21 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 
 ### 1. Install Hadron
 
+#### Quick Install (Prebuilt Binaries — Recommended)
+
 ```bash
-# Install the full binary suite (--locked is mandatory)
+curl -fsSL https://raw.githubusercontent.com/s0lda/hadron/main/install.sh | sh
+```
+
+*Detects Linux and macOS architectures, validates SHA256 checksums, and installs all three binaries (`hadron`, `hadron-gluon`, `hadron-forge-mcp`) into `~/.local/bin`.*
+
+#### Build from Source (Cargo)
+
+```bash
+# Requires Rust 1.93+ toolchain
 cargo install --locked --git https://github.com/s0lda/hadron.git hadron
 ```
+
 
 ### 2. Launch in Any Repo
 
