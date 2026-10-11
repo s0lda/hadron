@@ -278,6 +278,84 @@ pub fn perform_cargo_install(target_version: &str) -> UpdateState {
     }
 }
 
+/// Detected installation method of the running Hadron process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallMethod {
+    Cargo,
+    Homebrew,
+    Binary,
+}
+
+/// Detects how Hadron was installed based on executable path.
+pub fn detect_install_method_from_path(path: &Path) -> InstallMethod {
+    let path_str = path.to_string_lossy();
+    if path_str.contains(".cargo") {
+        InstallMethod::Cargo
+    } else if path_str.contains("/opt/homebrew/") || path_str.contains("/usr/local/Cellar/") {
+        InstallMethod::Homebrew
+    } else {
+        InstallMethod::Binary
+    }
+}
+
+/// Builds the release asset tarball URL for a target platform.
+pub fn release_asset_url(version: &str, target_triple: &str) -> String {
+    format!(
+        "https://github.com/s0lda/hadron/releases/download/v{version}/hadron-v{version}-{target_triple}.tar.gz"
+    )
+}
+
+/// Dispatches self-update based on the detected install method.
+pub fn perform_update(target_version: &str) -> UpdateState {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => return UpdateState::Failed(format!("Cannot determine executable path: {e}")),
+    };
+    match detect_install_method_from_path(&exe) {
+        InstallMethod::Cargo => perform_cargo_install(target_version),
+        InstallMethod::Homebrew => UpdateState::Failed(
+            "Hadron was installed via Homebrew. Run `brew upgrade hadron` to update.".into(),
+        ),
+        InstallMethod::Binary => perform_binary_install(target_version, &exe),
+    }
+}
+
+/// Performs in-place binary self-update using install.sh.
+pub fn perform_binary_install(target_version: &str, exe_path: &Path) -> UpdateState {
+    let parent = match exe_path.parent() {
+        Some(p) => p,
+        None => return UpdateState::Failed("Failed to resolve binary directory".into()),
+    };
+    let mut cmd = Command::new("sh");
+    let script = format!(
+        "curl -fsSL https://raw.githubusercontent.com/s0lda/hadron/main/install.sh | sh -s -- --version {target_version} -b {}",
+        parent.display()
+    );
+    cmd.args(["-c", &script]);
+    cmd.stdin(std::process::Stdio::null());
+    let shown = format!("{cmd:?}");
+    let out = cmd.output();
+
+    match out {
+        Ok(o) if o.status.success() => {
+            write_install_log(&shown, &o);
+            UpdateState::Installed {
+                version: target_version.to_string(),
+            }
+        }
+        Ok(o) => {
+            let log = write_install_log(&shown, &o);
+            let msg = failure_message(
+                &o.status.to_string(),
+                &String::from_utf8_lossy(&o.stderr),
+                log.as_deref(),
+            );
+            UpdateState::Failed(msg)
+        }
+        Err(e) => UpdateState::Failed(format!("Failed to run installer script: {e}")),
+    }
+}
+
 impl Chamber {
     pub(super) fn check_for_updates(&mut self, cx: &mut Context<Self>) {
         if matches!(self.update_state, UpdateState::Installing { .. }) {
@@ -324,7 +402,7 @@ impl Chamber {
                 cx.spawn(async move |this, cx| {
                     let state = cx
                         .background_executor()
-                        .spawn(async move { perform_cargo_install(&target_version) })
+                        .spawn(async move { perform_update(&target_version) })
                         .await;
 
                     let restart = warrants_restart(&state);
@@ -561,5 +639,27 @@ mod tests {
         let state = parse_remote_update_info("", "0.1.0");
         assert_eq!(state, UpdateState::UpToDate);
     }
+
+    #[test]
+    fn test_detect_install_method() {
+        let cargo_path = Path::new("/home/user/.cargo/bin/hadron");
+        assert_eq!(detect_install_method_from_path(cargo_path), InstallMethod::Cargo);
+
+        let brew_path = Path::new("/opt/homebrew/bin/hadron");
+        assert_eq!(detect_install_method_from_path(brew_path), InstallMethod::Homebrew);
+
+        let local_path = Path::new("/home/user/.local/bin/hadron");
+        assert_eq!(detect_install_method_from_path(local_path), InstallMethod::Binary);
+    }
+
+    #[test]
+    fn test_release_tarball_url() {
+        let url = release_asset_url("0.31.1", "x86_64-unknown-linux-gnu");
+        assert_eq!(
+            url,
+            "https://github.com/s0lda/hadron/releases/download/v0.31.1/hadron-v0.31.1-x86_64-unknown-linux-gnu.tar.gz"
+        );
+    }
 }
+
 
