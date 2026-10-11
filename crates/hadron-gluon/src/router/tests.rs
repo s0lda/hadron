@@ -725,3 +725,41 @@ fn an_interrupted_turn_ground_does_not_mask_a_newer_interrupting_request() {
     ];
     assert_eq!(next_pending(&events), Some(worker));
 }
+
+#[test]
+fn gluon_gate_handback_message_is_answered_by_continued_assignment() {
+    let worker = QuarkId::new("worker");
+    let assignment_id = ulid::Ulid::new();
+    let handback = Event::new(
+        Actor::Gluon,
+        Some(worker.clone()),
+        Kind::Message {
+            body: "@worker The merge gate stopped this branch from landing...".into(),
+        },
+    )
+    .with_answers(assignment_id);
+
+    // Prior to turn completion, it is pending
+    assert_eq!(next_pending(&[handback.clone()]), Some(worker.clone()));
+
+    // After the quark finishes its turn with answers == assignment_id, it is answered
+    let completion = Event::new(
+        Actor::Quark(worker.clone()),
+        None,
+        Kind::Status { state: QuarkState::Ground },
+    )
+    .answering(Some(assignment_id));
+
+    assert_eq!(next_pending(&[handback.clone(), completion]), None);
+
+    // Also answered if the turn completion is a Message answering the assignment
+    let completion_msg = Event::new(
+        Actor::Quark(worker),
+        None,
+        Kind::Message { body: "fixed".into() },
+    )
+    .answering(Some(assignment_id));
+
+    assert_eq!(next_pending(&[handback, completion_msg]), None);
+}
+

@@ -28,7 +28,8 @@ use crate::preons::Preon;
 /// which is what stops an unanswerable grant from being rediscovered forever.
 ///
 /// Does event `c` represent `quark` completing a turn that answers request `req`?
-/// - `Kind::Message`: requires completion with `answers == req.id` (or un-stamped legacy).
+/// - `Kind::Message`: requires completion with `answers == req.id` (or un-stamped legacy),
+///   or if authored by `Actor::Gluon`, matching `req.answers` (e.g. merge gate handbacks).
 /// - `Kind::Assign`: requires completion with `answers == req.answers` (the continued assignment).
 /// - `Kind::PermissionGrant`: satisfied by any subsequent completion for `target` that resolves the pause.
 pub fn is_request_answered(events_after: &[Event], req: &Event, target: &QuarkId) -> bool {
@@ -38,7 +39,7 @@ pub fn is_request_answered(events_after: &[Event], req: &Event, target: &QuarkId
         }
         match &req.kind {
             Kind::Message { .. } => match c.answers {
-                Some(a) => a == req.id,
+                Some(a) => a == req.id || (req.from == Actor::Gluon && req.answers == Some(a)),
                 None => true,
             },
             Kind::Assign { .. } => match c.answers {
