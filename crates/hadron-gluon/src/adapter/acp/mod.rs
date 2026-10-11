@@ -311,6 +311,10 @@ impl Quark for AcpQuark {
     /// the agent subprocess (see the struct doc). The next turn re-boots from scratch.
     /// A no-op if no session is open, so it is safe to call on an idle quark.
     fn reset_session(&mut self) {
+        if let Some(feed) = &self.live {
+            feed.set_active(false);
+            feed.clear();
+        }
         self.session = None;
         self.sync_cancel_slot();
     }

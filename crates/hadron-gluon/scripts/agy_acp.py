@@ -192,12 +192,19 @@ async def handle_prompt(msg_id, session_id, prompt):
                 "outputTokens": getattr(usage, "candidates_token_count", 0)
             } if usage else None
         })
+    except asyncio.CancelledError:
+        logger.info(f"session {session_id} prompt cancelled gracefully")
+        send_response(msg_id, {"stopReason": "cancelled"})
+        raise
     except Exception as e:
         # A bare `stopReason: error` tells the swarm the turn failed and nothing
         # about why. Hand back the reason — the client turns it into a real error.
         logger.error(f"turn failed: {e}")
         session_data["agent"] = None
         send_error(msg_id, f"Antigravity SDK turn failed: {e}")
+    finally:
+        if session_data.get("current_task") is asyncio.current_task():
+            session_data["current_task"] = None
 
 
 def session_config_options(session_id):
@@ -284,6 +291,7 @@ async def main():
                 "agent": None,
                 "model": SEAT_MODEL,
                 "cwd": params.get("cwd", ""),
+                "current_task": None,
             }
             send_response(msg_id, session_config_response(session_id))
 
@@ -305,7 +313,19 @@ async def main():
         elif method == "session/prompt":
             session_id = params.get("sessionId")
             prompt = params.get("prompt", [])
-            asyncio.create_task(handle_prompt(msg_id, session_id, prompt))
+            task = asyncio.create_task(handle_prompt(msg_id, session_id, prompt))
+            if session_id in sessions:
+                sessions[session_id]["current_task"] = task
+
+        elif method == "session/cancel":
+            session_id = params.get("sessionId")
+            if session_id in sessions:
+                task = sessions[session_id].get("current_task")
+                if task and not task.done():
+                    logger.info(f"cancelling in-flight prompt for session {session_id}")
+                    task.cancel()
+            if msg_id is not None:
+                send_response(msg_id, {})
 
         elif msg_id is not None:
             send_response(msg_id, {})

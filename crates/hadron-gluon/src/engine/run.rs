@@ -244,6 +244,8 @@ impl super::Engine {
                                     cancel_requested.remove(&key);
                                     dispatched_at_len.remove(&key);
                                     dispatched_assignment.remove(&key);
+                                    let live_dir = hadron_lattice::live::live_dir(&self.field_path);
+                                    let _ = hadron_lattice::live::clear(&live_dir, &target);
                                     // The abandoned task is not gone — it is handed to
                                     // the next dispatch for this quark, which merges it
                                     // with whatever interrupted it (Task 3 of

@@ -81,6 +81,45 @@ class TestAgyAcpModels(unittest.TestCase):
             models = agy_acp.fetch_sdk_models()
             self.assertEqual(models, agy_acp.DEFAULT_SUPPORTED_MODELS)
 
+    def test_handle_prompt_cancelled(self):
+        import asyncio
+        session_id = "test-session-cancel"
+        mock_agent = MagicMock()
+        
+        async def hang_chat(prompt):
+            await asyncio.sleep(10)
+        mock_agent.chat.side_effect = hang_chat
+
+        agy_acp.sessions[session_id] = {
+            "agent": mock_agent,
+            "model": "gemini-3.6-flash",
+            "cwd": "",
+            "current_task": None,
+        }
+
+        responses = []
+        with patch("agy_acp.send_response", side_effect=lambda mid, res: responses.append((mid, res))):
+            async def run():
+                prompt_task = asyncio.create_task(
+                    agy_acp.handle_prompt(42, session_id, [{"type": "text", "text": "hello"}])
+                )
+                agy_acp.sessions[session_id]["current_task"] = prompt_task
+                await asyncio.sleep(0.01)
+                # Cancel the task
+                prompt_task.cancel()
+                try:
+                    await prompt_task
+                except asyncio.CancelledError:
+                    pass
+
+            asyncio.run(run())
+
+        self.assertEqual(len(responses), 1)
+        msg_id, res = responses[0]
+        self.assertEqual(msg_id, 42)
+        self.assertEqual(res, {"stopReason": "cancelled"})
+        self.assertIsNone(agy_acp.sessions[session_id]["current_task"])
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -212,13 +212,7 @@ impl super::Engine {
     /// and stranded a quark whose turn was interrupted after it went Excited. `next_pending`
     /// already used this reading; sharing it is what keeps the two from disagreeing.
     fn has_answered(after: &[Event], addressee: &QuarkId, msg_id: ulid::Ulid) -> bool {
-        after.iter().any(|e| {
-            crate::router::is_turn_completion(e, addressee)
-                && match e.answers {
-                    Some(a) => a == msg_id,
-                    None => true, // legacy event: fall back to "it spoke after the message"
-                }
-        })
+        crate::router::has_answered(after, addressee, msg_id)
     }
 
     /// Whether a genuinely new `Message` addressed to or mentioning `target` has

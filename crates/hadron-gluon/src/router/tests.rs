@@ -712,5 +712,16 @@ fn code_blocks_and_inline_spans_do_not_excite_quarks() {
     assert!(task_names_card_specifically("Assigning to @worker for fix", worker_card, &[]));
 }
 
-
-
+#[test]
+fn an_interrupted_turn_ground_does_not_mask_a_newer_interrupting_request() {
+    let worker = QuarkId::new("worker");
+    let req1 = msg(Actor::Human, Some("worker"), "task 1");
+    let req2 = msg(Actor::Human, Some("worker"), "task 2 interrupting");
+    let events = vec![
+        req1.clone(),
+        req2.clone(),
+        Event::new(Actor::Quark(worker.clone()), None, Kind::Status { state: QuarkState::Ground })
+            .answering(Some(req1.id)),
+    ];
+    assert_eq!(next_pending(&events), Some(worker));
+}

@@ -27,6 +27,30 @@ use crate::preons::Preon;
 /// `land()` errors reroutes to `Blocked` rather than propagating (`engine/merge.rs`) —
 /// which is what stops an unanswerable grant from being rediscovered forever.
 ///
+/// Does event `c` represent `quark` completing a turn that answers request `req`?
+/// - `Kind::Message`: requires completion with `answers == req.id` (or un-stamped legacy).
+/// - `Kind::Assign`: requires completion with `answers == req.answers` (the continued assignment).
+/// - `Kind::PermissionGrant`: satisfied by any subsequent completion for `target` that resolves the pause.
+pub fn is_request_answered(events_after: &[Event], req: &Event, target: &QuarkId) -> bool {
+    events_after.iter().any(|c| {
+        if !is_turn_completion(c, target) {
+            return false;
+        }
+        match &req.kind {
+            Kind::Message { .. } => match c.answers {
+                Some(a) => a == req.id,
+                None => true,
+            },
+            Kind::Assign { .. } => match c.answers {
+                Some(a) => a == req.answers.unwrap_or(req.id),
+                None => true,
+            },
+            Kind::PermissionGrant { .. } => true,
+            _ => true,
+        }
+    })
+}
+
 /// Only the newest unanswered request is returned. Two quarks masked at once therefore
 /// resolve one per dispatch pass, which the engine's re-read loop already does.
 pub fn next_pending(events: &[Event]) -> Option<QuarkId> {
@@ -35,9 +59,23 @@ pub fn next_pending(events: &[Event]) -> Option<QuarkId> {
         .enumerate()
         .rev()
         .filter(|(_, e)| e.to.is_some() && is_turn_request(e))
-        .map(|(idx, e)| (idx, e.to.clone().unwrap()))
-        .find(|(idx, target)| !events[idx + 1..].iter().any(|e| is_turn_completion(e, target)))
-        .map(|(_, target)| target)
+        .find(|(idx, e)| {
+            let target = e.to.as_ref().unwrap();
+            !is_request_answered(&events[idx + 1..], e, target)
+        })
+        .map(|(_, e)| e.to.clone().unwrap())
+}
+
+/// Does event `e` represent `quark` completing a turn that answers `request_id` (or
+/// any request for an un-stamped legacy completion)?
+pub fn has_answered(after: &[Event], quark: &QuarkId, request_id: ulid::Ulid) -> bool {
+    after.iter().any(|e| {
+        is_turn_completion(e, quark)
+            && match e.answers {
+                Some(a) => a == request_id,
+                None => true, // legacy event: fall back to "it spoke after the message"
+            }
+    })
 }
 
 /// Does event `e` **request or resume** a turn from the quark it addresses (`to =
