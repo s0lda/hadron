@@ -45,16 +45,35 @@ fn main() {
     // the field path is the first non-flag argument (so flag order does not matter).
     let args: Vec<String> = std::env::args().collect();
 
-    // Check for headless batch subcommands (`hadron run <prompt>` or `hadron ci --plan <path>`)
-    if let Some(cmd) = headless_runner::parse_headless_command(&args) {
-        let repo_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        match headless_runner::run_headless_batch(cmd, &repo_root) {
-            Ok(()) => std::process::exit(0),
-            Err(e) => {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
+    match headless_runner::parse_cli_action(&args) {
+        headless_runner::CliAction::Version => {
+            println!("hadron {}", env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
+        headless_runner::CliAction::Help => {
+            headless_runner::print_help();
+            std::process::exit(0);
+        }
+        headless_runner::CliAction::Update { version } => {
+            match headless_runner::run_cli_update(version.as_deref()) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
             }
         }
+        headless_runner::CliAction::Batch(cmd) => {
+            let repo_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            match headless_runner::run_headless_batch(cmd, &repo_root) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        headless_runner::CliAction::LaunchChamber => {}
     }
 
     let no_daemon = args.iter().any(|a| a == "--no-daemon");

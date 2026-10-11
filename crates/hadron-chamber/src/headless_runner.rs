@@ -3,6 +3,118 @@ use hadron_lattice::io::append_event;
 use hadron_lattice::term::{self, Source};
 use hadron_lattice::{Actor, Event, Kind};
 
+/// High-level actions parsed from CLI arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CliAction {
+    Version,
+    Help,
+    Update { version: Option<String> },
+    Batch(HeadlessCommand),
+    LaunchChamber,
+}
+
+/// Parses CLI arguments into a `CliAction`.
+pub fn parse_cli_action(args: &[String]) -> CliAction {
+    if args.len() < 2 {
+        return CliAction::LaunchChamber;
+    }
+    match args[1].as_str() {
+        "-V" | "--version" => CliAction::Version,
+        "-h" | "--help" => CliAction::Help,
+        "update" => {
+            let mut version = None;
+            let mut iter = args[2..].iter();
+            while let Some(arg) = iter.next() {
+                if arg == "--version" || arg == "-v" {
+                    if let Some(val) = iter.next() {
+                        version = Some(val.trim_start_matches('v').to_string());
+                    }
+                } else if arg == "--latest" {
+                    version = None;
+                } else if !arg.starts_with("--") {
+                    version = Some(arg.trim_start_matches('v').to_string());
+                }
+            }
+            CliAction::Update { version }
+        }
+        "run" | "ci" => {
+            if let Some(cmd) = parse_headless_command(args) {
+                CliAction::Batch(cmd)
+            } else {
+                CliAction::Help
+            }
+        }
+        _ => CliAction::LaunchChamber,
+    }
+}
+
+/// Prints top-level CLI help text.
+pub fn print_help() {
+    let version = env!("CARGO_PKG_VERSION");
+    println!("Hadron {version}");
+    println!("A desktop chamber for orchestrating a swarm of AI coding agents across isolated git worktrees\n");
+    println!("USAGE:");
+    println!("    hadron [OPTIONS] [FIELD_PATH]");
+    println!("    hadron <SUBCOMMAND>\n");
+    println!("OPTIONS:");
+    println!("    -h, --help       Print help information");
+    println!("    -V, --version    Print version information");
+    println!("    --no-daemon      Attach to an already-running gluon daemon without auto-spawning one\n");
+    println!("SUBCOMMANDS:");
+    println!("    run <prompt>            Run a single headless swarm turn");
+    println!("    ci [--plan <path>]      Run autonomous headless CI execution");
+    println!("    update [--version <v>]  Self-update to latest or specific release version");
+}
+
+/// Runs self-update from the CLI.
+pub fn run_cli_update(target_version: Option<&str>) -> Result<(), String> {
+    term::info(
+        Source::Chamber,
+        &format!(
+            "Hadron Updater: Preparing update (target: {})...",
+            target_version.unwrap_or("latest")
+        ),
+    );
+
+    let exe = std::env::current_exe().map_err(|e| format!("Cannot locate current binary: {e}"))?;
+    let path_str = exe.to_string_lossy();
+    if path_str.contains(".cargo") {
+        let tag = target_version.map(|v| format!("v{}", v.trim_start_matches('v')));
+        let mut cmd = std::process::Command::new("cargo");
+        cmd.args(["install", "--locked", "--git", "https://github.com/s0lda/hadron.git"]);
+        if let Some(t) = &tag {
+            cmd.args(["--tag", t]);
+        }
+        cmd.arg("hadron");
+        term::info(Source::Chamber, &format!("Executing cargo: {:?}", cmd));
+        let status = cmd.status().map_err(|e| format!("Failed to run cargo: {e}"))?;
+        if status.success() {
+            term::info(Source::Chamber, "Hadron updated successfully via Cargo.");
+            Ok(())
+        } else {
+            Err(format!("Cargo install failed with status: {status}"))
+        }
+    } else {
+        let mut cmd = std::process::Command::new("sh");
+        let mut sh_cmd = "curl -fsSL https://raw.githubusercontent.com/s0lda/hadron/main/install.sh | sh".to_string();
+        if let Some(v) = target_version {
+            sh_cmd = format!("curl -fsSL https://raw.githubusercontent.com/s0lda/hadron/main/install.sh | sh -s -- --version {v}");
+        }
+        if let Some(parent) = exe.parent() {
+            sh_cmd = format!("{sh_cmd} -b {}", parent.display());
+        }
+        cmd.args(["-c", &sh_cmd]);
+        term::info(Source::Chamber, &format!("Executing installer: {:?}", cmd));
+        let status = cmd.status().map_err(|e| format!("Failed to run installer: {e}"))?;
+        if status.success() {
+            term::info(Source::Chamber, "Hadron updated successfully.");
+            Ok(())
+        } else {
+            Err(format!("Installer failed with status: {status}"))
+        }
+    }
+}
+
 /// Subcommands supported by Hadron in headless runner mode.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeadlessCommand {
@@ -210,4 +322,41 @@ mod tests {
             _ => panic!("Expected Message event"),
         }
     }
+
+    #[test]
+    fn test_parse_cli_actions() {
+        assert_eq!(
+            parse_cli_action(&["hadron".into(), "-V".into()]),
+            CliAction::Version
+        );
+        assert_eq!(
+            parse_cli_action(&["hadron".into(), "--version".into()]),
+            CliAction::Version
+        );
+        assert_eq!(
+            parse_cli_action(&["hadron".into(), "-h".into()]),
+            CliAction::Help
+        );
+        assert_eq!(
+            parse_cli_action(&["hadron".into(), "--help".into()]),
+            CliAction::Help
+        );
+        assert_eq!(
+            parse_cli_action(&["hadron".into(), "update".into()]),
+            CliAction::Update { version: None }
+        );
+        assert_eq!(
+            parse_cli_action(&["hadron".into(), "update".into(), "--version".into(), "0.32.0".into()]),
+            CliAction::Update { version: Some("0.32.0".into()) }
+        );
+        assert_eq!(
+            parse_cli_action(&["hadron".into(), "run".into(), "test prompt".into()]),
+            CliAction::Batch(HeadlessCommand::Run { prompt: "test prompt".into() })
+        );
+        assert_eq!(
+            parse_cli_action(&["hadron".into()]),
+            CliAction::LaunchChamber
+        );
+    }
 }
+
