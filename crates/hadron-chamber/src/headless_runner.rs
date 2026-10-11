@@ -66,8 +66,26 @@ pub fn print_help() {
     println!("    update [--version <v>]  Self-update to latest or specific release version");
 }
 
+/// Validates that a version string contains only safe semver characters.
+pub fn validate_version_string(v: &str) -> Result<&str, String> {
+    let clean = v.trim_start_matches('v');
+    if clean.is_empty() || clean.len() > 64 {
+        return Err("Version string must not be empty or excessively long".into());
+    }
+    if !clean
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return Err(format!("Invalid characters in version string: '{v}'"));
+    }
+    Ok(v)
+}
+
 /// Runs self-update from the CLI.
 pub fn run_cli_update(target_version: Option<&str>) -> Result<(), String> {
+    if let Some(v) = target_version {
+        validate_version_string(v)?;
+    }
     term::info(
         Source::Chamber,
         &format!(
@@ -95,15 +113,39 @@ pub fn run_cli_update(target_version: Option<&str>) -> Result<(), String> {
             Err(format!("Cargo install failed with status: {status}"))
         }
     } else {
+        let parent = exe.parent().ok_or_else(|| "Failed to resolve binary directory".to_string())?;
+        let update_dir = hadron_lattice::user_hadron_dir()
+            .map(|p| p.join("update"))
+            .unwrap_or_else(|| std::env::temp_dir().join("hadron-update"));
+        std::fs::create_dir_all(&update_dir)
+            .map_err(|e| format!("Failed to create update directory: {e}"))?;
+        let script_path = update_dir.join("install.sh");
+
+        term::info(Source::Chamber, "Downloading installer script...");
+        let curl_out = std::process::Command::new("curl")
+            .args([
+                "-fsSL",
+                "https://raw.githubusercontent.com/s0lda/hadron/main/install.sh",
+                "-o",
+            ])
+            .arg(&script_path)
+            .output()
+            .map_err(|e| format!("Failed to invoke curl: {e}"))?;
+
+        if !curl_out.status.success() {
+            return Err(format!(
+                "Failed to download installer: {}",
+                String::from_utf8_lossy(&curl_out.stderr)
+            ));
+        }
+
         let mut cmd = std::process::Command::new("sh");
-        let mut sh_cmd = "curl -fsSL https://raw.githubusercontent.com/s0lda/hadron/main/install.sh | sh".to_string();
+        cmd.arg(&script_path);
         if let Some(v) = target_version {
-            sh_cmd = format!("curl -fsSL https://raw.githubusercontent.com/s0lda/hadron/main/install.sh | sh -s -- --version {v}");
+            cmd.args(["--version", v]);
         }
-        if let Some(parent) = exe.parent() {
-            sh_cmd = format!("{sh_cmd} -b {}", parent.display());
-        }
-        cmd.args(["-c", &sh_cmd]);
+        cmd.args(["-b", &parent.to_string_lossy()]);
+        cmd.stdin(std::process::Stdio::null());
         term::info(Source::Chamber, &format!("Executing installer: {:?}", cmd));
         let status = cmd.status().map_err(|e| format!("Failed to run installer: {e}"))?;
         if status.success() {
@@ -357,6 +399,20 @@ mod tests {
             parse_cli_action(&["hadron".into()]),
             CliAction::LaunchChamber
         );
+    }
+
+    #[test]
+    fn test_validate_version_string() {
+        assert!(validate_version_string("0.31.1").is_ok());
+        assert!(validate_version_string("v0.31.1").is_ok());
+        assert!(validate_version_string("1.0.0-alpha.1").is_ok());
+
+        assert!(validate_version_string("").is_err());
+        assert!(validate_version_string("v").is_err());
+        assert!(validate_version_string("0.31.1; rm -rf /").is_err());
+        assert!(validate_version_string("0.31.1 | sh").is_err());
+        assert!(validate_version_string("0.31.1`whoami`").is_err());
+        assert!(validate_version_string("0.31.1$(id)").is_err());
     }
 }
 

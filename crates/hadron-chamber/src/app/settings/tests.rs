@@ -483,11 +483,11 @@ fn test_sandbox_settings_mode_and_tag_mapping() {
 fn test_auto_detect_env_provider() {
     use super::providers::{detect_available_env_provider, EnvProviderCandidate};
 
-    let fake_env = [("ANTHROPIC_API_KEY", "sk-ant-test")];
+    let fake_env = [("ANTHROPIC_API_KEY", "mock-anthropic-key-12345")];
     let candidate = detect_available_env_provider(&fake_env);
     assert_eq!(candidate, Some(EnvProviderCandidate::Anthropic));
 
-    let fake_env_openai = [("OPENAI_API_KEY", "sk-proj-test")];
+    let fake_env_openai = [("OPENAI_API_KEY", "mock-openai-key-12345")];
     let candidate_openai = detect_available_env_provider(&fake_env_openai);
     assert_eq!(candidate_openai, Some(EnvProviderCandidate::OpenAi));
 

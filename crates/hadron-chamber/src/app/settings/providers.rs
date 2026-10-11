@@ -2005,6 +2005,26 @@ impl super::Chamber {
         match &self.wizard_state {
             WizardState::None => {
                 let mut list = v_flex().gap_3();
+                if self.providers.is_empty() {
+                    let env_vars: Vec<(String, String)> = std::env::vars().collect();
+                    if let Some(candidate) = detect_available_env_provider(&env_vars) {
+                        list = list.child(
+                            div()
+                                .p_3()
+                                .rounded_md()
+                                .bg(theme::input_bg())
+                                .border_1()
+                                .border_color(theme::border())
+                                .text_xs()
+                                .text_color(theme::text_secondary())
+                                .child(format!(
+                                    "Detected {} via ${}. Click 'Add Quark' to configure.",
+                                    candidate.display_name(),
+                                    candidate.env_var()
+                                )),
+                        );
+                    }
+                }
                 for provider in &self.providers {
                     let model_text = if provider.model.trim().is_empty() {
                         "—".to_string()

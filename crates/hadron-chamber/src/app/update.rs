@@ -322,16 +322,53 @@ pub fn perform_update(target_version: &str) -> UpdateState {
 
 /// Performs in-place binary self-update using install.sh.
 pub fn perform_binary_install(target_version: &str, exe_path: &Path) -> UpdateState {
+    let clean = target_version.trim_start_matches('v');
+    if clean.is_empty()
+        || clean.len() > 64
+        || !clean
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return UpdateState::Failed(format!("Invalid version string format: '{target_version}'"));
+    }
+
     let parent = match exe_path.parent() {
         Some(p) => p,
         None => return UpdateState::Failed("Failed to resolve binary directory".into()),
     };
+
+    let update_dir = match update_dir() {
+        Some(d) => d,
+        None => std::env::temp_dir().join("hadron-update"),
+    };
+    if let Err(e) = std::fs::create_dir_all(&update_dir) {
+        return UpdateState::Failed(format!("Failed to create update directory: {e}"));
+    }
+    let script_path = update_dir.join("install.sh");
+
+    let curl_out = Command::new("curl")
+        .args([
+            "-fsSL",
+            "https://raw.githubusercontent.com/s0lda/hadron/main/install.sh",
+            "-o",
+        ])
+        .arg(&script_path)
+        .output();
+
+    match curl_out {
+        Ok(o) if !o.status.success() => {
+            return UpdateState::Failed(format!(
+                "Failed to download installer script: {}",
+                String::from_utf8_lossy(&o.stderr)
+            ));
+        }
+        Err(e) => return UpdateState::Failed(format!("Failed to invoke curl: {e}")),
+        Ok(_) => {}
+    }
+
     let mut cmd = Command::new("sh");
-    let script = format!(
-        "curl -fsSL https://raw.githubusercontent.com/s0lda/hadron/main/install.sh | sh -s -- --version {target_version} -b {}",
-        parent.display()
-    );
-    cmd.args(["-c", &script]);
+    cmd.arg(&script_path);
+    cmd.args(["--version", target_version, "-b", &parent.to_string_lossy()]);
     cmd.stdin(std::process::Stdio::null());
     let shown = format!("{cmd:?}");
     let out = cmd.output();
@@ -659,6 +696,16 @@ mod tests {
             url,
             "https://github.com/s0lda/hadron/releases/download/v0.31.1/hadron-v0.31.1-x86_64-unknown-linux-gnu.tar.gz"
         );
+    }
+
+    #[test]
+    fn test_perform_binary_install_rejects_malicious_version() {
+        let dummy_path = Path::new("/usr/local/bin/hadron");
+        let result = perform_binary_install("0.31.1; echo injected", dummy_path);
+        assert!(matches!(result, UpdateState::Failed(msg) if msg.contains("Invalid version string format")));
+
+        let result2 = perform_binary_install("0.31.1`id`", dummy_path);
+        assert!(matches!(result2, UpdateState::Failed(msg) if msg.contains("Invalid version string format")));
     }
 }
 
