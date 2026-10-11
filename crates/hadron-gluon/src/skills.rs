@@ -323,6 +323,54 @@ pub const SKILLS: &[Skill] = &[
         ],
         body: include_str!("../invariants/skills/memory-curation.md"),
     },
+    Skill {
+        id: "debate",
+        triggers: &[
+            "debate",
+            "team debate",
+            "architectural debate",
+            "trade-off analysis",
+            "devil's advocate",
+            "dialectic analysis",
+        ],
+        body: include_str!("../invariants/skills/debate.md"),
+    },
+    Skill {
+        id: "migration-deprecation",
+        triggers: &[
+            "deprecate",
+            "migration",
+            "migrate api",
+            "phased cutover",
+            "api deprecation",
+            "deprecation",
+        ],
+        body: include_str!("../invariants/skills/migration-deprecation.md"),
+    },
+    Skill {
+        id: "benchmarking",
+        triggers: &[
+            "benchmark",
+            "run benchmark",
+            "perf benchmark",
+            "measure latency",
+            "throughput test",
+            "latency benchmark",
+        ],
+        body: include_str!("../invariants/skills/benchmarking.md"),
+    },
+    Skill {
+        id: "doc-drift-audit",
+        triggers: &[
+            "doc drift",
+            "audit docs",
+            "check doc drift",
+            "sync features.md",
+            "documentation audit",
+            "features audit",
+        ],
+        body: include_str!("../invariants/skills/doc-drift-audit.md"),
+    },
 ];
 
 /// The canonical trigger phrase for a built-in skill id, or `None` if no such id.

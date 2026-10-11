@@ -28,3 +28,7 @@ These are your built-in procedures. The engine hands you a starting one below; i
 - **api-design** — Design type-safe API contracts, wire protocols, backwards compatibility, and error schemas
 - **incident-investigation** — Systematic failure reproduction, log/NDJSON dissection, bisection, and post-mortem generation
 - **memory-curation** — Maintain .hadron/nucleus (Rule 9) — distill lessons into notes/, prune index.md, and update features.md
+- **debate** — Conduct structured architectural debate and trade-off analysis without code changes, producing an ADR
+- **migration-deprecation** — Design and execute safe multi-crate API deprecations, backwards-compatible shims, and caller migrations
+- **benchmarking** — Measure and prove empirical performance, latency, and throughput deltas against a verified baseline
+- **doc-drift-audit** — Audit features.md, CLI tables, and docs against live symbol call sites and invariants to prevent drift

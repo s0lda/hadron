@@ -265,6 +265,38 @@ fn the_phrasings_a_human_actually_types_all_land() {
             "missed: {task:?}"
         );
     }
+
+    for task in ["let's debate this approach", "team debate on database architecture", "devil's advocate on redis"] {
+        assert_eq!(
+            select(task, &skills).map(|m| m.id),
+            Some("debate".to_string()),
+            "missed: {task:?}"
+        );
+    }
+
+    for task in ["migrate api to new traits", "phased cutover of router", "deprecate old session format"] {
+        assert_eq!(
+            select(task, &skills).map(|m| m.id),
+            Some("migration-deprecation".to_string()),
+            "missed: {task:?}"
+        );
+    }
+
+    for task in ["run benchmark on parser", "perf benchmark on locks", "measure latency of dispatch"] {
+        assert_eq!(
+            select(task, &skills).map(|m| m.id),
+            Some("benchmarking".to_string()),
+            "missed: {task:?}"
+        );
+    }
+
+    for task in ["audit docs for outdated commands", "sync features.md with code", "check doc drift in commands"] {
+        assert_eq!(
+            select(task, &skills).map(|m| m.id),
+            Some("doc-drift-audit".to_string()),
+            "missed: {task:?}"
+        );
+    }
 }
 
 #[test]
@@ -668,6 +700,10 @@ fn skills_map_to_their_preferred_role() {
     assert_eq!(preferred_role("incident-investigation"), Some("triage"));
     assert_eq!(preferred_role("systematic-debugging"), Some("triage"));
     assert_eq!(preferred_role("memory-curation"), Some("scribe"));
+    assert_eq!(preferred_role("debate"), Some("architect"));
+    assert_eq!(preferred_role("migration-deprecation"), Some("executor"));
+    assert_eq!(preferred_role("benchmarking"), Some("optimizer"));
+    assert_eq!(preferred_role("doc-drift-audit"), Some("scribe"));
     assert_eq!(preferred_role("release"), None);
 }
 
