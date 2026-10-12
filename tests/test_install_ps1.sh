@@ -5,22 +5,26 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Verify powershell.exe is available
+# Verify powershell.exe is available and responsive
 if ! command -v powershell.exe >/dev/null 2>&1; then
     echo "Notice: powershell.exe not found on PATH. Skipping Windows install.ps1 tests on non-WSL environment."
     exit 0
 fi
 
+run_ps() {
+    powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$@" < /dev/null
+}
+
 WIN_SCRIPT_PATH=$(wslpath -w "$REPO_ROOT/install.ps1")
 
 echo "==> 1. Testing install.ps1 -Help"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '$WIN_SCRIPT_PATH' -Help" | grep "Hadron Windows Installer" >/dev/null
+run_ps "& '$WIN_SCRIPT_PATH' -Help" | grep "Hadron Windows Installer" >/dev/null
 echo "install.ps1 -Help check passed"
 
 echo "==> 2. Testing install.ps1 -DryRun"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '$WIN_SCRIPT_PATH' -DryRun -Version 0.31.1" | grep "Would install Hadron v0.31.1" >/dev/null
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '$WIN_SCRIPT_PATH' -DryRun -Latest" | grep "Would install Hadron" >/dev/null
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '$WIN_SCRIPT_PATH' -DryRun -Version 0.31.1 -DesktopShortcut" | grep "Desktop Shortcut: True" >/dev/null
+run_ps "& '$WIN_SCRIPT_PATH' -DryRun -Version 0.31.1" | grep "Would install Hadron v0.31.1" >/dev/null
+run_ps "& '$WIN_SCRIPT_PATH' -DryRun -Latest" | grep "Would install Hadron" >/dev/null
+run_ps "& '$WIN_SCRIPT_PATH' -DryRun -Version 0.31.1 -DesktopShortcut" | grep "Desktop Shortcut: True" >/dev/null
 echo "install.ps1 -DryRun checks passed"
 
 echo "==> 3. Testing end-to-end extraction and SHA256 checksum verification"
@@ -49,7 +53,7 @@ WIN_INSTALL_DEST=$(wslpath -w "$INSTALL_DEST")
 WIN_ARCHIVE_URL="file://$WIN_STAGE_DIR\\$ARCHIVE_NAME"
 WIN_CHECKSUM_URL="file://$WIN_STAGE_DIR\\SHA256SUMS"
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+run_ps "
     \$env:HADRON_DOWNLOAD_URL = '$WIN_ARCHIVE_URL'
     \$env:HADRON_CHECKSUMS_URL = '$WIN_CHECKSUM_URL'
     & '$WIN_SCRIPT_PATH' -Version 0.31.1 -InstallDir '$WIN_INSTALL_DEST' -NoShortcut
@@ -69,7 +73,7 @@ WIN_CORRUPT_DEST=$(wslpath -w "$CORRUPT_DEST")
 echo "corrupted content" > "$STAGE_DIR/corrupt.zip"
 WIN_CORRUPT_URL="file://$WIN_STAGE_DIR\\corrupt.zip"
 
-if powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+if run_ps "
     \$env:HADRON_DOWNLOAD_URL = '$WIN_CORRUPT_URL'
     \$env:HADRON_CHECKSUMS_URL = '$WIN_CHECKSUM_URL'
     & '$WIN_SCRIPT_PATH' -Version 0.31.1 -InstallDir '$WIN_CORRUPT_DEST' -NoShortcut

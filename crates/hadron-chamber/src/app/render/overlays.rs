@@ -20,6 +20,21 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.32.0",
+        date: Some("2026-10-12"),
+        added: &[
+            "Multi-Platform Distribution: Standalone installers (install.sh, install.ps1) with SHA256 verification and custom app icon packaging",
+            "CLI Flags & Headless Updater: Added --version (-V), --help (-h), and headless hadron update command with install-method detection",
+            "Zero-Config Onboarding: Auto-detection of local Ollama and environment API keys (Anthropic, OpenAI) on initial launch",
+            "CI Release Automation: Multi-platform GitHub Actions matrix building Linux, macOS, and Windows MSVC binaries",
+        ],
+        changed: &[],
+        fixed: &[
+            "Router Turn Completion: Fixed router::is_request_answered for Gluon gate handbacks to resolve continued-assignment dispatch",
+            "Updater Hardening: Eliminated shell string interpolation in update runners, enforcing discrete arguments and semver whitelisting",
+        ],
+    },
+    Release {
         version: "0.31.1",
         date: Some("2026-10-11"),
         added: &[],

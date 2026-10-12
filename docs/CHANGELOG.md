@@ -5,6 +5,29 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.32.0] - 2026-10-12
+
+### Added
+- **Multi-Platform Binary Distribution & Standalone Installers (`install.sh`, `install.ps1`)**:
+  - Authored standalone POSIX installer `install.sh` supporting Linux (`x86_64`) and macOS (`x86_64`, `arm64`), automatic release resolution, SHA256 checksum verification, atomic unpacking, and macOS Gatekeeper quarantine handling.
+  - Authored standalone Windows PowerShell installer `install.ps1` with 64-bit architecture validation, Start Menu and Desktop shortcuts, custom application icon (`hadron.ico`) embedding, user PATH configuration, and SHA256 checksum integrity verification.
+  - Added automated test harnesses `tests/test_install_script.sh` and `tests/test_install_ps1.sh` verifying CLI flags, dry-run modes, end-to-end unpacking, and corrupt payload checksum rejection.
+- **Top-Level CLI Flags & Headless Update Command (`hadron-chamber`)**:
+  - Added standard `--version` (`-V`), `--help` (`-h`), and headless `hadron update [--version <v> | --latest]` subcommands with strict semver validation.
+- **Install-Method-Aware Self-Update (`hadron-chamber`)**:
+  - Added automated install source detection (`Cargo`, `Homebrew`, `Binary`) via `current_exe` path.
+  - Implemented in-place atomic binary replacement updater for standalone binary installs across Linux, macOS, and Windows.
+- **First-Run Zero-Config Provider Auto-Detection (`hadron-chamber`)**:
+  - Added automatic detection of local Ollama (`localhost:11434`) and standard environment API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`) to auto-seat quarks on initial launch.
+- **Multi-Platform CI Release Matrix (`.github/workflows/release.yml`)**:
+  - Added GitHub Actions workflow building precompiled release archives across Linux (`x86_64-unknown-linux-gnu`), macOS (`x86_64-apple-darwin`, `aarch64-apple-darwin`), and Windows (`x86_64-pc-windows-msvc`) with SHA256 checksum manifests and custom app icon packaging.
+
+### Fixed
+- **Swarm Router Handback Completion (`hadron-gluon`)**:
+  - Fixed `is_request_answered` to verify `req.answers == Some(a)` when `req.from == Actor::Gluon`, ensuring continued-assignment turn completions satisfy Gluon gate handback events without stalling turn dispatch.
+- **Security & Subprocess Hardening (`hadron-chamber`)**:
+  - Eliminated shell command injection risks in the updater by replacing piped shell executions with discrete subprocess invocations and strict version string whitelisting.
+
 ## [0.31.1] - 2026-10-11
 
 ### Fixed

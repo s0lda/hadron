@@ -299,6 +299,7 @@ pub fn detect_install_method_from_path(path: &Path) -> InstallMethod {
 }
 
 /// Builds the release asset tarball URL for a target platform.
+#[cfg(test)]
 pub fn release_asset_url(version: &str, target_triple: &str) -> String {
     let ext = if target_triple.contains("windows") { "zip" } else { "tar.gz" };
     format!(

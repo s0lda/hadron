@@ -114,7 +114,7 @@ if ($Version -eq "latest") {
     }
 
     if ([string]::IsNullOrWhiteSpace($resolved)) {
-        $resolved = "0.31.1"
+        $resolved = "0.32.0"
     }
     $Version = $resolved
 }
@@ -149,10 +149,19 @@ function Get-RemoteFile {
     param([string]$Url, [string]$Destination)
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
 
+    # If URL is a local/UNC file path or file:// URI, copy directly without network stack
+    if ($Url -like "file://*" -or (Test-Path $Url -ErrorAction SilentlyContinue)) {
+        $localPath = $Url -replace '^file://', ''
+        if (Test-Path $localPath -ErrorAction SilentlyContinue) {
+            Copy-Item -Path $localPath -Destination $Destination -Force
+            return
+        }
+    }
+
     # If curl.exe is available and functional, use it for optimal streaming
     $curl = Get-Command "curl.exe" -ErrorAction SilentlyContinue
     if ($curl) {
-        & $curl.Source -fsSL $Url -o $Destination
+        & $curl.Source -fsSL --connect-timeout 15 --max-time 300 $Url -o $Destination
         if ($LASTEXITCODE -eq 0 -and (Test-Path $Destination)) {
             return
         }
@@ -160,7 +169,7 @@ function Get-RemoteFile {
 
     # Fallback to Invoke-WebRequest or WebClient
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+        Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing -TimeoutSec 60
     } catch {
         $wc = New-Object System.Net.WebClient
         $wc.DownloadFile($Url, $Destination)
