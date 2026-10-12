@@ -261,9 +261,9 @@ if [ "$OS" = "linux" ]; then
     if [ "$HAS_XKB" -eq 0 ]; then
         echo ""
         echo "Notice: libxkbcommon not detected. If Hadron chamber UI does not start, install it via:"
-        echo "  sudo apt install libxkbcommon0    # Debian / Ubuntu"
-        echo "  sudo dnf install libxkbcommon      # Fedora / RHEL"
-        echo "  sudo pacman -S libxkbcommon        # Arch"
+        echo "  sudo apt install libxkbcommon0 libxkbcommon-x11-0    # Debian / Ubuntu"
+        echo "  sudo dnf install libxkbcommon                        # Fedora / RHEL"
+        echo "  sudo pacman -S libxkbcommon                          # Arch"
     fi
 
     if [ "$HAS_VULKAN" -eq 0 ]; then
