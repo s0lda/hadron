@@ -38,6 +38,8 @@ mod theme;
 mod window_frame;
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 mod symbols;
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+mod wsl;
 mod headless_runner;
 
 fn main() {

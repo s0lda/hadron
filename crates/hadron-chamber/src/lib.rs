@@ -20,3 +20,5 @@ pub mod theme;
 pub mod window_frame;
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 pub mod symbols;
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+pub mod wsl;
