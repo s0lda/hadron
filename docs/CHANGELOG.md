@@ -5,6 +5,29 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.0] - 2026-10-13
+
+### Added
+- **Zed/VS Code-Style Project Selector & Recent Projects (`hadron-chamber`)**:
+  - Implemented `WorkspaceMode::Selector` and a dedicated Welcome & Project Selector launchpad displaying MRU recent projects (`RecentProject`), active git branch badges, relative timestamps, remote environment tags (`Local` / `WSL: <distro>`), and one-click entry removal.
+  - Added home directory pollution guard in `resolve_field_path_with_home`: bare launches or launching from the user's home directory (`~` or `%USERPROFILE%`) open the Project Selector instead of creating a spurious `~/.hadron/field.jsonl`.
+  - Added in-app Quick Project Switcher modal accessible via `Ctrl+O` (`Cmd+O`), the 3-line application menu ("Open Workspace…"), `/projects`, and `/open [path]` slash commands, with search input filtering, Enter key project selection, and entry removal buttons.
+- **Windows-to-WSL Remote Repositories & Unified Quarks (`hadron-lattice`, `hadron-gluon`, `hadron-chamber`)**:
+  - Created `hadron_lattice::wsl` as the single source of truth for Windows UNC path translation (`\\wsl.localhost\<distro>\<path>` and `\\wsl$\<distro>\<path>`), installed WSL distribution enumeration (`wsl.exe -l -q` with UTF-16LE/UTF-8 decoding), and command wrapping.
+  - Enabled unified single-install quark configuration on Windows (`~/.hadron/team.json`) while working seamlessly on WSL repositories: `ProcessRunner` (`run`, `run_streaming`) and merge gate test runner (`merge::run_tests_within`) automatically wrap commands via `wsl.exe -d <distro> --cd <linux_path> -- <prog> <args...>` with safe host temp directory `cwd`.
+  - Configured Chamber's interactive PTY terminal (`PtyTerminal::new_with_options`, `resolve_pty_target`) to automatically launch `wsl.exe -d <distro> --cd <linux_path>` when the active workspace is a WSL UNC project.
+
+### Changed
+- **Titlebar & Workspace Menu Consolidation (`hadron-chamber`)**:
+  - Routed "Open Workspace…" in the 3-line hamburger and overlay menus directly to the Quick Project Switcher modal and removed the redundant titlebar project pill button.
+
+### Fixed
+- **WSL Native Folder Picker Anchoring & Path Resolution (`hadron-chamber`)**:
+  - Anchored native folder and image pickers (`pick_folder_path`, `pick_image_paths`) to the active WSL distro's Linux `$HOME` (`wslpath -w $HOME` for PowerShell `FolderBrowserDialog` and `--filename` for `zenity`) instead of defaulting to the Windows user profile.
+  - Removed unintended custom-path folder creation fallback on selector search submit, normalized multi-token CLI path arguments, and eliminated all workspace compiler warnings and dead-code annotations.
+- **CI Release Matrix Dependencies (`.github/workflows/release.yml`)**:
+  - Added `libxkbcommon-x11-dev` to Ubuntu release build dependencies and migrated Intel macOS runner from retired `macos-13` to `macos-14`.
+
 ## [0.32.0] - 2026-10-12
 
 ### Added

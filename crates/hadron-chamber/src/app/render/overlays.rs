@@ -20,6 +20,23 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.0",
+        date: Some("2026-10-13"),
+        added: &[
+            "Project Selector & MRU Launchpad: Zed/VS Code-style Welcome screen with recent projects, git branch/WSL badges, entry removal, and home-directory pollution guard",
+            "Quick Project Switcher & Commands: In-app project switcher modal via Ctrl+O, 3-line menu 'Open Workspace…', /projects, and /open [path]",
+            "Windows-WSL Remote Repositories: Canonical UNC path translation (\\\\wsl.localhost\\<distro>\\<path>) and distro discovery in hadron-lattice::wsl",
+            "Cross-Boundary Execution & WSL PTY: Automatic wsl.exe -d <distro> --cd <path> command wrapping for quark subprocesses, merge gate tests, and interactive Chamber PTY terminals",
+        ],
+        changed: &[
+            "Workspace Menu Consolidation: Routed 'Open Workspace…' menu item to the project switcher modal and removed duplicate titlebar project pill",
+        ],
+        fixed: &[
+            "WSL Picker Anchoring & Clean Builds: Anchored WSL folder/image pickers to Linux $HOME, removed custom-path folder creation fallback, and eliminated all workspace build warnings",
+            "CI Release Matrix: Added libxkbcommon-x11-dev for Linux X11 GPUI builds and updated Intel macOS runner to macos-14",
+        ],
+    },
+    Release {
         version: "0.32.0",
         date: Some("2026-10-12"),
         added: &[

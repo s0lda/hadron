@@ -144,6 +144,8 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/theme` | `/theme <preset \| custom>` | Switch color theme preset (`obsidian`, `oled`, `midnight`, `tokyo`, `nord`, `catppuccin`, `gruvbox`) or custom theme ID. | `/theme nord` |
 | `/toggle-roster` | `/toggle-roster` | Toggle visibility of the left Roster sidebar. | `/toggle-roster` |
 | `/toggle-inspector` | `/toggle-inspector` | Toggle visibility of the right Inspector sidebar. | `/toggle-inspector` |
+| `/projects` | `/projects` | Open the in-app Quick Project Switcher modal (`Ctrl+O`). | `/projects` |
+| `/open` | `/open [path]` | Open a project directory in a new Chamber window or invoke the project switcher if no path is given. | `/open ~/dev/my-app` |
 | `/home` | `/home [@Quark]` | Open Quark personal home & telemetry dashboard. | `/home @Agy` |
 | `/canvas` | `/canvas` | Open interactive GPUI vector canvas preview. | `/canvas` |
 | `/intercom` | `/intercom` | Toggle sub-channel audio intercom voice bridge. | `/intercom` |

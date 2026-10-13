@@ -33,11 +33,11 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 - 💬 **Collaborative Multi-LLM Chat**: Mix models in a single thread — `@claude`, `@ollama`, `@agy`, `@openai`, and many more see each other's output, share context, and execute parallel sub-tasks via Hub-and-Spoke orchestration.
 - 🛡️ **Git Worktrees & Automated Merge Gate**: Agents work in isolated git worktree branches. The Merge Gate automatically rebases onto `main` and runs your test suite before clean code lands.
 - 🔒 **Cross-Platform Process Sandboxing**: Zero-overhead native OS jailing across Linux/WSL (Bubblewrap), macOS (Apple Seatbelt), and Windows (PowerShell & Job Objects) with worktree write confinement, credential scrubbing, and interactive chat badge toggles.
-- ⚡ **Native GPUI Desktop App**: Lightning-fast GPU-accelerated UI with multi-tab PTY terminals, dense event log observability with rich context menu copy and drag selection, interactive git commit graph, live plan tracking, interactive 3D cosmic swarm visualizer, native interactive Mermaid diagram rendering, robust color emoji font fallbacks, and real-time multi-protocol token telemetry.
+- ⚡ **Native GPUI Desktop App**: Lightning-fast GPU-accelerated UI with Zed/VS Code-style Project Selector & MRU launchpad, seamless Windows-to-WSL remote project execution (`\\wsl.localhost\<distro>\<path>`) with unified quark credentials, multi-tab PTY terminals, dense event log observability with rich context menu copy and drag selection, interactive git commit graph, live plan tracking, interactive 3D cosmic swarm visualizer, native interactive Mermaid diagram rendering, robust color emoji font fallbacks, and real-time multi-protocol token telemetry.
 - 🛠️ **Hadron Forge & Developer Power Tools**: 50+ built-in MCP developer capabilities — AST precision edits via `blake3`, isolated PTY terminals, headless browser testing, LSP code intelligence, background process supervision, automated git bisect, and flamegraph profiling. Detailed in [`Power Tools Suite`](docs/forge/power-tools.md).
 - 🧠 **Persistent Nucleus Memory & Universal Absorption**: Cross-session shared memory within a configurable budget (16/32/64/128 KiB), plus `/absorb` to seamlessly import memories, invariants, skills, and plans from `.agents/`, `.claude/`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`, and many more.
 - 🤖 **Autonomous Headless Swarm Runner**: Standalone non-interactive CLI runner (`hadron run` / `hadron ci`) for CI/CD automation, speculative shadow pre-testing, AST-aware rebase healing, and tiled multi-PTY terminals.
-- 🎯 **Autonomous Swarm Control & Architectural Dialectic**: Built-in slash commands (`/goal`, `/loop`, `/absorb`, `/release`, `/git-init`, `/resume`, `/clear`, `/home`, `/canvas`, `/intercom`, `/dream`, `/timelapse`, `/radar`, `/baseline`, `/preview-rebase`, `/steer`, `/scout`, `/debate`, `/team-debate`, `/settle`) and 29 bundled workflow & engineering skills (TDD, security review, architecture audit, debate, migration-deprecation, benchmarking, doc-drift audit, systematic debugging, design specs).
+- 🎯 **Autonomous Swarm Control & Architectural Dialectic**: Built-in slash commands (`/goal`, `/loop`, `/absorb`, `/release`, `/projects`, `/open`, `/git-init`, `/resume`, `/clear`, `/home`, `/canvas`, `/intercom`, `/dream`, `/timelapse`, `/radar`, `/baseline`, `/preview-rebase`, `/steer`, `/scout`, `/debate`, `/team-debate`, `/settle`) and 29 bundled workflow & engineering skills (TDD, security review, architecture audit, debate, migration-deprecation, benchmarking, doc-drift audit, systematic debugging, design specs).
 
 ---
 
@@ -125,6 +125,7 @@ Hadron connects an expanding ecosystem of AI agents, local models, cloud APIs, a
 | `Alt+Up` / `Alt+Down` | Cycle Telemetry & Stats time windows (`Session` / `Week` / `Month` / `All`) |
 | `Ctrl+J` / `Ctrl+K` | Move selection in Quark Roster |
 | `Ctrl+Alt+Enter` | Toggle selected Quark enabled / disabled |
+| `Ctrl+O` / `Cmd+O` | Open Quick Project Switcher modal |
 | `Ctrl+M` / `F10` | Open App Menu overlay |
 | `F6` | Cycle global permission mode (`Ask` / `Write` / `Auto` / `Bypass`) |
 
