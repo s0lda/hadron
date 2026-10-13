@@ -229,12 +229,24 @@ fn prepare_windows_bin_overwrite_in(bin_dir: &Path) {
         let bin_path = bin_dir.join(name);
         if bin_path.exists() {
             let mut old_path = bin_dir.join(format!("{name}.old"));
-            let _ = std::fs::remove_file(&old_path);
-            if old_path.exists() {
+            if old_path.exists() && std::fs::remove_file(&old_path).is_err() {
                 old_path = bin_dir.join(format!("{name}.old.{}", std::process::id()));
-                let _ = std::fs::remove_file(&old_path);
+                if old_path.exists() {
+                    if let Err(err) = std::fs::remove_file(&old_path) {
+                        eprintln!(
+                            "Warning: could not remove stale backup {}: {err}",
+                            old_path.display()
+                        );
+                    }
+                }
             }
-            let _ = std::fs::rename(&bin_path, &old_path);
+            if let Err(err) = std::fs::rename(&bin_path, &old_path) {
+                eprintln!(
+                    "Warning: could not rename {} to {}: {err}",
+                    bin_path.display(),
+                    old_path.display()
+                );
+            }
         }
     }
 }
@@ -246,10 +258,21 @@ fn restore_windows_bin_if_missing_in(bin_dir: &Path) {
         if !bin_path.exists() {
             let pid_old = bin_dir.join(format!("{name}.old.{}", std::process::id()));
             let plain_old = bin_dir.join(format!("{name}.old"));
-            if pid_old.exists() {
-                let _ = std::fs::rename(&pid_old, &bin_path);
+            let restore_src = if pid_old.exists() {
+                Some(pid_old)
             } else if plain_old.exists() {
-                let _ = std::fs::rename(&plain_old, &bin_path);
+                Some(plain_old)
+            } else {
+                None
+            };
+            if let Some(src) = restore_src {
+                if let Err(err) = std::fs::rename(&src, &bin_path) {
+                    eprintln!(
+                        "Warning: could not restore {} from {}: {err}",
+                        bin_path.display(),
+                        src.display()
+                    );
+                }
             }
         }
     }
