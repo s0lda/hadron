@@ -4,7 +4,7 @@ use super::Team;
 
 /// The user's home directory, cross-platform: `$HOME` on Unix, `%USERPROFILE%`
 /// on Windows. `None` if neither is set.
-fn home_dir() -> Option<PathBuf> {
+pub fn home_dir() -> Option<PathBuf> {
     for var in ["HOME", "USERPROFILE"] {
         if let Some(v) = std::env::var_os(var) {
             if !v.is_empty() {

@@ -463,26 +463,51 @@ fn run_headless(path: Option<String>) {
 /// `hadron-gluon`), so `cargo run hadron-chamber` or `cargo run --bin hadron-chamber` does
 /// not misinterpret the binary name as the field path. If an explicit path argument is given
 /// that is a directory, resolves to `.hadron/field.jsonl` (or `field.jsonl`) inside that directory.
-/// Otherwise defaults to `.hadron/field.jsonl` in the current directory.
+/// Otherwise defaults to `.hadron/field.jsonl` in the current directory, unless `cwd` is the
+/// user's home directory under `StartupBehavior::ProjectSelector`, which returns `None` to prevent
+/// polluting `~` and signals Selector mode.
 fn resolve_field_path(args: &[String]) -> Option<String> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    resolve_field_path_in(&cwd, args)
+    let home = hadron_lattice::user_home_dir();
+    let res = resolve_field_path_with_home(&cwd, args, home.as_deref());
+    if let Some(ref field_file) = res {
+        let repo_root = crate::vcs::repo_root_of(std::path::Path::new(field_file));
+        let display_name = repo_root
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| repo_root.display().to_string());
+        let mut recent = config::RecentProject::new(repo_root.display().to_string(), display_name);
+        if let Some((distro, linux_path)) = wsl::parse_wsl_unc_path(&repo_root) {
+            recent = recent.with_remote(config::ProjectRemote::Wsl {
+                distro,
+                linux_path: linux_path.display().to_string(),
+            });
+        }
+        let mut prefs = config::load();
+        prefs.record_project(recent);
+        let _ = config::save(&prefs);
+    }
+    res
 }
 
 /// [`resolve_field_path`] with the current directory injected.
-///
-/// The bare-invocation arm **creates** `<cwd>/.hadron/field.jsonl` when it is absent,
-/// and that is the product, not an oversight: `cd /some/dir && hadron` makes
-/// `/some/dir` the workspace. Two directories are two independent swarms, and nothing
-/// resolves back to wherever the binary was installed or built. The accepted
-/// consequence is that a mistyped `cd` seeds `.hadron/` where you land — the directory
-/// you are standing in is the answer, always. **Do not turn this into a refusal.**
-///
-/// The cwd is a parameter because the function used to read it implicitly through a
-/// relative `Path::new(".hadron")`, which no test can exercise without `chdir` — and
-/// `chdir` in a test race-corrupts every other test in the binary. So the contract
-/// above was untested, one refactor away from silently becoming that refusal.
 fn resolve_field_path_in(cwd: &std::path::Path, args: &[String]) -> Option<String> {
+    resolve_field_path_with_home(cwd, args, hadron_lattice::user_home_dir().as_deref())
+}
+
+/// [`resolve_field_path_in`] with explicit `home` directory parameter for testability.
+fn resolve_field_path_with_home(
+    cwd: &std::path::Path,
+    args: &[String],
+    home: Option<&std::path::Path>,
+) -> Option<String> {
+    if args
+        .iter()
+        .any(|a| a == "--selector" || a == "--welcome" || a == "--projects")
+    {
+        return None;
+    }
+
     let current_exe_name = std::env::current_exe()
         .ok()
         .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()));
@@ -521,16 +546,50 @@ fn resolve_field_path_in(cwd: &std::path::Path, args: &[String]) -> Option<Strin
             }
         }
         None => {
-            let hadron_dir = cwd.join(".hadron");
-            let hadron_dir = hadron_dir.as_path();
-            if !hadron_dir.exists() {
-                let _ = std::fs::create_dir_all(hadron_dir);
+            let is_home = home.map_or(false, |h| {
+                cwd == h || cwd.canonicalize().ok() == h.canonicalize().ok()
+            });
+
+            if is_home {
+                let prefs = config::load();
+                match prefs.startup_behavior {
+                    config::StartupBehavior::ReopenLast => {
+                        if let Some(last) = prefs.last_project() {
+                            let p = std::path::Path::new(&last.path);
+                            if p.is_dir() {
+                                let hadron_field = p.join(".hadron").join("field.jsonl");
+                                if hadron_field.exists() {
+                                    return Some(hadron_field.to_string_lossy().to_string());
+                                }
+                            }
+                        }
+                        None
+                    }
+                    config::StartupBehavior::CurrentDir => {
+                        let hadron_dir = cwd.join(".hadron");
+                        if !hadron_dir.exists() {
+                            let _ = std::fs::create_dir_all(&hadron_dir);
+                        }
+                        let default_field = hadron_dir.join("field.jsonl");
+                        if !default_field.exists() {
+                            let _ = std::fs::File::create(&default_field);
+                        }
+                        Some(default_field.to_string_lossy().to_string())
+                    }
+                    config::StartupBehavior::ProjectSelector => None,
+                }
+            } else {
+                let hadron_dir = cwd.join(".hadron");
+                let hadron_dir = hadron_dir.as_path();
+                if !hadron_dir.exists() {
+                    let _ = std::fs::create_dir_all(hadron_dir);
+                }
+                let default_field = hadron_dir.join("field.jsonl");
+                if !default_field.exists() {
+                    let _ = std::fs::File::create(&default_field);
+                }
+                Some(default_field.to_string_lossy().to_string())
             }
-            let default_field = hadron_dir.join("field.jsonl");
-            if !default_field.exists() {
-                let _ = std::fs::File::create(&default_field);
-            }
-            Some(default_field.to_string_lossy().to_string())
         }
     }
 }
@@ -759,5 +818,47 @@ mod tests {
         // Gone: returns at once.
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(wait_for_process_exit(proc_root.path(), 2001, GLUON_EXIT_WAIT));
+    }
+
+    #[test]
+    fn test_bare_launch_in_home_dir_returns_none_under_selector_mode() {
+        let home = tempfile::tempdir().unwrap();
+        let bare = vec!["hadron".to_string()];
+        // When cwd is home directory and no explicit path, returns None (Selector mode)
+        assert_eq!(
+            resolve_field_path_with_home(home.path(), &bare, Some(home.path())),
+            None
+        );
+        // And it MUST NOT create .hadron/field.jsonl in home
+        assert!(
+            !home.path().join(".hadron").join("field.jsonl").exists(),
+            "bare launch in home directory must not pollute home with .hadron/field.jsonl"
+        );
+    }
+
+    #[test]
+    fn test_selector_flags_return_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        for flag in ["--selector", "--welcome", "--projects"] {
+            let args = vec!["hadron".to_string(), flag.to_string()];
+            assert_eq!(
+                resolve_field_path_with_home(tmp.path(), &args, None),
+                None,
+                "flag {flag} must signal selector mode"
+            );
+        }
+    }
+
+    #[test]
+    fn test_explicit_dir_arg_in_home_dir_resolves() {
+        let home = tempfile::tempdir().unwrap();
+        let project = home.path().join("my_project");
+        std::fs::create_dir_all(&project).unwrap();
+
+        let args = vec!["hadron".to_string(), project.to_string_lossy().to_string()];
+        assert_eq!(
+            resolve_field_path_with_home(home.path(), &args, Some(home.path())),
+            Some(field_in(&project))
+        );
     }
 }
