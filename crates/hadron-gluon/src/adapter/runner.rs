@@ -70,6 +70,20 @@ impl CliInvocation {
             false,
         )
     }
+
+    /// Resolves the actual command and arguments to be executed.
+    /// First applies sandboxing via [`hadron_gatekeeper::resolve_sandboxed_command`].
+    /// Then, if `cwd` is a WSL UNC path (e.g. `\\wsl.localhost\<distro>\<linux_path>`),
+    /// wraps the execution via `wsl.exe -d <distro> --cd <linux_path> <prog> <args...>`
+    /// using [`hadron_lattice::wsl::wrap_wsl_command`].
+    pub fn resolve_execution_command(&self) -> (String, Vec<String>) {
+        let (prog, args) = self.resolve_sandboxed_command();
+        if let Some((distro, linux_cwd)) = hadron_lattice::wsl::parse_wsl_unc_path(&self.cwd) {
+            hadron_lattice::wsl::wrap_wsl_command(&distro, &linux_cwd, &prog, &args)
+        } else {
+            (prog, args)
+        }
+    }
 }
 
 /// The result of one invocation. Kept CLI-agnostic: session ids and other
@@ -123,13 +137,16 @@ impl CliRunner for ProcessRunner {
         use std::process::Stdio;
         use tokio::io::AsyncWriteExt;
 
-        let (prog, args) = inv.resolve_sandboxed_command();
+        let is_wsl = hadron_lattice::wsl::is_wsl_unc_path(&inv.cwd);
+        let (prog, args) = inv.resolve_execution_command();
         let mut child_cmd = tokio::process::Command::new(&prog);
         child_cmd
             .args(&args)
             // THE fix: the CLI runs in the quark's own worktree, not wherever the
             // daemon happened to be launched from.
-            .current_dir(&inv.cwd)
+            // If running via WSL, wsl.exe uses `--cd <linux_cwd>` to switch directories,
+            // so we set the host working directory to temp_dir() to avoid UNC issues on Windows host.
+            .current_dir(if is_wsl { std::env::temp_dir() } else { inv.cwd.clone() })
             // A seat's resolved secrets. This is the ONLY place a resolved value
             // reaches anything — never argv, never a log line, never the field.
             .envs(inv.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
@@ -140,14 +157,13 @@ impl CliRunner for ProcessRunner {
         child_cmd.as_std_mut().set_process_group();
 
         let mut child = child_cmd
-
             .spawn()
             // A missing `cwd` fails as ENOENT — indistinguishable, in the raw error, from a
             // missing *program*. That cost a real debugging session: `failed to spawn claude:
             // No such file or directory` while `claude` sat on PATH, executable. Name the
             // likelier culprit rather than making the next reader re-derive it.
             .map_err(|e| {
-                if !inv.cwd.is_dir() {
+                if !is_wsl && !inv.cwd.is_dir() {
                     anyhow::anyhow!(
                         "failed to spawn {}: its working directory {:?} does not exist",
                         inv.program,
@@ -296,10 +312,12 @@ impl CliRunner for ProcessRunner {
         use std::process::Stdio;
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
-        let mut child_cmd = tokio::process::Command::new(&inv.program);
+        let is_wsl = hadron_lattice::wsl::is_wsl_unc_path(&inv.cwd);
+        let (prog, args) = inv.resolve_execution_command();
+        let mut child_cmd = tokio::process::Command::new(&prog);
         child_cmd
-            .args(&inv.args)
-            .current_dir(&inv.cwd)
+            .args(&args)
+            .current_dir(if is_wsl { std::env::temp_dir() } else { inv.cwd.clone() })
             .envs(inv.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -310,7 +328,7 @@ impl CliRunner for ProcessRunner {
         let mut child = child_cmd
             .spawn()
             .map_err(|e| {
-                if !inv.cwd.is_dir() {
+                if !is_wsl && !inv.cwd.is_dir() {
                     anyhow::anyhow!(
                         "failed to spawn {}: its working directory {:?} does not exist",
                         inv.program,
@@ -742,6 +760,31 @@ mod tests {
         );
         assert_eq!(win_prog, "powershell.exe");
         assert!(win_args.contains(&"-NoProfile".to_string()));
+    }
+
+    #[test]
+    fn test_cli_invocation_wsl_wrapping() {
+        let inv = CliInvocation {
+            program: "cargo".to_string(),
+            args: vec!["check".to_string(), "--workspace".to_string()],
+            stdin: String::new(),
+            cwd: PathBuf::from(r"\\wsl.localhost\Ubuntu-22.04\home\user\project"),
+            env: RedactedEnv::default(),
+            stream: None,
+            sandbox: hadron_gatekeeper::SandboxMode::Off,
+        };
+        let (prog, args) = inv.resolve_execution_command();
+        assert_eq!(prog, "wsl.exe");
+        assert_eq!(args, vec![
+            "-d",
+            "Ubuntu-22.04",
+            "--cd",
+            "/home/user/project",
+            "--",
+            "cargo",
+            "check",
+            "--workspace",
+        ]);
     }
 }
 

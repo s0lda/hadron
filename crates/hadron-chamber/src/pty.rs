@@ -175,6 +175,49 @@ pub fn default_shell() -> String {
     resolved
 }
 
+/// Resolves candidate shell executables, effective host working directory, and any WSL remoting target.
+pub(crate) fn resolve_pty_target(
+    cwd: &Path,
+    custom_shell: Option<&str>,
+) -> (Vec<String>, std::path::PathBuf, Option<(String, std::path::PathBuf)>) {
+    let wsl_target = hadron_lattice::wsl::parse_wsl_unc_path(cwd);
+    let clean_cwd = hadron_lattice::sys::paths::simplified(cwd);
+    let final_cwd = if wsl_target.is_some() {
+        std::env::temp_dir()
+    } else if clean_cwd.exists() {
+        clean_cwd.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    };
+
+    let primary_shell = custom_shell
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| {
+            if wsl_target.is_some() {
+                "wsl.exe".to_string()
+            } else {
+                default_shell()
+            }
+        });
+    let mut shells = vec![primary_shell];
+    if cfg!(windows) {
+        if !shells.contains(&"powershell.exe".to_string()) {
+            shells.push("powershell.exe".to_string());
+        }
+        if !shells.contains(&"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_string()) {
+            shells.push("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_string());
+        }
+        if !shells.contains(&"cmd.exe".to_string()) {
+            shells.push("cmd.exe".to_string());
+        }
+        if !shells.contains(&"C:\\Windows\\System32\\cmd.exe".to_string()) {
+            shells.push("C:\\Windows\\System32\\cmd.exe".to_string());
+        }
+    }
+    (shells, final_cwd, wsl_target)
+}
+
 impl PtyTerminal {
     #[allow(dead_code)]
     /// Spawn default shell on a fresh PTY sized `cols × rows`, rooted at `cwd`.
@@ -202,32 +245,8 @@ impl PtyTerminal {
             pixel_height: 0,
         };
 
-        let clean_cwd = hadron_lattice::sys::paths::simplified(cwd);
-        let final_cwd = if clean_cwd.exists() {
-            clean_cwd.to_path_buf()
-        } else {
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-        };
-
-        let primary_shell = custom_shell
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(default_shell);
-        let mut shells = vec![primary_shell.clone()];
-        if cfg!(windows) {
-            if !shells.contains(&"powershell.exe".to_string()) {
-                shells.push("powershell.exe".to_string());
-            }
-            if !shells.contains(&"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_string()) {
-                shells.push("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe".to_string());
-            }
-            if !shells.contains(&"cmd.exe".to_string()) {
-                shells.push("cmd.exe".to_string());
-            }
-            if !shells.contains(&"C:\\Windows\\System32\\cmd.exe".to_string()) {
-                shells.push("C:\\Windows\\System32\\cmd.exe".to_string());
-            }
-        }
+        let (shells, final_cwd, wsl_target) = resolve_pty_target(cwd, custom_shell);
+        let primary_shell = shells.first().cloned().unwrap_or_else(default_shell);
 
         let mut child_and_pair = None;
         let mut last_err = String::new();
@@ -265,7 +284,15 @@ impl PtyTerminal {
                 }
                 cmd.env(k, v);
             }
-            if cfg!(windows) {
+            let sh_lower = sh.to_lowercase();
+            if sh_lower.contains("wsl") {
+                if let Some((distro, linux_cwd)) = &wsl_target {
+                    cmd.arg("-d");
+                    cmd.arg(distro);
+                    cmd.arg("--cd");
+                    cmd.arg(linux_cwd);
+                }
+            } else if cfg!(windows) {
                 cmd.env("ComSpec", sh);
                 if !has_sys_root {
                     cmd.env("SystemRoot", "C:\\Windows");
@@ -279,7 +306,6 @@ impl PtyTerminal {
                 if !has_pathext {
                     cmd.env("PATHEXT", ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC");
                 }
-                let sh_lower = sh.to_lowercase();
                 if sh_lower.contains("powershell") || sh_lower.contains("pwsh") {
                     cmd.arg("-NoExit");
                     cmd.arg("-NoLogo");
@@ -976,6 +1002,24 @@ mod tests {
         let inj = term.injector.lock().unwrap();
         let eval = inj.eval_chunk("Please echo_probe here");
         assert_eq!(eval, Some("response_probe\n".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_pty_target_wsl_unc() {
+        let unc_path = Path::new(r"\\wsl.localhost\Ubuntu-22.04\home\user\code\hadron");
+        let (shells, cwd, wsl_target) = resolve_pty_target(unc_path, None);
+        assert_eq!(shells[0], "wsl.exe");
+        assert_eq!(cwd, std::env::temp_dir());
+        assert_eq!(wsl_target, Some(("Ubuntu-22.04".to_string(), std::path::PathBuf::from("/home/user/code/hadron"))));
+    }
+
+    #[test]
+    fn test_resolve_pty_target_local_dir() {
+        let dir = tempdir().unwrap();
+        let (shells, cwd, wsl_target) = resolve_pty_target(dir.path(), Some("custom_shell"));
+        assert_eq!(shells[0], "custom_shell");
+        assert_eq!(wsl_target, None);
+        assert_eq!(cwd, dir.path());
     }
 }
 

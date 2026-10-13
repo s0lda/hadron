@@ -262,9 +262,17 @@ pub async fn run_tests_within(
     args: &[&str],
     deadline: std::time::Duration,
 ) -> anyhow::Result<(bool, String)> {
-    let mut cmd = tokio::process::Command::new(program);
-    cmd.args(args)
-        .current_dir(&wt.path)
+    let (actual_prog, actual_args) = if let Some((distro, linux_cwd)) = hadron_lattice::wsl::parse_wsl_unc_path(&wt.path) {
+        let string_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        hadron_lattice::wsl::wrap_wsl_command(&distro, &linux_cwd, program, &string_args)
+    } else {
+        (program.to_string(), args.iter().map(|s| s.to_string()).collect())
+    };
+    let is_wsl = hadron_lattice::wsl::is_wsl_unc_path(&wt.path);
+
+    let mut cmd = tokio::process::Command::new(&actual_prog);
+    cmd.args(&actual_args)
+        .current_dir(if is_wsl { std::env::temp_dir() } else { wt.path.clone() })
         // A test runner that reads stdin would otherwise block on the daemon's own
         // terminal, which is the same wedge by another route.
         .stdin(std::process::Stdio::null())
