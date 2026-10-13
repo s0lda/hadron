@@ -494,7 +494,7 @@ fn resolve_field_path(args: &[String]) -> Option<String> {
 }
 
 /// [`resolve_field_path`] with the current directory injected.
-#[allow(dead_code)]
+#[cfg(test)]
 fn resolve_field_path_in(cwd: &std::path::Path, args: &[String]) -> Option<String> {
     resolve_field_path_with_home(cwd, args, hadron_lattice::user_home_dir().as_deref())
 }

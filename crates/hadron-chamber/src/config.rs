@@ -191,7 +191,7 @@ pub enum StartupBehavior {
     CurrentDir,
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 impl StartupBehavior {
     pub const ALL: [StartupBehavior; 3] = [
         StartupBehavior::ProjectSelector,
@@ -254,7 +254,6 @@ impl RecentProject {
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_branch(mut self, branch: impl Into<String>) -> Self {
         self.git_branch = Some(branch.into());
         self
