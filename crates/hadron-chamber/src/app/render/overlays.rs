@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.1",
+        date: Some("2026-10-13"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Start Menu & Install Dir Guard: Bare launches from %LOCALAPPDATA%\\Programs\\Hadron or binary install dirs now open the Project Selector and prune install dirs from recent projects",
+            "Terminal Selection & Copy: Wired Ctrl+C / Ctrl+Shift+C and right-click context menu (Copy, Copy Screen, Paste) to VTE grid selections with accurate 12px padding hit-testing",
+            "Windows In-Place Self-Update: Renamed locked running .exe binaries to .exe.old before update overwrite with rollback and .exe.old daemon teardown recognition",
+            "Installer & CI Hardening: Defaulted checksum verification to per-asset .sha256 URLs without 404 stderr noise and upgraded GitHub Actions release workflow to Node.js 24 (checkout@v6, action-gh-release@v3)",
+        ],
+    },
+    Release {
         version: "0.33.0",
         date: Some("2026-10-13"),
         added: &[

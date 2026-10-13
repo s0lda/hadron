@@ -5,6 +5,23 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.1] - 2026-10-13
+
+### Fixed
+- **Windows Start Menu & Install Directory Launch Guard (`hadron-chamber`, `install.ps1`)**:
+  - Updated `resolve_field_path_with_home` and `is_install_or_system_dir` to treat binary installation directories (`%LOCALAPPDATA%\Programs\Hadron`, `exe_dir`, `.local/bin`, `.cargo/bin`) as non-workspace launch directories, opening the Welcome & Project Selector instead of creating a workspace in the install folder.
+  - Configured `ChamberPrefs::load` to automatically prune binary installation directories from `recent_projects` and set Start Menu/Desktop shortcut `WorkingDirectory` to `$env:USERPROFILE` in `install.ps1`.
+- **Interactive Terminal Text Selection & Copy (`hadron-chamber`)**:
+  - Wired global `Copy` (`Ctrl+C` / `Cmd+C`) and `TerminalCopy` (`Ctrl+Shift+C`) actions through terminal-aware handlers (`on_copy_action`, `on_terminal_copy_shortcut`) that copy VTE grid text selection to the system clipboard or send `SIGINT` (`\x03`) when the terminal is focused without an active selection.
+  - Corrected `terminal_grid_cell` mouse hit-testing for the `12px` (`.p_3()`) inner viewport padding and added right-click `Copy`, `Copy Screen`, and `Paste` context menus across interactive and live PTY views.
+- **Windows In-Place Self-Update on Running Executables (`hadron-chamber`, `hadron-lattice`, `install.ps1`, `install.sh`)**:
+  - Updated `install.ps1` and `update.rs` (`prepare_windows_bin_overwrite_in`, `restore_windows_bin_if_missing_in`) to rename active running Windows executables (`hadron.exe`, `hadron-gluon.exe`, `hadron-forge-mcp.exe`) to `.exe.old` with automatic rollback before writing new binaries, avoiding NTFS `IOException` file locks during in-app self-updates.
+  - Updated `hadron_lattice::sys::inspect::matches_process_image_name` to recognize `.exe.old` process image names so daemon teardown cleanly terminates renamed running `hadron-gluon.exe.old` instances on restart.
+  - Defaulted `install.ps1` and `install.sh` checksum URLs to per-asset `.sha256` manifests with silent fallback probing, eliminating false `curl: (22) ... 404` stderr noise.
+- **CI Release Matrix & PTY Teardown Stability (`.github/workflows/release.yml`, `hadron-chamber`)**:
+  - Upgraded GitHub Actions release workflow to `actions/checkout@v6` and `softprops/action-gh-release@v3` for native Node.js 24 execution without deprecation warnings.
+  - Replaced fixed sleep with bounded polling in `pty::tests::test_pty_resource_cleanup_under_load` to eliminate reader-thread teardown flakes under heavy workspace test concurrency.
+
 ## [0.33.0] - 2026-10-13
 
 ### Added
