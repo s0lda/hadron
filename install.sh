@@ -134,7 +134,7 @@ fi
 
 TARBALL="hadron-v${VERSION}-${TARGET}.tar.gz"
 DOWNLOAD_URL="${HADRON_DOWNLOAD_URL:-https://github.com/${REPO}/releases/download/v${VERSION}/${TARBALL}}"
-CHECKSUMS_URL="${HADRON_CHECKSUMS_URL:-https://github.com/${REPO}/releases/download/v${VERSION}/SHA256SUMS}"
+CHECKSUMS_URL="${HADRON_CHECKSUMS_URL:-${DOWNLOAD_URL}.sha256}"
 
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "Hadron Installer (Dry Run)"
@@ -205,15 +205,17 @@ download_file "$DOWNLOAD_URL" "$TMP_DIR/$TARBALL"
 echo "==> Downloading SHA256 checksums..."
 if download_file "$CHECKSUMS_URL" "$TMP_DIR/SHA256SUMS" 2>/dev/null; then
     EXPECTED_SHA=$(grep "$TARBALL" "$TMP_DIR/SHA256SUMS" | awk '{print $1}' || true)
+    if [ -z "$EXPECTED_SHA" ] && [ -z "${HADRON_CHECKSUMS_URL:-}" ]; then
+        EXPECTED_SHA=$(awk '/^[a-fA-F0-9]{64}([[:space:]]|$)/ {print $1; exit}' "$TMP_DIR/SHA256SUMS")
+    fi
     if [ -n "$EXPECTED_SHA" ]; then
         echo "==> Verifying SHA256 checksum..."
         verify_sha256 "$TMP_DIR/$TARBALL" "$EXPECTED_SHA"
         echo "==> Checksum verified successfully."
     fi
-else
-    # Fallback to per-asset sha256 file
-    if download_file "${DOWNLOAD_URL}.sha256" "$TMP_DIR/${TARBALL}.sha256" 2>/dev/null; then
-        EXPECTED_SHA=$(awk '{print $1}' "$TMP_DIR/${TARBALL}.sha256")
+elif [ -z "${HADRON_CHECKSUMS_URL:-}" ] && download_file "https://github.com/${REPO}/releases/download/v${VERSION}/SHA256SUMS" "$TMP_DIR/SHA256SUMS" 2>/dev/null; then
+    EXPECTED_SHA=$(grep "$TARBALL" "$TMP_DIR/SHA256SUMS" | awk '{print $1}' || true)
+    if [ -n "$EXPECTED_SHA" ]; then
         echo "==> Verifying SHA256 checksum..."
         verify_sha256 "$TMP_DIR/$TARBALL" "$EXPECTED_SHA"
         echo "==> Checksum verified successfully."
@@ -224,12 +226,18 @@ echo "==> Unpacking binaries..."
 mkdir -p "$TMP_DIR/extracted"
 tar -xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR/extracted"
 
+BIN_SRC_DIR="$TMP_DIR/extracted"
+if [ -d "$TMP_DIR/extracted/hadron-v${VERSION}-${TARGET}" ]; then
+    BIN_SRC_DIR="$TMP_DIR/extracted/hadron-v${VERSION}-${TARGET}"
+fi
+
 mkdir -p "$INSTALL_DIR"
 
-# Install binaries
+# Install binaries (unlink destination first to avoid ETXTBSY on running binaries)
 for bin_name in hadron hadron-gluon hadron-forge-mcp; do
-    if [ -f "$TMP_DIR/extracted/$bin_name" ]; then
-        cp -f "$TMP_DIR/extracted/$bin_name" "$INSTALL_DIR/$bin_name"
+    if [ -f "$BIN_SRC_DIR/$bin_name" ]; then
+        rm -f "$INSTALL_DIR/$bin_name" 2>/dev/null || true
+        cp -f "$BIN_SRC_DIR/$bin_name" "$INSTALL_DIR/$bin_name"
         chmod +x "$INSTALL_DIR/$bin_name"
     else
         echo "Warning: Binary $bin_name not found in release archive." >&2

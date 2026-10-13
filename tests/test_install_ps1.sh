@@ -56,7 +56,7 @@ WIN_CHECKSUM_URL="file://$WIN_STAGE_DIR\\SHA256SUMS"
 run_ps "
     \$env:HADRON_DOWNLOAD_URL = '$WIN_ARCHIVE_URL'
     \$env:HADRON_CHECKSUMS_URL = '$WIN_CHECKSUM_URL'
-    & '$WIN_SCRIPT_PATH' -Version 0.31.1 -InstallDir '$WIN_INSTALL_DEST' -NoShortcut
+    & '$WIN_SCRIPT_PATH' -Version 0.31.1 -InstallDir '$WIN_INSTALL_DEST' -NoShortcut -NoModifyPath
 "
 
 # Verify all files exist in installation destination
@@ -76,12 +76,40 @@ WIN_CORRUPT_URL="file://$WIN_STAGE_DIR\\corrupt.zip"
 if run_ps "
     \$env:HADRON_DOWNLOAD_URL = '$WIN_CORRUPT_URL'
     \$env:HADRON_CHECKSUMS_URL = '$WIN_CHECKSUM_URL'
-    & '$WIN_SCRIPT_PATH' -Version 0.31.1 -InstallDir '$WIN_CORRUPT_DEST' -NoShortcut
+    & '$WIN_SCRIPT_PATH' -Version 0.31.1 -InstallDir '$WIN_CORRUPT_DEST' -NoShortcut -NoModifyPath
 " 2>/dev/null; then
     echo "Expected install.ps1 to fail on corrupt checksum but it succeeded" >&2
     exit 1
 else
     echo "install.ps1 corrupt checksum rejection passed"
 fi
+
+echo "==> 5. Testing in-place update while hadron.exe is actively running and locked by Windows"
+run_ps "
+    \$lockDir = Join-Path \$env:TEMP ('hadron-ps1-lock-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path \$lockDir -Force | Out-Null
+    \$pingExe = (Get-Command ping.exe).Source
+    \$runningExe = Join-Path \$lockDir 'hadron.exe'
+    Copy-Item -Path \$pingExe -Destination \$runningExe -Force
+    \$proc = Start-Process -FilePath \$runningExe -ArgumentList '-n','30','127.0.0.1' -WindowStyle Hidden -PassThru
+    Start-Sleep -Milliseconds 300
+    try {
+        \$env:HADRON_DOWNLOAD_URL = '$WIN_ARCHIVE_URL'
+        \$env:HADRON_CHECKSUMS_URL = '$WIN_CHECKSUM_URL'
+        & '$WIN_SCRIPT_PATH' -Version 0.31.1 -InstallDir \$lockDir -NoShortcut -NoModifyPath
+        if (-not (Test-Path (Join-Path \$lockDir 'hadron.exe.old'))) {
+            throw 'Expected running hadron.exe to be renamed to hadron.exe.old'
+        }
+        \$newContent = Get-Content -Path (Join-Path \$lockDir 'hadron.exe') -Raw
+        if (\$newContent -notmatch 'hadron.exe mock 0.31.1') {
+            throw 'Expected new hadron.exe binary to be written at destination'
+        }
+    } finally {
+        Stop-Process -Id \$proc.Id -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 200
+        Remove-Item -Recurse -Force \$lockDir -ErrorAction SilentlyContinue
+    }
+"
+echo "install.ps1 in-place running executable replacement passed"
 
 echo "All install.ps1 tests passed successfully!"

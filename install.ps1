@@ -16,6 +16,8 @@ param(
 
     [switch]$NoShortcut,
 
+    [switch]$NoModifyPath,
+
     [switch]$DesktopShortcut,
 
     [Alias("h")]
@@ -129,7 +131,7 @@ if ([string]::IsNullOrWhiteSpace($DownloadUrl)) {
 
 $ChecksumsUrl = $env:HADRON_CHECKSUMS_URL
 if ([string]::IsNullOrWhiteSpace($ChecksumsUrl)) {
-    $ChecksumsUrl = "https://github.com/$Repo/releases/download/v${Version}/SHA256SUMS"
+    $ChecksumsUrl = "${DownloadUrl}.sha256"
 }
 
 if ($DryRun) {
@@ -146,7 +148,7 @@ if ($DryRun) {
 
 # Download helper
 function Get-RemoteFile {
-    param([string]$Url, [string]$Destination)
+    param([string]$Url, [string]$Destination, [switch]$Quiet)
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
 
     # If URL is a local/UNC file path or file:// URI, copy directly without network stack
@@ -161,7 +163,8 @@ function Get-RemoteFile {
     # If curl.exe is available and functional, use it for optimal streaming
     $curl = Get-Command "curl.exe" -ErrorAction SilentlyContinue
     if ($curl) {
-        & $curl.Source -fsSL --connect-timeout 15 --max-time 300 $Url -o $Destination
+        $curlFlags = if ($Quiet) { "-fsL" } else { "-fsSL" }
+        & $curl.Source $curlFlags --connect-timeout 15 --max-time 300 $Url -o $Destination
         if ($LASTEXITCODE -eq 0 -and (Test-Path $Destination)) {
             return
         }
@@ -202,31 +205,32 @@ try {
     $ChecksumsLocal = Join-Path $StageDir "SHA256SUMS"
     $expectedSha = $null
 
-    try {
-        Get-RemoteFile -Url $ChecksumsUrl -Destination $ChecksumsLocal
-        if (Test-Path $ChecksumsLocal) {
-            $lines = Get-Content -Path $ChecksumsLocal
-            foreach ($line in $lines) {
-                if ($line -match "^([a-fA-F0-9]{64})\s+[\*]?(.*?)$") {
-                    $hash = $matches[1]
-                    $filename = [System.IO.Path]::GetFileName($matches[2].Trim())
-                    if ($filename -eq $ArchiveName -or $filename -eq $TarballName) {
-                        $expectedSha = $hash
+    $checksumCandidates = @($ChecksumsUrl)
+    $legacySumsUrl = "https://github.com/$Repo/releases/download/v${Version}/SHA256SUMS"
+    if ($ChecksumsUrl -ne $legacySumsUrl -and [string]::IsNullOrWhiteSpace($env:HADRON_CHECKSUMS_URL)) {
+        $checksumCandidates += $legacySumsUrl
+    }
+
+    foreach ($candidateUrl in $checksumCandidates) {
+        try {
+            Get-RemoteFile -Url $candidateUrl -Destination $ChecksumsLocal -Quiet
+            if (Test-Path $ChecksumsLocal) {
+                $lines = Get-Content -Path $ChecksumsLocal
+                foreach ($line in $lines) {
+                    if ($line -match "^([a-fA-F0-9]{64})\s+[\*]?(.*?)$") {
+                        $hash = $matches[1]
+                        $filename = [System.IO.Path]::GetFileName($matches[2].Trim())
+                        if ($filename -eq $ArchiveName -or $filename -eq $TarballName) {
+                            $expectedSha = $hash
+                            break
+                        }
+                    } elseif ($line.Trim() -match "^([a-fA-F0-9]{64})$" -and [string]::IsNullOrWhiteSpace($env:HADRON_CHECKSUMS_URL)) {
+                        $expectedSha = $matches[1]
                         break
                     }
                 }
-            }
-        }
-    } catch {
-        # Fallback to per-asset checksum file
-        try {
-            $singleShaUrl = "${DownloadUrl}.sha256"
-            $singleShaLocal = Join-Path $StageDir "$ArchiveName.sha256"
-            Get-RemoteFile -Url $singleShaUrl -Destination $singleShaLocal
-            if (Test-Path $singleShaLocal) {
-                $content = (Get-Content -Path $singleShaLocal -Raw).Trim()
-                if ($content -match "([a-fA-F0-9]{64})") {
-                    $expectedSha = $matches[1]
+                if ($expectedSha) {
+                    break
                 }
             }
         } catch {}
@@ -261,12 +265,42 @@ try {
     # Ensure target directory exists
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
+    # Clean up any unlocked stale .old binaries from prior in-place updates
+    Get-ChildItem -Path $InstallDir -Filter "*.old*" -File -ErrorAction SilentlyContinue | ForEach-Object {
+        Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
+    }
+
     # Copy binaries and icon
     $binaries = @("hadron.exe", "hadron-gluon.exe", "hadron-forge-mcp.exe")
     foreach ($bin in $binaries) {
         $src = Join-Path $binDir $bin
+        $dest = Join-Path $InstallDir $bin
         if (Test-Path $src) {
-            Copy-Item -Path $src -Destination (Join-Path $InstallDir $bin) -Force
+            $oldDest = $null
+            if (Test-Path $dest) {
+                # Windows locks running executables against overwrite/delete, but allows
+                # renaming them within the same directory before writing the new binary.
+                $oldDest = "$dest.old"
+                if (Test-Path $oldDest) {
+                    Remove-Item -Path $oldDest -Force -ErrorAction SilentlyContinue
+                }
+                if (Test-Path $oldDest) {
+                    $oldDest = "$dest.old.$PID"
+                }
+                Move-Item -Path $dest -Destination $oldDest -Force -ErrorAction SilentlyContinue
+            }
+            try {
+                Copy-Item -Path $src -Destination $dest -Force
+            } catch {
+                if ($oldDest -and (Test-Path $oldDest) -and -not (Test-Path $dest)) {
+                    Move-Item -Path $oldDest -Destination $dest -Force -ErrorAction SilentlyContinue
+                }
+                throw
+            }
+            # Best-effort cleanup if the binary was not running
+            if ($oldDest -and (Test-Path $oldDest)) {
+                Remove-Item -Path $oldDest -Force -ErrorAction SilentlyContinue
+            }
         } else {
             Write-Warning "Binary $bin was not found in release archive."
         }
@@ -321,21 +355,23 @@ try {
     }
 
     # Check and update PATH environment variable
-    $userPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
-    $pathParts = if ($userPath) { $userPath.Split(';') } else { @() }
-    $alreadyInPath = $false
-    foreach ($p in $pathParts) {
-        if ($p.TrimEnd('\') -eq $InstallDir.TrimEnd('\')) {
-            $alreadyInPath = $true
-            break
+    if (-not $NoModifyPath -and [string]::IsNullOrWhiteSpace($env:HADRON_NO_MODIFY_PATH)) {
+        $userPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+        $pathParts = if ($userPath) { $userPath.Split(';') } else { @() }
+        $alreadyInPath = $false
+        foreach ($p in $pathParts) {
+            if ($p.TrimEnd('\') -eq $InstallDir.TrimEnd('\')) {
+                $alreadyInPath = $true
+                break
+            }
         }
-    }
 
-    if (-not $alreadyInPath) {
-        Write-Host "==> Adding $InstallDir to user PATH..."
-        $newUserPath = if ([string]::IsNullOrWhiteSpace($userPath)) { $InstallDir } else { "$userPath;$InstallDir" }
-        [Environment]::SetEnvironmentVariable("Path", $newUserPath, [EnvironmentVariableTarget]::User)
-        $env:PATH = "$InstallDir;$env:PATH"
+        if (-not $alreadyInPath) {
+            Write-Host "==> Adding $InstallDir to user PATH..."
+            $newUserPath = if ([string]::IsNullOrWhiteSpace($userPath)) { $InstallDir } else { "$userPath;$InstallDir" }
+            [Environment]::SetEnvironmentVariable("Path", $newUserPath, [EnvironmentVariableTarget]::User)
+            $env:PATH = "$InstallDir;$env:PATH"
+        }
     }
 
     Write-Host @"

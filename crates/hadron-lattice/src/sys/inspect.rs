@@ -51,11 +51,7 @@ pub fn is_process_alive(pid: u32, expected_name: &str) -> bool {
             if success != 0 {
                 let path_str = String::from_utf16_lossy(&buf[..size as usize]);
                 let clean_path = path_str.trim_start_matches("\\?\\").trim_start_matches("//?/");
-                let path = std::path::Path::new(clean_path);
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    let expected_stem = expected_name.strip_suffix(".exe").unwrap_or(expected_name);
-                    return stem.eq_ignore_ascii_case(expected_stem);
-                }
+                return matches_process_image_name(clean_path, expected_name);
             }
             active
         }
@@ -65,5 +61,47 @@ pub fn is_process_alive(pid: u32, expected_name: &str) -> bool {
     {
         let _ = (pid, expected_name);
         true
+    }
+}
+
+/// Match a process image path against `expected_name`, accounting for `.exe` and
+/// in-place Windows update `.old` / `.old.<pid>` rename suffixes on running binaries.
+pub fn matches_process_image_name(clean_path: &str, expected_name: &str) -> bool {
+    let file_name = clean_path
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(clean_path);
+    let expected_stem = expected_name.strip_suffix(".exe").unwrap_or(expected_name);
+    let actual_stem = file_name
+        .split(".exe")
+        .next()
+        .unwrap_or(file_name)
+        .strip_suffix(".old")
+        .unwrap_or_else(|| file_name.split(".exe").next().unwrap_or(file_name));
+    actual_stem.eq_ignore_ascii_case(expected_stem)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_windows_process_image_including_renamed_old_binaries() {
+        assert!(matches_process_image_name(
+            r"C:\Users\Komputer\AppData\Local\Programs\Hadron\hadron-gluon.exe",
+            "hadron-gluon"
+        ));
+        assert!(matches_process_image_name(
+            r"C:\Users\Komputer\AppData\Local\Programs\Hadron\hadron-gluon.exe.old",
+            "hadron-gluon"
+        ));
+        assert!(matches_process_image_name(
+            r"C:\Users\Komputer\AppData\Local\Programs\Hadron\hadron-gluon.exe.old.4120",
+            "hadron-gluon.exe"
+        ));
+        assert!(!matches_process_image_name(
+            r"C:\Windows\System32\svchost.exe",
+            "hadron-gluon"
+        ));
     }
 }

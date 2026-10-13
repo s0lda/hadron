@@ -215,8 +215,48 @@ fn release_tag(version: &str) -> String {
     format!("v{version}")
 }
 
+#[cfg(any(windows, test))]
+const WINDOWS_BINARIES: &[&str] = &[
+    "hadron.exe",
+    "hadron-chamber.exe",
+    "hadron-gluon.exe",
+    "hadron-forge-mcp.exe",
+];
+
+#[cfg(any(windows, test))]
+fn prepare_windows_bin_overwrite_in(bin_dir: &Path) {
+    for name in WINDOWS_BINARIES {
+        let bin_path = bin_dir.join(name);
+        if bin_path.exists() {
+            let mut old_path = bin_dir.join(format!("{name}.old"));
+            let _ = std::fs::remove_file(&old_path);
+            if old_path.exists() {
+                old_path = bin_dir.join(format!("{name}.old.{}", std::process::id()));
+                let _ = std::fs::remove_file(&old_path);
+            }
+            let _ = std::fs::rename(&bin_path, &old_path);
+        }
+    }
+}
+
+#[cfg(any(windows, test))]
+fn restore_windows_bin_if_missing_in(bin_dir: &Path) {
+    for name in WINDOWS_BINARIES {
+        let bin_path = bin_dir.join(name);
+        if !bin_path.exists() {
+            let pid_old = bin_dir.join(format!("{name}.old.{}", std::process::id()));
+            let plain_old = bin_dir.join(format!("{name}.old"));
+            if pid_old.exists() {
+                let _ = std::fs::rename(&pid_old, &bin_path);
+            } else if plain_old.exists() {
+                let _ = std::fs::rename(&plain_old, &bin_path);
+            }
+        }
+    }
+}
+
 #[cfg(windows)]
-fn prepare_windows_cargo_bin_overwrite() {
+fn prepare_windows_cargo_bin_overwrite() -> Option<PathBuf> {
     let cargo_bin = std::env::var("CARGO_HOME")
         .map(PathBuf::from)
         .ok()
@@ -228,21 +268,15 @@ fn prepare_windows_cargo_bin_overwrite() {
         })
         .map(|p| p.join("bin"));
 
-    if let Some(cargo_bin) = cargo_bin {
-        for name in ["hadron.exe", "hadron-chamber.exe", "hadron-gluon.exe"] {
-            let bin_path = cargo_bin.join(name);
-            if bin_path.exists() {
-                let old_path = cargo_bin.join(format!("{name}.old"));
-                let _ = std::fs::remove_file(&old_path);
-                let _ = std::fs::rename(&bin_path, &old_path);
-            }
-        }
+    if let Some(ref dir) = cargo_bin {
+        prepare_windows_bin_overwrite_in(dir);
     }
+    cargo_bin
 }
 
 pub fn perform_cargo_install(target_version: &str) -> UpdateState {
     #[cfg(windows)]
-    prepare_windows_cargo_bin_overwrite();
+    let cargo_bin = prepare_windows_cargo_bin_overwrite();
 
     let tag = release_tag(target_version);
     let mut cmd = install_command(&tag);
@@ -250,6 +284,13 @@ pub fn perform_cargo_install(target_version: &str) -> UpdateState {
     // ran — `--target-dir` and all — rather than a hand-kept copy of it.
     let shown = format!("{cmd:?}");
     let out = cmd.output();
+
+    #[cfg(windows)]
+    if !matches!(&out, Ok(o) if o.status.success()) {
+        if let Some(ref dir) = cargo_bin {
+            restore_windows_bin_if_missing_in(dir);
+        }
+    }
 
     match out {
         Ok(o) if o.status.success() => {
@@ -370,6 +411,9 @@ pub fn perform_binary_install(target_version: &str, exe_path: &Path) -> UpdateSt
         Ok(_) => {}
     }
 
+    #[cfg(windows)]
+    prepare_windows_bin_overwrite_in(parent);
+
     let mut cmd = if is_windows {
         let mut c = Command::new("powershell.exe");
         c.args([
@@ -396,6 +440,11 @@ pub fn perform_binary_install(target_version: &str, exe_path: &Path) -> UpdateSt
     cmd.stdin(std::process::Stdio::null());
     let shown = format!("{cmd:?}");
     let out = cmd.output();
+
+    #[cfg(windows)]
+    if !matches!(&out, Ok(o) if o.status.success()) {
+        restore_windows_bin_if_missing_in(parent);
+    }
 
     match out {
         Ok(o) if o.status.success() => {
@@ -736,6 +785,30 @@ mod tests {
 
         let result2 = perform_binary_install("0.31.1`id`", dummy_path);
         assert!(matches!(result2, UpdateState::Failed(msg) if msg.contains("Invalid version string format")));
+    }
+
+    #[test]
+    fn test_prepare_and_restore_windows_bin_overwrite() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let hadron_exe = dir.path().join("hadron.exe");
+        let gluon_exe = dir.path().join("hadron-gluon.exe");
+        let mcp_exe = dir.path().join("hadron-forge-mcp.exe");
+        std::fs::write(&hadron_exe, b"old-hadron").unwrap();
+        std::fs::write(&gluon_exe, b"old-gluon").unwrap();
+        std::fs::write(&mcp_exe, b"old-mcp").unwrap();
+
+        prepare_windows_bin_overwrite_in(dir.path());
+        assert!(!hadron_exe.exists());
+        assert!(dir.path().join("hadron.exe.old").exists());
+        assert!(dir.path().join("hadron-gluon.exe.old").exists());
+        assert!(dir.path().join("hadron-forge-mcp.exe.old").exists());
+
+        // Simulate partial update where hadron.exe was written but hadron-gluon.exe failed
+        std::fs::write(&hadron_exe, b"new-hadron").unwrap();
+        restore_windows_bin_if_missing_in(dir.path());
+        assert_eq!(std::fs::read(&hadron_exe).unwrap(), b"new-hadron");
+        assert_eq!(std::fs::read(&gluon_exe).unwrap(), b"old-gluon");
+        assert_eq!(std::fs::read(&mcp_exe).unwrap(), b"old-mcp");
     }
 }
 
