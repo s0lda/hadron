@@ -512,37 +512,66 @@ fn resolve_field_path_with_home(
         .ok()
         .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()));
 
-    let explicit_arg = args.iter().skip(1).find(|a| {
-        if a.starts_with('-') {
-            return false;
-        }
-        let is_bin_name = a.as_str() == "hadron-chamber"
-            || a.as_str() == "hadron-gluon"
-            || a.as_str() == "hadron"
-            || current_exe_name.as_deref() == Some(a.as_str());
-        !is_bin_name
-    });
+    let non_flags: Vec<&str> = args
+        .iter()
+        .skip(1)
+        .filter(|a| {
+            if a.starts_with('-') {
+                return false;
+            }
+            let is_bin_name = a.as_str() == "hadron-chamber"
+                || a.as_str() == "hadron-gluon"
+                || a.as_str() == "hadron"
+                || current_exe_name.as_deref() == Some(a.as_str());
+            !is_bin_name
+        })
+        .map(|s| s.as_str())
+        .collect();
+
+    let explicit_arg = if non_flags.is_empty() {
+        None
+    } else {
+        Some(non_flags.join(" "))
+    };
 
     match explicit_arg {
         Some(raw_arg) => {
-            let path = std::path::Path::new(raw_arg);
-            if path.is_dir() {
-                let hadron_field = path.join(".hadron").join("field.jsonl");
-                let direct_field = path.join("field.jsonl");
-                if direct_field.exists() && !hadron_field.exists() {
-                    Some(direct_field.to_string_lossy().to_string())
+            let trimmed = raw_arg.trim().trim_matches(|c| c == '\'' || c == '"');
+            if trimmed.ends_with(".jsonl") {
+                return Some(trimmed.to_string());
+            }
+
+            let path_buf = if trimmed == "~" {
+                home.map(|h| h.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from(trimmed))
+            } else if let Some(stripped) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
+                if let Some(h) = home {
+                    h.join(stripped)
                 } else {
-                    let hadron_dir = path.join(".hadron");
-                    if !hadron_dir.exists() {
-                        let _ = std::fs::create_dir_all(&hadron_dir);
-                    }
-                    if !hadron_field.exists() {
-                        let _ = std::fs::File::create(&hadron_field);
-                    }
-                    Some(hadron_field.to_string_lossy().to_string())
+                    std::path::PathBuf::from(trimmed)
                 }
             } else {
-                Some(raw_arg.clone())
+                std::path::PathBuf::from(trimmed)
+            };
+
+            let abs_path = if path_buf.is_absolute() || crate::wsl::is_wsl_unc_path(&path_buf) {
+                path_buf
+            } else {
+                cwd.join(&path_buf)
+            };
+
+            let hadron_field = abs_path.join(".hadron").join("field.jsonl");
+            let direct_field = abs_path.join("field.jsonl");
+            if direct_field.exists() && !hadron_field.exists() {
+                Some(direct_field.to_string_lossy().to_string())
+            } else {
+                let hadron_dir = abs_path.join(".hadron");
+                if !hadron_dir.exists() {
+                    let _ = std::fs::create_dir_all(&hadron_dir);
+                }
+                if !hadron_field.exists() {
+                    let _ = std::fs::File::create(&hadron_field);
+                }
+                Some(hadron_field.to_string_lossy().to_string())
             }
         }
         None => {
@@ -860,5 +889,36 @@ mod tests {
             resolve_field_path_with_home(home.path(), &args, Some(home.path())),
             Some(field_in(&project))
         );
+    }
+
+    #[test]
+    fn test_multi_token_and_quoted_path_args_resolve() {
+        let tmp = tempfile::tempdir().unwrap();
+        let args_multi = vec![
+            "hadron".to_string(),
+            "custom".to_string(),
+            "path".to_string(),
+        ];
+        let resolved = resolve_field_path_with_home(tmp.path(), &args_multi, None).unwrap();
+        let expected = tmp.path().join("custom path").join(".hadron").join("field.jsonl");
+        assert_eq!(resolved, expected.to_string_lossy().to_string());
+
+        let args_quoted = vec![
+            "hadron".to_string(),
+            "\"quoted folder\"".to_string(),
+        ];
+        let resolved_quoted = resolve_field_path_with_home(tmp.path(), &args_quoted, None).unwrap();
+        let expected_quoted = tmp.path().join("quoted folder").join(".hadron").join("field.jsonl");
+        assert_eq!(resolved_quoted, expected_quoted.to_string_lossy().to_string());
+    }
+
+    #[test]
+    fn test_tilde_path_expansion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let args = vec!["hadron".to_string(), "~/dev/my_repo".to_string()];
+        let resolved = resolve_field_path_with_home(tmp.path(), &args, Some(home.path())).unwrap();
+        let expected = home.path().join("dev").join("my_repo").join(".hadron").join("field.jsonl");
+        assert_eq!(resolved, expected.to_string_lossy().to_string());
     }
 }

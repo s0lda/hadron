@@ -355,7 +355,7 @@ impl Chamber {
             "open" => {
                 let trimmed = args.trim();
                 if trimmed.is_empty() {
-                    self.open_workspace(cx);
+                    self.toggle_project_switcher(cx);
                 } else {
                     self.open_project_path(trimmed, _window, cx);
                 }

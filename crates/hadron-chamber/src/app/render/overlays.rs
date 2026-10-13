@@ -1820,14 +1820,8 @@ impl super::Chamber {
                     // Swallow clicks inside the panel so they don't hit the dismiss backdrop.
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {})
                     .child(item(
-                        "menu-open-folder",
-                        "Open Folder…",
-                        |this, _w, cx| this.open_workspace(cx),
-                        cx,
-                    ))
-                    .child(item(
-                        "menu-switch-project",
-                        "Switch Project… (Ctrl+O)",
+                        "menu-open-workspace",
+                        "Open Workspace… (Ctrl+O)",
                         |this, _w, cx| this.toggle_project_switcher(cx),
                         cx,
                     ))

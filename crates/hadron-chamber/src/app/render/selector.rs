@@ -244,12 +244,32 @@ impl super::Chamber {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let trimmed = path_str.trim().trim_matches(|c| c == '\'' || c == '"');
+        let home = hadron_lattice::user_home_dir();
+        let expanded = if trimmed == "~" {
+            home.map(|h| h.to_string_lossy().to_string()).unwrap_or_else(|| trimmed.to_string())
+        } else if let Some(stripped) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
+            home.map(|h| h.join(stripped).to_string_lossy().to_string()).unwrap_or_else(|| trimmed.to_string())
+        } else {
+            trimmed.to_string()
+        };
+        let final_path = {
+            let p = std::path::Path::new(&expanded);
+            if p.is_absolute() || crate::wsl::is_wsl_unc_path(p) {
+                expanded
+            } else if let Ok(cwd) = std::env::current_dir() {
+                cwd.join(p).to_string_lossy().to_string()
+            } else {
+                expanded
+            }
+        };
+
         match std::env::current_exe() {
             Ok(exe) => {
-                if let Err(e) = std::process::Command::new(exe).arg(path_str).spawn() {
+                if let Err(e) = std::process::Command::new(exe).arg(&final_path).spawn() {
                     self.toast_manager.push(
                         ToastKind::Error,
-                        format!("Failed to open {path_str}: {e}"),
+                        format!("Failed to open {final_path}: {e}"),
                         Some(3),
                     );
                 } else if self.workspace_mode == WorkspaceMode::Selector {
@@ -258,7 +278,7 @@ impl super::Chamber {
                     self.project_switcher_open = false;
                     self.toast_manager.push(
                         ToastKind::Success,
-                        format!("Opened {path_str} in new chamber window"),
+                        format!("Opened {final_path} in new chamber window"),
                         Some(3),
                     );
                     cx.notify();

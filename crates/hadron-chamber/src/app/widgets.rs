@@ -124,8 +124,8 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
                 _ => "Check for Updates…".to_string(),
             };
             menu.item(
-                PopupMenuItem::new("Open Workspace").on_click(move |_, _, cx| {
-                    open_workspace.update(cx, |this, cx| this.open_workspace(cx));
+                PopupMenuItem::new("Open Workspace…").on_click(move |_, _, cx| {
+                    open_workspace.update(cx, |this, cx| this.toggle_project_switcher(cx));
                 }),
             )
             .item(
@@ -802,12 +802,35 @@ pub(super) fn fallback_pick_image() -> Option<String> {
 
     // 2) WSL: drive a native Windows OpenFileDialog through PowerShell, then translate the
     //    returned `C:\…` path to `/mnt/c/…` with `wslpath`.
-    let script = "Add-Type -AssemblyName System.Windows.Forms; \
+    let initial_path = if crate::sys::is_wsl() {
+        let home = std::env::var("HOME").ok().unwrap_or_else(|| ".".to_string());
+        Command::new("wslpath")
+            .arg("-w")
+            .arg(&home)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    } else {
+        None
+    };
+
+    let script = if let Some(ref init) = initial_path {
+        format!(
+            "Add-Type -AssemblyName System.Windows.Forms; \
+             $d = New-Object System.Windows.Forms.OpenFileDialog; \
+             $d.InitialDirectory = '{init}'; \
+             $d.Filter = 'Images|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp|All files|*.*'; \
+             if ($d.ShowDialog() -eq 'OK') {{ $d.FileName }}"
+        )
+    } else {
+        "Add-Type -AssemblyName System.Windows.Forms; \
          $d = New-Object System.Windows.Forms.OpenFileDialog; \
          $d.Filter = 'Images|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp|All files|*.*'; \
-         if ($d.ShowDialog() -eq 'OK') { $d.FileName }";
+         if ($d.ShowDialog() -eq 'OK') { $d.FileName }".to_string()
+    };
     let win = Command::new("powershell.exe")
-        .args(["-NoProfile", "-Command", script])
+        .args(["-NoProfile", "-Command", &script])
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -825,22 +848,67 @@ pub(super) fn fallback_pick_image() -> Option<String> {
 pub(super) fn fallback_pick_directory() -> Option<String> {
     use std::process::Command;
 
+    let home = std::env::var("HOME").ok().unwrap_or_else(|| ".".to_string());
+
+    // 1) On Linux / WSLg, try zenity with default home path if available
+    let zenity_arg = format!("--filename={home}/");
     match Command::new("zenity")
-        .args(["--file-selection", "--directory", "--title=Open workspace"])
+        .args(["--file-selection", "--directory", "--title=Open workspace", &zenity_arg])
         .output()
     {
-        Ok(out) => {
+        Ok(out) if out.status.success() => {
             let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            return (out.status.success() && !path.is_empty()).then_some(path);
+            if !path.is_empty() {
+                return Some(path);
+            }
         }
-        Err(_) => { /* zenity not installed — try the Windows dialog below */ }
+        _ => { /* zenity not installed or failed — try next */ }
     }
 
-    let script = "Add-Type -AssemblyName System.Windows.Forms; \
+    // 2) If kdialog is available on Linux
+    match Command::new("kdialog")
+        .args(["--getexistingdirectory", &home, "--title", "Open workspace"])
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(path);
+            }
+        }
+        _ => {}
+    }
+
+    // 3) WSL: drive a native Windows FolderBrowserDialog through PowerShell.
+    // If running under WSL, translate the WSL home directory to Windows UNC so it opens
+    // inside the current WSL distro (e.g. \\wsl.localhost\Ubuntu\home\user) rather than
+    // defaulting to Windows C:\Users\<WindowsUser>.
+    let initial_path = if crate::sys::is_wsl() {
+        Command::new("wslpath")
+            .arg("-w")
+            .arg(&home)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    } else {
+        None
+    };
+
+    let script = if let Some(ref init) = initial_path {
+        format!(
+            "Add-Type -AssemblyName System.Windows.Forms; \
+             $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
+             $d.SelectedPath = '{init}'; \
+             if ($d.ShowDialog() -eq 'OK') {{ $d.SelectedPath }}"
+        )
+    } else {
+        "Add-Type -AssemblyName System.Windows.Forms; \
          $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
-         if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }";
+         if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }".to_string()
+    };
     let win = Command::new("powershell.exe")
-        .args(["-NoProfile", "-Command", script])
+        .args(["-NoProfile", "-Command", &script])
         .output()
         .ok()
         .filter(|o| o.status.success())

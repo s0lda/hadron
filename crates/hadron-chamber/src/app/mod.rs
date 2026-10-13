@@ -681,7 +681,8 @@ impl Chamber {
 
         let selector_search = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Search recent projects…")
+                .submit_on_enter(true)
+                .placeholder("Search recent projects or enter folder path… (Enter to open)")
         });
 
         // No `completion_provider`: the fork's LSP menu is drawn with `deferred()`
@@ -1044,7 +1045,26 @@ impl Chamber {
             cx.subscribe_in(&acp_program, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
             }),
-            cx.subscribe_in(&selector_search, window, |_, _, _: &InputEvent, _, cx| {
+            cx.subscribe_in(&selector_search, window, |this, _, event: &InputEvent, window, cx| {
+                if let InputEvent::PressEnter { .. } = event {
+                    let search_val = this.selector_search.read(cx).value().trim().to_string();
+                    if !search_val.is_empty() {
+                        let filtered: Vec<_> = this.prefs.recent_projects
+                            .iter()
+                            .filter(|p| {
+                                p.display_name.eq_ignore_ascii_case(&search_val)
+                                    || p.path.eq_ignore_ascii_case(&search_val)
+                            })
+                            .collect();
+                        if let Some(first) = filtered.first() {
+                            let path = first.path.clone();
+                            this.open_project_path(&path, window, cx);
+                        } else {
+                            this.open_project_path(&search_val, window, cx);
+                        }
+                        return;
+                    }
+                }
                 cx.notify()
             }),
             // A colour chosen in the picker writes the current Settings identity's colour.
