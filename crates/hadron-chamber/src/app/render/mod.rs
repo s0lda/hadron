@@ -29,9 +29,14 @@ pub mod diff_steering;
 pub mod quark_home;
 pub mod canvas;
 pub mod nucleus_graph;
+pub mod selector;
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.workspace_mode == WorkspaceMode::Selector {
+            return self.render_project_selector(window, cx).into_any_element();
+        }
+
         let frame_start =
             std::env::var_os("HADRON_FRAME_TIMING").is_some().then(std::time::Instant::now);
         // Drain a path chosen from the native avatar picker. The picker task runs

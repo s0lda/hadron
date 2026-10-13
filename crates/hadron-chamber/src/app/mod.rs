@@ -56,6 +56,12 @@ pub struct CachedStats {
     pub timeline: crate::model::SpendTimeline,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkspaceMode {
+    Chamber,
+    Selector,
+}
+
 pub(super) mod delegation;
 pub(crate) mod toasts;
 use toasts::{ToastKind, ToastManager};
@@ -613,6 +619,8 @@ struct Chamber {
     pub(super) gluon_stopped_notice: bool,
     #[allow(dead_code)]
     pub(super) audio_manager: audio::AudioTelemetryManager,
+    pub(super) workspace_mode: WorkspaceMode,
+    pub(super) selector_search: Entity<InputState>,
 }
 
 #[derive(Clone, Debug)]
@@ -649,11 +657,16 @@ impl Chamber {
         global: Team,
         path: PathBuf,
         lock_file: Option<std::fs::File>,
+        workspace_mode: WorkspaceMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let repo_root = crate::vcs::repo_root_of(&path).to_path_buf();
-        let files = crate::sys::list_workspace_files(&repo_root, &std::collections::HashSet::new());
+        let files = if workspace_mode == WorkspaceMode::Selector {
+            Vec::new()
+        } else {
+            crate::sys::list_workspace_files(&repo_root, &std::collections::HashSet::new())
+        };
         // `@`-mention autocomplete offers gitignored entries too (`d4679265`): a
         // wholly-ignored directory reaches us collapsed to one row (`target/`,
         // `.hadron/`), so the list gains ~16 entries, not the 51k files under them.
@@ -663,6 +676,11 @@ impl Chamber {
                 .map(|(p, _)| p.clone())
                 .collect::<Vec<String>>(),
         ));
+
+        let selector_search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Search recent projects…")
+        });
 
         // No `completion_provider`: the fork's LSP menu is drawn with `deferred()`
         // and paints off the bottom of the window (seven fixes could not move it —
@@ -1024,6 +1042,9 @@ impl Chamber {
             cx.subscribe_in(&acp_program, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
             }),
+            cx.subscribe_in(&selector_search, window, |_, _, _: &InputEvent, _, cx| {
+                cx.notify()
+            }),
             // A colour chosen in the picker writes the current Settings identity's colour.
             cx.subscribe_in(
                 &color_picker,
@@ -1194,14 +1215,18 @@ impl Chamber {
                 .await;
 
             let state = match this.update(cx, |chamber, _| {
-                (
+                if chamber.workspace_mode == WorkspaceMode::Selector {
+                    return None;
+                }
+                Some((
                     chamber.path.clone(),
                     chamber.file_tree_expanded.clone(),
                     chamber.right_rail_tab,
                     chamber.prefs.repo_monitor,
-                )
+                ))
             }) {
-                Ok(s) => s,
+                Ok(Some(s)) => s,
+                Ok(None) => continue,
                 Err(_) => break,
             };
 
@@ -1547,9 +1572,13 @@ impl Chamber {
             gluon_stopped_notice: false,
             update_state: UpdateState::default(),
             audio_manager,
+            workspace_mode,
+            selector_search,
         };
-        chamber.update_active_plan();
-        chamber.check_for_updates(cx);
+        if workspace_mode != WorkspaceMode::Selector {
+            chamber.update_active_plan();
+            chamber.check_for_updates(cx);
+        }
         chamber
     }
 
@@ -1857,17 +1886,22 @@ impl Chamber {
 
 /// Launch the chamber window against a field file path.
 pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>) {
-    let Some(path) = field_path else {
-        hadron_lattice::term::info(
-            hadron_lattice::term::Source::Chamber,
-            "usage: hadron-chamber <field.jsonl>",
-        );
-        return;
+    let (field_path, workspace_mode) = match field_path {
+        Some(path) => (PathBuf::from(path), WorkspaceMode::Chamber),
+        None => {
+            let dummy_path = hadron_lattice::team_config_path()
+                .and_then(|p| p.parent().map(|d| d.join("field.jsonl")))
+                .unwrap_or_else(|| PathBuf::from("field.jsonl"));
+            (dummy_path, WorkspaceMode::Selector)
+        }
     };
-    let field_path = PathBuf::from(&path);
     // The repo team file (`.hadron/team.json`) and the separate global catalogue
     // (`~/.hadron/team.json`, skipped when it IS the repo file).
-    let repo_path = hadron_lattice::team_for_field(&field_path);
+    let repo_path = if workspace_mode == WorkspaceMode::Selector {
+        None
+    } else {
+        hadron_lattice::team_for_field(&field_path)
+    };
     let global_path = hadron_lattice::team_config_path()
         .filter(|g| Some(g.as_path()) != repo_path.as_deref());
 
@@ -1893,7 +1927,11 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
     // Load the SAME repo team the daemon seated for this field, plus the catalogue.
     let team = repo_path.as_deref().map(load_team).unwrap_or_default();
     let global = global_path.as_deref().map(load_team).unwrap_or_default();
-    let events = io::read_events(&field_path).unwrap_or_default();
+    let events = if workspace_mode == WorkspaceMode::Selector {
+        Vec::new()
+    } else {
+        io::read_events(&field_path).unwrap_or_default()
+    };
     let view = model::project_with_team(&events, &resolve_team(&team, &global), &global);
 
     let app = gpui_platform::application().with_assets(crate::symbols::ChamberAssets);
@@ -2001,6 +2039,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
                         global.clone(),
                         field_path.clone(),
                         chamber_lock_file,
+                        workspace_mode,
                         window,
                         cx,
                     )

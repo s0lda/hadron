@@ -141,13 +141,14 @@ impl Chamber {
     /// daemon, so the failure mode `team_for_field-misses-repo-root` warns about — a
     /// silently-empty roster — cannot be inflicted on the session already open.
     pub(super) fn open_workspace(&mut self, cx: &mut Context<Self>) {
+        let is_selector = self.workspace_mode == WorkspaceMode::Selector;
         let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: false,
             directories: true,
             multiple: false,
             prompt: Some("Open workspace".into()),
         });
-        cx.spawn(async move |_this, cx| {
+        cx.spawn(async move |this, cx| {
             // Same two-step as `pick_avatar_image`: gpui's portal-backed picker first,
             // then a subprocess dialog for WSL, where there is usually no portal. Only
             // `NoPicker` earns that second dialog — treating a cancel as "no picker" is
@@ -167,6 +168,8 @@ impl Chamber {
                 Ok(exe) => {
                     if let Err(e) = std::process::Command::new(exe).arg(&dir).spawn() {
                         eprintln!("chamber: failed to open a chamber for {dir}: {e}");
+                    } else if is_selector {
+                        let _ = this.update(cx, |_chamber, cx| cx.quit());
                     }
                 }
                 Err(e) => eprintln!("chamber: cannot locate our own binary to relaunch: {e}"),
