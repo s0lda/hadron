@@ -1445,6 +1445,49 @@ mod tests {
         assert_eq!(prefs.repo_monitor, loaded.repo_monitor);
         assert_eq!(prefs.repo_monitor_interval_secs, loaded.repo_monitor_interval_secs);
     }
+
+    #[test]
+    fn test_recent_projects_and_remoting_preferences() {
+        let mut prefs = ChamberPrefs::default();
+        assert_eq!(prefs.startup_behavior, StartupBehavior::ProjectSelector);
+        assert!(prefs.recent_projects.is_empty());
+        assert_eq!(prefs.last_project(), None);
+
+        // Record a project
+        let p1 = RecentProject::new("/home/jake/dev/p1", "p1");
+        prefs.record_project(p1.clone());
+        assert_eq!(prefs.recent_projects.len(), 1);
+        assert_eq!(prefs.last_project().unwrap().path, "/home/jake/dev/p1");
+
+        // Record a second project
+        let p2 = RecentProject::new(r"\\wsl.localhost\Ubuntu\home\jake\p2", "p2")
+            .with_remote(ProjectRemote::Wsl {
+                distro: "Ubuntu".to_string(),
+                linux_path: "/home/jake/p2".to_string(),
+            })
+            .with_branch("main");
+        prefs.record_project(p2.clone());
+        assert_eq!(prefs.recent_projects.len(), 2);
+        assert_eq!(prefs.last_project().unwrap().path, r"\\wsl.localhost\Ubuntu\home\jake\p2");
+
+        // Record p1 again -> moves to front (LRU)
+        prefs.record_project(p1.clone());
+        assert_eq!(prefs.recent_projects.len(), 2);
+        assert_eq!(prefs.last_project().unwrap().path, "/home/jake/dev/p1");
+        assert_eq!(prefs.recent_projects[1].path, r"\\wsl.localhost\Ubuntu\home\jake\p2");
+
+        // Serde round-trip
+        let json = serde_json::to_string(&prefs).expect("serialize");
+        let loaded: ChamberPrefs = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(prefs.recent_projects, loaded.recent_projects);
+        assert_eq!(prefs.startup_behavior, loaded.startup_behavior);
+
+        // Remove project
+        prefs.remove_project("/home/jake/dev/p1");
+        assert_eq!(prefs.recent_projects.len(), 1);
+        assert_eq!(prefs.last_project().unwrap().path, r"\\wsl.localhost\Ubuntu\home\jake\p2");
+    }
 }
+
 
 
