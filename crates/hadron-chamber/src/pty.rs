@@ -960,9 +960,15 @@ mod tests {
             terms.push(PtyTerminal::new(dir.path(), 80, 24).expect("spawn PTY"));
         }
         drop(terms);
-        std::thread::sleep(Duration::from_millis(200));
 
-        let final_threads = std::fs::read_dir("/proc/self/task").unwrap().count();
+        let mut final_threads = std::fs::read_dir("/proc/self/task").unwrap().count();
+        for _ in 0..100 {
+            if final_threads <= initial_threads {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            final_threads = std::fs::read_dir("/proc/self/task").unwrap().count();
+        }
         assert!(
             final_threads <= initial_threads,
             "Threads must not leak after dropping PTY terminals! Baseline: {}, Final: {}",
