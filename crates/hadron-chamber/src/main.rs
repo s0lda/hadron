@@ -572,17 +572,21 @@ fn resolve_field_path_with_home(
             }
         }
         None => {
+            let exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()));
             let is_home = home.is_some_and(|h| {
                 cwd == h || cwd.canonicalize().ok() == h.canonicalize().ok()
             });
+            let is_install_dir = config::is_install_or_system_dir(cwd, exe_dir.as_deref());
 
-            if is_home {
+            if is_home || is_install_dir {
                 let prefs = config::load();
                 match prefs.startup_behavior {
                     config::StartupBehavior::ReopenLast => {
                         if let Some(last) = prefs.last_project() {
                             let p = std::path::Path::new(&last.path);
-                            if p.is_dir() {
+                            if p.is_dir() && !config::is_install_or_system_dir(p, exe_dir.as_deref()) {
                                 let hadron_field = p.join(".hadron").join("field.jsonl");
                                 if hadron_field.exists() {
                                     return Some(hadron_field.to_string_lossy().to_string());
@@ -591,7 +595,7 @@ fn resolve_field_path_with_home(
                         }
                         None
                     }
-                    config::StartupBehavior::CurrentDir => {
+                    config::StartupBehavior::CurrentDir if !is_install_dir => {
                         let hadron_dir = cwd.join(".hadron");
                         if !hadron_dir.exists() {
                             let _ = std::fs::create_dir_all(&hadron_dir);
@@ -602,7 +606,8 @@ fn resolve_field_path_with_home(
                         }
                         Some(default_field.to_string_lossy().to_string())
                     }
-                    config::StartupBehavior::ProjectSelector => None,
+                    config::StartupBehavior::CurrentDir
+                    | config::StartupBehavior::ProjectSelector => None,
                 }
             } else {
                 let hadron_dir = cwd.join(".hadron");
@@ -859,6 +864,39 @@ mod tests {
         assert!(
             !home.path().join(".hadron").join("field.jsonl").exists(),
             "bare launch in home directory must not pollute home with .hadron/field.jsonl"
+        );
+    }
+
+    #[test]
+    fn test_bare_launch_in_install_dir_returns_none_under_selector_mode() {
+        let root = tempfile::tempdir().unwrap();
+        let win_install_dir = root
+            .path()
+            .join("Users")
+            .join("User")
+            .join("AppData")
+            .join("Local")
+            .join("Programs")
+            .join("Hadron");
+        std::fs::create_dir_all(&win_install_dir).unwrap();
+        let bare = vec!["hadron.exe".to_string()];
+
+        assert_eq!(
+            resolve_field_path_with_home(&win_install_dir, &bare, None),
+            None,
+            "Start Menu launch from AppData\\Local\\Programs\\Hadron must open Project Selector"
+        );
+        assert!(
+            !win_install_dir.join(".hadron").join("field.jsonl").exists(),
+            "Start Menu launch must not create .hadron/field.jsonl in install directory"
+        );
+
+        let local_bin = root.path().join(".local").join("bin");
+        std::fs::create_dir_all(&local_bin).unwrap();
+        assert_eq!(
+            resolve_field_path_with_home(&local_bin, &bare, None),
+            None,
+            "bare launch in ~/.local/bin must open Project Selector"
         );
     }
 

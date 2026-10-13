@@ -107,22 +107,18 @@ impl Render for Chamber {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &gpui_component::input::Copy, window, cx| {
-                use gpui_component::WindowExt as _;
-                let selected = window.selected_text(cx);
-                if !selected.is_empty() {
-                    crate::sys::copy_to_system_clipboard(&selected);
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
-                    this.toast_manager.push(
-                        ToastKind::Success,
-                        "Copied to clipboard".to_string(),
-                        Some(2),
-                    );
-                }
+                this.on_copy_action(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &TerminalCopy, window, cx| {
+                this.on_terminal_copy_shortcut(window, cx);
             }))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 let is_copy = (event.keystroke.modifiers.control || event.keystroke.modifiers.platform)
                     && (event.keystroke.key == "c" || event.keystroke.key == "C");
-                if is_copy {
+                if is_copy && !this.terminal_focus.is_focused(window) {
+                    if this.copy_terminal_selection(cx) {
+                        return;
+                    }
                     use gpui_component::WindowExt as _;
                     let selected = window.selected_text(cx);
                     if !selected.is_empty() {
@@ -133,6 +129,7 @@ impl Render for Chamber {
                             "Copied to clipboard".to_string(),
                             Some(2),
                         );
+                        cx.notify();
                     }
                 }
             }))

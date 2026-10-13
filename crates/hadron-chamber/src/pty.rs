@@ -110,6 +110,21 @@ impl TermSnapshot {
         }
         out
     }
+
+    /// The visible screen text with trailing padding whitespace trimmed per line
+    /// and trailing blank lines stripped, suitable for clipboard copy.
+    pub fn trimmed_screen_text(&self) -> String {
+        let mut out = String::new();
+        for line in &self.lines {
+            let mut line_text = String::new();
+            for run in &line.runs {
+                line_text.push_str(&run.text);
+            }
+            out.push_str(line_text.trim_end());
+            out.push('\n');
+        }
+        out.trim_end().to_string()
+    }
 }
 
 /// Minimal [`Dimensions`] for constructing / resizing the grid. Scrollback is set
@@ -1026,6 +1041,41 @@ mod tests {
         assert_eq!(shells[0], "custom_shell");
         assert_eq!(wsl_target, None);
         assert_eq!(cwd, dir.path());
+    }
+
+    #[test]
+    fn test_trimmed_screen_text_strips_trailing_padding() {
+        let snap = TermSnapshot {
+            lines: vec![
+                TermLine {
+                    runs: vec![TermRun {
+                        text: "$ cargo test   ".to_string(),
+                        fg: DEFAULT_FG,
+                        bg: DEFAULT_BG,
+                        has_cursor: false,
+                    }],
+                },
+                TermLine {
+                    runs: vec![TermRun {
+                        text: "test result: ok.      ".to_string(),
+                        fg: DEFAULT_FG,
+                        bg: DEFAULT_BG,
+                        has_cursor: false,
+                    }],
+                },
+                TermLine {
+                    runs: vec![TermRun {
+                        text: "          ".to_string(),
+                        fg: DEFAULT_FG,
+                        bg: DEFAULT_BG,
+                        has_cursor: false,
+                    }],
+                },
+            ],
+            cols: 20,
+            rows: 3,
+        };
+        assert_eq!(snap.trimmed_screen_text(), "$ cargo test\ntest result: ok.");
     }
 }
 

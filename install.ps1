@@ -316,6 +316,7 @@ try {
     $hadronExePath = Join-Path $InstallDir "hadron.exe"
     $iconPath = if (Test-Path $iconDest) { "$iconDest,0" } else { "$hadronExePath,0" }
 
+    $shortcutWorkDir = if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) { $env:USERPROFILE } else { $InstallDir }
     if (-not $NoShortcut) {
         try {
             $programsDir = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
@@ -324,7 +325,7 @@ try {
                 $shortcutPath = Join-Path $programsDir "Hadron.lnk"
                 $shortcut = $wshShell.CreateShortcut($shortcutPath)
                 $shortcut.TargetPath = $hadronExePath
-                $shortcut.WorkingDirectory = $InstallDir
+                $shortcut.WorkingDirectory = $shortcutWorkDir
                 $shortcut.IconLocation = $iconPath
                 $shortcut.Description = "Hadron AI Coding Swarm Workspace"
                 $shortcut.Save()
@@ -343,7 +344,7 @@ try {
                 $desktopShortcutPath = Join-Path $desktopDir "Hadron.lnk"
                 $shortcut = $wshShell.CreateShortcut($desktopShortcutPath)
                 $shortcut.TargetPath = $hadronExePath
-                $shortcut.WorkingDirectory = $InstallDir
+                $shortcut.WorkingDirectory = $shortcutWorkDir
                 $shortcut.IconLocation = $iconPath
                 $shortcut.Description = "Hadron AI Coding Swarm Workspace"
                 $shortcut.Save()

@@ -113,6 +113,7 @@ impl Chamber {
         };
 
         let tab_title = tab.title.clone();
+        let view_entity = cx.entity().clone();
         v_flex()
             .id(SharedString::from(format!("pty-grid-card-{tab_ix}")))
             .flex_1()
@@ -190,6 +191,32 @@ impl Chamber {
                     ),
             )
             .child(pty_content)
+            .context_menu(move |mut menu, _, _| {
+                let v1 = view_entity.clone();
+                menu = menu.item(PopupMenuItem::new("Copy").on_click(move |_, window, cx| {
+                    v1.update(cx, |this, cx| {
+                        this.copy_terminal_selection_or_screen(Some(tab_ix), cx);
+                    });
+                    window.refresh();
+                }));
+                let v2 = view_entity.clone();
+                menu = menu.item(PopupMenuItem::new("Copy Screen").on_click(
+                    move |_, window, cx| {
+                        v2.update(cx, |this, cx| {
+                            this.copy_terminal_screen(Some(tab_ix), cx);
+                        });
+                        window.refresh();
+                    },
+                ));
+                let v3 = view_entity.clone();
+                menu = menu.item(PopupMenuItem::new("Paste").on_click(move |_, window, cx| {
+                    v3.update(cx, |this, cx| {
+                        this.paste_to_terminal(Some(tab_ix), cx);
+                    });
+                    window.refresh();
+                }));
+                menu
+            })
             .into_any_element()
     }
 

@@ -155,6 +155,7 @@ actions!(
         OpenGitItem,
         ToggleReplOverlay,
         ToggleProjectSwitcher,
+        TerminalCopy,
     ]
 );
 
@@ -176,20 +177,24 @@ const CHAT_MIN: f32 = 360.0;
 const INNER_RADIUS: Pixels = px(12.0);
 
 /// Terminal grid metrics: the render font size and one cell's width/height for
-/// Cascadia Code at that size. The pump loop divides the measured screen by
+/// Cascadia Code at that size, plus the inner padding (`.p_3()` = 12px) of the
+/// terminal lines container. The pump loop divides the measured screen by
 /// these to pick the PTY's columns/rows, so they must track the values used in
 /// the grid render. (Cascadia's advance is ~0.6em; line height ~1.3em.)
 const TERM_FONT: f32 = 13.0;
 const TERM_CELL_W: f32 = 7.8;
 const TERM_CELL_H: f32 = 17.0;
+const TERM_PAD: f32 = 12.0;
 
 /// Translate the terminal screen's measured pixel size into a PTY column/row
 /// grid. The single source of truth for the cell → grid conversion, used both to
 /// spawn the PTY and to resize it. Floored, and never below a 2×2 usable grid.
 fn term_dims((w, h): (f32, f32)) -> (usize, usize) {
+    let inner_w = (w - 2.0 * TERM_PAD).max(0.0);
+    let inner_h = (h - 2.0 * TERM_PAD).max(0.0);
     (
-        ((w / TERM_CELL_W).floor() as usize).max(2),
-        ((h / TERM_CELL_H).floor() as usize).max(2),
+        ((inner_w / TERM_CELL_W).floor() as usize).max(2),
+        ((inner_h / TERM_CELL_H).floor() as usize).max(2),
     )
 }
 
@@ -1648,7 +1653,6 @@ impl Chamber {
             .and_then(|tab| tab.term.as_ref())
     }
 
-    #[allow(dead_code)]
     pub(super) fn active_terminal_mut(&mut self) -> Option<&mut crate::pty::PtyTerminal> {
         let idx = self.active_terminal_index;
         self.terminals
@@ -1714,13 +1718,13 @@ fn default_key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-o", ToggleProjectSwitcher, None),
         // Global keyboard dismiss (Escape) to drop completions, modals, overlays, or return focus.
         KeyBinding::new("escape", Dismiss, None),
-        // Global text copy (Cmd+C / Ctrl+C) to copy selection from chat/TextViews
+        // Global text copy (Cmd+C / Ctrl+C / Ctrl+Shift+C) to copy selection from terminal or chat
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-c", gpui_component::input::Copy, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-c", gpui_component::input::Copy, None),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-c", gpui_component::input::Copy, None),
+        KeyBinding::new("ctrl-shift-c", TerminalCopy, None),
         // Git Rail scoped shortcuts (when Git panel has focus)
         KeyBinding::new("1", SelectGitBranches, Some(GIT_KEY_CONTEXT)),
         KeyBinding::new("2", SelectGitWorktrees, Some(GIT_KEY_CONTEXT)),
@@ -2277,9 +2281,34 @@ mod tests {
         // Focus Toggle: Ctrl+Tab and Ctrl+` -> ToggleFocus
         assert!(bindings.iter().any(|b| b.contains("ToggleFocus") && b.contains(r#"key: "tab""#)));
         assert!(bindings.iter().any(|b| b.contains("ToggleFocus") && b.contains(r#"key: "`""#)));
-        // Global Copy: Copy -> gpui_component::input::Copy
+        // Global Copy: Copy -> gpui_component::input::Copy and TerminalCopy
         assert!(bindings.iter().any(|b| b.contains("Copy") && b.contains(r#"key: "c""#)));
+        #[cfg(not(target_os = "macos"))]
+        assert!(bindings.iter().any(|b| b.contains("TerminalCopy") && b.contains(r#"key: "c""#)));
         // Project Switcher: Ctrl+O / Cmd+O -> ToggleProjectSwitcher
         assert!(bindings.iter().any(|b| b.contains("ToggleProjectSwitcher") && b.contains(r#"key: "o""#)));
+    }
+
+    #[test]
+    fn terminal_grid_cell_and_dims_account_for_inner_padding() {
+        let bounds = (1000.0, 200.0, 800.0, 400.0);
+        // Clicking exactly at the top-left of the padded text area (ox + TERM_PAD, oy + TERM_PAD) -> (0, 0, false)
+        assert_eq!(
+            terminal::terminal_grid_cell((1000.0 + TERM_PAD, 200.0 + TERM_PAD), bounds),
+            (0, 0, false)
+        );
+        // Clicking inside the top-left padding clamps to (0, 0, false)
+        assert_eq!(
+            terminal::terminal_grid_cell((1002.0, 202.0), bounds),
+            (0, 0, false)
+        );
+        // Clicking 2 rows and 3.6 columns inside the padded text area
+        let px_x = 1000.0 + TERM_PAD + 3.6 * TERM_CELL_W;
+        let px_y = 200.0 + TERM_PAD + 2.2 * TERM_CELL_H;
+        assert_eq!(terminal::terminal_grid_cell((px_x, px_y), bounds), (2, 3, true));
+
+        // term_dims subtracts 2 * TERM_PAD from width and height
+        let (cols, rows) = term_dims((2.0 * TERM_PAD + 10.0 * TERM_CELL_W, 2.0 * TERM_PAD + 5.0 * TERM_CELL_H));
+        assert_eq!((cols, rows), (10, 5));
     }
 }

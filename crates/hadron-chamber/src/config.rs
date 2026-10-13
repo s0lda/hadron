@@ -1075,8 +1075,12 @@ impl ChamberPrefs {
 
     /// Record a project in the recent projects LRU list.
     /// If an entry with the same path already exists, moves it to the front and updates its metadata.
+    /// Ignores binary installation or OS system directories (e.g. `AppData\Local\Programs\Hadron`).
     /// Caps the list at 50 entries.
     pub fn record_project(&mut self, project: RecentProject) {
+        if is_install_or_system_dir(Path::new(&project.path), None) {
+            return;
+        }
         self.recent_projects.retain(|p| p.path != project.path);
         self.recent_projects.insert(0, project);
         if self.recent_projects.len() > 50 {
@@ -1093,6 +1097,33 @@ impl ChamberPrefs {
     pub fn last_project(&self) -> Option<&RecentProject> {
         self.recent_projects.first()
     }
+}
+
+/// True when `path` is the Hadron binary installation directory or an OS system launch
+/// directory (e.g. `%LOCALAPPDATA%\Programs\Hadron`, `Program Files\Hadron`, `Windows\System32`,
+/// `~/.local/bin`, `~/.cargo/bin`, or `exe_dir`) that must never be treated as a project workspace.
+pub fn is_install_or_system_dir(path: &Path, exe_dir: Option<&Path>) -> bool {
+    if let Some(exe) = exe_dir {
+        if path == exe
+            || (path.exists()
+                && exe.exists()
+                && path.canonicalize().ok() == exe.canonicalize().ok())
+        {
+            return true;
+        }
+    }
+    let normalized = path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_ascii_lowercase();
+    normalized.ends_with("/appdata/local/programs/hadron")
+        || normalized.ends_with("/program files/hadron")
+        || normalized.ends_with("/program files (x86)/hadron")
+        || normalized.ends_with("/.local/bin")
+        || normalized.ends_with("/.cargo/bin")
+        || normalized.ends_with("/windows/system32")
+        || normalized.ends_with("/windows/syswow64")
 }
 
 impl Default for ChamberPrefs {
@@ -1162,6 +1193,10 @@ pub fn load_from(path: &Path) -> ChamberPrefs {
             {
                 prefs.roster_width = default_roster_width();
             }
+            // Prune any binary installation directory accidentally recorded by older Start Menu shortcuts.
+            prefs
+                .recent_projects
+                .retain(|p| !is_install_or_system_dir(Path::new(&p.path), None));
             prefs
         }
         Err(_) => ChamberPrefs::default(),
@@ -1612,6 +1647,42 @@ mod tests {
         assert_eq!(StartupBehavior::from_str("reopen-last"), Some(StartupBehavior::ReopenLast));
         assert_eq!(StartupBehavior::from_str("cwd"), Some(StartupBehavior::CurrentDir));
         assert_eq!(StartupBehavior::from_str("unknown"), None);
+    }
+
+    #[test]
+    fn test_install_or_system_dir_rejected_and_pruned_from_recent_projects() {
+        let win_install = Path::new(r"C:\Users\User\AppData\Local\Programs\Hadron");
+        assert!(is_install_or_system_dir(win_install, None));
+        assert!(is_install_or_system_dir(Path::new("/home/user/.local/bin"), None));
+        assert!(is_install_or_system_dir(Path::new("/home/user/.cargo/bin"), None));
+        assert!(is_install_or_system_dir(
+            Path::new("/opt/hadron/bin"),
+            Some(Path::new("/opt/hadron/bin"))
+        ));
+        assert!(!is_install_or_system_dir(
+            Path::new("/home/user/dev/hadron"),
+            Some(Path::new("/opt/hadron/bin"))
+        ));
+
+        // Recording an install dir is ignored
+        let mut prefs = ChamberPrefs::default();
+        prefs.record_project(RecentProject::new(
+            r"C:\Users\User\AppData\Local\Programs\Hadron",
+            "Hadron",
+        ));
+        assert!(prefs.recent_projects.is_empty());
+
+        // A config on disk polluted by an older Start Menu launch prunes the install dir on load
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("chamber.json");
+        std::fs::write(
+            &path,
+            r#"{"recent_projects":[{"path":"C:\\Users\\User\\AppData\\Local\\Programs\\Hadron","display_name":"Hadron","last_opened_secs":100},{"path":"C:\\Users\\User\\dev\\my-app","display_name":"my-app","last_opened_secs":90}]}"#,
+        )
+        .unwrap();
+        let loaded = load_from(&path);
+        assert_eq!(loaded.recent_projects.len(), 1);
+        assert_eq!(loaded.recent_projects[0].display_name, "my-app");
     }
 }
 

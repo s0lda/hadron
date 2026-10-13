@@ -268,6 +268,7 @@ impl super::Chamber {
                     .absolute()
                     .size_full();
 
+                    let view_entity = cx.entity().clone();
                     let screen = div()
                         .id("terminal-screen")
                         .track_focus(&self.terminal_focus)
@@ -282,6 +283,9 @@ impl super::Chamber {
                         .bg(theme::term_bg())
                         .on_action(cx.listener(|this, _: &Dismiss, _window, cx| {
                             this.on_terminal_escape(cx);
+                        }))
+                        .on_action(cx.listener(|this, _: &Paste, _window, cx| {
+                            this.paste_to_terminal(None, cx);
                         }))
                         .on_mouse_down(
                             MouseButton::Left,
@@ -321,7 +325,37 @@ impl super::Chamber {
                         }))
                         .on_key_down(cx.listener(Self::on_terminal_key))
                         .child(size_probe)
-                        .child(grid);
+                        .child(grid)
+                        .context_menu(move |mut menu, _, _| {
+                            let v1 = view_entity.clone();
+                            menu = menu.item(PopupMenuItem::new("Copy").on_click(
+                                move |_, window, cx| {
+                                    v1.update(cx, |this, cx| {
+                                        this.copy_terminal_selection_or_screen(None, cx);
+                                    });
+                                    window.refresh();
+                                },
+                            ));
+                            let v2 = view_entity.clone();
+                            menu = menu.item(PopupMenuItem::new("Copy Screen").on_click(
+                                move |_, window, cx| {
+                                    v2.update(cx, |this, cx| {
+                                        this.copy_terminal_screen(None, cx);
+                                    });
+                                    window.refresh();
+                                },
+                            ));
+                            let v3 = view_entity.clone();
+                            menu = menu.item(PopupMenuItem::new("Paste").on_click(
+                                move |_, window, cx| {
+                                    v3.update(cx, |this, cx| {
+                                        this.paste_to_terminal(None, cx);
+                                    });
+                                    window.refresh();
+                                },
+                            ));
+                            menu
+                        });
 
                     v_flex()
                         .flex_1()
