@@ -183,13 +183,20 @@ impl super::Chamber {
                                                     )
                                                     .child(
                                                         div()
+                                                            .id(ElementId::from(SharedString::from(format!("del-proj-{}", path_for_delete))))
                                                             .p_1()
                                                             .rounded_sm()
+                                                            .cursor_pointer()
                                                             .hover(|s| s.bg(rgba(0xff000033)))
-                                                            .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _window, cx| {
-                                                                this.prefs.remove_project(&path_for_delete);
-                                                                let _ = config::save(&this.prefs);
-                                                                cx.notify();
+                                                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                                            .on_click(cx.listener({
+                                                                let path_to_del = path_for_delete.clone();
+                                                                move |this, _, _window, cx| {
+                                                                    cx.stop_propagation();
+                                                                    this.prefs.remove_project(&path_to_del);
+                                                                    let _ = config::save(&this.prefs);
+                                                                    cx.notify();
+                                                                }
                                                             }))
                                                             .child(
                                                                 Icon::new(IconName::WindowClose)

@@ -477,7 +477,10 @@ fn resolve_field_path(args: &[String]) -> Option<String> {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| repo_root.display().to_string());
         let mut recent = config::RecentProject::new(repo_root.display().to_string(), display_name);
-        if let Some((distro, linux_path)) = wsl::parse_wsl_unc_path(&repo_root) {
+        if let Some(branch) = hadron_gluon::worktree::current_branch(repo_root) {
+            recent = recent.with_branch(branch);
+        }
+        if let Some((distro, linux_path)) = wsl::parse_wsl_unc_path(repo_root) {
             recent = recent.with_remote(config::ProjectRemote::Wsl {
                 distro,
                 linux_path: linux_path.display().to_string(),
@@ -491,11 +494,12 @@ fn resolve_field_path(args: &[String]) -> Option<String> {
 }
 
 /// [`resolve_field_path`] with the current directory injected.
+#[allow(dead_code)]
 fn resolve_field_path_in(cwd: &std::path::Path, args: &[String]) -> Option<String> {
     resolve_field_path_with_home(cwd, args, hadron_lattice::user_home_dir().as_deref())
 }
 
-/// [`resolve_field_path_in`] with explicit `home` directory parameter for testability.
+/// [`resolve_field_path`] with explicit `home` directory parameter for testability.
 fn resolve_field_path_with_home(
     cwd: &std::path::Path,
     args: &[String],
@@ -512,27 +516,16 @@ fn resolve_field_path_with_home(
         .ok()
         .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()));
 
-    let non_flags: Vec<&str> = args
-        .iter()
-        .skip(1)
-        .filter(|a| {
-            if a.starts_with('-') {
-                return false;
-            }
-            let is_bin_name = a.as_str() == "hadron-chamber"
-                || a.as_str() == "hadron-gluon"
-                || a.as_str() == "hadron"
-                || current_exe_name.as_deref() == Some(a.as_str());
-            !is_bin_name
-        })
-        .map(|s| s.as_str())
-        .collect();
-
-    let explicit_arg = if non_flags.is_empty() {
-        None
-    } else {
-        Some(non_flags.join(" "))
-    };
+    let explicit_arg = args.iter().skip(1).find(|a| {
+        if a.starts_with('-') {
+            return false;
+        }
+        let is_bin_name = a.as_str() == "hadron-chamber"
+            || a.as_str() == "hadron-gluon"
+            || a.as_str() == "hadron"
+            || current_exe_name.as_deref() == Some(a.as_str());
+        !is_bin_name
+    });
 
     match explicit_arg {
         Some(raw_arg) => {
@@ -559,23 +552,27 @@ fn resolve_field_path_with_home(
                 cwd.join(&path_buf)
             };
 
-            let hadron_field = abs_path.join(".hadron").join("field.jsonl");
-            let direct_field = abs_path.join("field.jsonl");
-            if direct_field.exists() && !hadron_field.exists() {
-                Some(direct_field.to_string_lossy().to_string())
+            if abs_path.is_dir() {
+                let hadron_field = abs_path.join(".hadron").join("field.jsonl");
+                let direct_field = abs_path.join("field.jsonl");
+                if direct_field.exists() && !hadron_field.exists() {
+                    Some(direct_field.to_string_lossy().to_string())
+                } else {
+                    let hadron_dir = abs_path.join(".hadron");
+                    if !hadron_dir.exists() {
+                        let _ = std::fs::create_dir_all(&hadron_dir);
+                    }
+                    if !hadron_field.exists() {
+                        let _ = std::fs::File::create(&hadron_field);
+                    }
+                    Some(hadron_field.to_string_lossy().to_string())
+                }
             } else {
-                let hadron_dir = abs_path.join(".hadron");
-                if !hadron_dir.exists() {
-                    let _ = std::fs::create_dir_all(&hadron_dir);
-                }
-                if !hadron_field.exists() {
-                    let _ = std::fs::File::create(&hadron_field);
-                }
-                Some(hadron_field.to_string_lossy().to_string())
+                Some(raw_arg.to_string())
             }
         }
         None => {
-            let is_home = home.map_or(false, |h| {
+            let is_home = home.is_some_and(|h| {
                 cwd == h || cwd.canonicalize().ok() == h.canonicalize().ok()
             });
 
@@ -892,23 +889,17 @@ mod tests {
     }
 
     #[test]
-    fn test_multi_token_and_quoted_path_args_resolve() {
+    fn test_quoted_path_args_resolve() {
         let tmp = tempfile::tempdir().unwrap();
-        let args_multi = vec![
-            "hadron".to_string(),
-            "custom".to_string(),
-            "path".to_string(),
-        ];
-        let resolved = resolve_field_path_with_home(tmp.path(), &args_multi, None).unwrap();
-        let expected = tmp.path().join("custom path").join(".hadron").join("field.jsonl");
-        assert_eq!(resolved, expected.to_string_lossy().to_string());
+        let folder = tmp.path().join("quoted folder");
+        std::fs::create_dir_all(&folder).unwrap();
 
         let args_quoted = vec![
             "hadron".to_string(),
             "\"quoted folder\"".to_string(),
         ];
         let resolved_quoted = resolve_field_path_with_home(tmp.path(), &args_quoted, None).unwrap();
-        let expected_quoted = tmp.path().join("quoted folder").join(".hadron").join("field.jsonl");
+        let expected_quoted = folder.join(".hadron").join("field.jsonl");
         assert_eq!(resolved_quoted, expected_quoted.to_string_lossy().to_string());
     }
 
@@ -916,9 +907,11 @@ mod tests {
     fn test_tilde_path_expansion() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tempfile::tempdir().unwrap();
+        let repo = home.path().join("dev").join("my_repo");
+        std::fs::create_dir_all(&repo).unwrap();
         let args = vec!["hadron".to_string(), "~/dev/my_repo".to_string()];
         let resolved = resolve_field_path_with_home(tmp.path(), &args, Some(home.path())).unwrap();
-        let expected = home.path().join("dev").join("my_repo").join(".hadron").join("field.jsonl");
+        let expected = repo.join(".hadron").join("field.jsonl");
         assert_eq!(resolved, expected.to_string_lossy().to_string());
     }
 }

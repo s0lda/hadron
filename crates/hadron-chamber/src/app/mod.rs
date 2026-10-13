@@ -682,7 +682,7 @@ impl Chamber {
         let selector_search = cx.new(|cx| {
             InputState::new(window, cx)
                 .submit_on_enter(true)
-                .placeholder("Search recent projects or enter folder path… (Enter to open)")
+                .placeholder("Search recent projects…")
         });
 
         // No `completion_provider`: the fork's LSP menu is drawn with `deferred()`
@@ -1059,8 +1059,6 @@ impl Chamber {
                         if let Some(first) = filtered.first() {
                             let path = first.path.clone();
                             this.open_project_path(&path, window, cx);
-                        } else {
-                            this.open_project_path(&search_val, window, cx);
                         }
                         return;
                     }
