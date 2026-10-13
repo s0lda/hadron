@@ -161,11 +161,104 @@ pub struct ChamberPrefs {
     /// Global process sandbox confinement mode for command execution.
     #[serde(default)]
     pub sandbox_mode: hadron_lattice::SandboxMode,
+    /// Recently opened projects for the Project Selector.
+    #[serde(default)]
+    pub recent_projects: Vec<RecentProject>,
+    /// What to do when Hadron is launched without an explicit path argument.
+    #[serde(default)]
+    pub startup_behavior: StartupBehavior,
 }
 
 fn default_repo_monitor_interval() -> u64 {
     300
 }
+
+/// Remote execution environment for a project workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ProjectRemote {
+    Wsl { distro: String, linux_path: String },
+    Ssh { host: String, user: Option<String>, remote_path: String },
+}
+
+/// What to do when Hadron launches without an explicit path argument.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StartupBehavior {
+    #[default]
+    ProjectSelector,
+    ReopenLast,
+    CurrentDir,
+}
+
+impl StartupBehavior {
+    pub const ALL: [StartupBehavior; 3] = [
+        StartupBehavior::ProjectSelector,
+        StartupBehavior::ReopenLast,
+        StartupBehavior::CurrentDir,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            StartupBehavior::ProjectSelector => "Project Selector (Welcome screen)",
+            StartupBehavior::ReopenLast => "Reopen Last Project",
+            StartupBehavior::CurrentDir => "Current Working Directory",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "project_selector" | "project-selector" | "selector" => Some(Self::ProjectSelector),
+            "reopen_last" | "reopen-last" | "last" => Some(Self::ReopenLast),
+            "current_dir" | "current-dir" | "cwd" => Some(Self::CurrentDir),
+            _ => None,
+        }
+    }
+}
+
+/// A recently opened project workspace entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentProject {
+    /// Canonical workspace path (local filesystem or Windows UNC path).
+    pub path: String,
+    /// Display name (folder or repository name).
+    pub display_name: String,
+    /// Epoch timestamp in seconds when the project was last opened.
+    pub last_opened_secs: u64,
+    /// Remote execution environment tag, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<ProjectRemote>,
+    /// Last detected git branch (e.g. "main").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_branch: Option<String>,
+}
+
+impl RecentProject {
+    pub fn new(path: impl Into<String>, display_name: impl Into<String>) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        Self {
+            path: path.into(),
+            display_name: display_name.into(),
+            last_opened_secs: now,
+            remote: None,
+            git_branch: None,
+        }
+    }
+
+    pub fn with_remote(mut self, remote: ProjectRemote) -> Self {
+        self.remote = Some(remote);
+        self
+    }
+
+    pub fn with_branch(mut self, branch: impl Into<String>) -> Self {
+        self.git_branch = Some(branch.into());
+        self
+    }
+}
+
 
 /// Sound themes and acoustic profiles for synthesized telemetry chimes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -978,6 +1071,27 @@ impl ChamberPrefs {
             }
         }
     }
+
+    /// Record a project in the recent projects LRU list.
+    /// If an entry with the same path already exists, moves it to the front and updates its metadata.
+    /// Caps the list at 50 entries.
+    pub fn record_project(&mut self, project: RecentProject) {
+        self.recent_projects.retain(|p| p.path != project.path);
+        self.recent_projects.insert(0, project);
+        if self.recent_projects.len() > 50 {
+            self.recent_projects.truncate(50);
+        }
+    }
+
+    /// Remove a project by path from the recent projects list.
+    pub fn remove_project(&mut self, path: &str) {
+        self.recent_projects.retain(|p| p.path != path);
+    }
+
+    /// The most recently opened project, if any.
+    pub fn last_project(&self) -> Option<&RecentProject> {
+        self.recent_projects.first()
+    }
 }
 
 impl Default for ChamberPrefs {
@@ -1019,9 +1133,12 @@ impl Default for ChamberPrefs {
             repo_monitor: default_true(),
             repo_monitor_interval_secs: default_repo_monitor_interval(),
             sandbox_mode: hadron_lattice::SandboxMode::default(),
+            recent_projects: Vec::new(),
+            startup_behavior: StartupBehavior::default(),
         }
     }
 }
+
 
 /// Resolve the on-disk preferences path: `~/.hadron/chamber.json` (cross-platform).
 /// `None` if the home directory can't be resolved.
@@ -1486,6 +1603,14 @@ mod tests {
         prefs.remove_project("/home/jake/dev/p1");
         assert_eq!(prefs.recent_projects.len(), 1);
         assert_eq!(prefs.last_project().unwrap().path, r"\\wsl.localhost\Ubuntu\home\jake\p2");
+
+        // StartupBehavior labels and parsing
+        assert_eq!(StartupBehavior::ALL.len(), 3);
+        assert_eq!(StartupBehavior::ProjectSelector.label(), "Project Selector (Welcome screen)");
+        assert_eq!(StartupBehavior::from_str("project_selector"), Some(StartupBehavior::ProjectSelector));
+        assert_eq!(StartupBehavior::from_str("reopen-last"), Some(StartupBehavior::ReopenLast));
+        assert_eq!(StartupBehavior::from_str("cwd"), Some(StartupBehavior::CurrentDir));
+        assert_eq!(StartupBehavior::from_str("unknown"), None);
     }
 }
 
