@@ -238,7 +238,7 @@ impl super::Chamber {
             )
     }
 
-    pub(super) fn open_project_path(
+    pub(crate) fn open_project_path(
         &mut self,
         path_str: &str,
         _window: &mut Window,
@@ -252,8 +252,16 @@ impl super::Chamber {
                         format!("Failed to open {path_str}: {e}"),
                         Some(3),
                     );
-                } else {
+                } else if self.workspace_mode == WorkspaceMode::Selector {
                     cx.quit();
+                } else {
+                    self.project_switcher_open = false;
+                    self.toast_manager.push(
+                        ToastKind::Success,
+                        format!("Opened {path_str} in new chamber window"),
+                        Some(3),
+                    );
+                    cx.notify();
                 }
             }
             Err(e) => {

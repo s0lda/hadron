@@ -101,6 +101,7 @@ impl Render for Chamber {
             .then(|| self.process_overlay(cx));
         let toasts = self.render_toasts(cx);
         let repl = self.repl_overlay_open.then(|| self.repl_overlay(window, cx));
+        let project_switcher = self.project_switcher_open.then(|| self.project_switcher_overlay(window, cx));
 
         let content = v_flex()
             .key_context(KEY_CONTEXT)
@@ -136,6 +137,7 @@ impl Render for Chamber {
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleReplOverlay, window, cx| this.toggle_repl_overlay(window, cx)))
+            .on_action(cx.listener(|this, _: &ToggleProjectSwitcher, _, cx| this.toggle_project_switcher(cx)))
             .on_action(cx.listener(|this, _: &CycleMode, _, cx| this.cycle_global_mode(cx)))
             .on_action(cx.listener(|this, _: &CycleSandbox, _, cx| this.cycle_sandbox_mode(cx)))
             .on_action(cx.listener(|this, _: &NextChatTab, _, cx| this.cycle_chat_tab(1, cx)))
@@ -203,6 +205,7 @@ impl Render for Chamber {
             .children(app_menu)
             .children(processes)
             .children(repl)
+            .children(project_switcher)
             .children(toasts);
 
         let wrapped_content = crate::window_frame::window_frame(window, cx, content);

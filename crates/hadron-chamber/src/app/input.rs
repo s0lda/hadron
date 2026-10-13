@@ -736,6 +736,8 @@ mod tests {
             "quit",
             "toggle-roster",
             "toggle-inspector",
+            "projects",
+            "open",
             "clear",
             "goal",
             "loop",

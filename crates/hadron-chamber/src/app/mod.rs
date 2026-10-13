@@ -154,6 +154,7 @@ actions!(
         PrevGitItem,
         OpenGitItem,
         ToggleReplOverlay,
+        ToggleProjectSwitcher,
     ]
 );
 
@@ -621,6 +622,7 @@ struct Chamber {
     pub(super) audio_manager: audio::AudioTelemetryManager,
     pub(super) workspace_mode: WorkspaceMode,
     pub(super) selector_search: Entity<InputState>,
+    pub(super) project_switcher_open: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1574,6 +1576,7 @@ impl Chamber {
             audio_manager,
             workspace_mode,
             selector_search,
+            project_switcher_open: false,
         };
         if workspace_mode != WorkspaceMode::Selector {
             chamber.update_active_plan();
@@ -1688,6 +1691,9 @@ fn default_key_bindings() -> Vec<KeyBinding> {
         // Quick REPL & Tool Scratchpad overlay (Capability #16)
         KeyBinding::new("cmd-k", ToggleReplOverlay, None),
         KeyBinding::new("ctrl-shift-k", ToggleReplOverlay, None),
+        // Quick Project Switcher (Ctrl+O / Cmd+O)
+        KeyBinding::new("ctrl-o", ToggleProjectSwitcher, None),
+        KeyBinding::new("cmd-o", ToggleProjectSwitcher, None),
         // Global keyboard dismiss (Escape) to drop completions, modals, overlays, or return focus.
         KeyBinding::new("escape", Dismiss, None),
         // Global text copy (Cmd+C / Ctrl+C) to copy selection from chat/TextViews
@@ -2255,5 +2261,7 @@ mod tests {
         assert!(bindings.iter().any(|b| b.contains("ToggleFocus") && b.contains(r#"key: "`""#)));
         // Global Copy: Copy -> gpui_component::input::Copy
         assert!(bindings.iter().any(|b| b.contains("Copy") && b.contains(r#"key: "c""#)));
+        // Project Switcher: Ctrl+O / Cmd+O -> ToggleProjectSwitcher
+        assert!(bindings.iter().any(|b| b.contains("ToggleProjectSwitcher") && b.contains(r#"key: "o""#)));
     }
 }

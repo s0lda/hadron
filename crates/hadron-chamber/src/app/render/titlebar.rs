@@ -37,6 +37,7 @@ impl super::Chamber {
                     .pl(px(8.0))
                     .gap_2()
                     .child(menu_button(&cx.entity()))
+                    .children(self.project_pill(cx))
                     .children(self.update_pill(cx))
                     .children(self.repo_monitor_pill(cx))
                     .children(self.github_monitor_pill(cx)),
@@ -278,6 +279,22 @@ impl super::Chamber {
                 .child(Icon::new(icon).small())
                 .child(label)
                 .tooltip(move |window, cx| Tooltip::new(SharedString::from(tip.clone())).build(window, cx)),
+        )
+    }
+
+    pub(super) fn project_pill(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let root = crate::vcs::repo_root_of(&self.path);
+        let name = root.file_name()?.to_string_lossy().to_string();
+        Some(
+            Button::new("titlebar-project-pill")
+                .small()
+                .icon(IconName::Folder)
+                .label(name)
+                .tooltip("Switch Project (Ctrl+O)")
+                .on_click(cx.listener(|this, _, _window, cx| {
+                    this.project_switcher_open = !this.project_switcher_open;
+                    cx.notify();
+                })),
         )
     }
 

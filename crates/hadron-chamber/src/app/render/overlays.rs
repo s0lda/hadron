@@ -1820,6 +1820,19 @@ impl super::Chamber {
                     // Swallow clicks inside the panel so they don't hit the dismiss backdrop.
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {})
                     .child(item(
+                        "menu-open-folder",
+                        "Open Folder…",
+                        |this, _w, cx| this.open_workspace(cx),
+                        cx,
+                    ))
+                    .child(item(
+                        "menu-switch-project",
+                        "Switch Project… (Ctrl+O)",
+                        |this, _w, cx| this.toggle_project_switcher(cx),
+                        cx,
+                    ))
+                    .child(sep())
+                    .child(item(
                         "menu-settings",
                         "Settings…",
                         |this, window, cx| this.open_settings(window, cx),
@@ -1846,6 +1859,243 @@ impl super::Chamber {
                     ))
                     .child(sep())
                     .child(item("menu-quit", "Quit Hadron", |_t, _w, cx| cx.quit(), cx)),
+            )
+    }
+
+    pub(super) fn project_switcher_overlay(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let current_root = crate::vcs::repo_root_of(&self.path).to_string_lossy().to_string();
+        let search_text = self.selector_search.read(cx).value().to_lowercase();
+        let recent_projects = self.prefs.recent_projects.clone();
+        let filtered_projects: Vec<_> = recent_projects
+            .into_iter()
+            .filter(|p| {
+                if search_text.is_empty() {
+                    true
+                } else {
+                    p.display_name.to_lowercase().contains(&search_text)
+                        || p.path.to_lowercase().contains(&search_text)
+                }
+            })
+            .collect();
+
+        let wsl_distros = crate::wsl::list_installed_wsl_distros();
+
+        div()
+            .id("project-switcher-backdrop")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x00000099))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.project_switcher_open = false;
+                    cx.notify();
+                }),
+            )
+            .child(
+                v_flex()
+                    .occlude()
+                    .w(px(580.0))
+                    .max_h(px(520.0))
+                    .p_5()
+                    .gap_3()
+                    .rounded(INNER_RADIUS)
+                    .bg(theme::glass_card())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {})
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(Icon::new(IconName::Folder).small())
+                                    .child(
+                                        div()
+                                            .text_base()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(theme::text())
+                                            .child("Quick Project Switcher"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .px_1p5()
+                                            .py_0p5()
+                                            .rounded_sm()
+                                            .bg(theme::glass_surface())
+                                            .text_color(theme::text_muted())
+                                            .child("Ctrl+O"),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        Button::new("switcher-open-folder")
+                                            .small()
+                                            .icon(IconName::Folder)
+                                            .label("Open Folder…")
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.project_switcher_open = false;
+                                                this.open_workspace(cx);
+                                            })),
+                                    )
+                                    .child(
+                                        div()
+                                            .p_1()
+                                            .rounded_sm()
+                                            .hover(|s| s.bg(theme::bg_surface_raised()))
+                                            .cursor_pointer()
+                                            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                this.project_switcher_open = false;
+                                                cx.notify();
+                                            }))
+                                            .child(Icon::new(IconName::WindowClose).small().text_color(theme::text_muted())),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .child(self.selector_search.clone()),
+                    )
+                    .child(
+                        v_flex()
+                            .id("switcher-projects-list")
+                            .flex_1()
+                            .gap_1p5()
+                            .overflow_y_scroll()
+                            .children(if filtered_projects.is_empty() {
+                                vec![
+                                    div()
+                                        .py_6()
+                                        .text_center()
+                                        .text_color(theme::text_muted())
+                                        .child("No matching projects found.")
+                                        .into_any_element(),
+                                ]
+                            } else {
+                                filtered_projects
+                                    .into_iter()
+                                    .map(|proj| {
+                                        let path = proj.path.clone();
+                                        let is_current = path == current_root;
+                                        let is_wsl = proj.remote.as_ref().and_then(|r| match r {
+                                            config::ProjectRemote::Wsl { distro, .. } => Some(distro.clone()),
+                                            _ => None,
+                                        });
+
+                                        h_flex()
+                                            .id(gpui::ElementId::from(gpui::SharedString::from(format!("switcher-proj-{}", path))))
+                                            .w_full()
+                                            .items_center()
+                                            .justify_between()
+                                            .p_2p5()
+                                            .rounded(INNER_RADIUS)
+                                            .border_1()
+                                            .when(is_current, |s| s.bg(theme::bg_surface_raised()).border_color(theme::accent()))
+                                            .when(!is_current, |s| s.bg(theme::glass_surface()).border_color(theme::glass_highlight()))
+                                            .hover(|s| s.bg(theme::bg_surface_raised()))
+                                            .cursor_pointer()
+                                            .on_click(cx.listener({
+                                                let path = path.clone();
+                                                move |this, _, window, cx| {
+                                                    this.open_project_path(&path, window, cx);
+                                                }
+                                            }))
+                                            .child(
+                                                v_flex()
+                                                    .gap_0p5()
+                                                    .child(
+                                                        h_flex()
+                                                            .items_center()
+                                                            .gap_2()
+                                                            .child(
+                                                                div()
+                                                                    .text_sm()
+                                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                                    .text_color(theme::text())
+                                                                    .child(proj.display_name),
+                                                            )
+                                                            .children(is_current.then(|| {
+                                                                div()
+                                                                    .text_xs()
+                                                                    .px_1p5()
+                                                                    .py_0p5()
+                                                                    .rounded_sm()
+                                                                    .bg(theme::accent_soft())
+                                                                    .text_color(theme::accent())
+                                                                    .child("Current")
+                                                                    .into_any_element()
+                                                            }))
+                                                            .children(is_wsl.map(|distro| {
+                                                                div()
+                                                                    .text_xs()
+                                                                    .px_1p5()
+                                                                    .py_0p5()
+                                                                    .rounded_sm()
+                                                                    .bg(rgb(0x8b5cf6))
+                                                                    .text_color(rgb(0xffffff))
+                                                                    .child(format!("WSL: {distro}"))
+                                                                    .into_any_element()
+                                                            })),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(theme::text_muted())
+                                                            .child(path),
+                                                    ),
+                                            )
+                                            .into_any_element()
+                                    })
+                                    .collect()
+                            }),
+                    )
+                    .children((!wsl_distros.is_empty()).then(|| {
+                        v_flex()
+                            .pt_2()
+                            .border_t_1()
+                            .border_color(theme::glass_highlight())
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child("WSL Distros:"),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .children(
+                                        wsl_distros
+                                            .into_iter()
+                                            .map(|d| {
+                                                let unc_path = crate::wsl::format_wsl_unc_path(&d, std::path::Path::new("/home"));
+                                                Button::new(gpui::ElementId::from(gpui::SharedString::from(format!("switcher-wsl-{}", d))))
+                                                    .small()
+                                                    .icon(IconName::Globe)
+                                                    .label(d)
+                                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                                        this.open_project_path(&unc_path.to_string_lossy(), window, cx);
+                                                    }))
+                                                    .into_any_element()
+                                            }),
+                                    ),
+                            )
+                    })),
             )
     }
 }

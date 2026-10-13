@@ -101,6 +101,8 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "quit", detail: "Exit Hadron Chamber", arity: Arity::None, arg: ArgSource::None, listed: false },
     Command { name: "toggle-roster", detail: "Toggle the Roster sidebar", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "toggle-inspector", detail: "Toggle the Inspector sidebar", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "projects", detail: "Open the Quick Project Switcher modal", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "open", detail: "Open a folder or project in a new chamber window (e.g. /open or /open /path/to/project)", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "git-init", detail: "Initialize a git repository with default .gitignore and initial commit", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "git-status", detail: "Show working tree status and branch info", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "git-log", detail: "Display last N commits (default 5)", arity: Arity::Line, arg: ArgSource::None, listed: true },
@@ -2838,6 +2840,17 @@ mod tests {
         assert!(command("clear").is_some());
         assert!(command("resume").is_some());
         assert!(command("diff").is_some());
+    }
+
+    #[test]
+    fn project_and_open_commands_listed_in_commands_table() {
+        let proj = command("projects").expect("/projects command");
+        assert_eq!(proj.arity, Arity::None);
+        assert!(proj.listed);
+
+        let open = command("open").expect("/open command");
+        assert_eq!(open.arity, Arity::Line);
+        assert!(open.listed);
     }
 }
 

@@ -347,6 +347,20 @@ impl Chamber {
                 self.toggle_rail(Rail::Inspector, _window, cx);
                 true
             }
+            "projects" => {
+                self.project_switcher_open = true;
+                cx.notify();
+                true
+            }
+            "open" => {
+                let trimmed = args.trim();
+                if trimmed.is_empty() {
+                    self.open_workspace(cx);
+                } else {
+                    self.open_project_path(trimmed, _window, cx);
+                }
+                true
+            }
             "clear" => {
                 let session_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
                 let session_dir = self.sessions_dir().join(&session_id);
@@ -2309,6 +2323,12 @@ impl Chamber {
         cx.notify();
     }
 
+    /// Toggle the quick project switcher overlay (Ctrl+O / Cmd+O / /projects).
+    pub(super) fn toggle_project_switcher(&mut self, cx: &mut Context<Self>) {
+        self.project_switcher_open = !self.project_switcher_open;
+        cx.notify();
+    }
+
     /// Global keyboard dismiss (Escape): drops active completions, closes open modals
     /// and overlays, closes file previews, or restores focus to the main chat input.
     pub(super) fn handle_escape_dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2323,6 +2343,7 @@ impl Chamber {
             || self.app_menu_open
             || self.process_manager_open
             || self.repl_overlay_open
+            || self.project_switcher_open
         {
             self.settings_open = false;
             self.info_panel = None;
@@ -2331,6 +2352,7 @@ impl Chamber {
             self.app_menu_open = false;
             self.process_manager_open = false;
             self.repl_overlay_open = false;
+            self.project_switcher_open = false;
             cx.notify();
             return;
         }
