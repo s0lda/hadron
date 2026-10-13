@@ -37,7 +37,6 @@ impl super::Chamber {
                     .pl(px(8.0))
                     .gap_2()
                     .child(menu_button(&cx.entity()))
-                    .children(self.project_pill(cx))
                     .children(self.update_pill(cx))
                     .children(self.repo_monitor_pill(cx))
                     .children(self.github_monitor_pill(cx)),
@@ -282,21 +281,6 @@ impl super::Chamber {
         )
     }
 
-    pub(super) fn project_pill(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let root = crate::vcs::repo_root_of(&self.path);
-        let name = root.file_name()?.to_string_lossy().to_string();
-        Some(
-            Button::new("titlebar-project-pill")
-                .small()
-                .icon(IconName::Folder)
-                .label(name)
-                .tooltip("Switch Project (Ctrl+O)")
-                .on_click(cx.listener(|this, _, _window, cx| {
-                    this.project_switcher_open = !this.project_switcher_open;
-                    cx.notify();
-                })),
-        )
-    }
 
     pub(super) fn repo_monitor_pill(&self, _cx: &mut Context<Self>) -> Option<impl IntoElement> {
         if !self.prefs.repo_monitor {
