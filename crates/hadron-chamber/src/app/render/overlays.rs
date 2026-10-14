@@ -20,6 +20,19 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.2",
+        date: Some("2026-10-14"),
+        added: &[
+            "WSL Home Folder Picker: Clicking a WSL distro card on the Project Selector or Quick Switcher now opens a folder picker directly in your Linux $HOME (\\\\wsl.localhost\\<distro>\\home\\<user>)",
+            "Project Selector Update Pill: Added the live update notification pill and changelog overlay to the 'Hadron' Project Selector screen",
+        ],
+        changed: &[],
+        fixed: &[
+            "Windows-WSL 9P Freeze & SQLite Lock Fix: Routed WSL UNC SQLite ledgers to host-local ~/.hadron/ledgers/, skipped 9P .cargo-lock LockFileEx calls, and preserved \\\\ prefixes when stripping \\\\?\\UNC\\",
+            "Native WSL Git & Catalogue Merging: Routed git/gh calls on WSL UNC paths through wsl.exe to eliminate 9P stat freezes, replaced per-file exists() checks with git ls-files --deleted, and merged WSL ~/.hadron/team.json catalogues",
+        ],
+    },
+    Release {
         version: "0.33.1",
         date: Some("2026-10-13"),
         added: &[],

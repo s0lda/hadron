@@ -127,7 +127,7 @@ if [ "$VERSION" = "latest" ]; then
         esac
     fi
     if [ -z "$RESOLVED_VERSION" ]; then
-        RESOLVED_VERSION="0.33.1"
+        RESOLVED_VERSION="0.33.2"
     fi
     VERSION="$RESOLVED_VERSION"
 fi

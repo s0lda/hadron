@@ -5,6 +5,20 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.2] - 2026-10-14
+
+### Added
+- **WSL Distro Home Folder Picker & Selector Update Pill (`hadron-chamber`, `hadron-lattice`)**:
+  - Wired `resolve_wsl_home_unc_path`, `pick_directory_at`, and `Chamber::open_wsl_distro_picker` so clicking a WSL distribution card on the Project Selector or Quick Project Switcher opens a native folder picker directly inside the user's Linux `$HOME` (`\\wsl.localhost\<distro>\home\<user>`).
+  - Enabled the in-app `update_pill`, changelog overlay, and notification toasts on the Welcome & Project Selector screen (`WorkspaceMode::Selector`) and shortened the header title to `"Hadron"`.
+
+### Fixed
+- **Windows-to-WSL 9P Freeze & SQLite Lock Remediation (`hadron-gluon`, `hadron-lattice`, `hadron-chamber`, `hadron-gatekeeper`)**:
+  - Routed SQLite energy/spend ledgers for WSL UNC repositories (`\\wsl.localhost\...` and `\\wsl$\...`) to host-local `~/.hadron/ledgers/<slug>-<hash>.db` (`ledger::resolve_ledger_path`), preventing 9P protocol `Error code 5: The database file is locked` failures.
+  - Updated `worktree::reap_build_artifacts` to skip `.cargo-lock` advisory locking (`LockFileEx`) on WSL 9P shares (`os error 1: Incorrect function`) and fixed `sys::paths::normalize_verbatim_unc` to preserve leading `\\` when stripping Windows `\\?\UNC\` prefixes.
+  - Added `hadron_lattice::wsl::git_command` and `wsl_aware_command` and wired them across `vcs.rs`, `sys.rs`, `snapshot.rs`, and `repo_monitor.rs` so `git` and `gh` execute natively inside WSL (`wsl.exe -d <distro> --cd <linux_path>`) instead of stalling on 9P metadata stats, and replaced per-file `.exists()` checks in `sys::list_workspace_files` with a single `git ls-files --deleted` query.
+  - Updated `hadron_lattice::team::io::load_catalogue_for_field` to merge the WSL user's `~/.hadron/team.json` seat catalogue when opening a WSL repository from Windows so repo overrides resolve cleanly.
+
 ## [0.33.1] - 2026-10-13
 
 ### Fixed
