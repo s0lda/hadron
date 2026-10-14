@@ -156,6 +156,7 @@ pub fn live_rows_from_activities(gate_activities: &[hadron_lattice::live::Activi
         .collect()
 }
 
+#[cfg(test)]
 pub fn live_rows(gates_dir: &std::path::Path, now: DateTime<Utc>) -> Vec<SwarmTask> {
     live_rows_from_activities(&hadron_lattice::live::gates(gates_dir, now))
 }

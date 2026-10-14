@@ -490,12 +490,6 @@ pub(crate) fn resolve_active_plan_with_plans(
         .or_else(|| newest_plan_from_list(all_plans))
 }
 
-/// Newest-first scan of messages for an explicit or mentioned plan file path that exists on disk.
-pub(crate) fn resolve_active_plan_from_messages(repo: &Path, messages: &[crate::model::MessageRow]) -> Option<String> {
-    let all_plans = scan_all_plan_paths(repo);
-    resolve_active_plan_from_messages_with_plans(repo, messages, &all_plans)
-}
-
 pub(crate) fn resolve_active_plan_from_messages_with_plans(
     repo: &Path,
     messages: &[crate::model::MessageRow],
@@ -701,6 +695,7 @@ fn newest_plan_from_list(all_plans: &[(std::time::SystemTime, String)]) -> Optio
 }
 
 /// Scan `.hadron/docs/plans/`, `docs/plans/`, and worktree trees for the most recently modified `.md` plan.
+#[cfg(test)]
 pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
     let candidates = scan_all_plan_paths(repo);
     newest_plan_from_list(&candidates)

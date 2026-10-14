@@ -282,7 +282,11 @@ impl super::Chamber {
 
         match std::env::current_exe() {
             Ok(exe) => {
-                if let Err(e) = std::process::Command::new(exe).arg(&final_path).spawn() {
+                if let Err(e) = crate::sys::spawn_with_console_pref(
+                    &exe,
+                    [&final_path],
+                    self.prefs.show_console_window,
+                ) {
                     self.toast_manager.push(
                         ToastKind::Error,
                         format!("Failed to open {final_path}: {e}"),

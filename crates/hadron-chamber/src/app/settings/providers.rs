@@ -1084,6 +1084,19 @@ impl super::Chamber {
                             cx.notify();
                         }))
                         .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Show console window (Windows)",
+                    Some("Show the companion command-line console window (cmd / conhost) with live daemon and chamber logs."),
+                    Switch::new("show-console-window")
+                        .checked(self.prefs.show_console_window)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.prefs.show_console_window = *checked;
+                            crate::sys::set_windows_console_visible(*checked);
+                            let _ = config::save(&this.prefs);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
                 )),
         );
 

@@ -75,7 +75,10 @@ fn main() {
                 }
             }
         }
-        headless_runner::CliAction::LaunchChamber => {}
+        headless_runner::CliAction::LaunchChamber => {
+            #[cfg(feature = "gui")]
+            sys::set_windows_console_visible(config::load().show_console_window);
+        }
     }
 
     let no_daemon = args.iter().any(|a| a == "--no-daemon");
@@ -196,7 +199,11 @@ fn main() {
                         gluon_bin, p
                     ),
                 );
-                match std::process::Command::new(&gluon_bin).arg(p).spawn() {
+                match sys::spawn_with_console_pref(
+                    &gluon_bin,
+                    [p],
+                    config::load().show_console_window,
+                ) {
                     Ok(child) => {
                         // Record the PID up front (same value the daemon writes to
                         // gluon.lock, without the read-back race) so the exit path can
@@ -416,11 +423,11 @@ fn relaunch(exe: &std::path::Path, args: &[String]) {
         Source::Chamber,
         &format!("restarting into the updated binary at {exe:?}..."),
     );
-    let mut cmd = std::process::Command::new(exe);
-    cmd.args(args);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new(exe);
+        cmd.args(args);
         // Only returns on failure.
         let e = cmd.exec();
         term::error(
@@ -429,7 +436,7 @@ fn relaunch(exe: &std::path::Path, args: &[String]) {
         );
     }
     #[cfg(not(unix))]
-    if let Err(e) = cmd.spawn() {
+    if let Err(e) = sys::spawn_with_console_pref(exe, args, config::load().show_console_window) {
         term::error(
             Source::Chamber,
             &format!("could not restart into {exe:?}: {e}. Start Hadron again by hand."),

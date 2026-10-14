@@ -1688,6 +1688,21 @@ mod tests {
         assert_eq!(loaded.recent_projects.len(), 1);
         assert_eq!(loaded.recent_projects[0].display_name, "my-app");
     }
+
+    #[test]
+    fn show_console_window_defaults_to_false_and_round_trips() {
+        let prefs = ChamberPrefs::default();
+        assert!(!prefs.show_console_window, "default must be false");
+
+        let custom = ChamberPrefs {
+            show_console_window: true,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&custom).unwrap();
+        assert!(json.contains("\"show_console_window\":true"));
+        let back: ChamberPrefs = serde_json::from_str(&json).unwrap();
+        assert!(back.show_console_window);
+    }
 }
 
 

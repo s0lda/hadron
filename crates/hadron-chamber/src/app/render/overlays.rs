@@ -1538,10 +1538,6 @@ impl super::Chamber {
         }
     }
 
-    pub(in crate::app) fn gluon_running(&self) -> bool {
-        Self::probe_gluon_running(&self.path)
-    }
-
     /// Live rows for the Process Manager overlay: the daemon's real running state
     /// (a flock probe — only the OS knows) plus every adopted roster seat. See
     /// [`crate::model::build_process_rows`] for the pure row-building logic.

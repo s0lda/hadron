@@ -800,6 +800,29 @@ pub fn set_windows_console_visible(visible: bool) {
 #[cfg(not(windows))]
 pub fn set_windows_console_visible(_visible: bool) {}
 
+/// Spawn a child `hadron` or `hadron-gluon` process, suppressing a new Windows
+/// console window (`CREATE_NO_WINDOW`) when `show_console` is false.
+pub fn spawn_with_console_pref<I, S>(
+    exe: &Path,
+    args: I,
+    show_console: bool,
+) -> std::io::Result<std::process::Child>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let mut cmd = Command::new(exe);
+    cmd.args(args);
+    #[cfg(windows)]
+    if !show_console {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    #[cfg(not(windows))]
+    let _ = show_console;
+    cmd.spawn()
+}
+
 /// Diagnostic snapshot of the display server, compositor layer shell, and notification pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplayEnvironment {

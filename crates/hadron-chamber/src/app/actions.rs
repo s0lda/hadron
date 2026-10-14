@@ -142,6 +142,7 @@ impl Chamber {
     /// silently-empty roster — cannot be inflicted on the session already open.
     pub(super) fn open_workspace(&mut self, cx: &mut Context<Self>) {
         let is_selector = self.workspace_mode == WorkspaceMode::Selector;
+        let show_console = self.prefs.show_console_window;
         let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: false,
             directories: true,
@@ -166,7 +167,7 @@ impl Chamber {
             };
             match std::env::current_exe() {
                 Ok(exe) => {
-                    if let Err(e) = std::process::Command::new(exe).arg(&dir).spawn() {
+                    if let Err(e) = crate::sys::spawn_with_console_pref(&exe, [&dir], show_console) {
                         eprintln!("chamber: failed to open a chamber for {dir}: {e}");
                     } else if is_selector {
                         let _ = this.update(cx, |_chamber, cx| cx.quit());
@@ -182,6 +183,7 @@ impl Chamber {
     /// (`\\wsl.localhost\<distro>\home\<user>`) and launch the selected folder in Hadron.
     pub(super) fn open_wsl_distro_picker(&mut self, distro: String, cx: &mut Context<Self>) {
         let is_selector = self.workspace_mode == WorkspaceMode::Selector;
+        let show_console = self.prefs.show_console_window;
         cx.spawn(async move |this, cx| {
             let picked = cx
                 .background_spawn(async move {
@@ -194,7 +196,7 @@ impl Chamber {
             };
             match std::env::current_exe() {
                 Ok(exe) => {
-                    if let Err(e) = std::process::Command::new(exe).arg(&dir).spawn() {
+                    if let Err(e) = crate::sys::spawn_with_console_pref(&exe, [&dir], show_console) {
                         let _ = this.update(cx, |chamber, cx| {
                             chamber.toast_manager.push(
                                 ToastKind::Error,
