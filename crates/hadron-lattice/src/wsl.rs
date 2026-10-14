@@ -14,14 +14,31 @@ pub fn is_wsl_unc_path(path: &Path) -> bool {
 /// Supported UNC formats:
 /// - `\\wsl.localhost\<distro>\<linux_path>`
 /// - `\\wsl$\<distro>\<linux_path>`
-/// - Forward-slash variants: `//wsl.localhost/...` and `//wsl$/...`
+/// - Verbatim UNC variants: `\\?\UNC\wsl.localhost\<distro>\...`, `\\?\UNC\wsl$\<distro>\...`
+/// - Forward-slash variants: `//wsl.localhost/...`, `//wsl$/...`, `//?/UNC/wsl.localhost/...`
 pub fn parse_wsl_unc_path(path: &Path) -> Option<(String, PathBuf)> {
     let s = path.to_str()?;
     let normalized = s.replace('/', "\\");
 
-    let rest = if let Some(stripped) = normalized.strip_prefix(r"\\wsl.localhost\") {
+    // Strip optional Windows verbatim prefixes (`\\?\UNC\` or `\\?\`) before matching WSL host.
+    let without_verbatim = if let Some(s) = normalized
+        .strip_prefix(r"\\?\UNC\")
+        .or_else(|| normalized.strip_prefix(r"\\?\unc\"))
+    {
+        format!(r"\\{s}")
+    } else if let Some(s) = normalized.strip_prefix(r"\\?\") {
+        if s.starts_with(r"\\") {
+            s.to_string()
+        } else {
+            format!(r"\\{s}")
+        }
+    } else {
+        normalized
+    };
+
+    let rest = if let Some(stripped) = without_verbatim.strip_prefix(r"\\wsl.localhost\") {
         stripped
-    } else if let Some(stripped) = normalized.strip_prefix(r"\\wsl$\") {
+    } else if let Some(stripped) = without_verbatim.strip_prefix(r"\\wsl$\") {
         stripped
     } else {
         return None;
@@ -59,6 +76,55 @@ pub fn format_wsl_unc_path(distro: &str, linux_path: &Path) -> PathBuf {
     } else {
         PathBuf::from(format!(r"\\wsl.localhost\{distro}\{clean}"))
     }
+}
+
+/// Parse raw stdout from `wsl.exe -d <distro> -- sh -c 'printf %s "$HOME"'` into a
+/// Windows WSL UNC path (`\\wsl.localhost\<distro>\<home>`), falling back to `/home`.
+pub fn parse_wsl_home_output(distro: &str, bytes: &[u8]) -> PathBuf {
+    if let Some(first) = decode_wsl_output(bytes).into_iter().next() {
+        let trimmed = first.trim();
+        if trimmed.starts_with('/') && trimmed.len() > 1 {
+            return format_wsl_unc_path(distro, Path::new(trimmed));
+        }
+    }
+    format_wsl_unc_path(distro, Path::new("/home"))
+}
+
+/// Resolve the default user's `$HOME` inside `distro` as a Windows WSL UNC path
+/// (e.g. `\\wsl.localhost\Ubuntu\home\Jake`), falling back to `\\wsl.localhost\<distro>\home`.
+pub fn resolve_wsl_home_unc_path(distro: &str) -> PathBuf {
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        if let Ok(output) = Command::new("wsl.exe")
+            .args(["-d", distro, "--", "sh", "-c", "printf %s \"$HOME\""])
+            .output()
+        {
+            if output.status.success() {
+                return parse_wsl_home_output(distro, &output.stdout);
+            }
+        }
+    }
+    parse_wsl_home_output(distro, b"")
+}
+
+/// Given a WSL UNC workspace path (e.g. `\\wsl.localhost\Ubuntu\home\Jake\dev\hadron`),
+/// infer the in-distro user's `~/.hadron/team.json` UNC path
+/// (`\\wsl.localhost\Ubuntu\home\Jake\.hadron\team.json`).
+pub fn wsl_catalogue_path_for_field(field_path: &Path) -> Option<PathBuf> {
+    let (distro, linux_path) = parse_wsl_unc_path(field_path)?;
+    let path_str = linux_path.to_string_lossy();
+    let mut parts = path_str.split('/').filter(|p| !p.is_empty());
+    let first = parts.next()?;
+    let user_home = match first {
+        "home" => {
+            let user = parts.next()?;
+            PathBuf::from(format!("/home/{user}/.hadron/team.json"))
+        }
+        "root" => PathBuf::from("/root/.hadron/team.json"),
+        _ => return None,
+    };
+    Some(format_wsl_unc_path(&distro, &user_home))
 }
 
 /// Decode raw bytes from CLI command output (e.g. `wsl.exe -l -q`) into strings,
@@ -108,6 +174,18 @@ pub fn list_installed_wsl_distros() -> Vec<String> {
     }
 }
 
+/// Translate a command argument or environment variable value when executing inside `distro`:
+/// if `val` is a WSL UNC path belonging to `distro`, returns its in-distro Linux path (`/home/...`);
+/// otherwise strips any extended-length UNC prefix.
+pub fn translate_arg_for_wsl(distro: &str, val: &str) -> String {
+    if let Some((arg_distro, linux_path)) = parse_wsl_unc_path(Path::new(val)) {
+        if arg_distro.eq_ignore_ascii_case(distro) {
+            return linux_path.to_string_lossy().replace('\\', "/");
+        }
+    }
+    crate::sys::paths::strip_unc_prefix(val)
+}
+
 /// Wrap a command and its arguments for execution inside a WSL distribution via `wsl.exe`.
 ///
 /// Returns `(program, args)` where `program` is `"wsl.exe"` and args are:
@@ -126,7 +204,7 @@ pub fn wrap_wsl_command(
         "--".to_string(),
         program.to_string(),
     ];
-    wsl_args.extend(args.iter().cloned());
+    wsl_args.extend(args.iter().map(|a| translate_arg_for_wsl(distro, a)));
     ("wsl.exe".to_string(), wsl_args)
 }
 
@@ -148,6 +226,18 @@ mod tests {
         assert_eq!(
             parse_wsl_unc_path(forward),
             Some(("Ubuntu".to_string(), PathBuf::from("/home/jake/repo")))
+        );
+
+        // Windows canonicalized verbatim UNC variants (`\\?\UNC\...`)
+        let verbatim = Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\jake\repo");
+        assert_eq!(
+            parse_wsl_unc_path(verbatim),
+            Some(("Ubuntu".to_string(), PathBuf::from("/home/jake/repo")))
+        );
+        let verbatim_dollar = Path::new(r"\\?\UNC\wsl$\Debian\var\log");
+        assert_eq!(
+            parse_wsl_unc_path(verbatim_dollar),
+            Some(("Debian".to_string(), PathBuf::from("/var/log")))
         );
     }
 
@@ -177,10 +267,46 @@ mod tests {
 
         assert!(!is_wsl_unc_path(Path::new(r"C:\Users\Jake")));
         assert!(is_wsl_unc_path(Path::new(r"\\wsl.localhost\Ubuntu\home\jake")));
+        assert!(is_wsl_unc_path(Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\jake")));
         assert!(is_wsl_unc_path(Path::new(r"\\wsl$\Debian\var\log")));
 
         // Verify list_installed_wsl_distros executes safely without panicking
         let _ = list_installed_wsl_distros();
+    }
+
+    #[test]
+    fn test_parse_wsl_home_and_catalogue_path() {
+        assert_eq!(
+            parse_wsl_home_output("Ubuntu", b"/home/Jake\n"),
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\Jake")
+        );
+        assert_eq!(
+            parse_wsl_home_output("Ubuntu", b""),
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home")
+        );
+        assert_eq!(
+            resolve_wsl_home_unc_path("Ubuntu"),
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home")
+        );
+
+        let field = Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron");
+        assert_eq!(
+            wsl_catalogue_path_for_field(field),
+            Some(PathBuf::from(
+                r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\team.json"
+            ))
+        );
+        let verbatim_field = Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\Jake\dev\hadron");
+        assert_eq!(
+            wsl_catalogue_path_for_field(verbatim_field),
+            Some(PathBuf::from(
+                r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\team.json"
+            ))
+        );
+        assert_eq!(
+            wsl_catalogue_path_for_field(Path::new(r"C:\Users\Jake\dev\hadron")),
+            None
+        );
     }
 
     #[test]

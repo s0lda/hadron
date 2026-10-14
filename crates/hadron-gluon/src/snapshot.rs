@@ -58,24 +58,51 @@ fn run_bounded(
 }
 
 pub fn git_with_env(repo_root: &Path, args: &[&str], envs: &[(&str, &str)]) -> anyhow::Result<String> {
-    let clean_root = hadron_lattice::sys::paths::simplified(repo_root);
-    let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(clean_root);
-    let clean_args: Vec<String> = args
-        .iter()
-        .map(|a| hadron_lattice::sys::paths::strip_unc_prefix(a))
-        .collect();
-    cmd.args(&clean_args);
-    cmd.env("GIT_AUTHOR_NAME", "hadron")
-        .env("GIT_AUTHOR_EMAIL", "hadron@localhost")
-        .env("GIT_COMMITTER_NAME", "hadron")
-        .env("GIT_COMMITTER_EMAIL", "hadron@localhost")
-        // Never block on a human who is not there: the daemon has no terminal, so a
-        // credential prompt would wait forever instead of failing.
-        .env("GIT_TERMINAL_PROMPT", "0");
-    for (k, v) in envs {
-        cmd.env(k, v);
-    }
+    let cmd = if let Some((distro, linux_cwd)) = hadron_lattice::wsl::parse_wsl_unc_path(repo_root) {
+        let mut c = Command::new("wsl.exe");
+        c.args([
+            "-d",
+            &distro,
+            "--cd",
+            &linux_cwd.to_string_lossy().replace('\\', "/"),
+            "--",
+            "env",
+            "GIT_AUTHOR_NAME=hadron",
+            "GIT_AUTHOR_EMAIL=hadron@localhost",
+            "GIT_COMMITTER_NAME=hadron",
+            "GIT_COMMITTER_EMAIL=hadron@localhost",
+            "GIT_TERMINAL_PROMPT=0",
+        ]);
+        for (k, v) in envs {
+            let translated_v = hadron_lattice::wsl::translate_arg_for_wsl(&distro, v);
+            c.arg(format!("{k}={translated_v}"));
+        }
+        c.arg("git");
+        for a in args {
+            c.arg(hadron_lattice::wsl::translate_arg_for_wsl(&distro, a));
+        }
+        c
+    } else {
+        let clean_root = hadron_lattice::sys::paths::simplified(repo_root);
+        let mut c = Command::new("git");
+        c.arg("-C").arg(clean_root);
+        let clean_args: Vec<String> = args
+            .iter()
+            .map(|a| hadron_lattice::sys::paths::strip_unc_prefix(a))
+            .collect();
+        c.args(&clean_args);
+        c.env("GIT_AUTHOR_NAME", "hadron")
+            .env("GIT_AUTHOR_EMAIL", "hadron@localhost")
+            .env("GIT_COMMITTER_NAME", "hadron")
+            .env("GIT_COMMITTER_EMAIL", "hadron@localhost")
+            // Never block on a human who is not there: the daemon has no terminal, so a
+            // credential prompt would wait forever instead of failing.
+            .env("GIT_TERMINAL_PROMPT", "0");
+        for (k, v) in envs {
+            c.env(k, v);
+        }
+        c
+    };
     let out = run_bounded(cmd, GIT_DEADLINE, args)?;
     if !out.success() {
         return Err(anyhow!(
@@ -111,10 +138,13 @@ fn head_commit(repo_root: &Path) -> Option<String> {
 /// the old behaviour) and `<root>/.git/worktrees/<name>` inside a worktree. It is also
 /// per-worktree, so two concurrent snapshots cannot collide on one index file.
 pub(crate) fn git_dir(path: &Path) -> anyhow::Result<std::path::PathBuf> {
-    Ok(std::path::PathBuf::from(git(
-        path,
-        &["rev-parse", "--absolute-git-dir"],
-    )?))
+    let raw = git(path, &["rev-parse", "--absolute-git-dir"])?;
+    if let Some((distro, _)) = hadron_lattice::wsl::parse_wsl_unc_path(path) {
+        if raw.starts_with('/') {
+            return Ok(hadron_lattice::wsl::format_wsl_unc_path(&distro, Path::new(&raw)));
+        }
+    }
+    Ok(std::path::PathBuf::from(raw))
 }
 
 /// The **main** checkout's root, asked from anywhere — including a linked worktree.
@@ -125,10 +155,19 @@ pub(crate) fn git_dir(path: &Path) -> anyhow::Result<std::path::PathBuf> {
 /// linked worktree, so its parent is the root in both cases. `--path-format=absolute`
 /// because git otherwise answers a *relative* path from inside a worktree.
 pub(crate) fn main_repo_root(path: &Path) -> anyhow::Result<std::path::PathBuf> {
-    let common = std::path::PathBuf::from(git(
+    let raw = git(
         path,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )?);
+    )?;
+    let common = if let Some((distro, _)) = hadron_lattice::wsl::parse_wsl_unc_path(path) {
+        if raw.starts_with('/') {
+            hadron_lattice::wsl::format_wsl_unc_path(&distro, Path::new(&raw))
+        } else {
+            std::path::PathBuf::from(raw)
+        }
+    } else {
+        std::path::PathBuf::from(raw)
+    };
     common
         .parent()
         .map(Path::to_path_buf)

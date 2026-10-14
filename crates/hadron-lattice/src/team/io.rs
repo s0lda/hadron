@@ -102,6 +102,23 @@ pub fn load_team(path: &Path) -> Team {
     }
 }
 
+/// When operating on a WSL UNC workspace from Windows (`\\wsl.localhost\<distro>\home\<user>\...`),
+/// merge any seat definitions from the WSL user's `~/.hadron/team.json` into `catalogue`
+/// (preserving existing host catalogue seats on ID collision) so repo roster overrides
+/// referencing WSL-configured seats do not get dropped as orphans.
+pub fn merge_wsl_catalogue(catalogue: &mut Team, workspace_or_field_path: &Path) {
+    if let Some(wsl_cat_path) = crate::wsl::wsl_catalogue_path_for_field(workspace_or_field_path) {
+        if wsl_cat_path.exists() {
+            let wsl_cat = load_team(&wsl_cat_path);
+            for seat in wsl_cat.quarks {
+                if catalogue.get(&seat.id).is_none() {
+                    catalogue.quarks.push(seat);
+                }
+            }
+        }
+    }
+}
+
 /// Save a team to an explicit path, creating the directory if it does not exist.
 /// The chamber calls this when the human seats a provider in Settings.
 ///

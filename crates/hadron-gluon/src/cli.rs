@@ -70,6 +70,11 @@ fn resolve_team_path(explicit: Option<PathBuf>, field_path: &Path) -> Option<Pat
             return Some(sibling);
         }
     }
+    if let Some(wsl_cat) = hadron_lattice::wsl::wsl_catalogue_path_for_field(field_path) {
+        if wsl_cat.exists() {
+            return Some(wsl_cat);
+        }
+    }
     team_config_path().filter(|p| p.exists())
 }
 
@@ -326,7 +331,11 @@ pub async fn run() {
     if let Some(g) = &global_path {
         term::info(Source::Gluon, &format!("catalogue from {}", g.display()));
     }
-    let team = load_resolved_team(team_path.as_deref(), global_path.as_deref());
+    let team = load_resolved_team(
+        team_path.as_deref(),
+        global_path.as_deref(),
+        &args.field_path,
+    );
 
     // Where quarks publish what they are doing mid-turn, for the chamber to render.
     // Derived from the field path, so both processes agree without a second setting.
@@ -492,8 +501,23 @@ pub async fn run() {
     let ledger = match crate::ledger::Ledger::open(&ledger_path) {
         Ok(l) => l,
         Err(e) => {
-            term::error(Source::Gluon, &format!("failed to open ledger at {}: {e:#}", ledger_path.display()));
-            std::process::exit(2);
+            term::warn(
+                Source::Gluon,
+                &format!(
+                    "failed to open file ledger at {} ({e:#}); falling back to in-memory ledger",
+                    ledger_path.display()
+                ),
+            );
+            match crate::ledger::Ledger::open_in_memory() {
+                Ok(mem) => mem,
+                Err(mem_err) => {
+                    term::error(
+                        Source::Gluon,
+                        &format!("failed to open in-memory ledger: {mem_err:#}"),
+                    );
+                    std::process::exit(2);
+                }
+            }
         }
     };
     // No swarm-wide ceiling. The ledger meters every seat, but only a seat the
@@ -642,7 +666,8 @@ pub async fn run() {
                 ),
                 (Ok(repo), Ok(global)) => {
                     let repo = repo.unwrap_or_default();
-                    let global = global.unwrap_or_default();
+                    let mut global = global.unwrap_or_default();
+                    hadron_lattice::merge_wsl_catalogue(&mut global, &args.field_path);
                     for id in orphan_overrides(&repo, &global) {
                         term::warn(
                             Source::Gluon,
@@ -729,9 +754,14 @@ async fn wait_for_shutdown_signal() {
 /// into the concrete team to seat. Warns about any override that names no catalogue
 /// seat — it is dropped and never seated, which is what keeps a not-adopted quark out
 /// of the running swarm. A missing/malformed file degrades to empty, like [`load_team`].
-fn load_resolved_team(repo_path: Option<&Path>, global_path: Option<&Path>) -> Team {
+fn load_resolved_team(
+    repo_path: Option<&Path>,
+    global_path: Option<&Path>,
+    field_path: &Path,
+) -> Team {
     let repo = repo_path.map(load_team).unwrap_or_default();
-    let global = global_path.map(load_team).unwrap_or_default();
+    let mut global = global_path.map(load_team).unwrap_or_default();
+    hadron_lattice::merge_wsl_catalogue(&mut global, field_path);
     for id in orphan_overrides(&repo, &global) {
         term::warn(
             Source::Gluon,

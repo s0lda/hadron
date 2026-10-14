@@ -218,6 +218,7 @@ pub fn ensure(repo_root: &Path, quark: &QuarkId, assignment: &str) -> anyhow::Re
 pub fn list(repo_root: &Path) -> anyhow::Result<Vec<Worktree>> {
     let out = git(repo_root, &["worktree", "list", "--porcelain"])?;
     let trees = trees_dir(repo_root);
+    let wsl_distro = hadron_lattice::wsl::parse_wsl_unc_path(repo_root).map(|(d, _)| d);
     let mut found = Vec::new();
     let mut path: Option<PathBuf> = None;
     let mut branch = String::new();
@@ -238,7 +239,11 @@ pub fn list(repo_root: &Path) -> anyhow::Result<Vec<Worktree>> {
     for line in out.lines() {
         if let Some(p) = line.strip_prefix("worktree ") {
             flush(&mut path, &mut branch, &mut found);
-            path = Some(PathBuf::from(p));
+            let resolved_p = match (&wsl_distro, p.starts_with('/')) {
+                (Some(distro), true) => hadron_lattice::wsl::format_wsl_unc_path(distro, Path::new(p)),
+                _ => PathBuf::from(p),
+            };
+            path = Some(resolved_p);
         } else if let Some(b) = line.strip_prefix("branch ") {
             branch = b.strip_prefix("refs/heads/").unwrap_or(b).to_string();
         }
@@ -395,6 +400,12 @@ pub fn reap_build_artifacts_maybe_dry(
     min_age: std::time::Duration,
     dry_run: bool,
 ) -> anyhow::Result<Option<ArtifactReap>> {
+    // Windows 9P (`\\wsl.localhost\...`) rejects Win32 `LockFileEx` with `ERROR_INVALID_FUNCTION`
+    // (`os error 1`) and makes walking `target/debug` across the VM boundary prohibitively slow.
+    if hadron_lattice::wsl::is_wsl_unc_path(repo_root) {
+        return Ok(Some(ArtifactReap::default()));
+    }
+
     let debug_dir = repo_root.join("target").join("debug");
     if !debug_dir.is_dir() {
         return Ok(Some(ArtifactReap::default()));
@@ -458,7 +469,12 @@ fn hold_target_lock(lock_path: &Path) -> anyhow::Result<Option<std::fs::File>> {
                 }
             }
             Err(std::fs::TryLockError::Error(e)) => {
-                return Err(e).with_context(|| format!("locking {}", lock_path.display()))
+                // Network redirectors (e.g. Windows 9P `os error 1` / `ERROR_INVALID_FUNCTION`)
+                // do not support advisory file locking; skip the sweep instead of erroring.
+                if e.raw_os_error() == Some(1) || e.kind() == std::io::ErrorKind::Unsupported {
+                    return Ok(None);
+                }
+                return Err(e).with_context(|| format!("locking {}", lock_path.display()));
             }
         }
     }
