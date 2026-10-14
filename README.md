@@ -116,7 +116,7 @@ Hadron connects an expanding ecosystem of AI agents, local models, cloud APIs, a
 
 | Shortcut | Action |
 | :--- | :--- |
-| `Ctrl+Tab` / `Ctrl+\`` | Toggle focus between Chat Input and PTY Terminal |
+| `Ctrl+Tab` / `Ctrl+\` | Toggle focus between Chat Input and PTY Terminal |
 | `Ctrl+Shift+T` / `Ctrl+Shift+W` | New / Close Terminal Tab |
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Next / Previous Terminal Tab (also `Ctrl+Shift+]` / `Ctrl+Shift+[`) |
 | `Alt+Left` / `Alt+Right` | Switch Chat column tabs (`Chat` / `Log` / `Stats`) |
