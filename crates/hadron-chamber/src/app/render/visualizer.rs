@@ -254,18 +254,13 @@ impl super::Chamber {
 
         let roster = &self.view.roster;
         let total_quarks = roster.len();
-        let live_dir = hadron_lattice::live::live_dir(&self.path);
 
         // Calculate active and excited counts accurately:
         // A quark is excited ONLY if it currently has fresh activity (thinking/working/planning/speaking)
         // OR an in-flight working task (TaskState::Working). Completed/Done tasks do NOT excite.
         let mut excited_quark_ids = std::collections::HashSet::new();
         for row in roster.iter() {
-            let activity = hadron_lattice::live::read(
-                &live_dir,
-                &hadron_lattice::QuarkId::new(&row.id),
-                now,
-            );
+            let activity = self.last_live_activities.get(&row.id).and_then(|a| a.as_ref());
             let has_active_task = self.view.tasks.iter().any(|t| {
                 (t.to == row.id || t.from == row.id) && t.state == TaskState::Working
             });

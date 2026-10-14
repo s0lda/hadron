@@ -95,9 +95,11 @@ pub fn parse_wsl_home_output(distro: &str, bytes: &[u8]) -> PathBuf {
 pub fn resolve_wsl_home_unc_path(distro: &str) -> PathBuf {
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
         use std::process::Command;
         if let Ok(output) = Command::new("wsl.exe")
-            .args(["-d", distro, "--", "sh", "-c", "printf %s \"$HOME\""])
+            .args(["-d", distro, "--exec", "sh", "-c", "printf %s \"$HOME\""])
+            .creation_flags(0x08000000)
             .output()
         {
             if output.status.success() {
@@ -105,6 +107,7 @@ pub fn resolve_wsl_home_unc_path(distro: &str) -> PathBuf {
             }
         }
     }
+    let _ = distro;
     parse_wsl_home_output(distro, b"")
 }
 
@@ -151,22 +154,33 @@ pub fn decode_wsl_output(bytes: &[u8]) -> Vec<String> {
     decoded
         .lines()
         .map(|line| line.trim_matches(|c: char| c == '\r' || c == '\0' || c.is_whitespace()).to_string())
-        .filter(|line| !line.is_empty())
+        .filter(|line| !line.is_empty() && !line.starts_with("wsl: ") && !line.starts_with("WSL: "))
         .collect()
 }
 
 /// Query installed WSL distributions on the local machine.
 ///
-/// Runs `wsl.exe --list --quiet` on Windows, safely decoding UTF-16LE / UTF-8 output.
+/// Runs `wsl.exe --list --quiet` on Windows (cached once per process), safely decoding UTF-16LE / UTF-8 output.
 /// Returns an empty vector on non-Windows platforms or if `wsl.exe` is unavailable.
 pub fn list_installed_wsl_distros() -> Vec<String> {
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
         use std::process::Command;
-        match Command::new("wsl.exe").args(["--list", "--quiet"]).output() {
-            Ok(output) if output.status.success() => decode_wsl_output(&output.stdout),
-            _ => Vec::new(),
-        }
+        use std::sync::OnceLock;
+        static DISTROS: OnceLock<Vec<String>> = OnceLock::new();
+        DISTROS
+            .get_or_init(|| {
+                match Command::new("wsl.exe")
+                    .args(["--list", "--quiet"])
+                    .creation_flags(0x08000000)
+                    .output()
+                {
+                    Ok(output) if output.status.success() => decode_wsl_output(&output.stdout),
+                    _ => Vec::new(),
+                }
+            })
+            .clone()
     }
     #[cfg(not(windows))]
     {
@@ -186,10 +200,51 @@ pub fn translate_arg_for_wsl(distro: &str, val: &str) -> String {
     crate::sys::paths::strip_unc_prefix(val)
 }
 
+/// Strip `wsl: ...` host diagnostic lines (such as `wsl: Failed to mount Z:\, see dmesg for more details.`)
+/// and carriage returns / null bytes from command output captured via `wsl.exe`.
+pub fn strip_wsl_noise(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for line in raw.lines() {
+        let clean = line.trim_end_matches(['\r', '\0']);
+        let trimmed_start = clean.trim_start_matches('\0');
+        if trimmed_start.starts_with("wsl: ") || trimmed_start.starts_with("WSL: ") {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(trimmed_start);
+    }
+    out
+}
+
+/// Build a `WSLENV` value that instructs `wsl.exe` on Windows to forward the given
+/// environment variable names into the Linux subprocess environment without exposing
+/// their values on the command line.
+pub fn wslenv_for_keys<'a>(keys: impl IntoIterator<Item = &'a str>) -> String {
+    let mut entries: Vec<String> = std::env::var("WSLENV")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .into_iter()
+        .collect();
+    for k in keys {
+        let k = k.trim();
+        if !k.is_empty() && k != "WSLENV" && k != "PATH" {
+            entries.push(format!("{k}/u"));
+        }
+    }
+    entries.join(":")
+}
+
 /// Wrap a command and its arguments for execution inside a WSL distribution via `wsl.exe`.
 ///
+/// Uses `--exec` (rather than `--`) so `wsl.exe` invokes `execvp` directly with the
+/// discrete argument vector instead of concatenating arguments into `/bin/bash -c`,
+/// which would fail on parentheses (`%(refname:short)`), pipes (`|`), globs (`quark/*`),
+/// or multi-line prompt strings.
+///
 /// Returns `(program, args)` where `program` is `"wsl.exe"` and args are:
-/// `["-d", <distro>, "--cd", <linux_cwd>, "--", <program>, ...<args>]`
+/// `["-d", <distro>, "--cd", <linux_cwd>, "--exec", <program>, ...<args>]`
 pub fn wrap_wsl_command(
     distro: &str,
     linux_cwd: &Path,
@@ -201,7 +256,7 @@ pub fn wrap_wsl_command(
         distro.to_string(),
         "--cd".to_string(),
         linux_cwd.to_string_lossy().replace('\\', "/"),
-        "--".to_string(),
+        "--exec".to_string(),
         program.to_string(),
     ];
     wsl_args.extend(args.iter().map(|a| translate_arg_for_wsl(distro, a)));
@@ -209,7 +264,7 @@ pub fn wrap_wsl_command(
 }
 
 /// Construct a `std::process::Command` for `program` in `cwd` that automatically routes
-/// through `wsl.exe -d <distro> --cd <linux_cwd> -- <program>` when `cwd` is a Windows
+/// through `wsl.exe -d <distro> --cd <linux_cwd> --exec <program>` when `cwd` is a Windows
 /// WSL UNC path (`\\wsl.localhost\<distro>\...` or `\\wsl$\<distro>\...`).
 pub fn wsl_aware_command(cwd: &Path, program: &str) -> std::process::Command {
     if let Some((distro, linux_cwd)) = parse_wsl_unc_path(cwd) {
@@ -219,7 +274,7 @@ pub fn wsl_aware_command(cwd: &Path, program: &str) -> std::process::Command {
             &distro,
             "--cd",
             &linux_cwd.to_string_lossy().replace('\\', "/"),
-            "--",
+            "--exec",
             program,
         ]);
         #[cfg(windows)]
@@ -377,11 +432,23 @@ mod tests {
                 "Ubuntu".to_string(),
                 "--cd".to_string(),
                 "/home/jake".to_string(),
-                "--".to_string(),
+                "--exec".to_string(),
                 "cargo".to_string(),
                 "test".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_strip_wsl_noise() {
+        let noisy = "origin/main\r\nwsl: Failed to mount Z:\\, see dmesg for more details.\r\n";
+        assert_eq!(strip_wsl_noise(noisy), "origin/main");
+
+        let only_noise = "wsl: Failed to mount Z:\\, see dmesg for more details.\n";
+        assert_eq!(strip_wsl_noise(only_noise), "");
+
+        let status = " M src/main.rs\r\nwsl: Failed to mount Z:\\\r\n?? new.txt\n";
+        assert_eq!(strip_wsl_noise(status), " M src/main.rs\n?? new.txt");
     }
 
     #[test]
@@ -409,7 +476,7 @@ mod tests {
         let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(
             args,
-            vec!["-d", "Ubuntu", "--cd", "/home/jake/dev/hadron", "--", "git"]
+            vec!["-d", "Ubuntu", "--cd", "/home/jake/dev/hadron", "--exec", "git"]
         );
 
         let local = Path::new("/home/jake/dev/hadron");

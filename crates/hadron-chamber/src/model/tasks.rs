@@ -141,19 +141,23 @@ pub fn tasks_at(tasks: &[SwarmTask], at: DateTime<Utc>) -> Vec<&SwarmTask> {
 /// so `gates_dir` — the directory itself, not the field path — is read directly here.
 /// Only fresh heartbeats are returned (`live::gates`'s own `is_fresh` guard); a gate
 /// whose heartbeat has stopped must not read as one still running.
-pub fn live_rows(gates_dir: &std::path::Path, now: DateTime<Utc>) -> Vec<SwarmTask> {
-    hadron_lattice::live::gates(gates_dir, now)
-        .into_iter()
+pub fn live_rows_from_activities(gate_activities: &[hadron_lattice::live::Activity]) -> Vec<SwarmTask> {
+    gate_activities
+        .iter()
         .map(|a| SwarmTask {
             to: a.quark.as_str().to_string(),
             from: "gate".to_string(),
             title: a.detail.clone(),
-            body: a.detail,
+            body: a.detail.clone(),
             state: TaskState::Working,
             asked_at: a.started.unwrap_or(a.at),
             done_at: None,
         })
         .collect()
+}
+
+pub fn live_rows(gates_dir: &std::path::Path, now: DateTime<Utc>) -> Vec<SwarmTask> {
+    live_rows_from_activities(&hadron_lattice::live::gates(gates_dir, now))
 }
 
 /// The timeline boundaries spanning `tasks`: earliest `asked_at` to latest of (`done_at` or `now`).

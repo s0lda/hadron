@@ -126,12 +126,7 @@ impl super::Chamber {
         // Presence: a live (adopted + enabled) quark shows its state colour, overridden
         // to Excited while it has fresh live activity — matching the roster row and rail
         // strip so the dot never disagrees with what the quark is actually doing.
-        let live_dir = hadron_lattice::live::live_dir(&self.path);
-        let activity = hadron_lattice::live::read(
-            &live_dir,
-            &hadron_lattice::QuarkId::new(&qid),
-            chrono::Utc::now(),
-        );
+        let activity = self.last_live_activities.get(&qid).and_then(|a| a.as_ref());
         let effective_state = effective_presence_state(
             roster_row.state,
             roster_row.adopted,

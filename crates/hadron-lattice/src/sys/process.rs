@@ -52,7 +52,7 @@ impl ConfigureProcessGroup for Command {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            self.creation_flags(0x00000200); // CREATE_NEW_PROCESS_GROUP
+            self.creation_flags(0x00000200 | 0x08000000); // CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
         }
         self
     }

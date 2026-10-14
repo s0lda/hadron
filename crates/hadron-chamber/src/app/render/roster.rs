@@ -3,7 +3,6 @@ use hadron_lattice::QuarkState;
 
 impl super::Chamber {
     pub(super) fn roster_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let live_dir = hadron_lattice::live::live_dir(&self.path);
         let selected_tab = self.roster_tab;
 
         let active_count = self.view.roster.iter().filter(|r| r.adopted && r.enabled).count();
@@ -38,11 +37,7 @@ impl super::Chamber {
         let mut rows = v_flex().w_full().gap_2();
         for (orig_ix, r, _) in &sorted_quarks {
             let is_selected = self.selected_quark_ix == Some(*orig_ix);
-            let activity = hadron_lattice::live::read(
-                &live_dir,
-                &hadron_lattice::QuarkId::new(&r.id),
-                chrono::Utc::now(),
-            );
+            let activity = self.last_live_activities.get(&r.id).and_then(|a| a.clone());
             rows = rows.child(self.render_quark_card(r, *orig_ix, is_selected, activity, cx));
         }
 

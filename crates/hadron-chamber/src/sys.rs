@@ -33,6 +33,7 @@ pub fn list_workspace_files(
     expanded_dirs: &std::collections::HashSet<String>,
 ) -> Vec<(String, bool)> {
     let mut files: Vec<(String, bool)> = Vec::new();
+    let is_wsl = hadron_lattice::wsl::is_wsl_unc_path(repo_root);
 
     // Files tracked in the index that have been deleted from the working tree.
     // Querying git once avoids a per-file `stat` across 600+ files over WSL 9P.
@@ -42,7 +43,7 @@ pub fn list_workspace_files(
         .ok()
         .filter(|o| o.status.success())
         .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
+            hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&o.stdout))
                 .lines()
                 .map(|s| s.to_string())
                 .collect()
@@ -61,7 +62,8 @@ pub fn list_workspace_files(
         .output()
     {
         if output.status.success() {
-            for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let cleaned = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&output.stdout));
+            for line in cleaned.lines() {
                 if !line.is_empty() && !deleted.contains(line) {
                     files.push((line.to_string(), false));
                 }
@@ -70,6 +72,8 @@ pub fn list_workspace_files(
     }
 
     // Ignored entries, with wholly-ignored heavy directories collapsed to a single entry.
+    // Over WSL 9P (`is_wsl`), gitignored directories (like `.hadron/`) are only walked
+    // when explicitly expanded in the file tree, avoiding 300+ synchronous 9P RPCs per scan.
     let mut ignored_dirs_to_expand = Vec::new();
     if let Ok(output) = hadron_lattice::wsl::git_command(repo_root)
         .args([
@@ -83,7 +87,8 @@ pub fn list_workspace_files(
         .output()
     {
         if output.status.success() {
-            for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let cleaned = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&output.stdout));
+            for line in cleaned.lines() {
                 // `--directory` never emits `.git/`, but guard anyway.
                 // `--others` walks the working tree directly, so emitted entries exist on disk.
                 let bare = line.trim_end_matches('/');
@@ -91,7 +96,12 @@ pub fn list_workspace_files(
                     files.push((line.to_string(), true));
                     if line.ends_with('/') {
                         let path_str = bare.to_string();
-                        if !is_heavy_ignored_dir(&path_str) || expanded_dirs.contains(&path_str) {
+                        let should_expand = if is_wsl {
+                            expanded_dirs.contains(&path_str)
+                        } else {
+                            !is_heavy_ignored_dir(&path_str) || expanded_dirs.contains(&path_str)
+                        };
+                        if should_expand {
                             ignored_dirs_to_expand.push(path_str);
                         }
                     }
@@ -120,7 +130,12 @@ pub fn list_workspace_files(
                 };
                 files.push((entry_path, true));
                 if is_dir {
-                    if !is_heavy_ignored_dir(&child_rel) || expanded_dirs.contains(&child_rel) {
+                    let should_expand = if is_wsl {
+                        expanded_dirs.contains(&child_rel)
+                    } else {
+                        !is_heavy_ignored_dir(&child_rel) || expanded_dirs.contains(&child_rel)
+                    };
+                    if should_expand {
                         ignored_dirs_to_expand.push(child_rel);
                     }
                 }
@@ -756,6 +771,34 @@ pub fn init_windows_app_icon() {
 
 #[cfg(not(windows))]
 pub fn init_windows_app_icon() {}
+
+/// Show or hide the Windows console window (`cmd.exe` / conhost) attached to this process.
+/// No-op on non-Windows platforms.
+#[cfg(windows)]
+pub fn set_windows_console_visible(visible: bool) {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOW};
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetConsoleWindow() -> HWND;
+        fn AllocConsole() -> i32;
+    }
+
+    unsafe {
+        let mut hwnd = GetConsoleWindow();
+        if visible && hwnd.is_null() {
+            let _ = AllocConsole();
+            hwnd = GetConsoleWindow();
+        }
+        if !hwnd.is_null() {
+            ShowWindow(hwnd, if visible { SW_SHOW } else { SW_HIDE });
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_windows_console_visible(_visible: bool) {}
 
 /// Diagnostic snapshot of the display server, compositor layer shell, and notification pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -154,6 +154,11 @@ impl CliRunner for ProcessRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        if is_wsl && !inv.env.is_empty() {
+            let wslenv = hadron_lattice::wsl::wslenv_for_keys(inv.env.iter().map(|(k, _)| k.as_str()));
+            child_cmd.env("WSLENV", wslenv);
+        }
+
         child_cmd.as_std_mut().set_process_group();
 
         let mut child = child_cmd
@@ -322,6 +327,11 @@ impl CliRunner for ProcessRunner {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        if is_wsl && !inv.env.is_empty() {
+            let wslenv = hadron_lattice::wsl::wslenv_for_keys(inv.env.iter().map(|(k, _)| k.as_str()));
+            child_cmd.env("WSLENV", wslenv);
+        }
 
         child_cmd.as_std_mut().set_process_group();
 
@@ -780,7 +790,7 @@ mod tests {
             "Ubuntu-22.04",
             "--cd",
             "/home/user/project",
-            "--",
+            "--exec",
             "cargo",
             "check",
             "--workspace",

@@ -93,7 +93,6 @@ impl super::Chamber {
             // push the pinned Settings button off the bottom.
             // A touch of horizontal padding + a smaller (20px) avatar so the folded
             // avatars keep a clear gutter from the strip edges instead of touching them.
-            let live_dir = hadron_lattice::live::live_dir(&self.path);
             let mut avatars = v_flex().w_full().gap_2p5().items_center().px_1();
             let selected_tab = self.roster_tab;
             let mut sorted_roster: Vec<_> = self
@@ -116,11 +115,7 @@ impl super::Chamber {
                     .then_with(|| a.0.id.to_lowercase().cmp(&b.0.id.to_lowercase()))
             });
             for (r, id) in sorted_roster {
-                let activity = hadron_lattice::live::read(
-                    &live_dir,
-                    &hadron_lattice::QuarkId::new(&r.id),
-                    chrono::Utc::now(),
-                );
+                let activity = self.last_live_activities.get(&r.id).and_then(|a| a.as_ref());
                 let effective_state =
                     effective_presence_state(r.state, r.adopted, r.enabled, activity.is_some());
                 let dot_color = if r.adopted && r.enabled {

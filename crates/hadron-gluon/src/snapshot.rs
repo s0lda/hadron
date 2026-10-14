@@ -65,7 +65,7 @@ pub fn git_with_env(repo_root: &Path, args: &[&str], envs: &[(&str, &str)]) -> a
             &distro,
             "--cd",
             &linux_cwd.to_string_lossy().replace('\\', "/"),
-            "--",
+            "--exec",
             "env",
             "GIT_AUTHOR_NAME=hadron",
             "GIT_AUTHOR_EMAIL=hadron@localhost",
@@ -104,21 +104,25 @@ pub fn git_with_env(repo_root: &Path, args: &[&str], envs: &[(&str, &str)]) -> a
         c
     };
     let out = run_bounded(cmd, GIT_DEADLINE, args)?;
+    let stdout = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&out.stdout));
+    let stderr = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&out.stderr));
     if !out.success() {
         return Err(anyhow!(
             "git {:?} failed: {}",
             args,
-            String::from_utf8_lossy(&out.stderr).trim()
+            stderr
         ));
     }
-    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    if stdout.is_empty() {
-        Ok(stderr)
-    } else if stderr.is_empty() {
-        Ok(stdout)
+    if args.first() == Some(&"push") {
+        if stdout.is_empty() {
+            Ok(stderr)
+        } else if stderr.is_empty() {
+            Ok(stdout)
+        } else {
+            Ok(format!("{stdout}\n{stderr}"))
+        }
     } else {
-        Ok(format!("{stdout}\n{stderr}"))
+        Ok(stdout)
     }
 }
 

@@ -71,7 +71,10 @@ pub fn commits_ahead(wt_path: &Path, base: &str) -> Option<usize> {
     if !out.status.success() {
         return None;
     }
-    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+    hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&out.stdout))
+        .trim()
+        .parse()
+        .ok()
 }
 
 /// The patch diff for a single commit (`git show --patch <commit>`).
@@ -558,7 +561,7 @@ pub fn commit_graph(repo_root: &Path) -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    Some(hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&out.stdout)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -721,7 +724,7 @@ fn run_git(repo_root: &Path, args: &[&str]) -> String {
         .output()
         .ok()
         .filter(|out| out.status.success())
-        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+        .map(|out| hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&out.stdout)))
         .unwrap_or_default()
 }
 
@@ -732,7 +735,8 @@ pub fn get_git_statuses(repo_root: &Path) -> std::collections::HashMap<String, G
         .output();
     if let Ok(output) = out {
         if output.status.success() {
-            for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let cleaned = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&output.stdout));
+            for line in cleaned.lines() {
                 if line.len() < 4 {
                     continue;
                 }

@@ -8,22 +8,17 @@ impl super::Chamber {
     pub(super) fn chat_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // One row per quark mid-turn, not just the first — the card and the
         // roster's blue dot must agree on who counts as "working".
-        let live_dir = hadron_lattice::live::live_dir(&self.path);
-        let gates_dir = hadron_lattice::live::gates_dir(&self.path);
+        // Read from `self.last_live_activities` / `self.last_gate_activities` (polled off the render pass)
+        // so hover/repaint frames never perform synchronous 9P file I/O.
         let now = chrono::Utc::now();
-        let mut live_map = std::collections::HashMap::new();
-        for r in &self.view.roster {
-            if r.adopted && r.enabled {
-                if let Some(act) = hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), now) {
-                    live_map.insert(r.id.as_str(), act);
-                }
-            }
-        }
-        let mut active = widgets::active_quarks_rich(&self.view.roster, |id| live_map.get(id).cloned(), now);
+        let mut active = widgets::active_quarks_rich(
+            &self.view.roster,
+            |id| self.last_live_activities.get(id).and_then(|a| a.clone()),
+            now,
+        );
 
         // Surface in-flight merge gates and Gluon system operations
-        let gate_activities = hadron_lattice::live::gates(&gates_dir, now);
-        for gate_act in &gate_activities {
+        for gate_act in &self.last_gate_activities {
             let detail = if gate_act.detail.is_empty() {
                 format!("merging `{}`", gate_act.quark.as_str())
             } else {
@@ -38,8 +33,8 @@ impl super::Chamber {
             });
         }
 
-        if let Some(gluon_act) = hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new("gluon"), now) {
-            if gate_activities.is_empty() {
+        if let Some(Some(gluon_act)) = self.last_live_activities.get("gluon").cloned() {
+            if self.last_gate_activities.is_empty() {
                 let detail = if gluon_act.detail.is_empty() {
                     gluon_act.doing.label().to_string()
                 } else {

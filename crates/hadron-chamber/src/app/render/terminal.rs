@@ -1490,8 +1490,8 @@ impl super::Chamber {
 
                 let tasks_to_render: Vec<&crate::model::SwarmTask> = self.view.tasks.iter().collect();
 
-                let gates_dir = hadron_lattice::live::gates_dir(&self.path);
-                let live_gate_rows: Vec<crate::model::SwarmTask> = model::tasks::live_rows(&gates_dir, now);
+                let live_gate_rows: Vec<crate::model::SwarmTask> =
+                    model::tasks::live_rows_from_activities(&self.last_gate_activities);
 
                 let list = if tasks_to_render.is_empty() && live_gate_rows.is_empty() {
                     div().p_4().child(empty_hint("No swarm tasks yet.")).into_any_element()
