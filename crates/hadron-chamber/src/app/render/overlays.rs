@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.3",
+        date: Some("2026-10-14"),
+        added: &[
+            "Windows Console Window Toggle: Added 'Show console window (Windows)' in Settings → Environment & Defaults (default off) to hide the Win32 console window on launch and pass CREATE_NO_WINDOW to child processes",
+        ],
+        changed: &[],
+        fixed: &[
+            "WSL 9P UI Freeze Remediation: Moved field.jsonl, live/, gates/, gluon.lock, and git queries off the UI render thread into background FieldPoll::gather snapshots, fixing infinite loading screens on WSL UNC workspaces",
+            "WSL --exec & Mount Warning Filter: Switched wsl.exe wrapper from '--' to '--exec' to avoid bash -c syntax errors on %(refname:short) and stripped 'wsl: Failed to mount...' lines from git output",
+        ],
+    },
+    Release {
         version: "0.33.2",
         date: Some("2026-10-14"),
         added: &[

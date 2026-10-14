@@ -5,6 +5,20 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.3] - 2026-10-14
+
+### Added
+- **Windows Console Window Visibility Preference (`hadron-chamber`)**:
+  - Added `ChamberPrefs::show_console_window` (default `false`) and a **"Show console window (Windows)"** switch in **Settings → Environment & Defaults** (`providers.rs`) that hides or restores the host Win32 console window (`GetConsoleWindow` / `AllocConsole` / `ShowWindow`) while keeping CLI commands (`--version`, `--help`, headless runner) attached.
+  - Added `sys::spawn_with_console_pref` across daemon auto-spawn (`main.rs`), workspace switching (`actions.rs`), and the Project Selector (`selector.rs`) so child processes spawn with `CREATE_NO_WINDOW` (`0x08000000`) when console visibility is disabled.
+
+### Fixed
+- **WSL 9P UI Freeze & Asynchronous Field Polling (`hadron-chamber`)**:
+  - Moved `field.jsonl`, `live/` card scanning, `gates/` inspection, `gluon.lock` liveness checks, and `git` branch/worktree queries off the GPUI main/render thread into background `FieldPoll::gather` snapshots (`reload.rs`, `app/mod.rs`, `render/chat.rs`, `render/roster.rs`, `render/stats.rs`, `render/terminal.rs`, `render/titlebar.rs`, `render/visualizer.rs`, `model/tasks.rs`), eliminating infinite loading screens and frame hangs when opening WSL repositories over Windows 9P.
+- **WSL `--exec` Argument Passing & Mount Warning Stripping (`hadron-lattice`, `hadron-chamber`, `hadron-gluon`)**:
+  - Switched `wsl_aware_command` and `ProcessRunner` from `wsl.exe ... --` (which invokes the login shell via `-c` and breaks on parentheses like `--format=%(refname:short)`) to `wsl.exe ... --exec` for direct `execve` without shell expansion.
+  - Added `strip_wsl_warnings` across `wsl.rs`, `vcs.rs`, and `snapshot.rs` to filter `wsl: Failed to mount ...` diagnostic lines from `stdout`/`stderr` before parsing `git` output, and set `CREATE_NO_WINDOW` on `wsl.exe` discovery/command helpers (`wsl.rs`, `sys/process.rs`).
+
 ## [0.33.2] - 2026-10-14
 
 ### Added
