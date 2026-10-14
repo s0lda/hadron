@@ -281,11 +281,7 @@ impl super::Chamber {
         if !self.prefs.repo_monitor {
             return None;
         }
-        let cached = self.repo_health_report.clone();
-        let report = cached.unwrap_or_else(|| {
-            let repo_root = crate::vcs::repo_root_of(&self.path);
-            hadron_gatekeeper::RepoMonitor::check_repo(&repo_root)
-        });
+        let report = self.repo_health_report.as_ref()?;
         let (label, tip, bg_color, text_color, icon) = if report.is_healthy() {
             (
                 "Repo: Clean".to_string(),

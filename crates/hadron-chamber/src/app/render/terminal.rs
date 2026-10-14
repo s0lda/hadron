@@ -46,16 +46,42 @@ impl super::Chamber {
                             window.focus(&this.terminal_focus, cx);
                         }
                         if this.right_rail_tab == RightRailTab::Changes {
-                            let root = crate::vcs::repo_root_of(&this.path);
-                            this.working_diff = crate::vcs::working_diff(root);
+                            let root = crate::vcs::repo_root_of(&this.path).to_path_buf();
+                            cx.spawn(async move |this, cx| {
+                                let diff = cx
+                                    .background_executor()
+                                    .spawn(async move { crate::vcs::working_diff(&root) })
+                                    .await;
+                                let _ = this.update(cx, |chamber, cx| {
+                                    chamber.working_diff = diff;
+                                    cx.notify();
+                                });
+                            })
+                            .detach();
                         }
                         if this.right_rail_tab == RightRailTab::Git {
-                            let root = crate::vcs::repo_root_of(&this.path);
-                            this.git_branch_fingerprint = Some(crate::vcs::branch_fingerprint(root));
-                            this.git_branches = Some(crate::vcs::list_branches(root, "main"));
-                            this.git_worktrees = Some(crate::vcs::list_worktrees(root));
-                            this.git_log_graph = crate::vcs::commit_graph(root);
-                            this.rebuild_graph_rows();
+                            let root = crate::vcs::repo_root_of(&this.path).to_path_buf();
+                            cx.spawn(async move |this, cx| {
+                                let (fp, branches, worktrees, graph) = cx
+                                    .background_executor()
+                                    .spawn(async move {
+                                        let fp = crate::vcs::branch_fingerprint(&root);
+                                        let branches = crate::vcs::list_branches(&root, "main");
+                                        let worktrees = crate::vcs::list_worktrees(&root);
+                                        let graph = crate::vcs::commit_graph(&root);
+                                        (fp, branches, worktrees, graph)
+                                    })
+                                    .await;
+                                let _ = this.update(cx, |chamber, cx| {
+                                    chamber.git_branch_fingerprint = Some(fp);
+                                    chamber.git_branches = Some(branches);
+                                    chamber.git_worktrees = Some(worktrees);
+                                    chamber.git_log_graph = graph;
+                                    chamber.rebuild_graph_rows();
+                                    cx.notify();
+                                });
+                            })
+                            .detach();
                         }
                         cx.notify();
                     }))

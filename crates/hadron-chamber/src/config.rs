@@ -167,6 +167,9 @@ pub struct ChamberPrefs {
     /// What to do when Hadron is launched without an explicit path argument.
     #[serde(default)]
     pub startup_behavior: StartupBehavior,
+    /// Whether to show the Windows console window (cmd/conhost) alongside the GUI window.
+    #[serde(default = "default_false")]
+    pub show_console_window: bool,
 }
 
 fn default_repo_monitor_interval() -> u64 {
@@ -1167,6 +1170,7 @@ impl Default for ChamberPrefs {
             sandbox_mode: hadron_lattice::SandboxMode::default(),
             recent_projects: Vec::new(),
             startup_behavior: StartupBehavior::default(),
+            show_console_window: default_false(),
         }
     }
 }

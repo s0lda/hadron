@@ -7,6 +7,9 @@ pub(super) struct WorkspaceScan {
     pub(super) git_statuses: std::collections::HashMap<String, crate::vcs::GitStatus>,
     pub(super) working_diff: Option<Vec<crate::vcs::FileDiff>>,
     pub(super) git_branch_fingerprint: Option<String>,
+    pub(super) git_branches: Option<Vec<crate::vcs::BranchInfo>>,
+    pub(super) git_worktrees: Option<Vec<crate::vcs::WorktreeInfo>>,
+    pub(super) git_log_graph: Option<String>,
     pub(super) repo_health: Option<hadron_gatekeeper::RepoHealthReport>,
     pub(super) remote_tracking: Option<crate::vcs::RemoteTrackingInfo>,
 }
@@ -17,6 +20,8 @@ impl WorkspaceScan {
         file_tree_expanded: &std::collections::HashSet<String>,
         scan_diff: bool,
         scan_git: bool,
+        scan_health: bool,
+        prev_branch_fingerprint: Option<&str>,
     ) -> Option<Self> {
         let files = crate::sys::list_workspace_files(repo_root, file_tree_expanded);
         let git_statuses = crate::vcs::get_git_statuses(repo_root);
@@ -25,17 +30,25 @@ impl WorkspaceScan {
         } else {
             None
         };
-        let git_branch_fingerprint = if scan_git {
-            Some(crate::vcs::branch_fingerprint(repo_root))
+        let (git_branch_fingerprint, git_branches, git_worktrees, git_log_graph) = if scan_git {
+            let fp = crate::vcs::branch_fingerprint(repo_root);
+            if prev_branch_fingerprint != Some(fp.as_str()) {
+                let branches = Some(crate::vcs::list_branches(repo_root, "main"));
+                let worktrees = Some(crate::vcs::list_worktrees(repo_root));
+                let graph = crate::vcs::commit_graph(repo_root);
+                (Some(fp), branches, worktrees, graph)
+            } else {
+                (Some(fp), None, None, None)
+            }
         } else {
-            None
+            (None, None, None, None)
         };
-        let repo_health = if scan_git {
+        let repo_health = if scan_health {
             Some(hadron_gatekeeper::RepoMonitor::check_repo(repo_root))
         } else {
             None
         };
-        let remote_tracking = if scan_git {
+        let remote_tracking = if scan_git || scan_health {
             Some(crate::vcs::get_remote_tracking_info(repo_root))
         } else {
             None
@@ -45,9 +58,107 @@ impl WorkspaceScan {
             git_statuses,
             working_diff,
             git_branch_fingerprint,
+            git_branches,
+            git_worktrees,
+            git_log_graph,
             repo_health,
             remote_tracking,
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct FieldPoll {
+    pub(super) events: Option<Vec<Event>>,
+    pub(super) team_before: Team,
+    pub(super) global_before: Team,
+    pub(super) repo_team: Option<Team>,
+    pub(super) global_team: Option<Team>,
+    pub(super) is_over_budget: bool,
+    pub(super) scan: Option<WorkspaceScan>,
+    pub(super) live_activities: Vec<(String, Option<hadron_lattice::live::Activity>)>,
+    pub(super) gate_activities: Vec<hadron_lattice::live::Activity>,
+    pub(super) gluon_now_running: bool,
+}
+
+impl FieldPoll {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn gather(
+        path: &std::path::Path,
+        repo_team_path: &std::path::Path,
+        team_before: Team,
+        global_before: Team,
+        roster_ids: &[String],
+        file_tree_expanded: &std::collections::HashSet<String>,
+        do_workspace_scan: bool,
+        scan_diff: bool,
+        scan_git: bool,
+        scan_health: bool,
+        prev_branch_fingerprint: Option<&str>,
+    ) -> Self {
+        let events = io::read_events(path).ok();
+        let read_strict = |p: &std::path::Path| -> Option<Team> {
+            std::fs::read_to_string(p)
+                .ok()
+                .and_then(|t| hadron_lattice::parse_team(&t).ok())
+        };
+        let repo_team = read_strict(repo_team_path);
+        let mut global_team = match hadron_lattice::team_config_path() {
+            Some(p) => read_strict(&p),
+            None => Some(Team::default()),
+        };
+        if let Some(ref mut gt) = global_team {
+            hadron_lattice::merge_wsl_catalogue(gt, path);
+        }
+
+        let root = crate::vcs::repo_root_of(path);
+        let budget_team = repo_team.as_ref().unwrap_or(&team_before);
+        let is_over_budget = hadron_gluon::nucleus_status::index_over_budget(
+            root,
+            hadron_gluon::nucleus_status::resolve_budget_bytes(budget_team),
+        );
+
+        let scan = if do_workspace_scan {
+            WorkspaceScan::gather(
+                root,
+                file_tree_expanded,
+                scan_diff,
+                scan_git,
+                scan_health,
+                prev_branch_fingerprint,
+            )
+        } else {
+            None
+        };
+
+        let now = chrono::Utc::now();
+        let live_dir = hadron_lattice::live::live_dir(path);
+        let mut live_activities = Vec::with_capacity(roster_ids.len() + 1);
+        for id in roster_ids {
+            let activity =
+                hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(id), now);
+            live_activities.push((id.clone(), activity));
+        }
+        let gluon_activity =
+            hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new("gluon"), now);
+        live_activities.push(("gluon".to_string(), gluon_activity));
+
+        let gates_dir = hadron_lattice::live::gates_dir(path);
+        let gate_activities = hadron_lattice::live::gates(&gates_dir, now);
+        let gluon_now_running = super::Chamber::probe_gluon_running(path);
+
+        Self {
+            events,
+            team_before,
+            global_before,
+            repo_team,
+            global_team,
+            is_over_budget,
+            scan,
+            live_activities,
+            gate_activities,
+            gluon_now_running,
+        }
     }
 }
 
@@ -82,15 +193,18 @@ impl super::Chamber {
 
     pub(super) fn update_active_plan(&mut self) {
         let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let start_ix = self.manual_plan_override_at_message_len.unwrap_or(0);
-        let recent_msgs = if start_ix < self.view.messages.len() {
-            &self.view.messages[start_ix..]
-        } else {
-            &[]
-        };
+        let all_plans = scan_all_plan_paths(&repo);
 
-        let new_plan_from_msg = if !recent_msgs.is_empty() {
-            resolve_active_plan_from_messages(&repo, recent_msgs)
+        let new_plan_from_msg = if let Some(start_ix) = self.manual_plan_override_at_message_len {
+            if start_ix < self.view.messages.len() {
+                resolve_active_plan_from_messages_with_plans(
+                    &repo,
+                    &self.view.messages[start_ix..],
+                    &all_plans,
+                )
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -102,10 +216,10 @@ impl super::Chamber {
             if repo.join(manual).is_file() {
                 Some(manual.clone())
             } else {
-                resolve_active_plan(&repo, &self.view.messages)
+                resolve_active_plan_with_plans(&repo, &self.view.messages, &all_plans)
             }
         } else {
-            resolve_active_plan(&repo, &self.view.messages)
+            resolve_active_plan_with_plans(&repo, &self.view.messages, &all_plans)
         };
 
         if let Some(rel_path) = active_plan_path {
@@ -200,12 +314,12 @@ impl super::Chamber {
     /// file tree / git statuses exactly as they are rather than blanking them.
     pub(super) fn reload_if_changed(
         &mut self,
-        scan: Option<WorkspaceScan>,
+        poll: FieldPoll,
         cx: &mut Context<Self>,
     ) {
         // Only reproject on a successful read — a transient read error must not
         // blank the current view (which would flash to empty, then repopulate).
-        if let Ok(events) = io::read_events(&self.path) {
+        if let Some(events) = poll.events {
             let mut changed = false;
 
             // The team files are edited out-of-band, not only through this window: the
@@ -216,46 +330,22 @@ impl super::Chamber {
             // event (event-seeding), which is why a new quark used to "appear after
             // mention". A no-op after this window's own save: the reload matches what
             // was just written, so `!=` is false and nothing reprojects.
-            //
-            // STRICT read on purpose: `load_team` degrades a missing/half-written file to
-            // an EMPTY team. Assigning that would blank the roster for a frame and — if a
-            // settings save landed in the next ~400ms tick — persist an empty team.json,
-            // which the polling daemon would read as "unseat the whole swarm". So parse
-            // with the error kept and, on ANY read/parse failure, leave the in-memory team
-            // untouched (mirrors the events guard above; `save_team`'s atomic rename is
-            // what protects concurrent *writers*, this protects concurrent *readers*).
-            let read_strict = |path: &std::path::Path| -> Option<Team> {
-                std::fs::read_to_string(path)
-                    .ok()
-                    .and_then(|t| hadron_lattice::parse_team(&t).ok())
-            };
-            let repo_team = read_strict(&self.repo_team_path());
-            let mut global_team = match hadron_lattice::team_config_path() {
-                Some(p) => read_strict(&p),
-                None => Some(Team::default()), // no catalogue configured → genuinely empty
-            };
-            if let Some(ref mut gt) = global_team {
-                hadron_lattice::merge_wsl_catalogue(gt, &self.path);
-            }
             let mut team_changed = false;
-            if let (Some(repo_team), Some(global_team)) = (repo_team, global_team) {
-                if repo_team != self.team || global_team != self.global {
-                    self.team = repo_team;
-                    self.global = global_team;
-                    self.providers =
-                        configured_providers(&resolve_team(&self.team, &self.global));
-                    team_changed = true;
-                    changed = true;
+            if self.team == poll.team_before && self.global == poll.global_before {
+                if let (Some(repo_team), Some(global_team)) = (poll.repo_team, poll.global_team) {
+                    if repo_team != self.team || global_team != self.global {
+                        self.team = repo_team;
+                        self.global = global_team;
+                        self.providers =
+                            configured_providers(&resolve_team(&self.team, &self.global));
+                        team_changed = true;
+                        changed = true;
+                    }
                 }
             }
 
-            let root = crate::vcs::repo_root_of(&self.path);
-            let is_over = hadron_gluon::nucleus_status::index_over_budget(
-                root,
-                hadron_gluon::nucleus_status::resolve_budget_bytes(&self.team),
-            );
-            if is_over != self.nucleus_over_budget {
-                self.nucleus_over_budget = is_over;
+            if poll.is_over_budget != self.nucleus_over_budget {
+                self.nucleus_over_budget = poll.is_over_budget;
                 changed = true;
             }
 
@@ -277,7 +367,7 @@ impl super::Chamber {
             // so the scan runs every tick. It just no longer runs *here*: it is three
             // `git` subprocesses plus a `stat` per tracked file, and on the render
             // thread that blocked mouse/keyboard dispatch for the whole scan.
-            if let Some(scan) = scan {
+            if let Some(scan) = poll.scan {
                 if scan.files != self.file_tree_paths {
                     // Gitignored entries included, mirroring `new` — see the note there.
                     *self.completion_files.borrow_mut() = scan
@@ -302,13 +392,21 @@ impl super::Chamber {
                     changed = true;
                 }
 
-                if scan.git_branch_fingerprint.is_some() && scan.git_branch_fingerprint != self.git_branch_fingerprint {
+                if scan.git_branch_fingerprint.is_some()
+                    && (scan.git_branch_fingerprint != self.git_branch_fingerprint
+                        || self.git_branches.is_none())
+                {
                     self.git_branch_fingerprint = scan.git_branch_fingerprint;
-                    let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                    self.git_branches = Some(crate::vcs::list_branches(&repo, "main"));
-                    self.git_worktrees = Some(crate::vcs::list_worktrees(&repo));
-                    self.git_log_graph = crate::vcs::commit_graph(&repo);
-                    self.rebuild_graph_rows();
+                    if let Some(branches) = scan.git_branches {
+                        self.git_branches = Some(branches);
+                    }
+                    if let Some(worktrees) = scan.git_worktrees {
+                        self.git_worktrees = Some(worktrees);
+                    }
+                    if scan.git_log_graph.is_some() {
+                        self.git_log_graph = scan.git_log_graph;
+                        self.rebuild_graph_rows();
+                    }
                     changed = true;
                 }
 
@@ -327,19 +425,12 @@ impl super::Chamber {
                 }
             }
 
-            let live_dir = hadron_lattice::live::live_dir(&self.path);
             let mut live_activity_changed = false;
-            for r in &self.view.roster {
-                let activity = hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), chrono::Utc::now());
-                if self.last_live_activities.get(&r.id) != Some(&activity) {
-                    self.last_live_activities.insert(r.id.clone(), activity);
+            for (id, activity) in poll.live_activities {
+                if self.last_live_activities.get(&id) != Some(&activity) {
+                    self.last_live_activities.insert(id, activity);
                     live_activity_changed = true;
                 }
-            }
-            let gluon_activity = hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new("gluon"), chrono::Utc::now());
-            if self.last_live_activities.get("gluon") != Some(&gluon_activity) {
-                self.last_live_activities.insert("gluon".to_string(), gluon_activity);
-                live_activity_changed = true;
             }
             if live_activity_changed {
                 changed = true;
@@ -348,10 +439,8 @@ impl super::Chamber {
             // Gate heartbeats live outside the roster loop above (keyed by branch, not
             // quark id — `live::gates_dir`), so the Tasks tab needs its own change
             // detection to repaint when a gate starts, keeps running, or finishes.
-            let gates_dir = hadron_lattice::live::gates_dir(&self.path);
-            let gate_activities = hadron_lattice::live::gates(&gates_dir, chrono::Utc::now());
-            if gate_activities != self.last_gate_activities {
-                self.last_gate_activities = gate_activities;
+            if poll.gate_activities != self.last_gate_activities {
+                self.last_gate_activities = poll.gate_activities;
                 changed = true;
             }
 
@@ -359,9 +448,8 @@ impl super::Chamber {
             // a stopped daemon means no quark in the swarm can take a turn until it's
             // restarted. Fire the banner only on the running→stopped edge (not every
             // tick it stays down) and clear it on stopped→running.
-            let gluon_now_running = self.gluon_running();
-            if let Some(went_running) = gluon_running_edge(self.last_gluon_running, gluon_now_running) {
-                self.last_gluon_running = gluon_now_running;
+            if let Some(went_running) = gluon_running_edge(self.last_gluon_running, poll.gluon_now_running) {
+                self.last_gluon_running = poll.gluon_now_running;
                 self.gluon_stopped_notice = !went_running;
                 changed = true;
             }
@@ -385,20 +473,36 @@ impl super::Chamber {
     }
 }
 
-/// Whether `last → now` crosses a gluon running/stopped edge: `Some(now)` on a
-/// transition (so the caller re-toasts once, not every poll it stays down),
-/// `None` on steady state.
 /// Resolve the active implementation plan for a workspace:
 /// 1. Newest-first scan of messages for an explicit plan file reference (`plan_ref`) or mention that exists on disk.
 /// 2. If no plan is explicitly referenced in messages, scan `.hadron/docs/plans/`, `docs/plans/`, and worktrees for the newest plan on disk.
 pub(crate) fn resolve_active_plan(repo: &Path, messages: &[crate::model::MessageRow]) -> Option<String> {
-    resolve_active_plan_from_messages(repo, messages).or_else(|| scan_newest_plan(repo))
+    let all_plans = scan_all_plan_paths(repo);
+    resolve_active_plan_with_plans(repo, messages, &all_plans)
+}
+
+pub(crate) fn resolve_active_plan_with_plans(
+    repo: &Path,
+    messages: &[crate::model::MessageRow],
+    all_plans: &[(std::time::SystemTime, String)],
+) -> Option<String> {
+    resolve_active_plan_from_messages_with_plans(repo, messages, all_plans)
+        .or_else(|| newest_plan_from_list(all_plans))
 }
 
 /// Newest-first scan of messages for an explicit or mentioned plan file path that exists on disk.
 pub(crate) fn resolve_active_plan_from_messages(repo: &Path, messages: &[crate::model::MessageRow]) -> Option<String> {
+    let all_plans = scan_all_plan_paths(repo);
+    resolve_active_plan_from_messages_with_plans(repo, messages, &all_plans)
+}
+
+pub(crate) fn resolve_active_plan_from_messages_with_plans(
+    repo: &Path,
+    messages: &[crate::model::MessageRow],
+    all_plans: &[(std::time::SystemTime, String)],
+) -> Option<String> {
     messages.iter().rev().find_map(|m| {
-        find_plan_mention_in_text(repo, &m.body)
+        find_plan_mention_in_text_with_plans(repo, &m.body, all_plans)
     })
 }
 
@@ -408,13 +512,16 @@ fn resolve_plan_path(repo: &Path, raw_path: &str) -> Option<String> {
         .or_else(|| raw_path.strip_prefix("file:"))
         .unwrap_or(raw_path);
     let clean = crate::vcs::strip_unc_prefix(clean);
+    let is_wsl = hadron_lattice::wsl::is_wsl_unc_path(repo);
 
     let joined = repo.join(&clean);
     if joined.is_file() {
-        if let (Ok(canon_repo), Ok(canon_full)) = (repo.canonicalize(), joined.canonicalize()) {
-            if canon_full.starts_with(&canon_repo) {
-                if let Ok(rel) = canon_full.strip_prefix(&canon_repo) {
-                    return Some(rel.to_string_lossy().to_string());
+        if !is_wsl {
+            if let (Ok(canon_repo), Ok(canon_full)) = (repo.canonicalize(), joined.canonicalize()) {
+                if canon_full.starts_with(&canon_repo) {
+                    if let Ok(rel) = canon_full.strip_prefix(&canon_repo) {
+                        return Some(rel.to_string_lossy().to_string());
+                    }
                 }
             }
         }
@@ -425,10 +532,15 @@ fn resolve_plan_path(repo: &Path, raw_path: &str) -> Option<String> {
     }
     let abs_p = Path::new(&clean);
     if abs_p.is_file() {
-        if let (Ok(canon_repo), Ok(canon_abs)) = (repo.canonicalize(), abs_p.canonicalize()) {
-            if canon_abs.starts_with(&canon_repo) {
-                if let Ok(rel) = canon_abs.strip_prefix(&canon_repo) {
-                    return Some(rel.to_string_lossy().to_string());
+        if let Ok(rel) = abs_p.strip_prefix(repo) {
+            return Some(rel.to_string_lossy().to_string());
+        }
+        if !is_wsl {
+            if let (Ok(canon_repo), Ok(canon_abs)) = (repo.canonicalize(), abs_p.canonicalize()) {
+                if canon_abs.starts_with(&canon_repo) {
+                    if let Ok(rel) = canon_abs.strip_prefix(&canon_repo) {
+                        return Some(rel.to_string_lossy().to_string());
+                    }
                 }
             }
         }
@@ -436,14 +548,26 @@ fn resolve_plan_path(repo: &Path, raw_path: &str) -> Option<String> {
     None
 }
 
-fn find_plan_mention_in_text(repo: &Path, text: &str) -> Option<String> {
+fn find_plan_mention_in_text_with_plans(
+    repo: &Path,
+    text: &str,
+    all_plans: &[(std::time::SystemTime, String)],
+) -> Option<String> {
     if let Some(p) = hadron_gluon::skills::plan_ref(text) {
+        let clean = p
+            .strip_prefix("file://")
+            .or_else(|| p.strip_prefix("file:"))
+            .unwrap_or(&p);
+        if let Some((_, rel)) = all_plans.iter().find(|(_, rel)| {
+            rel == clean || rel.ends_with(&format!("/{clean}")) || clean.ends_with(rel.as_str())
+        }) {
+            return Some(rel.clone());
+        }
         if let Some(resolved) = resolve_plan_path(repo, &p) {
             return Some(resolved);
         }
     }
 
-    let all_plans = scan_all_plan_paths(repo);
     if all_plans.is_empty() {
         return None;
     }
@@ -528,27 +652,29 @@ pub(crate) fn scan_all_plan_paths(repo: &Path) -> Vec<(std::time::SystemTime, St
         }
     }
 
-    let trees_dir = repo.join(".hadron").join("trees");
-    if let Ok(tree_entries) = std::fs::read_dir(&trees_dir) {
-        for tree_entry in tree_entries.flatten() {
-            if tree_entry.path().is_dir() {
-                let tree_path = tree_entry.path();
-                let tree_plan_dirs = [
-                    tree_path.join(".hadron").join("docs").join("plans"),
-                    tree_path.join("docs").join("plans"),
-                ];
-                for dir in &tree_plan_dirs {
-                    if let Ok(entries) = std::fs::read_dir(dir) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
-                                let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
-                                if file_name.starts_with('.') {
-                                    continue;
-                                }
-                                let mtime = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                                if let Ok(rel) = path.strip_prefix(repo) {
-                                    candidates.push((mtime, rel.to_string_lossy().to_string()));
+    if !hadron_lattice::wsl::is_wsl_unc_path(repo) {
+        let trees_dir = repo.join(".hadron").join("trees");
+        if let Ok(tree_entries) = std::fs::read_dir(&trees_dir) {
+            for tree_entry in tree_entries.flatten() {
+                if tree_entry.path().is_dir() {
+                    let tree_path = tree_entry.path();
+                    let tree_plan_dirs = [
+                        tree_path.join(".hadron").join("docs").join("plans"),
+                        tree_path.join("docs").join("plans"),
+                    ];
+                    for dir in &tree_plan_dirs {
+                        if let Ok(entries) = std::fs::read_dir(dir) {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
+                                    let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+                                    if file_name.starts_with('.') {
+                                        continue;
+                                    }
+                                    let mtime = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                                    if let Ok(rel) = path.strip_prefix(repo) {
+                                        candidates.push((mtime, rel.to_string_lossy().to_string()));
+                                    }
                                 }
                             }
                         }
@@ -562,9 +688,8 @@ pub(crate) fn scan_all_plan_paths(repo: &Path) -> Vec<(std::time::SystemTime, St
     candidates
 }
 
-/// Scan `.hadron/docs/plans/`, `docs/plans/`, and worktree trees for the most recently modified `.md` plan.
-pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
-    let mut candidates = scan_all_plan_paths(repo);
+fn newest_plan_from_list(all_plans: &[(std::time::SystemTime, String)]) -> Option<String> {
+    let mut candidates = all_plans.to_vec();
     candidates.sort_by(|a, b| {
         let is_master_a = a.1.ends_with("master.md") || a.1.ends_with("index.md");
         let is_master_b = b.1.ends_with("master.md") || b.1.ends_with("index.md");
@@ -573,6 +698,12 @@ pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
             .then_with(|| b.1.cmp(&a.1))
     });
     candidates.into_iter().next().map(|(_, rel)| rel)
+}
+
+/// Scan `.hadron/docs/plans/`, `docs/plans/`, and worktree trees for the most recently modified `.md` plan.
+pub(crate) fn scan_newest_plan(repo: &Path) -> Option<String> {
+    let candidates = scan_all_plan_paths(repo);
+    newest_plan_from_list(&candidates)
 }
 
 pub(crate) fn format_plan_step_label(file_name: &str) -> String {

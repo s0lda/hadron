@@ -669,7 +669,8 @@ impl Chamber {
         cx: &mut Context<Self>,
     ) -> Self {
         let repo_root = crate::vcs::repo_root_of(&path).to_path_buf();
-        let files = if workspace_mode == WorkspaceMode::Selector {
+        let is_wsl = crate::wsl::is_wsl_unc_path(&repo_root);
+        let files = if workspace_mode == WorkspaceMode::Selector || is_wsl {
             Vec::new()
         } else {
             crate::sys::list_workspace_files(&repo_root, &std::collections::HashSet::new())
@@ -1234,6 +1235,8 @@ impl Chamber {
         // the gluon (a separate process) appear without interaction. Dumb full
         // re-read — the field is small and this matches the engine's own posture.
         // The loop ends when the entity is dropped (`update` returns `Err`).
+        let mut last_health_scan: Option<std::time::Instant> = None;
+        let mut tick_count: u64 = 0;
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(Duration::from_millis(400))
@@ -1243,11 +1246,32 @@ impl Chamber {
                 if chamber.workspace_mode == WorkspaceMode::Selector {
                     return None;
                 }
+                let need_health = chamber.prefs.repo_monitor
+                    && (chamber.repo_health_report.is_none()
+                        || last_health_scan.is_none_or(|t| {
+                            t.elapsed()
+                                >= Duration::from_secs(
+                                    chamber.prefs.repo_monitor_interval_secs.max(10),
+                                )
+                        }));
+                let prev_fp = if chamber.git_branches.is_some() {
+                    chamber.git_branch_fingerprint.clone()
+                } else {
+                    None
+                };
+                let roster_ids: Vec<String> =
+                    chamber.view.roster.iter().map(|r| r.id.clone()).collect();
                 Some((
                     chamber.path.clone(),
+                    chamber.repo_team_path(),
+                    chamber.team.clone(),
+                    chamber.global.clone(),
+                    roster_ids,
                     chamber.file_tree_expanded.clone(),
                     chamber.right_rail_tab,
-                    chamber.prefs.repo_monitor,
+                    need_health,
+                    prev_fp,
+                    chamber.file_tree_paths.is_empty(),
                 ))
             }) {
                 Ok(Some(s)) => s,
@@ -1255,21 +1279,38 @@ impl Chamber {
                 Err(_) => break,
             };
 
-            let scan = cx
+            let is_wsl_path = crate::wsl::is_wsl_unc_path(&state.0);
+            let do_workspace_scan = !is_wsl_path
+                || state.9
+                || tick_count.is_multiple_of(5)
+                || state.6 == RightRailTab::Changes
+                || state.6 == RightRailTab::Git;
+            tick_count = tick_count.wrapping_add(1);
+            if do_workspace_scan && state.7 {
+                last_health_scan = Some(std::time::Instant::now());
+            }
+
+            let poll = cx
                 .background_executor()
                 .spawn(async move {
-                    let root = crate::vcs::repo_root_of(&state.0);
-                    reload::WorkspaceScan::gather(
-                        root,
+                    reload::FieldPoll::gather(
+                        &state.0,
                         &state.1,
-                        state.2 == RightRailTab::Changes,
-                        state.2 == RightRailTab::Git || state.3,
+                        state.2,
+                        state.3,
+                        &state.4,
+                        &state.5,
+                        do_workspace_scan,
+                        state.6 == RightRailTab::Changes,
+                        state.6 == RightRailTab::Git,
+                        state.7,
+                        state.8.as_deref(),
                     )
                 })
                 .await;
 
             if this
-                .update(cx, |chamber, cx| chamber.reload_if_changed(scan, cx))
+                .update(cx, |chamber, cx| chamber.reload_if_changed(poll, cx))
                 .is_err()
             {
                 break;
@@ -1341,8 +1382,14 @@ impl Chamber {
         // and the rows the app menu's `Sessions` submenu offers. Rebuilt by
         // `Self::reload_archives` after `/clear` or `/resume` writes a new archive.
         let sessions_dir = path.parent().map(|p| p.join("sessions")).unwrap_or_default();
-        let archived_messages = crate::model::load_archived_messages(&sessions_dir);
-        let sessions = crate::model::list_sessions(&sessions_dir);
+        let (archived_messages, sessions) = if workspace_mode == WorkspaceMode::Selector || is_wsl {
+            (Vec::new(), Vec::new())
+        } else {
+            (
+                crate::model::load_archived_messages(&sessions_dir),
+                crate::model::list_sessions(&sessions_dir),
+            )
+        };
         let prompt_history: Vec<String> = view
             .messages
             .iter()
@@ -1355,7 +1402,11 @@ impl Chamber {
             })
             .collect();
 
-        let events = io::read_events(&path).unwrap_or_default();
+        let events = if workspace_mode == WorkspaceMode::Selector {
+            Vec::new()
+        } else {
+            io::read_events(&path).unwrap_or_default()
+        };
         let alias_map: std::collections::HashMap<String, hadron_lattice::QuarkId> = view
             .roster
             .iter()
@@ -1566,7 +1617,7 @@ impl Chamber {
             agy_bridge_probe: None,
             file_tree_paths: files,
             _lock_file: lock_file,
-            git_statuses: if workspace_mode == WorkspaceMode::Selector {
+            git_statuses: if workspace_mode == WorkspaceMode::Selector || is_wsl {
                 std::collections::HashMap::new()
             } else {
                 crate::vcs::get_git_statuses(&repo_root)
@@ -1607,6 +1658,26 @@ impl Chamber {
         };
         if workspace_mode != WorkspaceMode::Selector {
             chamber.update_active_plan();
+            if is_wsl {
+                let sessions_dir_bg = sessions_dir.clone();
+                cx.spawn(async move |this, cx| {
+                    let (arch, sess) = cx
+                        .background_executor()
+                        .spawn(async move {
+                            (
+                                crate::model::load_archived_messages(&sessions_dir_bg),
+                                crate::model::list_sessions(&sessions_dir_bg),
+                            )
+                        })
+                        .await;
+                    let _ = this.update(cx, |chamber, cx| {
+                        chamber.archived_messages = arch;
+                        chamber.sessions = sess;
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
         }
         chamber.check_for_updates(cx);
         chamber

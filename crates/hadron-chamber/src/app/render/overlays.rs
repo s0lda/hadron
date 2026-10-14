@@ -1500,8 +1500,8 @@ impl super::Chamber {
     /// `pub(in crate::app)` (not private) so the 400ms reload tick (`app::reload`,
     /// a sibling of `app::render`, not a descendant) can poll it for the "gluon
     /// stopped" banner, not just this module.
-    pub(in crate::app) fn gluon_running(&self) -> bool {
-        let field_dir = hadron_lattice::hadron_dir_of(&self.path);
+    pub(in crate::app) fn probe_gluon_running(field_path: &std::path::Path) -> bool {
+        let field_dir = hadron_lattice::hadron_dir_of(field_path);
         let lock_path = field_dir.join("gluon.lock");
         if !lock_path.exists() {
             return false;
@@ -1538,11 +1538,15 @@ impl super::Chamber {
         }
     }
 
+    pub(in crate::app) fn gluon_running(&self) -> bool {
+        Self::probe_gluon_running(&self.path)
+    }
+
     /// Live rows for the Process Manager overlay: the daemon's real running state
     /// (a flock probe — only the OS knows) plus every adopted roster seat. See
     /// [`crate::model::build_process_rows`] for the pure row-building logic.
     pub(super) fn resolve_running_processes(&self) -> Vec<crate::model::ProcessRow> {
-        crate::model::build_process_rows(self.gluon_running(), &self.view.roster)
+        crate::model::build_process_rows(self.last_gluon_running, &self.view.roster)
     }
 
     /// The Process Manager overlay: a dim backdrop (click to dismiss) behind a card
@@ -1556,9 +1560,6 @@ impl super::Chamber {
     pub(super) fn process_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self.resolve_running_processes();
 
-        let live_dir = hadron_lattice::live::live_dir(&self.path);
-        let now = chrono::Utc::now();
-
         let mut list = v_flex().gap_1p5();
         for row in rows {
             // Determine dot color & presence label using Hadron SSOT halo dot logic (matching Roster)
@@ -1569,11 +1570,7 @@ impl super::Chamber {
                     (theme::halo_error(), "Stopped".to_string())
                 }
             } else if let Some(roster_row) = self.view.roster.iter().find(|r| r.id == row.id) {
-                let activity = hadron_lattice::live::read(
-                    &live_dir,
-                    &hadron_lattice::QuarkId::new(&row.id),
-                    now,
-                );
+                let activity = self.last_live_activities.get(&row.id).and_then(|a| a.as_ref());
                 let effective_state = effective_presence_state(
                     roster_row.state,
                     roster_row.adopted,

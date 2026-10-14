@@ -56,7 +56,10 @@ impl super::Chamber {
         // not a field event — inventing a list row for one would put a third,
         // untracked writer on caches that only `resync_lists_to_projection` may rebuild.
         // Pinned above the input, so it is where the human is already looking.
-        let drafts = streaming_drafts(&self.view.roster, |id| live_map.get(id).cloned());
+        let drafts = streaming_drafts(
+            &self.view.roster,
+            |id| self.last_live_activities.get(id).and_then(|a| a.clone()),
+        );
         let draft_card = (!drafts.is_empty()).then(|| {
             v_flex()
                 .id("draft-cards-list")

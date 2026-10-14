@@ -91,15 +91,42 @@ pub fn commit_diff(repo_root: &Path, commit: &str) -> Option<Vec<FileDiff>> {
 
 /// Checks if a commit hash is merged into / reachable from `target_branch` (e.g. "main").
 pub fn is_commit_merged(repo_root: &Path, commit: &str, target_branch: &str) -> bool {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+
     let clean_commit = commit.trim().trim_matches(|c: char| !c.is_ascii_alphanumeric());
     if clean_commit.is_empty() {
         return false;
     }
+
+    type CacheKey = (PathBuf, String, String);
+    static MERGED_CACHE: OnceLock<Mutex<HashMap<CacheKey, (bool, Instant)>>> = OnceLock::new();
+    let cache = MERGED_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (
+        repo_root.to_path_buf(),
+        clean_commit.to_string(),
+        target_branch.to_string(),
+    );
+    let now = Instant::now();
+    if let Ok(guard) = cache.lock() {
+        if let Some(&(merged, ts)) = guard.get(&key) {
+            if merged || now.duration_since(ts) < Duration::from_secs(5) {
+                return merged;
+            }
+        }
+    }
+
     let out = hadron_lattice::wsl::git_command(repo_root)
         .args(["merge-base", "--is-ancestor", clean_commit, target_branch])
         .output()
         .ok();
-    out.map(|o| o.status.success()).unwrap_or(false)
+    let merged = out.map(|o| o.status.success()).unwrap_or(false);
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(key, (merged, now));
+    }
+    merged
 }
 
 /// The full raw commit message for a single commit (`git show -s --format=%B <commit>`).
@@ -238,9 +265,12 @@ pub fn strip_unc_prefix(path_str: &str) -> String {
 /// Formats the repository working directory for display in the UI (e.g. `~/dev/hadron/`).
 pub fn format_working_dir(field_path: &Path) -> String {
     let root = repo_root_of(field_path);
-    let abs_path = root
-        .canonicalize()
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| root.to_path_buf()));
+    let abs_path = if hadron_lattice::wsl::is_wsl_unc_path(root) {
+        root.to_path_buf()
+    } else {
+        root.canonicalize()
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| root.to_path_buf()))
+    };
 
     let abs_str = strip_unc_prefix(&abs_path.to_string_lossy());
     let home_var = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"));
@@ -856,11 +886,18 @@ pub fn unabandon_branch(repo_root: &Path, slug: &str) -> String {
 
 /// True if the given directory is inside a valid git working tree.
 pub fn is_git_repo(repo_root: &Path) -> bool {
+    if repo_root.join(".git").exists() {
+        return true;
+    }
     let out = hadron_lattice::wsl::git_command(repo_root)
         .args(["rev-parse", "--is-inside-work-tree"])
         .output();
     match out {
-        Ok(o) => o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true",
+        Ok(o) => {
+            o.status.success()
+                && hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&o.stdout)).trim()
+                    == "true"
+        }
         Err(_) => false,
     }
 }
