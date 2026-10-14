@@ -1566,7 +1566,11 @@ impl Chamber {
             agy_bridge_probe: None,
             file_tree_paths: files,
             _lock_file: lock_file,
-            git_statuses: crate::vcs::get_git_statuses(&repo_root),
+            git_statuses: if workspace_mode == WorkspaceMode::Selector {
+                std::collections::HashMap::new()
+            } else {
+                crate::vcs::get_git_statuses(&repo_root)
+            },
             completion_files,
             file_tree_open: None,
             file_tree_expanded: std::collections::HashSet::new(),
@@ -1603,8 +1607,8 @@ impl Chamber {
         };
         if workspace_mode != WorkspaceMode::Selector {
             chamber.update_active_plan();
-            chamber.check_for_updates(cx);
         }
+        chamber.check_for_updates(cx);
         chamber
     }
 
@@ -1954,7 +1958,10 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
 
     // Load the SAME repo team the daemon seated for this field, plus the catalogue.
     let team = repo_path.as_deref().map(load_team).unwrap_or_default();
-    let global = global_path.as_deref().map(load_team).unwrap_or_default();
+    let mut global = global_path.as_deref().map(load_team).unwrap_or_default();
+    if workspace_mode != WorkspaceMode::Selector {
+        hadron_lattice::merge_wsl_catalogue(&mut global, &field_path);
+    }
     let events = if workspace_mode == WorkspaceMode::Selector {
         Vec::new()
     } else {

@@ -829,14 +829,24 @@ pub(super) fn fallback_pick_image() -> Option<String> {
          $d.Filter = 'Images|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp|All files|*.*'; \
          if ($d.ShowDialog() -eq 'OK') { $d.FileName }".to_string()
     };
-    let win = Command::new("powershell.exe")
-        .args(["-NoProfile", "-Command", &script])
+    let mut cmd = Command::new("powershell.exe");
+    cmd.args(["-NoProfile", "-Sta", "-Command", &script]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let win = cmd
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())?;
-    wsl_to_linux(win)
+    if cfg!(windows) {
+        Some(win)
+    } else {
+        wsl_to_linux(win)
+    }
 }
 
 /// A directory picker with the same two fallbacks as [`fallback_pick_image`], for the
@@ -846,47 +856,60 @@ pub(super) fn fallback_pick_image() -> Option<String> {
 ///
 /// **Blocking** — must be called on a background thread.
 pub(super) fn fallback_pick_directory() -> Option<String> {
+    pick_directory_at(None)
+}
+
+/// Directory picker rooted at an optional starting directory (e.g. a WSL distribution's
+/// `$HOME` UNC path `\\wsl.localhost\<distro>\home\<user>`).
+///
+/// **Blocking** — must be called on a background thread.
+pub(super) fn pick_directory_at(initial_dir: Option<&std::path::Path>) -> Option<String> {
     use std::process::Command;
 
-    let home = std::env::var("HOME").ok().unwrap_or_else(|| ".".to_string());
+    let start_dir = initial_dir
+        .map(|p| p.to_string_lossy().to_string())
+        .or_else(|| std::env::var("HOME").ok())
+        .or_else(|| std::env::var("USERPROFILE").ok())
+        .unwrap_or_else(|| ".".to_string());
 
-    // 1) On Linux / WSLg, try zenity with default home path if available
-    let zenity_arg = format!("--filename={home}/");
-    match Command::new("zenity")
-        .args(["--file-selection", "--directory", "--title=Open workspace", &zenity_arg])
-        .output()
-    {
-        Ok(out) if out.status.success() => {
-            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Some(path);
+    if !cfg!(windows) && !start_dir.starts_with(r"\\") {
+        // 1) On Linux / WSLg, try zenity with default home path if available
+        let zenity_arg = format!("--filename={}/", start_dir.trim_end_matches('/'));
+        match Command::new("zenity")
+            .args(["--file-selection", "--directory", "--title=Open workspace", &zenity_arg])
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !path.is_empty() {
+                    return Some(path);
+                }
             }
+            _ => { /* zenity not installed or failed — try next */ }
         }
-        _ => { /* zenity not installed or failed — try next */ }
+
+        // 2) If kdialog is available on Linux
+        match Command::new("kdialog")
+            .args(["--getexistingdirectory", &start_dir, "--title", "Open workspace"])
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !path.is_empty() {
+                    return Some(path);
+                }
+            }
+            _ => {}
+        }
     }
 
-    // 2) If kdialog is available on Linux
-    match Command::new("kdialog")
-        .args(["--getexistingdirectory", &home, "--title", "Open workspace"])
-        .output()
-    {
-        Ok(out) if out.status.success() => {
-            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Some(path);
-            }
-        }
-        _ => {}
-    }
-
-    // 3) WSL: drive a native Windows FolderBrowserDialog through PowerShell.
-    // If running under WSL, translate the WSL home directory to Windows UNC so it opens
-    // inside the current WSL distro (e.g. \\wsl.localhost\Ubuntu\home\user) rather than
-    // defaulting to Windows C:\Users\<WindowsUser>.
-    let initial_path = if crate::sys::is_wsl() {
+    // 3) Windows or WSL: drive a native Windows FolderBrowserDialog through PowerShell.
+    let initial_path = if start_dir.starts_with(r"\\") || cfg!(windows) {
+        Some(start_dir)
+    } else if crate::sys::is_wsl() {
         Command::new("wslpath")
             .arg("-w")
-            .arg(&home)
+            .arg(&start_dir)
             .output()
             .ok()
             .filter(|o| o.status.success())
@@ -896,25 +919,38 @@ pub(super) fn fallback_pick_directory() -> Option<String> {
     };
 
     let script = if let Some(ref init) = initial_path {
+        let escaped = init.replace('\'', "''");
         format!(
             "Add-Type -AssemblyName System.Windows.Forms; \
              $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
-             $d.SelectedPath = '{init}'; \
+             $d.Description = 'Select Hadron Workspace Folder'; \
+             $d.SelectedPath = '{escaped}'; \
              if ($d.ShowDialog() -eq 'OK') {{ $d.SelectedPath }}"
         )
     } else {
         "Add-Type -AssemblyName System.Windows.Forms; \
          $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
+         $d.Description = 'Select Hadron Workspace Folder'; \
          if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }".to_string()
     };
-    let win = Command::new("powershell.exe")
-        .args(["-NoProfile", "-Command", &script])
+    let mut cmd = Command::new("powershell.exe");
+    cmd.args(["-NoProfile", "-Sta", "-Command", &script]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let win = cmd
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())?;
-    wsl_to_linux(win)
+    if cfg!(windows) {
+        Some(win)
+    } else {
+        wsl_to_linux(win)
+    }
 }
 
 /// `C:\…` → `/mnt/c/…`. If the translation fails, hand back the raw path rather than

@@ -16,7 +16,9 @@ fn is_heavy_ignored_dir(rel_path: &str) -> bool {
     for c in rel_path.split('/') {
         match c {
             "target" | "node_modules" | ".git" | "trees" | "reaped" | "sessions"
-            | "update" | "venv" | ".venv" | "dist" | "build" | "incremental" => return true,
+            | "update" | "venv" | ".venv" | "dist" | "build" | "incremental"
+            | "cache" | "live" | "prompt-cost" | "quota" | "steer" | "archive"
+            | "ledgers" => return true,
             _ => {}
         }
     }
@@ -32,8 +34,23 @@ pub fn list_workspace_files(
 ) -> Vec<(String, bool)> {
     let mut files: Vec<(String, bool)> = Vec::new();
 
+    // Files tracked in the index that have been deleted from the working tree.
+    // Querying git once avoids a per-file `stat` across 600+ files over WSL 9P.
+    let deleted: std::collections::HashSet<String> = hadron_lattice::wsl::git_command(repo_root)
+        .args(["ls-files", "--deleted"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|s| s.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+
     // Tracked ∪ untracked, minus ignored — the real, editable files.
-    if let Ok(output) = Command::new("git")
+    if let Ok(output) = hadron_lattice::wsl::git_command(repo_root)
         .args([
             "ls-files",
             "--cached",
@@ -41,12 +58,11 @@ pub fn list_workspace_files(
             "--exclude-standard",
             "--deduplicate",
         ])
-        .current_dir(repo_root)
         .output()
     {
         if output.status.success() {
             for line in String::from_utf8_lossy(&output.stdout).lines() {
-                if repo_root.join(line).exists() {
+                if !line.is_empty() && !deleted.contains(line) {
                     files.push((line.to_string(), false));
                 }
             }
@@ -55,7 +71,7 @@ pub fn list_workspace_files(
 
     // Ignored entries, with wholly-ignored heavy directories collapsed to a single entry.
     let mut ignored_dirs_to_expand = Vec::new();
-    if let Ok(output) = Command::new("git")
+    if let Ok(output) = hadron_lattice::wsl::git_command(repo_root)
         .args([
             "ls-files",
             "--others",
@@ -64,15 +80,14 @@ pub fn list_workspace_files(
             "--directory",
             "--deduplicate",
         ])
-        .current_dir(repo_root)
         .output()
     {
         if output.status.success() {
             for line in String::from_utf8_lossy(&output.stdout).lines() {
-                // `--directory` never emits `.git/`, but guard anyway; `exists()` drops a
-                // stale entry. A collapsed dir keeps its trailing `/` (checked verbatim).
+                // `--directory` never emits `.git/`, but guard anyway.
+                // `--others` walks the working tree directly, so emitted entries exist on disk.
                 let bare = line.trim_end_matches('/');
-                if !bare.is_empty() && !line.starts_with(".git/") && repo_root.join(bare).exists() {
+                if !bare.is_empty() && !line.starts_with(".git/") {
                     files.push((line.to_string(), true));
                     if line.ends_with('/') {
                         let path_str = bare.to_string();

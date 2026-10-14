@@ -230,10 +230,13 @@ impl super::Chamber {
                     .and_then(|t| hadron_lattice::parse_team(&t).ok())
             };
             let repo_team = read_strict(&self.repo_team_path());
-            let global_team = match hadron_lattice::team_config_path() {
+            let mut global_team = match hadron_lattice::team_config_path() {
                 Some(p) => read_strict(&p),
                 None => Some(Team::default()), // no catalogue configured → genuinely empty
             };
+            if let Some(ref mut gt) = global_team {
+                hadron_lattice::merge_wsl_catalogue(gt, &self.path);
+            }
             let mut team_changed = false;
             if let (Some(repo_team), Some(global_team)) = (repo_team, global_team) {
                 if repo_team != self.team || global_team != self.global {

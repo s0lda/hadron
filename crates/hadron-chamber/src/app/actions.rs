@@ -178,6 +178,51 @@ impl Chamber {
         .detach();
     }
 
+    /// Open a folder picker rooted at a WSL distribution's `$HOME` directory
+    /// (`\\wsl.localhost\<distro>\home\<user>`) and launch the selected folder in Hadron.
+    pub(super) fn open_wsl_distro_picker(&mut self, distro: String, cx: &mut Context<Self>) {
+        let is_selector = self.workspace_mode == WorkspaceMode::Selector;
+        cx.spawn(async move |this, cx| {
+            let picked = cx
+                .background_spawn(async move {
+                    let unc_home = crate::wsl::resolve_wsl_home_unc_path(&distro);
+                    widgets::pick_directory_at(Some(&unc_home))
+                })
+                .await;
+            let Some(dir) = picked else {
+                return;
+            };
+            match std::env::current_exe() {
+                Ok(exe) => {
+                    if let Err(e) = std::process::Command::new(exe).arg(&dir).spawn() {
+                        let _ = this.update(cx, |chamber, cx| {
+                            chamber.toast_manager.push(
+                                ToastKind::Error,
+                                format!("Failed to open {dir}: {e}"),
+                                Some(3),
+                            );
+                            cx.notify();
+                        });
+                    } else if is_selector {
+                        let _ = this.update(cx, |_chamber, cx| cx.quit());
+                    } else {
+                        let _ = this.update(cx, |chamber, cx| {
+                            chamber.project_switcher_open = false;
+                            chamber.toast_manager.push(
+                                ToastKind::Success,
+                                format!("Opened {dir} in new chamber window"),
+                                Some(3),
+                            );
+                            cx.notify();
+                        });
+                    }
+                }
+                Err(e) => eprintln!("chamber: cannot locate our own binary to relaunch: {e}"),
+            }
+        })
+        .detach();
+    }
+
     /// Asynchronously refresh local repository health, git remote tracking, and GitHub issues/PRs.
     pub(super) fn refresh_remote_and_github(&mut self, cx: &mut Context<Self>) {
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();

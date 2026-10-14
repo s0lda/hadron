@@ -34,9 +34,25 @@ impl super::Chamber {
                 .map(|c| div().size(px(9.0)).rounded_full().bg(rgb(c)).into_any_element()),
         );
 
+        let changelog = self.changelog_open.then(|| self.changelog_overlay(cx));
+        let toasts = self.render_toasts(cx);
+        let version_badge = match self.update_pill(cx) {
+            Some(pill) => pill.into_any_element(),
+            None => div()
+                .text_xs()
+                .px_2()
+                .py_0p5()
+                .rounded_full()
+                .bg(theme::glass_surface())
+                .text_color(theme::text_muted())
+                .child(format!("v{}", env!("CARGO_PKG_VERSION")))
+                .into_any_element(),
+        };
+
         v_flex()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
+            .relative()
             .size_full()
             .rounded_t(top_radius)
             .rounded_b(bottom_radius)
@@ -73,18 +89,9 @@ impl super::Chamber {
                                                     .text_2xl()
                                                     .font_weight(gpui::FontWeight::BOLD)
                                                     .text_color(theme::text())
-                                                    .child("Hadron Swarm Workspace"),
+                                                    .child("Hadron"),
                                             )
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .px_2()
-                                                    .py_0p5()
-                                                    .rounded_full()
-                                                    .bg(theme::glass_surface())
-                                                    .text_color(theme::text_muted())
-                                                    .child(format!("v{}", env!("CARGO_PKG_VERSION"))),
-                                            ),
+                                            .child(version_badge),
                                     )
                                     .child(
                                         Button::new("open-folder")
@@ -228,13 +235,13 @@ impl super::Chamber {
                                                 wsl_distros
                                                     .into_iter()
                                                     .map(|d| {
-                                                        let unc_path = crate::wsl::format_wsl_unc_path(&d, std::path::Path::new("/home"));
+                                                        let distro = d.clone();
                                                         Button::new(ElementId::from(SharedString::from(format!("wsl-{}", d))))
                                                             .small()
                                                             .icon(IconName::Globe)
                                                             .label(d)
-                                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                                this.open_project_path(&unc_path.to_string_lossy(), window, cx);
+                                                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                                                this.open_wsl_distro_picker(distro.clone(), cx);
                                                             }))
                                                             .into_any_element()
                                                     }),
@@ -243,6 +250,8 @@ impl super::Chamber {
                             })),
                     ),
             )
+            .children(changelog)
+            .children(toasts)
     }
 
     pub(crate) fn open_project_path(

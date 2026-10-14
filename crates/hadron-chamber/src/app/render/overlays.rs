@@ -2130,13 +2130,13 @@ impl super::Chamber {
                                         wsl_distros
                                             .into_iter()
                                             .map(|d| {
-                                                let unc_path = crate::wsl::format_wsl_unc_path(&d, std::path::Path::new("/home"));
+                                                let distro = d.clone();
                                                 Button::new(gpui::ElementId::from(gpui::SharedString::from(format!("switcher-wsl-{}", d))))
                                                     .small()
                                                     .icon(IconName::Globe)
                                                     .label(d)
-                                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                                        this.open_project_path(&unc_path.to_string_lossy(), window, cx);
+                                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                                        this.open_wsl_distro_picker(distro.clone(), cx);
                                                     }))
                                                     .into_any_element()
                                             }),

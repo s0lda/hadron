@@ -34,9 +34,8 @@ pub struct RepoMonitor;
 impl RepoMonitor {
     /// Checks whether `Cargo.lock` in `repo_root` has uncommitted drift.
     pub fn check_cargo_lock_drift(repo_root: &Path) -> bool {
-        if let Ok(output) = std::process::Command::new("git")
+        if let Ok(output) = hadron_lattice::wsl::git_command(repo_root)
             .args(["status", "--porcelain", "Cargo.lock"])
-            .current_dir(repo_root)
             .output()
         {
             !output.stdout.is_empty()

@@ -208,6 +208,44 @@ pub fn wrap_wsl_command(
     ("wsl.exe".to_string(), wsl_args)
 }
 
+/// Construct a `std::process::Command` for `program` in `cwd` that automatically routes
+/// through `wsl.exe -d <distro> --cd <linux_cwd> -- <program>` when `cwd` is a Windows
+/// WSL UNC path (`\\wsl.localhost\<distro>\...` or `\\wsl$\<distro>\...`).
+pub fn wsl_aware_command(cwd: &Path, program: &str) -> std::process::Command {
+    if let Some((distro, linux_cwd)) = parse_wsl_unc_path(cwd) {
+        let mut c = std::process::Command::new("wsl.exe");
+        c.args([
+            "-d",
+            &distro,
+            "--cd",
+            &linux_cwd.to_string_lossy().replace('\\', "/"),
+            "--",
+            program,
+        ]);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+        c
+    } else {
+        let mut c = std::process::Command::new(program);
+        c.current_dir(cwd);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+        c
+    }
+}
+
+/// Construct a `std::process::Command` for `git` in `cwd`, routing through `wsl.exe` when
+/// `cwd` is a Windows WSL UNC path so git runs natively on ext4 instead of across 9P.
+pub fn git_command(cwd: &Path) -> std::process::Command {
+    wsl_aware_command(cwd, "git")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,5 +399,22 @@ mod tests {
         }
         let distros_u16 = decode_wsl_output(&utf16_bytes);
         assert_eq!(distros_u16, vec!["Ubuntu", "Debian"]);
+    }
+
+    #[test]
+    fn test_git_command_routes_wsl_unc_to_wsl_exe() {
+        let unc = Path::new(r"\\wsl.localhost\Ubuntu\home\jake\dev\hadron");
+        let cmd = git_command(unc);
+        assert_eq!(cmd.get_program(), "wsl.exe");
+        let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(
+            args,
+            vec!["-d", "Ubuntu", "--cd", "/home/jake/dev/hadron", "--", "git"]
+        );
+
+        let local = Path::new("/home/jake/dev/hadron");
+        let local_cmd = git_command(local);
+        assert_eq!(local_cmd.get_program(), "git");
+        assert_eq!(local_cmd.get_current_dir(), Some(local));
     }
 }

@@ -7,7 +7,6 @@
 //! crate that does. Shelling out to git is the whole implementation.
 
 use std::path::Path;
-use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileDiff {
@@ -35,8 +34,7 @@ pub enum DiffLine {
 /// A repository with no commits yet has no HEAD to diff against, so it has no changes
 /// to show rather than an error to report.
 pub fn working_diff(repo_root: &Path) -> Option<Vec<FileDiff>> {
-    let out = Command::new("git")
-        .current_dir(repo_root)
+    let out = hadron_lattice::wsl::git_command(repo_root)
         .args(["diff", "HEAD"])
         .output()
         .ok()?;
@@ -52,8 +50,7 @@ pub fn working_diff(repo_root: &Path) -> Option<Vec<FileDiff>> {
 /// delta. A branch already merged (or `base` itself) yields no files, which the panel
 /// renders as "no changes relative to <base>" rather than an error.
 pub fn branch_diff(repo_root: &Path, base: &str, branch: &str) -> Option<Vec<FileDiff>> {
-    let out = Command::new("git")
-        .current_dir(repo_root)
+    let out = hadron_lattice::wsl::git_command(repo_root)
         .args(["diff", &format!("{base}...{branch}")])
         .output()
         .ok()?;
@@ -67,8 +64,7 @@ pub fn branch_diff(repo_root: &Path, base: &str, branch: &str) -> Option<Vec<Fil
 /// How many commits the branch/worktree at `wt_path` is ahead of `base`.
 pub fn commits_ahead(wt_path: &Path, base: &str) -> Option<usize> {
     let range = format!("{base}..HEAD");
-    let out = Command::new("git")
-        .current_dir(wt_path)
+    let out = hadron_lattice::wsl::git_command(wt_path)
         .args(["rev-list", "--count", &range])
         .output()
         .ok()?;
@@ -80,8 +76,7 @@ pub fn commits_ahead(wt_path: &Path, base: &str) -> Option<usize> {
 
 /// The patch diff for a single commit (`git show --patch <commit>`).
 pub fn commit_diff(repo_root: &Path, commit: &str) -> Option<Vec<FileDiff>> {
-    let out = Command::new("git")
-        .current_dir(repo_root)
+    let out = hadron_lattice::wsl::git_command(repo_root)
         .args(["show", "--patch", commit])
         .output()
         .ok()?;
@@ -97,8 +92,7 @@ pub fn is_commit_merged(repo_root: &Path, commit: &str, target_branch: &str) -> 
     if clean_commit.is_empty() {
         return false;
     }
-    let out = Command::new("git")
-        .current_dir(repo_root)
+    let out = hadron_lattice::wsl::git_command(repo_root)
         .args(["merge-base", "--is-ancestor", clean_commit, target_branch])
         .output()
         .ok();
@@ -107,8 +101,7 @@ pub fn is_commit_merged(repo_root: &Path, commit: &str, target_branch: &str) -> 
 
 /// The full raw commit message for a single commit (`git show -s --format=%B <commit>`).
 pub fn commit_message(repo_root: &Path, commit: &str) -> Option<String> {
-    let out = Command::new("git")
-        .current_dir(repo_root)
+    let out = hadron_lattice::wsl::git_command(repo_root)
         .args(["show", "-s", "--format=%B", commit])
         .output()
         .ok()?;
@@ -121,8 +114,7 @@ pub fn commit_message(repo_root: &Path, commit: &str) -> Option<String> {
 /// Read a file's content at a specific git ref (`git show <ref>:<path>`).
 pub fn show_file_at_ref(repo_root: &Path, git_ref: &str, file_path: &str) -> Option<String> {
     let spec = format!("{git_ref}:{file_path}");
-    let out = Command::new("git")
-        .current_dir(repo_root)
+    let out = hadron_lattice::wsl::git_command(repo_root)
         .args(["show", &spec])
         .output()
         .ok()?;
@@ -460,8 +452,7 @@ pub fn abandon_branch(repo_root: &Path, wt_path: &Path, branch: &str, force: boo
     let tag = archive_tag_name(branch);
     let existing = run_git(repo_root, &["rev-parse", "--verify", "-q", &tag]).trim().to_string();
     if existing.is_empty() {
-        let ok = Command::new("git")
-            .current_dir(repo_root)
+        let ok = hadron_lattice::wsl::git_command(repo_root)
             .args(["tag", &tag, &sha])
             .output()
             .is_ok_and(|o| o.status.success());
@@ -475,8 +466,7 @@ pub fn abandon_branch(repo_root: &Path, wt_path: &Path, branch: &str, force: boo
         );
     }
 
-    let detached = Command::new("git")
-        .current_dir(wt_path)
+    let detached = hadron_lattice::wsl::git_command(wt_path)
         .args(["checkout", "--detach", "-q"])
         .output()
         .is_ok_and(|o| o.status.success());
@@ -486,8 +476,7 @@ pub fn abandon_branch(repo_root: &Path, wt_path: &Path, branch: &str, force: boo
         );
     }
 
-    let deleted_d = Command::new("git")
-        .current_dir(repo_root)
+    let deleted_d = hadron_lattice::wsl::git_command(repo_root)
         .args(["branch", "-d", branch])
         .output()
         .is_ok_and(|o| o.status.success());
@@ -504,8 +493,7 @@ pub fn abandon_branch(repo_root: &Path, wt_path: &Path, branch: &str, force: boo
         );
     }
 
-    let deleted_big_d = Command::new("git")
-        .current_dir(repo_root)
+    let deleted_big_d = hadron_lattice::wsl::git_command(repo_root)
         .args(["branch", "-D", branch])
         .output()
         .is_ok_and(|o| o.status.success());
@@ -531,8 +519,7 @@ pub fn abandon_branch(repo_root: &Path, wt_path: &Path, branch: &str, force: boo
 /// Returns a trailing note ONLY on failure (empty string on success), so callers
 /// can append it to their message without adding noise to the common case.
 fn reattach(wt_path: &Path, branch: &str) -> String {
-    let ok = Command::new("git")
-        .current_dir(wt_path)
+    let ok = hadron_lattice::wsl::git_command(wt_path)
         .args(["checkout", branch, "-q"])
         .output()
         .is_ok_and(|o| o.status.success());
@@ -559,8 +546,7 @@ fn reattach(wt_path: &Path, branch: &str) -> String {
 /// limit here would silently hide history again; cap what is *rendered*, never what
 /// is walked.
 pub fn commit_graph(repo_root: &Path) -> Option<String> {
-    let out = Command::new("git")
-        .current_dir(repo_root)
+    let out = hadron_lattice::wsl::git_command(repo_root)
         .args([
             "log",
             "--graph",
@@ -730,8 +716,7 @@ pub fn parse_graph(raw: &str) -> Vec<GraphRow> {
 /// callers treat "nothing" the same as "git couldn't answer", never an error to
 /// surface, matching [`get_git_statuses`]'s existing best-effort convention).
 fn run_git(repo_root: &Path, args: &[&str]) -> String {
-    Command::new("git")
-        .current_dir(repo_root)
+    hadron_lattice::wsl::git_command(repo_root)
         .args(args)
         .output()
         .ok()
@@ -742,8 +727,7 @@ fn run_git(repo_root: &Path, args: &[&str]) -> String {
 
 pub fn get_git_statuses(repo_root: &Path) -> std::collections::HashMap<String, GitStatus> {
     let mut statuses = std::collections::HashMap::new();
-    let out = Command::new("git")
-        .current_dir(repo_root)
+    let out = hadron_lattice::wsl::git_command(repo_root)
         .args(["status", "--porcelain"])
         .output();
     if let Ok(output) = out {
@@ -809,9 +793,9 @@ pub fn prune_merged_worktrees_and_branches(repo_root: &Path, confirm: bool) -> S
         let tag = archive_tag_name(&b.name);
         let sha = run_git(repo_root, &["rev-parse", "--verify", "-q", &b.name]).trim().to_string();
         if !sha.is_empty() {
-            let _ = Command::new("git").current_dir(repo_root).args(["tag", &tag, &sha]).output();
+            let _ = hadron_lattice::wsl::git_command(repo_root).args(["tag", &tag, &sha]).output();
         }
-        let del = Command::new("git").current_dir(repo_root).args(["branch", "-d", &b.name]).output();
+        let del = hadron_lattice::wsl::git_command(repo_root).args(["branch", "-d", &b.name]).output();
         if del.is_ok_and(|o| o.status.success()) {
             pruned_count += 1;
             details.push(format!("- `{}` -> archived as `{tag}` & deleted", b.name));
@@ -834,8 +818,7 @@ pub fn revert_last_landed_commit(repo_root: &Path) -> String {
     if last_sha.is_empty() {
         return "No commit found on HEAD to revert.".to_string();
     }
-    let revert = Command::new("git")
-        .current_dir(repo_root)
+    let revert = hadron_lattice::wsl::git_command(repo_root)
         .args(["revert", "--no-edit", &last_sha])
         .output();
     if revert.is_ok_and(|o| o.status.success()) {
@@ -857,8 +840,7 @@ pub fn unabandon_branch(repo_root: &Path, slug: &str) -> String {
         return format!("No archive tag found matching `{tag}`.");
     }
     let branch_name = if slug.starts_with("quark/") { slug.to_string() } else { format!("quark/{slug}") };
-    let res = Command::new("git")
-        .current_dir(repo_root)
+    let res = hadron_lattice::wsl::git_command(repo_root)
         .args(["branch", &branch_name, &tag])
         .output();
     if res.is_ok_and(|o| o.status.success()) {
@@ -870,8 +852,7 @@ pub fn unabandon_branch(repo_root: &Path, slug: &str) -> String {
 
 /// True if the given directory is inside a valid git working tree.
 pub fn is_git_repo(repo_root: &Path) -> bool {
-    let out = Command::new("git")
-        .current_dir(repo_root)
+    let out = hadron_lattice::wsl::git_command(repo_root)
         .args(["rev-parse", "--is-inside-work-tree"])
         .output();
     match out {
@@ -882,8 +863,7 @@ pub fn is_git_repo(repo_root: &Path) -> bool {
 
 /// True if HEAD points to a valid commit (repository has at least one commit).
 pub fn has_commits(repo_root: &Path) -> bool {
-    let out = Command::new("git")
-        .current_dir(repo_root)
+    let out = hadron_lattice::wsl::git_command(repo_root)
         .args(["rev-parse", "--verify", "HEAD"])
         .output();
     match out {
@@ -901,15 +881,13 @@ pub fn init_repository(repo_root: &Path) -> anyhow::Result<String> {
 
     let is_repo = is_git_repo(repo_root);
     if !is_repo {
-        let init_main = Command::new("git")
-            .current_dir(repo_root)
+        let init_main = hadron_lattice::wsl::git_command(repo_root)
             .args(["init", "-b", "main"])
             .output();
         let init_ok = match init_main {
             Ok(ref o) if o.status.success() => true,
             _ => {
-                let init_plain = Command::new("git")
-                    .current_dir(repo_root)
+                let init_plain = hadron_lattice::wsl::git_command(repo_root)
                     .arg("init")
                     .output();
                 init_plain.is_ok_and(|o| o.status.success())
@@ -948,18 +926,15 @@ pub fn init_repository(repo_root: &Path) -> anyhow::Result<String> {
     }
 
     if !has_commits(repo_root) {
-        let _ = Command::new("git")
-            .current_dir(repo_root)
+        let _ = hadron_lattice::wsl::git_command(repo_root)
             .args(["checkout", "-B", "main"])
             .output();
 
-        let _ = Command::new("git")
-            .current_dir(repo_root)
+        let _ = hadron_lattice::wsl::git_command(repo_root)
             .args(["add", ".gitignore"])
             .output();
 
-        let commit_res = Command::new("git")
-            .current_dir(repo_root)
+        let commit_res = hadron_lattice::wsl::git_command(repo_root)
             .env("GIT_AUTHOR_NAME", "hadron")
             .env("GIT_AUTHOR_EMAIL", "hadron@localhost")
             .env("GIT_COMMITTER_NAME", "hadron")
@@ -969,8 +944,7 @@ pub fn init_repository(repo_root: &Path) -> anyhow::Result<String> {
 
         if let Ok(out) = commit_res {
             if !out.status.success() {
-                let _ = Command::new("git")
-                    .current_dir(repo_root)
+                let _ = hadron_lattice::wsl::git_command(repo_root)
                     .env("GIT_AUTHOR_NAME", "hadron")
                     .env("GIT_AUTHOR_EMAIL", "hadron@localhost")
                     .env("GIT_COMMITTER_NAME", "hadron")
@@ -1119,8 +1093,7 @@ pub fn get_remote_tracking_info(repo_root: &Path) -> RemoteTrackingInfo {
 
 /// Fetch open GitHub issues via the `gh` CLI in `repo_root`.
 pub fn fetch_github_issues(repo_root: &Path) -> Result<Vec<GitHubIssueInfo>, String> {
-    let output = Command::new("gh")
-        .current_dir(repo_root)
+    let output = hadron_lattice::wsl::wsl_aware_command(repo_root, "gh")
         .args(["issue", "list", "--limit", "25", "--json", "number,title,author,state,url,createdAt"])
         .output();
 
@@ -1166,8 +1139,7 @@ pub fn fetch_github_issues(repo_root: &Path) -> Result<Vec<GitHubIssueInfo>, Str
 
 /// Fetch open GitHub pull requests via the `gh` CLI in `repo_root`.
 pub fn fetch_github_prs(repo_root: &Path) -> Result<Vec<GitHubPrInfo>, String> {
-    let output = Command::new("gh")
-        .current_dir(repo_root)
+    let output = hadron_lattice::wsl::wsl_aware_command(repo_root, "gh")
         .args(["pr", "list", "--limit", "25", "--json", "number,title,author,state,url,headRefName"])
         .output();
 
@@ -1680,7 +1652,7 @@ index a1b2c3d..e4f5g6h 100644
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let run_git_cmd = |args: &[&str]| {
-            Command::new("git")
+            std::process::Command::new("git")
                 .current_dir(root)
                 .env("GIT_AUTHOR_NAME", "Test")
                 .env("GIT_AUTHOR_EMAIL", "test@example.com")
