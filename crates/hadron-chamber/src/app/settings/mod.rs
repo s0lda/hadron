@@ -331,7 +331,7 @@ impl Chamber {
             // adopted quark never un-adopts it or rewrites the file.
             let resolved = resolve_team(&self.team, &self.global);
             let def = self.global.get(&qid).cloned();
-            if let Some(base) = resolved.get(&qid).cloned() {
+            if let Some(base) = resolved.get(&qid).cloned().or_else(|| def.clone()) {
                 let new_effort = (!effort_val.is_empty()).then_some(effort_val);
                 let new_mode = (!mode_val.is_empty()).then_some(mode_val);
                 let new_name = (!name.is_empty()).then_some(name.clone());
