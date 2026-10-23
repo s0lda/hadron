@@ -5,6 +5,19 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.4] - 2026-10-23
+
+### Fixed
+- **Global & WSL Home Catalogue Protection (`hadron-lattice`, `hadron-chamber`, `hadron-gluon`)**:
+  - Added `repo_team_for_field` and `is_global_team_config_path` (`team/io.rs`) so directory walk-ups stop at `.git` repository boundaries and never mistake a user's global `~/.hadron/team.json` or WSL home `/home/<user>/.hadron/team.json` (`\\wsl.localhost\<distro>\home\<user>\.hadron\team.json`) for a repository team config.
+  - Guarded `migrate_repo_to_catalogue` (`providers.rs`) against running on global or WSL home catalogue paths so opening a WSL repository without a repo `.hadron/team.json` never wipes the user's global seat catalogue.
+- **WSL User `PATH` Binary Resolution, Host Fallback & Forge Routing (`hadron-lattice`, `hadron-gluon`, `hadron-forge`)**:
+  - Added `resolve_wsl_program_path`, `should_run_in_wsl`, `decide_wsl_vs_host`, `infer_linux_home_from_path`, and `wsl_user_path_env` (`wsl.rs`) so `wsl.exe --exec` resolves CLI binaries installed in user directories (`~/.local/bin`, `~/.cargo/bin`, `~/.gemini/antigravity-cli/bin`) and automatically falls back to Windows host binaries (`where.exe`, e.g. Windows `agy.exe`) when a tool is only installed on the Windows host.
+  - Updated `hadron_forge::exec::build_exec_command` (`exec.rs`) to route workspace tool execution (`cargo`, `git`, `pytest`, `npm`) on WSL UNC paths through `wsl.exe -d <distro> --cd <linux_cwd> --exec` with the user's Linux `PATH`.
+- **Cross-OS ACP Bridge Normalization & Streaming `stderr` Diagnostics (`hadron-lattice`, `hadron-gluon`)**:
+  - Updated `Seat::normalize_vendor` (`team/seat.rs`) and `AcpTarget::resolve` (`adapter/registry/mod.rs`) to rewrite legacy or foreign-OS absolute `agy_acp.py` bridge paths to portable `{hadron}/bridges/agy/...` tokens and normalize `venv/Scripts/python.exe` ↔ `venv/bin/python` across Windows and Unix hosts.
+  - Updated `ProcessRunner::run` and `ProcessRunner::run_streaming` (`adapter/runner.rs`) to drain `stderr` concurrently alongside `stdout`, strip WSL mount noise (`strip_wsl_noise`), and include `stderr` diagnostic details in non-zero exit errors.
+
 ## [0.33.3] - 2026-10-14
 
 ### Added

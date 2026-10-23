@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.4",
+        date: Some("2026-10-23"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Global & WSL Catalogue Guard: Added repo_team_for_field and is_global_team_config_path stopping walk-ups at .git root so migrate_repo_to_catalogue never mistakes or wipes a user's global or WSL home ~/.hadron/team.json",
+            "WSL User PATH & Host Binary Fallback: Added resolve_wsl_program_path and should_run_in_wsl to resolve ~/.local/bin, ~/.cargo/bin, and ~/.gemini/antigravity-cli/bin inside WSL, fall back to Windows host binaries when needed, and route hadron-forge exec on WSL UNC paths through wsl.exe --exec",
+            "Cross-OS ACP Bridge & Streaming Diagnostics: Normalized foreign-OS agy_acp.py paths to portable {hadron}/bridges/agy/... tokens, mapped venv/Scripts/python.exe <-> venv/bin/python across hosts, and surfaced stripped stderr details on streaming CLI errors",
+        ],
+    },
+    Release {
         version: "0.33.3",
         date: Some("2026-10-14"),
         added: &[
