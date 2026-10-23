@@ -949,21 +949,17 @@ impl Chamber {
                     );
                     return true;
                 };
-                // A not-adopted catalogue row has no seat to flip — `toggle_quark_enabled`
-                // returns silently there, which would read as "nothing happened". Say why.
-                if !row.adopted {
-                    eprintln!(
-                        "chamber: {} is not adopted by this repo — adopt it from the roster first, \
-                         then `/toggle` can park it",
-                        row.id,
-                    );
-                    return true;
-                }
-                let (id, was) = (row.id.clone(), row.enabled);
+                let (id, was_adopted, was_enabled) = (row.id.clone(), row.adopted, row.enabled);
                 self.toggle_quark_enabled(&id, cx);
                 eprintln!(
                     "chamber: {id} is now {}",
-                    if was { "disabled — it will not take a turn" } else { "enabled" },
+                    if !was_adopted {
+                        "adopted and enabled"
+                    } else if was_enabled {
+                        "disabled — it will not take a turn"
+                    } else {
+                        "enabled"
+                    },
                 );
                 cx.notify();
                 true
