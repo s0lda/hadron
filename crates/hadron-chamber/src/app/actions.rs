@@ -2805,26 +2805,13 @@ impl Chamber {
 
     /// Toggle a quark's participation. A legacy full seat flips its own `enabled`; a
     /// catalogue-adopted quark records the flip as a per-repo override (created if it
-    /// does not exist yet). Only meaningful for adopted rows — a not-adopted quark is
-    /// "Adopt"ed instead (see the context menu).
+    /// does not exist yet). When the quark is not yet adopted in this repo, toggling it
+    /// ("Enable" in the Roster context menu or `/toggle`) adopts and enables it.
     pub(super) fn toggle_quark_enabled(&mut self, id: &str, cx: &mut Context<Self>) {
         let qid = QuarkId::new(id);
-        // The current (resolved) state is what we flip away from.
-        let resolved = resolve_team(&self.team, &self.global);
-        let Some(current) = resolved.get(&qid).map(|s| s.enabled) else {
-            return; // not adopted → nothing to toggle
-        };
-        let want = !current;
-        if let Some(seat) = self.team.quarks.iter_mut().find(|s| s.id == qid) {
-            seat.enabled = want;
-        } else if let Some(ov) = self.team.roster.iter_mut().find(|o| o.id == qid) {
-            ov.enabled = Some(want);
-        } else {
-            self.team
-                .roster
-                .push(SeatOverride { enabled: Some(want), ..SeatOverride::role(qid) });
+        if toggle_or_adopt_quark_in_team(&mut self.team, &self.global, &qid).is_some() {
+            self.save_repo_team(cx);
         }
-        self.save_repo_team(cx);
     }
 
     /// Append an event to the field and sync every view cache to it (the shared
@@ -2965,21 +2952,9 @@ impl Chamber {
         {
             return; // already adopted here
         }
-        let has_orchestrator = resolve_team(&self.team, &self.global)
-            .quarks
-            .iter()
-            .any(|s| s.flavor == hadron_lattice::Flavor::Orchestrator);
-        let flavor_override = if !has_orchestrator {
-            Some(hadron_lattice::Flavor::Orchestrator)
-        } else {
-            None
-        };
-        self.team.roster.push(SeatOverride {
-            enabled: Some(true),
-            flavor: flavor_override,
-            ..SeatOverride::role(qid) // inherit the catalogue's role + definition
-        });
-        self.save_repo_team(cx);
+        if toggle_or_adopt_quark_in_team(&mut self.team, &self.global, &qid).is_some() {
+            self.save_repo_team(cx);
+        }
     }
 
     /// Toggle the Process Manager overlay (pinned Roster rail button, above Settings).
