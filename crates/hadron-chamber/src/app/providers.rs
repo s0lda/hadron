@@ -319,6 +319,9 @@ pub(super) fn configured_providers(team: &Team) -> Vec<ConfiguredQuark> {
 /// so a running daemon reconciles this to an empty re-seat rather than a disruptive
 /// rebuild; this wrapper only does the file I/O and a one-time safety backup.
 pub(super) fn migrate_repo_to_catalogue(repo_path: &std::path::Path, global_path: &std::path::Path) {
+    if repo_path == global_path || hadron_lattice::is_global_team_config_path(repo_path) {
+        return; // never treat a global catalogue (native or WSL home) as a repo team
+    }
     let mut repo = load_team(repo_path);
     if repo.quarks.is_empty() {
         return; // already split (or empty) — nothing to migrate
@@ -665,5 +668,26 @@ mod tests {
     fn nucleus_budget_kb_for_treats_a_hand_edited_zero_as_unset() {
         let team = Team { nucleus_index_budget_kb: Some(0), ..Team::default() };
         assert_eq!(nucleus_budget_kb_for(&team), 32);
+    }
+
+    #[test]
+    fn migrate_repo_to_catalogue_never_wipes_a_global_catalogue_path() {
+        let dir = tempdir().unwrap();
+        let fake_wsl_global = dir.path().join("home").join("Jake").join(".hadron").join("team.json");
+        std::fs::create_dir_all(fake_wsl_global.parent().unwrap()).unwrap();
+
+        let mut wsl_team = Team::default();
+        wsl_team.quarks.push(Seat::cli(QuarkId::new("cli-agy"), "agy", "gemini-3-pro", Flavor::Worker));
+        hadron_lattice::save_team(&fake_wsl_global, &wsl_team).unwrap();
+
+        // Simulate a WSL home catalogue path directly: `is_global_team_config_path` returns true
+        // for `/home/<user>/.hadron/team.json` and `\\wsl.localhost\<distro>\home\<user>\.hadron\team.json`.
+        assert!(hadron_lattice::is_global_team_config_path(std::path::Path::new(
+            r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\team.json"
+        )));
+
+        // Calling migrate_repo_to_catalogue with `repo_path == global_path` is a no-op
+        migrate_repo_to_catalogue(&fake_wsl_global, &fake_wsl_global);
+        assert_eq!(load_team(&fake_wsl_global).quarks.len(), 1);
     }
 }

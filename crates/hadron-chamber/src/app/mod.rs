@@ -2003,7 +2003,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
     let repo_path = if workspace_mode == WorkspaceMode::Selector {
         None
     } else {
-        hadron_lattice::team_for_field(&field_path)
+        hadron_lattice::repo_team_for_field(&field_path)
     };
     let global_path = hadron_lattice::team_config_path()
         .filter(|g| Some(g.as_path()) != repo_path.as_deref());

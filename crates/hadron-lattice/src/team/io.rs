@@ -30,6 +30,87 @@ pub fn team_config_path() -> Option<PathBuf> {
     Some(user_hadron_dir()?.join("team.json"))
 }
 
+/// Returns `true` if `path` points to a user-level global `~/.hadron/team.json`
+/// (either the local host's `team_config_path()` or a Linux/WSL user home
+/// `/home/<user>/.hadron/team.json` / `/root/.hadron/team.json`, including Windows
+/// WSL UNC paths like `\\wsl.localhost\<distro>\home\<user>\.hadron\team.json`).
+///
+/// This prevents directory walk-ups from mistaking a user's home `~/.hadron/team.json`
+/// for a repository's `.hadron/team.json` when opening a repository inside `~` that
+/// has no repo-level `team.json` yet.
+pub fn is_global_team_config_path(path: &Path) -> bool {
+    if let Some(global) = team_config_path() {
+        if path == global {
+            return true;
+        }
+    }
+    if let Some(wsl_cat) = crate::wsl::wsl_catalogue_path_for_field(path) {
+        if path == wsl_cat {
+            return true;
+        }
+    }
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty()).collect();
+    // Match `/home/<user>/.hadron/team.json` or `//wsl.localhost/<distro>/home/<user>/.hadron/team.json`
+    if parts.len() == 4
+        && parts[0] == "home"
+        && parts[2] == ".hadron"
+        && parts[3] == "team.json"
+    {
+        return true;
+    }
+    // Match `/root/.hadron/team.json`
+    if parts.len() == 3
+        && parts[0] == "root"
+        && parts[1] == ".hadron"
+        && parts[2] == "team.json"
+    {
+        return true;
+    }
+    if let Some((_distro, linux_path)) = crate::wsl::parse_wsl_unc_path(path) {
+        let lp = linux_path.to_string_lossy();
+        let lparts: Vec<&str> = lp.split('/').filter(|p| !p.is_empty()).collect();
+        if (lparts.len() == 4
+            && lparts[0] == "home"
+            && lparts[2] == ".hadron"
+            && lparts[3] == "team.json")
+            || (lparts.len() == 3
+                && lparts[0] == "root"
+                && lparts[1] == ".hadron"
+                && lparts[2] == "team.json")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Resolve the **repository-scoped** `.hadron/team.json` for a given `field_path`,
+/// returning `None` if the repository has no `.hadron/team.json` of its own.
+///
+/// Never returns the user-level global `~/.hadron/team.json` (nor a WSL home
+/// `/home/<user>/.hadron/team.json`), and stops walking up once it hits a `.git`
+/// boundary.
+pub fn repo_team_for_field(field_path: &Path) -> Option<PathBuf> {
+    if let Some(sibling) = field_path.parent().map(|d| d.join("team.json")) {
+        if sibling.exists() && !is_global_team_config_path(&sibling) {
+            return Some(sibling);
+        }
+    }
+    let mut current = field_path.parent();
+    while let Some(dir) = current {
+        let repo_config = dir.join(".hadron").join("team.json");
+        if repo_config.exists() && !is_global_team_config_path(&repo_config) {
+            return Some(repo_config);
+        }
+        if dir.join(".git").exists() {
+            break;
+        }
+        current = dir.parent();
+    }
+    None
+}
+
 /// Resolve which `team.json` describes the team working a given field: the
 /// project-level `team.json` sitting next to the field (the `.hadron/` convention)
 /// if present, else the global `~/.hadron/team.json`. Both the daemon (to seat)
@@ -37,21 +118,7 @@ pub fn team_config_path() -> Option<PathBuf> {
 /// share this — otherwise the chamber shows legibility for a team the daemon
 /// never seated.
 pub fn team_for_field(field_path: &Path) -> Option<PathBuf> {
-    if let Some(sibling) = field_path.parent().map(|d| d.join("team.json")) {
-        if sibling.exists() {
-            return Some(sibling);
-        }
-    }
-    // Fall back to walking up the directory tree looking for a project `.hadron/team.json`.
-    let mut current = field_path.parent();
-    while let Some(dir) = current {
-        let repo_config = dir.join(".hadron").join("team.json");
-        if repo_config.exists() {
-            return Some(repo_config);
-        }
-        current = dir.parent();
-    }
-    team_config_path()
+    repo_team_for_field(field_path).or_else(team_config_path)
 }
 
 /// Resolve the `team.json` path for a given repository root. Checks `<repo_root>/.hadron/team.json`,

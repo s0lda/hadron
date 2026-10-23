@@ -301,11 +301,33 @@ impl Seat {
 
     /// Strip a leading transport prefix a legacy `provider` value may carry, leaving the
     /// pure vendor: "acp-claude" → "claude", "cli-agy" → "agy", "agy" → "agy". Idempotent.
+    /// Also normalizes legacy or foreign-OS absolute paths for the `agy` ACP bridge to
+    /// the portable `{hadron}/bridges/agy/...` tokens so a catalogue shared or migrated
+    /// between Windows and WSL works on both hosts.
     pub fn normalize_vendor(&mut self) {
         for prefix in ["cli-", "acp-", "sdk-"] {
             if let Some(rest) = self.vendor.strip_prefix(prefix) {
                 self.vendor = rest.to_string();
-                return;
+                break;
+            }
+        }
+        if self.transport == Transport::Acp && self.vendor == "agy" {
+            if let Some(cmd) = &mut self.command {
+                let is_foreign_or_legacy_agy_bridge = cmd.args.iter().any(|a| {
+                    let norm = a.replace('\\', "/");
+                    norm.ends_with("/agy_acp.py")
+                        && !norm.starts_with("{hadron}/")
+                        && !norm.starts_with("{repo}/")
+                        && !norm.starts_with("crates/")
+                });
+                if is_foreign_or_legacy_agy_bridge {
+                    cmd.program = "{hadron}/bridges/agy/venv/bin/python".to_string();
+                    for arg in &mut cmd.args {
+                        if arg.replace('\\', "/").ends_with("/agy_acp.py") {
+                            *arg = "{hadron}/bridges/agy/agy_acp.py".to_string();
+                        }
+                    }
+                }
             }
         }
     }
@@ -459,6 +481,49 @@ mod tests {
         }"#;
         let seat: Seat = serde_json::from_str(json).expect("valid seat json");
         assert_eq!(seat.sandbox, Some(SandboxMode::Strict));
+    }
+
+    #[test]
+    fn test_normalize_vendor_rewrites_legacy_and_foreign_os_agy_bridge_command() {
+        let mut seat = Seat {
+            transport: Transport::Acp,
+            command: Some(AcpCommand {
+                program: "/home/Jake/dev/hadron/crates/hadron-gluon/scripts/venv/bin/python"
+                    .to_string(),
+                args: vec![
+                    "/home/Jake/dev/hadron/crates/hadron-gluon/scripts/agy_acp.py".to_string(),
+                ],
+            }),
+            ..Seat::cli(QuarkId::new("acp-agy"), "acp-agy", "gemini-3-pro", Flavor::Worker)
+        };
+        seat.normalize_vendor();
+        assert_eq!(seat.vendor, "agy");
+        assert_eq!(
+            seat.command,
+            Some(AcpCommand {
+                program: "{hadron}/bridges/agy/venv/bin/python".to_string(),
+                args: vec!["{hadron}/bridges/agy/agy_acp.py".to_string()],
+            })
+        );
+
+        // Windows foreign path also normalizes cleanly
+        let mut win_seat = Seat {
+            transport: Transport::Acp,
+            command: Some(AcpCommand {
+                program: r"C:\Users\Komputer\.hadron\bridges\agy\venv\Scripts\python.exe"
+                    .to_string(),
+                args: vec![r"C:\Users\Komputer\.hadron\bridges\agy\agy_acp.py".to_string()],
+            }),
+            ..Seat::cli(QuarkId::new("acp-agy"), "agy", "gemini-3-pro", Flavor::Worker)
+        };
+        win_seat.normalize_vendor();
+        assert_eq!(
+            win_seat.command,
+            Some(AcpCommand {
+                program: "{hadron}/bridges/agy/venv/bin/python".to_string(),
+                args: vec!["{hadron}/bridges/agy/agy_acp.py".to_string()],
+            })
+        );
     }
 }
 

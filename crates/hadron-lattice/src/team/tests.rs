@@ -393,13 +393,59 @@ fn team_for_field_prefers_the_sibling_then_global() {
     let hadron = dir.path().join(".hadron");
     std::fs::create_dir_all(&hadron).unwrap();
     let field = hadron.join("field.jsonl");
-    // No sibling team.json yet → falls back to the global path (env-dependent,
-    // but never the sibling).
+    // No sibling team.json yet → repo_team_for_field is None, and team_for_field falls back
+    // to the global path (env-dependent, but never the sibling).
     let sibling = hadron.join("team.json");
+    assert_eq!(repo_team_for_field(&field), None);
     assert_ne!(team_for_field(&field), Some(sibling.clone()));
     // Once a sibling exists, it wins.
     std::fs::write(&sibling, "{}").unwrap();
+    assert_eq!(repo_team_for_field(&field), Some(sibling.clone()));
     assert_eq!(team_for_field(&field), Some(sibling));
+}
+
+#[test]
+fn is_global_team_config_path_detects_native_and_wsl_home_catalogues() {
+    assert!(is_global_team_config_path(std::path::Path::new(
+        "/home/Jake/.hadron/team.json"
+    )));
+    assert!(is_global_team_config_path(std::path::Path::new(
+        "/root/.hadron/team.json"
+    )));
+    assert!(is_global_team_config_path(std::path::Path::new(
+        r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\team.json"
+    )));
+    assert!(is_global_team_config_path(std::path::Path::new(
+        r"\\wsl$\Ubuntu\home\Jake\.hadron\team.json"
+    )));
+    assert!(is_global_team_config_path(std::path::Path::new(
+        r"\\?\UNC\wsl.localhost\Ubuntu\home\Jake\.hadron\team.json"
+    )));
+    assert!(!is_global_team_config_path(std::path::Path::new(
+        "/home/Jake/dev/hadron/.hadron/team.json"
+    )));
+    assert!(!is_global_team_config_path(std::path::Path::new(
+        r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\team.json"
+    )));
+}
+
+#[test]
+fn repo_team_for_field_stops_at_git_root_and_skips_parent_dirs() {
+    let dir = tempdir().unwrap();
+    // Simulate a parent directory with a `.hadron/team.json` (like `/home/user/.hadron/team.json`)
+    let parent_hadron = dir.path().join(".hadron");
+    std::fs::create_dir_all(&parent_hadron).unwrap();
+    std::fs::write(parent_hadron.join("team.json"), "{}").unwrap();
+
+    // And a nested git repo `dir/dev/myrepo` that has `.git` and `.hadron/field.jsonl`
+    // but NO `myrepo/.hadron/team.json`.
+    let repo_dir = dir.path().join("dev").join("myrepo");
+    std::fs::create_dir_all(repo_dir.join(".git")).unwrap();
+    std::fs::create_dir_all(repo_dir.join(".hadron")).unwrap();
+    let field = repo_dir.join(".hadron").join("field.jsonl");
+
+    // Walk-up must stop at `myrepo/.git` and NOT climb into `dir/.hadron/team.json`.
+    assert_eq!(repo_team_for_field(&field), None);
 }
 
 #[test]

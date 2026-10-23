@@ -247,6 +247,10 @@ impl AcpTarget {
                     .replace("/venv/bin/python", "/venv/Scripts/python.exe")
                     .replace("\\venv\\bin\\python3", "\\venv\\Scripts\\python.exe")
                     .replace("\\venv\\bin\\python", "\\venv\\Scripts\\python.exe");
+            } else {
+                res.program = res.program
+                    .replace("\\venv\\Scripts\\python.exe", "/venv/bin/python")
+                    .replace("/venv/Scripts/python.exe", "/venv/bin/python");
             }
             return Ok(res);
         }
@@ -265,6 +269,10 @@ impl AcpTarget {
                 .replace("/venv/bin/python", "/venv/Scripts/python.exe")
                 .replace("\\venv\\bin\\python3", "\\venv\\Scripts\\python.exe")
                 .replace("\\venv\\bin\\python", "\\venv\\Scripts\\python.exe");
+        } else {
+            program = program
+                .replace("\\venv\\Scripts\\python.exe", "/venv/bin/python")
+                .replace("/venv/Scripts/python.exe", "/venv/bin/python");
         }
         Ok(AcpTarget {
             program,

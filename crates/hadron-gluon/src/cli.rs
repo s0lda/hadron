@@ -65,17 +65,12 @@ fn resolve_team_path(explicit: Option<PathBuf>, field_path: &Path) -> Option<Pat
     if explicit.is_some() {
         return explicit;
     }
-    if let Some(sibling) = field_path.parent().map(|d| d.join("team.json")) {
-        if sibling.exists() {
-            return Some(sibling);
-        }
+    if let Some(repo_team) = hadron_lattice::repo_team_for_field(field_path) {
+        return Some(repo_team);
     }
-    if let Some(wsl_cat) = hadron_lattice::wsl::wsl_catalogue_path_for_field(field_path) {
-        if wsl_cat.exists() {
-            return Some(wsl_cat);
-        }
-    }
-    team_config_path().filter(|p| p.exists())
+    team_config_path().filter(|p| p.exists()).or_else(|| {
+        hadron_lattice::wsl::wsl_catalogue_path_for_field(field_path).filter(|p| p.exists())
+    })
 }
 
 /// Seat the quarks: real adapters, one per seat in `team.json`. Returns the quarks,

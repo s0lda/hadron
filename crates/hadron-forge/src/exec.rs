@@ -276,6 +276,81 @@ pub fn run_bounded(
     }
 }
 
+/// Parse a Windows WSL UNC path (`\\wsl.localhost\<distro>\<linux_path>`, `\\wsl$\...`,
+/// or verbatim `\\?\UNC\wsl.localhost\...`) into `(distro, linux_path)`.
+pub fn parse_wsl_unc_path(path: &Path) -> Option<(String, String)> {
+    let s = path.to_str()?;
+    let normalized = s.replace('/', "\\");
+    let without_verbatim = if let Some(s) = normalized
+        .strip_prefix(r"\\?\UNC\")
+        .or_else(|| normalized.strip_prefix(r"\\?\unc\"))
+    {
+        format!(r"\\{s}")
+    } else if let Some(s) = normalized.strip_prefix(r"\\?\") {
+        if s.starts_with(r"\\") {
+            s.to_string()
+        } else {
+            format!(r"\\{s}")
+        }
+    } else {
+        normalized
+    };
+
+    let rest = if let Some(stripped) = without_verbatim.strip_prefix(r"\\wsl.localhost\") {
+        stripped
+    } else if let Some(stripped) = without_verbatim.strip_prefix(r"\\wsl$\") {
+        stripped
+    } else {
+        return None;
+    };
+    if rest.is_empty() {
+        return None;
+    }
+    let (distro, linux_part) = match rest.find('\\') {
+        Some(idx) => (&rest[..idx], &rest[idx..]),
+        None => (rest, ""),
+    };
+    if distro.is_empty() {
+        return None;
+    }
+    let mut linux_path_str = linux_part.replace('\\', "/");
+    if !linux_path_str.starts_with('/') {
+        linux_path_str.insert(0, '/');
+    }
+    Some((distro.to_string(), linux_path_str))
+}
+
+/// Build the `Command` that [`exec`] spawns for `program` and `args` in `cwd`.
+/// Routes through `wsl.exe -d <distro> --cd <linux_cwd> --exec sh -c ...` when `cwd` is
+/// a Windows WSL UNC path so workspace tools (`cargo`, `git`, `pytest`, `npm`) execute
+/// natively inside WSL with the user's `~/.local/bin` and `~/.cargo/bin` on `PATH`.
+pub fn build_exec_command(cwd: &Path, program: Program, args: &[String]) -> Command {
+    if let Some((distro, linux_cwd)) = parse_wsl_unc_path(cwd) {
+        let mut cmd = Command::new("wsl.exe");
+        cmd.args([
+            "-d",
+            &distro,
+            "--cd",
+            &linux_cwd,
+            "--exec",
+            "sh",
+            "-c",
+            "export PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.gemini/antigravity-cli/bin:$PATH\"; exec \"$@\"",
+            "sh",
+            program.as_str(),
+        ]);
+        cmd.args(args);
+        cmd.env("GIT_TERMINAL_PROMPT", "0");
+        cmd.env("WSLENV", "GIT_TERMINAL_PROMPT/u");
+        cmd
+    } else {
+        let mut cmd = Command::new(program.as_str());
+        cmd.args(args).current_dir(cwd);
+        cmd.env("GIT_TERMINAL_PROMPT", "0");
+        cmd
+    }
+}
+
 /// Run an allowlisted program inside `root`, bounded and output-capped.
 pub fn exec(
     root: &Root,
@@ -294,10 +369,7 @@ pub fn exec(
         .canonicalize()
         .map_err(|e| ForgeError::Io(e.to_string()))?;
 
-    let mut cmd = Command::new(program.as_str());
-    cmd.args(args).current_dir(&cwd);
-    // No terminal here either — a credential prompt would wait forever.
-    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    let cmd = build_exec_command(&cwd, program, args);
 
     let label = format!("{} {:?}", program.as_str(), args);
     let out = run_bounded(cmd, deadline, &label).map_err(|e| ForgeError::Io(e.to_string()))?;
@@ -399,5 +471,24 @@ mod tests {
         assert!(out.timed_out, "the deadline must fire");
         assert_eq!(out.code, None, "a killed process reports no exit code");
         assert!(out.stderr_lossy().contains("process group was killed"));
+    }
+
+    #[test]
+    fn build_exec_command_routes_wsl_unc_to_wsl_exe() {
+        let unc = Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\Jake\dev\hadron");
+        let cmd = build_exec_command(unc, Program::Cargo, &["check".to_string()]);
+        assert_eq!(cmd.get_program(), "wsl.exe");
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args[0], "-d");
+        assert_eq!(args[1], "Ubuntu");
+        assert_eq!(args[2], "--cd");
+        assert_eq!(args[3], "/home/Jake/dev/hadron");
+        assert_eq!(args[4], "--exec");
+        assert_eq!(args[5], "sh");
+        assert!(args.contains(&"cargo".to_string()));
+        assert!(args.contains(&"check".to_string()));
     }
 }

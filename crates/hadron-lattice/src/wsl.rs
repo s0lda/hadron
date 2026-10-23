@@ -218,6 +218,128 @@ pub fn strip_wsl_noise(raw: &str) -> String {
     out
 }
 
+/// Resolve the full path of `program` inside `distro` using the user's login `PATH`
+/// (including `$HOME/.local/bin`, `$HOME/.cargo/bin`, `$HOME/.gemini/antigravity-cli/bin`),
+/// or return `None` if `program` is not installed inside `distro`.
+///
+/// Results are cached per `(distro, program)` for the lifetime of the process.
+pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
+    #[cfg(windows)]
+    {
+        use std::collections::HashMap;
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+        use std::sync::{Mutex, OnceLock};
+
+        static CACHE: OnceLock<Mutex<HashMap<(String, String), Option<String>>>> = OnceLock::new();
+        let map = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        let key = (distro.to_string(), program.to_string());
+        if let Some(cached) = map.lock().unwrap().get(&key) {
+            return cached.clone();
+        }
+
+        let resolved = Command::new("wsl.exe")
+            .args([
+                "-d",
+                distro,
+                "--exec",
+                "sh",
+                "-c",
+                "export PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.gemini/antigravity-cli/bin:$PATH\"; command -v \"$1\"",
+                "sh",
+                program,
+            ])
+            .creation_flags(0x08000000)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| decode_wsl_output(&o.stdout).into_iter().next())
+            .filter(|s| s.starts_with('/'));
+
+        map.lock().unwrap().insert(key, resolved.clone());
+        resolved
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = distro;
+        Some(program.to_string())
+    }
+}
+
+/// Check whether `program` exists inside `distro` (checking standard system and user bin directories)
+/// or on the Windows host, and return `true` if `program` should be executed via `wsl.exe` inside `distro`,
+/// or `false` if it is only installed on the Windows host (e.g. `agy.exe` on Windows when opening a WSL repo).
+///
+/// Results are cached per `(distro, program)` for the lifetime of the process.
+pub fn should_run_in_wsl(distro: &str, program: &str) -> bool {
+    #[cfg(windows)]
+    {
+        use std::collections::HashMap;
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+        use std::sync::{Mutex, OnceLock};
+
+        static CACHE: OnceLock<Mutex<HashMap<(String, String), bool>>> = OnceLock::new();
+        let map = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        let key = (distro.to_string(), program.to_string());
+        if let Some(&cached) = map.lock().unwrap().get(&key) {
+            return cached;
+        }
+
+        let in_wsl = resolve_wsl_program_path(distro, program).is_some();
+        let on_host = Command::new("where.exe")
+            .arg(program)
+            .creation_flags(0x08000000)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        let decision = decide_wsl_vs_host(in_wsl, on_host);
+        map.lock().unwrap().insert(key, decision);
+        decision
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (distro, program);
+        true
+    }
+}
+
+/// Pure decision helper for unit tests: given whether a binary exists in WSL and whether it
+/// exists on the Windows host, returns `true` when execution should route through `wsl.exe`.
+pub fn decide_wsl_vs_host(in_wsl: bool, on_host: bool) -> bool {
+    if in_wsl {
+        true
+    } else {
+        !on_host
+    }
+}
+
+/// Resolve the in-distro user home directory (e.g. `/home/Jake` or `/root`) from a Linux path,
+/// falling back to `None` if `linux_path` is not under `/home/<user>` or `/root`.
+pub fn infer_linux_home_from_path(linux_path: &Path) -> Option<String> {
+    let s = linux_path.to_string_lossy();
+    let mut parts = s.split('/').filter(|p| !p.is_empty());
+    match parts.next()? {
+        "home" => {
+            let user = parts.next()?;
+            Some(format!("/home/{user}"))
+        }
+        "root" => Some("/root".to_string()),
+        _ => None,
+    }
+}
+
+/// Build an augmented Linux `PATH` string that prepends the user's `~/.local/bin`,
+/// `~/.cargo/bin`, and `~/.gemini/antigravity-cli/bin` so `wsl.exe --exec` can find user-installed
+/// tools (like `agy`, `cargo`, `claude`) without invoking a shell that mangles arguments.
+pub fn wsl_user_path_env(linux_cwd: &Path) -> Option<String> {
+    let home = infer_linux_home_from_path(linux_cwd)?;
+    Some(format!(
+        "{home}/.local/bin:{home}/.cargo/bin:{home}/.gemini/antigravity-cli/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    ))
+}
+
 /// Build a `WSLENV` value that instructs `wsl.exe` on Windows to forward the given
 /// environment variable names into the Linux subprocess environment without exposing
 /// their values on the command line.
@@ -251,13 +373,14 @@ pub fn wrap_wsl_command(
     program: &str,
     args: &[String],
 ) -> (String, Vec<String>) {
+    let resolved_prog = resolve_wsl_program_path(distro, program).unwrap_or_else(|| program.to_string());
     let mut wsl_args = vec![
         "-d".to_string(),
         distro.to_string(),
         "--cd".to_string(),
         linux_cwd.to_string_lossy().replace('\\', "/"),
         "--exec".to_string(),
-        program.to_string(),
+        resolved_prog,
     ];
     wsl_args.extend(args.iter().map(|a| translate_arg_for_wsl(distro, a)));
     ("wsl.exe".to_string(), wsl_args)
@@ -268,6 +391,7 @@ pub fn wrap_wsl_command(
 /// WSL UNC path (`\\wsl.localhost\<distro>\...` or `\\wsl$\<distro>\...`).
 pub fn wsl_aware_command(cwd: &Path, program: &str) -> std::process::Command {
     if let Some((distro, linux_cwd)) = parse_wsl_unc_path(cwd) {
+        let resolved_prog = resolve_wsl_program_path(&distro, program).unwrap_or_else(|| program.to_string());
         let mut c = std::process::Command::new("wsl.exe");
         c.args([
             "-d",
@@ -275,7 +399,7 @@ pub fn wsl_aware_command(cwd: &Path, program: &str) -> std::process::Command {
             "--cd",
             &linux_cwd.to_string_lossy().replace('\\', "/"),
             "--exec",
-            program,
+            &resolved_prog,
         ]);
         #[cfg(windows)]
         {
@@ -483,5 +607,31 @@ mod tests {
         let local_cmd = git_command(local);
         assert_eq!(local_cmd.get_program(), "git");
         assert_eq!(local_cmd.get_current_dir(), Some(local));
+    }
+
+    #[test]
+    fn test_decide_wsl_vs_host_and_user_path() {
+        // When present in WSL, run in WSL
+        assert!(decide_wsl_vs_host(true, true));
+        assert!(decide_wsl_vs_host(true, false));
+        // When NOT in WSL, but present on Windows host, run on Windows host
+        assert!(!decide_wsl_vs_host(false, true));
+        // When neither has it, default to WSL so the WSL error surfaces cleanly
+        assert!(decide_wsl_vs_host(false, false));
+
+        assert_eq!(
+            infer_linux_home_from_path(Path::new("/home/Jake/dev/hadron")),
+            Some("/home/Jake".to_string())
+        );
+        assert_eq!(
+            infer_linux_home_from_path(Path::new("/root/project")),
+            Some("/root".to_string())
+        );
+        assert_eq!(infer_linux_home_from_path(Path::new("/var/log")), None);
+
+        let path_env = wsl_user_path_env(Path::new("/home/Jake/dev/hadron")).unwrap();
+        assert!(path_env.contains("/home/Jake/.local/bin"));
+        assert!(path_env.contains("/home/Jake/.cargo/bin"));
+        assert!(path_env.contains("/home/Jake/.gemini/antigravity-cli/bin"));
     }
 }

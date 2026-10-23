@@ -2769,7 +2769,7 @@ impl Chamber {
     /// it exists yet.
     pub(super) fn repo_team_path(&self) -> PathBuf {
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        hadron_lattice::team_for_field(&self.path)
+        hadron_lattice::repo_team_for_field(&self.path)
             .unwrap_or_else(|| repo_root.join(".hadron").join("team.json"))
     }
 
