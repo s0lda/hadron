@@ -3045,6 +3045,55 @@ pub(super) fn apply_orchestrator_exclusivity(
     }
 }
 
+/// Flip an adopted quark's `enabled` state, or adopt-and-enable an unadopted catalogue
+/// quark into `team` (promoting it to `Orchestrator` if the resolved team has none yet).
+/// Returns the new `enabled` state (`Some(true | false)`), or `None` if `qid` is unknown
+/// in both `team` and `global`.
+pub(super) fn toggle_or_adopt_quark_in_team(
+    team: &mut hadron_lattice::Team,
+    global: &hadron_lattice::Team,
+    qid: &QuarkId,
+) -> Option<bool> {
+    let resolved = resolve_team(team, global);
+    if let Some(current) = resolved.get(qid).map(|s| s.enabled) {
+        let want = !current;
+        if let Some(seat) = team.quarks.iter_mut().find(|s| s.id == *qid) {
+            seat.enabled = want;
+        } else if let Some(ov) = team.roster.iter_mut().find(|o| o.id == *qid) {
+            ov.enabled = Some(want);
+        } else {
+            team.roster.push(SeatOverride {
+                enabled: Some(want),
+                ..SeatOverride::role(qid.clone())
+            });
+        }
+        return Some(want);
+    }
+
+    if global.get(qid).is_none() {
+        return None;
+    }
+
+    let has_orchestrator = resolved
+        .quarks
+        .iter()
+        .any(|s| s.flavor == hadron_lattice::Flavor::Orchestrator);
+    let flavor_override = (!has_orchestrator).then_some(hadron_lattice::Flavor::Orchestrator);
+    if let Some(ov) = team.roster.iter_mut().find(|o| o.id == *qid) {
+        ov.enabled = Some(true);
+        if ov.flavor.is_none() {
+            ov.flavor = flavor_override;
+        }
+    } else {
+        team.roster.push(SeatOverride {
+            enabled: Some(true),
+            flavor: flavor_override,
+            ..SeatOverride::role(qid.clone())
+        });
+    }
+    Some(true)
+}
+
 /// Purge a quark from both the repo team and the global catalogue.
 ///
 /// Removes any legacy full seat in `team.quarks`, any override in `team.roster`,
@@ -3526,5 +3575,56 @@ mod tests {
             }
             other => panic!("expected Kind::Reboot for third event, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn toggle_or_adopt_quark_in_team_adopts_unadopted_and_flips_adopted() {
+        let q1 = QuarkId::new("acp-claude");
+        let q2 = QuarkId::new("cli-agy");
+        let global = hadron_lattice::Team {
+            quarks: vec![
+                hadron_lattice::Seat::cli(
+                    q1.clone(),
+                    "claude",
+                    "claude-opus-4-6",
+                    hadron_lattice::Flavor::Worker,
+                ),
+                hadron_lattice::Seat::cli(
+                    q2.clone(),
+                    "agy",
+                    "gemini-3.1-pro",
+                    hadron_lattice::Flavor::Worker,
+                ),
+            ],
+            ..Default::default()
+        };
+        let mut repo = hadron_lattice::Team::default();
+
+        // Clicking "Enable" on an unadopted catalogue quark in an empty repo adopts it
+        // as enabled and promotes it to Orchestrator (since the repo has no orchestrator yet).
+        assert_eq!(toggle_or_adopt_quark_in_team(&mut repo, &global, &q1), Some(true));
+        let resolved = resolve_team(&repo, &global);
+        let s1 = resolved.get(&q1).expect("q1 must be adopted");
+        assert!(s1.enabled);
+        assert_eq!(s1.flavor, hadron_lattice::Flavor::Orchestrator);
+
+        // Enabling a second unadopted quark adopts it as enabled without clobbering the orchestrator.
+        assert_eq!(toggle_or_adopt_quark_in_team(&mut repo, &global, &q2), Some(true));
+        let resolved = resolve_team(&repo, &global);
+        let s2 = resolved.get(&q2).expect("q2 must be adopted");
+        assert!(s2.enabled);
+        assert_eq!(s2.flavor, hadron_lattice::Flavor::Worker);
+
+        // Toggling an already-adopted enabled quark disables it, and toggling again re-enables it.
+        assert_eq!(toggle_or_adopt_quark_in_team(&mut repo, &global, &q2), Some(false));
+        assert!(!resolve_team(&repo, &global).get(&q2).unwrap().enabled);
+        assert_eq!(toggle_or_adopt_quark_in_team(&mut repo, &global, &q2), Some(true));
+        assert!(resolve_team(&repo, &global).get(&q2).unwrap().enabled);
+
+        // Unknown quark id returns None and leaves the repo untouched.
+        assert_eq!(
+            toggle_or_adopt_quark_in_team(&mut repo, &global, &QuarkId::new("ghost")),
+            None
+        );
     }
 }
