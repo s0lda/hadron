@@ -2498,6 +2498,7 @@ impl Chamber {
                     ov.flavor = Some(flavor.clone());
                 } else {
                     trial.roster.push(SeatOverride {
+                        enabled: Some(true),
                         flavor: Some(flavor.clone()),
                         ..SeatOverride::role(qid.clone())
                     });
