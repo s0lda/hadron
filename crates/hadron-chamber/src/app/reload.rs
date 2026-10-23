@@ -98,6 +98,9 @@ impl FieldPoll {
     ) -> Self {
         let events = io::read_events(path).ok();
         let read_strict = |p: &std::path::Path| -> Option<Team> {
+            if !p.exists() {
+                return Some(Team::default());
+            }
             std::fs::read_to_string(p)
                 .ok()
                 .and_then(|t| hadron_lattice::parse_team(&t).ok())
