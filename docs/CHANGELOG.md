@@ -5,6 +5,21 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.9] - 2026-10-24
+
+### Added
+- **Quark Info Live Model & Reasoning Effort Selectors (`hadron-chamber`)**:
+  - Replaced static `Model` and `Effort` text rows in the Roster > Quark > Info panel (`render/stats.rs`) with searchable `gpui_component::select::Select` dropdowns (`info_model_select_state`, `info_effort_select_state`) wired to `set_quark_model` and `set_quark_effort` (`settings/mod.rs`) via `update_seat_config`.
+  - Wired `open_quark_info` across `/home`, `open_selected_quark`, `ContextMenuAction::QuarkInfo`, and visualizer **"View Details"** to launch background ACP/CLI/HTTP model probes when opening a quark's info overlay, backed by curated `vendor_fallback_models` (`settings/model_select.rs`) so both Quark Info and Settings dropdowns are always populated.
+
+### Fixed
+- **Shared `.hadron` Sandbox Binds, CLI Turn Reaping & Render-Thread I/O Elimination (`hadron-chamber`, `hadron-gluon`, `hadron-gatekeeper`)**:
+  - Pre-created and read-write bound `<repo_root>/.hadron/{nucleus,docs,skills,preons,live}` in Bubblewrap (`bwrap`) and macOS Seatbelt sandboxes (`sandbox.rs`), and added error-propagating `reconcile_worktree_dot_hadron` (`worktree.rs`) during `commit_turn`.
+  - Emitted `Kind::Reboot` for all roster quarks on `/clear`, armed `ChildProcessGuard` (`kill_on_drop` + process-group teardown) in `ProcessRunner` (`adapter/runner.rs`), and wired `on_window_closed` (`main.rs`) to send graceful `SIGTERM` before `SIGKILL` to `hadron-gluon` on Chamber exit.
+  - Cached event logs, plan paths/contents, and nucleus docs off the GPUI render thread (`reload.rs`, `render/breadcrumb.rs`, `render/terminal.rs`), and added a 30fps `pump_visualizer` loop with hit-testing (`render/visualizer.rs`).
+- **CI Release Publication Gating (`.github/workflows/release.yml`)**:
+  - Split `.github/workflows/release.yml` into `build-release` and `publish-release` (`needs: build-release`) so GitHub Releases are only published after all platform matrix builds succeed.
+
 ## [0.33.8] - 2026-10-24
 
 ### Fixed

@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.9",
+        date: Some("2026-10-24"),
+        added: &[
+            "Quark Info Live Model & Reasoning Effort Selectors: Replaced static Model and Effort rows in the Roster > Quark > Info overlay with searchable Select dropdowns backed by background ACP/CLI/HTTP probes and curated vendor fallback models, persisting changes directly via update_seat_config",
+        ],
+        changed: &[],
+        fixed: &[
+            "Shared .hadron Sandbox Binds, CLI Turn Reaping & Render-Thread I/O Elimination: Bound <repo_root>/.hadron/{nucleus,docs,skills,preons,live} in bwrap/Seatbelt with error-checked worktree reconciliation, reaped active CLI subprocesses on /clear and Chamber exit (ChildProcessGuard + SIGTERM), and moved event/plan/nucleus disk reads off the GPUI render thread",
+            "CI Matrix-Gated Release Publication: Split .github/workflows/release.yml into build-release and publish-release (needs: build-release) so GitHub Releases only publish after all 4 target binaries compile cleanly",
+        ],
+    },
+    Release {
         version: "0.33.8",
         date: Some("2026-10-24"),
         added: &[],
