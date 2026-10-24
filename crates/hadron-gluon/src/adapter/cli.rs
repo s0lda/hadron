@@ -20,9 +20,41 @@ pub fn probe_cli_models(spec: &CliSpec) -> anyhow::Result<ModelSelector> {
         .model_probe
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("no model_probe configured"))?;
-    let output = std::process::Command::new(&spec.program)
+    let output = match std::process::Command::new(&spec.program)
         .args(&probe_spec.args)
-        .output()?;
+        .output()
+    {
+        Ok(out) if out.status.success() => out,
+        primary_res => {
+            #[cfg(windows)]
+            {
+                let mut cmd_parts = vec![hadron_lattice::wsl::shell_escape(&spec.program)];
+                for arg in &probe_spec.args {
+                    cmd_parts.push(hadron_lattice::wsl::shell_escape(arg));
+                }
+                let script = format!(
+                    "export PATH=\"$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | tail -n 1)/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; {}",
+                    cmd_parts.join(" ")
+                );
+                if let Ok(wsl_out) = std::process::Command::new("wsl.exe")
+                    .args(["sh", "-lc", &script])
+                    .output()
+                {
+                    if wsl_out.status.success() {
+                        wsl_out
+                    } else {
+                        primary_res?
+                    }
+                } else {
+                    primary_res?
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                primary_res?
+            }
+        }
+    };
     if !output.status.success() {
         anyhow::bail!("model probe process exited with status {}", output.status);
     }
@@ -106,10 +138,10 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
     }
 
     let mut p = projection.clone();
-    // Drop the oldest events one at a time until it fits. The marker rides as a
-    // synthetic leading event so it renders inside the transcript, right where the
-    // cut happened.
-    while !p.field_window.is_empty() {
+    // Drop the oldest events one at a time until it fits, keeping at least the 2
+    // most recent field events while reference sections (`nucleus_index`,
+    // `nucleus_digest`, `git_diff`) can still be shed first.
+    while p.field_window.len() > 2 {
         p.field_window.remove(0);
         let mut probe = p.clone();
         probe.field_window.insert(
@@ -122,18 +154,18 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
         }
     }
 
-    // The field window is gone and it still does not fit: drop the working diff and
-    // reference sections (`nucleus_index`, `nucleus_digest`, tool catalogue, active
-    // skill, role body, and excess `invariants`) before ever touching `# Your task`
-    // or `# Who you are`. On Windows (`SAFE_ARG_BYTES` = 24 KiB), `invariants` +
-    // `nucleus_digest` + `nucleus_index` alone exceed 24 KiB, so slicing `&out[..cut]`
-    // directly would cut off `# Your task` at the bottom of the prompt.
+    // Still over budget: drop the working diff and reference sections
+    // (`nucleus_index`, `nucleus_digest`, tool catalogue, active skill, role body)
+    // before shedding the last 2 field messages or excess `invariants`.
     p.git_diff = String::new();
-    p.field_window = vec![Event::new(
-        Actor::Gluon,
-        None,
-        Kind::Message { body: TRUNCATION_MARKER.to_string() },
-    )];
+    p.field_window.insert(
+        0,
+        Event::new(
+            Actor::Gluon,
+            None,
+            Kind::Message { body: TRUNCATION_MARKER.to_string() },
+        ),
+    );
     let mut out = render(&p);
     if out.len() <= max_bytes {
         return out;
@@ -148,6 +180,13 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
     }
     if !p.nucleus_digest.is_empty() {
         p.nucleus_digest.clear();
+        out = render(&p);
+        if out.len() <= max_bytes {
+            return out;
+        }
+    }
+    while p.field_window.len() > 1 {
+        p.field_window.remove(1);
         out = render(&p);
         if out.len() <= max_bytes {
             return out;
@@ -427,15 +466,22 @@ impl<R: CliRunner> CliQuark<R> {
                 return;
             }
             let Some(dir) = &dir else { return };
-            let due = last_publish.is_none_or(|t: Instant| t.elapsed() >= PUBLISH_THROTTLE);
+            // Status transitions (while draft is empty) arrive in bursts (e.g.
+            // `agent_response` followed <1ms later by `tool_name: run_command`) and
+            // must never be dropped by the text delta throttle.
+            let is_status_only = acc.draft().is_empty();
+            let due = is_status_only
+                || last_publish.is_none_or(|t: Instant| t.elapsed() >= PUBLISH_THROTTLE);
             if due {
                 last_publish = Some(Instant::now());
-                // Text once there is any; until then the step/tool the stream last
-                // named, so a CLI that reports its work before it reports its words
-                // (agy does — see `cli_stream::on_agy_line`) still shows a moving
-                // Live card instead of a motionless `working…`.
-                let activity = if acc.draft().is_empty() {
-                    Activity::new(quark_id.clone(), Doing::Working, acc.status())
+                let activity = if is_status_only {
+                    let status = acc.status();
+                    let doing = if status == "thinking" || status == "reading the message" {
+                        Doing::Thinking
+                    } else {
+                        Doing::Working
+                    };
+                    Activity::new(quark_id.clone(), doing, status)
                 } else {
                     Activity::speaking(quark_id.clone(), acc.draft())
                 };

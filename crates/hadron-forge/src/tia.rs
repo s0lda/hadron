@@ -30,7 +30,19 @@ impl TestImpactPlan {
 
 /// Computes a [`TestImpactPlan`] given the list of modified file paths in a branch.
 pub fn compute_impacted_tests(changed_files: &[&str]) -> TestImpactPlan {
-    if changed_files.is_empty() {
+    let code_files: Vec<&str> = changed_files
+        .iter()
+        .copied()
+        .filter(|f| {
+            let n = f.trim_start_matches("./");
+            !n.starts_with(".hadron/")
+                && !n.starts_with("docs/")
+                && !n.ends_with(".md")
+                && !n.ends_with(".txt")
+        })
+        .collect();
+
+    if code_files.is_empty() {
         return TestImpactPlan {
             target_package: None,
             target_symbols: Vec::new(),
@@ -39,7 +51,7 @@ pub fn compute_impacted_tests(changed_files: &[&str]) -> TestImpactPlan {
     }
 
     // Check for root manifest or workspace config changes -> full workspace
-    for file in changed_files {
+    for file in &code_files {
         if *file == "Cargo.toml"
             || *file == "Cargo.lock"
             || file.starts_with(".cargo")
@@ -52,7 +64,7 @@ pub fn compute_impacted_tests(changed_files: &[&str]) -> TestImpactPlan {
     let mut detected_packages = std::collections::HashSet::new();
     let mut symbols = Vec::new();
 
-    for file in changed_files {
+    for file in &code_files {
         if let Some(rest) = file.strip_prefix("crates/") {
             if let Some(slash_idx) = rest.find('/') {
                 let pkg = &rest[..slash_idx];
@@ -86,7 +98,7 @@ pub fn compute_impacted_tests(changed_files: &[&str]) -> TestImpactPlan {
         // If exactly one file changed, we can target that symbol.
         // If multiple files changed in the crate, testing the entire crate ensures
         // all affected modules are tested and cargo test CLI is not passed invalid arguments.
-        let target_symbols = if changed_files.len() == 1 {
+        let target_symbols = if code_files.len() == 1 {
             symbols
         } else {
             Vec::new()

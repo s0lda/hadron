@@ -174,7 +174,11 @@ pub fn detect_affected_runner(worktree_path: &Path, base: &str) -> (&'static str
     let tia_plan = hadron_forge::tia::compute_impacted_tests(&file_refs);
     if !tia_plan.requires_full_workspace {
         if let Some(target_pkg) = tia_plan.target_package {
-            let mut args = vec!["test".to_string(), "-p".to_string(), target_pkg];
+            let mut args = vec!["test".to_string(), "-p".to_string(), target_pkg.clone()];
+            if target_pkg == "hadron" {
+                args.push("--bin".to_string());
+                args.push("hadron".to_string());
+            }
             // cargo test only accepts at most one positional [TESTNAME] filter argument.
             if tia_plan.target_symbols.len() == 1 {
                 args.push(tia_plan.target_symbols[0].clone());
@@ -293,10 +297,22 @@ pub async fn run_tests_within(
     // **The gate's cost lives or dies on this line** — and so does the disk. See
     // `worktree::shared_build_env` for why; the quark's own subprocess gets the very
     // same env, which is the point of it living in one place.
-    cmd.envs(crate::worktree::shared_build_env(&wt.path));
-
-    // Inject cache metadata isolation flags to prevent foreign rlib collisions
-    hadron_gatekeeper::cache_guard::inject_cache_isolation_flags(cmd.as_std_mut(), program, &wt.path);
+    let build_env = crate::worktree::shared_build_env(&wt.path);
+    if let Some((distro, _)) = hadron_lattice::wsl::parse_wsl_unc_path(&wt.path) {
+        let mut keys = Vec::with_capacity(build_env.len());
+        for (k, v) in build_env {
+            let translated = hadron_lattice::wsl::translate_arg_for_wsl(&distro, &v);
+            cmd.env(&k, translated);
+            keys.push(k);
+        }
+        let existing_wslenv = std::env::var("WSLENV").ok();
+        let wslenv = hadron_lattice::wsl::wslenv_for_keys(existing_wslenv.as_deref(), &keys);
+        if !wslenv.is_empty() {
+            cmd.env("WSLENV", wslenv);
+        }
+    } else {
+        cmd.envs(build_env);
+    }
 
     // Its own process group, so the deadline can kill the whole tree rather than just
     // the launcher. `cargo test` is a launcher: killing it orphans the test binary,

@@ -34,6 +34,13 @@ impl AstBlastRadiusAnalyzer {
         let mut crates = HashSet::new();
         for file in changed_files {
             let normalized = file.trim_start_matches("./");
+            if normalized.starts_with(".hadron/")
+                || normalized.starts_with("docs/")
+                || normalized.ends_with(".md")
+                || normalized.ends_with(".txt")
+            {
+                continue;
+            }
             if normalized == "Cargo.toml"
                 || normalized == "Cargo.lock"
                 || normalized.starts_with(".cargo")

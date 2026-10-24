@@ -128,6 +128,16 @@ impl StreamAccumulator {
                 // `agy_step_label`) becomes the status line, and that is what streams.
                 let Some(step) = value.get("step_update") else { return false };
                 let Some(label) = agy_step_label(step) else { return false };
+                // Completed `agent_response` steps carry `label == "thinking"` and
+                // often arrive alongside or after a tool step. Never overwrite an
+                // active tool status back to `"thinking"` on a `DONE` agent_response.
+                if label == "thinking"
+                    && step.get("state").and_then(Value::as_str) == Some("DONE")
+                    && !self.status.is_empty()
+                    && self.status != "reading the message"
+                {
+                    return false;
+                }
                 if label == self.status {
                     return false; // the same step going ACTIVE → DONE says nothing new
                 }
@@ -189,7 +199,23 @@ fn agy_step_label(step: &Value) -> Option<String> {
             .get("tool_info")
             .and_then(|info| info.get("parameters"))
             .and_then(Value::as_object)
-            .and_then(|params| params.values().filter_map(Value::as_str).find_map(short_arg));
+            .and_then(|params| {
+                const PRIORITY_KEYS: &[&str] = &[
+                    "CommandLine",
+                    "Path",
+                    "AbsolutePath",
+                    "DirectoryPath",
+                    "SearchPath",
+                    "Query",
+                    "Pattern",
+                    "query",
+                    "toolSummary",
+                ];
+                PRIORITY_KEYS
+                    .iter()
+                    .find_map(|k| params.get(*k).and_then(Value::as_str).and_then(short_arg))
+                    .or_else(|| params.values().filter_map(Value::as_str).find_map(short_arg))
+            });
         return Some(match arg {
             Some(arg) => format!("{tool}: {arg}"),
             None => tool.to_string(),
@@ -379,6 +405,17 @@ mod tests {
             r#"{"event":"step_update","step_update":{"step_type":"tool","tool_name":"list_dir"}}"#
         ));
         assert_eq!(acc.status(), "list_dir", "no tool_info at all is still a usable label");
+
+        // Priority keys ensure `Path` wins over short `Replacement`/`Target` snippets on `edit_file`,
+        // and a completed `agent_response` never overwrites an active tool label with `"thinking"`.
+        assert!(acc.on_line(
+            r#"{"event":"step_update","step_update":{"state":"ACTIVE","step_type":"tool","tool_name":"edit_file","tool_info":{"parameters":{"Path":"/repo/src/main.rs","Replacement":"ok","Target":"old"}}}}"#
+        ));
+        assert_eq!(acc.status(), "edit_file: main.rs");
+        assert!(!acc.on_line(
+            r#"{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response"}}"#
+        ));
+        assert_eq!(acc.status(), "edit_file: main.rs");
     }
 
     #[test]

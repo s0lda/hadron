@@ -262,6 +262,73 @@ pub fn strip_unc_prefix(path_str: &str) -> String {
     }
 }
 
+/// Formats a repository root path for display in the UI (e.g. `~/dev/hadron/`),
+/// normalizing WSL UNC paths (`\\wsl.localhost\<distro>\home\<user>\...`) and
+/// Windows backslashes to forward slashes with a trailing `/`.
+pub fn format_repo_root_display(root: &Path, home_override: Option<&str>) -> String {
+    if let Some((_distro, linux_path)) = hadron_lattice::wsl::parse_wsl_unc_path(root) {
+        let clean = linux_path.replace('\\', "/");
+        let clean_trimmed = clean.trim_end_matches('/');
+        let formatted = if let Some(rest) = clean_trimmed.strip_prefix("/home/") {
+            if let Some((_user, after_user)) = rest.split_once('/') {
+                if after_user.is_empty() {
+                    "~".to_string()
+                } else {
+                    format!("~/{after_user}")
+                }
+            } else {
+                "~".to_string()
+            }
+        } else if clean_trimmed == "/root" {
+            "~".to_string()
+        } else if let Some(after_root) = clean_trimmed.strip_prefix("/root/") {
+            if after_root.is_empty() {
+                "~".to_string()
+            } else {
+                format!("~/{after_root}")
+            }
+        } else if clean_trimmed.is_empty() {
+            "/".to_string()
+        } else {
+            clean_trimmed.to_string()
+        };
+        return if formatted.ends_with('/') {
+            formatted
+        } else {
+            format!("{formatted}/")
+        };
+    }
+
+    let abs_str = strip_unc_prefix(&root.to_string_lossy()).replace('\\', "/");
+    let path_str = if let Some(home) = home_override {
+        let home_clean = strip_unc_prefix(home).replace('\\', "/");
+        let home_trimmed = home_clean.trim_end_matches('/');
+        if !home_trimmed.is_empty() && abs_str.trim_end_matches('/') == home_trimmed {
+            "~".to_string()
+        } else if !home_trimmed.is_empty()
+            && abs_str.starts_with(home_trimmed)
+            && abs_str.as_bytes().get(home_trimmed.len()) == Some(&b'/')
+        {
+            let rel = abs_str[home_trimmed.len() + 1..].trim_end_matches('/');
+            if rel.is_empty() {
+                "~".to_string()
+            } else {
+                format!("~/{rel}")
+            }
+        } else {
+            abs_str
+        }
+    } else {
+        abs_str
+    };
+
+    if path_str.ends_with('/') {
+        path_str
+    } else {
+        format!("{path_str}/")
+    }
+}
+
 /// Formats the repository working directory for display in the UI (e.g. `~/dev/hadron/`).
 pub fn format_working_dir(field_path: &Path) -> String {
     let root = repo_root_of(field_path);
@@ -271,32 +338,10 @@ pub fn format_working_dir(field_path: &Path) -> String {
         root.canonicalize()
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| root.to_path_buf()))
     };
-
-    let abs_str = strip_unc_prefix(&abs_path.to_string_lossy());
-    let home_var = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"));
-
-    let path_str = if let Ok(home) = home_var {
-        let home_clean = strip_unc_prefix(&home);
-        let home_path = Path::new(&home_clean);
-        let abs_p = Path::new(&abs_str);
-        if let Ok(rel) = abs_p.strip_prefix(home_path) {
-            if rel.as_os_str().is_empty() {
-                "~".to_string()
-            } else {
-                format!("~/{}", rel.display().to_string().replace('\\', "/"))
-            }
-        } else {
-            abs_str
-        }
-    } else {
-        abs_str
-    };
-
-    if path_str.ends_with('/') || path_str.ends_with('\\') {
-        path_str
-    } else {
-        format!("{path_str}/")
-    }
+    let home_var = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok();
+    format_repo_root_display(&abs_path, home_var.as_deref())
 }
 
 
@@ -1082,7 +1127,11 @@ pub fn parse_ahead_behind(output: &str) -> (usize, usize) {
 /// Query local git configuration and rev-list to get upstream tracking info for `repo_root`.
 pub fn get_remote_tracking_info(repo_root: &Path) -> RemoteTrackingInfo {
     let mut remote_url = run_git(repo_root, &["remote", "get-url", "origin"]).trim().to_string();
-    let mut remote_name = "origin".to_string();
+    let mut remote_name = if remote_url.is_empty() {
+        String::new()
+    } else {
+        "origin".to_string()
+    };
     if remote_url.is_empty() {
         let remotes = run_git(repo_root, &["remote"]);
         if let Some(first) = remotes.lines().next() {
@@ -1098,15 +1147,21 @@ pub fn get_remote_tracking_info(repo_root: &Path) -> RemoteTrackingInfo {
     let is_github = remote_url.contains("github.com");
 
     let current_branch = run_git(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"]).trim().to_string();
-    let mut tracking_branch = run_git(repo_root, &["rev-parse", "--abbrev-ref", "@{u}"]).trim().to_string();
-    if tracking_branch.is_empty() || tracking_branch.contains("@{u}") {
-        let check_origin_main = run_git(repo_root, &["rev-parse", "--verify", "origin/main"]);
-        if !check_origin_main.trim().is_empty() {
-            tracking_branch = "origin/main".to_string();
+    let mut tracking_branch = if remote_url.is_empty() {
+        String::new()
+    } else {
+        run_git(repo_root, &["rev-parse", "--abbrev-ref", "@{u}"]).trim().to_string()
+    };
+    if !remote_url.is_empty() && (tracking_branch.is_empty() || tracking_branch.contains("@{u}")) {
+        let candidate_main = format!("{remote_name}/main");
+        let check_remote_main = run_git(repo_root, &["rev-parse", "--verify", &candidate_main]);
+        if !check_remote_main.trim().is_empty() {
+            tracking_branch = candidate_main;
         } else {
-            let check_origin_master = run_git(repo_root, &["rev-parse", "--verify", "origin/master"]);
-            if !check_origin_master.trim().is_empty() {
-                tracking_branch = "origin/master".to_string();
+            let candidate_master = format!("{remote_name}/master");
+            let check_remote_master = run_git(repo_root, &["rev-parse", "--verify", &candidate_master]);
+            if !check_remote_master.trim().is_empty() {
+                tracking_branch = candidate_master;
             } else {
                 tracking_branch = String::new();
             }
@@ -1246,12 +1301,43 @@ mod tests {
         let field = PathBuf::from(".hadron/field.jsonl");
         let formatted = format_working_dir(&field);
         assert!(formatted.ends_with('/'));
+        assert!(!formatted.contains('\\'), "no mixed slashes: {formatted}");
         if let Ok(home) = std::env::var("HOME") {
             let current = std::env::current_dir().unwrap();
             if current.starts_with(&home) {
                 assert!(formatted.starts_with("~/"));
             }
         }
+    }
+
+    #[test]
+    fn format_repo_root_display_normalizes_wsl_unc_and_windows_paths() {
+        let wsl_home_repo = Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron");
+        assert_eq!(
+            format_repo_root_display(wsl_home_repo, Some(r"C:\Users\Komputer")),
+            "~/dev/hadron/"
+        );
+
+        let wsl_field = Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\field.jsonl");
+        assert_eq!(format_working_dir(wsl_field), "~/dev/hadron/");
+
+        let wsl_opt_repo = Path::new(r"\\wsl$\Ubuntu\opt\workspace\app");
+        assert_eq!(
+            format_repo_root_display(wsl_opt_repo, Some(r"C:\Users\Komputer")),
+            "/opt/workspace/app/"
+        );
+
+        let win_home_repo = Path::new(r"C:\Users\Jake\dev\hadron");
+        assert_eq!(
+            format_repo_root_display(win_home_repo, Some(r"C:\Users\Jake")),
+            "~/dev/hadron/"
+        );
+
+        let win_other_repo = Path::new(r"D:\projects\hadron");
+        assert_eq!(
+            format_repo_root_display(win_other_repo, Some(r"C:\Users\Jake")),
+            "D:/projects/hadron/"
+        );
     }
 
     #[test]
