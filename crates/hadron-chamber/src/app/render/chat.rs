@@ -728,6 +728,7 @@ impl super::Chamber {
 
                             let expanded = this.log_expanded.contains(&ix);
                             let color = this.color_for(&m.from);
+                            let to_color = m.to.as_deref().map(|t| this.color_for(t));
                             let entity = view.clone();
                             let msg_body = m.body.clone();
                             return row
@@ -826,7 +827,7 @@ impl super::Chamber {
                                                 ))
                                             }
                                         })
-                                        .child(log_row(ix, m, expanded, color, local_offset, &cx.theme().mono_font_family)),
+                                        .child(log_row(ix, m, expanded, color, to_color, local_offset, &cx.theme().mono_font_family)),
                                 )
                                 .into_any_element();
                         }

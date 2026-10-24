@@ -603,7 +603,7 @@ impl super::Chamber {
                         .child(
                             text_button("vis-open-info", "View Details").on_click(cx.listener(
                                 move |this, _, _window, cx| {
-                                    this.open_quark_info(qid_for_info.clone(), InfoTab::Identity, cx);
+                                    this.open_quark_info(qid_for_info.clone(), InfoTab::Home, cx);
                                 },
                             )),
                         ),

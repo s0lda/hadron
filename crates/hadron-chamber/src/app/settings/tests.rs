@@ -389,8 +389,8 @@ fn test_theme_token_get_and_set_hex() {
 
     // Verify initial values from default preset
     assert_eq!(ThemeTokenKey::CanvasBase.get_hex(&theme), "#050505");
-    assert_eq!(ThemeTokenKey::TextPrimary.get_hex(&theme), "#e8e8e8");
-    assert_eq!(ThemeTokenKey::TextMuted.get_hex(&theme), "#707070");
+    assert_eq!(ThemeTokenKey::TextPrimary.get_hex(&theme), "#e6edf3");
+    assert_eq!(ThemeTokenKey::TextMuted.get_hex(&theme), "#8a93a6");
     assert_eq!(ThemeTokenKey::SyntaxKeyword.get_hex(&theme), "#f97583");
     assert_eq!(ThemeTokenKey::TermBg.get_hex(&theme), "#080808");
 

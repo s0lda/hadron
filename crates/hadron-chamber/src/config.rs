@@ -544,12 +544,12 @@ impl AccentChoice {
 
     pub fn rgb(self) -> gpui::Rgba {
         match self {
-            AccentChoice::Amethyst => gpui::rgb(0xc084fc),
-            AccentChoice::Sapphire => gpui::rgb(0x60a5fa),
-            AccentChoice::Emerald => gpui::rgb(0x34d399),
-            AccentChoice::Amber => gpui::rgb(0xfbbf24),
+            AccentChoice::Amethyst => gpui::rgb(0x9d7cd8),
+            AccentChoice::Sapphire => gpui::rgb(0x38bdf8),
+            AccentChoice::Emerald => gpui::rgb(0x62c073),
+            AccentChoice::Amber => gpui::rgb(0xe5c07b),
             AccentChoice::Rose => gpui::rgb(0xf472b6),
-            AccentChoice::Coral => gpui::rgb(0xf87171),
+            AccentChoice::Coral => gpui::rgb(0xe06c75),
         }
     }
 
@@ -607,10 +607,10 @@ pub struct AccentPalette {
     pub glow_amber: String,
 }
 
-fn default_glow_blue_hex() -> String { "#4f83f0".to_string() }
-fn default_glow_pink_hex() -> String { "#c084fc".to_string() }
-fn default_glow_green_hex() -> String { "#2fcf8a".to_string() }
-fn default_glow_amber_hex() -> String { "#fbbf24".to_string() }
+fn default_glow_blue_hex() -> String { "#38bdf8".to_string() }
+fn default_glow_pink_hex() -> String { "#9d7cd8".to_string() }
+fn default_glow_green_hex() -> String { "#62c073".to_string() }
+fn default_glow_amber_hex() -> String { "#e5c07b".to_string() }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextPalette {
@@ -656,10 +656,10 @@ pub struct StatusPalette {
     pub info: String,
 }
 
-fn default_status_success() -> String { "#22c55e".to_string() }
-fn default_status_warning() -> String { "#f59e0b".to_string() }
-fn default_status_error() -> String { "#ef4444".to_string() }
-fn default_status_info() -> String { "#3b82f6".to_string() }
+fn default_status_success() -> String { "#62c073".to_string() }
+fn default_status_warning() -> String { "#e5c07b".to_string() }
+fn default_status_error() -> String { "#e06c75".to_string() }
+fn default_status_info() -> String { "#38bdf8".to_string() }
 
 impl Default for StatusPalette {
     fn default() -> Self {
@@ -695,22 +695,22 @@ impl ThemeDefinition {
                 popover: "#101010".into(),
             },
             accents: AccentPalette {
-                primary: "#c084fc".into(),
-                glow_blue: "#4f83f0".into(),
-                glow_pink: "#c084fc".into(),
-                glow_green: "#2fcf8a".into(),
-                glow_amber: "#fbbf24".into(),
+                primary: "#9d7cd8".into(),
+                glow_blue: "#38bdf8".into(),
+                glow_pink: "#9d7cd8".into(),
+                glow_green: "#62c073".into(),
+                glow_amber: "#e5c07b".into(),
             },
             text: TextPalette {
-                primary: "#e8e8e8".into(),
-                secondary: "#a8a8a8".into(),
-                muted: "#707070".into(),
+                primary: "#e6edf3".into(),
+                secondary: "#8a93a6".into(),
+                muted: "#8a93a6".into(),
             },
             syntax: SyntaxPalette::default_dark(),
             terminal: TerminalPalette {
                 bg: "#080808".into(),
-                fg: "#e8e8e8".into(),
-                prompt: "#4ade80".into(),
+                fg: "#e6edf3".into(),
+                prompt: "#62c073".into(),
             },
             status: StatusPalette::default(),
         }
@@ -732,22 +732,22 @@ impl ThemeDefinition {
                 popover: "#0a0a0a".into(),
             },
             accents: AccentPalette {
-                primary: "#c084fc".into(),
-                glow_blue: "#4f83f0".into(),
-                glow_pink: "#c084fc".into(),
-                glow_green: "#2fcf8a".into(),
-                glow_amber: "#fbbf24".into(),
+                primary: "#9d7cd8".into(),
+                glow_blue: "#38bdf8".into(),
+                glow_pink: "#9d7cd8".into(),
+                glow_green: "#62c073".into(),
+                glow_amber: "#e5c07b".into(),
             },
             text: TextPalette {
-                primary: "#e8e8e8".into(),
-                secondary: "#a8a8a8".into(),
-                muted: "#707070".into(),
+                primary: "#e6edf3".into(),
+                secondary: "#8a93a6".into(),
+                muted: "#8a93a6".into(),
             },
             syntax: SyntaxPalette::default_dark(),
             terminal: TerminalPalette {
                 bg: "#000000".into(),
-                fg: "#e8e8e8".into(),
-                prompt: "#4ade80".into(),
+                fg: "#e6edf3".into(),
+                prompt: "#62c073".into(),
             },
             status: StatusPalette::default(),
         }

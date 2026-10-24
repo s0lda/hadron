@@ -56,9 +56,7 @@ impl ChatTab {
 /// stays short instead of one long scroll.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum InfoTab {
-    /// Who this quark is: header, role, state, adoption, and the Restart action.
-    Identity,
-    /// Personal telemetry, tool usage, and milestones.
+    /// Identity (role, state, adoption, Restart action) + personal telemetry, tool usage, and milestones.
     Home,
     /// How it is wired: provider, agent command, model, transport, effort, permission.
     Config,
@@ -67,24 +65,22 @@ pub(super) enum InfoTab {
 }
 
 impl InfoTab {
-    pub(super) const ALL: [InfoTab; 4] = [InfoTab::Identity, InfoTab::Home, InfoTab::Config, InfoTab::Stats];
+    pub(super) const ALL: [InfoTab; 3] = [InfoTab::Home, InfoTab::Config, InfoTab::Stats];
 
     pub(super) fn index(self) -> usize {
         match self {
-            InfoTab::Identity => 0,
-            InfoTab::Home => 1,
-            InfoTab::Config => 2,
-            InfoTab::Stats => 3,
+            InfoTab::Home => 0,
+            InfoTab::Config => 1,
+            InfoTab::Stats => 2,
         }
     }
 
     pub(super) fn from_index(ix: usize) -> Self {
-        Self::ALL.get(ix).copied().unwrap_or(InfoTab::Identity)
+        Self::ALL.get(ix).copied().unwrap_or(InfoTab::Home)
     }
 
     pub(super) fn label(self) -> &'static str {
         match self {
-            InfoTab::Identity => "Identity",
             InfoTab::Home => "Home",
             InfoTab::Config => "Config",
             InfoTab::Stats => "Stats",
@@ -241,16 +237,16 @@ mod tests {
 
     #[test]
     fn test_info_tab_indexing_and_defaults() {
-        assert_eq!(InfoTab::Identity.index(), 0);
-        assert_eq!(InfoTab::Home.index(), 1);
-        assert_eq!(InfoTab::Config.index(), 2);
-        assert_eq!(InfoTab::Stats.index(), 3);
-        assert_eq!(InfoTab::from_index(0), InfoTab::Identity);
-        assert_eq!(InfoTab::from_index(1), InfoTab::Home);
-        assert_eq!(InfoTab::from_index(2), InfoTab::Config);
-        assert_eq!(InfoTab::from_index(3), InfoTab::Stats);
-        assert_eq!(InfoTab::from_index(99), InfoTab::Identity);
+        assert_eq!(InfoTab::Home.index(), 0);
+        assert_eq!(InfoTab::Config.index(), 1);
+        assert_eq!(InfoTab::Stats.index(), 2);
+        assert_eq!(InfoTab::from_index(0), InfoTab::Home);
+        assert_eq!(InfoTab::from_index(1), InfoTab::Config);
+        assert_eq!(InfoTab::from_index(2), InfoTab::Stats);
+        assert_eq!(InfoTab::from_index(99), InfoTab::Home);
         assert_eq!(InfoTab::Home.label(), "Home");
-        assert_eq!(InfoTab::ALL.len(), 4);
+        assert_eq!(InfoTab::Config.label(), "Config");
+        assert_eq!(InfoTab::Stats.label(), "Stats");
+        assert_eq!(InfoTab::ALL.len(), 3);
     }
 }

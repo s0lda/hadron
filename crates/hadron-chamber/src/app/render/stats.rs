@@ -320,23 +320,6 @@ impl super::Chamber {
                 )
         };
 
-        let identity_section = v_flex()
-            .gap_1p5()
-            .child(panel_eyebrow("IDENTITY"))
-            .child(kv_row("Role", flavor_str))
-            .child(kv_row(
-                "State",
-                if roster_row.enabled { "enabled" } else { "disabled" },
-            ))
-            .child(kv_row(
-                "Adoption",
-                if roster_row.adopted { "adopted in this repo" } else { "available (catalogue)" },
-            ))
-            .child(make_model_row(&self.info_model_select_state))
-            .child(make_effort_row(&self.info_effort_select_state))
-            // Restart lives here (Identity), acting on this quark; ACP-only, else None.
-            .children(restart_action);
-
         let mut config_section = v_flex()
             .gap_1p5()
             .child(panel_eyebrow("CONFIGURATION"))
@@ -359,7 +342,7 @@ impl super::Chamber {
                 .child(perm_chip),
         );
 
-        // --- Home section ---
+        // --- Home section (Identity + Personal Telemetry) ---
         let home_snap = crate::app::render::quark_home::QuarkTelemetrySnapshot::from_stats_and_messages(
             &qid,
             &q_stats,
@@ -367,7 +350,19 @@ impl super::Chamber {
         );
         let mut home_section = v_flex()
             .gap_1p5()
-            .child(panel_eyebrow("PERSONAL TELEMETRY & PERFORMANCE"))
+            .child(panel_eyebrow("IDENTITY"))
+            .child(kv_row("Role", flavor_str))
+            .child(kv_row(
+                "State",
+                if roster_row.enabled { "enabled" } else { "disabled" },
+            ))
+            .child(kv_row(
+                "Adoption",
+                if roster_row.adopted { "adopted in this repo" } else { "available (catalogue)" },
+            ))
+            // Restart lives here on Home alongside Identity status; ACP-only, else None.
+            .children(restart_action)
+            .child(div().mt_2().child(panel_eyebrow("PERSONAL TELEMETRY & PERFORMANCE")))
             .child(kv_row("Total turns", home_snap.total_turns.to_string()))
             .child(kv_row("Fresh spent", format!("{} tokens", format_num(q_stats.fresh))))
             .child(kv_row(
@@ -560,7 +555,6 @@ impl super::Chamber {
             );
 
         let body = match info_selected {
-            InfoTab::Identity => identity_section.into_any_element(),
             InfoTab::Home => home_section.into_any_element(),
             InfoTab::Config => config_section.into_any_element(),
             InfoTab::Stats => v_flex()

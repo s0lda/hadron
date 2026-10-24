@@ -1498,7 +1498,7 @@ impl Chamber {
             completion: None,
             focus_handle,
             chat_tab: ChatTab::Chat,
-            info_tab: InfoTab::Identity,
+            info_tab: InfoTab::Home,
             stats_window: StatsWindow::Current,
             archived_messages,
             sessions,

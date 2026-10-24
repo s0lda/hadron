@@ -57,7 +57,69 @@ fn run_bounded(
     Ok(out)
 }
 
+/// Guard `git push` invocations so Hadron never publishes internal `archive/*` tags
+/// or any non-release tag (only `v<major>.<minor>.<patch>` tags may be pushed).
+/// Remote ref deletions (`--delete` / `-d` / `:ref`) are permitted so stale remote tags
+/// can still be cleaned up.
+fn validate_push_args(args: &[&str]) -> anyhow::Result<()> {
+    if args.first().copied() != Some("push") {
+        return Ok(());
+    }
+    let is_delete_flag = args.iter().any(|&a| a == "--delete" || a == "-d");
+    for &arg in &args[1..] {
+        if matches!(arg, "--tags" | "--follow-tags" | "--all" | "--mirror") {
+            return Err(anyhow!(
+                "refusing `git push {arg}`: bulk ref/tag pushes are forbidden to prevent publishing internal archive/* tags"
+            ));
+        }
+        if arg.starts_with('-') {
+            continue;
+        }
+        if is_delete_flag || arg.starts_with(':') {
+            continue;
+        }
+        let target_ref = arg
+            .rsplit_once(':')
+            .map(|(_, dst)| dst)
+            .unwrap_or(arg)
+            .strip_prefix('+')
+            .unwrap_or(arg);
+        if target_ref.starts_with("archive/") || target_ref.starts_with("refs/tags/archive/") {
+            return Err(anyhow!(
+                "refusing to push internal archive tag `{arg}` to remote"
+            ));
+        }
+        if let Some(tag_name) = target_ref.strip_prefix("refs/tags/") {
+            if !is_release_version_tag(tag_name) {
+                return Err(anyhow!(
+                    "refusing to push non-release tag `{arg}` (only vX.Y.Z release tags may be published)"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_release_version_tag(tag: &str) -> bool {
+    let Some(rest) = tag.strip_prefix('v') else {
+        return false;
+    };
+    let mut parts = rest.split('.');
+    let (Some(maj), Some(min), Some(pat), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    !maj.is_empty()
+        && !min.is_empty()
+        && !pat.is_empty()
+        && maj.bytes().all(|b| b.is_ascii_digit())
+        && min.bytes().all(|b| b.is_ascii_digit())
+        && pat.bytes().all(|b| b.is_ascii_digit())
+}
+
 pub fn git_with_env(repo_root: &Path, args: &[&str], envs: &[(&str, &str)]) -> anyhow::Result<String> {
+    validate_push_args(args)?;
     let cmd = if let Some((distro, linux_cwd)) = hadron_lattice::wsl::parse_wsl_unc_path(repo_root) {
         let mut c = Command::new("wsl.exe");
         c.args([
@@ -383,5 +445,20 @@ mod tests {
 
         restore(root, &snap).unwrap();
         assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), "one\n");
+    }
+
+    #[test]
+    fn validate_push_args_blocks_archive_and_bulk_tag_pushes() {
+        assert!(validate_push_args(&["push", "origin", "HEAD"]).is_ok());
+        assert!(validate_push_args(&["push", "origin", "refs/tags/v0.33.9"]).is_ok());
+        assert!(validate_push_args(&["push", "origin", "--delete", "archive/cli-agy-01M5"]).is_ok());
+        assert!(validate_push_args(&["push", "origin", ":refs/tags/archive/cli-agy-01M5"]).is_ok());
+
+        assert!(validate_push_args(&["push", "origin", "--tags"]).is_err());
+        assert!(validate_push_args(&["push", "origin", "--follow-tags"]).is_err());
+        assert!(validate_push_args(&["push", "origin", "--mirror"]).is_err());
+        assert!(validate_push_args(&["push", "origin", "archive/cli-agy-01M5"]).is_err());
+        assert!(validate_push_args(&["push", "origin", "refs/tags/archive/cli-agy-01M5"]).is_err());
+        assert!(validate_push_args(&["push", "origin", "refs/tags/some-scratch-tag"]).is_err());
     }
 }

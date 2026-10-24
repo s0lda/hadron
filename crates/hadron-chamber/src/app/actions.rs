@@ -2455,7 +2455,7 @@ impl Chamber {
     /// of clicking a roster row.
     pub(super) fn open_selected_quark(&mut self, cx: &mut Context<Self>) {
         if let Some(id) = self.selected_quark_ix.and_then(|ix| self.view.roster.get(ix)).map(|r| r.id.clone()) {
-            self.open_quark_info(id, InfoTab::Identity, cx);
+            self.open_quark_info(id, InfoTab::Home, cx);
         }
     }
 
@@ -2463,7 +2463,7 @@ impl Chamber {
         match action {
             ContextMenuAction::QuarkInfo(id) => {
                 // Each open starts at the top section, not wherever the last panel left off.
-                self.open_quark_info(id, InfoTab::Identity, cx);
+                self.open_quark_info(id, InfoTab::Home, cx);
             }
             ContextMenuAction::ToggleQuark(id) => {
                 self.toggle_quark_enabled(&id, cx);

@@ -1318,11 +1318,17 @@ pub(super) fn task_row(
 /// A single row in the compact activity Log: time · actor · kind · body, tabular and dense
 /// so the Log reads like a console rather than a second chat. Body truncates to one line —
 /// the Chat tab is where a message is read in full.
+///
+/// Metadata cells (`@from`, `@to`, time, kind) use `TextView::html` rather than
+/// `TextView::markdown` because `markdown.rs`'s `push_mention_and_command_marks` forces an
+/// inline `pink-400` color mark onto every `@token`, overriding the parent `div().text_color(...)`
+/// and making every quark name in the Event Log render the same pink instead of its own color.
 pub(super) fn log_row<Tz: chrono::TimeZone>(
     ix: usize,
     m: &MessageRow,
     expanded: bool,
     author_color: Hsla,
+    to_color: Option<Hsla>,
     tz: Tz,
     mono_font: &gpui::SharedString,
 ) -> impl IntoElement
@@ -1335,7 +1341,8 @@ where
     } else {
         crate::text::flatten_to_single_line(&m.body)
     };
-    let to_tag = m.to.as_ref().map(|t| format!("➜ @{t}"));
+    let to_handle = m.to.as_ref().map(|t| format!("@{t}"));
+    let resolved_to_color: Hsla = to_color.unwrap_or_else(|| theme::text_muted().into());
 
     if expanded {
         let token_tag = m.usage.as_ref().and_then(|u| {
@@ -1372,7 +1379,7 @@ where
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(theme::accent())
                                     .child(
-                                        gpui_component::text::TextView::markdown(("log-idx-exp", ix), format!("#{}", ix + 1))
+                                        gpui_component::text::TextView::html(("log-idx-exp", ix), format!("#{}", ix + 1))
                                             .selectable(true),
                                     ),
                             )
@@ -1382,7 +1389,7 @@ where
                                     .font_family(mono_font.clone())
                                     .text_color(theme::text_muted())
                                     .child(
-                                        gpui_component::text::TextView::markdown(("log-time-exp", ix), &time)
+                                        gpui_component::text::TextView::html(("log-time-exp", ix), &time)
                                             .selectable(true),
                                     ),
                             )
@@ -1392,18 +1399,25 @@ where
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(author_color)
                                     .child(
-                                        gpui_component::text::TextView::markdown(("log-from-exp", ix), format!("@{}", m.from))
+                                        gpui_component::text::TextView::html(("log-from-exp", ix), format!("@{}", m.from))
                                             .selectable(true),
                                     ),
                             )
-                            .when_some(to_tag.clone(), |d, to| {
+                            .when_some(to_handle.clone(), |d, to| {
                                 d.child(
-                                    div()
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
                                         .text_xs()
-                                        .text_color(theme::text_muted())
+                                        .child(div().text_color(theme::text_muted()).child("➜"))
                                         .child(
-                                            gpui_component::text::TextView::markdown(("log-to-exp", ix), to)
-                                                .selectable(true),
+                                            div()
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(resolved_to_color)
+                                                .child(
+                                                    gpui_component::text::TextView::html(("log-to-exp", ix), to)
+                                                        .selectable(true),
+                                                ),
                                         ),
                                 )
                             })
@@ -1418,7 +1432,7 @@ where
                                     .text_xs()
                                     .text_color(log_kind_color(m.kind_label))
                                     .child(
-                                        gpui_component::text::TextView::markdown(("log-kind-exp", ix), m.kind_label)
+                                        gpui_component::text::TextView::html(("log-kind-exp", ix), m.kind_label)
                                             .selectable(true),
                                     ),
                             ),
@@ -1430,7 +1444,7 @@ where
                                 .font_family(mono_font.clone())
                                 .text_color(theme::text_muted())
                                 .child(
-                                    gpui_component::text::TextView::markdown(("log-tokens-exp", ix), tokens)
+                                    gpui_component::text::TextView::html(("log-tokens-exp", ix), tokens)
                                         .selectable(true),
                                 ),
                         )
@@ -1468,7 +1482,7 @@ where
                     .font_family(mono_font.clone())
                     .text_color(theme::text_muted())
                     .child(
-                        gpui_component::text::TextView::markdown(("log-time", ix), &time)
+                        gpui_component::text::TextView::html(("log-time", ix), &time)
                             .selectable(true),
                     ),
             )
@@ -1485,21 +1499,23 @@ where
                             .text_color(author_color)
                             .truncate()
                             .child(
-                                gpui_component::text::TextView::markdown(("log-from", ix), format!("@{}", m.from))
+                                gpui_component::text::TextView::html(("log-from", ix), format!("@{}", m.from))
                                     .selectable(true),
                             ),
                     )
-                    .when_some(to_tag, |d, to| {
-                        d.child(
-                            div()
-                                .text_xs()
-                                .text_color(theme::text_muted())
-                                .truncate()
-                                .child(
-                                    gpui_component::text::TextView::markdown(("log-to", ix), to)
-                                        .selectable(true),
-                                ),
-                        )
+                    .when_some(to_handle, |d, to| {
+                        d.child(div().text_xs().text_color(theme::text_muted()).child("➜"))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(resolved_to_color)
+                                    .truncate()
+                                    .child(
+                                        gpui_component::text::TextView::html(("log-to", ix), to)
+                                            .selectable(true),
+                                    ),
+                            )
                     }),
             )
             .child(
@@ -1509,7 +1525,7 @@ where
                     .text_xs()
                     .text_color(log_kind_color(m.kind_label))
                     .child(
-                        gpui_component::text::TextView::markdown(("log-kind", ix), m.kind_label)
+                        gpui_component::text::TextView::html(("log-kind", ix), m.kind_label)
                             .selectable(true),
                     ),
             )
@@ -2067,8 +2083,8 @@ mod tests {
             severity: None,
         };
         let font = gpui::SharedString::from("monospace");
-        let _compact = log_row(0, &msg, false, gpui::hsla(0.0, 0.0, 0.0, 1.0), chrono::Utc, &font);
-        let _expanded = log_row(0, &msg, true, gpui::hsla(0.0, 0.0, 0.0, 1.0), chrono::Utc, &font);
+        let _compact = log_row(0, &msg, false, gpui::hsla(0.0, 0.0, 0.0, 1.0), Some(gpui::hsla(0.5, 0.5, 0.5, 1.0)), chrono::Utc, &font);
+        let _expanded = log_row(0, &msg, true, gpui::hsla(0.0, 0.0, 0.0, 1.0), Some(gpui::hsla(0.5, 0.5, 0.5, 1.0)), chrono::Utc, &font);
     }
 }
 
