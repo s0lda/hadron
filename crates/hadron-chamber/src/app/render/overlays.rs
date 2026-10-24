@@ -20,6 +20,19 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.10",
+        date: Some("2026-10-24"),
+        added: &[],
+        changed: &[
+            "Quark Info Home Tab Consolidation: Merged Identity fields (Role, State, Adoption) and ACP Session Restart into InfoTab::Home and removed InfoTab::Identity so Model and Reasoning Effort selectors appear only once (in Config)",
+            "High-Contrast Telemetry Accent & Typography Palette: Applied #e6edf3 primary text, #8a93a6 secondary text, and telemetry semantic accents (#62c073, #9d7cd8, #38bdf8, #e5c07b, #e06c75) across config.rs and theme.rs while preserving #050505/#0b0b0b obsidian surfaces",
+        ],
+        fixed: &[
+            "Event Log Per-Quark @mention Coloring: Rendered Event Log metadata cells (@from, -> @to, time, kind) with TextView::html instead of TextView::markdown so @mention tokens inherit their per-quark author_color and to_color instead of markdown.rs's pink-400 override",
+            "Remote Archive Tag Push Guard: Added validate_push_args in hadron-gluon::snapshot::git_with_env to block bulk tag pushes (--tags, --follow-tags, --mirror) and internal archive/* or non-release tag pushes",
+        ],
+    },
+    Release {
         version: "0.33.9",
         date: Some("2026-10-24"),
         added: &[

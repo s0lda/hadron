@@ -5,6 +5,20 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.10] - 2026-10-24
+
+### Changed
+- **Quark Info Home Tab Consolidation (`hadron-chamber`)**:
+  - Merged `Identity` fields (`Role`, `State`, `Adoption`) and the ACP Session Restart control directly into `InfoTab::Home` (`render/stats.rs`, `tabs.rs`, `actions.rs`, `render/visualizer.rs`) and removed `InfoTab::Identity` so the `Model` and `Effort` selectors appear only once in `InfoTab::Config`.
+- **High-Contrast Telemetry Accent & Typography Palette (`hadron-chamber`)**:
+  - Updated `ThemeTokens::obsidian` (`config.rs`) and `theme.rs` defaults and unit tests to use `#e6edf3` primary typography, `#8a93a6` muted text, and semantic telemetry accents (`#62c073` green, `#9d7cd8` purple, `#38bdf8` cyan, `#e5c07b` amber, `#e06c75` coral) while retaining `#050505` / `#0b0b0b` obsidian surfaces.
+
+### Fixed
+- **Event Log Per-Quark `@mention` Coloring (`hadron-chamber`)**:
+  - Updated `log_row` (`widgets.rs`, `render/chat.rs`) to pass `to_color` for target seats and render Event Log metadata cells (`@from`, `➜ @to`, timestamp, kind) with `TextView::html` instead of `TextView::markdown`, preserving per-quark `author_color` and `to_color` instead of `markdown.rs`'s hardcoded `pink-400` mention highlight.
+- **Remote Archive & Non-Release Tag Push Guard (`hadron-gluon`)**:
+  - Added `validate_push_args` and `is_release_version_tag` in `snapshot::git_with_env` (`snapshot.rs`) to reject bulk ref pushes (`--tags`, `--follow-tags`, `--all`, `--mirror`) and non-release or internal `archive/*` tag pushes while still allowing remote ref deletions (`--delete` / `:ref`).
+
 ## [0.33.9] - 2026-10-24
 
 ### Added
