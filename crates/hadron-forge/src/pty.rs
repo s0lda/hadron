@@ -251,6 +251,7 @@ impl PtyManager {
 
         #[cfg(not(unix))]
         {
+            let _ = (prog, cwd, id, terminal_cols, terminal_rows, env_vars);
             Err(ForgeError::Rejected(
                 "PTY sessions are only supported on Unix platforms".into(),
             ))
@@ -291,6 +292,7 @@ impl PtyManager {
 
         #[cfg(not(unix))]
         {
+            let _ = data;
             Err(ForgeError::Rejected(
                 "PTY is not supported on non-unix".into(),
             ))
@@ -370,6 +372,7 @@ impl PtyManager {
 
         #[cfg(not(unix))]
         {
+            let _ = (session, cols, rows);
             Err(ForgeError::Rejected(
                 "PTY is not supported on non-unix".into(),
             ))

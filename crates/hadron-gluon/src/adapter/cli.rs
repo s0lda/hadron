@@ -28,18 +28,13 @@ pub fn probe_cli_models(spec: &CliSpec) -> anyhow::Result<ModelSelector> {
         primary_res => {
             #[cfg(windows)]
             {
-                let mut cmd_parts = vec![hadron_lattice::wsl::shell_escape(&spec.program)];
-                for arg in &probe_spec.args {
-                    cmd_parts.push(hadron_lattice::wsl::shell_escape(arg));
-                }
-                let script = format!(
-                    "export PATH=\"$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | tail -n 1)/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; {}",
-                    cmd_parts.join(" ")
-                );
-                if let Ok(wsl_out) = std::process::Command::new("wsl.exe")
-                    .args(["sh", "-lc", &script])
-                    .output()
-                {
+                use std::os::windows::process::CommandExt;
+                let script = "NVM_BIN=$(ls -d \"$HOME\"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -n 1); export PATH=\"${NVM_BIN:+$NVM_BIN:}$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.gemini/antigravity-cli/bin:$HOME/.grok/bin:$HOME/.bun/bin:$HOME/.deno/bin:$HOME/.volta/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:$PATH\"; exec \"$@\"";
+                let mut cmd = std::process::Command::new("wsl.exe");
+                cmd.args(["--exec", "sh", "-lc", script, "sh", &spec.program]);
+                cmd.args(&probe_spec.args);
+                cmd.creation_flags(0x08000000);
+                if let Ok(wsl_out) = cmd.output() {
                     if wsl_out.status.success() {
                         wsl_out
                     } else {

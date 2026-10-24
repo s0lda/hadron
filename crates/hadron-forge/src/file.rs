@@ -315,6 +315,7 @@ mod tests {
         assert!(rep.blocks.contains("[Hash: "));
     }
 
+    #[cfg(unix)]
     #[test]
     fn rejects_a_two_level_symlink_escape() {
         let dir = tempfile::tempdir().unwrap();
@@ -407,6 +408,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_symlink_out_of_an_allowed_external_root_is_refused() {
         let (_inside, outside, root) = root_with_external(ExternalAccess::ReadWrite);

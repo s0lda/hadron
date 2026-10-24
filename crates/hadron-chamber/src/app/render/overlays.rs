@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.8",
+        date: Some("2026-10-24"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Windows Build & Zero-Warning Cleanliness: Replaced missing wsl::shell_escape calls in probe_cli_models with parameterized wsl.exe --exec sh -lc argument passing, silenced non-Unix/Windows compiler warnings across hadron-forge and hadron-chamber, and removed the build.rs icon cargo:warning",
+        ],
+    },
+    Release {
         version: "0.33.7",
         date: Some("2026-10-24"),
         added: &[],

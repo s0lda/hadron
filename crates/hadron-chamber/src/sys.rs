@@ -836,13 +836,13 @@ pub struct DisplayEnvironment {
 
 /// Detect the active desktop display server, Wayland compositor capability, and notification mechanism.
 pub fn detect_display_environment() -> DisplayEnvironment {
-    let wsl = is_wsl();
-    let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
-    let wayland_socket = std::env::var("WAYLAND_SOCKET").ok();
-    let x11_display = std::env::var("DISPLAY").ok();
-
     #[cfg(target_os = "linux")]
     {
+        let wsl = is_wsl();
+        let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
+        let wayland_socket = std::env::var("WAYLAND_SOCKET").ok();
+        let x11_display = std::env::var("DISPLAY").ok();
+
         if wayland_display.is_some() || wayland_socket.is_some() {
             if wsl {
                 DisplayEnvironment {

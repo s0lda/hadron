@@ -5,6 +5,13 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.8] - 2026-10-24
+
+### Fixed
+- **Windows Cross-Target Compilation & Zero-Warning Build Cleanliness (`hadron-gluon`, `hadron-forge`, `hadron-chamber`)**:
+  - Replaced missing `hadron_lattice::wsl::shell_escape` calls in the Windows WSL fallback of `probe_cli_models` (`crates/hadron-gluon/src/adapter/cli.rs`) with parameterized `wsl.exe --exec sh -lc '...; exec "$@"' sh <program> <args...>` execution and `CREATE_NO_WINDOW`.
+  - Silenced non-Unix unused variable warnings in `PtyManager` (`crates/hadron-forge/src/pty.rs`), gated Unix symlink escape unit tests with `#[cfg(unix)]` (`crates/hadron-forge/src/file.rs`), scoped Linux display environment probes inside `#[cfg(target_os = "linux")]` (`crates/hadron-chamber/src/sys.rs`), and removed the noisy `cargo:warning` icon log from `crates/hadron-chamber/build.rs`.
+
 ## [0.33.7] - 2026-10-24
 
 ### Fixed

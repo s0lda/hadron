@@ -25,7 +25,6 @@ fn main() {
 
             if let Some(ico) = target_ico {
                 println!("cargo:rerun-if-changed={}", ico.display());
-                println!("cargo:warning=[hadron build.rs] Using icon path: {}", ico.display());
 
                 let mut res = winres::WindowsResource::new();
                 // Pass the full absolute path string to prevent build toolchain path mismatches
@@ -77,7 +76,11 @@ fn main() {
                             println!("cargo:rustc-link-arg={}", res_o.display());
                         }
                     }
-                    Err(e) => panic!("[hadron build.rs] winres compilation ERROR: {e}"),
+                    Err(e) => {
+                        if cfg!(windows) {
+                            panic!("[hadron build.rs] winres compilation ERROR: {e}");
+                        }
+                    }
                 }
             } else {
                 println!("cargo:warning=[hadron build.rs] ERROR: icon path does not exist!");
