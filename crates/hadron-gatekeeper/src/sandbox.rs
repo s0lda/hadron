@@ -11,7 +11,35 @@ pub use hadron_lattice::SandboxMode;
 
 
 pub fn is_bwrap_available() -> bool {
-    std::path::Path::new("/usr/bin/bwrap").exists()
+    use std::sync::OnceLock;
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        Path::new("/usr/bin/bwrap").exists()
+            && Command::new("/usr/bin/bwrap")
+                .args(["--ro-bind", "/", "/", "true"])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+    })
+}
+
+/// When `work_dir` is inside a Hadron quark worktree (`<repo_root>/.hadron/trees/<quark_id>`),
+/// returns the parent repository root (`<repo_root>`) so `bwrap` can bind `<repo_root>/.git`,
+/// `<repo_root>/.hadron/nucleus`, `<repo_root>/.hadron/docs`, `<repo_root>/.hadron/live`, and
+/// `<repo_root>/target` while keeping the main checkout working tree isolated.
+pub fn infer_repo_root_from_worktree(work_dir: &Path) -> Option<PathBuf> {
+    for ancestor in work_dir.ancestors() {
+        if ancestor.file_name().and_then(|n| n.to_str()) == Some("trees") {
+            if let Some(hadron_dir) = ancestor.parent() {
+                if hadron_dir.file_name().and_then(|n| n.to_str()) == Some(".hadron") {
+                    if let Some(repo_root) = hadron_dir.parent() {
+                        return Some(repo_root.to_path_buf());
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 pub fn build_bwrap_args(
@@ -27,34 +55,102 @@ pub fn build_bwrap_args(
         return full;
     }
 
+    let effective_work_dir =
+        if let Some((_distro, linux_path)) = hadron_lattice::wsl::parse_wsl_unc_path(work_dir) {
+            linux_path
+        } else {
+            work_dir.to_path_buf()
+        };
+    let work_dir_str = effective_work_dir.to_string_lossy().replace('\\', "/");
+
     let mut bwrap = vec![
         "--ro-bind".to_string(), "/usr".to_string(), "/usr".to_string(),
         "--ro-bind".to_string(), "/bin".to_string(), "/bin".to_string(),
+        "--ro-bind-try".to_string(), "/sbin".to_string(), "/sbin".to_string(),
         "--ro-bind".to_string(), "/lib".to_string(), "/lib".to_string(),
-    ];
-
-    if Path::new("/lib64").exists() {
-        bwrap.push("--ro-bind".to_string());
-        bwrap.push("/lib64".to_string());
-        bwrap.push("/lib64".to_string());
-    }
-    if Path::new("/etc/resolv.conf").exists() {
-        bwrap.push("--ro-bind".to_string());
-        bwrap.push("/etc/resolv.conf".to_string());
-        bwrap.push("/etc/resolv.conf".to_string());
-    }
-    if Path::new("/etc/ssl").exists() {
-        bwrap.push("--ro-bind".to_string());
-        bwrap.push("/etc/ssl".to_string());
-        bwrap.push("/etc/ssl".to_string());
-    }
-
-    bwrap.extend(vec![
+        "--ro-bind-try".to_string(), "/lib64".to_string(), "/lib64".to_string(),
+        "--ro-bind-try".to_string(), "/lib32".to_string(), "/lib32".to_string(),
+        "--ro-bind-try".to_string(), "/run".to_string(), "/run".to_string(),
+        "--ro-bind-try".to_string(), "/mnt/wsl".to_string(), "/mnt/wsl".to_string(),
+        "--ro-bind-try".to_string(), "/etc".to_string(), "/etc".to_string(),
+        "--ro-bind-try".to_string(), "/opt".to_string(), "/opt".to_string(),
         "--proc".to_string(), "/proc".to_string(),
         "--dev".to_string(), "/dev".to_string(),
         "--tmpfs".to_string(), "/tmp".to_string(),
-        "--bind".to_string(), work_dir.display().to_string(), work_dir.display().to_string(),
-        "--chdir".to_string(), work_dir.display().to_string(),
+    ];
+
+    let linux_home = hadron_lattice::wsl::infer_linux_home_from_path(&effective_work_dir)
+        .or_else(|| std::env::var("HOME").ok().filter(|h| h.starts_with('/')));
+    if let Some(ref home) = linux_home {
+        for ro_rel in [
+            ".local",
+            ".rustup",
+            ".nvm",
+            ".fnm",
+            ".volta",
+            ".bun",
+            ".deno",
+            ".pyenv",
+            ".gitconfig",
+        ] {
+            let p = format!("{home}/{ro_rel}");
+            bwrap.extend(["--ro-bind-try".to_string(), p.clone(), p]);
+        }
+        for rw_rel in [
+            ".cargo",
+            ".gemini",
+            ".antigravity",
+            ".claude",
+            ".claude.json",
+            ".codex",
+            ".copilot",
+            ".grok",
+            ".config",
+            ".cache",
+            ".npm",
+            ".hadron",
+        ] {
+            let p = format!("{home}/{rw_rel}");
+            bwrap.extend(["--bind-try".to_string(), p.clone(), p]);
+        }
+        bwrap.extend(["--setenv".to_string(), "HOME".to_string(), home.clone()]);
+        let mut sandbox_path = hadron_lattice::wsl::wsl_user_path_env(&effective_work_dir)
+            .unwrap_or_else(|| {
+                format!(
+                    "{home}/.local/bin:{home}/.cargo/bin:{home}/.gemini/antigravity-cli/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+                )
+            });
+        if program.starts_with('/') {
+            if let Some(parent) = Path::new(program).parent().and_then(|p| p.to_str()) {
+                if !parent.is_empty() && !sandbox_path.split(':').any(|d| d == parent) {
+                    sandbox_path = format!("{parent}:{sandbox_path}");
+                }
+            }
+        }
+        bwrap.extend(["--setenv".to_string(), "PATH".to_string(), sandbox_path]);
+    }
+
+    if let Some(repo_root) = infer_repo_root_from_worktree(&effective_work_dir) {
+        let root_str = repo_root.to_string_lossy().replace('\\', "/");
+        let git_dir = format!("{root_str}/.git");
+        let hadron_dir = format!("{root_str}/.hadron");
+        let nucleus_dir = format!("{root_str}/.hadron/nucleus");
+        let docs_dir = format!("{root_str}/.hadron/docs");
+        let live_dir = format!("{root_str}/.hadron/live");
+        let target_dir = format!("{root_str}/target");
+        bwrap.extend([
+            "--bind-try".to_string(), git_dir.clone(), git_dir,
+            "--ro-bind-try".to_string(), hadron_dir.clone(), hadron_dir,
+            "--bind-try".to_string(), nucleus_dir.clone(), nucleus_dir,
+            "--bind-try".to_string(), docs_dir.clone(), docs_dir,
+            "--bind-try".to_string(), live_dir.clone(), live_dir,
+            "--bind-try".to_string(), target_dir.clone(), target_dir,
+        ]);
+    }
+
+    bwrap.extend([
+        "--bind".to_string(), work_dir_str.clone(), work_dir_str.clone(),
+        "--chdir".to_string(), work_dir_str,
         "--die-with-parent".to_string(),
     ]);
 
@@ -207,7 +303,8 @@ pub fn build_windows_sandbox_script(
     mode: SandboxMode,
     unshare_net: bool,
 ) -> String {
-    let work_dir_escaped = escape_powershell_single_quote(&work_dir.display().to_string());
+    let clean_work_dir = hadron_lattice::sys::paths::strip_unc_prefix(&work_dir.display().to_string());
+    let work_dir_escaped = escape_powershell_single_quote(&clean_work_dir);
     let prog_escaped = escape_powershell_single_quote(program);
 
     let mut parts = Vec::new();
@@ -326,9 +423,31 @@ pub fn detect_sandbox_platform() -> SandboxPlatform {
     }
 }
 
+/// Detect the active sandbox platform for a specific workspace path.
+///
+/// When `work_dir` is a Windows WSL UNC path (`\\wsl.localhost\<distro>\...` or `\\wsl$\<distro>\...`),
+/// execution targets the Linux distribution inside WSL rather than the Windows host, so this
+/// checks whether Bubblewrap (`bwrap`) is available inside `distro` and never selects the
+/// Windows PowerShell harness.
+pub fn detect_sandbox_platform_for_path(work_dir: &Path) -> SandboxPlatform {
+    if let Some((distro, _)) = hadron_lattice::wsl::parse_wsl_unc_path(work_dir) {
+        if hadron_lattice::wsl::is_wsl_bwrap_available(&distro) {
+            return SandboxPlatform::LinuxBwrap;
+        } else {
+            return SandboxPlatform::Fallback;
+        }
+    }
+    detect_sandbox_platform()
+}
+
 /// Cross-platform sandboxed command resolver.
 /// Jails via Bubblewrap (`bwrap`) on Linux/WSL, Apple Seatbelt (`sandbox-exec`) on macOS,
 /// and PowerShell containment harness with Job Objects on Windows.
+///
+/// When `work_dir` is a WSL UNC path (`\\wsl.localhost\<distro>\<linux_path>`) and `program`
+/// runs inside WSL (`should_run_in_wsl`), resolves `program` and translates `args` for `distro`
+/// and jails with `bwrap` inside `distro` (when available) rather than wrapping in host
+/// `powershell.exe`.
 pub fn resolve_sandboxed_command(
     work_dir: &Path,
     program: &str,
@@ -338,6 +457,29 @@ pub fn resolve_sandboxed_command(
 ) -> (String, Vec<String>) {
     if mode == SandboxMode::Off {
         return (program.to_string(), args.to_vec());
+    }
+
+    if let Some((distro, linux_cwd)) = hadron_lattice::wsl::parse_wsl_unc_path(work_dir) {
+        if hadron_lattice::wsl::should_run_in_wsl(&distro, program) {
+            let resolved_prog = hadron_lattice::wsl::resolve_wsl_program_path(&distro, program)
+                .unwrap_or_else(|| program.to_string());
+            let translated_args: Vec<String> = args
+                .iter()
+                .map(|a| hadron_lattice::wsl::translate_arg_for_wsl(&distro, a))
+                .collect();
+            if hadron_lattice::wsl::is_wsl_bwrap_available(&distro) {
+                let bwrap_args = build_bwrap_args(
+                    &linux_cwd,
+                    &resolved_prog,
+                    &translated_args,
+                    mode,
+                    unshare_net,
+                );
+                return ("bwrap".to_string(), bwrap_args);
+            } else {
+                return (resolved_prog, translated_args);
+            }
+        }
     }
 
     match detect_sandbox_platform() {
@@ -597,6 +739,51 @@ mod tests {
             script.contains(r#"\"The code is correct\""#),
             "script must escape internal double quotes for native argv parsing, got: {script}"
         );
+    }
+
+    #[test]
+    fn test_bwrap_worktree_and_wsl_unc_resolution_never_uses_powershell() {
+        use std::path::{Path, PathBuf};
+
+        let wt = Path::new("/home/Jake/dev/my-cloud/.hadron/trees/cli-agy");
+        assert_eq!(
+            infer_repo_root_from_worktree(wt),
+            Some(PathBuf::from("/home/Jake/dev/my-cloud"))
+        );
+
+        let unc_wt = Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\my-cloud\.hadron\trees\cli-agy");
+        let bwrap_args = build_bwrap_args(
+            unc_wt,
+            "/home/Jake/.local/bin/agy",
+            &["--version".to_string()],
+            SandboxMode::WorktreeOnly,
+            false,
+        );
+        // Must normalize WSL UNC work_dir to Linux path inside bwrap
+        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.hadron/trees/cli-agy".to_string()));
+        // Must mount /run and /mnt/wsl BEFORE /etc so symlinked /etc/resolv.conf resolves
+        let run_idx = bwrap_args.iter().position(|a| a == "/run").expect("/run mounted");
+        let etc_idx = bwrap_args.iter().position(|a| a == "/etc").expect("/etc mounted");
+        assert!(run_idx < etc_idx, "/run must be mounted before /etc");
+        // Must bind user toolchains/auth and parent git/nucleus/target
+        assert!(bwrap_args.contains(&"/home/Jake/.local".to_string()));
+        assert!(bwrap_args.contains(&"/home/Jake/.gemini".to_string()));
+        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.git".to_string()));
+        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.hadron/nucleus".to_string()));
+        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/target".to_string()));
+
+        // WSL UNC path must NEVER select WindowsHarness / powershell.exe
+        let platform = detect_sandbox_platform_for_path(unc_wt);
+        assert_ne!(platform, SandboxPlatform::WindowsHarness);
+        let (prog, args) = resolve_sandboxed_command(
+            unc_wt,
+            "agy",
+            &["--print".to_string(), "ok".to_string()],
+            SandboxMode::WorktreeOnly,
+            false,
+        );
+        assert_ne!(prog, "powershell.exe");
+        assert!(!args.iter().any(|a| a.contains("powershell")));
     }
 }
 

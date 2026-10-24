@@ -1325,7 +1325,7 @@ impl super::Chamber {
                 )),
         );
 
-        let sandbox_platform = hadron_gatekeeper::detect_sandbox_platform();
+        let sandbox_platform = hadron_gatekeeper::detect_sandbox_platform_for_path(&self.path);
         let is_sandbox_on = self.prefs.sandbox_mode != hadron_lattice::SandboxMode::Off;
         let sandbox_card = settings_card_section(
             "Native Process Sandbox Engine",

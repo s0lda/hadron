@@ -871,6 +871,77 @@ mod tests {
             "check",
             "--workspace",
         ]);
+
+        // With WorktreeOnly (the default when sandbox_mode is omitted in team.json),
+        // WSL execution must use Linux bwrap (or direct WSL fallback) and NEVER powershell.exe.
+        let inv_sandboxed = CliInvocation {
+            program: "agy".to_string(),
+            args: vec!["--print".to_string(), "ok".to_string()],
+            stdin: String::new(),
+            cwd: PathBuf::from(r"\\wsl.localhost\Ubuntu-22.04\home\user\project\.hadron\trees\cli-agy"),
+            env: RedactedEnv::default(),
+            stream: None,
+            sandbox: hadron_gatekeeper::SandboxMode::WorktreeOnly,
+        };
+        let (s_prog, s_args) = inv_sandboxed.resolve_execution_command();
+        assert_eq!(s_prog, "wsl.exe");
+        assert_eq!(&s_args[0..5], &[
+            "-d",
+            "Ubuntu-22.04",
+            "--cd",
+            "/home/user/project/.hadron/trees/cli-agy",
+            "--exec",
+        ]);
+        assert!(
+            !s_args.iter().any(|a| a.contains("powershell")),
+            "WSL sandboxed invocation must never wrap in powershell.exe: {s_args:?}"
+        );
+        assert!(
+            s_args.contains(&"agy".to_string()),
+            "WSL sandboxed invocation must include target program: {s_args:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_runner_executes_worktree_in_bwrap_sandbox() {
+        if !hadron_gatekeeper::is_bwrap_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path();
+        let git_dir = repo_root.join(".git");
+        let nucleus_dir = repo_root.join(".hadron/nucleus");
+        let wt_dir = repo_root.join(".hadron/trees/cli-agy");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::create_dir_all(&nucleus_dir).unwrap();
+        std::fs::create_dir_all(&wt_dir).unwrap();
+        std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(repo_root.join("parent_secret.txt"), "parent-only").unwrap();
+
+        let res = ProcessRunner
+            .run(CliInvocation {
+                program: "sh".into(),
+                args: vec![
+                    "-c".into(),
+                    format!(
+                        "cat {}/HEAD && echo wt-ok > inside.txt && cat inside.txt && (ls {}/parent_secret.txt 2>/dev/null && echo LEAK || echo ISOLATED)",
+                        git_dir.display(),
+                        repo_root.display()
+                    ),
+                ],
+                stdin: String::new(),
+                cwd: wt_dir.clone(),
+                env: RedactedEnv::default(),
+                stream: None,
+                sandbox: hadron_gatekeeper::SandboxMode::WorktreeOnly,
+            })
+            .await
+            .expect("bwrap sandboxed worktree run should succeed");
+        assert!(res.stdout.contains("ref: refs/heads/main"));
+        assert!(res.stdout.contains("wt-ok"));
+        assert!(res.stdout.contains("ISOLATED"));
+        assert!(wt_dir.join("inside.txt").exists());
     }
 
     #[cfg(unix)]

@@ -219,11 +219,15 @@ pub fn strip_wsl_noise(raw: &str) -> String {
 }
 
 /// Resolve the full path of `program` inside `distro` using the user's login `PATH`
-/// (including `$HOME/.local/bin`, `$HOME/.cargo/bin`, `$HOME/.gemini/antigravity-cli/bin`),
-/// or return `None` if `program` is not installed inside `distro`.
+/// (including `$HOME/.nvm/versions/node/*/bin`, `$HOME/.local/bin`, `$HOME/.cargo/bin`,
+/// `$HOME/.gemini/antigravity-cli/bin`, `$HOME/.grok/bin`, `$HOME/.bun/bin`, `$HOME/.deno/bin`,
+/// `$HOME/.volta/bin`, `/snap/bin`), or return `None` if `program` is not installed inside `distro`.
 ///
 /// Results are cached per `(distro, program)` for the lifetime of the process.
 pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
+    if program.starts_with('/') {
+        return Some(program.to_string());
+    }
     #[cfg(windows)]
     {
         use std::collections::HashMap;
@@ -245,7 +249,7 @@ pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
                 "--exec",
                 "sh",
                 "-c",
-                "export PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.gemini/antigravity-cli/bin:$PATH\"; command -v \"$1\"",
+                "NVM_BIN=$(ls -d \"$HOME\"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -n 1); export PATH=\"${NVM_BIN:+$NVM_BIN:}$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.gemini/antigravity-cli/bin:$HOME/.grok/bin:$HOME/.bun/bin:$HOME/.deno/bin:$HOME/.volta/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin\"; command -v \"$1\"",
                 "sh",
                 program,
             ])
@@ -254,7 +258,7 @@ pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
             .ok()
             .filter(|o| o.status.success())
             .and_then(|o| decode_wsl_output(&o.stdout).into_iter().next())
-            .filter(|s| s.starts_with('/'));
+            .filter(|s| s.starts_with('/') && !s.starts_with("/mnt/"));
 
         map.lock().unwrap().insert(key, resolved.clone());
         resolved
@@ -263,6 +267,64 @@ pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
     {
         let _ = distro;
         Some(program.to_string())
+    }
+}
+
+/// Check whether Bubblewrap (`bwrap`) is installed and functional inside `distro`.
+///
+/// Cached per `distro` for the lifetime of the process.
+pub fn is_wsl_bwrap_available(distro: &str) -> bool {
+    #[cfg(windows)]
+    {
+        use std::collections::HashMap;
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+        use std::sync::{Mutex, OnceLock};
+
+        static CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+        let map = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        if let Some(&cached) = map.lock().unwrap().get(distro) {
+            return cached;
+        }
+
+        let Some(bwrap_path) = resolve_wsl_program_path(distro, "bwrap") else {
+            map.lock().unwrap().insert(distro.to_string(), false);
+            return false;
+        };
+
+        let ok = Command::new("wsl.exe")
+            .args([
+                "-d",
+                distro,
+                "--exec",
+                &bwrap_path,
+                "--ro-bind",
+                "/",
+                "/",
+                "true",
+            ])
+            .creation_flags(0x08000000)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        map.lock().unwrap().insert(distro.to_string(), ok);
+        ok
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = distro;
+        use std::process::Command;
+        use std::sync::OnceLock;
+        static AVAILABLE: OnceLock<bool> = OnceLock::new();
+        *AVAILABLE.get_or_init(|| {
+            Path::new("/usr/bin/bwrap").exists()
+                && Command::new("/usr/bin/bwrap")
+                    .args(["--ro-bind", "/", "/", "true"])
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+        })
     }
 }
 
@@ -330,14 +392,42 @@ pub fn infer_linux_home_from_path(linux_path: &Path) -> Option<String> {
     }
 }
 
-/// Build an augmented Linux `PATH` string that prepends the user's `~/.local/bin`,
-/// `~/.cargo/bin`, and `~/.gemini/antigravity-cli/bin` so `wsl.exe --exec` can find user-installed
-/// tools (like `agy`, `cargo`, `claude`) without invoking a shell that mangles arguments.
+/// Build an augmented Linux `PATH` string that prepends the user's `~/.nvm/versions/node/*/bin`
+/// (when discoverable), `~/.local/bin`, `~/.cargo/bin`, `~/.gemini/antigravity-cli/bin`,
+/// `~/.grok/bin`, `~/.bun/bin`, `~/.deno/bin`, and `~/.volta/bin` so `wsl.exe --exec` and `bwrap`
+/// can find user-installed tools (like `agy`, `cargo`, `claude`, `codex`, `copilot`, `node`, `npx`)
+/// without invoking a shell that mangles arguments.
 pub fn wsl_user_path_env(linux_cwd: &Path) -> Option<String> {
     let home = infer_linux_home_from_path(linux_cwd)?;
-    Some(format!(
-        "{home}/.local/bin:{home}/.cargo/bin:{home}/.gemini/antigravity-cli/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    ))
+    let mut dirs = Vec::new();
+    let nvm_nodes = Path::new(&home).join(".nvm/versions/node");
+    if let Ok(entries) = std::fs::read_dir(&nvm_nodes) {
+        let mut versions: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path().join("bin")))
+            .filter(|p| p.is_dir())
+            .collect();
+        versions.sort();
+        for v in versions.into_iter().rev() {
+            dirs.push(v.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    dirs.extend([
+        format!("{home}/.local/bin"),
+        format!("{home}/.cargo/bin"),
+        format!("{home}/.gemini/antigravity-cli/bin"),
+        format!("{home}/.grok/bin"),
+        format!("{home}/.bun/bin"),
+        format!("{home}/.deno/bin"),
+        format!("{home}/.volta/bin"),
+        "/usr/local/sbin".to_string(),
+        "/usr/local/bin".to_string(),
+        "/usr/sbin".to_string(),
+        "/usr/bin".to_string(),
+        "/sbin".to_string(),
+        "/bin".to_string(),
+        "/snap/bin".to_string(),
+    ]);
+    Some(dirs.join(":"))
 }
 
 /// Build a `WSLENV` value that instructs `wsl.exe` on Windows to forward the given
