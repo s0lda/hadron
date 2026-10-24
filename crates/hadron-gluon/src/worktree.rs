@@ -838,14 +838,17 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// `.hadron/{nucleus,docs,skills,preons}` path instead of `<repo_root>/.hadron/`,
 /// rescue those shared artifacts up into `<repo_root>/.hadron/` and remove the nested
 /// `<worktree>/.hadron/` directory so it is neither stranded nor committed to git.
-pub fn reconcile_worktree_dot_hadron(wt_path: &Path) {
+pub fn reconcile_worktree_dot_hadron(wt_path: &Path) -> anyhow::Result<()> {
     let nested_hadron = wt_path.join(".hadron");
-    let Ok(meta) = std::fs::symlink_metadata(&nested_hadron) else {
-        return;
+    let meta = match std::fs::symlink_metadata(&nested_hadron) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e).with_context(|| format!("stat-ing {}", nested_hadron.display())),
     };
     if meta.file_type().is_symlink() {
-        let _ = std::fs::remove_file(&nested_hadron);
-        return;
+        std::fs::remove_file(&nested_hadron)
+            .with_context(|| format!("removing symlink {}", nested_hadron.display()))?;
+        return Ok(());
     }
     let Some(repo_root) = wt_path
         .parent()
@@ -854,18 +857,22 @@ pub fn reconcile_worktree_dot_hadron(wt_path: &Path) {
         .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some(".hadron"))
         .and_then(|p| p.parent())
     else {
-        return;
+        return Ok(());
     };
     let shared_hadron = repo_root.join(".hadron");
     for sub in ["nucleus", "docs", "skills", "preons"] {
         let src = nested_hadron.join(sub);
         if let Ok(sub_meta) = std::fs::symlink_metadata(&src) {
             if sub_meta.file_type().is_dir() {
-                let _ = copy_dir_recursive(&src, &shared_hadron.join(sub));
+                copy_dir_recursive(&src, &shared_hadron.join(sub)).with_context(|| {
+                    format!("reconciling {} into {}", src.display(), shared_hadron.display())
+                })?;
             }
         }
     }
-    let _ = std::fs::remove_dir_all(&nested_hadron);
+    std::fs::remove_dir_all(&nested_hadron)
+        .with_context(|| format!("removing reconciled {}", nested_hadron.display()))?;
+    Ok(())
 }
 
 /// End the turn on a commit. `Ok(None)` = nothing to commit — a pure-conversation
@@ -873,7 +880,7 @@ pub fn reconcile_worktree_dot_hadron(wt_path: &Path) {
 /// its own work. Callers must therefore compare HEAD rather than assume *we* were
 /// the ones who committed.
 pub fn commit_turn(wt: &Worktree, message: &str) -> anyhow::Result<Option<String>> {
-    reconcile_worktree_dot_hadron(&wt.path);
+    reconcile_worktree_dot_hadron(&wt.path)?;
     if !is_dirty(&wt.path)? {
         return Ok(None);
     }
