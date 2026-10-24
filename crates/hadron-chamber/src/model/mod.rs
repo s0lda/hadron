@@ -235,19 +235,14 @@ pub fn default_mode_seed(default_mode: Mode) -> Option<Event> {
         .then(|| Event::new(Actor::Human, None, Kind::ModeSet { mode: default_mode }))
 }
 
-/// The reboots `/clear` must append after truncating the field: one per resident
-/// (ACP) quark, so every live agent re-boots into the fresh session instead of
-/// carrying pre-clear context. The field-is-session model means a cleared field
-/// needs new sessions.
-///
-/// Only `Transport::Acp` quarks are resident and hold something to reap — a one-shot
-/// CLI quark keeps nothing between turns, so it is skipped (a Reboot to it is a no-op
-/// the daemon would service pointlessly). SSOT for the "restart residents on clear"
-/// rule, kept here (pure, tested) so the GPUI command handler is a thin caller.
+/// The reboots `/clear` must append after truncating the field: one per quark on the
+/// roster, so every resident ACP agent re-boots into the fresh session AND any mid-turn
+/// CLI or HTTP quark is immediately aborted by `Engine::service_reboots` instead of
+/// continuing its pre-clear task in the background. For an idle CLI quark, servicing
+/// `Kind::Reboot` is a fast no-op (`reset_session()` + `live::clear`).
 pub fn post_clear_reboots(roster: &[RosterRow]) -> Vec<Event> {
     roster
         .iter()
-        .filter(|r| matches!(r.transport, hadron_lattice::Transport::Acp))
         .map(|r| Event::new(Actor::Human, Some(QuarkId::new(&r.id)), Kind::Reboot))
         .collect()
 }

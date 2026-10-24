@@ -5,17 +5,7 @@ impl Chamber {
     /// Render the general Nucleus Invariants & Context Breadcrumb Bar.
     /// Displays active feature map rows, invariants, lessons, and active plan context.
     pub(super) fn breadcrumb_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let repo = crate::vcs::repo_root_of(&self.path);
-        let nucleus_dir = repo.join(".hadron").join("nucleus");
-
-        let feat_file = nucleus_dir.join("features.md");
-        let feat_content = std::fs::read_to_string(&feat_file).ok();
-
-        let inv_file = nucleus_dir.join("invariants").join("always.md");
-        let inv_content = std::fs::read_to_string(&inv_file).ok();
-
-        let index_file = nucleus_dir.join("index.md");
-        let index_content = std::fs::read_to_string(&index_file).ok();
+        let (ref feat_content, ref inv_content, ref index_content) = self.cached_nucleus_docs;
 
         let summary = BreadcrumbSummary::from_nucleus(
             feat_content.as_deref(),
@@ -34,17 +24,7 @@ impl Chamber {
         content: &str,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let repo = crate::vcs::repo_root_of(&self.path);
-        let nucleus_dir = repo.join(".hadron").join("nucleus");
-
-        let feat_file = nucleus_dir.join("features.md");
-        let feat_content = std::fs::read_to_string(&feat_file).ok();
-
-        let inv_file = nucleus_dir.join("invariants").join("always.md");
-        let inv_content = std::fs::read_to_string(&inv_file).ok();
-
-        let index_file = nucleus_dir.join("index.md");
-        let index_content = std::fs::read_to_string(&index_file).ok();
+        let (ref feat_content, ref inv_content, ref index_content) = self.cached_nucleus_docs;
 
         let summary = BreadcrumbSummary::from_plan(
             rel_path,

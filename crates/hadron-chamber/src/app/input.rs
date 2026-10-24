@@ -80,9 +80,16 @@ impl super::Chamber {
         for (cmd, args) in &cmds {
             if cmd != "clear" {
                 let cmd_ev = slash_command_event(cmd, args);
-                if let Err(e) = io::append_event(&self.path, &cmd_ev) {
-                    eprintln!("chamber: failed to append command event: {e}");
-                }
+                let path = self.path.clone();
+                let cmd_ev_bg = cmd_ev.clone();
+                cx.background_executor()
+                    .spawn(async move {
+                        if let Err(e) = io::append_event(&path, &cmd_ev_bg) {
+                            eprintln!("chamber: failed to append command event: {e}");
+                        }
+                    })
+                    .detach();
+                self.events.push(cmd_ev);
             }
             self.handle_chat_command(cmd, args, window, cx);
         }
@@ -93,7 +100,7 @@ impl super::Chamber {
                 // least one command ran): clear the box and stop before posting nothing.
                 input.update(cx, |state, cx| state.set_value("", window, cx));
                 if !cmds.is_empty() && !cmds.iter().any(|(c, _)| c == "clear") {
-                    let events = io::read_events(&self.path).unwrap_or_default();
+                    let events = self.events.clone();
                     self.sync_view(&events);
                     cx.notify();
                 }
@@ -106,19 +113,11 @@ impl super::Chamber {
         // several quarks ("@opus do X and @agy do Y") — each is fanned out in turn.
         // (Stripping a single leading mention into `to` would drop the others.)
         let ev = Event::new(Actor::Human, None, Kind::Message { body: text.clone() });
-        if let Err(e) = io::append_event(&self.path, &ev) {
-            eprintln!("chamber: failed to append steering message: {e}");
-            return;
-        }
-
         self.audio_manager.trigger_cue(crate::app::audio::AudioCue::MessageSent);
         input.update(cx, |state, cx| state.set_value("", window, cx));
-        let events = io::read_events(&self.path).unwrap_or_default();
-        self.sync_view(&events);
+        self.append_and_reload(ev, cx);
 
         // Task 7 Step 2: Inform the human if they typed at a mid-turn CLI seat that cannot be interrupted
-        let live_dir = hadron_lattice::live::live_dir(&self.path);
-        let now = chrono::Utc::now();
         let line_mentions = crate::text::line_start_mentions(&text);
 
         let mut uninterruptible_notices = Vec::new();
@@ -126,8 +125,13 @@ impl super::Chamber {
             if r.transport == hadron_lattice::Transport::Cli
                 && r.flavor != Some(hadron_lattice::Flavor::Orchestrator)
             {
-                let is_busy = matches!(r.state, QuarkState::Excited | QuarkState::Thinking)
-                    || hadron_lattice::live::read(&live_dir, &hadron_lattice::QuarkId::new(&r.id), now).is_some();
+                let has_live = self
+                    .last_live_activities
+                    .get(&r.id)
+                    .and_then(|a| a.as_ref())
+                    .is_some();
+                let is_busy =
+                    matches!(r.state, QuarkState::Excited | QuarkState::Thinking) || has_live;
 
                 if is_busy {
                     let is_addressed = line_mentions.iter().any(|m| {

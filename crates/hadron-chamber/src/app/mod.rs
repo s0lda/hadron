@@ -628,6 +628,12 @@ struct Chamber {
     pub(super) workspace_mode: WorkspaceMode,
     pub(super) selector_search: Entity<InputState>,
     pub(super) project_switcher_open: bool,
+    pub(super) events: Vec<Event>,
+    pub(super) cached_plan_paths: Vec<(std::time::SystemTime, String)>,
+    pub(super) cached_active_plan_content: Option<(String, String)>,
+    pub(super) cached_nucleus_docs: (Option<String>, Option<String>, Option<String>),
+    pub(super) visualizer_last_tick: Option<std::time::Instant>,
+    pub(super) visualizer_hit_nodes: std::rc::Rc<std::cell::RefCell<Vec<(String, f32, f32)>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -1339,6 +1345,19 @@ impl Chamber {
         })
         .detach();
 
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(33))
+                .await;
+            if this
+                .update(cx, |chamber, cx| chamber.pump_visualizer(cx))
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+
         // Precompute the message indices for the virtualized chat.
         let chat_message_ixs = model::chat_message_indices(&view.messages);
 
@@ -1402,11 +1421,25 @@ impl Chamber {
             })
             .collect();
 
-        let events = if workspace_mode == WorkspaceMode::Selector {
+        let events = if workspace_mode == WorkspaceMode::Selector || is_wsl {
             Vec::new()
         } else {
             io::read_events(&path).unwrap_or_default()
         };
+        let (cached_plan_paths, cached_nucleus_docs) =
+            if workspace_mode == WorkspaceMode::Selector || is_wsl {
+                (Vec::new(), (None, None, None))
+            } else {
+                let nucleus_dir = repo_root.join(".hadron").join("nucleus");
+                (
+                    reload::scan_all_plan_paths(&repo_root),
+                    (
+                        std::fs::read_to_string(nucleus_dir.join("features.md")).ok(),
+                        std::fs::read_to_string(nucleus_dir.join("invariants").join("always.md")).ok(),
+                        std::fs::read_to_string(nucleus_dir.join("index.md")).ok(),
+                    ),
+                )
+            };
         let alias_map: std::collections::HashMap<String, hadron_lattice::QuarkId> = view
             .roster
             .iter()
@@ -1645,39 +1678,49 @@ impl Chamber {
             last_live_activities: std::collections::HashMap::new(),
             last_gate_activities: Vec::new(),
             last_gluon_running: true,
-            nucleus_over_budget: hadron_gluon::nucleus_status::index_over_budget(
-                &repo_root,
-                nucleus_index_budget_bytes,
-            ),
+            nucleus_over_budget: if workspace_mode == WorkspaceMode::Selector || is_wsl {
+                false
+            } else {
+                hadron_gluon::nucleus_status::index_over_budget(
+                    &repo_root,
+                    nucleus_index_budget_bytes,
+                )
+            },
             gluon_stopped_notice: false,
             update_state: UpdateState::default(),
             audio_manager,
             workspace_mode,
             selector_search,
             project_switcher_open: false,
+            events,
+            cached_plan_paths,
+            cached_active_plan_content: None,
+            cached_nucleus_docs,
+            visualizer_last_tick: None,
+            visualizer_hit_nodes: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         };
-        if workspace_mode != WorkspaceMode::Selector {
+        if workspace_mode != WorkspaceMode::Selector && !is_wsl {
             chamber.update_active_plan();
-            if is_wsl {
-                let sessions_dir_bg = sessions_dir.clone();
-                cx.spawn(async move |this, cx| {
-                    let (arch, sess) = cx
-                        .background_executor()
-                        .spawn(async move {
-                            (
-                                crate::model::load_archived_messages(&sessions_dir_bg),
-                                crate::model::list_sessions(&sessions_dir_bg),
-                            )
-                        })
-                        .await;
-                    let _ = this.update(cx, |chamber, cx| {
-                        chamber.archived_messages = arch;
-                        chamber.sessions = sess;
-                        cx.notify();
-                    });
-                })
-                .detach();
-            }
+        }
+        if workspace_mode != WorkspaceMode::Selector && is_wsl {
+            let sessions_dir_bg = sessions_dir.clone();
+            cx.spawn(async move |this, cx| {
+                let (arch, sess) = cx
+                    .background_executor()
+                    .spawn(async move {
+                        (
+                            crate::model::load_archived_messages(&sessions_dir_bg),
+                            crate::model::list_sessions(&sessions_dir_bg),
+                        )
+                    })
+                    .await;
+                let _ = this.update(cx, |chamber, cx| {
+                    chamber.archived_messages = arch;
+                    chamber.sessions = sess;
+                    cx.notify();
+                });
+            })
+            .detach();
         }
         chamber.check_for_updates(cx);
         chamber
@@ -2095,6 +2138,12 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
         //   alt-pageup/pagedn  right-rail tabs     (Terminal / Files / Changes / Plan)
         //   alt-up/down        Stats time window
         cx.bind_keys(default_key_bindings());
+        cx.on_window_closed(|cx, _window_id| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
 
         // Build window options here (needs `&App`, not the async cx below).
         //

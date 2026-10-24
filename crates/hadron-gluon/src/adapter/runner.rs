@@ -135,6 +135,42 @@ pub fn reply_to_outcome(result: &CliResult) -> TurnOutcome {
 /// real processes); covered by Task 6's `#[ignore]`d live tests.
 pub struct ProcessRunner;
 
+/// Ensures a spawned CLI subprocess and its entire process group are unregistered
+/// and terminated if the enclosing future is dropped before `wait()` completes
+/// (for example when `/clear`, `/reboot`, `CANCEL_DEADLINE`, or `until_silent`
+/// aborts an in-flight turn task).
+struct ChildProcessGuard {
+    pid: Option<u32>,
+    armed: bool,
+}
+
+impl ChildProcessGuard {
+    fn new(pid: Option<u32>) -> Self {
+        if let Some(p) = pid {
+            crate::proc::register(p);
+        }
+        Self { pid, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+        if let Some(p) = self.pid {
+            crate::proc::unregister(p);
+        }
+    }
+}
+
+impl Drop for ChildProcessGuard {
+    fn drop(&mut self) {
+        if let Some(p) = self.pid {
+            crate::proc::unregister(p);
+            if self.armed {
+                hadron_lattice::sys::process::kill_process_group(p);
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl CliRunner for ProcessRunner {
     async fn run(&self, inv: CliInvocation) -> anyhow::Result<CliResult> {
@@ -182,6 +218,7 @@ impl CliRunner for ProcessRunner {
             child_cmd.env("WSLENV", wslenv);
         }
 
+        child_cmd.kill_on_drop(true);
         child_cmd.as_std_mut().set_process_group();
 
         let mut child = child_cmd
@@ -202,26 +239,11 @@ impl CliRunner for ProcessRunner {
                 }
             })?;
 
-        let pid = child.id();
-        if let Some(pid) = pid {
-            crate::proc::register(pid);
-        }
+        let mut child_guard = ChildProcessGuard::new(child.id());
 
         if let Some(mut stdin) = child.stdin.take() {
-            let res = stdin.write_all(inv.stdin.as_bytes()).await;
-            if res.is_err() {
-                if let Some(pid) = pid {
-                    crate::proc::unregister(pid);
-                }
-            }
-            res?;
-            let res = stdin.shutdown().await;
-            if res.is_err() {
-                if let Some(pid) = pid {
-                    crate::proc::unregister(pid);
-                }
-            }
-            res?; // close stdin so the CLI proceeds
+            stdin.write_all(inv.stdin.as_bytes()).await?;
+            stdin.shutdown().await?; // close stdin so the CLI proceeds
         }
 
         if let Some(stream_spec) = &inv.stream {
@@ -306,9 +328,7 @@ impl CliRunner for ProcessRunner {
             };
             let ((stdout_accumulated, usage), stderr) = tokio::join!(stdout_fut, stderr_fut);
             let status = child.wait().await?;
-            if let Some(pid) = pid {
-                crate::proc::unregister(pid);
-            }
+            child_guard.disarm();
             if !status.success() {
                 let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".to_string());
                 let detail = hadron_lattice::wsl::strip_wsl_noise(&stderr);
@@ -322,9 +342,7 @@ impl CliRunner for ProcessRunner {
             Ok(CliResult { stdout: stdout_accumulated, exit: status.code().unwrap_or(0), usage })
         } else {
             let output_res = child.wait_with_output().await;
-            if let Some(pid) = pid {
-                crate::proc::unregister(pid);
-            }
+            child_guard.disarm();
             let output = output_res?;
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -392,6 +410,7 @@ impl CliRunner for ProcessRunner {
             child_cmd.env("WSLENV", wslenv);
         }
 
+        child_cmd.kill_on_drop(true);
         child_cmd.as_std_mut().set_process_group();
 
         let mut child = child_cmd
@@ -408,26 +427,11 @@ impl CliRunner for ProcessRunner {
                 }
             })?;
 
-        let pid = child.id();
-        if let Some(pid) = pid {
-            crate::proc::register(pid);
-        }
+        let mut child_guard = ChildProcessGuard::new(child.id());
 
         if let Some(mut stdin) = child.stdin.take() {
-            let res = stdin.write_all(inv.stdin.as_bytes()).await;
-            if res.is_err() {
-                if let Some(pid) = pid {
-                    crate::proc::unregister(pid);
-                }
-            }
-            res?;
-            let res = stdin.shutdown().await;
-            if res.is_err() {
-                if let Some(pid) = pid {
-                    crate::proc::unregister(pid);
-                }
-            }
-            res?;
+            stdin.write_all(inv.stdin.as_bytes()).await?;
+            stdin.shutdown().await?;
         }
 
         let stderr_fut = async {
@@ -451,9 +455,7 @@ impl CliRunner for ProcessRunner {
         };
         let (stdout_accumulated, stderr) = tokio::join!(stdout_fut, stderr_fut);
         let status = child.wait().await?;
-        if let Some(pid) = pid {
-            crate::proc::unregister(pid);
-        }
+        child_guard.disarm();
         if !status.success() {
             let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".to_string());
             let detail = hadron_lattice::wsl::strip_wsl_noise(&stderr);
@@ -990,6 +992,67 @@ mod tests {
             "run_streaming must include stderr in error message, got: {msg2}"
         );
         assert!(msg2.contains('4'), "exit code should surface: {msg2}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_runner_drop_kills_child_process_group() {
+        let (pid_tx, pid_rx) = tokio::sync::oneshot::channel::<u32>();
+        let mut pid_tx = Some(pid_tx);
+        let handle = tokio::spawn(async move {
+            ProcessRunner
+                .run_streaming(
+                    CliInvocation {
+                        program: "sh".into(),
+                        // Spawn a background sleep child inside the shell's process group and print its PID.
+                        args: vec![
+                            "-c".into(),
+                            "sleep 60 & echo $!; wait".into(),
+                        ],
+                        stdin: String::new(),
+                        cwd: std::env::temp_dir(),
+                        env: RedactedEnv::default(),
+                        stream: None,
+                        sandbox: hadron_gatekeeper::SandboxMode::Off,
+                    },
+                    &mut |line| {
+                        if let Ok(pid) = line.trim().parse::<u32>() {
+                            if let Some(tx) = pid_tx.take() {
+                                let _ = tx.send(pid);
+                            }
+                        }
+                    },
+                )
+                .await
+        });
+
+        let grandchild_pid = tokio::time::timeout(std::time::Duration::from_secs(5), pid_rx)
+            .await
+            .expect("timed out waiting for grandchild pid")
+            .expect("pid channel closed");
+        let pid_alive = |pid: u32| unsafe { libc::kill(pid as i32, 0) == 0 };
+        assert!(
+            pid_alive(grandchild_pid),
+            "grandchild sleep should be alive while turn is running"
+        );
+
+        // Simulate `/clear` or `/reboot` aborting the in-flight CLI turn task.
+        handle.abort();
+        let _ = handle.await;
+
+        // Wait briefly for the kernel to reap the killed process group.
+        let mut dead = false;
+        for _ in 0..30 {
+            if !pid_alive(grandchild_pid) {
+                dead = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(
+            dead,
+            "aborting the ProcessRunner task must kill the entire child process group (grandchild pid {grandchild_pid} still alive)"
+        );
     }
 }
 

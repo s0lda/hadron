@@ -7,6 +7,8 @@ description: Use when migrating or absorbing foreign assistant configurations, s
 
 Universal procedure for discovering, extracting, distilling, and unifying foreign AI assistant configurations into Hadron's single source of truth (`.hadron/`).
 
+> **CRITICAL WORKTREE SSOT RULE:** When running inside a quark worktree (`<repo_root>/.hadron/trees/<quark-id>`), you MUST write all absorbed `.hadron/` artifacts (`nucleus/`, `skills/`, `docs/specs/`, `docs/plans/`, `preons/`) to the **shared parent repository root** `<repo_root>/.hadron/` (resolve `<repo_root>` by stripping `/.hadron/trees/<quark-id>` from `pwd`), NEVER to a worktree-local `<worktree>/.hadron/` directory. Hadron's engine and Chamber Settings load skills, preons, plans, and nucleus strictly from `<repo_root>/.hadron/`.
+
 ## Phase 1: Dynamic Discovery (Universal Repo Scan)
 
 Do NOT rely solely on a fixed list of paths. Perform a comprehensive workspace search to discover all foreign assistant context:

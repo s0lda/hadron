@@ -236,17 +236,48 @@ pub struct ProjectedQuarkNode {
 }
 
 impl super::Chamber {
+    pub(crate) fn has_excited_visualizer_nodes(&self) -> bool {
+        self.view.roster.iter().any(|row| {
+            let activity = self
+                .last_live_activities
+                .get(&row.id)
+                .and_then(|a| a.as_ref());
+            let has_active_task = self.view.tasks.iter().any(|t| {
+                (t.to == row.id || t.from == row.id) && t.state == TaskState::Working
+            });
+            activity.is_some() || has_active_task
+        })
+    }
+
+    pub(crate) fn pump_visualizer(&mut self, cx: &mut Context<Self>) {
+        if self.workspace_mode == WorkspaceMode::Selector
+            || self.prefs.inspector_collapsed
+            || self.right_rail_tab != RightRailTab::Visualizer
+        {
+            self.visualizer_last_tick = None;
+            return;
+        }
+        let now = std::time::Instant::now();
+        let dt = self
+            .visualizer_last_tick
+            .map(|prev| now.saturating_duration_since(prev).as_secs_f32().min(0.1))
+            .unwrap_or(0.033);
+        self.visualizer_last_tick = Some(now);
+
+        if self.visualizer_auto_spin {
+            self.visualizer_yaw = (self.visualizer_yaw + dt * 0.28) % (2.0 * PI);
+            cx.notify();
+        } else if self.has_excited_visualizer_nodes() {
+            cx.notify();
+        }
+    }
+
     /// Render the interactive 3D Cosmic Sphere Topology visualizer tab.
     pub(super) fn visualizer_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let now = chrono::Utc::now();
         let time_secs = (now.timestamp_millis() % 1_000_000) as f32 / 1000.0;
 
-        // Auto-rotation angle progression
-        let yaw = if self.visualizer_auto_spin {
-            self.visualizer_yaw + time_secs * 0.28
-        } else {
-            self.visualizer_yaw
-        };
+        let yaw = self.visualizer_yaw;
         let pitch = self.visualizer_pitch;
 
         // Precompute rotation matrices for the frame
@@ -457,6 +488,7 @@ impl super::Chamber {
                     .child(if auto_spin { "Auto-Spin: ON" } else { "Auto-Spin: OFF" })
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.visualizer_auto_spin = !this.visualizer_auto_spin;
+                        this.visualizer_last_tick = Some(std::time::Instant::now());
                         cx.notify();
                     })),
             )
@@ -582,6 +614,7 @@ impl super::Chamber {
 
         let sphere_radius = base_radius;
         let nodes_for_canvas = nodes.clone();
+        let hit_nodes_for_canvas = self.visualizer_hit_nodes.clone();
 
         // 3D Canvas Rendering
         let canvas_elem = canvas(
@@ -853,6 +886,13 @@ impl super::Chamber {
                 // Sort back-to-front for correct alpha blending and rendering
                 projected_nodes.sort_by(|a, b| a.z_depth.partial_cmp(&b.z_depth).unwrap_or(std::cmp::Ordering::Equal));
 
+                if let Ok(mut hit_nodes) = hit_nodes_for_canvas.try_borrow_mut() {
+                    hit_nodes.clear();
+                    for node in &projected_nodes {
+                        hit_nodes.push((node.id.clone(), node.screen_x, node.screen_y));
+                    }
+                }
+
                 // -------------------------------------------------------------
                 // 7. Active Delegation Streams (In-flight tasks only)
                 // -------------------------------------------------------------
@@ -1002,13 +1042,13 @@ impl super::Chamber {
                     let mut clicked_quark: Option<String> = None;
                     let mut min_dist_sq = 24.0 * 24.0; // 24px hit threshold
 
-                    for node in &nodes {
-                        let dx = node.screen_x - click_x;
-                        let dy = node.screen_y - click_y;
+                    for (id, sx, sy) in this.visualizer_hit_nodes.borrow().iter() {
+                        let dx = *sx - click_x;
+                        let dy = *sy - click_y;
                         let d_sq = dx * dx + dy * dy;
                         if d_sq < min_dist_sq {
                             min_dist_sq = d_sq;
-                            clicked_quark = Some(node.id.clone());
+                            clicked_quark = Some(id.clone());
                         }
                     }
 

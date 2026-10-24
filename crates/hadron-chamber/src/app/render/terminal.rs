@@ -864,17 +864,27 @@ impl super::Chamber {
 
                 // The active plan is the plan tracked by Chamber reload, or resolved from
                 // recent field messages and `.hadron/docs/plans/` directory scan.
-                let active_plan_path = self
-                    .last_plan_path
-                    .clone()
-                    .or_else(|| crate::app::reload::resolve_active_plan(&repo, &self.view.messages));
+                let active_plan_path = self.last_plan_path.clone().or_else(|| {
+                    crate::app::reload::resolve_active_plan_with_plans(
+                        &repo,
+                        &self.view.messages,
+                        &self.cached_plan_paths,
+                    )
+                });
 
-                // Resolve the referenced plan to its on-disk content in one step; either
-                // the reference or the file may be absent (a plan can be named before it
-                // is written, or removed after).
+                // Resolve the referenced plan to its cached or on-disk content in one step;
+                // either the reference or the file may be absent.
                 let resolved = active_plan_path.and_then(|rel_path| {
-                    crate::sys::read_workspace_file(&repo, &rel_path)
-                        .map(|content| (rel_path, content))
+                    match &self.cached_active_plan_content {
+                        Some((cached_rel, cached_body)) if cached_rel == &rel_path => {
+                            Some((rel_path, cached_body.clone()))
+                        }
+                        _ if !crate::wsl::is_wsl_unc_path(&repo) => {
+                            crate::sys::read_workspace_file(&repo, &rel_path)
+                                .map(|content| (rel_path, content))
+                        }
+                        _ => None,
+                    }
                 });
 
                 let plan_element = match resolved {
@@ -892,7 +902,10 @@ impl super::Chamber {
                         list = list.child(self.breadcrumb_bar_for_plan(&rel_path, &content, cx));
 
                         // Sibling and suite plans across .hadron/docs/plans/
-                        let dropdown_items = crate::app::reload::scan_plan_dropdown_items(&repo, &rel_path);
+                        let dropdown_items = crate::app::reload::build_plan_dropdown_items(
+                            &self.cached_plan_paths,
+                            &rel_path,
+                        );
 
                         // Header card with plan path, sibling switcher, and progress
                         let mut header_card = v_flex()
@@ -1351,7 +1364,10 @@ impl super::Chamber {
                         list.into_any_element()
                     }
                     None => {
-                        let dropdown_items = crate::app::reload::scan_plan_dropdown_items(&repo, "");
+                        let dropdown_items = crate::app::reload::build_plan_dropdown_items(
+                            &self.cached_plan_paths,
+                            "",
+                        );
                         let total_selectable_plans = dropdown_items
                             .iter()
                             .filter(|item| matches!(item, crate::app::reload::PlanDropdownItem::Plan { .. }))

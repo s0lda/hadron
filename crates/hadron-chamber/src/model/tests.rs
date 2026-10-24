@@ -402,11 +402,10 @@
         assert_eq!(std::fs::read_to_string(&ledger_file).unwrap(), "fake-ledger-data");
     }
 
-    /// `/clear` restarts every resident agent so the fresh field is a fresh session:
-    /// one `Kind::Reboot` per ACP quark, addressed to it; CLI quarks (nothing resident)
-    /// are skipped.
+    /// `/clear` emits a `Kind::Reboot` for every quark on the roster (both ACP and CLI)
+    /// so resident ACP sessions reset AND any in-flight CLI/HTTP turns are aborted immediately.
     #[test]
-    fn post_clear_reboots_one_per_resident_quark_skipping_cli() {
+    fn post_clear_reboots_one_per_quark_including_cli() {
         use hadron_lattice::Transport;
         let roster = vec![
             roster_entry("opus", Transport::Acp),
@@ -416,14 +415,17 @@
 
         let reboots = post_clear_reboots(&roster);
 
-        assert_eq!(reboots.len(), 2, "one reboot per ACP quark, none for the CLI quark");
+        assert_eq!(reboots.len(), 3, "one reboot per quark on the roster (ACP and CLI)");
         assert!(reboots.iter().all(|e| matches!(e.kind, Kind::Reboot)));
         assert!(reboots.iter().all(|e| e.from == Actor::Human));
         let targets: Vec<String> = reboots
             .iter()
             .filter_map(|e| e.to.as_ref().map(|q| q.as_str().to_string()))
             .collect();
-        assert_eq!(targets, vec!["opus".to_string(), "gemini".to_string()]);
+        assert_eq!(
+            targets,
+            vec!["opus".to_string(), "agy".to_string(), "gemini".to_string()]
+        );
     }
 
     /// An empty `model` means two different things by transport, and the roster must not

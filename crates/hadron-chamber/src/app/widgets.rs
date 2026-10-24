@@ -263,7 +263,10 @@ pub(super) fn control_button(id: &'static str, icon: IconName, is_close: bool) -
             match id {
                 "min" => window.minimize_window(),
                 "max" => window.zoom_window(),
-                _ => window.remove_window(),
+                _ => {
+                    window.remove_window();
+                    cx.quit();
+                }
             }
         })
         .child(Icon::new(icon).small())

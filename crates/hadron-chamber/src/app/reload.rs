@@ -12,6 +12,8 @@ pub(super) struct WorkspaceScan {
     pub(super) git_log_graph: Option<String>,
     pub(super) repo_health: Option<hadron_gatekeeper::RepoHealthReport>,
     pub(super) remote_tracking: Option<crate::vcs::RemoteTrackingInfo>,
+    pub(super) plan_paths: Vec<(std::time::SystemTime, String)>,
+    pub(super) nucleus_docs: (Option<String>, Option<String>, Option<String>),
 }
 
 impl WorkspaceScan {
@@ -53,6 +55,13 @@ impl WorkspaceScan {
         } else {
             None
         };
+        let plan_paths = scan_all_plan_paths(repo_root);
+        let nucleus_dir = repo_root.join(".hadron").join("nucleus");
+        let nucleus_docs = (
+            std::fs::read_to_string(nucleus_dir.join("features.md")).ok(),
+            std::fs::read_to_string(nucleus_dir.join("invariants").join("always.md")).ok(),
+            std::fs::read_to_string(nucleus_dir.join("index.md")).ok(),
+        );
         Some(Self {
             files,
             git_statuses,
@@ -63,6 +72,8 @@ impl WorkspaceScan {
             git_log_graph,
             repo_health,
             remote_tracking,
+            plan_paths,
+            nucleus_docs,
         })
     }
 }
@@ -172,6 +183,7 @@ impl super::Chamber {
     /// available-but-not-adopted catalogue quarks show greyed. The one place the view
     /// is rebuilt, so every mutation path routes through the same resolve.
     pub(super) fn reproject(&mut self, events: &[Event]) {
+        self.events = events.to_vec();
         let resolved = resolve_team(&self.team, &self.global);
         self.view = model::project_with_team(events, &resolved, &self.global);
         let alias_map: std::collections::HashMap<String, hadron_lattice::QuarkId> = self
@@ -196,7 +208,11 @@ impl super::Chamber {
 
     pub(super) fn update_active_plan(&mut self) {
         let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let all_plans = scan_all_plan_paths(&repo);
+        let is_wsl = crate::wsl::is_wsl_unc_path(&repo);
+        if self.cached_plan_paths.is_empty() && !is_wsl {
+            self.cached_plan_paths = scan_all_plan_paths(&repo);
+        }
+        let all_plans = self.cached_plan_paths.clone();
 
         let new_plan_from_msg = if let Some(start_ix) = self.manual_plan_override_at_message_len {
             if start_ix < self.view.messages.len() {
@@ -216,7 +232,7 @@ impl super::Chamber {
             self.manual_plan_override_at_message_len = None;
             Some(p)
         } else if let Some(ref manual) = self.last_plan_path {
-            if repo.join(manual).is_file() {
+            if all_plans.iter().any(|(_, p)| p == manual) || (!is_wsl && repo.join(manual).is_file()) {
                 Some(manual.clone())
             } else {
                 resolve_active_plan_with_plans(&repo, &self.view.messages, &all_plans)
@@ -231,7 +247,19 @@ impl super::Chamber {
             if path_changed {
                 self.last_plan_path = Some(path_str);
             }
-            if let Some(content) = crate::sys::read_workspace_file(&repo, &rel_path) {
+            let content_opt = match &self.cached_active_plan_content {
+                Some((cached_rel, cached_body)) if cached_rel == &rel_path => {
+                    Some(cached_body.clone())
+                }
+                _ => {
+                    let loaded = crate::sys::read_workspace_file(&repo, &rel_path);
+                    if let Some(ref body) = loaded {
+                        self.cached_active_plan_content = Some((rel_path.clone(), body.clone()));
+                    }
+                    loaded
+                }
+            };
+            if let Some(content) = content_opt {
                 let tasks = parse_plan_tasks(&content);
                 // The Tasks tab titles a row by the plan task its dispatch names. The
                 // parse happens here, once per reload, rather than in `model` (which is
@@ -253,18 +281,21 @@ impl super::Chamber {
         } else {
             self.last_plan_path = None;
             self.last_incomplete_task = None;
+            self.cached_active_plan_content = None;
         }
 
-        for i in 0..self.view.tasks.len() {
-            let body = self.view.tasks[i].body.clone();
-            if let Some(named) = hadron_gluon::skills::research_ref(&body) {
-                if let Some(content) = crate::sys::read_workspace_file(&repo, &named) {
-                    if let Some(title) = hadron_lattice::nucleus::parse_research_title(&content) {
-                        crate::model::tasks::retitle_from_research(
-                            &mut self.view.tasks,
-                            &named,
-                            &title,
-                        );
+        if !is_wsl {
+            for i in 0..self.view.tasks.len() {
+                let body = self.view.tasks[i].body.clone();
+                if let Some(named) = hadron_gluon::skills::research_ref(&body) {
+                    if let Some(content) = crate::sys::read_workspace_file(&repo, &named) {
+                        if let Some(title) = hadron_lattice::nucleus::parse_research_title(&content) {
+                            crate::model::tasks::retitle_from_research(
+                                &mut self.view.tasks,
+                                &named,
+                                &title,
+                            );
+                        }
                     }
                 }
             }
@@ -352,7 +383,12 @@ impl super::Chamber {
                 changed = true;
             }
 
-            if events.len() != self.view.messages.len() {
+            let stale_behind_local_append = !events.is_empty()
+                && events.len() < self.events.len()
+                && self.events.get(events.len() - 1).map(|e| e.id)
+                    == events.last().map(|e| e.id);
+
+            if !stale_behind_local_append && events.len() != self.view.messages.len() {
                 self.sync_view(&events);
                 self.chat_list_state
                     .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
@@ -371,6 +407,16 @@ impl super::Chamber {
             // `git` subprocesses plus a `stat` per tracked file, and on the render
             // thread that blocked mouse/keyboard dispatch for the whole scan.
             if let Some(scan) = poll.scan {
+                if scan.plan_paths != self.cached_plan_paths {
+                    self.cached_plan_paths = scan.plan_paths;
+                    self.cached_active_plan_content = None;
+                    self.update_active_plan();
+                    changed = true;
+                }
+                if scan.nucleus_docs != self.cached_nucleus_docs {
+                    self.cached_nucleus_docs = scan.nucleus_docs;
+                    changed = true;
+                }
                 if scan.files != self.file_tree_paths {
                     // Gitignored entries included, mirroring `new` — see the note there.
                     *self.completion_files.borrow_mut() = scan
@@ -479,6 +525,7 @@ impl super::Chamber {
 /// Resolve the active implementation plan for a workspace:
 /// 1. Newest-first scan of messages for an explicit plan file reference (`plan_ref`) or mention that exists on disk.
 /// 2. If no plan is explicitly referenced in messages, scan `.hadron/docs/plans/`, `docs/plans/`, and worktrees for the newest plan on disk.
+#[cfg(test)]
 pub(crate) fn resolve_active_plan(repo: &Path, messages: &[crate::model::MessageRow]) -> Option<String> {
     let all_plans = scan_all_plan_paths(repo);
     resolve_active_plan_with_plans(repo, messages, &all_plans)
@@ -774,8 +821,16 @@ pub(crate) enum PlanDropdownItem {
 
 /// Discover and organize plans across `.hadron/docs/plans/`, `docs/plans/`, and worktrees into
 /// clean suite groups with active suite prioritization, headers, and step labels for the Chamber dropdown.
+#[cfg(test)]
 pub(crate) fn scan_plan_dropdown_items(repo: &Path, active_plan_rel: &str) -> Vec<PlanDropdownItem> {
     let all_paths = scan_all_plan_paths(repo);
+    build_plan_dropdown_items(&all_paths, active_plan_rel)
+}
+
+pub(crate) fn build_plan_dropdown_items(
+    all_paths: &[(std::time::SystemTime, String)],
+    active_plan_rel: &str,
+) -> Vec<PlanDropdownItem> {
     if all_paths.is_empty() {
         return Vec::new();
     }
@@ -802,7 +857,7 @@ pub(crate) fn scan_plan_dropdown_items(repo: &Path, active_plan_rel: &str) -> Ve
     };
 
     for (mtime, rel) in all_paths {
-        let p = Path::new(&rel);
+        let p = Path::new(rel);
         let file_name = p.file_name().and_then(|f| f.to_str()).unwrap_or("").to_string();
         let suite = if let Some(parent) = p.parent() {
             let parent_name = parent.file_name().and_then(|f| f.to_str()).unwrap_or("");
@@ -816,8 +871,8 @@ pub(crate) fn scan_plan_dropdown_items(repo: &Path, active_plan_rel: &str) -> Ve
         };
 
         entries.push(PlanEntry {
-            mtime,
-            rel,
+            mtime: *mtime,
+            rel: rel.clone(),
             suite,
             file_name,
         });

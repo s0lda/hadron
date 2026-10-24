@@ -816,11 +816,64 @@ pub fn head(path: &Path) -> Option<String> {
     git_ok(path, &["rev-parse", "--verify", "HEAD"]).ok().flatten()
 }
 
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_symlink() {
+            continue;
+        }
+        let target = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &target)?;
+        } else if ty.is_file() {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
+/// If a quark running inside `<repo_root>/.hadron/trees/<id>` wrote to a worktree-local
+/// `.hadron/{nucleus,docs,skills,preons}` path instead of `<repo_root>/.hadron/`,
+/// rescue those shared artifacts up into `<repo_root>/.hadron/` and remove the nested
+/// `<worktree>/.hadron/` directory so it is neither stranded nor committed to git.
+pub fn reconcile_worktree_dot_hadron(wt_path: &Path) {
+    let nested_hadron = wt_path.join(".hadron");
+    let Ok(meta) = std::fs::symlink_metadata(&nested_hadron) else {
+        return;
+    };
+    if meta.file_type().is_symlink() {
+        let _ = std::fs::remove_file(&nested_hadron);
+        return;
+    }
+    let Some(repo_root) = wt_path
+        .parent()
+        .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some("trees"))
+        .and_then(|p| p.parent())
+        .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some(".hadron"))
+        .and_then(|p| p.parent())
+    else {
+        return;
+    };
+    let shared_hadron = repo_root.join(".hadron");
+    for sub in ["nucleus", "docs", "skills", "preons"] {
+        let src = nested_hadron.join(sub);
+        if let Ok(sub_meta) = std::fs::symlink_metadata(&src) {
+            if sub_meta.file_type().is_dir() {
+                let _ = copy_dir_recursive(&src, &shared_hadron.join(sub));
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&nested_hadron);
+}
+
 /// End the turn on a commit. `Ok(None)` = nothing to commit — a pure-conversation
 /// turn, a read-only `Ask`-posture turn, or a `Bypass` quark that already committed
 /// its own work. Callers must therefore compare HEAD rather than assume *we* were
 /// the ones who committed.
 pub fn commit_turn(wt: &Worktree, message: &str) -> anyhow::Result<Option<String>> {
+    reconcile_worktree_dot_hadron(&wt.path);
     if !is_dirty(&wt.path)? {
         return Ok(None);
     }
@@ -1687,5 +1740,32 @@ pub(crate) mod tests {
             lines[0]
         );
         assert!(lines[1].contains("files=0"), "a zero sweep is still recorded: {}", lines[1]);
+    }
+
+    #[test]
+    fn commit_turn_reconciles_worktree_dot_hadron_into_shared_repo_root() {
+        let repo = git_repo();
+        let wt = ensure(repo.path(), &q("cli-agy"), "01ABSORB").unwrap();
+        let wt_skill_dir = wt.path.join(".hadron/skills/my-skill");
+        let wt_preons_dir = wt.path.join(".hadron/preons");
+        std::fs::create_dir_all(&wt_skill_dir).unwrap();
+        std::fs::create_dir_all(&wt_preons_dir).unwrap();
+        std::fs::write(wt_skill_dir.join("SKILL.md"), "---\nname: my-skill\n---\n").unwrap();
+        std::fs::write(wt_preons_dir.join("auditor.md"), "---\nname: auditor\n---\n").unwrap();
+
+        assert_eq!(commit_turn(&wt, "cli-agy: absorb").unwrap(), None);
+        assert!(
+            !wt.path.join(".hadron").exists(),
+            "nested .hadron in worktree must be cleaned up after reconciliation"
+        );
+        assert!(
+            repo.path().join(".hadron/skills/my-skill/SKILL.md").is_file(),
+            "skills written to worktree .hadron must be rescued into shared repo_root/.hadron/skills"
+        );
+        assert!(
+            repo.path().join(".hadron/preons/auditor.md").is_file(),
+            "preons written to worktree .hadron must be rescued into shared repo_root/.hadron/preons"
+        );
+        assert!(!is_dirty(&wt.path).unwrap());
     }
 }

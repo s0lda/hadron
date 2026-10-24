@@ -1061,11 +1061,11 @@ impl Chamber {
                     // `.any()`-then-`.find()`-then-`.unwrap()` pair here restated the same
                     // match twice and could only stay correct by accident.
                     match super::mentions::seat_by_mention(&self.view.roster, target) {
-                        Some(row) if matches!(row.transport, hadron_lattice::Transport::Acp) => {
+                        Some(row) => {
                             vec![Event::new(Actor::Human, Some(QuarkId::new(&row.id)), Kind::Reboot)]
                         }
-                        _ => {
-                            eprintln!("chamber: `/reboot` target not found or not a resident quark: {target}");
+                        None => {
+                            eprintln!("chamber: `/reboot` target not found: {target}");
                             vec![]
                         }
                     }
@@ -2818,12 +2818,18 @@ impl Chamber {
     /// write path for chat messages, permission grants and mode changes — the same
     /// bus the quarks use).
     pub(super) fn append_and_reload(&mut self, ev: Event, cx: &mut Context<Self>) {
-        if let Err(e) = io::append_event(&self.path, &ev) {
-            eprintln!("chamber: failed to append event: {e}");
-            return;
-        }
-        let events = io::read_events(&self.path).unwrap_or_default();
-        self.sync_view(&events);
+        let path = self.path.clone();
+        let ev_bg = ev.clone();
+        cx.background_executor()
+            .spawn(async move {
+                if let Err(e) = io::append_event(&path, &ev_bg) {
+                    eprintln!("chamber: failed to append event: {e}");
+                }
+            })
+            .detach();
+        let mut next = self.events.clone();
+        next.push(ev);
+        self.sync_view(&next);
         cx.notify();
     }
 

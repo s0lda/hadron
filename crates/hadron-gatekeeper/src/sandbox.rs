@@ -134,18 +134,20 @@ pub fn build_bwrap_args(
         let root_str = repo_root.to_string_lossy().replace('\\', "/");
         let git_dir = format!("{root_str}/.git");
         let hadron_dir = format!("{root_str}/.hadron");
-        let nucleus_dir = format!("{root_str}/.hadron/nucleus");
-        let docs_dir = format!("{root_str}/.hadron/docs");
-        let live_dir = format!("{root_str}/.hadron/live");
-        let target_dir = format!("{root_str}/target");
         bwrap.extend([
             "--bind-try".to_string(), git_dir.clone(), git_dir,
             "--ro-bind-try".to_string(), hadron_dir.clone(), hadron_dir,
-            "--bind-try".to_string(), nucleus_dir.clone(), nucleus_dir,
-            "--bind-try".to_string(), docs_dir.clone(), docs_dir,
-            "--bind-try".to_string(), live_dir.clone(), live_dir,
-            "--bind-try".to_string(), target_dir.clone(), target_dir,
         ]);
+        for sub in ["nucleus", "docs", "skills", "preons", "live"] {
+            let sub_path = repo_root.join(".hadron").join(sub);
+            if repo_root.join(".hadron").is_dir() {
+                let _ = std::fs::create_dir_all(&sub_path);
+            }
+            let sub_str = format!("{root_str}/.hadron/{sub}");
+            bwrap.extend(["--bind-try".to_string(), sub_str.clone(), sub_str]);
+        }
+        let target_dir = format!("{root_str}/target");
+        bwrap.extend(["--bind-try".to_string(), target_dir.clone(), target_dir]);
     }
 
     bwrap.extend([
@@ -173,6 +175,14 @@ pub fn build_macos_sandbox_profile(
     unshare_net: bool,
 ) -> String {
     let work_dir_str = work_dir.display().to_string();
+    let repo_subpaths = if let Some(repo_root) = infer_repo_root_from_worktree(work_dir) {
+        let root_str = repo_root.display();
+        format!(
+            "\n    (subpath \"{root_str}/.git\")\n    (subpath \"{root_str}/.hadron/nucleus\")\n    (subpath \"{root_str}/.hadron/docs\")\n    (subpath \"{root_str}/.hadron/skills\")\n    (subpath \"{root_str}/.hadron/preons\")\n    (subpath \"{root_str}/.hadron/live\")\n    (subpath \"{root_str}/target\")"
+        )
+    } else {
+        String::new()
+    };
     let network_rule = if unshare_net || mode == SandboxMode::Strict {
         "(deny network*)"
     } else {
@@ -187,7 +197,7 @@ pub fn build_macos_sandbox_profile(
 (allow sysctl-read)
 (allow file-read*)
 (allow file-write*
-    (subpath "{work_dir_str}")
+    (subpath "{work_dir_str}"){repo_subpaths}
     (subpath "/private/tmp")
     (subpath "/tmp")
     (subpath "/private/var/folders")
@@ -765,12 +775,19 @@ mod tests {
         let run_idx = bwrap_args.iter().position(|a| a == "/run").expect("/run mounted");
         let etc_idx = bwrap_args.iter().position(|a| a == "/etc").expect("/etc mounted");
         assert!(run_idx < etc_idx, "/run must be mounted before /etc");
-        // Must bind user toolchains/auth and parent git/nucleus/target
+        // Must bind user toolchains/auth and parent git/nucleus/docs/skills/preons/target
         assert!(bwrap_args.contains(&"/home/Jake/.local".to_string()));
         assert!(bwrap_args.contains(&"/home/Jake/.gemini".to_string()));
         assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.git".to_string()));
         assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.hadron/nucleus".to_string()));
+        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.hadron/docs".to_string()));
+        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.hadron/skills".to_string()));
+        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.hadron/preons".to_string()));
         assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/target".to_string()));
+
+        let macos_profile = build_macos_sandbox_profile(wt, SandboxMode::WorktreeOnly, false);
+        assert!(macos_profile.contains("/home/Jake/dev/my-cloud/.hadron/skills"));
+        assert!(macos_profile.contains("/home/Jake/dev/my-cloud/.hadron/preons"));
 
         // WSL UNC path must NEVER select WindowsHarness / powershell.exe
         let platform = detect_sandbox_platform_for_path(unc_wt);
