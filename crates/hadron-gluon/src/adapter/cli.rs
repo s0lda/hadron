@@ -122,17 +122,79 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
         }
     }
 
-    // The field window is gone and it still does not fit: the diff is the only other
-    // unbounded section. Drop it too, and say so.
+    // The field window is gone and it still does not fit: drop the working diff and
+    // reference sections (`nucleus_index`, `nucleus_digest`, tool catalogue, active
+    // skill, role body, and excess `invariants`) before ever touching `# Your task`
+    // or `# Who you are`. On Windows (`SAFE_ARG_BYTES` = 24 KiB), `invariants` +
+    // `nucleus_digest` + `nucleus_index` alone exceed 24 KiB, so slicing `&out[..cut]`
+    // directly would cut off `# Your task` at the bottom of the prompt.
     p.git_diff = String::new();
     p.field_window = vec![Event::new(
         Actor::Gluon,
         None,
         Kind::Message { body: TRUNCATION_MARKER.to_string() },
     )];
-    let out = render(&p);
+    let mut out = render(&p);
     if out.len() <= max_bytes {
         return out;
+    }
+
+    if !p.nucleus_index.is_empty() {
+        p.nucleus_index.clear();
+        out = render(&p);
+        if out.len() <= max_bytes {
+            return out;
+        }
+    }
+    if !p.nucleus_digest.is_empty() {
+        p.nucleus_digest.clear();
+        out = render(&p);
+        if out.len() <= max_bytes {
+            return out;
+        }
+    }
+    if p.has_forge_tools {
+        p.has_forge_tools = false;
+        out = render(&p);
+        if out.len() <= max_bytes {
+            return out;
+        }
+    }
+    if p.active_skill.is_some() {
+        p.active_skill = None;
+        out = render(&p);
+        if out.len() <= max_bytes {
+            return out;
+        }
+    }
+    if p.role_body.is_some() {
+        p.role_body = None;
+        out = render(&p);
+        if out.len() <= max_bytes {
+            return out;
+        }
+    }
+    if !p.invariants.is_empty() {
+        let mut without_inv = p.clone();
+        without_inv.invariants.clear();
+        let base_len = render(&without_inv).len();
+        let inv_budget = max_bytes.saturating_sub(base_len + 40);
+        if inv_budget > 0 && inv_budget < p.invariants.len() {
+            let mut cut = inv_budget;
+            while cut > 0 && !p.invariants.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            p.invariants.truncate(cut);
+            out = render(&p);
+            if out.len() <= max_bytes {
+                return out;
+            }
+        }
+        p.invariants.clear();
+        out = render(&p);
+        if out.len() <= max_bytes {
+            return out;
+        }
     }
 
     // Nothing left to drop — the *task itself* is enormous. Hard-cut on a char
@@ -597,7 +659,11 @@ mod tests {
 
     #[tokio::test]
     async fn fit_prompt_to_budget_respects_windows_command_line_limit() {
-        let p = huge_projection(200, 2000);
+        let mut p = huge_projection(200, 2000);
+        p.invariants = format!("# The Standard Model\n{}", "rule ".repeat(6000));
+        p.nucleus_digest = "feature map ".repeat(400);
+        p.nucleus_index = "- [lesson](notes/lesson.md) — hook\n".repeat(200);
+        p.has_forge_tools = true;
         let windows_safe_bytes = 24 * 1024;
         let fitted = fit_prompt_to_budget(&p, &QuarkId::new("agy"), windows_safe_bytes);
         assert!(
@@ -607,6 +673,10 @@ mod tests {
         );
         assert!(fitted.contains(TRUNCATION_MARKER));
         assert!(fitted.contains("# Who you are"));
+        assert!(
+            fitted.contains("# Your task\nsummarise the work so far"),
+            "task section must survive Windows 24 KiB command-line truncation even when invariants exceed 24 KiB"
+        );
     }
 
     /// Layer 3b of the cwd chain, agy side.

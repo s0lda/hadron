@@ -365,14 +365,24 @@ impl super::Engine {
             });
         }
 
-        // 2. The most recent *task-bearing* event addressed to this quark. Skip
-        //    non-task events like a PermissionGrant (also addressed to the quark, to
-        //    re-trigger it) — otherwise a resumed quark would get an empty task, and
-        //    (now) a branch named for the grant rather than the assignment.
-        if let Some(trigger) = events.iter().rev().find(|e| {
+        // 2. The most recent *task-bearing* event addressed to this quark, preferring
+        //    the newest unanswered one (so `driver_for` and `next_pending` never
+        //    disagree on which event drives the turn) and falling back to the newest
+        //    overall when resuming after a `PermissionGrant` (where the task-bearing
+        //    event was paused by `Status{Waiting}`). Skip non-task events like a
+        //    PermissionGrant — otherwise a resumed quark would get an empty task, and
+        //    a branch named for the grant rather than the assignment.
+        let unanswered_trigger = events.iter().enumerate().rev().find_map(|(idx, e)| {
+            (e.to.as_ref() == Some(target)
+                && matches!(e.kind, Kind::Assign { .. } | Kind::Message { .. })
+                && !crate::router::is_request_answered(&events[idx + 1..], e, target))
+            .then_some(e)
+        });
+        let latest_trigger = events.iter().rev().find(|e| {
             e.to.as_ref() == Some(target)
                 && matches!(e.kind, Kind::Assign { .. } | Kind::Message { .. })
-        }) {
+        });
+        if let Some(trigger) = unanswered_trigger.or(latest_trigger) {
             let assignment = Self::continued_assignment(trigger).unwrap_or(trigger.id);
             return Some(match &trigger.kind {
                 Kind::Assign { task, invariants } => Driver {

@@ -763,3 +763,49 @@ fn gluon_gate_handback_message_is_answered_by_continued_assignment() {
     assert_eq!(next_pending(&[handback, completion_msg]), None);
 }
 
+#[test]
+fn multiple_addressed_steers_quiesce_once_the_newest_is_answered() {
+    let worker = QuarkId::new("cli-agy");
+    let req0 = msg(Actor::Human, None, "initial task");
+    let steer1 = msg(Actor::Human, Some("cli-agy"), "@cli-agy [STEERING GUIDANCE]: first steer");
+    let steer2 = msg(Actor::Human, Some("cli-agy"), "@cli-agy [STEERING GUIDANCE]: second steer");
+    let ground0 = Event::new(
+        Actor::Quark(worker.clone()),
+        None,
+        Kind::Status { state: QuarkState::Ground },
+    )
+    .answering(Some(req0.id));
+
+    // Before steer2 is answered, worker is pending
+    assert_eq!(
+        next_pending(&[req0.clone(), steer1.clone(), steer2.clone(), ground0.clone()]),
+        Some(worker.clone())
+    );
+
+    // Once worker completes a turn answering steer2, steer1 is superseded and the field quiesces
+    let assign2 = Event::new(
+        Actor::Gluon,
+        Some(worker.clone()),
+        Kind::Assign {
+            task: "@cli-agy [STEERING GUIDANCE]: second steer".into(),
+            invariants: vec![],
+        },
+    )
+    .with_answers(steer2.id);
+    let reply2 = Event::new(
+        Actor::Quark(worker.clone()),
+        None,
+        Kind::Message { body: "acknowledged".into() },
+    )
+    .answering(Some(steer2.id));
+    let ground2 = Event::new(
+        Actor::Quark(worker),
+        None,
+        Kind::Status { state: QuarkState::Ground },
+    )
+    .answering(Some(steer2.id));
+
+    let events = vec![req0, steer1, steer2, ground0, assign2, reply2, ground2];
+    assert_eq!(next_pending(&events), None);
+}
+

@@ -29,21 +29,34 @@ use crate::preons::Preon;
 ///
 /// Does event `c` represent `quark` completing a turn that answers request `req`?
 /// - `Kind::Message`: requires completion with `answers == req.id` (or un-stamped legacy),
-///   or if authored by `Actor::Gluon`, matching `req.answers` (e.g. merge gate handbacks).
-/// - `Kind::Assign`: requires completion with `answers == req.answers` (the continued assignment).
+///   if authored by `Actor::Gluon`, matching `req.answers` (e.g. merge gate handbacks),
+///   or answering a newer addressed request in `events_after` that superseded `req`.
+/// - `Kind::Assign`: requires completion with `answers == req.answers` (the continued assignment),
+///   or answering a newer addressed request in `events_after` that superseded `req`.
 /// - `Kind::PermissionGrant`: satisfied by any subsequent completion for `target` that resolves the pause.
 pub fn is_request_answered(events_after: &[Event], req: &Event, target: &QuarkId) -> bool {
+    let answered_newer_request = |a: ulid::Ulid| {
+        events_after.iter().any(|r| {
+            r.id == a
+                && r.to.as_ref() == Some(target)
+                && matches!(r.kind, Kind::Assign { .. } | Kind::Message { .. })
+        })
+    };
     events_after.iter().any(|c| {
         if !is_turn_completion(c, target) {
             return false;
         }
         match &req.kind {
             Kind::Message { .. } => match c.answers {
-                Some(a) => a == req.id || (req.from == Actor::Gluon && req.answers == Some(a)),
+                Some(a) => {
+                    a == req.id
+                        || (req.from == Actor::Gluon && req.answers == Some(a))
+                        || answered_newer_request(a)
+                }
                 None => true,
             },
             Kind::Assign { .. } => match c.answers {
-                Some(a) => a == req.answers.unwrap_or(req.id),
+                Some(a) => a == req.answers.unwrap_or(req.id) || answered_newer_request(a),
                 None => true,
             },
             Kind::PermissionGrant { .. } => true,
