@@ -18,5 +18,5 @@ Execute the repository release workflow strictly following instructions in `.had
 $(python3 -c 'import re; c=open("docs/CHANGELOG.md").read(); m=re.search(r"^## \[X\.Y\.Z\].*?\n(.*?)(?=^## \[|\Z)", c, re.S|re.M); print(m.group(1).strip() if m else "")')" vX.Y.Z HEAD
    ```
 5. **Push:** Push current worktree commit to remote `main` branch (`git push origin HEAD:main`) and push release tag (`git push origin vX.Y.Z`).
-6. **GitHub Release Publication:** Create/update GitHub release with formatted Markdown changelog notes via `gh release create vX.Y.Z --title "Hadron vX.Y.Z" --notes "<CHANGELOG_BODY>"`.
+6. **CI-Gated GitHub Release Publication:** Do **NOT** run `gh release create` manually at tag-push time. The `publish-release` job in `.github/workflows/release.yml` (`needs: build-release`) automatically creates `Hadron vX.Y.Z` with `docs/CHANGELOG.md` notes and attaches all archives only after all 4 platform builds succeed.
 

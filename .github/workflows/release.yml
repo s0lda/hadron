@@ -89,10 +89,52 @@ jobs:
             fi
           fi
 
-      - name: Upload Release Asset
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-release
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Download all target artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Extract changelog notes
+        id: changelog
+        shell: bash
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          VER="${TAG#v}"
+          python3 - "$VER" <<'PY' > release_notes.md
+          import re, sys
+          ver = re.escape(sys.argv[1])
+          c = open("docs/CHANGELOG.md", encoding="utf-8").read()
+          m = re.search(rf"^## \[v?{ver}\].*?\n(.*?)(?=^## \[|\Z)", c, re.S | re.M)
+          print(m.group(1).strip() if m else f"Release v{sys.argv[1]}")
+          PY
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ steps.changelog.outputs.tag }}
+          name: Hadron ${{ steps.changelog.outputs.tag }}
+          body_path: release_notes.md
+          fail_on_unmatched_files: true
           files: |
             dist/*.tar.gz
             dist/*.zip
