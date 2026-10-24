@@ -313,7 +313,7 @@ pub async fn run() {
 
     // Seat the team: explicit --team, else a sibling team.json next to the field
     // (the .hadron/ convention), else the config-dir default; refuse to start when none.
-    let team_path = resolve_team_path(args.team_path.clone(), &args.field_path);
+    let mut team_path = resolve_team_path(args.team_path.clone(), &args.field_path);
     match &team_path {
         Some(p) => term::info(Source::Gluon, &format!("team from {}", p.display())),
         None => term::info(Source::Gluon, "no team.json found (looked next to the field, then the config dir)"),
@@ -321,7 +321,7 @@ pub async fn run() {
     // The global catalogue holds the quark *definitions* a repo's role/state overrides
     // resolve against. Skip it when it IS the repo file (a bare ~/.hadron/team.json used
     // directly as the team) — there is nothing to resolve against itself.
-    let global_path =
+    let mut global_path =
         team_config_path().filter(|g| Some(g.as_path()) != team_path.as_deref());
     if let Some(g) = &global_path {
         term::info(Source::Gluon, &format!("catalogue from {}", g.display()));
@@ -642,6 +642,15 @@ pub async fn run() {
         // reconcile even when the repo file is untouched. Reconcile when EITHER file's
         // bytes change. `poll_team_file` updates `last_seen` on every change, so an
         // unchanged file's `last_seen` still holds its current content to parse against.
+        let current_team_path = resolve_team_path(args.team_path.clone(), &args.field_path);
+        let current_global_path =
+            team_config_path().filter(|g| Some(g.as_path()) != current_team_path.as_deref());
+        if current_team_path != team_path || current_global_path != global_path {
+            team_path = current_team_path;
+            global_path = current_global_path;
+            last_seen_repo = None;
+            last_seen_global = None;
+        }
         let repo_changed = team_path
             .as_deref()
             .and_then(|p| poll_team_file(p, &mut last_seen_repo));

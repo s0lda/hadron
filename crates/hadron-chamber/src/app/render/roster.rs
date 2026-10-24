@@ -223,7 +223,9 @@ impl super::Chamber {
                             .truncate()
                             .child(identity.name.clone()),
                     )
-                    .when(r.flavor == Some(hadron_lattice::Flavor::Orchestrator), |this| {
+                    .when(
+                        r.adopted && r.flavor == Some(hadron_lattice::Flavor::Orchestrator),
+                        |this| {
                         this.child(
                             h_flex()
                                 .id(SharedString::from(format!("orch-badge-{}", r.id)))
@@ -424,7 +426,7 @@ impl super::Chamber {
                             },
                         ));
                     }
-                    if let Some(hadron_lattice::Flavor::Worker) = r_flavor {
+                    if !is_adopted || r_flavor == Some(hadron_lattice::Flavor::Worker) {
                         let qid4 = qid_str.clone();
                         let view4 = view.clone();
                         menu = menu.item(PopupMenuItem::new("Make Orchestrator").on_click(

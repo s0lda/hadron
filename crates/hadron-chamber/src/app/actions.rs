@@ -3078,7 +3078,16 @@ pub(super) fn toggle_or_adopt_quark_in_team(
         .quarks
         .iter()
         .any(|s| s.flavor == hadron_lattice::Flavor::Orchestrator);
-    let flavor_override = (!has_orchestrator).then_some(hadron_lattice::Flavor::Orchestrator);
+    let flavor_override = if !has_orchestrator {
+        Some(hadron_lattice::Flavor::Orchestrator)
+    } else if global
+        .get(qid)
+        .is_some_and(|s| s.flavor == hadron_lattice::Flavor::Orchestrator)
+    {
+        Some(hadron_lattice::Flavor::Worker)
+    } else {
+        None
+    };
     if let Some(ov) = team.roster.iter_mut().find(|o| o.id == *qid) {
         ov.enabled = Some(true);
         if ov.flavor.is_none() {
@@ -3593,7 +3602,7 @@ mod tests {
                     q2.clone(),
                     "agy",
                     "gemini-3.1-pro",
-                    hadron_lattice::Flavor::Worker,
+                    hadron_lattice::Flavor::Orchestrator,
                 ),
             ],
             ..Default::default()
