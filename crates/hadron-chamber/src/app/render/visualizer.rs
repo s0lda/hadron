@@ -603,9 +603,7 @@ impl super::Chamber {
                         .child(
                             text_button("vis-open-info", "View Details").on_click(cx.listener(
                                 move |this, _, _window, cx| {
-                                    this.info_panel = Some(qid_for_info.clone());
-                                    this.info_tab = InfoTab::Identity;
-                                    cx.notify();
+                                    this.open_quark_info(qid_for_info.clone(), InfoTab::Identity, cx);
                                 },
                             )),
                         ),

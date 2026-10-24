@@ -583,9 +583,7 @@ impl Chamber {
                     default_quark
                 };
 
-                self.info_panel = Some(target_id);
-                self.info_tab = InfoTab::Home;
-                cx.notify();
+                self.open_quark_info(target_id, InfoTab::Home, cx);
                 true
             }
             "canvas" => {
@@ -2456,19 +2454,16 @@ impl Chamber {
     /// Open the info panel for the keyboard-selected quark — the keyboard equivalent
     /// of clicking a roster row.
     pub(super) fn open_selected_quark(&mut self, cx: &mut Context<Self>) {
-        if let Some(r) = self.selected_quark_ix.and_then(|ix| self.view.roster.get(ix)) {
-            self.info_panel = Some(r.id.clone());
-            self.info_tab = InfoTab::Identity;
-            cx.notify();
+        if let Some(id) = self.selected_quark_ix.and_then(|ix| self.view.roster.get(ix)).map(|r| r.id.clone()) {
+            self.open_quark_info(id, InfoTab::Identity, cx);
         }
     }
 
     pub(super) fn handle_context_menu_action(&mut self, action: ContextMenuAction, cx: &mut Context<Self>) {
         match action {
             ContextMenuAction::QuarkInfo(id) => {
-                self.info_panel = Some(id);
                 // Each open starts at the top section, not wherever the last panel left off.
-                self.info_tab = InfoTab::Identity;
+                self.open_quark_info(id, InfoTab::Identity, cx);
             }
             ContextMenuAction::ToggleQuark(id) => {
                 self.toggle_quark_enabled(&id, cx);

@@ -126,9 +126,19 @@ impl super::Chamber {
     /// A general Model select component for any seat (e.g. CLI seats) using native Select.
     pub(super) fn general_model_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let selected = self.settings_model.read(cx).value().trim().to_string();
-        if self.general_model_select_key.as_ref() != Some(&selected) {
-            self.general_model_select_key = Some(selected.clone());
-            let delegate = create_model_delegate("Inherit", &[], Some(&selected));
+        let target_key = self.settings_target.key().to_string();
+        let vendor = self
+            .view
+            .roster
+            .iter()
+            .find(|r| r.id == target_key)
+            .map(|r| r.vendor.clone())
+            .unwrap_or_default();
+        let models = self.models_for_quark(&target_key, &vendor);
+        let cache_key = format!("{target_key}:{selected}:{}", models.join(","));
+        if self.general_model_select_key.as_ref() != Some(&cache_key) {
+            self.general_model_select_key = Some(cache_key);
+            let delegate = create_model_delegate("Inherit", &models, Some(&selected));
             self.general_model_select_state.update(cx, |s, cx| {
                 s.set_items(delegate, window, cx);
                 if !selected.is_empty() {

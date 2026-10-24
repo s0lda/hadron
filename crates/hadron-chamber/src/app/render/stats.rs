@@ -51,9 +51,13 @@ impl super::Chamber {
         )
     }
 
-    pub(super) fn info_panel_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn info_panel_overlay(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let qid = self.info_panel.as_ref().unwrap().clone();
-        let roster_row = self.view.roster.iter().find(|r| r.id == qid).unwrap();
+        let roster_row = self.view.roster.iter().find(|r| r.id == qid).unwrap().clone();
         let q_color = self.color_for(&qid);
         let resolved = self.resolve_identity(&qid);
 
@@ -126,7 +130,7 @@ impl super::Chamber {
         // Presence: a live (adopted + enabled) quark shows its state colour, overridden
         // to Excited while it has fresh live activity — matching the roster row and rail
         // strip so the dot never disagrees with what the quark is actually doing.
-        let activity = self.last_live_activities.get(&qid).and_then(|a| a.as_ref());
+        let activity = self.last_live_activities.get(&qid).and_then(|a| a.clone());
         let effective_state = effective_presence_state(
             roster_row.state,
             roster_row.adopted,
@@ -240,6 +244,82 @@ impl super::Chamber {
                     .into_any_element()
             });
 
+        let current_model = seat
+            .as_ref()
+            .map(|s| s.model.trim().to_string())
+            .unwrap_or_else(|| {
+                if model_str == "—" {
+                    String::new()
+                } else {
+                    model_str.clone()
+                }
+            });
+        let available_models = self.models_for_quark(&qid, &roster_row.vendor);
+        let model_key = (qid.clone(), current_model.clone(), available_models.clone());
+        if self.info_model_select_key.as_ref() != Some(&model_key) {
+            self.info_model_select_key = Some(model_key);
+            let delegate = create_model_delegate("Inherit", &available_models, Some(&current_model));
+            self.info_model_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                if !current_model.is_empty() {
+                    s.set_selected_value(&current_model.clone().into(), window, cx);
+                } else {
+                    s.set_selected_value(&"".into(), window, cx);
+                }
+            });
+        }
+
+        let current_effort = effort.clone().unwrap_or_default();
+        let available_efforts = self.efforts_for_quark(&qid);
+        let effort_key = (qid.clone(), current_effort.clone(), available_efforts.clone());
+        if self.info_effort_select_key.as_ref() != Some(&effort_key) {
+            self.info_effort_select_key = Some(effort_key);
+            let delegate = create_model_delegate("Inherit", &available_efforts, Some(&current_effort));
+            self.info_effort_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                if !current_effort.is_empty() {
+                    s.set_selected_value(&current_effort.clone().into(), window, cx);
+                } else {
+                    s.set_selected_value(&"".into(), window, cx);
+                }
+            });
+        }
+
+        let make_model_row = |select_state: &Entity<SelectState<ModelSelectDelegate>>| {
+            h_flex()
+                .w_full()
+                .justify_between()
+                .gap_4()
+                .items_center()
+                .text_sm()
+                .child(div().flex_none().text_color(theme::text_muted()).child("Model"))
+                .child(
+                    div().w(px(260.0)).child(
+                        Select::new(select_state)
+                            .w_full()
+                            .placeholder("Select model...")
+                            .search_placeholder("Search models..."),
+                    ),
+                )
+        };
+
+        let make_effort_row = |select_state: &Entity<SelectState<ModelSelectDelegate>>| {
+            h_flex()
+                .w_full()
+                .justify_between()
+                .gap_4()
+                .items_center()
+                .text_sm()
+                .child(div().flex_none().text_color(theme::text_muted()).child("Effort"))
+                .child(
+                    div().w(px(260.0)).child(
+                        Select::new(select_state)
+                            .w_full()
+                            .placeholder("Select reasoning effort..."),
+                    ),
+                )
+        };
+
         let identity_section = v_flex()
             .gap_1p5()
             .child(panel_eyebrow("IDENTITY"))
@@ -252,6 +332,8 @@ impl super::Chamber {
                 "Adoption",
                 if roster_row.adopted { "adopted in this repo" } else { "available (catalogue)" },
             ))
+            .child(make_model_row(&self.info_model_select_state))
+            .child(make_effort_row(&self.info_effort_select_state))
             // Restart lives here (Identity), acting on this quark; ACP-only, else None.
             .children(restart_action);
 
@@ -260,14 +342,9 @@ impl super::Chamber {
             .child(panel_eyebrow("CONFIGURATION"))
             .child(kv_row("Vendor", roster_row.vendor.clone()))
             .child(kv_row("Agent", agent_str))
-            .child(kv_row("Model", model_str))
-            .child(kv_row("Transport", transport_str));
-        // Always shown, even when the seat inherits (unset) — an empty row read as a
-        // missing feature ("I can't see the effort tag"); "inherited" says it explicitly.
-        config_section = config_section.child(kv_row(
-            "Effort",
-            effort.clone().unwrap_or_else(|| "inherited".to_string()),
-        ));
+            .child(make_model_row(&self.info_model_select_state))
+            .child(kv_row("Transport", transport_str))
+            .child(make_effort_row(&self.info_effort_select_state));
         // The Permission chip below is the single authority control (it replaced the
         // Claude-specific ACP `mode_config`), so `mode_config` is deliberately not shown
         // here — showing both would just relocate the duplication it was meant to remove.

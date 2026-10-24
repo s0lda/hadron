@@ -9,7 +9,7 @@ use secrets::secret_status;
 // settings.rs (`pub(super)` there = visible to `app`).
 pub(super) use secrets::SecretStatus;
 
-pub(super) use model_select::{create_model_delegate, ModelSelectDelegate};
+pub(super) use model_select::{create_model_delegate, vendor_fallback_models, ModelSelectDelegate};
 pub(super) use providers::{ThemeCategoryTab, ThemeTokenKey};
 
 mod secrets;
@@ -473,5 +473,144 @@ impl Chamber {
         self.load_settings_inputs(window, cx);
         let _ = config::save(&self.prefs);
         cx.notify();
+    }
+
+    /// Open the Quark Info panel for `id` on `tab`, launching background model probes
+    /// for ACP/CLI/HTTP seats so the Model selector dropdown populates live.
+    pub(super) fn open_quark_info(&mut self, id: String, tab: InfoTab, cx: &mut Context<Self>) {
+        self.start_acp_model_probe(&id, cx);
+        self.start_agy_bridge_provision(&id, cx);
+        self.start_http_model_probe(&id, cx);
+        self.info_panel = Some(id);
+        self.info_tab = tab;
+        cx.notify();
+    }
+
+    /// Combined model options for `qid`: live probed models (ACP/CLI/HTTP) when ready,
+    /// augmented with curated vendor fallback models so the dropdown is never empty.
+    pub(super) fn models_for_quark(&self, qid: &str, vendor: &str) -> Vec<String> {
+        let mut models = Vec::new();
+        if let Some(p) = &self.acp_model_probe {
+            if p.id == qid {
+                if let AcpModelState::Ready { selectors } = &p.state {
+                    if let Some(sel) = &selectors.model {
+                        for m in &sel.available {
+                            if !m.value.is_empty() && !models.contains(&m.value) {
+                                models.push(m.value.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(p) = &self.http_model_probe {
+            if p.id == qid {
+                if let HttpModelState::Ready { models: http_models } = &p.state {
+                    for m in http_models {
+                        if !m.is_empty() && !models.contains(m) {
+                            models.push(m.clone());
+                        }
+                    }
+                }
+            }
+        }
+        for m in vendor_fallback_models(vendor) {
+            if !models.contains(&m) {
+                models.push(m);
+            }
+        }
+        models
+    }
+
+    /// Combined effort options for `qid`: live ACP-probed thought levels or standard levels.
+    pub(super) fn efforts_for_quark(&self, qid: &str) -> Vec<String> {
+        let mut available = Vec::new();
+        if let Some(p) = &self.acp_model_probe {
+            if p.id == qid {
+                if let AcpModelState::Ready { selectors } = &p.state {
+                    if let Some(sel) = &selectors.effort {
+                        for m in &sel.available {
+                            if !m.value.is_empty() && !available.contains(&m.value) {
+                                available.push(m.value.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if available.is_empty() {
+            available = vec![
+                "low".into(),
+                "medium".into(),
+                "high".into(),
+                "max".into(),
+            ];
+        }
+        available
+    }
+
+    /// Directly persist a new model choice for `qid_str` from the Quark Info selector.
+    pub(super) fn set_quark_model(
+        &mut self,
+        qid_str: &str,
+        model_val: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let qid = QuarkId::new(qid_str);
+        let resolved = resolve_team(&self.team, &self.global);
+        let def = self.global.get(&qid).cloned();
+        if let Some(base) = resolved.get(&qid).cloned().or_else(|| def.clone()) {
+            let trimmed = model_val.trim();
+            let new_model = if trimmed.is_empty() {
+                def.as_ref()
+                    .map(|d| d.model.clone())
+                    .unwrap_or_else(|| base.model.clone())
+            } else {
+                trimmed.to_string()
+            };
+            if base.model != new_model {
+                let desired = Seat {
+                    model: new_model.clone(),
+                    ..base
+                };
+                self.update_seat_config(&qid, &desired, cx);
+            }
+            if self.settings_target.key() == qid_str {
+                self.settings_model
+                    .update(cx, |s, cx| s.set_value(new_model, window, cx));
+            }
+            cx.notify();
+        }
+    }
+
+    /// Directly persist a new reasoning effort choice for `qid_str` from the Quark Info selector.
+    pub(super) fn set_quark_effort(
+        &mut self,
+        qid_str: &str,
+        effort_val: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let qid = QuarkId::new(qid_str);
+        let resolved = resolve_team(&self.team, &self.global);
+        let def = self.global.get(&qid).cloned();
+        if let Some(base) = resolved.get(&qid).cloned().or_else(|| def.clone()) {
+            let trimmed = effort_val.trim();
+            let new_effort = (!trimmed.is_empty()).then(|| trimmed.to_string());
+            if base.effort != new_effort {
+                let desired = Seat {
+                    effort: new_effort.clone(),
+                    ..base
+                };
+                self.update_seat_config(&qid, &desired, cx);
+            }
+            if self.settings_target.key() == qid_str {
+                self.settings_effort.update(cx, |s, cx| {
+                    s.set_value(new_effort.unwrap_or_default(), window, cx)
+                });
+            }
+            cx.notify();
+        }
     }
 }

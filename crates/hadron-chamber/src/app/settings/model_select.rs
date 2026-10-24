@@ -58,3 +58,92 @@ pub fn create_model_delegate(default_label: &str, models: &[String], selected: O
     }
     SearchableVec::new(items)
 }
+
+/// Curated fallback models for known vendors so any seat (including CLI seats without
+/// a live model probe or ACP seats whose background probe is still in flight) always
+/// offers a rich, searchable list of models in Settings and the Quark Info panel.
+pub fn vendor_fallback_models(vendor: &str) -> Vec<String> {
+    let v = vendor.trim().to_ascii_lowercase();
+    if v.contains("agy") || v.contains("gemini") || v.contains("google") {
+        vec![
+            "gemini-4-argon-medium".to_string(),
+            "gemini-3.8-pro".to_string(),
+            "gemini-3.8-flash".to_string(),
+            "gemini-3.6-pro".to_string(),
+            "gemini-3.6-flash".to_string(),
+            "gemini-3.5-flash".to_string(),
+            "gemini-3.1-pro".to_string(),
+            "gemini-2.5-pro".to_string(),
+            "gemini-2.5-flash".to_string(),
+        ]
+    } else if v.contains("claude") || v.contains("anthropic") {
+        vec![
+            "claude-opus-4-6".to_string(),
+            "claude-sonnet-4-6".to_string(),
+            "claude-sonnet-4-5".to_string(),
+            "claude-haiku-4-5".to_string(),
+            "opus".to_string(),
+            "sonnet".to_string(),
+            "haiku".to_string(),
+        ]
+    } else if v.contains("codex") || v.contains("openai") {
+        vec![
+            "gpt-5".to_string(),
+            "o3".to_string(),
+            "o4-mini".to_string(),
+            "gpt-4.1".to_string(),
+            "gpt-4o".to_string(),
+            "gpt-4o-mini".to_string(),
+        ]
+    } else if v.contains("grok") || v.contains("xai") {
+        vec![
+            "grok-4".to_string(),
+            "grok-3".to_string(),
+            "grok-3-mini".to_string(),
+        ]
+    } else if v.contains("copilot") || v.contains("github") {
+        vec![
+            "claude-sonnet-4.5".to_string(),
+            "gpt-5".to_string(),
+            "gpt-4o".to_string(),
+            "o3-mini".to_string(),
+        ]
+    } else if v.contains("mistral") {
+        vec![
+            "mistral-large-latest".to_string(),
+            "codestral-latest".to_string(),
+            "ministral-8b-latest".to_string(),
+        ]
+    } else if v.contains("deepseek") {
+        vec![
+            "deepseek-chat".to_string(),
+            "deepseek-reasoner".to_string(),
+        ]
+    } else {
+        Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_component::select::SelectDelegate;
+
+    #[test]
+    fn vendor_fallback_models_covers_core_vendors() {
+        assert!(vendor_fallback_models("agy").contains(&"gemini-4-argon-medium".to_string()));
+        assert!(vendor_fallback_models("claude").contains(&"claude-sonnet-4-6".to_string()));
+        assert!(vendor_fallback_models("codex").contains(&"gpt-5".to_string()));
+        assert!(vendor_fallback_models("grok").contains(&"grok-4".to_string()));
+        assert!(vendor_fallback_models("copilot").contains(&"gpt-5".to_string()));
+        assert!(vendor_fallback_models("unknown-vendor").is_empty());
+    }
+
+    #[test]
+    fn create_model_delegate_includes_inherit_and_deduplicates_selected() {
+        let models = vec!["gpt-5".to_string(), "o3".to_string()];
+        let delegate = create_model_delegate("Inherit", &models, Some("custom-model"));
+        assert_eq!(delegate.items_count(0), 4);
+    }
+}
+

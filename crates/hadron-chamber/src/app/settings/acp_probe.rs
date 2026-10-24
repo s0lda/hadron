@@ -301,14 +301,15 @@ impl super::Chamber {
     /// The ACP Model **select**: the agent's offered models in the shared searchable
     /// dropdown list component, with an "Inherit" row (blank → catalogue default).
     pub(super) fn acp_model_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let models = match self.acp_model_probe.as_ref().map(|p| &p.state) {
-            Some(AcpModelState::Ready { selectors }) => selectors
-                .model
-                .as_ref()
-                .map(|sel| sel.available.iter().map(|m| m.value.clone()).collect())
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        };
+        let target_key = self.settings_target.key().to_string();
+        let vendor = self
+            .view
+            .roster
+            .iter()
+            .find(|r| r.id == target_key)
+            .map(|r| r.vendor.clone())
+            .unwrap_or_default();
+        let models = self.models_for_quark(&target_key, &vendor);
         let selected = self.settings_model.read(cx).value().trim().to_string();
         let key = (selected.clone(), models.clone());
         if self.acp_model_select_key.as_ref() != Some(&key) {

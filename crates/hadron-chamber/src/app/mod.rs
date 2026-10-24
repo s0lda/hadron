@@ -493,6 +493,12 @@ struct Chamber {
     /// Native SelectState dropdown for Settings Reasoning Effort.
     effort_select_state: Entity<SelectState<ModelSelectDelegate>>,
     effort_select_key: Option<(String, Vec<String>)>,
+    /// Native SelectState dropdown for Roster > Quark > Info Model selector.
+    info_model_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    info_model_select_key: Option<(String, String, Vec<String>)>,
+    /// Native SelectState dropdown for Roster > Quark > Info Effort selector.
+    info_effort_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    info_effort_select_key: Option<(String, String, Vec<String>)>,
     /// Native SelectState dropdown for General Settings Default Permission Mode.
     default_mode_select_state: Entity<SelectState<ModelSelectDelegate>>,
     default_mode_select_key: Option<Mode>,
@@ -761,6 +767,12 @@ impl Chamber {
         let effort_select_state = cx.new(|cx| {
             SelectState::new(create_model_delegate("Inherit", &[], None), None, window, cx).searchable(false)
         });
+        let info_model_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Inherit", &[], None), None, window, cx).searchable(true)
+        });
+        let info_effort_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("Inherit", &[], None), None, window, cx).searchable(false)
+        });
         let default_mode_select_state = cx.new(|cx| {
             SelectState::new(create_model_delegate("Ask", &["Write".into(), "Auto".into(), "Bypass".into()], None), None, window, cx).searchable(false)
         });
@@ -892,6 +904,20 @@ impl Chamber {
                 this.settings_effort.update(cx, |s, cx| s.set_value(val.to_string(), window, cx));
                 this.commit_settings_inputs(cx);
                 cx.notify();
+            }),
+            cx.subscribe_in(&info_model_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                if let Some(qid) = this.info_panel.clone() {
+                    this.set_quark_model(&qid, val, window, cx);
+                }
+            }),
+            cx.subscribe_in(&info_effort_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                if let Some(qid) = this.info_panel.clone() {
+                    this.set_quark_effort(&qid, val, window, cx);
+                }
             }),
             cx.subscribe_in(&default_mode_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
                 let SelectEvent::Confirm(selected) = event;
@@ -1600,6 +1626,10 @@ impl Chamber {
             mode_select_key: None,
             effort_select_state,
             effort_select_key: None,
+            info_model_select_state,
+            info_model_select_key: None,
+            info_effort_select_state,
+            info_effort_select_key: None,
             default_mode_select_state,
             default_mode_select_key: None,
             editor_select_state,
