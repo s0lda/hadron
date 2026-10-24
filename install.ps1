@@ -116,7 +116,7 @@ if ($Version -eq "latest") {
     }
 
     if ([string]::IsNullOrWhiteSpace($resolved)) {
-        $resolved = "0.33.4"
+        $resolved = "0.33.6"
     }
     $Version = $resolved
 }

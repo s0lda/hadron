@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.6",
+        date: Some("2026-10-24"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Windows PowerShell Native Argument Escaping: Added escape_powershell_native_arg in hadron-gatekeeper so build_windows_sandbox_script escapes embedded double quotes, backslashes, and empty arguments inside PowerShell @(...) arrays without splitting CLI prompts on quotes (fixing 'unexpected argument code found' when spawning Agy on Windows)",
+        ],
+    },
+    Release {
         version: "0.33.5",
         date: Some("2026-10-24"),
         added: &[],

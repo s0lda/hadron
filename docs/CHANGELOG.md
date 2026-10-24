@@ -5,6 +5,12 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.6] - 2026-10-24
+
+### Fixed
+- **Windows PowerShell Native Argument Escaping for CLI Quarks (`hadron-gatekeeper`)**:
+  - Added `escape_powershell_native_arg` (`sandbox.rs`) and wired `build_windows_sandbox_script` to backslash-escape embedded double quotes (`\"`), double backslashes preceding quotes or trailing whitespace-containing arguments, and pass empty strings as `'""'` inside PowerShell `@(...)` argument arrays so Windows PowerShell 5.1 does not split native child `CreateProcessW` command lines on unescaped quotes (e.g. `"The code is correct"` in Standard Model Rule 1) when invoking `agy` or other CLI tools on Windows (`error: unexpected argument 'code' found`).
+
 ## [0.33.5] - 2026-10-24
 
 ### Fixed
