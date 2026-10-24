@@ -146,6 +146,60 @@ pub fn escape_powershell_single_quote(s: &str) -> String {
     s.replace('\'', "''")
 }
 
+/// Escape an argument string for a single-quoted element `'...'` inside a PowerShell
+/// `@(...)` array passed to a native executable (`& '<prog>' @(...)`).
+///
+/// Windows PowerShell 5.1 (`powershell.exe`) builds the child `CreateProcessW`
+/// command line by wrapping arguments that contain whitespace in outer `"..."`
+/// **without** escaping internal `"` or trailing `\`, and drops empty `''` strings
+/// outright unless passed as `'""'`. Native Windows binaries (`CommandLineToArgvW` /
+/// MSVCRT) then split on any unescaped `"` inside the argument (e.g. `"The code is correct"`
+/// in Standard Model Rule 1), causing the next word (`code`) to be parsed as an
+/// unexpected positional argument.
+pub fn escape_powershell_native_arg(s: &str) -> String {
+    if s.is_empty() {
+        return "\"\"".to_string();
+    }
+    let has_whitespace = s.chars().any(|c| c.is_whitespace());
+    let mut out = String::with_capacity(s.len() + 8);
+    let mut bs_count = 0usize;
+    for ch in s.chars() {
+        match ch {
+            '\\' => {
+                bs_count += 1;
+            }
+            '"' => {
+                for _ in 0..(bs_count * 2 + 1) {
+                    out.push('\\');
+                }
+                out.push('"');
+                bs_count = 0;
+            }
+            '\'' => {
+                for _ in 0..bs_count {
+                    out.push('\\');
+                }
+                bs_count = 0;
+                out.push_str("''");
+            }
+            _ => {
+                for _ in 0..bs_count {
+                    out.push('\\');
+                }
+                bs_count = 0;
+                out.push(ch);
+            }
+        }
+    }
+    if bs_count > 0 {
+        let final_bs = if has_whitespace { bs_count * 2 } else { bs_count };
+        for _ in 0..final_bs {
+            out.push('\\');
+        }
+    }
+    out
+}
+
 pub fn build_windows_sandbox_script(
     work_dir: &Path,
     program: &str,
@@ -179,7 +233,7 @@ pub fn build_windows_sandbox_script(
     } else {
         let formatted_args: Vec<String> = args
             .iter()
-            .map(|a| format!("'{}'", escape_powershell_single_quote(a)))
+            .map(|a| format!("'{}'", escape_powershell_native_arg(a)))
             .collect();
         let args_array = formatted_args.join(", ");
         parts.push(format!("& '{prog_escaped}' @({args_array}); exit $LASTEXITCODE"));
@@ -489,6 +543,60 @@ mod tests {
         let (prog, args) = resolve_sandboxed_command(work_dir, "echo", &["test".to_string()], SandboxMode::Off, false);
         assert_eq!(prog, "echo");
         assert_eq!(args, vec!["test".to_string()]);
+    }
+
+    #[test]
+    fn test_escape_powershell_native_arg_preserves_embedded_quotes_and_backslashes() {
+        use std::path::Path;
+
+        // Empty argument must become "" inside single quotes ('""') so PowerShell 5.1 does not drop it.
+        assert_eq!(escape_powershell_native_arg(""), "\"\"");
+
+        // Embedded double quotes (e.g. Standard Model Rule 1) must be backslash-escaped
+        // so PowerShell's native argument quoting does not split on `"The code is correct"`.
+        let prompt = "# CRITICAL DIRECTIVE\n\n\"The code is correct\" and \"the code runs\" are different claims.";
+        assert_eq!(
+            escape_powershell_native_arg(prompt),
+            "# CRITICAL DIRECTIVE\n\n\\\"The code is correct\\\" and \\\"the code runs\\\" are different claims."
+        );
+
+        // Backslashes preceding a double quote must be doubled + 1 (`2k + 1`), and single quotes doubled.
+        assert_eq!(
+            escape_powershell_native_arg(r#"it's a \"quoted\" test"#),
+            r#"it''s a \\\"quoted\\\" test"#
+        );
+
+        // Trailing backslashes in an argument WITH whitespace must be doubled so they don't escape PowerShell's closing `"`.
+        assert_eq!(
+            escape_powershell_native_arg(r"C:\Program Files\App\"),
+            r"C:\Program Files\App\\"
+        );
+
+        // Trailing backslashes in an argument WITHOUT whitespace are not wrapped in `"..."` by PowerShell, so keep as-is.
+        assert_eq!(
+            escape_powershell_native_arg(r"\\wsl.localhost\Ubuntu\home\Jake\"),
+            r"\\wsl.localhost\Ubuntu\home\Jake\"
+        );
+
+        // Verify build_windows_sandbox_script escapes `--print <prompt>` properly for agy.
+        let work_dir = Path::new(r"C:\Users\Jake\repo");
+        let script = build_windows_sandbox_script(
+            work_dir,
+            "agy",
+            &[
+                "chat".to_string(),
+                "--mode".to_string(),
+                "agent".to_string(),
+                "--print".to_string(),
+                prompt.to_string(),
+            ],
+            SandboxMode::WorktreeOnly,
+            false,
+        );
+        assert!(
+            script.contains(r#"\"The code is correct\""#),
+            "script must escape internal double quotes for native argv parsing, got: {script}"
+        );
     }
 }
 
