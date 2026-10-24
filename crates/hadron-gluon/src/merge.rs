@@ -305,14 +305,16 @@ pub async fn run_tests_within(
             cmd.env(&k, translated);
             keys.push(k);
         }
-        let existing_wslenv = std::env::var("WSLENV").ok();
-        let wslenv = hadron_lattice::wsl::wslenv_for_keys(existing_wslenv.as_deref(), &keys);
+        let wslenv = hadron_lattice::wsl::wslenv_for_keys(keys.iter().map(String::as_str));
         if !wslenv.is_empty() {
             cmd.env("WSLENV", wslenv);
         }
     } else {
         cmd.envs(build_env);
     }
+
+    // Inject cache metadata isolation flags to prevent foreign rlib collisions
+    hadron_gatekeeper::cache_guard::inject_cache_isolation_flags(cmd.as_std_mut(), program, &wt.path);
 
     // Its own process group, so the deadline can kill the whole tree rather than just
     // the launcher. `cargo test` is a launcher: killing it orphans the test binary,
@@ -1083,7 +1085,16 @@ mod tests {
 
         let (program, args) = detect_affected_runner(&wt.path, "main");
         assert_eq!(program, "cargo");
-        assert_eq!(args, vec!["test".to_string(), "-p".to_string(), "hadron".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "test".to_string(),
+                "-p".to_string(),
+                "hadron".to_string(),
+                "--bin".to_string(),
+                "hadron".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -1263,7 +1274,7 @@ mod tests {
 
         let (prog, args) = detect_affected_runner(&wt.path, &base);
         assert_eq!(prog, "cargo");
-        assert_eq!(args, vec!["test", "-p", "hadron"]);
+        assert_eq!(args, vec!["test", "-p", "hadron", "--bin", "hadron"]);
     }
 }
 

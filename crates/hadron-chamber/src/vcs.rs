@@ -267,7 +267,7 @@ pub fn strip_unc_prefix(path_str: &str) -> String {
 /// Windows backslashes to forward slashes with a trailing `/`.
 pub fn format_repo_root_display(root: &Path, home_override: Option<&str>) -> String {
     if let Some((_distro, linux_path)) = hadron_lattice::wsl::parse_wsl_unc_path(root) {
-        let clean = linux_path.replace('\\', "/");
+        let clean = linux_path.to_string_lossy().replace('\\', "/");
         let clean_trimmed = clean.trim_end_matches('/');
         let formatted = if let Some(rest) = clean_trimmed.strip_prefix("/home/") {
             if let Some((_user, after_user)) = rest.split_once('/') {
@@ -331,10 +331,11 @@ pub fn format_repo_root_display(root: &Path, home_override: Option<&str>) -> Str
 
 /// Formats the repository working directory for display in the UI (e.g. `~/dev/hadron/`).
 pub fn format_working_dir(field_path: &Path) -> String {
-    let root = repo_root_of(field_path);
-    let abs_path = if hadron_lattice::wsl::is_wsl_unc_path(root) {
-        root.to_path_buf()
+    let abs_path = if let Some((distro, linux_path)) = hadron_lattice::wsl::parse_wsl_unc_path(field_path) {
+        let linux_root = repo_root_of(&linux_path);
+        hadron_lattice::wsl::format_wsl_unc_path(&distro, linux_root)
     } else {
+        let root = repo_root_of(field_path);
         root.canonicalize()
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| root.to_path_buf()))
     };
