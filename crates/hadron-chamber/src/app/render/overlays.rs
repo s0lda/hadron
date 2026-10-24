@@ -20,6 +20,16 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.5",
+        date: Some("2026-10-24"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Unadopted Catalogue Quark Adoption & Live Repo Team Re-Resolution: Clicking 'Enable' or 'Make Orchestrator' on an unadopted catalogue quark now adopts and enables it into .hadron/team.json (auto-promoting the first seat to Orchestrator), hides ORCH badges on unadopted rows, and live-resolves newly created repo team.json files in the daemon without restarting",
+            "Superseded /steer Loop Fix & Windows 24 KiB Prompt Budget: Answering a newer addressed /steer request now marks older superseded requests to the same quark as answered to prevent infinite re-dispatch loops, and fit_prompt_to_budget sheds reference sections before '# Your task' under the Windows 24 KiB argv limit",
+        ],
+    },
+    Release {
         version: "0.33.4",
         date: Some("2026-10-23"),
         added: &[],

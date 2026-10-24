@@ -5,6 +5,16 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.5] - 2026-10-24
+
+### Fixed
+- **Unadopted Catalogue Quark Adoption & Live Repo `team.json` Re-Resolution (`hadron-chamber`, `hadron-gluon`)**:
+  - Added `toggle_or_adopt_quark_in_team` (`actions.rs`) and wired it across `toggle_quark_enabled`, `adopt_quark`, `/toggle`, `apply_orchestrator_exclusivity`, and `save_quark_settings` (`settings/mod.rs`) so clicking **"Enable"** or **"Make Orchestrator"** on an unadopted catalogue quark in a new repository adopts and enables it into `.hadron/team.json` (auto-promoting the first adopted seat to `Orchestrator`).
+  - Updated `FieldPoll::gather` (`reload.rs`) to treat a missing repo `.hadron/team.json` as `Some(Team::default())` and updated `hadron_gluon::cli::run` (`cli.rs`) to re-evaluate `resolve_team_path` on every poll tick so newly created repo `.hadron/team.json` files are adopted live without restarting the daemon, while hiding the `ORCH` badge on unadopted catalogue rows (`render/roster.rs`).
+- **Superseded `/steer` Loop Prevention & Windows 24 KiB Prompt Task Preservation (`hadron-gluon`)**:
+  - Updated `is_request_answered` (`router/mod.rs`) and `Engine::driver_for` (`engine/routing.rs`) so completing a turn that answers a newer addressed `/steer` or task request marks older superseded requests to the same quark as answered instead of re-exciting the quark in an infinite loop.
+  - Updated `fit_prompt_to_budget` (`adapter/cli.rs`) to progressively drop `nucleus_index`, `nucleus_digest`, tool descriptions, active skill, role body, and excess `invariants` before `# Your task` and `# Who you are` when fitting the Windows 24 KiB command-line limit (`SAFE_ARG_BYTES`), ensuring the task section is never truncated off the end of the prompt.
+
 ## [0.33.4] - 2026-10-23
 
 ### Fixed
