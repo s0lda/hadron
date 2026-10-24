@@ -5,6 +5,22 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.7] - 2026-10-24
+
+### Fixed
+- **WSL Sandboxed Execution via Linux Bubblewrap & Worktree/Toolchain Mounts (`hadron-gatekeeper`, `hadron-lattice`, `hadron-chamber`)**:
+  - Added `detect_sandbox_platform_for_path` (`sandbox.rs`) and `is_wsl_bwrap_available` (`wsl.rs`), and updated `resolve_sandboxed_command` (`sandbox.rs`) so WSL UNC worktree paths (`\\wsl.localhost\<distro>\...`) route sandboxed CLI execution through in-distro Linux Bubblewrap (`bwrap`) or direct WSL fallback instead of wrapping in Windows `powershell.exe`.
+  - Updated `build_bwrap_args` (`sandbox.rs`) to mount `/run` and `/mnt/wsl` before `/etc` (so symlinked `/etc/resolv.conf` resolves), bind user toolchains/auth (`~/.local`, `~/.gemini`, `~/.claude`, `~/.codex`, `~/.cargo`, `~/.nvm`) and parent worktree metadata (`<repo>/.git`, `<repo>/.hadron/nucleus`, `<repo>/.hadron/docs`, `<repo>/.hadron/live`, `<repo>/target`) via `infer_repo_root_from_worktree` while keeping the parent checkout isolated, and strip Windows `\\?\` prefixes in `build_windows_sandbox_script`.
+  - Excluded `/mnt/*` Windows interop paths from `resolve_wsl_program_path` and added `~/.nvm/versions/node/*/bin`, `~/.grok/bin`, `~/.bun/bin`, `~/.deno/bin`, `~/.volta/bin`, and `/snap/bin` to `wsl_user_path_env` (`wsl.rs`).
+- **WSL Merge Gate Environment Forwarding, `hadron` Binary Target Filtering & Doc/Nucleus Blast Radius Exemption (`hadron-gluon`, `hadron-forge`)**:
+  - Updated `merge::run_tests_within` (`merge.rs`) to translate `shared_build_env` paths (`CARGO_TARGET_DIR`, `CARGO_HOME`) for WSL UNC worktrees and forward them via `WSLENV` (`wslenv_for_keys`) while retaining `inject_cache_isolation_flags`.
+  - Updated `detect_affected_runner` (`merge.rs`) to pass `--bin hadron` when running `cargo test -p hadron`, and updated `compute_impacted_tests` (`tia.rs`) and `AstBlastRadiusAnalyzer` (`ast_blast_radius.rs`) to exempt `.hadron/`, `docs/`, `.md`, and `.txt` changes from triggering Rust workspace test rebuilds.
+- **Agy Live Stream Tool Status Priority & Prompt Budget Field Window Retention (`hadron-gluon`)**:
+  - Updated `CliQuark` live status publishing (`adapter/cli.rs`) and `StreamAccumulator` (`adapter/cli_stream.rs`) to publish tool/thinking status transitions immediately without text-delta throttling, prioritize file/command keys (`CommandLine`, `Path`, `AbsolutePath`, `Query`) in `agy_step_label`, and prevent completed `agent_response` steps from overwriting active tool labels with `"thinking"`.
+  - Updated `fit_prompt_to_budget` (`adapter/cli.rs`) to retain the 2 most recent field messages while shedding `git_diff`, `nucleus_index`, and `nucleus_digest` first, and added a WSL `sh -lc` fallback to `probe_cli_models` on Windows.
+- **WSL UNC Working Directory Display & Remote Tracking Fallback (`hadron-chamber`)**:
+  - Added `format_repo_root_display` (`vcs.rs`) and updated `format_working_dir` so WSL UNC repository paths (`\\wsl.localhost\<distro>\home\<user>\...`) and Windows paths format cleanly with `~/` and forward slashes, and guarded `get_remote_tracking_info` (`vcs.rs`) when no git remote is configured.
+
 ## [0.33.6] - 2026-10-24
 
 ### Fixed

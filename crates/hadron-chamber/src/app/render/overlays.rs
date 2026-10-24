@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.7",
+        date: Some("2026-10-24"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "WSL Sandboxed Execution via Linux Bubblewrap: Routed WSL UNC worktree sandboxing through in-distro Linux bwrap (with /run, /mnt/wsl, user toolchains, and parent .git/.hadron/target mounts) instead of Windows powershell.exe, and excluded /mnt/* Windows interop paths from WSL binary resolution",
+            "WSL Merge Gate & Blast Radius Filtering: Forwarded translated CARGO_TARGET_DIR/CARGO_HOME into WSL merge gate via WSLENV, targeted --bin hadron for hadron package test runs, and exempted .hadron/, docs/, .md, and .txt edits from triggering Rust test rebuilds",
+            "Agy Live Stream Tool Labels & Prompt Budget Retention: Bypassed text-delta throttling on status-only transitions, prioritized file/command arguments in agy_step_label without overwriting active tools on DONE agent_response steps, and preserved recent field messages ahead of reference sections in fit_prompt_to_budget",
+            "WSL UNC Working Directory Display: Normalized WSL UNC and Windows repository root paths to ~/ and forward slashes in format_working_dir and guarded git remote tracking lookup when no remote exists",
+        ],
+    },
+    Release {
         version: "0.33.6",
         date: Some("2026-10-24"),
         added: &[],
