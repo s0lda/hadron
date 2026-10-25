@@ -20,6 +20,22 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.11",
+        date: Some("2026-10-25"),
+        added: &[
+            "End-to-End Live Activity Fidelity: Streamed ToolCall chunks from agy_acp.py, preserved Activity.started timestamps across ACP/CLI turns, and replaced generic working... placeholders with active SwarmTask titles and humanized tool strings ($ cmd, read file, edit file)",
+            "Alphabetical Roster Badges & Turn Diff Chips: Added inline gating/+branch badges, phase-colored live activity rows, and context-window fill bars to alphabetically-sorted Roster cards, plus clickable commit (⊕ sha) and file diff (± file) chips in Chat turn cards",
+            "Consolidated Mission & Git Inspector Rails: Unified Plan & Waves, Swarm Tasks, and Nucleus Memory into RightRailTab::Mission and folded working-tree diffs into GitSubtab::Changes",
+            "3D Visualizer Dual-Shell Topology & Live Activity Dock: Added phase-colored 3D excitation halos, orbiting tool satellites, 1.0x seated vs 1.28x catalogue shells, and click-to-snap camera rotation (focus_angles_for_spherical)",
+        ],
+        changed: &[
+            "Pure-Neutral Achromatic Surfaces, Noto Sans Typography & Zero-Blue-Cast Telemetry Palette: Applied #0F0F0F..#2E2E2E neutral surface ladder, #EDEDED/#8E8E8E typography, Noto Sans default UI font, and desaturated telemetry accents (#62C073, #A87FFB, #C778DD, #E5C07B, #E06C75)",
+        ],
+        fixed: &[
+            "Event Log @human Resolution & Window Close Button: Resolved @human to configured human display name in Event Log and kept standard red (#ef4444) on theme::danger() window close button hover",
+        ],
+    },
+    Release {
         version: "0.33.10",
         date: Some("2026-10-24"),
         added: &[],
@@ -1306,7 +1322,7 @@ impl super::Chamber {
         // Signature brand motif: the four quark energies as a small constellation of dots,
         // echoing the field's corner glows.
         let quark_dots = h_flex().gap_1p5().items_center().children(
-            [0x38bdf8u32, 0x9d7cd8, 0x62c073, 0xe5c07b]
+            [0xc778ddu32, 0xa87ffb, 0x62c073, 0xe5c07b]
                 .into_iter()
                 .map(|c| div().size(px(9.0)).rounded_full().bg(rgb(c)).into_any_element()),
         );

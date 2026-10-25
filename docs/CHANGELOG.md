@@ -5,6 +5,27 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.11] - 2026-10-25
+
+### Added
+- **End-to-End Live Activity Fidelity & Turn-Start Telemetry (`hadron-gluon`, `hadron-chamber`)**:
+  - Streamed `ToolCall` chunks (`sessionUpdate: "tool_call"`) and initial prompt thoughts from `scripts/agy_acp.py`, preserved turn `Activity.started` timestamps across `LiveFeed` (`acp/session.rs`) and `CliQuark` (`cli.rs`, `cli_stream.rs`), and added `active_quarks_rich_with_tasks` and `humanize_activity_detail` (`widgets.rs`) to replace generic `working…` placeholders with active `SwarmTask` titles and humanized tool strings (`$ <cmd>`, `read <file>`, `edit <file>`).
+- **Alphabetical Roster Badges & In-Stream Turn Diff Chips (`hadron-chamber`)**:
+  - Preserved alphabetical display-name order in `roster_pane` (`render/roster.rs`) while adding inline `gating` and `+branch` worktree badges, phase-colored live activity pills, and static context-window fill micro-bars to each quark card.
+  - Upgraded the Chat `live_card` preview (`render/chat.rs`) with click-to-inspect Quark Info navigation and added clickable commit (`⊕ <sha>`) and file diff (`± <file>`) chips to quark turn reports.
+- **Consolidated Inspector Rail: `Mission` & `GitSubtab::Changes` (`hadron-chamber`)**:
+  - Consolidated `Plan`, `Tasks`, and `.hadron/nucleus/` memory inspection into `RightRailTab::Mission` (`MissionSubtab::{Plan, Tasks, Nucleus}` in `render/terminal.rs` and `tabs.rs`) with an always-visible active-tasks summary strip, and moved working-tree diffs into `GitSubtab::Changes` (`render/git.rs`).
+- **3D Swarm Visualizer Dual-Shell Topology, Phase Halos & Live Activity Dock (`hadron-chamber`)**:
+  - Upgraded `visualizer_view` (`render/visualizer.rs`) with dual-shell spherical placement (`1.0x` inner seated swarm vs `1.28x` outer catalogue), phase-specific 3D excitation halos (`phase_halo_color`), orbiting tool satellites (`Doing::Working`), gating core beams (`Doing::Gating`), and an interactive Live Activity Dock that rotates the 3D camera (`focus_angles_for_spherical`) to center any clicked quark.
+
+### Changed
+- **Pure-Neutral Achromatic Surfaces, `Noto Sans` Typography & Zero-Blue-Cast Telemetry Palette (`hadron-chamber`)**:
+  - Updated `Obsidian` surface tokens (`#0F0F0F` canvas, `#171717` surface, `#1F1F1F` elevated/input, `#262626` raised/hover, `#2E2E2E` hairline border), neutral typography (`#EDEDED` primary, `#8E8E8E` muted), `Noto Sans` default UI font (`fonts::UI_FAMILY`), and desaturated zero-blue-cast telemetry accents (`#62C073` emerald-mint, `#A87FFB` warm violet, `#C778DD` muted orchid, `#E5C07B` warm amber, `#E06C75` coral red) across `theme.rs`, `config.rs`, `render/visualizer.rs`, `render/git.rs`, `render/flamechart.rs`, and `mermaid/render.rs`.
+
+### Fixed
+- **Event Log `@human` Resolution & Standard Red Window Close Button (`hadron-chamber`)**:
+  - Added `resolve_mention_names_with_human` (`mentions.rs`) so `@human` resolves to the user's configured display name (`@Jake`) in the Event Log, and preserved standard red (`#ef4444`) on `theme::danger()` for the window close button hover.
+
 ## [0.33.10] - 2026-10-24
 
 ### Changed
