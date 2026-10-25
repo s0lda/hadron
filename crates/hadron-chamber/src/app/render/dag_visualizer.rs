@@ -1,27 +1,78 @@
 use super::*;
 use gpui_component::ActiveTheme;
 use hadron_lattice::task_graph::TaskGraph;
+use std::hash::{Hash, Hasher};
+
+pub(crate) fn compute_plan_content_hash(content: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    content.hash(&mut hasher);
+    hasher.finish()
+}
 
 impl Chamber {
-    /// Renders the Interactive Plan DAG & Wave Visualizer (Capability #11).
-    #[allow(dead_code)]
-    pub(super) fn plan_dag_visualizer(&self, content: &str, cx: &mut Context<Self>) -> impl IntoElement {
-        let graph = TaskGraph::parse_from_markdown(content);
-        if graph.tasks.is_empty() {
-            return div().into_any_element();
+    pub(super) fn resolve_cached_plan_dag(
+        &self,
+        repo: &std::path::Path,
+        content: &str,
+    ) -> CachedPlanDag {
+        let content_hash = compute_plan_content_hash(content);
+        let head_oid = self.git_branch_fingerprint.clone();
+
+        if let Some(cached) = self.cached_plan_dag.borrow().as_ref() {
+            if cached.content_hash == content_hash && cached.head_oid == head_oid {
+                return cached.clone();
+            }
         }
+
+        let graph = TaskGraph::parse_from_markdown(content);
         let waves = match graph.compute_waves() {
             Ok(w) => w,
             Err(_) => vec![graph.tasks.clone()],
         };
+        let ready_ids: std::collections::HashSet<String> =
+            graph.ready_tasks().into_iter().map(|t| t.id).collect();
+        let mut landed_commits = std::collections::HashSet::new();
+        for task in &graph.tasks {
+            if let Some(ref hash) = task.commit_hash {
+                if crate::vcs::is_commit_merged(repo, hash, "main") {
+                    landed_commits.insert(hash.clone());
+                }
+            }
+        }
+        let progress = crate::app::mentions::parse_plan_progress_with_status(repo, content);
+        let task_groups = crate::app::mentions::parse_plan_tasks_with_status(repo, content);
+
+        let built = CachedPlanDag {
+            content_hash,
+            head_oid,
+            graph,
+            waves,
+            ready_ids,
+            landed_commits,
+            progress,
+            task_groups,
+        };
+        *self.cached_plan_dag.borrow_mut() = Some(built.clone());
+        built
+    }
+
+    /// Renders the Interactive Plan DAG & Wave Visualizer (Capability #11).
+    #[allow(dead_code)]
+    pub(super) fn plan_dag_visualizer(&self, content: &str, cx: &mut Context<Self>) -> impl IntoElement {
+        let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        let cached = self.resolve_cached_plan_dag(&repo, content);
+        let graph = &cached.graph;
+        if graph.tasks.is_empty() {
+            return div().into_any_element();
+        }
+        let waves = &cached.waves;
 
         if waves.is_empty() {
             return div().into_any_element();
         }
 
         let is_expanded = self.plan_dag_expanded;
-        let ready_ids: std::collections::HashSet<String> = graph.ready_tasks().into_iter().map(|t| t.id).collect();
-        let _barrier_scheduler = hadron_gluon::engine::dag_scheduler::DagBarrierScheduler::from_plan_markdown(content).ok();
+        let ready_ids = &cached.ready_ids;
         let unblocked_count = ready_ids.len();
 
         let header_bar = h_flex()
@@ -90,12 +141,14 @@ impl Chamber {
             .id("dag-waves-row")
             .gap_2()
             .items_start()
+            .track_scroll(&self.dag_waves_scroll)
+            .max_h(px(320.0))
             .overflow_x_scroll()
+            .overflow_y_scroll()
             .pb_1()
             .w_full()
             .min_w_0();
 
-        let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
         for (wave_idx, wave) in waves.iter().enumerate() {
             let mut col = v_flex()
                 .gap_1p5()
@@ -139,7 +192,7 @@ impl Chamber {
             for task in wave {
                 let is_ready = ready_ids.contains(&task.id);
                 let is_landed = if let Some(ref hash) = task.commit_hash {
-                    crate::vcs::is_commit_merged(&repo, hash, "main")
+                    cached.landed_commits.contains(hash)
                 } else {
                     task.completed
                 };
@@ -269,5 +322,15 @@ mod tests {
         assert_eq!(waves.len(), 3);
         assert!(graph.tasks[0].completed);
         assert_eq!(graph.tasks[0].commit_hash.as_deref(), Some("abc1234"));
+    }
+
+    #[test]
+    fn test_plan_content_hash_cache_key_stability() {
+        let md = "- [x] Task 1.1: Setup (commit abc1234)\n- [ ] Task 1.2: Next (after: task-1.1)\n";
+        let h1 = compute_plan_content_hash(md);
+        let h2 = compute_plan_content_hash(md);
+        let h3 = compute_plan_content_hash("- [x] Task 1.1: Setup\n- [x] Task 1.2: Next\n");
+        assert_eq!(h1, h2);
+        assert_ne!(h1, h3);
     }
 }

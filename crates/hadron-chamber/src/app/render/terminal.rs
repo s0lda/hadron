@@ -890,7 +890,8 @@ impl super::Chamber {
 
                 let plan_element = match resolved {
                     Some((rel_path, content)) => {
-                        let (total, landed_count, branch_count, _) = parse_plan_progress_with_status(&repo, &content);
+                        let cached_dag = self.resolve_cached_plan_dag(&repo, &content);
+                        let (total, landed_count, branch_count, _) = cached_dag.progress.clone();
                         let completed = landed_count + branch_count;
                         let frac = if total > 0 {
                             completed as f32 / total as f32
@@ -1190,7 +1191,7 @@ impl super::Chamber {
                         list = list.child(self.plan_dag_visualizer(&content, cx));
 
                         // Task groups checklist
-                        let task_groups = parse_plan_tasks_with_status(&repo, &content);
+                        let task_groups = cached_dag.task_groups;
                         for (task_name, steps) in task_groups {
                             if steps.is_empty() {
                                 continue;
@@ -1661,6 +1662,7 @@ impl super::Chamber {
                                     .id("nucleus-scroll")
                                     .size_full()
                                     .overflow_y_scroll()
+                                    .track_scroll(&self.mission_plan_scroll)
                                     .child(col),
                             )
                             .into_any_element()

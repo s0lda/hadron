@@ -457,11 +457,19 @@ impl<R: CliRunner> CliQuark<R> {
         let turn_started = chrono::Utc::now();
         let mut acc = StreamAccumulator::new(stream.format);
         let mut last_publish: Option<Instant> = None;
+        let mut last_heartbeat: Option<Instant> = None;
         let mut on_line = |line: &str| {
-            if !acc.on_line(line) {
+            let changed = acc.on_line(line);
+            let Some(dir) = &dir else { return };
+            if !changed {
+                if !line.trim().is_empty()
+                    && last_heartbeat.is_none_or(|t: Instant| t.elapsed() >= PUBLISH_THROTTLE)
+                {
+                    last_heartbeat = Some(Instant::now());
+                    let _ = live::touch_heartbeat(dir, &quark_id);
+                }
                 return;
             }
-            let Some(dir) = &dir else { return };
             // Status transitions (while draft is empty) arrive in bursts (e.g.
             // `agent_response` followed <1ms later by `tool_name: run_command`) and
             // must never be dropped by the text delta throttle.
@@ -469,7 +477,9 @@ impl<R: CliRunner> CliQuark<R> {
             let due = is_status_only
                 || last_publish.is_none_or(|t: Instant| t.elapsed() >= PUBLISH_THROTTLE);
             if due {
-                last_publish = Some(Instant::now());
+                let now = Instant::now();
+                last_publish = Some(now);
+                last_heartbeat = Some(now);
                 let mut activity = if is_status_only {
                     let status = acc.status();
                     let doing = if status == "thinking"
@@ -493,8 +503,44 @@ impl<R: CliRunner> CliQuark<R> {
             let _ = live::clear(dir, &self.id);
         }
         run_result?;
-        let (message, spend) = acc.finish();
-        Ok(TurnOutcome { message, usage: Usage { spend, ..Default::default() }, ..Default::default() })
+        let res = acc.finish_result();
+        let model = res
+            .model
+            .or_else(|| (!self.model.trim().is_empty()).then(|| self.model.clone()));
+        let context_tokens = res.context_used.or_else(|| {
+            if !self.model.trim().is_empty() && !res.spend.is_empty() {
+                Some(
+                    res.spend
+                        .input
+                        .unwrap_or(0)
+                        .saturating_add(res.spend.cache_read.unwrap_or(0)),
+                )
+            } else {
+                None
+            }
+        });
+        let context = context_tokens.map(|used| {
+            let size = res.context_window.unwrap_or(2_000_000);
+            hadron_lattice::ContextUsage {
+                used_tokens: used,
+                context_window_size: size,
+                used_percentage: if size > 0 {
+                    (used as f64 / size as f64) * 100.0
+                } else {
+                    0.0
+                },
+            }
+        });
+        Ok(TurnOutcome {
+            message: res.message,
+            usage: Usage {
+                spend: res.spend,
+                model,
+                context,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
     }
 }
 

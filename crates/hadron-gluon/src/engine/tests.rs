@@ -6887,3 +6887,71 @@ async fn a_deadline_abandoned_turn_is_grounded_not_left_stale() {
          not just the interrupting message: {events:?}"
     );
 }
+
+#[tokio::test]
+async fn liveness_watchdog_keeps_heartbeating_turn_alive_and_terminates_silent_stall() {
+    let dir = tempfile::tempdir().unwrap();
+    let live_dir = dir.path().join("live");
+    let quark = QuarkId::new("cli-agy");
+
+    // 1. A turn emitting heartbeats via `touch_heartbeat` survives past `stall_deadline` (80ms).
+    let live_clone = live_dir.clone();
+    let quark_clone = quark.clone();
+    let active_fut = async move {
+        for _ in 0..4 {
+            tokio::time::sleep(Duration::from_millis(35)).await;
+            hadron_lattice::live::touch_heartbeat(&live_clone, &quark_clone).unwrap();
+        }
+        Ok(TurnOutcome {
+            message: Some("survived via heartbeats".to_string()),
+            ..Default::default()
+        })
+    };
+    let out = super::excite_with_liveness_watchdog(
+        active_fut,
+        &live_dir,
+        &quark,
+        Duration::from_millis(80),
+        Duration::from_secs(5),
+    )
+    .await
+    .expect("heartbeating turn must not be killed by stall_deadline");
+    assert_eq!(out.message.as_deref(), Some("survived via heartbeats"));
+    let _ = hadron_lattice::live::clear(&live_dir, &quark);
+
+    // 2. A silent stalled turn is terminated promptly at `stall_deadline`.
+    let silent_fut = async {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        Ok(TurnOutcome::default())
+    };
+    let err = super::excite_with_liveness_watchdog(
+        silent_fut,
+        &live_dir,
+        &quark,
+        Duration::from_millis(60),
+        Duration::from_secs(5),
+    )
+    .await
+    .expect_err("silent turn must be terminated at stall_deadline");
+    assert!(err.to_string().contains("silence deadline"), "{err}");
+}
+
+#[test]
+fn should_rotate_session_triggers_at_seventy_percent_context() {
+    let mut usage = hadron_lattice::Usage::default();
+    assert!(!super::should_rotate_session(&usage));
+
+    usage.context = Some(hadron_lattice::ContextUsage {
+        used_tokens: 1_300_000,
+        context_window_size: 2_000_000,
+        used_percentage: 65.0,
+    });
+    assert!(!super::should_rotate_session(&usage));
+
+    usage.context = Some(hadron_lattice::ContextUsage {
+        used_tokens: 1_400_000,
+        context_window_size: 2_000_000,
+        used_percentage: 70.0,
+    });
+    assert!(super::should_rotate_session(&usage));
+}

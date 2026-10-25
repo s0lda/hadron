@@ -73,10 +73,11 @@ impl super::Chamber {
         self.history_draft.clear();
 
         // A line may begin with chained UI commands, then a normal message, e.g.
-        // "/toggle-roster /clear ping the team". `split_leading_commands` peels the
+        // "/toggle-roster /clear ping the team". `split_leading_commands_in` peels the
         // leading `/command` tokens; the returned body is the untouched remainder, so a
         // multi-line message (Shift+Enter, a markdown list) keeps its newlines.
-        let (cmds, body) = split_leading_commands(&full);
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        let (cmds, body) = split_leading_commands_in(&full, Some(&repo_root));
         for (cmd, args) in &cmds {
             if cmd != "clear" {
                 let cmd_ev = slash_command_event(cmd, args);
@@ -202,13 +203,23 @@ impl super::Chamber {
             .iter()
             .map(|q| (q.id.0.clone(), q.display_name.clone()))
             .collect();
+        let repo_root = crate::vcs::repo_root_of(&self.path);
         let files = self.completion_files.borrow();
-        let result = crate::text::completion_candidates(
+        let result = crate::text::completion_candidates_with_root(
             &text,
             cursor,
             &quarks,
             files.as_slice(),
             &self.sessions,
+            Some(repo_root),
+        );
+        self.ghost_completion = crate::text::extract_ghost_completion(
+            &text,
+            cursor,
+            &self.prompt_history,
+            &quarks,
+            files.as_slice(),
+            Some(repo_root),
         );
         drop(files);
         self.completion = result.map(|c| {
@@ -323,11 +334,32 @@ impl super::Chamber {
         let start = card.start.min(cursor);
         let new_value = format!("{}{}{}", &value[..start], new_text, &value[cursor..]);
         let new_cursor = start + new_text.len();
+        self.ghost_completion = None;
         self.input.update(cx, |state, cx| {
             state.set_value(new_value, window, cx);
             state.set_selected_range(new_cursor..new_cursor, cx);
         });
         cx.notify();
+    }
+
+    /// Accept the inline ghost-text completion suffix when the cursor is at the end of input.
+    pub(super) fn accept_ghost_completion(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(ghost) = self.ghost_completion.take() else {
+            return false;
+        };
+        let value = self.input.read(cx).value().to_string();
+        let new_value = format!("{value}{ghost}");
+        let new_cursor = new_value.len();
+        self.input.update(cx, |state, cx| {
+            state.set_value(new_value, window, cx);
+            state.set_selected_range(new_cursor..new_cursor, cx);
+        });
+        cx.notify();
+        true
     }
 }
 
@@ -376,7 +408,37 @@ pub(crate) fn slash_command_event(cmd: &str, args: &str) -> Event {
     )
 }
 
+fn split_chained_line_command<'a>(
+    tail: &'a str,
+    repo_root: Option<&std::path::Path>,
+) -> (&'a str, &'a str) {
+    let bytes = tail.as_bytes();
+    let mut idx = 0;
+    while idx < bytes.len() {
+        if bytes[idx] == b'/' && (idx == 0 || bytes[idx - 1].is_ascii_whitespace()) {
+            let candidate = &tail[idx + 1..];
+            let end = candidate
+                .find(char::is_whitespace)
+                .unwrap_or(candidate.len());
+            let name = &candidate[..end];
+            if !name.is_empty() && crate::text::command_in(name, repo_root).is_some() {
+                return (tail[..idx].trim(), &tail[idx..]);
+            }
+        }
+        idx += 1;
+    }
+    (tail.trim(), "")
+}
+
+#[cfg(test)]
 pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Option<String>) {
+    split_leading_commands_in(full, None)
+}
+
+pub(super) fn split_leading_commands_in(
+    full: &str,
+    repo_root: Option<&std::path::Path>,
+) -> (Vec<(String, String)>, Option<String>) {
     let mut cmds = Vec::new();
     let mut body_lines: Vec<&str> = Vec::new();
     let mut in_fence = false;
@@ -440,29 +502,36 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
             };
 
             let tok_end = check_head.find(char::is_whitespace).unwrap_or(check_head.len());
-            let Some(cmd) = check_head[..tok_end]
-                .strip_prefix('/')
-                .filter(|c| !c.is_empty())
-                .and_then(crate::text::command)
-            else {
+            let raw_cmd_name = check_head[..tok_end].strip_prefix('/').filter(|c| !c.is_empty());
+            let Some((resolved_name, cmd)) = raw_cmd_name.and_then(|name| {
+                crate::text::command_in(name, repo_root).map(|c| (name, c))
+            }) else {
                 break;
+            };
+            let cmd_name = if cmd.name.is_empty() {
+                resolved_name
+            } else {
+                cmd.name
             };
             consumed = true;
             match cmd.arity {
                 crate::text::Arity::None => {
-                    cmds.push((cmd.name.to_string(), String::new()));
+                    cmds.push((cmd_name.to_string(), String::new()));
                     rest = &check_head[tok_end..];
                 }
                 crate::text::Arity::Line => {
-                    let raw_args = check_head[tok_end..].trim();
+                    let (raw_args, next_rest) =
+                        split_chained_line_command(&check_head[tok_end..], repo_root);
                     let args = match leading_mention {
                         Some(mention) if raw_args.is_empty() => mention.to_string(),
                         Some(mention) => format!("{mention} {raw_args}"),
                         None => raw_args.to_string(),
                     };
-                    cmds.push((cmd.name.to_string(), args));
-                    rest = "";
-                    break;
+                    cmds.push((cmd_name.to_string(), args));
+                    rest = next_rest;
+                    if rest.is_empty() {
+                        break;
+                    }
                 }
                 crate::text::Arity::Body => {
                     let first = check_head[tok_end..].trim();
@@ -480,7 +549,7 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
                     } else {
                         first_arg
                     };
-                    cmds.push((cmd.name.to_string(), arg));
+                    cmds.push((cmd_name.to_string(), arg));
                     break 'lines;
                 }
             }
@@ -1005,6 +1074,37 @@ mod tests {
             }
             other => panic!("expected Kind::Command, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn split_leading_commands_in_discovers_repo_custom_skill_and_chains_line_commands() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let skills_dir = tmp.path().join(".hadron").join("skills");
+        std::fs::create_dir_all(&skills_dir).expect("create skills dir");
+        std::fs::write(
+            skills_dir.join("joke.md"),
+            "---\nname: joke\n---\nTell a joke.\n",
+        )
+        .expect("write joke.md");
+
+        let (cmds, body) =
+            split_leading_commands_in("/joke @Agy tell me a rust pun", Some(tmp.path()));
+        assert_eq!(
+            cmds,
+            vec![("joke".to_string(), "@Agy tell me a rust pun".to_string())]
+        );
+        assert_eq!(body, None);
+
+        let (chained, body2) =
+            split_leading_commands_in("/mode bypass /goal Ship autonomous wave", Some(tmp.path()));
+        assert_eq!(
+            chained,
+            vec![
+                ("mode".to_string(), "bypass".to_string()),
+                ("goal".to_string(), "Ship autonomous wave".to_string()),
+            ]
+        );
+        assert_eq!(body2, None);
     }
 }
 

@@ -35,7 +35,9 @@ async fn until_silent(
     // Poll well inside `live::STALE_AFTER_SECS`, or a write could go stale between
     // two ticks and never be seen. Derived from the deadline so a test with a tiny
     // one exercises this same path rather than a code branch of its own.
-    let tick = (deadline / 4).min(std::time::Duration::from_secs(30)).max(std::time::Duration::from_millis(10));
+    let tick = (deadline / 4)
+        .min(std::time::Duration::from_secs(5))
+        .max(std::time::Duration::from_millis(10));
     let mut last_sign = std::time::Instant::now();
     let mut newest_seen: Option<chrono::DateTime<chrono::Utc>> = None;
     loop {
@@ -45,12 +47,69 @@ async fn until_silent(
                 newest_seen = Some(activity.at);
                 last_sign = std::time::Instant::now();
             }
+        } else if let Some(age) = hadron_lattice::live::last_heartbeat_age(live_dir, quark) {
+            if age < last_sign.elapsed() {
+                last_sign = std::time::Instant::now()
+                    .checked_sub(age)
+                    .unwrap_or_else(std::time::Instant::now);
+            }
         }
         let silent_for = last_sign.elapsed();
         if silent_for >= deadline {
             return silent_for;
         }
     }
+}
+
+/// Run a quark excitation future guarded by both a silence/liveness watchdog (`stall_deadline`)
+/// and a maximum wall-clock safety ceiling (`max_wall_clock`).
+///
+/// Any stdout line (CLI) or `session/update` notification (ACP) refreshes `<live_dir>/<quark>.json`,
+/// resetting the silence timer so multi-hour turns that actively emit progress are never killed
+/// until `max_wall_clock`, while genuinely stalled/silent turns are reaped after `stall_deadline`.
+pub async fn excite_with_liveness_watchdog<F>(
+    excite_fut: F,
+    live_dir: &std::path::Path,
+    quark: &QuarkId,
+    stall_deadline: std::time::Duration,
+    max_wall_clock: std::time::Duration,
+) -> anyhow::Result<TurnOutcome>
+where
+    F: std::future::Future<Output = anyhow::Result<TurnOutcome>>,
+{
+    tokio::select! {
+        biased;
+        outcome = excite_fut => outcome,
+        silent_for = until_silent(live_dir, quark, stall_deadline) => Err(
+            anyhow::anyhow!(
+                "turn hit the silence deadline with no terminal status: {} \
+                 produced no sign of life for {}s (process gone, or hung with \
+                 no outcome); the engine is ending the turn on its behalf. A \
+                 turn that is still working publishes activity and is never \
+                 reaped — if this fired on healthy work, that quark's \
+                 transport publishes nothing (CLI seats do not).",
+                quark.as_str(),
+                silent_for.as_secs().max(stall_deadline.as_secs()),
+            )
+        ),
+        _ = tokio::time::sleep(max_wall_clock) => Err(
+            anyhow::anyhow!(
+                "turn exceeded maximum wall-clock ceiling ({}s) for {}; aborting turn.",
+                max_wall_clock.as_secs(),
+                quark.as_str(),
+            )
+        ),
+    }
+}
+
+/// Returns `true` when post-turn context window occupancy reaches or exceeds 70%,
+/// triggering an automatic session rotation (`reset_session`) before the next turn
+/// so long-running overnight runs do not suffer context degradation or token ballooning.
+pub fn should_rotate_session(usage: &hadron_lattice::Usage) -> bool {
+    usage
+        .context
+        .as_ref()
+        .is_some_and(|c| c.used_percentage >= 70.0)
 }
 
 impl super::Engine {
@@ -694,6 +753,7 @@ impl super::Engine {
                     let turn_tree = tree.clone();
                     let assignment = driver.as_ref().map(|d| d.assignment);
                     let deadline = self.turn_deadline;
+                    let max_wall_clock = self.max_turn_wall_clock;
                     let live_dir = hadron_lattice::live::live_dir(&self.field_path);
                     let abort = turns.spawn(async move {
                         let mut quark = quark.lock().await;
@@ -710,23 +770,15 @@ impl super::Engine {
                         //
                         // The lock is acquired OUTSIDE the deadline on purpose: it
                         // measures the turn, not the wait for a turn slot. And it
-                        // measures SILENCE, not elapsed time — see `until_silent`.
-                        let outcome = tokio::select! {
-                            biased;
-                            outcome = quark.excite(projection) => outcome,
-                            silent_for = until_silent(&live_dir, &turn_id, deadline) => Err(
-                                anyhow::anyhow!(
-                                    "turn hit the silence deadline with no terminal status: {} \
-                                     produced no sign of life for {}s (process gone, or hung with \
-                                     no outcome); the engine is ending the turn on its behalf. A \
-                                     turn that is still working publishes activity and is never \
-                                     reaped — if this fired on healthy work, that quark's \
-                                     transport publishes nothing (CLI seats do not).",
-                                    turn_id.as_str(),
-                                    silent_for.as_secs().max(deadline.as_secs()),
-                                )
-                            ),
-                        };
+                        // measures SILENCE, not elapsed time — see `excite_with_liveness_watchdog`.
+                        let outcome = excite_with_liveness_watchdog(
+                            quark.excite(projection),
+                            &live_dir,
+                            &turn_id,
+                            deadline,
+                            max_wall_clock,
+                        )
+                        .await;
                         (turn_id, lane, turn_tree, assignment, outcome)
                     });
                     dispatched_at_len.insert((target.clone(), lane), events.len());
@@ -797,6 +849,7 @@ impl super::Engine {
                     cancel_requested.remove(&(target.clone(), lane));
                     dispatched_at_len.remove(&(target.clone(), lane));
                     let dispatched = dispatched_assignment.remove(&(target.clone(), lane)).flatten();
+                    let rotate_session = should_rotate_session(&outcome.usage);
                     // The graceful cancel's ordinary resolution: the transport honoured
                     // `session/cancel` and the turn returned normally with
                     // `outcome.cancelled == true` — this is the common path, NOT the
@@ -821,15 +874,37 @@ impl super::Engine {
                             first_err = Some(err);
                         }
                     }
+                    if rotate_session {
+                        if let Some(quark) =
+                            self.quarks.get(&target).and_then(|lanes| lanes.get(lane)).cloned()
+                        {
+                            term::info(
+                                Source::Gluon,
+                                &format!(
+                                    "rotating session for {} (post-turn context >= 70%)",
+                                    target.as_str()
+                                ),
+                            );
+                            quark.lock().await.reset_session();
+                        }
+                    }
                 }
-                Ok((target, lane, _, _, Err(err))) => {
+                Ok((target, lane, tree, _, Err(err))) => {
                     // A failed turn must still leave a terminal status behind, or the
                     // quark reads as forever-working. Its siblings keep running.
+                    heartbeat_tracker.unregister(&target);
                     in_flight.remove(&(target.clone(), lane));
                     abort_handles.remove(&(target.clone(), lane));
                     cancel_requested.remove(&(target.clone(), lane));
                     dispatched_at_len.remove(&(target.clone(), lane));
                     dispatched_assignment.remove(&(target.clone(), lane));
+                    if let Some(t) = tree.as_ref() {
+                        let _ = crate::worktree::checkpoint_atomic_step(
+                            &t.wt.path,
+                            &target,
+                            "WIP checkpoint before turn error",
+                        );
+                    }
                     let err_msg = self.format_error_message(&target, &err);
                     let _ = self
                         .append(

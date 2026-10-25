@@ -188,6 +188,7 @@ async def handle_prompt(msg_id, session_id, prompt):
         response = await agent.chat(prompt_text)
         text_accumulated = []
         thought_accumulated = []
+        tool_call_count = 0
         async for chunk in response.chunks:
             if isinstance(chunk, Text):
                 text_accumulated.append(chunk.text)
@@ -202,6 +203,7 @@ async def handle_prompt(msg_id, session_id, prompt):
                     "content": {"type": "text", "text": chunk.text}
                 })
             elif isinstance(chunk, ToolCall):
+                tool_call_count += 1
                 title = _format_tool_call_title(chunk)
                 call_id = str(getattr(chunk, "id", None) or uuid.uuid4())
                 send_session_update(session_id, {
@@ -223,19 +225,51 @@ async def handle_prompt(msg_id, session_id, prompt):
                 })
 
         usage = response.usage_metadata
+        usage_payload = None
         if usage:
+            prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0
+            cached_tokens = getattr(usage, "cached_content_token_count", 0) or 0
+            # `cached_content_token_count` is a subset of `prompt_token_count` in Gemini/Antigravity SDK.
+            input_tokens = max(0, prompt_tokens - cached_tokens)
+            candidates_tokens = getattr(usage, "candidates_token_count", 0) or 0
+            thoughts_tokens = getattr(usage, "thoughts_token_count", 0) or 0
+            output_tokens = candidates_tokens + thoughts_tokens
+            total_tokens = getattr(usage, "total_token_count", 0) or (
+                input_tokens + output_tokens + cached_tokens
+            )
+            max_tokens = getattr(usage, "context_window_size", 2000000) or 2000000
+            invocations = max(1, tool_call_count + 1)
+            raw_context = input_tokens + cached_tokens
+            if invocations > 1 and raw_context > max_tokens // 2:
+                raw_context = raw_context // invocations
+            used = min(max_tokens, raw_context)
+
             send_session_update(session_id, {
                 "sessionUpdate": "usage_update",
-                "used": getattr(usage, "total_token_count", 0),
-                "size": getattr(usage, "context_window_size", 2000000)
+                "used": used,
+                "size": max_tokens
             })
+
+            usage_payload = {
+                "totalTokens": total_tokens,
+                "inputTokens": input_tokens,
+                "outputTokens": output_tokens,
+                "cachedReadTokens": cached_tokens,
+                "thoughtTokens": thoughts_tokens,
+                "cumulative": False,
+                "_meta": {"cumulative": False},
+            }
+
+            if used >= int(0.75 * max_tokens):
+                logger.info(
+                    f"session {session_id} context reached {used}/{max_tokens} tokens (>=75%); "
+                    "rotating resident SDK agent for next turn"
+                )
+                session_data["agent"] = None
 
         send_response(msg_id, {
             "stopReason": "end_turn",
-            "usage": {
-                "inputTokens": getattr(usage, "prompt_token_count", 0),
-                "outputTokens": getattr(usage, "candidates_token_count", 0)
-            } if usage else None
+            "usage": usage_payload
         })
     except asyncio.CancelledError:
         logger.info(f"session {session_id} prompt cancelled gracefully")

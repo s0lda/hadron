@@ -889,6 +889,33 @@ pub fn commit_turn(wt: &Worktree, message: &str) -> anyhow::Result<Option<String
     Ok(head(&wt.path))
 }
 
+/// Commit any dirty worktree changes as an atomic step checkpoint so multi-step
+/// or interrupted autonomous turns never lose intermediate file progress.
+/// Returns `Ok(Some(head_sha))` when a checkpoint commit was created, or `Ok(None)`
+/// when the worktree was already clean.
+pub fn checkpoint_atomic_step(
+    worktree_path: &Path,
+    quark: &QuarkId,
+    summary: &str,
+) -> anyhow::Result<Option<String>> {
+    reconcile_worktree_dot_hadron(worktree_path)?;
+    if !is_dirty(worktree_path)? {
+        return Ok(None);
+    }
+    let clean_summary: String = summary
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("atomic step checkpoint")
+        .trim()
+        .chars()
+        .take(72)
+        .collect();
+    let msg = format!("chore({}): checkpoint — {}", quark.as_str(), clean_summary);
+    git(worktree_path, &["add", "-A"])?;
+    git(worktree_path, &["commit", "-q", "-m", &msg])?;
+    Ok(head(worktree_path))
+}
+
 /// `git diff <base>...HEAD` — by construction exactly and only this quark's work on
 /// this assignment. This is the authoritative attribution, and what the projection
 /// shows the quark ("everything you have done so far"). The old `git diff HEAD`
@@ -1774,5 +1801,24 @@ pub(crate) mod tests {
             "preons written to worktree .hadron must be rescued into shared repo_root/.hadron/preons"
         );
         assert!(!is_dirty(&wt.path).unwrap());
+    }
+
+    #[test]
+    fn checkpoint_atomic_step_commits_dirty_worktree_and_noops_when_clean() {
+        let repo = git_repo();
+        let wt = ensure(repo.path(), &q("cli-agy"), "01CHECKPOINT").unwrap();
+        let head_before = head(&wt.path);
+        assert_eq!(
+            checkpoint_atomic_step(&wt.path, &q("cli-agy"), "nothing changed").unwrap(),
+            None
+        );
+        std::fs::write(wt.path.join("step1.txt"), "atomic progress\n").unwrap();
+        let sha = checkpoint_atomic_step(&wt.path, &q("cli-agy"), "Step 1 verified\nextra line")
+            .unwrap()
+            .expect("dirty worktree must produce a checkpoint commit");
+        assert_ne!(Some(sha), head_before);
+        assert!(!is_dirty(&wt.path).unwrap());
+        let log_msg = git(&wt.path, &["log", "-1", "--pretty=%s"]).unwrap();
+        assert_eq!(log_msg.trim(), "chore(cli-agy): checkpoint — Step 1 verified");
     }
 }

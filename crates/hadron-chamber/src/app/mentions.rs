@@ -18,7 +18,11 @@ pub(super) fn seat_by_mention<'a>(
     roster: &'a [crate::model::RosterRow],
     target: &str,
 ) -> Option<&'a crate::model::RosterRow> {
-    let want = target.trim().trim_start_matches('@').trim();
+    let want = target
+        .trim()
+        .trim_start_matches('@')
+        .trim_end_matches([',', ':', ';'])
+        .trim();
     if want.is_empty() {
         return None;
     }

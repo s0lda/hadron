@@ -17,12 +17,14 @@ Load plan, review critically, execute all tasks, report when complete.
 2. If concerns exist: raise them with human partner before starting.
 3. If clear: create todo list per task item.
 
-### Step 2: Task-by-Task Execution
+### Step 2: Task-by-Task Execution (≤15m Atomic Waves & Checkpointing)
 For each task in the plan:
-1. Mark task status as `in_progress`.
-2. Follow bite-sized steps exactly without jumping ahead or skipping code blocks.
-3. Execute required verification commands (`cargo test`, `pytest`, etc.).
-4. Mark task status as `completed`.
+1. Decompose work into atomic waves lasting **≤15 minutes** per turn so no single turn accumulates unbounded context or risks silent network stalls.
+2. Mark task status as `in_progress`.
+3. Follow bite-sized steps exactly without jumping ahead or skipping code blocks.
+4. Execute required verification commands (`cargo test`, `pytest`, etc.).
+5. Commit an intermediate git checkpoint after each verified step (`checkpoint_atomic_step` or `git commit`) and update the plan checkbox (`- [x]`) on disk before dispatching the next wave.
+6. Mark task status as `completed`.
 
 ### Step 3: Branch Completion
 When all tasks are complete and verified:

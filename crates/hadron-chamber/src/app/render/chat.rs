@@ -457,9 +457,22 @@ impl super::Chamber {
                         }
                     }))
                     .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                        if (event.keystroke.key == "tab" || event.keystroke.key == "Tab") && this.completion.is_some() {
-                            this.accept_completion(window, cx);
-                            cx.stop_propagation();
+                        let key = event.keystroke.key.as_str();
+                        if key.eq_ignore_ascii_case("tab") {
+                            if this.completion.is_some() {
+                                this.accept_completion(window, cx);
+                                cx.stop_propagation();
+                            } else if this.accept_ghost_completion(window, cx) {
+                                cx.stop_propagation();
+                            }
+                        } else if key.eq_ignore_ascii_case("right") && this.completion.is_none() {
+                            let (cursor, len) = {
+                                let state = this.input.read(cx);
+                                (state.cursor(), state.value().len())
+                            };
+                            if cursor >= len && this.accept_ghost_completion(window, cx) {
+                                cx.stop_propagation();
+                            }
                         }
                     }))
                     .on_action(cx.listener(|this, _: &Paste, window, cx| {
@@ -489,6 +502,46 @@ impl super::Chamber {
                                     .appearance(false)
                                     .bordered(false)
                                     .focus_bordered(false),
+                            )
+                            .when_some(
+                                self.ghost_completion
+                                    .clone()
+                                    .filter(|_| self.completion.is_none()),
+                                |el, ghost| {
+                                    el.child(
+                                        h_flex()
+                                            .id("ghost-completion-pill")
+                                            .items_center()
+                                            .gap_1()
+                                            .px_2()
+                                            .py_0p5()
+                                            .mt_1()
+                                            .rounded_md()
+                                            .bg(theme::glass_card())
+                                            .border_1()
+                                            .border_color(theme::glass_highlight())
+                                            .text_xs()
+                                            .text_color(theme::text_muted())
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.accept_ghost_completion(window, cx);
+                                            }))
+                                            .child(
+                                                div()
+                                                    .px_1()
+                                                    .rounded_xs()
+                                                    .bg(theme::glass_highlight())
+                                                    .text_color(theme::text_muted())
+                                                    .child("Tab ↹"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_color(theme::text_muted())
+                                                    .truncate()
+                                                    .child(format!("…{ghost}")),
+                                            ),
+                                    )
+                                },
                             )
                             .child(
                                 h_flex()

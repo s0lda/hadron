@@ -32,6 +32,17 @@ fn path_as_u32(value: &Value, path: &str) -> Option<u32> {
     resolve_path(value, path)?.as_u64().and_then(|n| u32::try_from(n).ok())
 }
 
+/// Parsed outcome of a streaming CLI invocation, including incremental token spend,
+/// model identifier, and optional context window telemetry.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StreamResult {
+    pub message: Option<String>,
+    pub spend: TokenSpend,
+    pub model: Option<String>,
+    pub context_used: Option<u32>,
+    pub context_window: Option<u32>,
+}
+
 /// Accumulates one streaming turn's lines. Feed every stdout line via
 /// [`Self::on_line`], throttle-publish [`Self::draft`] when it returns `true`,
 /// and read the outcome off [`Self::finish`] once the subprocess exits.
@@ -41,6 +52,9 @@ pub struct StreamAccumulator {
     status: String,
     final_text: Option<String>,
     spend: TokenSpend,
+    model: Option<String>,
+    context_used: Option<u32>,
+    context_window: Option<u32>,
 }
 
 impl StreamAccumulator {
@@ -51,6 +65,9 @@ impl StreamAccumulator {
             status: String::new(),
             final_text: None,
             spend: TokenSpend::default(),
+            model: None,
+            context_used: None,
+            context_window: None,
         }
     }
 
@@ -64,6 +81,13 @@ impl StreamAccumulator {
             return false;
         }
         let Ok(value) = serde_json::from_str::<Value>(line) else { return false };
+        if let Some(m) = path_as_str(&value, "model")
+            .or_else(|| path_as_str(&value, "result.model"))
+            .or_else(|| path_as_str(&value, "step_update.model"))
+            .filter(|s| !s.trim().is_empty())
+        {
+            self.model = Some(m.to_string());
+        }
         match &self.format {
             StreamFormat::AgyStreamJson => self.on_agy_line(&value),
             StreamFormat::Ndjson {
@@ -109,6 +133,21 @@ impl StreamAccumulator {
     fn on_agy_line(&mut self, value: &Value) -> bool {
         match value.get("event").and_then(Value::as_str) {
             Some("step_update") => {
+                if let Some(v) = path_as_u32(value, "step_update.usage.input_tokens") {
+                    self.spend.input = Some(self.spend.input.unwrap_or(0).saturating_add(v));
+                }
+                if let Some(v) = path_as_u32(value, "step_update.usage.output_tokens") {
+                    self.spend.output = Some(self.spend.output.unwrap_or(0).saturating_add(v));
+                }
+                if let Some(v) = path_as_u32(value, "step_update.usage.cache_read_tokens") {
+                    self.spend.cache_read = Some(self.spend.cache_read.unwrap_or(0).saturating_add(v));
+                }
+                if let Some(v) = path_as_u32(value, "step_update.usage.used_tokens") {
+                    self.context_used = Some(v);
+                }
+                if let Some(v) = path_as_u32(value, "step_update.usage.context_window_size") {
+                    self.context_window = Some(v);
+                }
                 if let Some(delta) = path_as_str(value, "step_update.text_delta") {
                     if !delta.is_empty() {
                         self.draft.push_str(delta);
@@ -157,6 +196,12 @@ impl StreamAccumulator {
                 if let Some(v) = path_as_u32(value, "result.usage.cache_read_tokens") {
                     self.spend.cache_read = Some(v);
                 }
+                if let Some(v) = path_as_u32(value, "result.usage.used_tokens") {
+                    self.context_used = Some(v);
+                }
+                if let Some(v) = path_as_u32(value, "result.usage.context_window_size") {
+                    self.context_window = Some(v);
+                }
                 false // the result line is bookkeeping, never a delta to publish
             }
             _ => false,
@@ -175,12 +220,25 @@ impl StreamAccumulator {
         &self.status
     }
 
+    /// Consume the accumulator into a full [`StreamResult`] carrying message, spend,
+    /// model, and optional context window telemetry.
+    pub fn finish_result(self) -> StreamResult {
+        let message = self.final_text.or_else(|| (!self.draft.is_empty()).then_some(self.draft));
+        StreamResult {
+            message,
+            spend: self.spend,
+            model: self.model,
+            context_used: self.context_used,
+            context_window: self.context_window,
+        }
+    }
+
     /// Consume the accumulator: the final message (the format's own final-text
     /// field if it ever reported one, else the deltas concatenated so far — a
     /// fallback for a stream that dies before its result line) and the spend.
     pub fn finish(self) -> (Option<String>, TokenSpend) {
-        let message = self.final_text.or_else(|| (!self.draft.is_empty()).then_some(self.draft));
-        (message, self.spend)
+        let res = self.finish_result();
+        (res.message, res.spend)
     }
 }
 
@@ -431,6 +489,22 @@ mod tests {
         let (message, spend) = acc.finish();
         assert_eq!(message.as_deref(), Some("partial reply"));
         assert_eq!(spend.input, None, "no usage was ever reported");
+    }
+
+    #[test]
+    fn finish_result_retains_model_and_incremental_step_usage_when_result_line_absent() {
+        let mut acc = agy();
+        acc.on_line(r#"{"event":"init","conversation_id":"abc","model":"gemini-4-argon-medium"}"#);
+        acc.on_line(r#"{"event":"step_update","step_update":{"step_type":"tool","tool_name":"run_command","usage":{"input_tokens":1200,"output_tokens":80,"cache_read_tokens":4000,"used_tokens":5200,"context_window_size":2000000}}}"#);
+        acc.on_line(r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"done","usage":{"input_tokens":300,"output_tokens":40,"cache_read_tokens":1000}}}"#);
+        let res = acc.finish_result();
+        assert_eq!(res.message.as_deref(), Some("done"));
+        assert_eq!(res.model.as_deref(), Some("gemini-4-argon-medium"));
+        assert_eq!(res.spend.input, Some(1500));
+        assert_eq!(res.spend.output, Some(120));
+        assert_eq!(res.spend.cache_read, Some(5000));
+        assert_eq!(res.context_used, Some(5200));
+        assert_eq!(res.context_window, Some(2000000));
     }
 
     #[test]

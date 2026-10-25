@@ -328,10 +328,16 @@ pub(crate) fn note_body(
 
 /// Look a command up by the name typed after the slash.
 pub fn command(name: &str) -> Option<&'static Command> {
+    command_in(name, None)
+}
+
+/// Look a command up by the name typed after the slash, including custom skills
+/// resolved from `<repo_root>/.hadron/skills/*.md` and `~/.hadron/skills/*.md`.
+pub fn command_in(name: &str, repo_root: Option<&std::path::Path>) -> Option<&'static Command> {
     if let Some(cmd) = COMMANDS.iter().find(|c| c.name == name) {
         return Some(cmd);
     }
-    if is_custom_skill(name) {
+    if is_custom_skill_in(name, repo_root) {
         let leaked_name: &'static str = Box::leak(name.to_string().into_boxed_str());
         let cmd = Box::leak(Box::new(Command {
             name: leaked_name,
@@ -345,15 +351,66 @@ pub fn command(name: &str) -> Option<&'static Command> {
     None
 }
 
-fn is_custom_skill(name: &str) -> bool {
-    let repo_dir = std::env::current_dir().ok().map(|d| d.join(".hadron").join("skills"));
-    let user_dir = hadron_lattice::user_hadron_dir().map(|d| d.join("skills"));
-    for dir in [repo_dir, user_dir].into_iter().flatten() {
+fn custom_skill_dirs(repo_root: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(root) = repo_root {
+        dirs.push(root.join(".hadron").join("skills"));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        let cwd_skills = cwd.join(".hadron").join("skills");
+        if !dirs.contains(&cwd_skills) {
+            dirs.push(cwd_skills);
+        }
+    }
+    if let Some(user_dir) = hadron_lattice::user_hadron_dir().map(|d| d.join("skills")) {
+        if !dirs.contains(&user_dir) {
+            dirs.push(user_dir);
+        }
+    }
+    dirs
+}
+
+/// Return all discovered custom skill names (`*.md` stems and `name:` front-matter ids).
+pub fn custom_skill_names(repo_root: Option<&std::path::Path>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut names = Vec::new();
+    for dir in custom_skill_dirs(repo_root) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "md") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if seen.insert(stem.to_string()) {
+                        names.push(stem.to_string());
+                    }
+                }
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    let (front, _) = hadron_gluon::skills::split_front_matter(&content);
+                    if let Some(id) = front.and_then(|f| hadron_gluon::skills::front_matter_value(f, "name")) {
+                        if seen.insert(id.to_string()) {
+                            names.push(id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    names.sort();
+    names
+}
+
+pub fn is_custom_skill_in(name: &str, repo_root: Option<&std::path::Path>) -> bool {
+    if name.is_empty() || contains_path_escape(name) {
+        return false;
+    }
+    for dir in custom_skill_dirs(repo_root) {
         if dir.join(format!("{name}.md")).exists() {
             return true;
         }
     }
-    false
+    custom_skill_names(repo_root).iter().any(|s| s == name)
 }
 
 /// The markdown `/help` prints.
@@ -364,6 +421,12 @@ fn is_custom_skill(name: &str) -> bool {
 /// addressee parsed out of the body — so a stray leading mention would turn the
 /// help text into a dispatch.
 pub fn help_body() -> String {
+    help_body_with_skills(None)
+}
+
+/// The markdown `/help` prints, including any custom skills discovered in `repo_root`
+/// or `~/.hadron/skills/`.
+pub fn help_body_with_skills(repo_root: Option<&std::path::Path>) -> String {
     let mut out = String::from("**Chat commands**\n\n");
     for c in COMMANDS.iter().filter(|c| c.listed) {
         let arg = match (c.name, c.arity) {
@@ -372,6 +435,16 @@ pub fn help_body() -> String {
             (_, Arity::Line | Arity::Body) => " <…>",
         };
         out.push_str(&format!("- `/{}{}` — {}\n", c.name, arg, c.detail));
+    }
+    let custom: Vec<String> = custom_skill_names(repo_root)
+        .into_iter()
+        .filter(|name| !COMMANDS.iter().any(|c| c.name == name))
+        .collect();
+    if !custom.is_empty() {
+        out.push_str("\n**Custom Skills**\n\n");
+        for name in custom {
+            out.push_str(&format!("- `/{name} <…>` — Custom skill procedure\n"));
+        }
     }
     out.push_str(
         "\nA command may start any line, not just the first — so you can write a \
@@ -1099,7 +1172,8 @@ pub fn split_target(args: &str) -> (Option<&str>, &str) {
     // `find` returns a char boundary by construction, so `split_at` cannot land
     // mid-character — the crash class this file is otherwise full of.
     let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-    let (target, task) = rest.split_at(end);
+    let (raw_target, task) = rest.split_at(end);
+    let target = raw_target.trim_end_matches([',', ':', ';']);
     if target.is_empty() {
         // A bare `@` with nothing attached is not a target. Return the text AFTER
         // it, not the original argument: returning `args` leaked the stray `@`
@@ -1215,6 +1289,14 @@ pub enum CompletionTrigger {
 ///
 /// Returns the trigger type, the query typed after it, and its byte index.
 pub fn extract_completion_query(text: &str, offset: usize) -> Option<(CompletionTrigger, String, usize)> {
+    extract_completion_query_with_root(text, offset, None)
+}
+
+pub fn extract_completion_query_with_root(
+    text: &str,
+    offset: usize,
+    repo_root: Option<&std::path::Path>,
+) -> Option<(CompletionTrigger, String, usize)> {
     let mut safe_offset = offset.min(text.len());
     while safe_offset > 0 && !text.is_char_boundary(safe_offset) {
         safe_offset -= 1;
@@ -1224,21 +1306,40 @@ pub fn extract_completion_query(text: &str, offset: usize) -> Option<(Completion
     let line_start = before_cursor.rfind('\n').map_or(0, |i| i + 1);
     let current_line = &before_cursor[line_start..];
 
-    // Check if the current line starts with a command that takes arguments (e.g. `/resume bug`)
-    if current_line.starts_with('/') {
-        let after_slash = &current_line[1..];
-        if let Some(space_pos) = after_slash.find(char::is_whitespace) {
-            let cmd_name = &after_slash[..space_pos];
-            if let Some(cmd) = command(cmd_name) {
-                if cmd.arg != ArgSource::None {
-                    let arg_part = &after_slash[space_pos..];
-                    let arg_trimmed = arg_part.trim_start();
-                    let leading_spaces = arg_part.len() - arg_trimmed.len();
-                    let arg_start = line_start + 1 + space_pos + leading_spaces;
-                    let query = arg_trimmed.to_string();
-                    return Some((CompletionTrigger::Arg(cmd.arg), query, arg_start));
+    // Find the last `/command` on `current_line` that is at line start or preceded by whitespace
+    // and followed by whitespace before the cursor (e.g. `/resume bug`, `@Antigravity /resume bug`,
+    // or `/clear /resume bug`). If the cursor is still in that command's first argument token
+    // (no whitespace inside `arg_trimmed` and not starting a new `/cmd`), complete `cmd.arg`.
+    let mut last_cmd_arg: Option<(ArgSource, String, usize)> = None;
+    for (idx, c) in current_line.char_indices() {
+        if c == '/'
+            && (idx == 0
+                || current_line[..idx]
+                    .chars()
+                    .next_back()
+                    .is_some_and(char::is_whitespace))
+        {
+            let after_slash = &current_line[idx + 1..];
+            if let Some(space_pos) = after_slash.find(char::is_whitespace) {
+                let cmd_name = &after_slash[..space_pos];
+                if let Some(cmd) = command_in(cmd_name, repo_root) {
+                    if cmd.arg != ArgSource::None {
+                        let arg_part = &after_slash[space_pos..];
+                        let arg_trimmed = arg_part.trim_start();
+                        let leading_spaces = arg_part.len() - arg_trimmed.len();
+                        let arg_start = line_start + idx + 1 + space_pos + leading_spaces;
+                        last_cmd_arg = Some((cmd.arg, arg_trimmed.to_string(), arg_start));
+                    } else {
+                        last_cmd_arg = None;
+                    }
                 }
             }
+        }
+    }
+
+    if let Some((arg_src, query, arg_start)) = last_cmd_arg {
+        if !query.starts_with('/') && !query.contains(char::is_whitespace) {
+            return Some((CompletionTrigger::Arg(arg_src), query, arg_start));
         }
     }
 
@@ -1376,7 +1477,18 @@ pub fn completion_candidates(
     files: &[String],
     sessions: &[crate::model::SessionInfo],
 ) -> Option<Completions> {
-    let (trigger, query, start) = extract_completion_query(text, cursor)?;
+    completion_candidates_with_root(text, cursor, quarks, files, sessions, None)
+}
+
+pub fn completion_candidates_with_root(
+    text: &str,
+    cursor: usize,
+    quarks: &[(String, Option<String>)],
+    files: &[String],
+    sessions: &[crate::model::SessionInfo],
+    repo_root: Option<&std::path::Path>,
+) -> Option<Completions> {
+    let (trigger, query, start) = extract_completion_query_with_root(text, cursor, repo_root)?;
     let query_lower = query.to_lowercase();
     let mut out: Vec<Candidate> = Vec::new();
 
@@ -1519,25 +1631,14 @@ pub fn completion_candidates(
                     });
                 }
             }
-            let repo_dir = std::env::current_dir().ok().map(|d| d.join(".hadron").join("skills"));
-            let user_dir = hadron_lattice::user_hadron_dir().map(|d| d.join("skills"));
-            for dir in [repo_dir, user_dir].into_iter().flatten() {
-                if let Ok(entries) = std::fs::read_dir(dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.extension().is_some_and(|e| e == "md") {
-                            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                                if !seen.contains(stem) && (query_lower.is_empty() || stem.contains(&query_lower)) {
-                                    seen.insert(stem.to_string());
-                                    out.push(Candidate {
-                                        label: format!("/{stem}"),
-                                        detail: "Custom skill procedure".into(),
-                                        new_text: format!("/{stem} "),
-                                    });
-                                }
-                            }
-                        }
-                    }
+            for stem in custom_skill_names(repo_root) {
+                if !seen.contains(&stem) && (query_lower.is_empty() || stem.to_lowercase().contains(&query_lower)) {
+                    seen.insert(stem.clone());
+                    out.push(Candidate {
+                        label: format!("/{stem}"),
+                        detail: "Custom skill procedure".into(),
+                        new_text: format!("/{stem} "),
+                    });
                 }
             }
             out.sort_by(|a, b| {
@@ -1629,6 +1730,102 @@ pub fn completion_candidates(
         return None;
     }
     Some(Completions { start, candidates: out })
+}
+
+/// Compute an inline ghost-text suffix for `text` when `cursor` is at the end of `text`.
+///
+/// Sources (in priority order):
+/// 1. Recent prompt history (`history` iterated newest-first) matching `text` as a prefix.
+/// 2. Slash command prefix (`/br` -> `ainstorm `).
+/// 3. `@mention` or `@file` prefix (`@or` -> `chestrator `).
+pub fn extract_ghost_completion(
+    text: &str,
+    cursor: usize,
+    history: &[String],
+    quarks: &[(String, Option<String>)],
+    files: &[String],
+    repo_root: Option<&std::path::Path>,
+) -> Option<String> {
+    let mut safe_cursor = cursor.min(text.len());
+    while safe_cursor > 0 && !text.is_char_boundary(safe_cursor) {
+        safe_cursor -= 1;
+    }
+    if safe_cursor != text.len() || text.is_empty() {
+        return None;
+    }
+
+    let text_chars = text.chars().count();
+    if text_chars >= 2 && !text.contains('\n') {
+        let text_lower = text.to_lowercase();
+        for entry in history.iter().rev() {
+            let first_line = entry.lines().next().unwrap_or("");
+            if first_line.chars().count() > text_chars
+                && first_line.to_lowercase().starts_with(&text_lower)
+            {
+                let suffix: String = first_line.chars().skip(text_chars).collect();
+                if !suffix.is_empty() {
+                    return Some(suffix);
+                }
+            }
+        }
+    }
+
+    let last_tok_start = text
+        .rfind(char::is_whitespace)
+        .map_or(0, |i| i + text[i..].chars().next().map_or(1, char::len_utf8));
+    let tok = &text[last_tok_start..];
+    if let Some(prefix) = tok.strip_prefix('/') {
+        if !prefix.is_empty() {
+            let prefix_lower = prefix.to_lowercase();
+            let prefix_chars = prefix.chars().count();
+            for cmd in COMMANDS.iter().filter(|c| c.listed) {
+                if cmd.name.len() > prefix.len() && cmd.name.starts_with(&prefix_lower) {
+                    let suffix: String = cmd.name.chars().skip(prefix_chars).collect();
+                    return Some(format!("{suffix} "));
+                }
+            }
+            for skill in custom_skill_names(repo_root) {
+                if skill.chars().count() > prefix_chars
+                    && skill.to_lowercase().starts_with(&prefix_lower)
+                {
+                    let suffix: String = skill.chars().skip(prefix_chars).collect();
+                    return Some(format!("{suffix} "));
+                }
+            }
+        }
+    } else if let Some(prefix) = tok.strip_prefix('@') {
+        if !prefix.is_empty() {
+            let prefix_lower = prefix.to_lowercase();
+            let prefix_chars = prefix.chars().count();
+            for (alias, _) in MENTION_ALIASES {
+                if alias.chars().count() > prefix_chars
+                    && alias.to_lowercase().starts_with(&prefix_lower)
+                {
+                    let suffix: String = alias.chars().skip(prefix_chars).collect();
+                    return Some(format!("{suffix} "));
+                }
+            }
+            for (id, display) in quarks {
+                let name = display.as_ref().unwrap_or(id);
+                if name.chars().count() > prefix_chars
+                    && name.to_lowercase().starts_with(&prefix_lower)
+                {
+                    let suffix: String = name.chars().skip(prefix_chars).collect();
+                    return Some(format!("{suffix} "));
+                }
+            }
+            for file in files {
+                if file.chars().count() > prefix_chars
+                    && file.to_lowercase().starts_with(&prefix_lower)
+                {
+                    let suffix: String = file.chars().skip(prefix_chars).collect();
+                    return Some(format!("{suffix} "));
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// Scans messages from newest to oldest for the last chat message matching an optional seat target.
@@ -2851,6 +3048,69 @@ mod tests {
         let open = command("open").expect("/open command");
         assert_eq!(open.arity, Arity::Line);
         assert!(open.listed);
+    }
+
+    #[test]
+    fn split_target_strips_trailing_punctuation_for_steer_and_skills() {
+        assert_eq!(
+            split_target("@Agy, please focus on tests"),
+            (Some("Agy"), "please focus on tests")
+        );
+        assert_eq!(
+            split_target("@Opus: review the router"),
+            (Some("Opus"), "review the router")
+        );
+        assert_eq!(
+            split_target("@Sonnet; check types"),
+            (Some("Sonnet"), "check types")
+        );
+    }
+
+    #[test]
+    fn custom_skill_discovery_and_completion_via_repo_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let skills_dir = tmp.path().join(".hadron").join("skills");
+        std::fs::create_dir_all(&skills_dir).expect("create skills dir");
+        std::fs::write(
+            skills_dir.join("joke.md"),
+            "---\nname: joke\ndescription: Tell a dad joke\n---\nTell a dad joke.\n",
+        )
+        .expect("write joke.md");
+
+        assert!(is_custom_skill_in("joke", Some(tmp.path())));
+        assert!(command_in("joke", Some(tmp.path())).is_some());
+        let help = help_body_with_skills(Some(tmp.path()));
+        assert!(help.contains("`/joke <…>`"), "help should list /joke: {help}");
+
+        let comp = completion_candidates_with_root("/jo", 3, &[], &[], &[], Some(tmp.path()))
+            .expect("completion for /jo");
+        assert!(
+            comp.candidates.iter().any(|c| c.label == "/joke"),
+            "candidates should contain /joke: {:?}",
+            comp.candidates.iter().map(|c| &c.label).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn multi_command_autocomplete_triggers_after_earlier_commands() {
+        let input = "/mode bypass /go";
+        let comp = completion_candidates(input, input.len(), &[], &[], &[])
+            .expect("chained /go completion");
+        assert!(
+            comp.candidates.iter().any(|c| c.label == "/goal"),
+            "expected /goal in chained command completion"
+        );
+    }
+
+    #[test]
+    fn extract_ghost_completion_suggests_from_history_and_commands() {
+        let history = vec!["@Agy please run the full workspace test gate".to_string()];
+        let quarks = vec![("cli-agy".to_string(), Some("Agy".to_string()))];
+        let ghost = extract_ghost_completion("@Agy please run", 15, &history, &quarks, &[], None);
+        assert_eq!(
+            ghost.as_deref(),
+            Some(" the full workspace test gate")
+        );
     }
 }
 

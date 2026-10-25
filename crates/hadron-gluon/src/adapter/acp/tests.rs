@@ -114,6 +114,50 @@ fn a_backwards_counter_is_read_as_an_absolute_not_as_zero() {
     assert_eq!(w.input, 21, "and the watermark follows the agent");
 }
 
+#[test]
+fn non_cumulative_spend_report_and_context_fallback_record_accurate_per_turn_tokens() {
+    use super::spend::{turn_spend_from_report, turn_spend_with_context, SpendReport};
+
+    // Per-turn (`cumulative: Some(false)`) reports must not subtract the previous watermark.
+    let w0 = SpendWatermark { input: 1_000, output: 200, cache_read: 5_000, cache_write: 0 };
+    let report = SpendReport {
+        input: Some(1_500),
+        output: Some(300),
+        cache_read: Some(8_000),
+        cache_write: None,
+        cumulative: Some(false),
+    };
+    let (s1, w1) = turn_spend_from_report(w0, &report, None);
+    assert_eq!(s1.input, Some(1_500));
+    assert_eq!(s1.output, Some(300));
+    assert_eq!(s1.cache_read, Some(8_000));
+    assert_eq!(s1.fresh(), Some(1_800));
+    assert_eq!(w1.input, 2_500);
+    assert_eq!(w1.output, 500);
+    assert_eq!(w1.cache_read, 13_000);
+
+    // Via `AcpUsage` with `_meta.cumulative = false` (what `agy_acp.py` emits):
+    let mut u = AcpUsage::new(9_800, 1_500, 300);
+    u.cached_read_tokens = Some(8_000);
+    let mut meta = serde_json::Map::new();
+    meta.insert("cumulative".to_string(), serde_json::Value::Bool(false));
+    u = u.meta(meta);
+    let (s_meta, _) = turn_spend(w0, Some(&u));
+    assert_eq!(s_meta.input, Some(1_500));
+    assert_eq!(s_meta.output, Some(300));
+    assert_eq!(s_meta.cache_read, Some(8_000));
+
+    // Fallback when `PromptResponse.usage` is `None` but `usage_update` (`context`) was reported:
+    let (s_ctx, w_ctx) = turn_spend_with_context(
+        SpendWatermark { input: 50_000, ..Default::default() },
+        None,
+        Some((81_379, 2_000_000)),
+    );
+    assert_eq!(s_ctx.input, Some(31_379));
+    assert_eq!(s_ctx.fresh(), Some(31_379));
+    assert_eq!(w_ctx.input, 81_379);
+}
+
 /// Posture decides the answer to ACP's blocking permission request, and the
 /// unattended postures are the only ones that *run commands*. Never fail open.
 #[test]

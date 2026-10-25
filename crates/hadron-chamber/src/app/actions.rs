@@ -443,7 +443,12 @@ impl Chamber {
             // other three address the named quark, or the orchestrator when the
             // human names nobody.
             "commands" | "help" => {
-                self.post_chat_message(Actor::Gluon, crate::text::help_body(), cx);
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                self.post_chat_message(
+                    Actor::Gluon,
+                    crate::text::help_body_with_skills(Some(&repo_root)),
+                    cx,
+                );
                 true
             }
             "goal" => {
@@ -813,7 +818,11 @@ impl Chamber {
                 || cmd == "curate-memory"
                 || cmd == "deprecate"
                 || cmd == "benchmark"
-                || self.skill_corpus().iter().any(|s| s.id == cmd) =>
+                || self.skill_corpus().iter().any(|s| s.id == cmd)
+                || crate::text::is_custom_skill_in(
+                    cmd,
+                    Some(crate::vcs::repo_root_of(&self.path)),
+                ) =>
             {
                 let skill_id = match cmd {
                     "team-brainstorm" | "brainstorm" => "brainstorming",

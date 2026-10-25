@@ -23,7 +23,7 @@ use super::model::{
     classify_request, effort_selector, mode_selector, model_selector, permission_choice,
     resolve_model,
 };
-use super::spend::turn_spend;
+use super::spend::turn_spend_with_context;
 
 /// Build the ACP JSON stdio descriptor `AcpAgent::from_str` parses (see the crate
 /// doc example on `AcpAgent`), with a resolved secret env baked into its `env`
@@ -596,6 +596,9 @@ impl super::AcpQuark {
                                         // — which the claude CLI never reports.
                                         SessionUpdate::UsageUpdate(u) => {
                                             *context.lock().unwrap() = Some((u.used, u.size));
+                                            if let Some(feed) = &live {
+                                                let _ = live::touch_heartbeat(&feed.dir, &feed.quark);
+                                            }
                                             if let Some(bucket) =
                                                 u.meta.as_ref().and_then(parse_claude_rate_limit)
                                             {
@@ -652,7 +655,11 @@ impl super::AcpQuark {
                                         // Everything else (user echoes, tool-call updates,
                                         // command lists, mode changes) is protocol
                                         // bookkeeping with nothing for a human to read.
-                                        _ => {}
+                                        _ => {
+                                            if let Some(feed) = &live {
+                                                let _ = live::touch_heartbeat(&feed.dir, &feed.quark);
+                                            }
+                                        }
                                     }
                                     Ok(())
                                 }
@@ -1015,8 +1022,10 @@ impl super::AcpQuark {
             }
         };
 
-        // Per-turn spend, by component, from the cumulative counters.
-        let (spend, new_watermark) = turn_spend(self.last_spend, reply.usage.as_ref());
+        // Per-turn spend, by component, from the cumulative or per-turn counters,
+        // falling back to context usage_update when end-turn usage is absent.
+        let (spend, new_watermark) =
+            turn_spend_with_context(self.last_spend, reply.usage.as_ref(), reply.context);
         self.last_spend = new_watermark;
 
         // Context, when the agent sent a `usage_update`. NOTE the honesty rule this

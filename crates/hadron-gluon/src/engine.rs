@@ -34,7 +34,8 @@ mod routing;
 mod turn;
 mod merge;
 mod reboot;
-mod run;
+pub mod run;
+pub use run::{excite_with_liveness_watchdog, should_rotate_session};
 #[cfg(test)]
 mod tests;
 
@@ -121,6 +122,15 @@ const FIELD_POLL: std::time::Duration = std::time::Duration::from_millis(150);
 /// human's `/clear`, not the watchdog's business. Override per-engine with
 /// [`Engine::with_turn_deadline`].
 pub const TURN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// Default silence stall threshold for the liveness watchdog (15 minutes without any
+/// CLI stdout line or ACP `session/update` notification).
+pub const DEFAULT_STALL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Maximum wall-clock safety ceiling for a single turn (4 hours) even when emitting
+/// periodic heartbeats.
+pub const DEFAULT_MAX_TURN_WALL_CLOCK: std::time::Duration =
+    std::time::Duration::from_secs(4 * 60 * 60);
 
 /// How long the dispatch loop waits for a requested graceful cancel (a filled
 /// [`crate::quark::CancelSlot`]) to actually resolve a turn before giving up on
@@ -438,9 +448,11 @@ pub struct Engine {
     /// turns finishing at once could still interleave their *sequences* of events.
     /// Holding this across each append keeps the JSONL a clean, totally-ordered log.
     field_lock: Arc<AsyncMutex<()>>,
-    /// The watchdog: how long an excited turn may run before the engine writes its
-    /// terminal status *for* it. See [`TURN_DEADLINE`].
+    /// The watchdog: how long an excited turn may run silent before the engine writes its
+    /// terminal status *for* it. See [`TURN_DEADLINE`] and [`DEFAULT_STALL_DEADLINE`].
     turn_deadline: std::time::Duration,
+    /// Maximum wall-clock safety ceiling for a turn regardless of heartbeats.
+    max_turn_wall_clock: std::time::Duration,
     /// How long the dispatch loop waits for a requested graceful cancel to
     /// resolve before falling through to the destructive abort path. See
     /// [`CANCEL_DEADLINE`]; overridable the same way [`Self::turn_deadline`] is,
@@ -598,6 +610,7 @@ impl Engine {
             merge: None,
             field_lock: Arc::new(AsyncMutex::new(())),
             turn_deadline: TURN_DEADLINE,
+            max_turn_wall_clock: DEFAULT_MAX_TURN_WALL_CLOCK,
             cancel_deadline: CANCEL_DEADLINE,
             disabled: HashSet::new(),
             resident,
@@ -836,6 +849,12 @@ impl Engine {
     /// misconfiguration, not a feature.
     pub fn with_turn_deadline(mut self, deadline: std::time::Duration) -> Self {
         self.turn_deadline = deadline;
+        self
+    }
+
+    /// Override the maximum wall-clock ceiling ([`DEFAULT_MAX_TURN_WALL_CLOCK`]) for a turn.
+    pub fn with_max_turn_wall_clock(mut self, deadline: std::time::Duration) -> Self {
+        self.max_turn_wall_clock = deadline;
         self
     }
 

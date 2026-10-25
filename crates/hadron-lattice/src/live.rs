@@ -220,6 +220,47 @@ pub fn read(dir: &Path, quark: &QuarkId, now: DateTime<Utc>) -> Option<Activity>
     activity.is_fresh(now).then_some(activity)
 }
 
+/// Refresh a quark's heartbeat timestamp (`at = Utc::now()`) in `<dir>/<quark>.json`,
+/// preserving existing `doing`, `detail`, `full`, and `started` fields if a file is
+/// already present, or writing a default [`Doing::Working`] heartbeat otherwise.
+pub fn touch_heartbeat(dir: &Path, quark: &QuarkId) -> std::io::Result<()> {
+    let now = Utc::now();
+    let path = file_for(dir, quark);
+    let activity = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|body| serde_json::from_str::<Activity>(&body).ok())
+        .map(|mut prev| {
+            prev.at = now;
+            prev
+        })
+        .unwrap_or_else(|| {
+            let mut a = Activity::new(quark.clone(), Doing::Working, "working");
+            a.at = now;
+            a.started = Some(now);
+            a
+        });
+    publish(dir, &activity)
+}
+
+/// Measure how long ago `quark` last published or touched `<dir>/<quark>.json`.
+/// Unlike [`read`], this does NOT clamp at [`STALE_AFTER_SECS`] so the turn liveness
+/// watchdog can measure silence windows up to the full stall deadline (e.g. 15m).
+pub fn last_heartbeat_age(dir: &Path, quark: &QuarkId) -> Option<std::time::Duration> {
+    let path = file_for(dir, quark);
+    if let Ok(body) = std::fs::read_to_string(&path) {
+        if let Ok(activity) = serde_json::from_str::<Activity>(&body) {
+            let delta = Utc::now().signed_duration_since(activity.at);
+            return Some(delta.to_std().unwrap_or(std::time::Duration::ZERO));
+        }
+    }
+    std::fs::metadata(&path)
+        .ok()?
+        .modified()
+        .ok()?
+        .elapsed()
+        .ok()
+}
+
 /// Where a merge gate's in-flight heartbeats live: a **subdirectory** of `live/`, not
 /// a sibling file. A gate is not a seat — it is keyed by branch, not by quark — and an
 /// orchestrator's Work and Chat lanes already share one `live/<id>.json`
@@ -464,5 +505,24 @@ mod tests {
         let legacy = r#"{"quark":"opus","at":"2026-08-01T00:00:00Z","doing":"working","detail":"Read x.rs"}"#;
         let parsed: Activity = serde_json::from_str(legacy).expect("an older live file still parses");
         assert_eq!(parsed.full, None);
+    }
+
+    #[test]
+    fn touch_heartbeat_refreshes_timestamp_and_preserves_draft() {
+        let dir = tmp();
+        let id = QuarkId::new("agy");
+        let mut initial = Activity::speaking(id.clone(), "streaming draft");
+        initial.at = Utc::now() - Duration::seconds(300);
+        publish(&dir, &initial).unwrap();
+
+        let age_before = last_heartbeat_age(&dir, &id).expect("age exists");
+        assert!(age_before.as_secs() >= 290);
+
+        touch_heartbeat(&dir, &id).unwrap();
+        let age_after = last_heartbeat_age(&dir, &id).expect("age exists");
+        assert!(age_after.as_secs() < 5);
+
+        let refreshed = read(&dir, &id, Utc::now()).expect("now fresh again");
+        assert_eq!(refreshed.full.as_deref(), Some("streaming draft"));
     }
 }

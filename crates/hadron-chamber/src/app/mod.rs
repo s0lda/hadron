@@ -68,10 +68,7 @@ use toasts::{ToastKind, ToastManager};
 
 mod mentions;
 pub(crate) use mentions::StepStatus;
-use mentions::{
-    parse_plan_overview, parse_plan_progress_with_status, parse_plan_tasks,
-    parse_plan_tasks_with_status, resolve_mention_names_with_human,
-};
+use mentions::{parse_plan_overview, parse_plan_tasks, resolve_mention_names_with_human};
 
 mod identity;
 use identity::{
@@ -211,6 +208,18 @@ struct CompletionCard {
     selected: usize,
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct CachedPlanDag {
+    pub content_hash: u64,
+    pub head_oid: Option<String>,
+    pub graph: hadron_lattice::task_graph::TaskGraph,
+    pub waves: Vec<Vec<hadron_lattice::task_graph::TaskNode>>,
+    pub ready_ids: std::collections::HashSet<String>,
+    pub landed_commits: std::collections::HashSet<String>,
+    pub progress: (usize, usize, usize, Vec<(String, mentions::StepStatus)>),
+    pub task_groups: Vec<(String, Vec<(String, mentions::StepStatus)>)>,
+}
+
 pub(super) struct TerminalTab {
     pub title: String,
     pub term: Option<crate::pty::PtyTerminal>,
@@ -245,6 +254,8 @@ struct Chamber {
     /// The completion card floating above the message box, or `None` when no
     /// `@`/`:`/`/` query is live. Our own overlay, not the fork's LSP menu.
     completion: Option<CompletionCard>,
+    /// Inline ghost-text completion suffix offered at the end of the chat input.
+    pub(super) ghost_completion: Option<String>,
     /// Root focus target, so Ctrl+Shift+P dispatches regardless of what's focused.
     focus_handle: FocusHandle,
     /// Which view the chat column's segmented tabs are showing.
@@ -326,6 +337,12 @@ struct Chamber {
     pub(super) git_graph_list: gpui::ListState,
     /// Scroll position of the Plan tracker pane.
     plan_scroll: ScrollHandle,
+    /// Scroll position of the Execution Topology & Wave DAG row.
+    pub(super) dag_waves_scroll: ScrollHandle,
+    /// Scroll position of the Mission Nucleus / secondary scroll container.
+    pub(super) mission_plan_scroll: ScrollHandle,
+    /// Cached parsed Plan DAG, waves, and merged-commit status.
+    pub(super) cached_plan_dag: std::cell::RefCell<Option<CachedPlanDag>>,
     /// Scroll position of the Tasks pane.
     tasks_scroll: ScrollHandle,
     /// Scroll position of the Time Travel inspector pane.
@@ -1496,6 +1513,7 @@ impl Chamber {
             history_index: None,
             history_draft: String::new(),
             completion: None,
+            ghost_completion: None,
             focus_handle,
             chat_tab: ChatTab::Chat,
             info_tab: InfoTab::Home,
@@ -1544,6 +1562,9 @@ impl Chamber {
             delegations,
             git_graph_list,
             plan_scroll: ScrollHandle::new(),
+            dag_waves_scroll: ScrollHandle::new(),
+            mission_plan_scroll: ScrollHandle::new(),
+            cached_plan_dag: std::cell::RefCell::new(None),
             tasks_scroll: ScrollHandle::new(),
             time_travel_scroll: ScrollHandle::new(),
             task_scrub: None,
