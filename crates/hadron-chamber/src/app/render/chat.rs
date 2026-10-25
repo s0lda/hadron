@@ -1045,9 +1045,11 @@ impl super::Chamber {
                     );
                 }
             }
+            let primary_commit = turn_commits.first().cloned();
             for sha in turn_commits {
                 let ent_git = chamber_entity.clone();
                 let mono = mono_font.clone();
+                let sha_click = sha.clone();
                 row = row.child(
                     h_flex()
                         .id(SharedString::from(format!("turn-commit-{ix}-{sha}")))
@@ -1062,11 +1064,9 @@ impl super::Chamber {
                         .cursor_pointer()
                         .hover(|s| s.bg(theme::success().opacity(0.22)))
                         .on_click(move |_, _window, cx| {
+                            let sha_c = sha_click.clone();
                             ent_git.update(cx, |this, cx| {
-                                this.prefs.inspector_collapsed = false;
-                                this.right_rail_tab = RightRailTab::Git;
-                                this.git_subtab = GitSubtab::Graph;
-                                cx.notify();
+                                this.open_turn_diff(Some(sha_c), None, cx);
                             });
                         })
                         .child(
@@ -1082,6 +1082,8 @@ impl super::Chamber {
             for file_name in turn_files {
                 let ent_diff = chamber_entity.clone();
                 let mono = mono_font.clone();
+                let file_click = file_name.clone();
+                let commit_hint = primary_commit.clone();
                 row = row.child(
                     h_flex()
                         .id(SharedString::from(format!("turn-file-{ix}-{file_name}")))
@@ -1096,11 +1098,10 @@ impl super::Chamber {
                         .cursor_pointer()
                         .hover(|s| s.bg(theme::bg_surface_raised()))
                         .on_click(move |_, _window, cx| {
+                            let f_c = file_click.clone();
+                            let c_h = commit_hint.clone();
                             ent_diff.update(cx, |this, cx| {
-                                this.prefs.inspector_collapsed = false;
-                                this.right_rail_tab = RightRailTab::Git;
-                                this.git_subtab = GitSubtab::Changes;
-                                cx.notify();
+                                this.open_turn_diff(c_h, Some(f_c), cx);
                             });
                         })
                         .child(

@@ -2138,15 +2138,12 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
         // Settings picker writes `chamber.json` on click, so reading it at click time
         // keeps ONE home for the setting instead of a second cached copy that could
         // drift. A click is rare and the file is tiny.
-        gpui_component::text::set_link_handler(|url| {
-            if let Some((path, line)) = crate::sys::file_url_target(url) {
-                match crate::sys::editor_argv(&config::load().editor, &path, line) {
-                    Some((program, args)) => std::process::Command::new(&program).args(&args).spawn().is_ok(),
-                    None => {
-                        crate::sys::open_path_or_url(&path.display().to_string());
-                        true
-                    }
-                }
+        let link_workspace = field_path.clone();
+        gpui_component::text::set_link_handler(move |url| {
+            if let Some((path, line)) =
+                crate::sys::resolve_file_url_for_workspace(url, Some(&link_workspace))
+            {
+                crate::sys::spawn_editor(&config::load().editor, &path, line).is_ok()
             } else {
                 crate::sys::open_path_or_url(url);
                 true

@@ -1589,15 +1589,23 @@ impl super::Chamber {
                     }
                     MissionSubtab::Nucleus => {
                         let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                        let index_md = if !crate::wsl::is_wsl_unc_path(&repo) {
-                            crate::sys::read_workspace_file(&repo, ".hadron/nucleus/index.md")
-                                .unwrap_or_else(|| "No .hadron/nucleus/index.md found.".to_string())
-                        } else {
-                            "Nucleus index cached on host.".to_string()
-                        };
-                        let lesson_lines: Vec<String> = index_md
+                        let index_md = self
+                            .cached_nucleus_docs
+                            .2
+                            .clone()
+                            .or_else(|| {
+                                (!crate::wsl::is_wsl_unc_path(&repo)).then(|| {
+                                    crate::sys::read_workspace_file(&repo, ".hadron/nucleus/index.md")
+                                }).flatten()
+                            })
+                            .unwrap_or_else(|| "No .hadron/nucleus/index.md found.".to_string());
+                        let all_lessons: Vec<&str> = index_md
                             .lines()
                             .filter(|l| l.trim_start().starts_with("- ["))
+                            .collect();
+                        let total_lessons = all_lessons.len();
+                        let lesson_lines: Vec<String> = all_lessons
+                            .into_iter()
                             .take(40)
                             .map(|l| l.trim().to_string())
                             .collect();
@@ -1624,7 +1632,7 @@ impl super::Chamber {
                                         .text_color(theme::text_muted())
                                         .child(format!(
                                             "{} indexed post-mortem lessons shared across quarks",
-                                            lesson_lines.len()
+                                            total_lessons
                                         )),
                                 ),
                         );

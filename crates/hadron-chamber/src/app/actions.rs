@@ -2604,21 +2604,16 @@ impl Chamber {
     /// [`crate::sys::editor_argv`] and falls through to the platform opener, which is
     /// exactly the behaviour that existed before the setting did.
     pub(super) fn open_in_editor(&self, path: &std::path::Path, line: Option<u32>) {
-        let spawned = match crate::sys::editor_argv(&self.prefs.editor, path, line) {
-            Some((program, args)) => std::process::Command::new(&program)
-                .args(&args)
-                .spawn()
-                .map(|_| ())
-                .map_err(|e| format!("{program}: {e}")),
-            None => {
-                crate::sys::open_path_or_url(&path.display().to_string());
-                Ok(())
-            }
-        };
+        let resolved = crate::sys::resolve_file_url_for_workspace(
+            &format!("file://{}", path.display()),
+            Some(&self.path),
+        )
+        .map(|(p, _)| p)
+        .unwrap_or_else(|| path.to_path_buf());
         // Rule 8: an editor that is configured but not installed is the likeliest
         // failure here, and silently doing nothing reads to the human as a dead click.
-        if let Err(e) = spawned {
-            eprintln!("chamber: could not open {}: {e}", path.display());
+        if let Err(e) = crate::sys::spawn_editor(&self.prefs.editor, &resolved, line) {
+            eprintln!("chamber: could not open {}: {e}", resolved.display());
         }
     }
 

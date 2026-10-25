@@ -181,23 +181,43 @@ impl super::Chamber {
                 .child(self.git_worktrees_section(cx))
                 .into_any_element(),
             GitSubtab::Changes => {
-                let diff_content = match &self.working_diff {
-                    Some(diffs) if diffs.is_empty() => div()
+                let selected_commit = self.git_selected_commit.clone();
+                let has_commit_diff = selected_commit.is_some()
+                    && self
+                        .git_commit_diff
+                        .as_ref()
+                        .is_some_and(|d| !d.is_empty());
+                let has_working_diff = self
+                    .working_diff
+                    .as_ref()
+                    .is_some_and(|d| !d.is_empty());
+
+                let diff_content = if has_commit_diff || has_working_diff {
+                    let mut col = v_flex().w_full().gap_2();
+                    if let Some(commit_hash) = selected_commit.filter(|_| has_commit_diff) {
+                        col = col.child(self.commit_diff_panel(&commit_hash, cx));
+                    }
+                    if let Some(diffs) = self.working_diff.as_ref().filter(|d| !d.is_empty()) {
+                        col = col.child(self.file_diff_rows(
+                            diffs,
+                            &self.changes_open_ixs,
+                            DiffPanel::Changes,
+                            cx,
+                        ));
+                    }
+                    col.into_any_element()
+                } else if self.working_diff.is_some() {
+                    div()
                         .p_4()
                         .text_color(theme::text_muted())
                         .child("No changes in working tree.")
-                        .into_any_element(),
-                    Some(diffs) => self.file_diff_rows(
-                        diffs,
-                        &self.changes_open_ixs,
-                        DiffPanel::Changes,
-                        cx,
-                    ),
-                    None => div()
+                        .into_any_element()
+                } else {
+                    div()
                         .p_4()
                         .text_color(theme::text_muted())
                         .child("Loading working tree diff…")
-                        .into_any_element(),
+                        .into_any_element()
                 };
                 div()
                     .id("changes-scroll")
@@ -471,6 +491,84 @@ impl super::Chamber {
         for h in changed {
             self.invalidate_graph_row(h);
         }
+    }
+
+    /// Open `Git -> Changes` and load both the working tree diff and the turn's commit diff,
+    /// auto-expanding `file_filter` (or all files when `file_filter` is `None`).
+    pub(crate) fn open_turn_diff(
+        &mut self,
+        commit_hint: Option<String>,
+        file_filter: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.prefs.inspector_collapsed = false;
+        self.right_rail_tab = RightRailTab::Git;
+        self.git_subtab = GitSubtab::Changes;
+
+        let target_sha = commit_hint
+            .and_then(|sha| {
+                self.git_graph_rows
+                    .iter()
+                    .find_map(|r| {
+                        r.full_hash
+                            .as_ref()
+                            .filter(|fh| fh.starts_with(&sha) || r.hash.as_deref() == Some(sha.as_str()))
+                            .cloned()
+                    })
+                    .or(Some(sha))
+            })
+            .or_else(|| self.git_selected_commit.clone())
+            .unwrap_or_else(|| "HEAD".to_string());
+
+        let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        cx.spawn(async move |this, cx| {
+            let sha_bg = target_sha.clone();
+            let (w_diff, c_diff, c_msg) = cx
+                .background_executor()
+                .spawn(async move {
+                    let w = crate::vcs::working_diff(&root);
+                    let c = crate::vcs::commit_diff(&root, &sha_bg);
+                    let m = crate::vcs::commit_message(&root, &sha_bg);
+                    (w, c, m)
+                })
+                .await;
+            let _ = this.update(cx, |chamber, cx| {
+                let matches_filter = |path: &str, filter: &str| -> bool {
+                    path == filter
+                        || path.ends_with(&format!("/{filter}"))
+                        || path.ends_with(&format!("\\{filter}"))
+                };
+                if let Some(ref files) = w_diff {
+                    chamber.changes_open_ixs.clear();
+                    for (i, d) in files.iter().enumerate() {
+                        if file_filter.as_deref().is_none_or(|f| matches_filter(&d.path, f)) {
+                            chamber.changes_open_ixs.insert(i);
+                        }
+                    }
+                }
+                chamber.working_diff = w_diff;
+
+                if let Some(ref files) = c_diff {
+                    chamber.git_commit_open_ixs.clear();
+                    for (i, d) in files.iter().enumerate() {
+                        if file_filter.as_deref().is_none_or(|f| matches_filter(&d.path, f)) {
+                            chamber.git_commit_open_ixs.insert(i);
+                        }
+                    }
+                    if chamber.git_commit_open_ixs.is_empty() {
+                        for i in 0..files.len() {
+                            chamber.git_commit_open_ixs.insert(i);
+                        }
+                    }
+                }
+                chamber.git_selected_commit = Some(target_sha);
+                chamber.git_commit_diff = c_diff;
+                chamber.git_commit_message = c_msg;
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     /// Tell the Graph subtab's virtual list that one row's height changed.

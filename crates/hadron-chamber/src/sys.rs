@@ -377,20 +377,91 @@ pub const EDITOR_LADDER: [EditorChoice; 5] = [
 /// and percent-decodes the path, because a URL is where `%20` comes from.
 pub fn file_url_target(url: &str) -> Option<(std::path::PathBuf, Option<u32>)> {
     let rest = url.strip_prefix("file://")?;
-    // `file:///path` (empty authority) is the only form we accept; a host would name
-    // another machine, and we cannot open a file there.
-    let rest = if rest.starts_with('/') { rest } else { return None };
-
-    let (path, fragment) = match rest.split_once('#') {
+    let (path_raw, fragment) = match rest.split_once('#') {
         Some((p, f)) => (p, Some(f)),
         None => (rest, None),
     };
     let line = fragment
-        .map(|f| f.trim_start_matches(['L', 'l']))
+        .map(|f| f.split('-').next().unwrap_or(f).trim_start_matches(['L', 'l']))
         .and_then(|f| f.parse::<u32>().ok())
         .filter(|n| *n > 0);
 
-    Some((std::path::PathBuf::from(percent_decode(path)), line))
+    let decoded = percent_decode(path_raw);
+    let normalized = if decoded.starts_with(r"\\wsl.localhost\")
+        || decoded.starts_with(r"\\wsl$\")
+        || decoded.starts_with("//wsl.localhost/")
+        || decoded.starts_with("//wsl$/")
+    {
+        decoded
+    } else if decoded.starts_with("wsl.localhost/") || decoded.starts_with("wsl$/") {
+        format!(r"\\{}", decoded.replace('/', "\\"))
+    } else if let Some(after_slash) = decoded.strip_prefix('/') {
+        // Handle `file:///C:/path` on Windows vs `file:///linux/path`
+        if after_slash.len() >= 2
+            && after_slash.as_bytes()[0].is_ascii_alphabetic()
+            && after_slash.as_bytes()[1] == b':'
+        {
+            after_slash.to_string()
+        } else {
+            decoded
+        }
+    } else if decoded.len() >= 2
+        && decoded.as_bytes()[0].is_ascii_alphabetic()
+        && decoded.as_bytes()[1] == b':'
+    {
+        decoded
+    } else {
+        // A non-WSL host authority names another machine; reject it.
+        return None;
+    };
+
+    Some((std::path::PathBuf::from(normalized), line))
+}
+
+/// Strip an embedded `/.hadron/trees/<quark>/` worktree segment from a path string
+/// so links generated inside an isolated quark worktree resolve to the main repository checkout.
+pub fn strip_quark_worktree_segment(path: &Path) -> std::path::PathBuf {
+    let s = path.to_string_lossy();
+    for marker in ["/.hadron/trees/", r"\.hadron\trees\"] {
+        if let Some(idx) = s.find(marker) {
+            let prefix = &s[..idx];
+            let after_marker = &s[idx + marker.len()..];
+            if let Some(sep_pos) = after_marker.find(['/', '\\']) {
+                let sep = &after_marker[sep_pos..sep_pos + 1];
+                let rest = &after_marker[sep_pos + 1..];
+                return std::path::PathBuf::from(format!("{prefix}{sep}{rest}"));
+            }
+        }
+    }
+    path.to_path_buf()
+}
+
+/// Resolve a `file://` URL against the active `workspace` root (if any), translating
+/// between Linux in-distro paths (`/home/...`) and Windows WSL UNC paths
+/// (`\\wsl.localhost\<distro>\home\...`) and stripping `.hadron/trees/<quark>/` segments.
+pub fn resolve_file_url_for_workspace(
+    url: &str,
+    workspace: Option<&Path>,
+) -> Option<(std::path::PathBuf, Option<u32>)> {
+    let (raw_path, line) = file_url_target(url)?;
+    let cleaned = strip_quark_worktree_segment(&raw_path);
+
+    if let Some(ws) = workspace {
+        if let Some((distro, _)) = hadron_lattice::wsl::parse_wsl_unc_path(ws) {
+            // Workspace is accessed via Windows WSL UNC path (`\\wsl.localhost\<distro>\...`).
+            // If the URL path is a Linux absolute path (`/home/...`), map it into the WSL UNC namespace
+            // instead of letting Windows resolve `/home/...` as `C:\home\...`.
+            let s = cleaned.to_string_lossy();
+            if s.starts_with('/') && !hadron_lattice::wsl::is_wsl_unc_path(&cleaned) {
+                return Some((hadron_lattice::wsl::format_wsl_unc_path(&distro, &cleaned), line));
+            }
+        } else if let Some((_, linux_path)) = hadron_lattice::wsl::parse_wsl_unc_path(&cleaned) {
+            // Workspace is native Linux/WSL path, URL was a WSL UNC path.
+            return Some((linux_path, line));
+        }
+    }
+
+    Some((cleaned, line))
 }
 
 /// Minimal `%XX` decoder — enough for a filesystem path in a URL, and not worth a
@@ -455,6 +526,30 @@ pub fn editor_argv(choice: &EditorChoice, path: &Path, line: Option<u32>) -> Opt
         }
     };
     Some((program.to_string(), args))
+}
+
+/// Spawn the configured editor (or platform opener when `choice` is `System`) for `path` and `line`.
+pub fn spawn_editor(choice: &EditorChoice, path: &Path, line: Option<u32>) -> Result<(), String> {
+    match editor_argv(choice, path, line) {
+        Some((program, args)) => {
+            match std::process::Command::new(&program).args(&args).spawn() {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    #[cfg(windows)]
+                    if e.kind() == std::io::ErrorKind::NotFound && !program.ends_with(".cmd") && !program.ends_with(".exe") {
+                        if std::process::Command::new(format!("{program}.cmd")).args(&args).spawn().is_ok() {
+                            return Ok(());
+                        }
+                    }
+                    Err(format!("{program}: {e}"))
+                }
+            }
+        }
+        None => {
+            open_path_or_url(&path.display().to_string());
+            Ok(())
+        }
+    }
 }
 
 /// Returns true if running inside Windows Subsystem for Linux (WSL).
@@ -1132,6 +1227,18 @@ mod tests {
         assert!(file_url_target("mailto:a@b.c").is_none());
         // A host component names another machine — we cannot open its files.
         assert!(file_url_target("file://otherbox/tmp/a.rs").is_none());
+    }
+
+    #[test]
+    fn resolve_file_url_for_workspace_maps_linux_paths_and_strips_worktree_under_wsl_unc() {
+        let wsl_ws = Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\field.jsonl");
+        let url = "file:///home/Jake/dev/hadron/.hadron/trees/cli-agy/crates/hadron-chamber/src/pty.rs#L48-L49";
+        let (resolved, line) = super::resolve_file_url_for_workspace(url, Some(wsl_ws)).unwrap();
+        assert_eq!(
+            resolved,
+            Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\crates\hadron-chamber\src\pty.rs")
+        );
+        assert_eq!(line, Some(48));
     }
 
     // -- editor_argv: each editor spells "at line N" its own way --
