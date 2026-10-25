@@ -923,6 +923,7 @@ impl super::Chamber {
             .w_full()
             .min_w_0()
             .text_size(px(ui_size))
+            .line_height(gpui::relative(1.55))
             .child(
                 gpui_component::text::TextView::markdown((view, ix), content)
                     .selectable(true)
@@ -966,7 +967,7 @@ impl super::Chamber {
         };
         div()
             .p(pad)
-            .rounded_md()
+            .rounded_lg()
             .bg(accent.opacity(0.10))
             .border_l(gpui::px(3.0))
             .border_color(accent.opacity(0.75))

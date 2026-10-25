@@ -440,6 +440,37 @@ pub(super) fn resolve_mention_names_with_human(
             continue;
         }
 
+        if c == '[' && !in_code_block && !in_inline_code {
+            let rest = &body[idx..];
+            if let Some(bracket_paren_idx) = rest.find("](") {
+                let label = &rest[1..bracket_paren_idx];
+                let after_bracket = &rest[bracket_paren_idx + 1..];
+                if let Some(end_paren) = after_bracket.find(')') {
+                    let target = &after_bracket[1..end_paren];
+                    if !label.contains("\n\n") && !target.contains('\n') {
+                        let clean_label = label.replace('`', "");
+                        let is_file = target.trim_start().starts_with("file://");
+                        if is_file && !clean_label.contains("<span") {
+                            let hex = crate::theme::file_link_hex();
+                            out.push_str(&format!("[<span style=\"color: {hex}\">{clean_label}</span>]({target})"));
+                        } else {
+                            out.push_str(&format!("[{clean_label}]({target})"));
+                        }
+                        let target_idx = idx + bracket_paren_idx + 1 + end_paren + 1;
+                        while let Some(&(curr_idx, _)) = chars.peek() {
+                            if curr_idx < target_idx {
+                                chars.next();
+                            } else {
+                                break;
+                            }
+                        }
+                        prev_char = Some(')');
+                        continue;
+                    }
+                }
+            }
+        }
+
         let is_mention_start = c == '@'
             && !in_code_block
             && !in_inline_code
@@ -601,7 +632,8 @@ pub(super) fn resolve_mention_names_with_human(
 
                 let url = format!("file://{}{}", abs_path.display(), line_frag);
                 let title = token.replace('"', "&quot;");
-                out.push_str(&format!("[{display_name}]({url} \"{title}\")"));
+                let hex = crate::theme::file_link_hex();
+                out.push_str(&format!("[<span style=\"color: {hex}\">{display_name}</span>]({url} \"{title}\")"));
                 out.push_str(&trailing);
                 prev_char = trailing.chars().next_back().or_else(|| ")".chars().next());
             } else {
@@ -913,53 +945,56 @@ Some table notes.
     #[test]
     fn file_mentions_resolve_to_interactive_markdown_links_with_tooltips() {
         let root = std::path::Path::new("/workspace");
+        let hex = crate::theme::file_link_hex();
 
         // Relative file path with directory
         assert_eq!(
             resolve_mention_names("@path/to/some/file.md", &[], Some(root)),
-            "[file.md](file:///workspace/path/to/some/file.md \"path/to/some/file.md\")"
+            format!("[<span style=\"color: {hex}\">file.md</span>](file:///workspace/path/to/some/file.md \"path/to/some/file.md\")")
         );
 
         // Root file
         assert_eq!(
             resolve_mention_names("@Cargo.toml", &[], Some(root)),
-            "[Cargo.toml](file:///workspace/Cargo.toml \"Cargo.toml\")"
+            format!("[<span style=\"color: {hex}\">Cargo.toml</span>](file:///workspace/Cargo.toml \"Cargo.toml\")")
         );
 
         // Dotfile
         assert_eq!(
             resolve_mention_names("@.gitignore", &[], Some(root)),
-            "[.gitignore](file:///workspace/.gitignore \".gitignore\")"
+            format!("[<span style=\"color: {hex}\">.gitignore</span>](file:///workspace/.gitignore \".gitignore\")")
         );
 
         // File with line number
         assert_eq!(
             resolve_mention_names("@src/main.rs:123", &[], Some(root)),
-            "[main.rs:123](file:///workspace/src/main.rs#L123 \"src/main.rs:123\")"
+            format!("[<span style=\"color: {hex}\">main.rs:123</span>](file:///workspace/src/main.rs#L123 \"src/main.rs:123\")")
         );
 
         // File with hash fragment
         assert_eq!(
             resolve_mention_names("@src/lib.rs#L42", &[], Some(root)),
-            "[lib.rs#L42](file:///workspace/src/lib.rs#L42 \"src/lib.rs#L42\")"
+            format!("[<span style=\"color: {hex}\">lib.rs#L42</span>](file:///workspace/src/lib.rs#L42 \"src/lib.rs#L42\")")
         );
 
         // Absolute path
         assert_eq!(
             resolve_mention_names("@/home/Jake/dev/hadron/Cargo.lock", &[], Some(root)),
-            "[Cargo.lock](file:///home/Jake/dev/hadron/Cargo.lock \"/home/Jake/dev/hadron/Cargo.lock\")"
+            format!("[<span style=\"color: {hex}\">Cargo.lock</span>](file:///home/Jake/dev/hadron/Cargo.lock \"/home/Jake/dev/hadron/Cargo.lock\")")
         );
 
         // Directory mention
         assert_eq!(
             resolve_mention_names("@crates/hadron-chamber/", &[], Some(root)),
-            "[hadron-chamber/](file:///workspace/crates/hadron-chamber/ \"crates/hadron-chamber/\")"
+            format!("[<span style=\"color: {hex}\">hadron-chamber/</span>](file:///workspace/crates/hadron-chamber/ \"crates/hadron-chamber/\")")
         );
 
         // Trailing sentence punctuation is preserved outside the link
         assert_eq!(
             resolve_mention_names("Check @src/main.rs. And (@crates/Cargo.toml), see @file.md!", &[], Some(root)),
-            "Check [main.rs](file:///workspace/src/main.rs \"src/main.rs\"). And ([Cargo.toml](file:///workspace/crates/Cargo.toml \"crates/Cargo.toml\")), see [file.md](file:///workspace/file.md \"file.md\")!"
+            format!(
+                "Check [<span style=\"color: {hex}\">main.rs</span>](file:///workspace/src/main.rs \"src/main.rs\"). And ([<span style=\"color: {hex}\">Cargo.toml</span>](file:///workspace/crates/Cargo.toml \"crates/Cargo.toml\")), see [<span style=\"color: {hex}\">file.md</span>](file:///workspace/file.md \"file.md\")!"
+            )
         );
 
         // Mixed with quark mentions
@@ -970,7 +1005,29 @@ Some table notes.
         }];
         assert_eq!(
             resolve_mention_names("Hey @acp-claude-2, please look at @crates/hadron-chamber/src/app/mod.rs:50", &roster, Some(root)),
-            "Hey @Sonnet, please look at [mod.rs:50](file:///workspace/crates/hadron-chamber/src/app/mod.rs#L50 \"crates/hadron-chamber/src/app/mod.rs:50\")"
+            format!(
+                "Hey @Sonnet, please look at [<span style=\"color: {hex}\">mod.rs:50</span>](file:///workspace/crates/hadron-chamber/src/app/mod.rs#L50 \"crates/hadron-chamber/src/app/mod.rs:50\")"
+            )
+        );
+    }
+
+    #[test]
+    fn test_strip_inner_backticks_and_style_links() {
+        let hex = crate::theme::file_link_hex();
+        // Web link with backticks inside label
+        assert_eq!(
+            resolve_mention_names("See [`symbol_name`](https://example.com/doc) for details", &[], None),
+            "See [symbol_name](https://example.com/doc) for details"
+        );
+        // File link with backticks inside label
+        assert_eq!(
+            resolve_mention_names("Open [`terminal_pane`](file:///path/to/terminal.rs#L20)", &[], None),
+            format!("Open [<span style=\"color: {hex}\">terminal_pane</span>](file:///path/to/terminal.rs#L20)")
+        );
+        // Plain file link without backticks
+        assert_eq!(
+            resolve_mention_names("Check [config.rs](file:///path/to/config.rs)", &[], None),
+            format!("Check [<span style=\"color: {hex}\">config.rs</span>](file:///path/to/config.rs)")
         );
     }
 
@@ -1001,9 +1058,10 @@ Some table notes.
             "```\n@acp-claude-2\n@src/main.rs\n```"
         );
         // Inside code stays literal; outside resolves in the same string.
+        let hex = crate::theme::file_link_hex();
         assert_eq!(
             resolve_mention_names("`@acp-claude-2` then @acp-claude-2 with @src/main.rs.", &roster, None),
-            "`@acp-claude-2` then @Sonnet with [main.rs](file:///src/main.rs \"src/main.rs\")."
+            format!("`@acp-claude-2` then @Sonnet with [<span style=\"color: {hex}\">main.rs</span>](file:///src/main.rs \"src/main.rs\").")
         );
     }
 

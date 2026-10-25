@@ -605,12 +605,18 @@ pub struct AccentPalette {
     pub glow_green: String,
     #[serde(default = "default_glow_amber_hex")]
     pub glow_amber: String,
+    #[serde(default = "default_link_hex")]
+    pub link: String,
+    #[serde(default = "default_file_link_hex")]
+    pub file_link: String,
 }
 
 fn default_glow_blue_hex() -> String { "#c778dd".to_string() }
 fn default_glow_pink_hex() -> String { "#a87ffb".to_string() }
 fn default_glow_green_hex() -> String { "#62c073".to_string() }
 fn default_glow_amber_hex() -> String { "#e5c07b".to_string() }
+fn default_link_hex() -> String { "#38bdf8".to_string() }
+fn default_file_link_hex() -> String { "#e5c07b".to_string() }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextPalette {
@@ -700,6 +706,8 @@ impl ThemeDefinition {
                 glow_pink: "#a87ffb".into(),
                 glow_green: "#62c073".into(),
                 glow_amber: "#e5c07b".into(),
+                link: "#38bdf8".into(),
+                file_link: "#e5c07b".into(),
             },
             text: TextPalette {
                 primary: "#ededed".into(),
@@ -737,6 +745,8 @@ impl ThemeDefinition {
                 glow_pink: "#a87ffb".into(),
                 glow_green: "#62c073".into(),
                 glow_amber: "#e5c07b".into(),
+                link: "#38bdf8".into(),
+                file_link: "#e5c07b".into(),
             },
             text: TextPalette {
                 primary: "#ededed".into(),
@@ -774,6 +784,8 @@ impl ThemeDefinition {
                 glow_pink: "#9d7cd8".into(),
                 glow_green: "#62c073".into(),
                 glow_amber: "#e5c07b".into(),
+                link: "#38bdf8".into(),
+                file_link: "#e5c07b".into(),
             },
             text: TextPalette {
                 primary: "#f1f5f9".into(),
@@ -816,6 +828,8 @@ impl ThemeDefinition {
                 glow_pink: "#bb9af7".into(),
                 glow_green: "#73daca".into(),
                 glow_amber: "#e0af68".into(),
+                link: "#7aa2f7".into(),
+                file_link: "#e0af68".into(),
             },
             text: TextPalette {
                 primary: "#c0caf5".into(),
@@ -858,6 +872,8 @@ impl ThemeDefinition {
                 glow_pink: "#b48ead".into(),
                 glow_green: "#a3be8c".into(),
                 glow_amber: "#ebcb8b".into(),
+                link: "#88c0d0".into(),
+                file_link: "#ebcb8b".into(),
             },
             text: TextPalette {
                 primary: "#eceff4".into(),
@@ -900,6 +916,8 @@ impl ThemeDefinition {
                 glow_pink: "#f5c2e7".into(),
                 glow_green: "#a6e3a1".into(),
                 glow_amber: "#f9e2af".into(),
+                link: "#89b4fa".into(),
+                file_link: "#f9e2af".into(),
             },
             text: TextPalette {
                 primary: "#cdd6f4".into(),
@@ -942,6 +960,8 @@ impl ThemeDefinition {
                 glow_pink: "#d3869b".into(),
                 glow_green: "#b8bb26".into(),
                 glow_amber: "#fabd2f".into(),
+                link: "#83a598".into(),
+                file_link: "#fabd2f".into(),
             },
             text: TextPalette {
                 primary: "#ebdbb2".into(),

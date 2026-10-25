@@ -643,7 +643,7 @@ impl super::Chamber {
             .justify_between()
             .px_3()
             .py_1p5()
-            .rounded_md()
+            .rounded_lg()
             .bg(theme::glass_card())
             .border_1()
             .border_color(theme::glass_highlight())

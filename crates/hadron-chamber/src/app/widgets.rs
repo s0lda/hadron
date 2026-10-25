@@ -1725,7 +1725,7 @@ pub(super) fn markdown_style(ui_font_size: Option<f32>, word_wrap: bool) -> gpui
         let mut s = gpui::StyleRefinement::default()
             .border_1()
             .border_color(theme::border())
-            .rounded_md();
+            .rounded_lg();
         s.overflow.x = Some(gpui::Overflow::Scroll);
         s
     };
@@ -1736,7 +1736,7 @@ pub(super) fn markdown_style(ui_font_size: Option<f32>, word_wrap: bool) -> gpui
         .bg(theme::input_bg())
         .border_1()
         .border_color(theme::border())
-        .rounded_md();
+        .rounded_lg();
     if !word_wrap {
         cb.overflow.x = Some(gpui::Overflow::Scroll);
     }

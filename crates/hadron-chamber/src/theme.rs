@@ -53,6 +53,8 @@ pub struct ResolvedTheme {
     pub glow_pink: Rgba,
     pub glow_green: Rgba,
     pub glow_amber: Rgba,
+    pub link: Rgba,
+    pub file_link: Rgba,
     // text
     pub text_primary: Rgba,
     pub text_secondary: Rgba,
@@ -100,6 +102,8 @@ impl ResolvedTheme {
         let g_pink = parse_hex_color(&def.accents.glow_pink).unwrap_or_else(|| rgba(0xa87ffb15));
         let g_green = parse_hex_color(&def.accents.glow_green).unwrap_or_else(|| rgba(0x62c0731a));
         let g_amber = parse_hex_color(&def.accents.glow_amber).unwrap_or_else(|| rgba(0xe5c07b1a));
+        let lnk = parse_hex_color(&def.accents.link).unwrap_or_else(|| rgb(0x38bdf8));
+        let f_lnk = parse_hex_color(&def.accents.file_link).unwrap_or_else(|| rgb(0xe5c07b));
 
         let txt_pri = parse_hex_color(&def.text.primary).unwrap_or_else(|| rgb(0xededed));
         let txt_sec = parse_hex_color(&def.text.secondary).unwrap_or_else(|| rgb(0x8e8e8e));
@@ -145,6 +149,8 @@ impl ResolvedTheme {
             glow_pink: g_pink,
             glow_green: g_green,
             glow_amber: g_amber,
+            link: lnk,
+            file_link: f_lnk,
             text_primary: txt_pri,
             text_secondary: txt_sec,
             text_muted: txt_mut,
@@ -880,15 +886,33 @@ pub fn accent_secondary() -> Rgba {
 pub fn danger() -> Rgba {
     rgb(0xef4444) // standard red — window close-button hover
 }
-/// Markdown link colour in chat — warm orchid-violet, distinct from primary text.
+/// Markdown link colour in chat — default palette blue #38bdf8, distinct from primary text.
 pub fn link() -> Rgba {
-    rgb(0xc778dd) // muted orchid-purple
+    active_custom_theme().map(|t| t.link).unwrap_or_else(|| rgb(0x38bdf8))
+}
+/// File link colour in chat — default warm amber #e5c07b, distinct from web links.
+pub fn file_link() -> Rgba {
+    active_custom_theme().map(|t| t.file_link).unwrap_or_else(|| rgb(0xe5c07b))
+}
+pub fn link_hex() -> String {
+    let c = link();
+    let r = (c.r * 255.0).round() as u8;
+    let g = (c.g * 255.0).round() as u8;
+    let b = (c.b * 255.0).round() as u8;
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+pub fn file_link_hex() -> String {
+    let c = file_link();
+    let r = (c.r * 255.0).round() as u8;
+    let g = (c.g * 255.0).round() as u8;
+    let b = (c.b * 255.0).round() as u8;
+    format!("#{r:02x}{g:02x}{b:02x}")
 }
 pub fn link_hover() -> Rgba {
-    rgb(0xd896eb) // brighter orchid on hover
+    link()
 }
 pub fn link_active() -> Rgba {
-    rgb(0xa87ffb) // warm violet while pressed
+    link()
 }
 
 /// Roster chip color for a quark's lifecycle state (the status ramp).

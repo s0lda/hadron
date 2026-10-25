@@ -3003,12 +3003,14 @@ pub enum ThemeTokenKey {
     TextPrimary,
     TextSecondary,
     TextMuted,
-    // Accents & Indicators (5)
+    // Accents & Indicators (7)
     AccentPrimary,
     GlowBlue,
     GlowPink,
     GlowGreen,
     GlowAmber,
+    Link,
+    FileLink,
     // Terminal (3)
     TermBg,
     TermFg,
@@ -3031,7 +3033,7 @@ pub enum ThemeTokenKey {
 }
 
 impl ThemeTokenKey {
-    pub const ALL: [ThemeTokenKey; 33] = [
+    pub const ALL: [ThemeTokenKey; 35] = [
         // Surfaces
         ThemeTokenKey::CanvasBase,
         ThemeTokenKey::BgBase,
@@ -3051,6 +3053,8 @@ impl ThemeTokenKey {
         ThemeTokenKey::GlowPink,
         ThemeTokenKey::GlowGreen,
         ThemeTokenKey::GlowAmber,
+        ThemeTokenKey::Link,
+        ThemeTokenKey::FileLink,
         // Terminal
         ThemeTokenKey::TermBg,
         ThemeTokenKey::TermFg,
@@ -3090,6 +3094,8 @@ impl ThemeTokenKey {
             ThemeTokenKey::GlowPink => "Thinking Glow (Reasoning)",
             ThemeTokenKey::GlowGreen => "Available Glow (Idle)",
             ThemeTokenKey::GlowAmber => "Waiting Glow (Blocked)",
+            ThemeTokenKey::Link => "Web Link",
+            ThemeTokenKey::FileLink => "File Link",
             ThemeTokenKey::TermBg => "Terminal Background",
             ThemeTokenKey::TermFg => "Terminal Text",
             ThemeTokenKey::TermPrompt => "Terminal Prompt",
@@ -3125,7 +3131,9 @@ impl ThemeTokenKey {
             | ThemeTokenKey::GlowBlue
             | ThemeTokenKey::GlowPink
             | ThemeTokenKey::GlowGreen
-            | ThemeTokenKey::GlowAmber => "Accents",
+            | ThemeTokenKey::GlowAmber
+            | ThemeTokenKey::Link
+            | ThemeTokenKey::FileLink => "Accents",
             ThemeTokenKey::TermBg | ThemeTokenKey::TermFg | ThemeTokenKey::TermPrompt => "Terminal",
             ThemeTokenKey::SyntaxKeyword
             | ThemeTokenKey::SyntaxFunction
@@ -3162,6 +3170,8 @@ impl ThemeTokenKey {
             ThemeTokenKey::GlowPink => "Thinking/reasoning state halo and corner whisper",
             ThemeTokenKey::GlowGreen => "Available/idle ground state halo and corner whisper",
             ThemeTokenKey::GlowAmber => "Waiting/blocked state halo and corner whisper",
+            ThemeTokenKey::Link => "Hyperlink text color in chat and markdown",
+            ThemeTokenKey::FileLink => "Local file path link color in chat and markdown",
             ThemeTokenKey::TermBg => "PTY terminal screen background surface",
             ThemeTokenKey::TermFg => "Default terminal output foreground text",
             ThemeTokenKey::TermPrompt => "Shell prompt indicator ($, >, user@host)",
@@ -3200,6 +3210,8 @@ impl ThemeTokenKey {
             ThemeTokenKey::GlowPink => theme.accents.glow_pink.clone(),
             ThemeTokenKey::GlowGreen => theme.accents.glow_green.clone(),
             ThemeTokenKey::GlowAmber => theme.accents.glow_amber.clone(),
+            ThemeTokenKey::Link => theme.accents.link.clone(),
+            ThemeTokenKey::FileLink => theme.accents.file_link.clone(),
             ThemeTokenKey::TermBg => theme.terminal.bg.clone(),
             ThemeTokenKey::TermFg => theme.terminal.fg.clone(),
             ThemeTokenKey::TermPrompt => theme.terminal.prompt.clone(),
@@ -3238,6 +3250,8 @@ impl ThemeTokenKey {
             ThemeTokenKey::GlowPink => theme.accents.glow_pink = hex,
             ThemeTokenKey::GlowGreen => theme.accents.glow_green = hex,
             ThemeTokenKey::GlowAmber => theme.accents.glow_amber = hex,
+            ThemeTokenKey::Link => theme.accents.link = hex,
+            ThemeTokenKey::FileLink => theme.accents.file_link = hex,
             ThemeTokenKey::TermBg => theme.terminal.bg = hex,
             ThemeTokenKey::TermFg => theme.terminal.fg = hex,
             ThemeTokenKey::TermPrompt => theme.terminal.prompt = hex,
@@ -3282,6 +3296,8 @@ impl ThemeTokenKey {
                     | ThemeTokenKey::GlowPink
                     | ThemeTokenKey::GlowGreen
                     | ThemeTokenKey::GlowAmber
+                    | ThemeTokenKey::Link
+                    | ThemeTokenKey::FileLink
             ),
             ThemeCategoryTab::Terminal => matches!(
                 self,

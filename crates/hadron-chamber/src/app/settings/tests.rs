@@ -347,7 +347,7 @@ fn first_adopted_catalogue_quark_becomes_orchestrator_when_team_has_none() {
 fn test_theme_tokens_count_and_categories() {
     use super::providers::{ThemeCategoryTab, ThemeTokenKey};
 
-    assert_eq!(ThemeTokenKey::ALL.len(), 33, "Theme editor must provide all 33 design tokens");
+    assert_eq!(ThemeTokenKey::ALL.len(), 35, "Theme editor must provide all 35 design tokens");
 
     let mut surfaces_count = 0;
     let mut text_accents_count = 0;
@@ -374,10 +374,10 @@ fn test_theme_tokens_count_and_categories() {
     }
 
     assert_eq!(surfaces_count, 8, "Surfaces category must contain 8 tokens");
-    assert_eq!(text_accents_count, 8, "Text & Accents category must contain 8 tokens (3 text + 5 accents)");
+    assert_eq!(text_accents_count, 10, "Text & Accents category must contain 10 tokens (3 text + 7 accents)");
     assert_eq!(terminal_count, 3, "Terminal category must contain 3 tokens");
     assert_eq!(syntax_count, 14, "Syntax category must contain 14 tokens");
-    assert_eq!(surfaces_count + text_accents_count + terminal_count + syntax_count, 33);
+    assert_eq!(surfaces_count + text_accents_count + terminal_count + syntax_count, 35);
 }
 
 #[test]
