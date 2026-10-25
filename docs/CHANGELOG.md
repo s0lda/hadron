@@ -5,6 +5,26 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.13] - 2026-10-25
+
+### Added
+- **Chained Slash Commands & Inline Tab/Right Ghost-Text Completion (`hadron-chamber`)**:
+  - Updated `Chamber::send` (`input.rs`), `extract_inline_skills_from_text`, and `extract_inline_skill_slugs` (`text.rs`) to expand multiple same-line slash commands (`/skill1 /skill2`) and recognize mid-line `/skill` and `/steer @target` triggers.
+  - Added `inline_completion_ghost_suffix` (`render/chat.rs`, `input.rs`) to render ghost-text suffix previews inside the composer and accept completions directly via `Tab` or `Right` arrow keys.
+- **Liveness Heartbeat Watchdog, Atomic Worktree Checkpoints & 70% Post-Turn Context Rotation (`hadron-lattice`, `hadron-gluon`)**:
+  - Added `HeartbeatAssessment` (`live.rs`) and background watchdog polling (`engine/run.rs`) to detect stalled turns (15m heartbeat silence) and 4h wall-clock ceilings (`LivenessFault::{Stalled, WallClockExceeded}`) with immediate process-group termination and orchestrator escalation.
+  - Added `worktree::checkpoint_dirty_worktree` (`worktree.rs`) to capture uncommitted worktree edits before reaping a timed-out or stalled quark, plus proactive post-turn session rotation (`ROTATION_CONTEXT_RATIO = 0.70`) and pre-turn Plan DAG step context injection (`extract_plan_step_context_for_quark`).
+
+### Fixed
+- **Mission Plan Wave DAG Scroll Retention, Content-Hash Caching & Checkbox Commit Scanning (`hadron-chamber`)**:
+  - Added `CachedPlanDag` (`app/mod.rs`, `render/dag_visualizer.rs`, `render/terminal.rs`) keyed by `(plan_path, content_hash, git_fingerprint)` with persistent horizontal and per-wave vertical `ScrollHandle` instances and explicit cross-axis `max_h(px(360.0))` viewport bounds on `#dag-waves-row`, eliminating per-frame `git rev-list` subprocess spawns and scroll resets during live telemetry ticks.
+  - Updated `scan_checkbox_progress` and `extract_commit_sha_from_checkbox` (`dag_visualizer.rs`) to count checked top-level `- [x] Task N` items when steps lack nested sub-checkboxes and parse `(commit <sha>)` annotations directly from plan markdown.
+- **Repo-Root Custom Skill Discovery & `@target` Punctuation Stripping (`hadron-chamber`)**:
+  - Threaded `repo_root` into `all_skills_for_repo` (`text.rs`, `actions.rs`, `input.rs`, `render/chat.rs`) so repo-local `.hadron/skills/*.md` commands resolve when the process working directory differs from the opened repository, and stripped trailing punctuation (`,`, `.`, `;`, `:`, `!`, `?`) from `@target` mentions (`mentions.rs`) so `/steer @Agy, ...` routes cleanly.
+- **ACP/CLI Per-Turn Spend Delta Accounting & 75% ACP Context Rotation (`hadron-gluon`)**:
+  - Updated `scripts/agy_acp.py` to compute per-turn deltas from cumulative `trajectory_Loop_Usage` watermarks while summing per-call `modelUsage` entries, and added `CumulativeSpendTracker` (`acp/spend.rs`) with automatic reset detection and 75% context window rotation (`CONTEXT_ROTATION_THRESHOLD_PCT = 75`) in `acp/session.rs`.
+  - Updated `extract_usage` and `parse_ndjson_transcript` (`cli_stream.rs`, `cli.rs`) to read nested `usage.{input_tokens,output_tokens,model}` fields, take peak `input_tokens` across multi-step CLI turns for `Usage.context`, and report `Usage.step` and `Usage.model` to `LiveFeed`.
+
 ## [0.33.12] - 2026-10-25
 
 ### Added

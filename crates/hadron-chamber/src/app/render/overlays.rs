@@ -20,6 +20,20 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.13",
+        date: Some("2026-10-25"),
+        added: &[
+            "Chained Slash Commands & Inline Ghost Completion: Expanded multiple same-line slash commands (/skill1 /skill2), matched mid-line /skill and /steer triggers, and added inline Tab/Right ghost-text completion in the composer",
+            "Liveness Heartbeat Watchdog, Worktree Checkpoints & 70% Context Rotation: Added 15m stall / 4h wall-clock watchdog enforcement, atomic worktree checkpointing before reaping stalled turns, post-turn 70% context rotation, and pre-turn Plan DAG step context injection",
+        ],
+        changed: &[],
+        fixed: &[
+            "Mission Plan Wave DAG Scroll & Cache Stability: Cached parsed Plan DAGs, landed commits, and checkbox progress in CachedPlanDag with persistent ScrollHandles, cross-axis max_h bounds on #dag-waves-row, and (commit <sha>) checkbox parsing",
+            "Repo-Root Custom Skill Discovery & @target Punctuation Stripping: Threaded repo_root into custom skill discovery (.hadron/skills/*.md) and stripped trailing punctuation (,.;:!?) from @target mentions in /steer and chat routing",
+            "ACP/CLI Per-Turn Spend Delta Accounting & 75% ACP Context Rotation: Fixed cumulative vs per-turn token accounting in agy_acp.py and CumulativeSpendTracker, rotated ACP sessions at 75% context fill, and populated CLI Usage.model/context/step telemetry",
+        ],
+    },
+    Release {
         version: "0.33.12",
         date: Some("2026-10-25"),
         added: &[
