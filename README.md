@@ -14,7 +14,7 @@
 
   <br />
 
-  <img src="assets/demo_3.png" alt="Hadron Orchestrated Multi-Provider Chat Workspace" width="900" />
+  <img src="assets/demo.gif" alt="Hadron Orchestrated Multi-Provider Chat Workspace" width="900" />
 
 </div>
 
@@ -33,7 +33,7 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 - 💬 **Collaborative Multi-LLM Chat**: Mix models in a single thread — `@claude`, `@ollama`, `@agy`, `@openai`, and many more see each other's output, share context, and execute parallel sub-tasks via Hub-and-Spoke orchestration.
 - 🛡️ **Git Worktrees & Automated Merge Gate**: Agents work in isolated git worktree branches. The Merge Gate automatically rebases onto `main` and runs your test suite before clean code lands.
 - 🔒 **Cross-Platform Process Sandboxing**: Zero-overhead native OS jailing across Linux/WSL (Bubblewrap), macOS (Apple Seatbelt), and Windows (PowerShell & Job Objects) with worktree write confinement, credential scrubbing, and interactive chat badge toggles.
-- ⚡ **Native GPUI Desktop App**: Lightning-fast GPU-accelerated UI with Zed/VS Code-style Project Selector & MRU launchpad, seamless Windows-to-WSL remote project execution (`\\wsl.localhost\<distro>\<path>`) with unified quark credentials, multi-tab PTY terminals, dense event log observability with rich context menu copy and drag selection, interactive git commit graph, live plan tracking, interactive 3D cosmic swarm visualizer, native interactive Mermaid diagram rendering, robust color emoji font fallbacks, and real-time multi-protocol token telemetry.
+- ⚡ **Native GPUI Desktop App**: GPU-accelerated workspace featuring a Project Selector, Windows-to-WSL remote execution, multi-tab PTY terminals, interactive Git & Wave DAG visualizers, native Mermaid diagrams, and real-time token telemetry.
 - 🛠️ **Hadron Forge & Developer Power Tools**: 50+ built-in MCP developer capabilities — AST precision edits via `blake3`, isolated PTY terminals, headless browser testing, LSP code intelligence, background process supervision, automated git bisect, and flamegraph profiling. Detailed in [`Power Tools Suite`](docs/forge/power-tools.md).
 - 🧠 **Persistent Nucleus Memory & Universal Absorption**: Cross-session shared memory within a configurable budget (16/32/64/128 KiB), plus `/absorb` to seamlessly import memories, invariants, skills, and plans from `.agents/`, `.claude/`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`, and many more.
 - 🤖 **Autonomous Headless Swarm Runner**: Standalone non-interactive CLI runner (`hadron run` / `hadron ci`) for CI/CD automation, speculative shadow pre-testing, AST-aware rebase healing, and tiled multi-PTY terminals.
